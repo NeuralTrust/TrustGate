@@ -41,18 +41,18 @@ const (
 )
 
 var credentialBodyKeys = map[string]struct{}{
-	"password":       {},
-	"passwd":           {},
-	"secret":           {},
-	"token":            {},
-	"api_key":          {},
-	"apikey":           {},
-	"authorization":    {},
-	"credential":       {},
-	"access_token":     {},
-	"refresh_token":    {},
-	"client_secret":    {},
-	"private_key":      {},
+	"password":      {},
+	"passwd":        {},
+	"secret":        {},
+	"token":         {},
+	"api_key":       {},
+	"apikey":        {},
+	"authorization": {},
+	"credential":    {},
+	"access_token":  {},
+	"refresh_token": {},
+	"client_secret": {},
+	"private_key":   {},
 }
 
 var sensitiveHeaders = map[string]struct{}{

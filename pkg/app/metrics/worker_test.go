@@ -16,9 +16,11 @@ package metrics_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -159,4 +161,170 @@ func TestWorker_NilPipelineAndNilArgsAreNoop(t *testing.T) {
 	w.Process(nil, nil, resp, time.Now(), time.Now(), nil)
 	w.Process(nil, req, nil, time.Now(), time.Now(), nil)
 	time.Sleep(20 * time.Millisecond)
+}
+
+// siblingDeleter deletes a sibling key from its parent map when the encoder
+// marshals it, which reproduces the Go 1.27 encoding/json/v2 panic on demand:
+// v2's sorted-map path collects a map's keys, sorts them, then looks each value
+// up again with reflect MapIndex. A key gone by that second pass yields the zero
+// Value and reflect.Value.Set panics on it (RUN-1261).
+type siblingDeleter struct {
+	parent map[string]any
+	victim string
+}
+
+func (d siblingDeleter) MarshalJSON() ([]byte, error) {
+	delete(d.parent, d.victim)
+	return []byte(`"trigger"`), nil
+}
+
+func selfDeletingMap() map[string]any {
+	m := map[string]any{}
+	m["a_trigger"] = siblingDeleter{parent: m, victim: "z_victim"}
+	m["m_filler"] = 1
+	m["z_victim"] = "gone before the encoder looks it up"
+	return m
+}
+
+// TestWorker_SurvivesAPanickingTask is the reason runTask exists. Tasks run on a
+// goroutine the worker started, so before the recover a panic while marshalling
+// one event killed the process and every in-flight request with it.
+//
+// The payload is a real RUN-1261 shape rather than a synthetic panic: plugin
+// extras holding a map that changes while the encoder walks it.
+func TestWorker_SurvivesAPanickingTask(t *testing.T) {
+	// The hazard is real, or this test proves nothing.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("marshalling a self-mutating map did not panic; this test " +
+					"no longer reproduces RUN-1261")
+			}
+		}()
+		_, _ = json.Marshal(selfDeletingMap())
+	}()
+
+	capture := &captureExporter{}
+	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{})
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: capture}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "capture"})
+
+	w := appmetrics.NewWorker(newTestLogger(), pipeline)
+	w.StartWorkers(1)
+	defer w.Shutdown()
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x"}`)}
+
+	poisoned := trace.New("trace-poisoned", trace.Metadata{GatewayID: "gw-1"})
+	span := &trace.Span{Type: trace.SpanPlugin, Name: "trustguard"}
+	span.SetExtras(selfDeletingMap())
+	_ = poisoned.AddSpan(span)
+	w.Process(poisoned, req, resp, time.Now(), time.Now(), nil)
+
+	// The worker must still be alive and draining. A second, clean event proves
+	// the goroutine was not taken down with the task.
+	healthy := trace.New("trace-healthy", trace.Metadata{GatewayID: "gw-1"})
+	w.Process(healthy, req, resp, time.Now(), time.Now(), nil)
+
+	require.Eventually(t, func() bool {
+		for _, e := range capture.snapshot() {
+			if e.TraceID == "trace-healthy" {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 10*time.Millisecond,
+		"the worker stopped processing after a task panicked")
+}
+
+type blockingExporter struct {
+	started chan struct{}
+	release chan struct{}
+	closed  atomic.Bool
+}
+
+func (e *blockingExporter) Name() string                       { return "blocking" }
+func (e *blockingExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
+func (e *blockingExporter) Publish(context.Context, *events.Event) error {
+	close(e.started)
+	<-e.release
+	return nil
+}
+func (e *blockingExporter) Close() { e.closed.Store(true) }
+
+func TestWorkerShutdownWaitsForPublishingBeforeClosingExporter(t *testing.T) {
+	exporter := &blockingExporter{started: make(chan struct{}), release: make(chan struct{})}
+	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{})
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: exporter}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(), telemetrydomain.ExporterConfig{Name: "blocking"})
+	worker := appmetrics.NewWorker(newTestLogger(), pipeline)
+	worker.StartWorkers(1)
+	worker.Process(nil, &infracontext.RequestContext{GatewayID: "gw"}, &infracontext.ResponseContext{}, time.Now(), time.Now(), nil)
+	select {
+	case <-exporter.started:
+	case <-time.After(time.Second):
+		t.Fatal("export did not start")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		worker.Shutdown()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("shutdown returned while an exporter was still publishing")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if exporter.closed.Load() {
+		t.Fatal("exporter closed while Publish was active")
+	}
+	close(exporter.release)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after Publish returned")
+	}
+	if !exporter.closed.Load() {
+		t.Fatal("exporter was not closed")
+	}
+}
+
+type cancellationExporter struct {
+	started  chan struct{}
+	canceled chan struct{}
+}
+
+func (e *cancellationExporter) Name() string                       { return "cancellation" }
+func (e *cancellationExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
+func (e *cancellationExporter) Publish(ctx context.Context, _ *events.Event) error {
+	close(e.started)
+	<-ctx.Done()
+	close(e.canceled)
+	return ctx.Err()
+}
+func (e *cancellationExporter) Close() {}
+
+func TestWorkerShutdownCancelsActivePublishing(t *testing.T) {
+	exporter := &cancellationExporter{started: make(chan struct{}), canceled: make(chan struct{})}
+	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{})
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: exporter}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(), telemetrydomain.ExporterConfig{Name: "cancellation"})
+	worker := appmetrics.NewWorker(newTestLogger(), pipeline)
+	worker.StartWorkers(1)
+	worker.Process(nil, &infracontext.RequestContext{GatewayID: "gw"}, &infracontext.ResponseContext{}, time.Now(), time.Now(), nil)
+
+	select {
+	case <-exporter.started:
+	case <-time.After(time.Second):
+		t.Fatal("export did not start")
+	}
+	worker.Shutdown()
+	select {
+	case <-exporter.canceled:
+	default:
+		t.Fatal("shutdown did not cancel the active publish context")
+	}
 }

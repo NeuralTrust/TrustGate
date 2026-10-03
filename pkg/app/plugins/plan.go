@@ -24,6 +24,12 @@ import (
 type StagePlan struct {
 	byStage map[policy.Stage][]chainEntry
 	batches map[policy.Stage][][]chainEntry
+	// streamed is the pre_response list a streamed segment walks: the entries
+	// that take part in per-segment inspection (streamParticipants), in
+	// OrderStreamEntries order. finishStage always sets it, empty but non-nil
+	// when no entry takes part; plans built without finishStage leave it nil
+	// and the executor derives it on demand.
+	streamed []chainEntry
 }
 
 var planStages = [...]policy.Stage{
@@ -33,7 +39,21 @@ var planStages = [...]policy.Stage{
 	policy.StagePostResponse,
 }
 
+// NewStagePlan compiles the policies into a per-stage plan for the MCP plane,
+// where the scope gates and its specificity breaks ties at equal priority.
 func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	return newStagePlan(reg, policies, logger, false)
+}
+
+// NewInertStagePlan compiles the policies into a per-stage plan for a plane
+// where the scope does not gate. Every entry scores zero specificity, so
+// adding a group to a policy's scope can no longer reorder the chain
+// (RUN-1621, rule 4).
+func NewInertStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	return newStagePlan(reg, policies, logger, true)
+}
+
+func newStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger, flatSpecificity bool) *StagePlan {
 	plan := &StagePlan{
 		byStage: make(map[policy.Stage][]chainEntry, len(planStages)),
 		batches: make(map[policy.Stage][][]chainEntry, len(planStages)),
@@ -63,13 +83,16 @@ func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) 
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
-			mode:        pol.Mode.Normalize(),
-			priority:    pol.Priority,
-			parallel:    pol.Parallel,
-			global:      pol.IsGlobal(),
-			mutatesReq:  plugin.MutatesRequestBody(),
-			mutatesResp: plugin.MutatesResponseBody(),
-			mutatesMeta: plugin.MutatesMetadata(),
+			mode:         pol.Mode.Normalize(),
+			priority:     pol.Priority,
+			specificity:  entrySpecificity(pol.MCPScope, flatSpecificity),
+			parallel:     pol.Parallel,
+			global:       pol.GatewayWide(),
+			mutatesReq:   plugin.MutatesRequestBody(),
+			mutatesResp:  plugin.MutatesResponseBody(),
+			mutatesMeta:  plugin.MutatesMetadata(),
+			readsContent: IsContentReader(plugin),
+			local:        RewritesLocally(plugin),
 		}
 		for _, stage := range planStages {
 			if isEffectiveStage(plugin, pol.Stages, stage) {
@@ -78,13 +101,64 @@ func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) 
 		}
 	}
 	for stage := range plan.byStage {
-		entries := plan.byStage[stage]
-		sort.SliceStable(entries, func(i, j int) bool {
-			return entries[i].priority < entries[j].priority
-		})
-		plan.batches[stage] = groupBatches(entries, stage, logger)
+		plan.finishStage(stage, plan.byStage[stage], logger)
 	}
 	return plan
+}
+
+// Union returns a plan holding the entries of p and of every extra plan,
+// deduplicated by policy id and regrouped into batches under the same ordering
+// NewStagePlan applies. It never consults the plugin Registry, so it is safe on
+// the request path. Without extras it returns p itself.
+func (p *StagePlan) Union(extra ...*StagePlan) *StagePlan {
+	if len(extra) == 0 {
+		return p
+	}
+	out := &StagePlan{
+		byStage: make(map[policy.Stage][]chainEntry, len(planStages)),
+		batches: make(map[policy.Stage][][]chainEntry, len(planStages)),
+	}
+	for _, stage := range planStages {
+		merged := appendUniqueEntries(nil, p.entriesFor(stage))
+		for _, other := range extra {
+			merged = appendUniqueEntries(merged, other.entriesFor(stage))
+		}
+		if len(merged) == 0 {
+			continue
+		}
+		out.finishStage(stage, merged, nil)
+	}
+	return out
+}
+
+func (p *StagePlan) finishStage(stage policy.Stage, entries []chainEntry, logger *slog.Logger) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return lessEntry(entries[i], entries[j])
+	})
+	p.byStage[stage] = entries
+	p.batches[stage] = groupBatches(entries, stage, logger)
+	if stage == policy.StagePreResponse {
+		p.streamed = streamParticipants(OrderStreamEntries(entries))
+	}
+}
+
+func appendUniqueEntries(dst, src []chainEntry) []chainEntry {
+	for _, entry := range src {
+		if containsEntry(dst, entry.config.ID) {
+			continue
+		}
+		dst = append(dst, entry)
+	}
+	return dst
+}
+
+func containsEntry(entries []chainEntry, id string) bool {
+	for i := range entries {
+		if entries[i].config.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *StagePlan) Has(stage policy.Stage) bool {
@@ -106,11 +180,51 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
+// StreamPlan reports whether any entry of the stage opted into per-segment
+// inspection *and* has it enabled, and yields the options that entry runs
+// under. The stream guard is built only when it reports true, so a gateway
+// whose policies do not participate pays nothing for the feature.
+//
+// The opt-in and its configuration are answered together because only the
+// plugin can parse its own settings: split apart, a plan that says "yes" would
+// hand the caller no head_chars and no on_error, and the caller would run on
+// defaults an operator never asked for.
+//
+// The first participating entry wins. One stream carries one head gate, and
+// the entries are already ordered by priority.
+func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
+	if p == nil {
+		return false, StreamOptions{}
+	}
+	for _, entry := range p.byStage[stage] {
+		inspector, ok := streamInspector(entry.plugin)
+		if !ok {
+			continue
+		}
+		if enabled, opts := inspector.StreamSettings(entry.config.Settings); enabled {
+			return true, opts
+		}
+	}
+	return false, StreamOptions{}
+}
+
 func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
 	if p == nil {
 		return nil
 	}
 	return p.byStage[stage]
+}
+
+// streamEntriesFor is the pre_response list in streamed order. It is nil-safe
+// and falls back to deriving the order for a plan that did not precompute it.
+func (p *StagePlan) streamEntriesFor() []chainEntry {
+	if p == nil {
+		return nil
+	}
+	if p.streamed != nil {
+		return p.streamed
+	}
+	return streamParticipants(OrderStreamEntries(p.byStage[policy.StagePreResponse]))
 }
 
 func (p *StagePlan) batchesFor(stage policy.Stage) [][]chainEntry {
@@ -126,26 +240,21 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 	}
 	sorted := append([]chainEntry(nil), entries...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		a, b := sorted[i], sorted[j]
-		if a.priority != b.priority {
-			return a.priority < b.priority
-		}
-		if a.config.Slug != b.config.Slug {
-			return a.config.Slug < b.config.Slug
-		}
-		return a.config.ID < b.config.ID
+		return lessEntry(sorted[i], sorted[j])
 	})
+
+	sorted = orderByContentFlow(sorted, stage)
 
 	batches := make([][]chainEntry, 0, len(sorted))
 	var current []chainEntry
-	var usedReq, usedResp, usedMeta bool
+	var usedReq, usedResp, usedMeta, hasRewriter bool
 	for i := range sorted {
 		entry := sorted[i]
 		if !entry.parallel {
 			if len(current) > 0 {
 				batches = append(batches, current)
 				current = nil
-				usedReq, usedResp, usedMeta = false, false, false
+				usedReq, usedResp, usedMeta, hasRewriter = false, false, false, false
 			}
 			batches = append(batches, []chainEntry{entry})
 			continue
@@ -163,7 +272,11 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 					capability = "metadata"
 				}
 			}
-			if !samePriority || capability != "" {
+			// A pure reader never shares a batch with a rewriter of its
+			// priority: a batch runs on isolated copies, so it would judge the
+			// original content (RUN-1693).
+			readerAfterRewriter := samePriority && hasRewriter && entry.onlyReadsAt(stage)
+			if !samePriority || capability != "" || readerAfterRewriter {
 				if capability != "" && logger != nil {
 					logger.Warn("plugin forced sequential: parallel batch capability cap exceeded",
 						slog.String("stage", string(stage)),
@@ -172,16 +285,109 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 				}
 				batches = append(batches, current)
 				current = nil
-				usedReq, usedResp, usedMeta = false, false, false
+				usedReq, usedResp, usedMeta, hasRewriter = false, false, false, false
 			}
 		}
 		current = append(current, entry)
 		usedReq = usedReq || entry.mutatesReq
 		usedResp = usedResp || entry.mutatesResp
 		usedMeta = usedMeta || entry.mutatesMeta
+		hasRewriter = hasRewriter || entry.rewritesAt(stage)
 	}
 	if len(current) > 0 {
 		batches = append(batches, current)
 	}
 	return batches
+}
+
+// streamParticipants keeps the entries that take part in per-segment
+// inspection: their plugin implements StreamInspector and their settings opt
+// in. An entry that opted out has nothing to say about a block, yet walking it
+// cost a span with no decision on every stream (RUN-1745 F5), could leave the
+// stream's per-response instruments to an entry that records none, and let a
+// policy whose settings no longer parse fail every block of a stream another
+// policy opted into (F8). The opt-in reads only the policy's settings, so it
+// is answered once when the plan is built. The result is never nil.
+func streamParticipants(entries []chainEntry) []chainEntry {
+	out := make([]chainEntry, 0, len(entries))
+	for _, entry := range entries {
+		inspector, ok := streamInspector(entry.plugin)
+		if !ok {
+			continue
+		}
+		if enabled, _ := inspector.StreamSettings(entry.config.Settings); enabled {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// OrderStreamEntries returns the pre_response entries in the order a streamed
+// segment walks them: the same content-flow rule batches use, so a reader
+// (openai_moderation) or a remote guard (bedrock_guardrail) inspects a segment
+// only after the local rewriters of its priority have masked it. Entries must
+// already be in lessEntry order. The result is a new slice, deterministic and
+// stable; priorities are never crossed.
+func OrderStreamEntries(entries []chainEntry) []chainEntry {
+	return orderByContentFlow(entries, policy.StagePreResponse)
+}
+
+// orderByContentFlow reorders each run of consecutive parallel entries that
+// share a priority so that content reaches a third party only after every local
+// rewrite of that priority:
+//
+//   - the pure content readers move after everything else (RUN-1693);
+//   - among the rest, the slots the rewriters hold are refilled with the local
+//     rewriters (RewritesLocally) first and then the rewriters that may send the
+//     content off the box (RUN-1745). Entries that neither rewrite nor read keep
+//     their exact place.
+//
+// The sort is stable, so the tie-break (specificity, slug, id) still decides the
+// order inside each group. A run with no rewriter is left exactly as it was.
+// Two rewriters of one stage always claim the same body, so the batch planner
+// already runs them one after the other and the reorder adds no sequential
+// step. Priorities are never crossed.
+func orderByContentFlow(entries []chainEntry, stage policy.Stage) []chainEntry {
+	out := make([]chainEntry, 0, len(entries))
+	for i := 0; i < len(entries); {
+		j := i + 1
+		if entries[i].parallel {
+			for j < len(entries) && entries[j].parallel && entries[j].priority == entries[i].priority {
+				j++
+			}
+		}
+		run := entries[i:j]
+		hasRewriter := false
+		for _, e := range run {
+			hasRewriter = hasRewriter || e.rewritesAt(stage)
+		}
+		if !hasRewriter {
+			out = append(out, run...)
+			i = j
+			continue
+		}
+		var head, readers, local, offBox []chainEntry
+		var slots []int
+		for _, e := range run {
+			switch {
+			case e.onlyReadsAt(stage):
+				readers = append(readers, e)
+				continue
+			case e.rewritesOffBoxAt(stage):
+				offBox = append(offBox, e)
+				slots = append(slots, len(head))
+			case e.rewritesAt(stage):
+				local = append(local, e)
+				slots = append(slots, len(head))
+			}
+			head = append(head, e)
+		}
+		for k, e := range append(local, offBox...) {
+			head[slots[k]] = e
+		}
+		out = append(out, head...)
+		out = append(out, readers...)
+		i = j
+	}
+	return out
 }

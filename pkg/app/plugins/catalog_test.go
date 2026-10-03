@@ -432,6 +432,27 @@ func TestTrustGuardSchema(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeString, collectorID.Type)
 	assert.True(t, collectorID.Required)
+
+	// RUN-1670: on_error, on_timeout and timeout must stay in the catalogue
+	// schema so the console can render them. They exist in the plugin's own
+	// settings (pkg/infra/plugins/trustguard/config.go) regardless of whether
+	// the catalogue lists them, so a silent removal here would once again make
+	// them reachable only through a raw admin-API call.
+	onError, ok := fieldByKey(fields, "on_error")
+	require.True(t, ok, "trustguard schema must expose on_error so fail_closed is reachable from the console")
+	assert.Equal(t, FieldTypeEnum, onError.Type)
+	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onError.Enum))
+	assert.Equal(t, "fail_open", onError.Default)
+
+	onTimeout, ok := fieldByKey(fields, "on_timeout")
+	require.True(t, ok, "trustguard schema must expose on_timeout")
+	assert.Equal(t, FieldTypeEnum, onTimeout.Type)
+	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onTimeout.Enum))
+	assert.Equal(t, "fail_open", onTimeout.Default)
+
+	timeoutField, ok := fieldByKey(fields, "timeout")
+	require.True(t, ok, "trustguard schema must expose timeout")
+	assert.Equal(t, FieldTypeDuration, timeoutField.Type)
 }
 
 func TestAzureContentSafetySchema(t *testing.T) {
@@ -588,7 +609,9 @@ func TestSemanticCacheSchema(t *testing.T) {
 	skipIfStreaming, ok := fieldByKey(fields, "skip_if_streaming")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeBoolean, skipIfStreaming.Type)
-	assert.Equal(t, false, skipIfStreaming.Default)
+	assert.Equal(t, true, skipIfStreaming.Default,
+		"the console default must match config.skipIfStreaming(); a cache hit is served "+
+			"as application/json, so a streamed leg stays out of the cache unless asked")
 
 	embedding, ok := fieldByKey(fields, "embedding")
 	require.True(t, ok)
@@ -752,38 +775,14 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	}
 }
 
-// The keys are string literals rather than the plugin's config struct because
-// infra plugins depend on this package; the point of the test is that the two
-// lists cannot drift apart unnoticed. Settings are not validated against the
-// schema, so an option missing here still works over the API and is simply
-// unreachable from the admin UI — the failure mode this test exists to prevent.
-func TestPromptCompressionSchema_AdvertisesEveryHonouredOption(t *testing.T) {
+// Prompt compression deliberately exposes no settings: its defaults are the
+// values that keep provider prompt caches stable, and every knob the catalog
+// once offered was a way to make the policy worse. The plugin still parses
+// explicit settings over the API (see promptcompression.parseConfig); this test
+// pins that the console is shown nothing to edit.
+func TestPromptCompressionSchema_ExposesNoFields(t *testing.T) {
 	meta, ok := pluginCatalogMeta["prompt_compression"]
 	require.True(t, ok)
-
-	fields := meta.schema.Fields
-	for _, expected := range []struct {
-		key       string
-		fieldType FieldType
-		def       any
-	}{
-		{"compress_json", FieldTypeBoolean, true},
-		{"normalize_whitespace", FieldTypeBoolean, true},
-		{"strip_ansi", FieldTypeBoolean, true},
-		{"max_consecutive_blank_lines", FieldTypeInteger, 1},
-		{"min_length", FieldTypeInteger, 256},
-		{"max_body_bytes", FieldTypeInteger, 1048576},
-	} {
-		field, found := fieldByKey(fields, expected.key)
-		require.Truef(t, found, "the plugin honours %q but the catalog does not offer it", expected.key)
-		assert.Equal(t, expected.fieldType, field.Type, expected.key)
-		assert.Equal(t, expected.def, field.Default,
-			"%s must advertise the default the plugin actually applies", expected.key)
-	}
-
-	roles, found := fieldByKey(fields, "target_roles")
-	require.True(t, found)
-	assert.Equal(t, FieldTypeArray, roles.Type)
-	require.NotNil(t, roles.Item)
-	assert.Equal(t, []string{"system", "user", "assistant", "tool"}, enumValues(roles.Item.Enum))
+	assert.Empty(t, meta.schema.Fields, "prompt_compression must run on its defaults; a field here puts a Configuration tab back in the console")
+	assert.Contains(t, meta.description, "nothing to configure")
 }

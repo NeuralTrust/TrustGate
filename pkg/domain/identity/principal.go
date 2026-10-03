@@ -22,10 +22,69 @@ import (
 type Method string
 
 const (
-	MethodAPIKey        Method = "api_key"
+	MethodAPIKey Method = "api_key"
+	// MethodJWT is the undifferentiated value every bearer JWT carried before
+	// RUN-1501, when a customer identity provider's token and a token the
+	// gateway itself issued were indistinguishable in telemetry. Nothing emits
+	// it any more, but it stays accepted everywhere a bearer token is
+	// authorized: a principal that still carries it must keep facing the checks
+	// it faced before, never fall through to a permissive default.
 	MethodJWT           Method = "jwt"
+	MethodExternalJWT   Method = "external_jwt"
+	MethodOAuth         Method = "oauth"
 	MethodIntrospection Method = "introspection"
 	MethodMTLS          Method = "mtls"
+)
+
+// IsBearerToken reports whether the method identifies a principal established
+// from a bearer token: a JWT verified against a customer identity provider, a
+// token the gateway itself issued at its own interactive login, an opaque token
+// resolved by introspection, or the legacy undifferentiated JWT value.
+func (m Method) IsBearerToken() bool {
+	switch m {
+	case MethodJWT, MethodExternalJWT, MethodOAuth, MethodIntrospection:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsExternalIdPAssertion reports whether the method identifies a principal
+// whose raw token was minted by a customer identity provider, and so can be
+// presented back to that provider as an assertion. A token the gateway issued
+// itself is excluded: the gateway mints session claims fresh and never carries
+// the upstream token into them, so there is no assertion any provider would
+// accept.
+func (m Method) IsExternalIdPAssertion() bool {
+	return m == MethodExternalJWT || m == MethodJWT
+}
+
+const (
+	// ClaimOrg is the claim carrying the platform tenant (team) the principal
+	// belongs to. For built-in default-IdP sessions it is authoritative for the
+	// tenant-binding check that stops a user of one org reaching another org's
+	// gateway.
+	ClaimOrg = "org"
+	// ClaimGroups is the claim carrying the principal's IdP group memberships,
+	// which role oidc_mapping rules are authored against.
+	ClaimGroups = "groups"
+	// ClaimStoreAccess is the claim carrying the principal's per-principal MCP
+	// Store access level: "open" (the whole Store), "curated" (only servers the
+	// admin granted them), or "none" (closed). Minted by the control plane from
+	// the admin's per-user/per-group Access decision. Absent means the gateway's
+	// own Store default mode applies.
+	ClaimStoreAccess = "store_access"
+	// ClaimCredentialSubject is the claim carrying the subject of the credential
+	// a caller actually presented, on a request that runs as something else: a
+	// consumer acting as the application runs as app:<consumer_id>, and this is
+	// how "which api key or certificate called" survives that.
+	ClaimCredentialSubject = "credential_subject" // #nosec G101 -- JWT claim name, not a credential
+	// ClaimGateway is the claim naming the gateway a platform token was minted
+	// for. The control plane resolves store_access per gateway (Access policies
+	// are gateway-scoped), so the token must not be redeemed at another gateway
+	// of the same tenant: the callback refuses a token whose gateway claim names
+	// a different gateway.
+	ClaimGateway = "gateway"
 )
 
 type Principal struct {
@@ -106,6 +165,81 @@ func (p *Principal) Email() string {
 	return EmailFromClaims(p.Claims)
 }
 
+// Org returns the platform tenant (team) claim, or "" when absent.
+func (p *Principal) Org() string {
+	if p == nil {
+		return ""
+	}
+	return StringClaim(p.Claims, ClaimOrg)
+}
+
+// StoreAccess returns the per-principal MCP Store access level claim
+// ("open" | "curated" | "none"), or "" when absent — in which case the
+// gateway's own Store default mode applies.
+func (p *Principal) StoreAccess() string {
+	if p == nil {
+		return ""
+	}
+	return StringClaim(p.Claims, ClaimStoreAccess)
+}
+
+// Groups returns the principal's normalized group memberships.
+func (p *Principal) Groups() []string {
+	if p == nil {
+		return nil
+	}
+	return GroupsFromClaims(p.Claims)
+}
+
+// StringClaim returns a trimmed string claim.
+func StringClaim(claims map[string]any, key string) string {
+	v, _ := claims[key].(string)
+	return strings.TrimSpace(v)
+}
+
+// GroupsFromClaims returns normalized group memberships from identity claims.
+func GroupsFromClaims(claims map[string]any) []string {
+	return GroupsFromClaim(claims[ClaimGroups])
+}
+
+// GroupsFromClaim normalizes string, string-slice, and JSON-array group claims.
+func GroupsFromClaim(value any) []string {
+	var values []string
+	switch v := value.(type) {
+	case string:
+		values = strings.Fields(v)
+	case []string:
+		values = v
+	case []any:
+		values = make([]string, 0, len(v))
+		for _, item := range v {
+			if group, ok := item.(string); ok {
+				values = append(values, group)
+			}
+		}
+	default:
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	groups := make([]string, 0, len(values))
+	for _, group := range values {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups
+}
+
 func EmailFromClaims(claims map[string]any) string {
 	if len(claims) == 0 {
 		return ""
@@ -123,4 +257,37 @@ func EmailFromClaims(claims map[string]any) string {
 func LooksLikeEmail(s string) bool {
 	at := strings.IndexByte(s, '@')
 	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " \t\n")
+}
+
+// Subject namespaces the gateway mints for itself.
+//
+// A subject is the key an upstream account hangs off, so two callers with the
+// same subject are the same account. The gateway builds some of them — an
+// application (app:<consumer_id>), an end user an application names
+// (app:<consumer_id>:<end_user>), the account an MCP instance holds for
+// everyone (instance:<registry_id>) — and reads the rest from whatever an
+// identity provider put in a token.
+//
+// Nothing makes those two sets disjoint on their own. An identity provider is
+// free to issue any string, and which claim the subject is read from is
+// configurable per credential (subject_claim), so it may be one a person can
+// edit about themselves. A token naming "app:<some consumer id>" would then be
+// that application, and would read the upstream accounts it had linked.
+//
+// So the namespaces are reserved: a subject the gateway did not mint may not
+// claim to be one it did. The check belongs where a token becomes a principal,
+// before anything keys on it.
+const (
+	AppSubjectPrefix      = "app:"
+	InstanceSubjectPrefix = "instance:"
+)
+
+// ReservedSubject reports whether a subject falls in a namespace only the
+// gateway may mint. Case-insensitive, because the vault key is compared byte
+// for byte and "APP:" would otherwise slip a distinct-but-confusable subject
+// past a reader who trusts the prefix.
+func ReservedSubject(subject string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(subject))
+	return strings.HasPrefix(lowered, AppSubjectPrefix) ||
+		strings.HasPrefix(lowered, InstanceSubjectPrefix)
 }

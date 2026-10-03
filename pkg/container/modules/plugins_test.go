@@ -54,7 +54,7 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		"model_allowlist":       {appplugins.ProtocolLLM},
 		"prompt_template":       {appplugins.ProtocolLLM},
 		"tool_injection":        {appplugins.ProtocolLLM},
-		"tool_allowlist":        {appplugins.ProtocolLLM},
+		"tool_allowlist":        {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"openai_moderation":     {appplugins.ProtocolLLM},
 		"bedrock_guardrail":     {appplugins.ProtocolLLM},
 		"azure_content_safety":  {appplugins.ProtocolLLM},
@@ -108,4 +108,47 @@ func TestNewPluginRegistry_OpenAIModerationCatalogMetadata(t *testing.T) {
 		keys = append(keys, f.Key)
 	}
 	assert.ElementsMatch(t, []string{"api_key", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
+}
+
+// TestNewPluginRegistry_ContentReaderSet pins which plugins the planner
+// sequences after same-priority rewriters (RUN-1693). Opting a plugin in
+// changes where it runs relative to rewriters, so it must be a conscious edit
+// here as well as in the plugin.
+func TestNewPluginRegistry_ContentReaderSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	var got []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if appplugins.IsContentReader(p) {
+			got = append(got, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{"azure_content_safety", "openai_moderation", "semantic_cache"}, got)
+}
+
+// TestNewPluginRegistry_LocalRewriterSet pins which rewriters the planner runs
+// ahead of the same-priority rewriters that send content to a third party
+// (RUN-1745). A plugin listed here must never send the body it rewrites off the
+// box: opting in a remote guard would hand it the text a local mask hides.
+func TestNewPluginRegistry_LocalRewriterSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	var got []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if appplugins.RewritesLocally(p) {
+			got = append(got, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{
+		"model_allowlist",
+		"per_tool_rate_limiter",
+		"prompt_compression",
+		"prompt_template",
+		"regex_replace",
+		"token_rate_limiter",
+		"tool_allowlist",
+		"tool_injection",
+	}, got)
 }

@@ -16,7 +16,9 @@ package openaimoderation
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -25,11 +27,24 @@ import (
 const PluginName = "openai_moderation"
 
 const (
-	defaultModel = "omni-moderation-latest"
+	defaultModel = ModelOmniLatest
 
 	stagePreRequest  = "pre_request"
 	stagePreResponse = "pre_response"
 )
+
+// Streaming defaults. The moderation endpoint is a single classifier call with
+// no token leg in front of it, so it answers faster than a full guard and a
+// tighter cadence is affordable: blocks close about twice as often as
+// trustguard's, which buys a smaller window between the text being produced and
+// being cleared.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            400,
+	MinCharsBetweenEvals: 1024,
+	MaxHoldMS:            500,
+	MaxAccumulatedBytes:  262144,
+	GuardTimeout:         1500 * time.Millisecond,
+}
 
 type Settings struct {
 	APIKey         string             `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential
@@ -39,6 +54,10 @@ type Settings struct {
 	Thresholds     map[string]float64 `mapstructure:"thresholds"`
 	BlockOnFlagged bool               `mapstructure:"block_on_flagged"`
 	Action         ActionSettings     `mapstructure:"action"`
+	// Streaming opts the pre_response leg into per-block inspection. Absent, a
+	// streamed response is not moderated at all, which is what this plugin did
+	// before the block loop existed.
+	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
 type ActionSettings struct {
@@ -51,6 +70,13 @@ func parseConfig(settings map[string]any) (Settings, error) {
 		return Settings{}, err
 	}
 	cfg.applyDefaults()
+	// With no thresholds, evaluate() can only raise a violation through
+	// BlockOnFlagged. A console-created policy omits both, so it would call
+	// OpenAI and never block or report; the flagged verdict decides instead.
+	// An explicit block_on_flagged is kept as sent.
+	if v, set := settings["block_on_flagged"]; (!set || v == nil) && len(cfg.Thresholds) == 0 {
+		cfg.BlockOnFlagged = true
+	}
 	if err := cfg.validate(); err != nil {
 		return Settings{}, err
 	}
@@ -64,6 +90,11 @@ func (s *Settings) applyDefaults() {
 	if len(s.Stages) == 0 {
 		s.Stages = []string{stagePreRequest, stagePreResponse}
 	}
+	// The buffered leg already fails closed in enforce mode when the endpoint
+	// is unreachable, so the stream leg inherits that rather than a laxer
+	// default. In the modes that do not block, the executor discards a cut
+	// before it reaches the client, so this is not a way to make observe cut.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
 }
 
 func (s *Settings) validate() error {
@@ -80,7 +111,7 @@ func (s *Settings) validate() error {
 			return fmt.Errorf("openai_moderation: threshold for %q must be between 0 and 1", cat)
 		}
 	}
-	return nil
+	return s.Streaming.Validate(PluginName)
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {
@@ -90,4 +121,34 @@ func (s Settings) selectsStage(stage policy.Stage) bool {
 		}
 	}
 	return false
+}
+
+// unknownAgainstModel reports, for s's own Model, whether that model is
+// unrecognised, plus this config's own thresholds/categories keys that model
+// does not know about. Unlike ValidateSettingsWrite's check, it does not
+// weigh a previous version of the settings: every stored gap is worth a
+// load-time warning once, regardless of how it got there.
+func (s Settings) unknownAgainstModel() (modelUnknown bool, thresholds, categories []string) {
+	known, ok := categoriesForModel(s.Model)
+	if !ok {
+		return true, nil, nil
+	}
+	for cat := range s.Thresholds {
+		if _, isKnown := known[cat]; !isKnown {
+			thresholds = append(thresholds, cat)
+		}
+	}
+	sort.Strings(thresholds)
+	seen := make(map[string]struct{}, len(s.Categories))
+	for _, cat := range s.Categories {
+		if _, dup := seen[cat]; dup {
+			continue
+		}
+		seen[cat] = struct{}{}
+		if _, isKnown := known[cat]; !isKnown {
+			categories = append(categories, cat)
+		}
+	}
+	sort.Strings(categories)
+	return false, thresholds, categories
 }

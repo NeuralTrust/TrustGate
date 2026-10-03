@@ -60,6 +60,7 @@ const (
 	attrMCPUpstreamLatencyMs = "trustgate.mcp.upstream_latency_ms"
 	attrMCPRPCErrorCode      = "trustgate.mcp.rpc_error_code"
 	attrMCPAccountRef        = "trustgate.mcp.account_ref"
+	attrMCPDecision          = "trustgate.mcp.decision"
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
@@ -193,6 +194,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attrs = append(attrs, attribute.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
 		}
 		appendStr(attrMCPAccountRef, evt.MCP.AccountRef)
+		appendStr(attrMCPDecision, evt.MCP.Decision)
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
@@ -242,7 +244,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		attribute.Bool(attrIsFlagged, evt.IsFlagged),
 	)
 	if len(evt.Security) > 0 {
-		attrs = append(attrs, attribute.StringSlice(attrSecurity, evt.Security))
+		attrs = append(attrs, attribute.String(attrSecurity, jsonString(evt.Security)))
 	}
 	if len(evt.PolicyChain) > 0 {
 		if encoded := jsonString(evt.PolicyChain); encoded != "" {

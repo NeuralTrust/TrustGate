@@ -43,6 +43,7 @@ const (
 type client struct {
 	pool        *providers.HTTPClientPool
 	tokenSource azureTokenSource
+	retention   *retentionMemo
 }
 
 var (
@@ -58,6 +59,7 @@ func NewAzureClient() providers.Client {
 	return &client{
 		pool:        providers.NewHTTPClientPool(),
 		tokenSource: getAzureBearerToken,
+		retention:   newRetentionMemo(),
 	}
 }
 
@@ -101,7 +103,12 @@ func (c *client) Completions(
 		return nil, err
 	}
 
-	return c.rawPostForAPI(ctx, target.url, target.api, auth, reqBody)
+	reqBody = c.sendableBody(config, target.url, reqBody)
+	resp, err := c.rawPostForAPI(ctx, target.url, target.api, auth, reqBody)
+	if retryBody, ok := c.retentionRetryBody(ctx, config, target.url, model, reqBody, err); ok {
+		resp, err = c.rawPostForAPI(ctx, target.url, target.api, auth, retryBody)
+	}
+	return resp, err
 }
 
 func (c *client) Embeddings(
@@ -323,7 +330,12 @@ func (c *client) CompletionsStream(
 		return nil, err
 	}
 
-	return c.postStream(ctx, target.url, target.api, auth, reqBody)
+	reqBody = c.sendableBody(config, target.url, reqBody)
+	seq, err := c.postStream(ctx, target.url, target.api, auth, reqBody)
+	if retryBody, ok := c.retentionRetryBody(ctx, config, target.url, model, reqBody, err); ok {
+		seq, err = c.postStream(ctx, target.url, target.api, auth, retryBody)
+	}
+	return seq, err
 }
 
 func (c *client) postStream(ctx context.Context, url, api string, auth authHeader, reqBody []byte) (iter.Seq2[[]byte, error], error) {

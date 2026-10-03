@@ -75,7 +75,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAPIKeyAuth(gwID, name, true)
+	a, err := domain.NewAPIKeyAuth(gwID, name, true, nil)
 	if err != nil {
 		t.Fatalf("auth domain.NewAPIKeyAuth: %v", err)
 	}
@@ -84,11 +84,14 @@ func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 
 func validIDPAuth(t *testing.T, gwID ids.GatewayID, name string, enabled bool) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAuth(gwID, name, domain.TypeOIDC, enabled, domain.Config{OIDC: &domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		JWKSURL:           "https://issuer.example.com/.well-known/jwks.json",
-		AllowedAlgorithms: []string{"RS256"},
+	// Built through the deprecated alias on purpose: NewAuth canonicalizes it,
+	// so this also covers that a row written that way is found by a query for
+	// the canonical type.
+	a, err := domain.NewAuth(gwID, name, domain.TypeOIDC, enabled, domain.Config{OAuth2: &domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		JWKSURL:    "https://issuer.example.com/.well-known/jwks.json",
+		Algorithms: []string{"RS256"},
 	}})
 	if err != nil {
 		t.Fatalf("auth domain.NewAuth: %v", err)
@@ -173,7 +176,7 @@ func TestRepository_ListEnabledByGatewayAndType(t *testing.T) {
 		}
 	}
 
-	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOIDC)
+	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOAuth2)
 	if err != nil {
 		t.Fatalf("ListEnabledByGatewayAndType: %v", err)
 	}
@@ -252,6 +255,60 @@ func TestRepository_Update(t *testing.T) {
 	}
 	if got.Config.OAuth2 == nil || got.Config.OAuth2.Issuer != "https://issuer" {
 		t.Fatalf("oauth2 config not persisted: %+v", got.Config)
+	}
+}
+
+// Update used to write neither the key preview nor an expiry, so a rotated key
+// kept the masked head and tail of the secret it replaced and an expiry could
+// not be changed at all.
+func TestRepository_Update_PersistsRotatedPreviewAndExpiry(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "agw-rotate")
+
+	a := validAuth(t, gwID, "rotating")
+	if err := r.Save(ctx, a); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := a.RotateAPIKey(); err != nil {
+		t.Fatalf("RotateAPIKey: %v", err)
+	}
+	expiry := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second)
+	if err := a.SetExpiry(&expiry); err != nil {
+		t.Fatalf("SetExpiry: %v", err)
+	}
+	if err := r.Update(ctx, a); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("FindByID after rotation: %v", err)
+	}
+	if got.KeyHash != domain.HashAPIKey(a.RawKey) {
+		t.Fatalf("key_hash not rotated: %q", got.KeyHash)
+	}
+	wantPrefix, wantSuffix := domain.APIKeyPreview(a.RawKey)
+	if got.KeyPrefix != wantPrefix || got.KeySuffix != wantSuffix {
+		t.Fatalf("preview = %q…%q, want the rotated key's %q…%q", got.KeyPrefix, got.KeySuffix, wantPrefix, wantSuffix)
+	}
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(expiry) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, expiry)
+	}
+
+	if err := a.SetExpiry(nil); err != nil {
+		t.Fatalf("SetExpiry(nil): %v", err)
+	}
+	if err := r.Update(ctx, a); err != nil {
+		t.Fatalf("Update clearing expiry: %v", err)
+	}
+	got, err = r.FindByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("FindByID after clearing: %v", err)
+	}
+	if got.ExpiresAt != nil {
+		t.Fatalf("ExpiresAt = %v, want it cleared", got.ExpiresAt)
 	}
 }
 

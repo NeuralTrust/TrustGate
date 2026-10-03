@@ -35,10 +35,10 @@ func TestSlugCandidates(t *testing.T) {
 			// Bedrock writes the date without separators, so only the
 			// geography comes off — the deployment-date rule needs dashes.
 			name:   "a dated Bedrock profile only loses its geography",
-			models: []string{"us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+			models: []string{"us.anthropic.small-chat-model-4-5-20251001-v1:0"},
 			want: []string{
-				"us.anthropic.claude-haiku-4-5-20251001-v1:0",
-				"anthropic.claude-haiku-4-5-20251001-v1:0",
+				"us.anthropic.small-chat-model-4-5-20251001-v1:0",
+				"anthropic.small-chat-model-4-5-20251001-v1:0",
 			},
 		},
 		{

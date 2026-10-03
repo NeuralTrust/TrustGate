@@ -20,6 +20,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -118,19 +119,73 @@ func TestModelsIDFromRest(t *testing.T) {
 func TestGeminiModelFromPath(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/v1beta/models/gemini-pro:generateContent":                                                          "gemini-pro",
-		"/v1beta/models/gemini-1.5-flash:streamGenerateContent":                                              "gemini-1.5-flash",
-		"/v1beta/models/gemini-pro":                                                                          "gemini-pro",
-		"/slug/v1beta/models/gemini-pro:generateContent":                                                     "gemini-pro",
-		"/v1beta/models/:generateContent":                                                                    "",
-		"/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-flash:generateContent":               "gemini-2.5-flash",
-		"/slug/v1beta1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent": "gemini-2.5-pro",
-		"/v1/chat/completions":                                                                               "",
+		"/v1beta/models/gemini-pro:generateContent":                                                             "gemini-pro",
+		"/v1beta/models/gemini-1.5-flash:streamGenerateContent":                                                 "gemini-1.5-flash",
+		"/v1beta/models/gemini-pro":                                                                             "gemini-pro",
+		"/slug/v1beta/models/gemini-pro:generateContent":                                                        "gemini-pro",
+		"/v1beta/models/:generateContent":                                                                       "",
+		"/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-flash:generateContent":                  "gemini-2.5-flash",
+		"/slug/v1beta1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent":    "gemini-2.5-pro",
+		"/v1/chat/completions":                                                                                  "",
+		"/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent":                                               "eu.amazon.nova-lite-v1:0",
+		"/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent":                                 "mistral.mistral-7b-instruct-v0:2",
+		"/v1beta/models/gemini-2.5-pro:batchGenerateContent":                                                    "gemini-2.5-pro:batchGenerateContent",
+		"/v1beta/models/eu.amazon.nova-lite-v1:0":                                                               "eu.amazon.nova-lite-v1:0",
+		"/v1/projects/p/locations/r/publishers/google/models/us.anthropic.claude-opus-5-5-v1:0:generateContent": "us.anthropic.claude-opus-5-5-v1:0",
 	}
 	for rest, want := range cases {
 		if got := adapter.GeminiModelFromPath(rest); got != want {
 			t.Fatalf("GeminiModelFromPath(%q) = %q, want %q", rest, got, want)
 		}
+	}
+}
+
+func TestResolveProxyPathKeepsColonsInGeminiModelIDs(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/slug/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent",
+		"/slug/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent",
+		"/slug/v1/projects/p/locations/r/publishers/google/models/eu.amazon.nova-lite-v1:0:generateContent",
+	} {
+		route, err := ResolveProxyPath(path)
+		if err != nil {
+			t.Fatalf("ResolveProxyPath(%q) error = %v", path, err)
+		}
+		if route.SourceFormat != adapter.FormatGemini || route.Capability != CapabilityChat {
+			t.Fatalf("ResolveProxyPath(%q) = %+v, want a Gemini chat route", path, route)
+		}
+	}
+	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/eu.amazon.nova-lite-v1:0"); !errors.Is(err, ErrUnknownProxyPath) {
+		t.Fatalf("a Vertex path without a method must stay unknown, got %v", err)
+	}
+}
+
+func TestSplitGeminiModelActionDoesNotDecodePercentEscapes(t *testing.T) {
+	t.Parallel()
+	cases := map[string][2]string{
+		"gemini-pro%3AgenerateContent":               {"gemini-pro%3AgenerateContent", ""},
+		"eu.amazon.nova-lite-v1%3A0:generateContent": {"eu.amazon.nova-lite-v1%3A0", "generateContent"},
+		"gemini-pro%3F:generateContent":              {"gemini-pro%3F", "generateContent"},
+	}
+	for segment, want := range cases {
+		model, action := adapter.SplitGeminiModelAction(segment)
+		if model != want[0] || action != want[1] {
+			t.Fatalf("SplitGeminiModelAction(%q) = (%q, %q), want (%q, %q)", segment, model, action, want[0], want[1])
+		}
+	}
+	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro%3AgenerateContent"); !errors.Is(err, ErrUnknownProxyPath) {
+		t.Fatalf("a Vertex path whose ':' is percent-encoded must not be split, got %v", err)
+	}
+}
+
+func TestSplitGeminiModelActionKeepsUnknownMethodsInTheModel(t *testing.T) {
+	t.Parallel()
+	model, action := adapter.SplitGeminiModelAction("gemini-2.5-pro:batchGenerateContent")
+	if model != "gemini-2.5-pro:batchGenerateContent" || action != "" {
+		t.Fatalf("SplitGeminiModelAction = (%q, %q), want the whole segment as the model", model, action)
+	}
+	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:batchGenerateContent"); !errors.Is(err, ErrUnknownProxyPath) {
+		t.Fatalf("a Vertex path with a method TrustGate does not route must stay unknown, got %v", err)
 	}
 }
 
@@ -186,5 +241,33 @@ func TestProxyRouteAllowedMethods(t *testing.T) {
 				t.Fatal("AllowsMethod(PUT) = true")
 			}
 		})
+	}
+}
+
+func TestProxyCapabilities_OnlyChatIsAChatRequest(t *testing.T) {
+	t.Parallel()
+	if string(CapabilityChat) != providers.CapabilityChat {
+		t.Fatalf("CapabilityChat = %q, providers.CapabilityChat = %q", CapabilityChat, providers.CapabilityChat)
+	}
+	cases := []struct {
+		capability ProxyCapability
+		want       bool
+	}{
+		{capability: CapabilityChat, want: true},
+		{capability: CapabilityEmbeddings},
+		{capability: CapabilityRerank},
+		{capability: CapabilityFiles},
+		{capability: CapabilityModels},
+		{capability: CapabilityImages},
+		{capability: CapabilityAudioSpeech},
+		{capability: CapabilityAudioTranscription},
+	}
+	formats := []adapter.Format{adapter.FormatOpenAI, adapter.FormatOpenAIEmbeddings, adapter.FormatCohereRerank}
+	for _, tc := range cases {
+		for _, f := range formats {
+			if got := adapter.IsChatRequest(string(tc.capability), f); got != tc.want {
+				t.Errorf("IsChatRequest(%q, %s) = %v, want %v", tc.capability, f, got, tc.want)
+			}
+		}
 	}
 }

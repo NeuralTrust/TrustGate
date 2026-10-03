@@ -15,11 +15,14 @@
 package middleware
 
 import (
+	"net"
+	"net/netip"
 	"testing"
 	"time"
 
 	appmetricsmocks "github.com/NeuralTrust/TrustGate/pkg/app/metrics/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -28,6 +31,29 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 )
+
+func TestMetricsUsesTrustedIngressIP(t *testing.T) {
+	for _, protocol := range []string{"llm", "mcp"} {
+		t.Run(protocol, func(t *testing.T) {
+			cfg := &config.Config{ClientIP: config.ClientIPConfig{Mode: "gcp", TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.129.0.0/23")}}}
+			app := fiber.New(fiber.Config{ProxyHeader: fiber.HeaderXForwardedFor})
+			raw := &fasthttp.RequestCtx{}
+			raw.SetRemoteAddr(&net.TCPAddr{IP: net.ParseIP("10.129.0.10"), Port: 1234})
+			raw.Request.Header.Set(fiber.HeaderXForwardedFor, "192.0.2.99, 203.0.113.42, 34.1.2.3")
+			c := app.AcquireCtx(raw)
+			defer app.ReleaseCtx(c)
+			if protocol == "llm" {
+				m := NewMetricsMiddleware(nil, cfg)
+				require.Equal(t, "203.0.113.42", m.buildTraceMetadata(c, "gw", &gatewaydomain.Gateway{}).IP)
+				require.Equal(t, "203.0.113.42", m.buildRequestContext(c, "gw").IP)
+			} else {
+				m := NewMCPMetricsMiddleware(nil, cfg)
+				require.Equal(t, "203.0.113.42", m.buildTraceMetadata(c, "gw", &gatewaydomain.Gateway{}).IP)
+				require.Equal(t, "203.0.113.42", m.buildRequestContext(c, "gw").IP)
+			}
+		})
+	}
+}
 
 func TestMetricsCapturesOwnedFiberBuffers(t *testing.T) {
 	for _, protocol := range []string{"llm", "mcp"} {
@@ -77,6 +103,8 @@ func TestMetricsDelayedCompletionSurvivesRequestReuse(t *testing.T) {
 					require.Equal(t, "/original/v1/chat/completions", req.Path)
 					require.Equal(t, req.Path, rt.Metadata().Path)
 					require.Equal(t, "original", req.Headers["X-Test"][0])
+					require.NotNil(t, rt.Metadata().EndUser)
+					require.Equal(t, "original", rt.Metadata().EndUser.ID)
 					require.Equal(t, "payload", string(req.Body))
 					require.Equal(t, "response", string(resp.Body))
 				}).Return().Once()
@@ -93,6 +121,7 @@ func TestMetricsDelayedCompletionSurvivesRequestReuse(t *testing.T) {
 			app.Post("/*", func(c *fiber.Ctx) error {
 				pending = trace.FromContext(c.UserContext())
 				pending.AddAsync()
+				pending.SetEndUser(c.Get("X-Test"))
 				return c.SendString("response")
 			})
 			raw := &fasthttp.RequestCtx{}

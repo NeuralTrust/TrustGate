@@ -125,7 +125,7 @@ func TestPluginE2E_BedrockGuardrail_Enforce(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status)
 		assert.Equal(t, "application/json", header.Get("Content-Type"))
 		assert.JSONEq(t,
-			`{"error":{"type":"guardrail_blocked","policy":"topic_policy","name":"DangerousTopics"}}`,
+			`{"error":{"type":"guardrail_blocked","message":"Request blocked by guardrail.","policy":"topic_policy","name":"DangerousTopics"}}`,
 			string(raw),
 		)
 		assert.Equal(t, hitsBefore, up.Hits(), "a blocked request must not reach the upstream")

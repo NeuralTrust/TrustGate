@@ -19,9 +19,11 @@ import (
 	"strings"
 	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -31,6 +33,7 @@ import (
 )
 
 type MetricsMiddleware struct {
+	resolveClientIP     func(string, string) string
 	worker              appmetrics.Worker
 	telemetryEnabled    bool
 	enableRequestTraces bool
@@ -39,6 +42,7 @@ type MetricsMiddleware struct {
 
 func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MetricsMiddleware {
 	return &MetricsMiddleware{
+		resolveClientIP:     requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs),
 		worker:              worker,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
@@ -76,6 +80,9 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			}
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
+			// Read the verified outcome at completion rather than when req was
+			// built, so it holds even if Metrics is ever mounted before Auth.
+			markPlaygroundVerified(c, req)
 			requestTrace.OnComplete(func() {
 				m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
 			})
@@ -130,7 +137,7 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 		TenantID:  gw.TenantID(),
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
-		IP:        strings.Clone(c.IP()),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 	}
 	if window, ok := gw.RetentionWindow(); ok {
 		meta.RetentionWindow = window
@@ -155,15 +162,25 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		query.Add(string(key), string(value))
 	}
 
-	return &infracontext.RequestContext{
+	req := &infracontext.RequestContext{
 		GatewayID: gatewayID,
 		Headers:   headers,
 		Method:    strings.Clone(c.Method()),
 		Path:      strings.Clone(c.Path()),
 		Query:     query,
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        strings.Clone(c.IP()),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 	}
+	stampRequestTarget(c, req)
+	return req
+}
+
+// markPlaygroundVerified flags req as a verified playground request. The signal
+// is the AuthContext the playground identity resolver produced, never the raw
+// header a client can send.
+func markPlaygroundVerified(c *fiber.Ctx, req *infracontext.RequestContext) {
+	authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
+	req.PlaygroundVerified = ok && authCtx.Method == appauth.MethodPlayground
 }
 
 func gatewayIDFromContext(c *fiber.Ctx) string {
@@ -213,4 +230,11 @@ func cloneStreamHeaders(headers map[string][]string) map[string][]string {
 		}
 	}
 	return owned
+}
+
+func metricsClientIP(c *fiber.Ctx, resolve func(string, string) string) string {
+	if resolve == nil {
+		resolve = requestmeta.NewIPResolver("peer", nil)
+	}
+	return resolve(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor))
 }

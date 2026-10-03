@@ -28,5 +28,11 @@ var (
 	ErrInvalidGatewayID = fmt.Errorf("auth: invalid gateway_id: %w", commonerrors.ErrValidation)
 	ErrInvalidType      = fmt.Errorf("auth: invalid type: %w", commonerrors.ErrValidation)
 	ErrInvalidConfig    = fmt.Errorf("auth: invalid config: %w", commonerrors.ErrValidation)
-	ErrDuplicateOAuth2  = fmt.Errorf("auth: another enabled oauth2 auth already covers this issuer and audience: %w", commonerrors.ErrAlreadyExists)
+	// ErrExpired is a key that was real and is not any more. It wraps
+	// ErrNotFound so every caller that already refuses an unknown key refuses
+	// this one identically: what the holder is told must not distinguish a key
+	// that expired from a key that never existed.
+	ErrExpired         = fmt.Errorf("auth: api key expired: %w", commonerrors.ErrNotFound)
+	ErrExpiryInThePast = fmt.Errorf("auth: expires_at is in the past: %w", commonerrors.ErrValidation)
+	ErrDuplicateOAuth2 = fmt.Errorf("auth: another enabled oauth2 auth already covers this issuer and audience: %w", commonerrors.ErrAlreadyExists)
 )

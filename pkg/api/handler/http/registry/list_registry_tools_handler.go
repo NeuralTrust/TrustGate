@@ -37,7 +37,7 @@ type ListRegistryToolsResponse struct {
 
 // Handle godoc
 // @Summary      List an MCP backend's tools
-// @Description  Introspects the MCP server behind the registry and returns its advertised tools. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 502 when the upstream MCP server is unreachable.
+// @Description  Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.
 // @Tags         registries
 // @Produce      json
 // @Security     BearerAuth
@@ -47,6 +47,7 @@ type ListRegistryToolsResponse struct {
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Failure      502         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries/{id}/tools [get]
 func (h *ListRegistryToolsHandler) Handle(c *fiber.Ctx) error {

@@ -59,10 +59,15 @@ type catalogMeta struct {
 // because those structs are private, use mapstructure tags, and carry semantic
 // validation that reflection cannot express.
 var pluginCatalogMeta = map[string]catalogMeta{
+	// Throttle's name promises more than it does: the delay is capped and the
+	// request is then admitted, so the description says so.
 	"rate_limiter": {
-		name:        "Rate Limiter",
-		group:       groupTrafficControl,
-		description: "Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition.",
+		name:  "Rate Limiter",
+		group: groupTrafficControl,
+		description: "Applies to LLM and native MCP traffic. Limit request volume with a sliding window. Counts gateway-wide for global or MCP-wide policies, otherwise per consumer, with an optional header-based partition. " +
+			"Enforce rejects requests over the limit. Throttle delays each one by up to " + MaxThrottleDelay.String() +
+			" and then lets it through, so it smooths bursts but does not cap the rate. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -86,10 +91,11 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Defaults to the window, which is when the budget actually returns.",
 				},
 				{
-					Key:         "group_by_header",
-					Label:       "Group By Header",
-					Type:        FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer.",
+					Key:   "group_by_header",
+					Label: "Group By Header",
+					Type:  FieldTypeString,
+					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer. " +
+						"On native MCP tools/call traffic this reads the same transport request headers as an LLM call, so it partitions MCP the same way; when the header is absent from the request the limit falls back to the shared scope counter, on both planes alike.",
 				},
 			},
 		},
@@ -97,7 +103,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"request_size_limiter": {
 		name:        "Request Size Limiter",
 		group:       groupTrafficControl,
-		description: "Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
+		description: "Applies to LLM and native MCP traffic. Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -127,16 +133,17 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "require_content_length",
 					Label:       "Require Content-Length",
 					Type:        FieldTypeBoolean,
-					Description: "Reject requests that do not declare a Content-Length header.",
+					Description: "Reject requests that do not declare a Content-Length header. Native MCP tools/call traffic has no such header of its own: the gateway derives it from the tool call's actual payload size, so this setting never refuses an MCP call for lacking one.",
 					Default:     false,
 				},
 			},
 		},
 	},
 	"token_rate_limiter": {
-		name:        "LLM Budget",
-		group:       groupQuota,
-		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer.",
+		name:  "LLM Budget",
+		group: groupQuota,
+		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -265,9 +272,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		},
 	},
 	"per_tool_rate_limiter": {
-		name:        "Per-Tool Rate Limiter",
-		group:       groupTrafficControl,
-		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global policies, otherwise per consumer.",
+		name:  "Per-Tool Rate Limiter",
+		group: groupTrafficControl,
+		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global or MCP-wide policies, otherwise per consumer. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -415,11 +423,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Default:     true,
 				},
 				{
-					Key:         "skip_if_streaming",
-					Label:       "Skip If Streaming",
-					Type:        FieldTypeBoolean,
-					Description: "Skip caching for streaming requests and responses.",
-					Default:     false,
+					Key:   "skip_if_streaming",
+					Label: "Skip If Streaming",
+					Type:  FieldTypeBoolean,
+					Description: "Skip caching for streaming requests and responses. " +
+						"Turning this off lets a cache hit answer a request that asked for a " +
+						"stream with a single non-streamed body.",
+					Default: true,
 				},
 				{
 					Key:         "ttl",
@@ -498,7 +508,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"tool_allowlist": {
 		name:        "Tool Allowlist",
 		group:       groupRouting,
-		description: "Control which tools appear on the request with allow and deny glob patterns. Deny wins; choose how to handle an empty tools list after filtering.",
+		description: "Control which tools a request may use with allow and deny glob patterns; deny wins. LLM requests have their tools list filtered, with a choice of what to do when nothing is left; on MCP a denied tools/call is refused before it reaches the upstream.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -519,7 +529,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "on_empty_after_filter",
 					Label:       "On Empty After Filter",
 					Type:        FieldTypeEnum,
-					Description: "Behavior when filtering removes every tool from the request.",
+					Description: "Behavior when filtering removes every tool from an LLM request. Not applicable to MCP, where a tools/call is either allowed or refused.",
 					Enum:        enumOptions("reject", "pass_through_empty", "strip_tools_field"),
 					Default:     "reject",
 				},
@@ -527,7 +537,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "scope",
 					Label:       "Scope",
 					Type:        FieldTypeEnum,
-					Description: "Informational; effective scope derives from the policy global flag.",
+					Description: "Informational; effective scope derives from the policy's gateway-wide placement (global or MCP-wide).",
 					Enum:        enumOptions("consumer", "global"),
 				},
 			},
@@ -604,7 +614,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "role",
 								Label:       "Role",
 								Type:        FieldTypeString,
-								Description: "Message role used when inserting the rendered content.",
+								Description: "Role used when inserting the rendered content. OpenAI-compatible and Cohere: any role is prepended as a message. Anthropic: system goes to the top-level system field; user and assistant are prepended; other roles are not applied. OpenAI Responses: system goes to instructions; user, assistant and developer are prepended as input items; other roles are not applied. Bedrock: system goes to the system blocks; user is prepended; other roles are not applied. Gemini: system goes to systemInstruction; user is prepended; other roles, including assistant, are not applied. Roles a format cannot carry (for example developer on Anthropic, assistant on Gemini or Bedrock) are forwarded without the injection and recorded as unapplied.",
 								Default:     "system",
 							},
 							{
@@ -618,7 +628,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "on_existing_system",
 								Label:       "On Existing System",
 								Type:        FieldTypeEnum,
-								Description: "How to combine with an existing system prompt.",
+								Description: "How to combine with an existing system prompt. Merge appends the rendered content to the existing system prompt (as a new text block or part on Anthropic block lists, Bedrock and Gemini, and after a blank line in strings such as Responses instructions); replace leaves only the rendered content. A Mode B template's system text is merged into the system prompt on Anthropic, Gemini, OpenAI Responses and Bedrock; if the request's own system field cannot be read, the request is rejected with 400 unsupported_request_shape. Bedrock replace drops existing guardContent and cachePoint system blocks, and on Bedrock a blank rendered injection is not applied. On OpenAI-compatible, Cohere and Mistral the rendered messages replace the whole conversation, including the client's system message. On Anthropic with no system prompt, one is created as a plain string.",
 								Enum:        enumOptions("merge", "replace"),
 								Default:     "merge",
 							},
@@ -710,7 +720,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "allow_untemplated_requests",
 					Label:       "Allow Untemplated Requests",
 					Type:        FieldTypeBoolean,
-					Description: "When false and named templates are configured, reject requests without a template reference.",
+					Description: "When false and named templates are configured, reject requests without a template reference. In enforce mode, requests in a non-chat format (embeddings, files, images, audio, rerank) are rejected too, since they cannot carry a reference it can read. Separately, whenever templates are configured, a chat request whose body the policy cannot edit (unreadable or ambiguous fields, or a system field it cannot merge into) is rejected with 400 unsupported_request_shape regardless of this setting. Observe mode never rejects.",
 					Default:     true,
 				},
 				{
@@ -748,65 +758,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"prompt_compression": {
 		name:        "Prompt Compression",
 		group:       groupPromptManagement,
-		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable.",
-		schema: SettingsSchema{
-			Fields: []Field{
-				{
-					Key:         "compress_json",
-					Label:       "Compress JSON",
-					Type:        FieldTypeBoolean,
-					Description: "Minify standalone JSON message content, ```json fenced blocks and tool-call arguments. At least one transform must stay enabled.",
-					Default:     true,
-				},
-				{
-					Key:         "normalize_whitespace",
-					Label:       "Normalize Whitespace",
-					Type:        FieldTypeBoolean,
-					Description: "Trim trailing spaces per line, keeping Markdown hard line breaks, and collapse runs of blank lines.",
-					Default:     true,
-				},
-				{
-					Key:         "strip_ansi",
-					Label:       "Strip ANSI Escapes",
-					Type:        FieldTypeBoolean,
-					Description: "Remove ANSI colour and cursor sequences, common in captured terminal and CI logs.",
-					Default:     true,
-				},
-				{
-					Key:         "max_consecutive_blank_lines",
-					Label:       "Max Consecutive Blank Lines",
-					Type:        FieldTypeInteger,
-					Description: "Longest run of blank lines kept when whitespace is normalized. Between 1 and 1000.",
-					Default:     1,
-				},
-				{
-					Key:         "min_length",
-					Label:       "Minimum Content Length",
-					Type:        FieldTypeInteger,
-					Description: "Skip message content shorter than this many bytes; 0 compresses everything. Leaving small messages byte-identical protects provider prompt-cache prefixes.",
-					Default:     256,
-				},
-				{
-					Key:         "max_body_bytes",
-					Label:       "Max Body Bytes",
-					Type:        FieldTypeInteger,
-					Description: "Skip the whole pipeline for request bodies larger than this, bounding per-request CPU cost; 0 disables the cap.",
-					Default:     1048576,
-				},
-				{
-					Key:         "target_roles",
-					Label:       "Target Roles",
-					Type:        FieldTypeArray,
-					Description: "Restrict compression to messages with these roles. Empty compresses every role.",
-					Item: &Field{
-						Key:   "role",
-						Label: "Role",
-						Type:  FieldTypeEnum,
-						Enum:  enumOptions("system", "user", "assistant", "tool"),
-					},
-				},
-			},
-		},
+		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable. Runs with fixed defaults; there is nothing to configure.",
+		// No operator-facing fields. The transforms are safe on every prompt and the
+		// thresholds (256-byte minimum, 1 MiB body cap, every role) are the ones that
+		// keep provider prompt caches stable, so exposing them only invited settings
+		// that made the policy worse. The plugin still honours explicit settings sent
+		// over the API; the console has nothing to render.
+		schema: SettingsSchema{},
 	},
 	"tool_injection": {
 		name:        "Tool Injection",
@@ -875,7 +833,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "scope",
 					Label:       "Scope",
 					Type:        FieldTypeEnum,
-					Description: "Informational; effective scope derives from the policy global flag.",
+					Description: "Informational; effective scope derives from the policy's gateway-wide placement (global or MCP-wide).",
 					Enum:        enumOptions("consumer", "global"),
 				},
 			},
@@ -884,7 +842,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors. Streaming responses are inspected after the stream completes (post_response), not live.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors and timeouts unless on_error / on_timeout say fail_closed. Streamed responses are inspected block by block as they are produced, whenever the direction includes the response; set streaming.enabled to false to inspect them only after the stream completes.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -907,6 +865,34 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
 				},
+				{
+					Key:   "on_error",
+					Label: "On Error",
+					Type:  FieldTypeEnum,
+					Description: "What to do when the guard cannot inspect the request: a transport failure, a server error, " +
+						"rejected or missing credentials, a missing base URL, unavailable entitlements, or a mask that " +
+						"could not be applied. fail_open lets the request through uninspected and marks it failed_open " +
+						"with the reason. A block or a rate limit is the guard's answer and is never affected.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_open",
+				},
+				{
+					Key:   "on_timeout",
+					Label: "On Timeout",
+					Type:  FieldTypeEnum,
+					Description: "What to do when the guard does not answer in time. Defaults to fail_open, like on_error. " +
+						"A large enough payload can push the detector past the deadline, so fail_closed is the " +
+						"stricter choice for a policy that must never let text through uninspected.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_open",
+				},
+				{
+					Key:   "timeout",
+					Label: "Timeout",
+					Type:  FieldTypeDuration,
+					Description: "How long one evaluate call may take for this policy (e.g. 30s). " +
+						"Leave empty to use the deployment-wide TRUSTGUARD_TIMEOUT.",
+				},
 			},
 		},
 	},
@@ -924,11 +910,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:         "model",
-					Label:       "Model",
-					Type:        FieldTypeString,
-					Description: "Moderations model.",
-					Default:     "omni-moderation-latest",
+					Key:   "model",
+					Label: "Model",
+					Type:  FieldTypeString,
+					Description: "Moderations model: omni-moderation-latest or omni-moderation-2024-09-26. " +
+						"OpenAI has retired text-moderation-latest and text-moderation-stable. An unrecognised " +
+						"model already stored keeps loading (logged as a warning), but a new write must use a " +
+						"recognised one.",
+					Default: "omni-moderation-latest",
 				},
 				{
 					Key:         "stages",
@@ -943,10 +932,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
-					Key:         "categories",
-					Label:       "Categories",
-					Type:        FieldTypeArray,
-					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned by OpenAI.",
+					Key:   "categories",
+					Label: "Categories",
+					Type:  FieldTypeArray,
+					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned " +
+						"by OpenAI. Valid keys: harassment, harassment/threatening, hate, hate/threatening, " +
+						"illicit, illicit/violent, self-harm, self-harm/intent, self-harm/instructions, " +
+						"sexual, sexual/minors, violence, violence/graphic. An unknown key is rejected on a " +
+						"new write; an already-stored one keeps working.",
 					Item: &Field{
 						Key:   "category",
 						Label: "Category",
@@ -954,10 +947,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
-					Key:         "thresholds",
-					Label:       "Thresholds",
-					Type:        FieldTypeMap,
-					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks.",
+					Key:   "thresholds",
+					Label: "Thresholds",
+					Type:  FieldTypeMap,
+					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks. " +
+						"Valid keys: harassment, harassment/threatening, hate, hate/threatening, illicit, " +
+						"illicit/violent, self-harm, self-harm/intent, self-harm/instructions, sexual, " +
+						"sexual/minors, violence, violence/graphic. An unknown key is rejected on a new write, " +
+						"but an already-stored one keeps working unchanged.",
 					Value: &Field{
 						Key:   "threshold",
 						Label: "Threshold",
@@ -968,7 +965,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "block_on_flagged",
 					Label:       "Block On Flagged",
 					Type:        FieldTypeBoolean,
-					Description: "Block any category OpenAI marks flagged, even without a configured threshold.",
+					Description: "Block any category OpenAI marks flagged, even without a configured threshold. When neither this nor thresholds is set, it defaults to true so the policy acts on the flagged verdict.",
 					Default:     false,
 				},
 				{
@@ -980,7 +977,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "message",
 							Label:       "Message",
 							Type:        FieldTypeString,
-							Description: "Block message returned to the caller.",
+							Description: `Optional; returned to the caller when the guardrail blocks. Defaults to "This content violates our usage policy." when empty.`,
 						},
 					},
 				},
@@ -1040,7 +1037,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "message",
 					Label:       "Block Message",
 					Type:        FieldTypeString,
-					Description: "Optional message returned to the caller when content is blocked.",
+					Description: `Optional; returned to the caller when the guardrail blocks. Defaults to "This content violates our usage policy." when empty.`,
 				},
 			},
 		},
@@ -1077,7 +1074,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "message",
 					Label:       "Block Message",
 					Type:        FieldTypeString,
-					Description: "Optional operator message; the 403 body always carries the matched policy and name.",
+					Description: `Optional; returned to the caller when the guardrail blocks, alongside the matched policy and name. Defaults to "This content violates our usage policy." when empty.`,
 				},
 				{
 					Key:      "credentials",
@@ -1131,6 +1128,62 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Description: "Optional temporary-credential session token.",
 						},
 					},
+				},
+			},
+		},
+	},
+	"google_model_armor": {
+		name:        "Google Model Armor",
+		group:       groupGuardrails,
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streaming responses pass through untouched.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "project",
+					Label:       "Project",
+					Type:        FieldTypeString,
+					Description: "GCP project ID that owns the Model Armor template.",
+					Required:    true,
+				},
+				{
+					Key:         "location",
+					Label:       "Location",
+					Type:        FieldTypeString,
+					Description: "Model Armor is regional; this names the template's region (e.g. us-central1) and picks the regional API host.",
+					Required:    true,
+				},
+				{
+					Key:         "template",
+					Label:       "Template ID",
+					Type:        FieldTypeString,
+					Description: "Model Armor template identifier to evaluate against.",
+					Required:    true,
+				},
+				{
+					Key:         "block_on",
+					Label:       "Block On",
+					Type:        FieldTypeArray,
+					Description: "Filters that reject the call when they return MATCH_FOUND. Defaults to all five when left empty.",
+					Item: &Field{
+						Key:   "filter",
+						Label: "Filter",
+						Type:  FieldTypeEnum,
+						Enum:  enumOptions("sdp", "rai", "pi_and_jailbreak", "malicious_uris", "csam"),
+					},
+				},
+				{
+					Key:         "sdp_action",
+					Label:       "SDP Action",
+					Type:        FieldTypeEnum,
+					Description: "How TrustGate reacts when the sensitive-data-protection filter fires: block the call, or reinject the de-identified text Model Armor itself returned. Only applies when sdp is in Block On.",
+					Enum:        enumOptions("block", "anonymize"),
+					Default:     "block",
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: `Optional; returned to the caller when the guardrail blocks, alongside the filter that fired. Defaults to "This content violates our usage policy." when empty.`,
 				},
 			},
 		},

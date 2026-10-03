@@ -17,6 +17,7 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
@@ -70,11 +71,38 @@ func GeminiModelFromPath(path string) string {
 	if idx < 0 {
 		return ""
 	}
-	model := path[idx+len(marker):]
-	if c := strings.IndexByte(model, ':'); c >= 0 {
-		model = model[:c]
-	}
+	model, _ := SplitGeminiModelAction(path[idx+len(marker):])
 	return model
+}
+
+// geminiMethods are the methods TrustGate routes on a Gemini or Vertex model
+// path. Any other suffix after a ':' is part of the model id.
+var geminiMethods = map[string]struct{}{
+	"generateContent":       {},
+	"streamGenerateContent": {},
+	"countTokens":           {},
+	"embedContent":          {},
+	"batchEmbedContents":    {},
+	"predict":               {},
+	"streamRawPredict":      {},
+	"rawPredict":            {},
+}
+
+// SplitGeminiModelAction splits the last segment of a Gemini model path into
+// the model and its method. The split is at the last ':' followed by one of
+// the methods TrustGate routes (geminiMethods), because model ids can contain
+// ':' themselves (Bedrock "eu.amazon.nova-lite-v1:0"). A segment without such
+// a method, an unknown one such as batchGenerateContent included, is all
+// model. The segment is not percent-decoded: no SDK encodes the ':', and
+// decoding here alone would let the stream detection, which reads the raw
+// path, disagree with routing, and would let %3F or %23 into model ids.
+func SplitGeminiModelAction(segment string) (model, action string) {
+	if c := strings.LastIndexByte(segment, ':'); c >= 0 {
+		if _, ok := geminiMethods[segment[c+1:]]; ok {
+			return segment[:c], segment[c+1:]
+		}
+	}
+	return segment, ""
 }
 
 func DetectFormat(body []byte) Format {
@@ -131,6 +159,23 @@ func (f Format) IsOpenAIFamily() bool {
 	return f == FormatOpenAIResponses || IsSameWireFormat(f, FormatOpenAI)
 }
 
+// IsChatRequest reports whether a request of the proxy capability, sent in
+// wire format f, is a chat request, the only kind that declares tools. The
+// capability decides when set; a caller that does not route by capability
+// leaves it to the format.
+func IsChatRequest(capability string, f Format) bool {
+	if capability != "" {
+		return capability == providers.CapabilityChat
+	}
+	switch f {
+	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
+		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed:
+		return false
+	default:
+		return true
+	}
+}
+
 func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
@@ -142,6 +187,24 @@ func SupportedSourceFormat(f Format) bool {
 	default:
 		return false
 	}
+}
+
+// geminiStreamAction is the Gemini/Vertex URL action that signals a streamed
+// response (clients hit ".../models/<model>:streamGenerateContent"). The leading
+// colon is part of the match so unrelated paths that merely contain the word
+// "streamGenerateContent" do not trigger a false positive.
+const geminiStreamAction = ":streamGenerateContent"
+
+// URLRequestsStream reports whether the request URL asks for a streamed
+// response, the way Gemini and Vertex signal it: the ":streamGenerateContent"
+// action in the path or "alt=sse" in the query. Their bodies carry no stream
+// flag, so a decoded Gemini request always reads as buffered; anything that
+// decides on the stream flag must consult the URL as well.
+func URLRequestsStream(path string, query url.Values) bool {
+	if strings.Contains(path, geminiStreamAction) {
+		return true
+	}
+	return query != nil && query.Get("alt") == "sse"
 }
 
 func RequestWantsStream(body []byte) (stream bool, explicit bool) {
@@ -163,6 +226,8 @@ func resolveProviderWireFormat(providerName string) Format {
 	case provider.XAI:
 		return FormatXAI
 	case provider.Cerebras:
+		return FormatOpenAI
+	case provider.Moonshot:
 		return FormatOpenAI
 	case provider.OpenRouter:
 		return FormatOpenRouter
@@ -211,7 +276,7 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 		return Format(sourceFormat), nil
 	}
 	switch providerName {
-	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.XAI, provider.Cerebras, provider.OpenRouter:
+	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.XAI, provider.Cerebras, provider.Moonshot, provider.OpenRouter:
 		return ResolveTargetFormat(providerName, providerOptions), nil
 	case provider.Anthropic:
 		return FormatAnthropic, nil

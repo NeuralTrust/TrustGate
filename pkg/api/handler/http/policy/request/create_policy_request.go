@@ -34,6 +34,10 @@ type CreatePolicyRequest struct {
 	Settings    map[string]any `json:"settings,omitempty"`
 	Stages      []string       `json:"stages,omitempty"`
 	Mode        string         `json:"mode,omitempty"`
+	// MCPScope narrows the policy to MCP destinations and principals. Omitted
+	// (or null) keeps the policy consumer-wide; {} is rejected as it would
+	// never match.
+	MCPScope *MCPScopeRequest `json:"mcp_scope,omitempty"`
 }
 
 func (r CreatePolicyRequest) Validate() error {
@@ -58,6 +62,11 @@ func (r CreatePolicyRequest) ToStages() []domain.Stage {
 
 func (r CreatePolicyRequest) ToMode() domain.Mode {
 	return domain.Mode(r.Mode)
+}
+
+// ToMCPScope converts the optional mcp_scope into its domain form.
+func (r CreatePolicyRequest) ToMCPScope() (*domain.MCPScope, error) {
+	return r.MCPScope.ToDomain()
 }
 
 func (r CreatePolicyRequest) ParallelOrDefault() bool {

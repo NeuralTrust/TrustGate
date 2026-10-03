@@ -15,15 +15,22 @@
 package proxy_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
@@ -31,6 +38,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -38,7 +46,9 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 const consumerSlug = "cons1234"
@@ -89,35 +99,18 @@ func authStubWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Met
 // is valid for the gateway but NOT attached to the consumer that matches the
 // path, so the handler must reject the request with 403.
 func authStubForbidden(gatewayID ids.GatewayID, slug string) fiber.Handler {
+	return authStubForbiddenWithMethod(gatewayID, slug, appauth.MethodAPIKey)
+}
+
+func authStubForbiddenWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Method) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
+		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	}
-}
-
-func authStubRoleBased(gatewayID ids.GatewayID, slug string, consumerRoles, effectiveRoles []ids.RoleID) fiber.Handler {
-	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Slug:        slug,
-			Active:      true,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     consumerRoles,
-		}},
-	})
-	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodOIDC, GatewayID: gatewayID, Subject: "user-1", RoleIDs: effectiveRoles}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
 		c.SetUserContext(ctx)
 		return c.Next()
@@ -149,6 +142,32 @@ func newProxyRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodPost, proxyPath, strings.NewReader(`{"model":"gpt"}`))
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func TestHandleCapturesOriginalRequestWithoutTelemetry(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, in appproxy.ForwardInput) {
+			original := requestmeta.FromContext(ctx)
+			if original == nil || original.IP == "192.0.2.99" || original.IP != in.Request.IP || original.Headers["User-Agent"][0] != "client/1.0" {
+				t.Fatalf("incorrect HTTP provenance: %+v", original)
+			}
+			if _, ok := original.Headers["Authorization"]; ok {
+				t.Fatal("credential forwarded")
+			}
+		}).Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+	req := newProxyRequest()
+	req.Header.Set("User-Agent", "client/1.0")
+	req.Header.Set("X-Forwarded-For", "192.0.2.99")
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
 }
 
 func decodeError(t *testing.T, body io.Reader) httpio.ErrorBody {
@@ -213,54 +232,15 @@ func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
 	}
 }
 
-func TestHandle_Forbidden_APIKeyCannotAuthorizeRoleBasedConsumer(t *testing.T) {
+func TestHandle_OIDCAttachedAuthSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
-	gwID := ids.New[ids.GatewayKind]()
-	roleID := ids.New[ids.RoleKind]()
-	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gwID,
-			Slug:        consumerSlug,
-			Active:      true,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{roleID},
-		}},
-	})
 	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error {
-		authID := ids.New[ids.AuthKind]()
-		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gwID, AuthID: authID}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gwID)
-		ctx = appconsumer.WithAuthID(ctx, authID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	})
-	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/*", handler.Handle)
-
-	resp, err := app.Test(newProxyRequest())
-	if err != nil {
-		t.Fatalf("app.Test: %v", err)
-	}
-	if resp.StatusCode != fiber.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
-	fwd := proxymocks.NewForwarder(t)
-	gwID := ids.New[ids.GatewayKind]()
-	roleID := ids.New[ids.RoleKind]()
-	app := fiber.New()
-	app.Use(authStubRoleBased(gwID, consumerSlug, []ids.RoleID{roleID}, []ids.RoleID{roleID}))
+	app.Use(authStubWithMethod(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOIDC))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Consumer.Consumer.RoutingMode == domainconsumer.RoutingModeRoleBased
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
 		})).
 		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
 		Once()
@@ -275,22 +255,19 @@ func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
 }
 
 // authStubPlayground mimics the auth middleware after the playground identity
-// resolver validated a server-minted playground token: MethodPlayground, no
-// AuthID, and the consumer's own roles as effective roles.
-func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domainconsumer.RoutingMode) fiber.Handler {
-	roleIDs := []ids.RoleID{ids.New[ids.RoleKind]()}
+// resolver validated a server-minted playground token: MethodPlayground and no
+// AuthID.
+func authStubPlayground(gatewayID ids.GatewayID, slug string) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Slug:        slug,
-			Active:      true,
-			RoutingMode: routingMode,
-			RoleIDs:     roleIDs,
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gatewayID,
+			Slug:      slug,
+			Active:    true,
 		}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user", RoleIDs: roleIDs}
+		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user"}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
@@ -300,35 +277,24 @@ func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domain
 }
 
 func TestHandle_PlaygroundSucceeds(t *testing.T) {
-	tests := []struct {
-		name        string
-		routingMode domainconsumer.RoutingMode
-	}{
-		{name: "inline consumer", routingMode: domainconsumer.RoutingModeInline},
-		{name: "role-based consumer", routingMode: domainconsumer.RoutingModeRoleBased},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fwd := proxymocks.NewForwarder(t)
-			app := fiber.New()
-			app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug, tt.routingMode))
-			handler := proxyhttp.NewForwardedHandler(fwd)
-			app.All("/*", handler.Handle)
-			fwd.EXPECT().
-				Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-					return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
-				})).
-				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
-				Once()
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/*", handler.Handle)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
+		})).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
 
-			resp, err := app.Test(newProxyRequest())
-			if err != nil {
-				t.Fatalf("app.Test: %v", err)
-			}
-			if resp.StatusCode != fiber.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
-		})
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 
@@ -354,10 +320,10 @@ func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 	}
 }
 
-func TestHandle_Forbidden_IDPLacksRole(t *testing.T) {
+func TestHandle_Forbidden_OIDCAuthNotAttached(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubRoleBased(ids.New[ids.GatewayKind](), consumerSlug, []ids.RoleID{ids.New[ids.RoleKind]()}, []ids.RoleID{ids.New[ids.RoleKind]()}))
+	app.Use(authStubForbiddenWithMethod(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOIDC))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 
@@ -528,6 +494,388 @@ func TestHandle_Streaming_InvokesFinalizerWithCapturedOutput(t *testing.T) {
 	}
 }
 
+func TestHandle_Streaming_MidStreamError(t *testing.T) {
+	upstreamErr := errors.New("upstream reset")
+	const genericFrame = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
+	const clientFrame = "event: error\ndata: {\"type\":\"error\"}\n"
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + genericFrame + "\n\n"},
+		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, fwd := newTestApp(t)
+			stream := func(yield func([]byte, error) bool) {
+				for _, l := range [][]byte{[]byte("event: error"), []byte(`data: {"type":"error"}`)} {
+					if !yield(l, nil) {
+						return
+					}
+				}
+				yield(nil, tt.err)
+			}
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{
+					StatusCode: 200,
+					Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+					Stream:     stream,
+				}, nil).
+				Once()
+
+			resp, err := app.Test(newProxyRequest())
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != tt.want {
+				t.Fatalf("body = %q, want %q", string(body), tt.want)
+			}
+		})
+	}
+}
+
+func TestHandle_Streaming_GeminiClientGetsTheGeminiErrorObject(t *testing.T) {
+	const geminiFrame = `data: {"error":{"code":500,"message":"upstream stream terminated unexpectedly","status":"INTERNAL"}}`
+	const chunk = `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}`
+	paths := map[string]string{
+		"gemini": "/" + consumerSlug + "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"vertex": "/" + consumerSlug + "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+	}
+	tests := map[string]func(yield func([]byte, error) bool){
+		"mid-stream error": func(yield func([]byte, error) bool) {
+			if yield([]byte(chunk), nil) {
+				yield(nil, errors.New("upstream reset"))
+			}
+		},
+		"panic": func(yield func([]byte, error) bool) {
+			if yield([]byte(chunk), nil) {
+				panic("reader exploded")
+			}
+		},
+	}
+	for format, path := range paths {
+		for name, stream := range tests {
+			t.Run(format+" "+name, func(t *testing.T) {
+				fwd := proxymocks.NewForwarder(t)
+				app := fiber.New()
+				app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+				app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.DiscardHandler)).Handle)
+				fwd.EXPECT().
+					Forward(mock.Anything, mock.Anything).
+					Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+					Once()
+
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"contents":[]}`))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				if err != nil {
+					t.Fatalf("app.Test: %v", err)
+				}
+				body, _ := io.ReadAll(resp.Body)
+				if want := chunk + "\n" + geminiFrame + "\n"; strings.TrimRight(string(body), "\n")+"\n" != want {
+					t.Fatalf("body = %q, want %q", string(body), want)
+				}
+			})
+		}
+	}
+}
+
+func TestHandle_Streaming_PanicEndsWithErrorEventAndCancels(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(logger).Handle)
+
+	var forwardCtx context.Context
+	stream := func(yield func([]byte, error) bool) {
+		if !yield([]byte(`data: {"id":"1"}`), nil) {
+			return
+		}
+		panic("reader exploded")
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	want := `data: {"id":"1"}` + "\n" +
+		`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n\n"
+	if string(body) != want {
+		t.Fatalf("body = %q, want %q", string(body), want)
+	}
+	if forwardCtx.Err() == nil {
+		t.Fatal("the forward context outlived the panicking stream")
+	}
+	if !strings.Contains(logs.String(), "reader exploded") || !strings.Contains(logs.String(), "stack=") {
+		t.Fatalf("panic not logged with its stack: %s", logs.String())
+	}
+}
+
+func TestHandle_Streaming_PanicLogsTheReaderStack(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(logger).Handle)
+
+	stream := func(func([]byte, error) bool) {
+		panic(&appproxy.ReaderPanic{Value: "reader exploded", Stack: []byte("reader-goroutine-stack")})
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	if !strings.Contains(logs.String(), "panic=\"reader exploded\"") || !strings.Contains(logs.String(), "stack=reader-goroutine-stack") {
+		t.Fatalf("reader panic not logged with the reader stack: %s", logs.String())
+	}
+}
+
+func TestHandle_Streaming_PanicRunsFinalizerOnceWithErrorEvent(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	stream := func(yield func([]byte, error) bool) {
+		for _, l := range []string{"data: a", "data: b"} {
+			if !yield([]byte(l), nil) {
+				return
+			}
+		}
+		panic("reader exploded")
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	var (
+		mu        sync.Mutex
+		calls     int
+		gotOutput []byte
+	)
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals(infracontext.StreamMetricsFinalizerKey, infracontext.StreamMetricsFinalizer(
+			func(_ *infracontext.RequestContext, output []byte, _ int, _ map[string][]string) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls++
+				gotOutput = output
+			}))
+		return c.Next()
+	})
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.DiscardHandler)).Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("finalizer calls = %d, want 1", calls)
+	}
+	want := "data: a\ndata: b\n" + `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n"
+	if string(gotOutput) != want {
+		t.Fatalf("captured output = %q, want %q", string(gotOutput), want)
+	}
+}
+
+func TestHandle_Streaming_PanicAfterTheStreamEndedWritesNoSecondErrorEvent(t *testing.T) {
+	const errorFrame = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
+	upstreamErr := errors.New("upstream reset")
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "after the error event", err: upstreamErr, want: "data: a\n" + errorFrame + "\n\n"},
+		{name: "after the client was notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: "data: a\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			var logs bytes.Buffer
+			app := fiber.New()
+			app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.NewTextHandler(&logs, nil))).Handle)
+
+			stream := func(yield func([]byte, error) bool) {
+				if !yield([]byte("data: a"), nil) {
+					return
+				}
+				yield(nil, tt.err)
+				panic("panic while unwinding")
+			}
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+				Once()
+
+			resp, err := app.Test(newProxyRequest())
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != tt.want {
+				t.Fatalf("body = %q, want %q", string(body), tt.want)
+			}
+			if !strings.Contains(logs.String(), "panic while unwinding") {
+				t.Fatalf("panic after the stream ended was not logged: %s", logs.String())
+			}
+		})
+	}
+}
+
+func TestHandle_ForwardContextEndsWithTheResponse(t *testing.T) {
+	t.Run("buffered", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		var forwardCtx context.Context
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+			Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+			Once()
+
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		if forwardCtx.Err() == nil {
+			t.Fatal("the forward context outlived the response")
+		}
+	})
+
+	t.Run("streamed", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		var forwardCtx context.Context
+		var errDuringStream error
+		stream := func(yield func([]byte, error) bool) {
+			errDuringStream = forwardCtx.Err()
+			yield([]byte("data: [DONE]"), nil)
+		}
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+			Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+			Once()
+
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		if errDuringStream != nil {
+			t.Fatalf("the forward context ended before the stream was written: %v", errDuringStream)
+		}
+		if forwardCtx.Err() == nil {
+			t.Fatal("the forward context outlived the stream")
+		}
+	})
+}
+
+// A stream guard cut hands the rest of the upstream to a background drain
+// that charges its usage; the forward context must outlive the response until
+// that drain is done, or the drain reads a cancelled upstream.
+func TestHandle_ForwardContextWaitsForTheStreamToSettle(t *testing.T) {
+	app, fwd := newTestApp(t)
+	var forwardCtx context.Context
+	settled := make(chan struct{})
+	stream := func(yield func([]byte, error) bool) {
+		yield([]byte("data: [DONE]"), nil)
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+		Return(&appproxy.ForwardResult{
+			StatusCode:    200,
+			Stream:        stream,
+			StreamSettled: func() <-chan struct{} { return settled },
+		}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	if forwardCtx.Err() != nil {
+		t.Fatal("the forward context ended before the stream settled")
+	}
+	close(settled)
+	select {
+	case <-forwardCtx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the forward context outlived the settled stream")
+	}
+}
+
+func TestHandle_StreamingClientDisconnectCancelsTheForwardContext(t *testing.T) {
+	app, fwd := newTestApp(t)
+	forwardCtx := make(chan context.Context, 1)
+	stream := func(yield func([]byte, error) bool) {
+		ctx := <-forwardCtx
+		forwardCtx <- ctx
+		for ctx.Err() == nil {
+			if !yield([]byte(": keepalive"), nil) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx <- ctx }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = app.Listener(listener) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: gw\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"model\":\"gpt\"}", proxyPath)
+	if err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if _, err := bufio.NewReader(conn).ReadString(':'); err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	_ = conn.Close()
+
+	ctx := <-forwardCtx
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the forward context was not cancelled after the client went away")
+	}
+}
+
 func TestHandle_InvalidRequestPayload(t *testing.T) {
 	app, fwd := newTestApp(t)
 	fwd.EXPECT().
@@ -545,6 +893,108 @@ func TestHandle_InvalidRequestPayload(t *testing.T) {
 	if eb := decodeError(t, resp.Body); eb.Error != "invalid_request" {
 		t.Fatalf("error = %q, want invalid_request", eb.Error)
 	}
+}
+
+func TestHandle_AmbiguousRequestBody(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrAmbiguousRequestBody).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if eb := decodeError(t, resp.Body); eb.Error != "invalid_request_body" {
+		t.Fatalf("error = %q, want invalid_request_body", eb.Error)
+	}
+}
+
+func TestHandle_InvalidRequestPayload_AnthropicEnvelope(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrInvalidRequestPayload).
+		Once()
+
+	req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"type":"error"`) {
+		t.Fatalf("body = %s, want anthropic error envelope", raw)
+	}
+	if !strings.Contains(string(raw), `"invalid_request_error"`) {
+		t.Fatalf("body = %s, want invalid_request_error", raw)
+	}
+}
+
+func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
+	stream := func(yield func([]byte, error) bool) {
+		if !yield([]byte("data: a"), nil) {
+			return
+		}
+		_ = yield(nil, errors.New("boom"))
+	}
+
+	t.Run("messages", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Return(&appproxy.ForwardResult{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+				Stream:     stream,
+			}, nil).
+			Once()
+		req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":8}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		want := "data: a\n" +
+			"event: error\n" +
+			`data: {"type":"error","error":{"type":"api_error","message":"upstream stream terminated unexpectedly"}}` +
+			"\n\n\n"
+		if string(body) != want {
+			t.Fatalf("body = %q, want %q", body, want)
+		}
+	})
+
+	t.Run("chat completions", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Return(&appproxy.ForwardResult{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+				Stream:     stream,
+			}, nil).
+			Once()
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		want := "data: a\n" +
+			`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` +
+			"\n\n"
+		if string(body) != want {
+			t.Fatalf("body = %q, want %q", body, want)
+		}
+	})
 }
 
 func TestHandle_CapabilityNotSupported(t *testing.T) {
@@ -642,9 +1092,8 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.Anything).
-		Return(nil, fmt.Errorf("%w: %q (Anthropic: restricted by its model allow-list; "+
-			"OpenAI: not in the provider catalog)",
-			routingdomain.ErrNoRegistryServesModel, "claude-sonnet-4-5")).
+		Return(nil, fmt.Errorf("%w: %q (tried openai, vertex)",
+			routingdomain.ErrNoRegistryServesModel, "gemini-3-flash-preview")).
 		Once()
 
 	rt := trace.New("trace-no-registry", trace.Metadata{})
@@ -668,15 +1117,11 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	if eb.Error != "model_not_supported" {
 		t.Fatalf("error = %q, want model_not_supported", eb.Error)
 	}
-	if !strings.Contains(eb.Message, "claude-sonnet-4-5") {
+	if !strings.Contains(eb.Message, "gemini-3-flash-preview") {
 		t.Fatalf("message = %q, want the requested model named", eb.Message)
 	}
-	if !strings.Contains(eb.Message, "Anthropic") || !strings.Contains(eb.Message, "OpenAI") {
-		t.Fatalf("message = %q, want every bound registry named", eb.Message)
-	}
-	if !strings.Contains(eb.Message, "restricted by its model allow-list") ||
-		!strings.Contains(eb.Message, "not in the provider catalog") {
-		t.Fatalf("message = %q, want the forwarder's message relayed whole, not truncated", eb.Message)
+	if !strings.Contains(eb.Message, "openai") || !strings.Contains(eb.Message, "vertex") {
+		t.Fatalf("message = %q, want the probed providers listed", eb.Message)
 	}
 }
 
@@ -836,88 +1281,91 @@ func TestHandle_WrongMethodIs405WithoutForwarding(t *testing.T) {
 	}
 }
 
-// authStubWithClaims authenticates the proxyPath consumer with a verified
-// token of the given method, carrying claims, the way the OAuth2 resolver does.
-func authStubWithClaims(gatewayID ids.GatewayID, slug string, method appauth.Method, subject string, claims map[string]any) fiber.Handler {
-	authID := ids.New[ids.AuthKind]()
-	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{authID}}},
-	})
-	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: authID, Subject: subject, Claims: claims}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
-		ctx = appconsumer.WithAuthID(ctx, authID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
+func TestOriginalRequestUsesSocketPeerBeforeConfiguredFiberHeader(t *testing.T) {
+	for _, mode := range []string{"peer", "gcp"} {
+		t.Run(mode, func(t *testing.T) {
+			app := fiber.New(fiber.Config{ProxyHeader: fiber.HeaderXForwardedFor})
+			app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+			fwd := proxymocks.NewForwarder(t)
+			h := proxyhttp.NewForwardedHandler(fwd).WithClientIPResolver(requestmeta.NewIPResolver(mode, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/32")}))
+			app.All("/*", h.Handle)
+			fwd.EXPECT().Forward(mock.Anything, mock.Anything).Run(func(ctx context.Context, _ appproxy.ForwardInput) {
+				want := "0.0.0.0"
+				if mode == "gcp" {
+					want = "203.0.113.42"
+				}
+				original := requestmeta.FromContext(ctx)
+				require.NotNil(t, original)
+				assert.Equal(t, want, original.IP)
+			}).Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+			req := newProxyRequest()
+			req.Header.Set(fiber.HeaderXForwardedFor, "192.0.2.99, 203.0.113.42, 34.1.2.3")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+		})
 	}
 }
 
-// tracedProxyCall runs one proxy request behind auth and returns the trace the
-// handler stamped.
-func tracedProxyCall(t *testing.T, auth fiber.Handler) trace.Metadata {
-	t.Helper()
-	fwd := proxymocks.NewForwarder(t)
-	fwd.EXPECT().Forward(mock.Anything, mock.Anything).Return(nil, appproxy.ErrModelNotAllowed).Maybe()
-
-	rt := trace.New("trace-principal", trace.Metadata{})
-	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error {
-		c.SetUserContext(trace.NewContext(c.UserContext(), rt))
-		return c.Next()
-	})
-	app.Use(auth)
-	app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
-
-	resp, err := app.Test(newProxyRequest())
-	if err != nil {
-		t.Fatalf("app.Test: %v", err)
+// A streamed response is finalized with the handler's own request context, so
+// that context must carry the playground verdict the auth stage reached, not
+// whatever X-AG-Playground-Token the client sent.
+func TestHandle_Streaming_FinalizerReqCarriesPlaygroundVerdict(t *testing.T) {
+	gwID := ids.New[ids.GatewayKind]()
+	tests := []struct {
+		name string
+		auth fiber.Handler
+		want bool
+	}{
+		{name: "verified playground auth", auth: authStubPlayground(gwID, consumerSlug), want: true},
+		{name: "api key with forged playground header", auth: authStub(gwID, consumerSlug), want: false},
 	}
-	_ = resp.Body.Close()
-	return rt.Metadata()
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			stream := func(yield func([]byte, error) bool) { yield([]byte("data: a"), nil) }
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{
+					StatusCode: 200,
+					Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+					Stream:     stream,
+				}, nil).
+				Once()
 
-// A chat front-end that forwards each person's IdP token (Open WebUI's OAuth
-// connection) is attributed to that person, verified, not to the consumer.
-func TestHandle_OAuth2TokenStampsTheVerifiedPrincipal(t *testing.T) {
-	meta := tracedProxyCall(t, authStubWithClaims(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOAuth2,
-		"596a83e6", map[string]any{"sub": "596a83e6", "email": "ana@nobia.test"}))
+			var (
+				mu  sync.Mutex
+				got *infracontext.RequestContext
+			)
+			app := fiber.New()
+			app.Use(tt.auth)
+			app.Use(func(c *fiber.Ctx) error {
+				c.Locals(infracontext.StreamMetricsFinalizerKey, infracontext.StreamMetricsFinalizer(
+					func(req *infracontext.RequestContext, _ []byte, _ int, _ map[string][]string) {
+						mu.Lock()
+						defer mu.Unlock()
+						got = req
+					}))
+				return c.Next()
+			})
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
 
-	if meta.PrincipalSubject != "596a83e6" || meta.PrincipalEmail != "ana@nobia.test" || meta.PrincipalMethod != "oauth2" {
-		t.Fatalf("principal = (%q, %q, %q), want (596a83e6, ana@nobia.test, oauth2)",
-			meta.PrincipalSubject, meta.PrincipalEmail, meta.PrincipalMethod)
-	}
-}
+			req := newProxyRequest()
+			req.Header.Set("X-AG-Playground-Token", "forged")
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			_, _ = io.ReadAll(resp.Body)
 
-// IdPs that carry no email claim (Entra access tokens, Keycloak without the
-// email scope) still name the person in another claim.
-func TestHandle_OAuth2TokenEmailFallsBackToOtherClaims(t *testing.T) {
-	meta := tracedProxyCall(t, authStubWithClaims(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOAuth2,
-		"user-1", map[string]any{"preferred_username": "ana@nobia.test"}))
-
-	if meta.PrincipalSubject != "user-1" || meta.PrincipalEmail != "ana@nobia.test" {
-		t.Fatalf("principal = (%q, %q), want (user-1, ana@nobia.test)", meta.PrincipalSubject, meta.PrincipalEmail)
-	}
-}
-
-func TestHandle_RoleBasedOIDCTokenStampsTheVerifiedPrincipal(t *testing.T) {
-	role := ids.New[ids.RoleKind]()
-	meta := tracedProxyCall(t, authStubRoleBased(ids.New[ids.GatewayKind](), consumerSlug, []ids.RoleID{role}, []ids.RoleID{role}))
-
-	if meta.PrincipalSubject != "user-1" || meta.PrincipalMethod != "oidc" {
-		t.Fatalf("principal = (%q, %q), want (user-1, oidc)", meta.PrincipalSubject, meta.PrincipalMethod)
-	}
-}
-
-// An API key identifies the application, not a person: it must not be
-// promoted to the principal (and so to TrustGuard's user attribute).
-func TestHandle_APIKeyStampsNoPrincipal(t *testing.T) {
-	meta := tracedProxyCall(t, authStubWithClaims(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodAPIKey,
-		"key-1", map[string]any{"email": "app@nobia.test"}))
-
-	if meta.PrincipalSubject != "" || meta.PrincipalEmail != "" || meta.PrincipalMethod != "" {
-		t.Fatalf("principal = (%q, %q, %q), want none for an API key",
-			meta.PrincipalSubject, meta.PrincipalEmail, meta.PrincipalMethod)
+			mu.Lock()
+			defer mu.Unlock()
+			if got == nil {
+				t.Fatal("finalizer was not called")
+			}
+			if got.PlaygroundVerified != tt.want {
+				t.Fatalf("PlaygroundVerified = %v, want %v", got.PlaygroundVerified, tt.want)
+			}
+		})
 	}
 }

@@ -3,20 +3,18 @@ FROM golang:1.27-trixie AS builder
 
 WORKDIR /build
 
-# CGO is required: confluent-kafka-go is a cgo binding to librdkafka. The
-# bundled glibc librdkafka (statically linked into the binary) ships for both
-# amd64 and arm64, so we build against glibc and run on distroless base.
+# CGO is off: the binary is fully static and runs on distroless "static". With
+# cgo disabled Go uses its pure-Go DNS resolver, which reads /etc/resolv.conf
+# (search domains, ndots) and /etc/hosts but ignores nsswitch.conf.
 ENV GOPRIVATE=github.com/NeuralTrust/* \
     GONOPROXY=github.com/NeuralTrust/* \
     GONOSUMDB=github.com/NeuralTrust/* \
     GIT_TERMINAL_PROMPT=0 \
-    CGO_ENABLED=1
+    CGO_ENABLED=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
-        gcc \
-        libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY go.mod go.sum ./
@@ -35,7 +33,7 @@ RUN go mod verify
 ARG VERSION=0.0.0-dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
-ARG MODULE=github.com/NeuralTrust/AgentGateway
+ARG MODULE=github.com/NeuralTrust/TrustGate
 
 RUN go build \
     -trimpath \
@@ -46,11 +44,17 @@ RUN go build \
     -o /out/trustgate \
     ./cmd/trustgate
 
+# "static" has no libc or loader, so a dependency that pulls cgo back in must
+# fail here, not when the pod starts.
+RUN if readelf -d /out/trustgate | grep -q NEEDED; then \
+        echo "trustgate must be statically linked (CGO_ENABLED=0), readelf found NEEDED entries:" >&2; \
+        readelf -d /out/trustgate >&2; \
+        exit 1; \
+    fi
+
 # --- Runtime stage ---------------------------------------------------------
-# distroless "base" (not "static") because the cgo binary dynamically links glibc.
-# The "nossl" variant: the binary links only libc, libm and the loader (Go does
-# TLS natively), so a system OpenSSL would be unused surface for scanners.
-FROM gcr.io/distroless/base-nossl-debian13:nonroot AS runtime
+# distroless "static": CA certificates, tzdata and the nonroot user, no libc.
+FROM gcr.io/distroless/static-debian13:nonroot AS runtime
 
 WORKDIR /app
 

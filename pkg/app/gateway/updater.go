@@ -27,6 +27,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -42,7 +43,14 @@ type UpdateInput struct {
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
-	Entitlements    *domain.Entitlements
+	// TrafficLabeling replaces the traffic labeling config when set. A nil
+	// value keeps it unless ClearTrafficLabeling is true.
+	TrafficLabeling      *trafficlabel.Config
+	ClearTrafficLabeling bool
+	Entitlements         *domain.Entitlements
+	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
+	// a reserved metadata key server-side, so it survives client metadata replacement.
+	StoreMode *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -54,6 +62,7 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo             domain.Repository
+	registries       RegistryFinder
 	memoryCache      *cache.TTLMap
 	publisher        cache.EventPublisher
 	exporterFactory  appmetrics.ExporterFactory
@@ -64,6 +73,7 @@ type updater struct {
 
 func NewUpdater(
 	repo domain.Repository,
+	registries RegistryFinder,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	exporterFactory appmetrics.ExporterFactory,
@@ -73,6 +83,7 @@ func NewUpdater(
 ) Updater {
 	return &updater{
 		repo:             repo,
+		registries:       registries,
 		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
 		publisher:        publisher,
 		exporterFactory:  exporterFactory,
@@ -109,6 +120,19 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	} else if old.TenantID() == "" {
 		g.Metadata = domain.WithTenantID(g.Metadata, tenantID)
 	}
+	// store_mode is a reserved key stripped from client metadata, so re-stamp it
+	// after the metadata block. Preserve the existing mode unless it is being
+	// set. curated is the default, so it is represented by the absence of the
+	// key — a gateway nobody has governed grants nobody anything.
+	storeMode := old.StoreMode()
+	if in.StoreMode != nil {
+		storeMode = *in.StoreMode
+	}
+	if storeMode == domain.StoreModeOpen || storeMode == domain.StoreModeNone {
+		g.Metadata = domain.WithStoreMode(g.Metadata, storeMode)
+	} else if g.Metadata != nil {
+		delete(g.Metadata, domain.MetadataStoreModeKey)
+	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
 	}
@@ -117,6 +141,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	}
 	if in.SessionConfig != nil {
 		g.SessionConfig = in.SessionConfig
+	}
+	switch {
+	case in.TrafficLabeling != nil:
+		g.TrafficLabeling = in.TrafficLabeling.Normalized()
+	case in.ClearTrafficLabeling:
+		g.TrafficLabeling = nil
 	}
 	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
 		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
@@ -127,6 +157,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
 		return nil, err
+	}
+	if in.TrafficLabeling != nil {
+		if err := validateTrafficLabelingRegistry(ctx, u.registries, g.ID, g.TrafficLabeling); err != nil {
+			return nil, err
+		}
 	}
 	maxInstances := 0
 	if u.rateLimitEnabled && tenantID != "" && in.Entitlements != nil {

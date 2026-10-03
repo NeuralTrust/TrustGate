@@ -24,7 +24,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -41,7 +40,6 @@ type dataFinder struct {
 	registryRepo   registrydomain.Repository
 	policyRepo     policydomain.Repository
 	authRepo       authdomain.Repository
-	roleRepo       roledomain.Repository
 	pluginRegistry appplugins.Registry
 	memoryCache    *cache.TTLMap
 	logger         *slog.Logger
@@ -53,7 +51,6 @@ func NewDataFinder(
 	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
-	roleRepo roledomain.Repository,
 	pluginRegistry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
@@ -63,7 +60,6 @@ func NewDataFinder(
 		registryRepo:   registryRepo,
 		policyRepo:     policyRepo,
 		authRepo:       authRepo,
-		roleRepo:       roleRepo,
 		pluginRegistry: pluginRegistry,
 		memoryCache:    manager.GetTTLMap(cache.ConsumerDataTTLName),
 		logger:         logger,
@@ -108,15 +104,11 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
-	roles, err := f.loadRoles(ctx, gatewayID)
+	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
 	if err != nil {
 		return nil, err
 	}
-	backendByID, err := f.loadBackends(ctx, gatewayID, consumers, roles)
-	if err != nil {
-		return nil, err
-	}
-	globalPolicies, policiesByConsumer, err := f.loadPolicies(ctx, gatewayID)
+	loaded, err := f.loadPolicies(ctx, gatewayID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,23 +117,41 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
+	everywhere := partitionScoped(loaded.everywhere)
+	onMCP := partitionScoped(loaded.onMCP)
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
 		chain := fallbackChainOf(c)
 		fallbackBackends := collectBackends(chain, backendByID)
 		f.warnUnresolvedFallbackChain(c, fallbackBackends)
-		policies := composePolicies(globalPolicies, policiesByConsumer[c.ID])
+		gatewayWide := everywhere
+		if c.Type == domain.TypeMCP {
+			gatewayWide = onMCP
+		}
+		attached := partitionScoped(loaded.byConsumer[c.ID])
+		unscoped := composePolicies(gatewayWide.unscoped, attached.unscoped)
+		scoped := mergeScoped(attached.scoped, gatewayWide.scoped)
+		policies, plan, mcpPlans := f.plansFor(c, unscoped, scoped, mergeScoped(attached.crossing, gatewayWide.crossing))
 		routable = append(routable, RoutableConsumer{
 			Consumer:         c,
 			Registries:       collectBackends(poolRegistryIDs(c.RegistryIDs, chain), backendByID),
 			FallbackBackends: fallbackBackends,
 			Policies:         policies,
-			PolicyPlan:       f.buildPolicyPlan(policies),
+			PolicyPlan:       plan,
+			ScopedPolicies:   scoped,
+			MCPPlans:         mcpPlans,
 			Auths:            collectAuths(c.AuthIDs, authByID),
 		})
 	}
 
-	data := NewData(gatewayID, routable, roles)
+	data := NewData(gatewayID, routable)
+	data.StoreConsumer = &RoutableConsumer{
+		Consumer:       domain.BuildStoreConsumer(gatewayID),
+		Policies:       onMCP.unscoped,
+		PolicyPlan:     f.buildPolicyPlan(onMCP.unscoped),
+		ScopedPolicies: onMCP.scoped,
+		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, onMCP.unscoped, onMCP.scoped, f.logger),
+	}
 	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
 	return data, nil
@@ -154,16 +164,131 @@ func (f *dataFinder) buildPolicyPlan(policies []*policydomain.Policy) *appplugin
 	return appplugins.NewStagePlan(f.pluginRegistry, policies, f.logger)
 }
 
+func (f *dataFinder) buildMCPPlans(c *domain.Consumer, unscoped, scoped []*policydomain.Policy) *PolicyPlans {
+	if c == nil || c.Type != domain.TypeMCP {
+		return nil
+	}
+	return BuildPolicyPlans(f.pluginRegistry, unscoped, scoped, f.logger)
+}
+
+// plansFor resolves what a consumer runs. An MCP consumer keeps the split it
+// has always had: the unscoped policies are its chain and the scoped ones are
+// selected per destination on tools/call. Any other consumer folds the crossing
+// policies into a single set that is both its Policies and its PolicyPlan
+// (RUN-1621, §2.1).
+func (f *dataFinder) plansFor(
+	c *domain.Consumer,
+	unscoped, scoped, crossing []*policydomain.Policy,
+) ([]*policydomain.Policy, *appplugins.StagePlan, *PolicyPlans) {
+	if c == nil || c.Type == domain.TypeMCP {
+		return unscoped, f.buildPolicyPlan(unscoped), f.buildMCPPlans(c, unscoped, scoped)
+	}
+	policies := f.inertPolicies(c, unscoped, crossing)
+	return policies, appplugins.NewInertStagePlan(f.pluginRegistry, policies, f.logger), nil
+}
+
+// inertPolicies is the set a non-MCP consumer runs: its unscoped policies plus
+// the crossing ones that survive the plugin opt-in and the coalescence. A
+// destination scope never reaches here, whether it arrived by attach or by
+// global (RUN-1621, rule 7), and neither does a tombstone (rule 1):
+// partitionScoped keeps both out of the crossing bucket.
+func (f *dataFinder) inertPolicies(c *domain.Consumer, unscoped, crossing []*policydomain.Policy) []*policydomain.Policy {
+	inert := f.coalesceInert(c, unscoped, f.inertSafeOnly(crossing))
+	if len(inert) == 0 {
+		return unscoped
+	}
+	out := make([]*policydomain.Policy, 0, len(unscoped)+len(inert))
+	out = append(out, unscoped...)
+	return append(out, inert...)
+}
+
+// inertSafeOnly drops the policies whose plugin gates by tool or registry name
+// (RUN-1621, rule 2). The opt-in is a default deny, so an unknown plugin and an
+// absent registry both drop everything.
+func (f *dataFinder) inertSafeOnly(crossing []*policydomain.Policy) []*policydomain.Policy {
+	out := make([]*policydomain.Policy, 0, len(crossing))
+	for _, p := range crossing {
+		if appplugins.IsInertSafe(f.pluginRegistry, p.Slug) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// coalesceInert resolves the collisions inertness creates. A crossing policy
+// loses its group outside MCP, so policies the level guard accepted as distinct
+// land on the same one. Three cases, in this order (RUN-1621, rule 3.6): an
+// unscoped policy of the same slug was written for exactly that traffic and
+// wins; a single collapsed policy runs, which is the requirement; two or more
+// contradict each other and none runs, because executing an arbitrary one is
+// worse than executing neither. A disabled policy occupies no level, the same
+// exemption the write-side guard makes, so it neither wins a collision nor
+// causes one.
+func (f *dataFinder) coalesceInert(c *domain.Consumer, unscoped, crossing []*policydomain.Policy) []*policydomain.Policy {
+	if len(crossing) == 0 {
+		return nil
+	}
+	unscopedSlugs := make(map[string]struct{}, len(unscoped))
+	for _, p := range unscoped {
+		if p.Enabled {
+			unscopedSlugs[p.Slug] = struct{}{}
+		}
+	}
+	order := make([]string, 0, len(crossing))
+	bySlug := make(map[string][]*policydomain.Policy, len(crossing))
+	for _, p := range crossing {
+		if !p.Enabled {
+			continue
+		}
+		if _, seen := bySlug[p.Slug]; !seen {
+			order = append(order, p.Slug)
+		}
+		bySlug[p.Slug] = append(bySlug[p.Slug], p)
+	}
+	out := make([]*policydomain.Policy, 0, len(order))
+	for _, slug := range order {
+		group := bySlug[slug]
+		if _, overridden := unscopedSlugs[slug]; overridden {
+			f.warnCoalesced(c, slug, group,
+				"scope-bound policies collapse onto an unscoped policy of the same slug outside MCP; only the unscoped one runs")
+			continue
+		}
+		if len(group) > 1 {
+			f.warnCoalesced(c, slug, group,
+				"scope-bound policies collapse onto the same level outside MCP and none of them runs; give them distinct consumers or merge them")
+			continue
+		}
+		out = append(out, group[0])
+	}
+	return out
+}
+
+func (f *dataFinder) warnCoalesced(c *domain.Consumer, slug string, group []*policydomain.Policy, msg string) {
+	names := make([]string, 0, len(group))
+	policyIDs := make([]string, 0, len(group))
+	for _, p := range group {
+		names = append(names, p.Name)
+		policyIDs = append(policyIDs, p.ID.String())
+	}
+	attrs := []any{
+		slog.String("slug", slug),
+		slog.Any("policy_names", names),
+		slog.Any("policy_ids", policyIDs),
+	}
+	if c != nil {
+		attrs = append(attrs, slog.String("consumer_id", c.ID.String()))
+	}
+	f.logger.Warn(msg, attrs...)
+}
+
 func (f *dataFinder) loadBackends(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
-	roles []*roledomain.Role,
 ) (map[ids.RegistryID]*registrydomain.Registry, error) {
 	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
 		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
 	})
-	idList = appendRoleRegistryIDs(idList, roles)
 	if len(idList) == 0 {
 		return map[ids.RegistryID]*registrydomain.Registry{}, nil
 	}
@@ -181,29 +306,44 @@ func (f *dataFinder) loadBackends(
 	return byID, nil
 }
 
-func (f *dataFinder) loadPolicies(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-) ([]*policydomain.Policy, map[ids.ConsumerID][]*policydomain.Policy, error) {
+// loadedPolicies is a gateway's policies split by placement: everywhere holds
+// the global policies, which reach every consumer; onMCP holds the global and
+// the MCP-wide ones in load order, which reach the MCP consumers and the Store;
+// and byConsumer holds the links of every policy that is neither. A
+// gateway-wide policy's links are ignored, so it never reaches a consumer twice
+// and an MCP-wide one never reaches an LLM or A2A consumer through a link.
+type loadedPolicies struct {
+	everywhere []*policydomain.Policy
+	onMCP      []*policydomain.Policy
+	byConsumer map[ids.ConsumerID][]*policydomain.Policy
+}
+
+func (f *dataFinder) loadPolicies(ctx context.Context, gatewayID ids.GatewayID) (loadedPolicies, error) {
 	all, err := f.policyRepo.ListByGateway(ctx, gatewayID)
 	if err != nil {
-		return nil, nil, err
+		return loadedPolicies{}, err
 	}
-	globals := make([]*policydomain.Policy, 0)
-	byConsumer := make(map[ids.ConsumerID][]*policydomain.Policy)
+	out := loadedPolicies{
+		everywhere: make([]*policydomain.Policy, 0),
+		onMCP:      make([]*policydomain.Policy, 0),
+		byConsumer: make(map[ids.ConsumerID][]*policydomain.Policy),
+	}
 	for _, p := range all {
 		if p == nil {
 			continue
 		}
-		if p.IsGlobal() {
-			globals = append(globals, p)
+		if p.GatewayWide() {
+			if p.IsGlobal() {
+				out.everywhere = append(out.everywhere, p)
+			}
+			out.onMCP = append(out.onMCP, p)
 			continue
 		}
 		for _, cid := range p.ConsumerIDs {
-			byConsumer[cid] = append(byConsumer[cid], p)
+			out.byConsumer[cid] = append(out.byConsumer[cid], p)
 		}
 	}
-	return globals, byConsumer, nil
+	return out, nil
 }
 
 func (f *dataFinder) loadAuths(
@@ -224,33 +364,6 @@ func (f *dataFinder) loadAuths(
 		byID[a.ID] = a
 	}
 	return byID, nil
-}
-
-func (f *dataFinder) loadRoles(ctx context.Context, gatewayID ids.GatewayID) ([]*roledomain.Role, error) {
-	if f.roleRepo == nil {
-		return nil, nil
-	}
-	return f.roleRepo.ListByGateway(ctx, gatewayID)
-}
-
-func appendRoleRegistryIDs(idList []ids.RegistryID, roles []*roledomain.Role) []ids.RegistryID {
-	seen := make(map[ids.RegistryID]struct{}, len(idList))
-	for _, id := range idList {
-		seen[id] = struct{}{}
-	}
-	for _, r := range roles {
-		if r == nil {
-			continue
-		}
-		for _, id := range r.RegistryIDs {
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			seen[id] = struct{}{}
-			idList = append(idList, id)
-		}
-	}
-	return idList
 }
 
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {
@@ -322,11 +435,66 @@ func collectBackends(idList []ids.RegistryID, byID map[ids.RegistryID]*registryd
 	return out
 }
 
-func composePolicies(globals, consumerScoped []*policydomain.Policy) []*policydomain.Policy {
-	out := make([]*policydomain.Policy, 0, len(globals)+len(consumerScoped))
-	overriddenSlugs := make(map[string]struct{}, len(consumerScoped))
-	seenIDs := make(map[ids.PolicyID]struct{}, len(globals)+len(consumerScoped))
-	for _, p := range consumerScoped {
+// scopeBuckets splits a policy list by how far its mcp_scope reaches: unscoped
+// policies run on every plane, crossing ones narrow by group alone and so also
+// reach a non-MCP plane, mcpOnly ones name a registry or a tool and cannot
+// leave MCP, and dormant ones are tombstones that run nowhere. scoped is the
+// three scoped buckets in load order, which is what the MCP plane selects
+// among; tombstones stay in it so a policy pruned to {} is reported as skipped
+// instead of vanishing.
+type scopeBuckets struct {
+	unscoped []*policydomain.Policy
+	crossing []*policydomain.Policy
+	mcpOnly  []*policydomain.Policy
+	dormant  []*policydomain.Policy
+	scoped   []*policydomain.Policy
+}
+
+func partitionScoped(policies []*policydomain.Policy) scopeBuckets {
+	buckets := scopeBuckets{unscoped: make([]*policydomain.Policy, 0, len(policies))}
+	for _, p := range policies {
+		if p == nil {
+			continue
+		}
+		switch {
+		case p.MCPScope == nil:
+			buckets.unscoped = append(buckets.unscoped, p)
+			continue
+		case p.Dormant():
+			buckets.dormant = append(buckets.dormant, p)
+		case p.MCPScope.CrossesPlanes():
+			buckets.crossing = append(buckets.crossing, p)
+		default:
+			buckets.mcpOnly = append(buckets.mcpOnly, p)
+		}
+		buckets.scoped = append(buckets.scoped, p)
+	}
+	return buckets
+}
+
+func mergeScoped(attached, gatewayWideScoped []*policydomain.Policy) []*policydomain.Policy {
+	if len(attached)+len(gatewayWideScoped) == 0 {
+		return nil
+	}
+	out := make([]*policydomain.Policy, 0, len(attached)+len(gatewayWideScoped))
+	seenIDs := make(map[ids.PolicyID]struct{}, len(attached)+len(gatewayWideScoped))
+	for _, list := range [][]*policydomain.Policy{attached, gatewayWideScoped} {
+		for _, p := range list {
+			if _, dup := seenIDs[p.ID]; dup {
+				continue
+			}
+			seenIDs[p.ID] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func composePolicies(gatewayWide, attached []*policydomain.Policy) []*policydomain.Policy {
+	out := make([]*policydomain.Policy, 0, len(gatewayWide)+len(attached))
+	overriddenSlugs := make(map[string]struct{}, len(attached))
+	seenIDs := make(map[ids.PolicyID]struct{}, len(gatewayWide)+len(attached))
+	for _, p := range attached {
 		if _, dup := seenIDs[p.ID]; dup {
 			continue
 		}
@@ -334,7 +502,7 @@ func composePolicies(globals, consumerScoped []*policydomain.Policy) []*policydo
 		overriddenSlugs[p.Slug] = struct{}{}
 		out = append(out, p)
 	}
-	for _, p := range globals {
+	for _, p := range gatewayWide {
 		if _, dup := seenIDs[p.ID]; dup {
 			continue
 		}

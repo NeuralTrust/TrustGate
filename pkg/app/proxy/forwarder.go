@@ -36,6 +36,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -43,13 +44,18 @@ var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
 	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
+	// ErrAmbiguousRequestBody refuses a chat request whose body
+	// adapter.HasAmbiguousKeys reports: one that is not valid JSON, starts
+	// with a byte order mark, repeats a key, or has two keys the decoder
+	// reads as one struct field. The plugins would judge what the decoder
+	// reads, and the upstream may read another body or another copy.
+	ErrAmbiguousRequestBody = errors.New("request body is not valid JSON, repeats a key, or has keys that differ only in case where the gateway decodes it")
 )
 
 type ForwardInput struct {
 	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
-	RoleIDs   []ids.RoleID
 	Request   *infracontext.RequestContext
 }
 
@@ -58,6 +64,12 @@ type ForwardResult struct {
 	Headers    map[string][]string
 	Body       []byte
 	Stream     iter.Seq2[[]byte, error]
+	// StreamSettled, read once Stream has returned, gives a channel closed
+	// when the upstream read Stream left running in the background is done,
+	// or nil when it left none. A stream guard cut leaves one: the drain that
+	// reads the rest of the upstream so its usage is still charged. The
+	// caller keeps the forward context alive until then.
+	StreamSettled func() <-chan struct{}
 }
 
 type forwardRequestDTO struct {
@@ -89,8 +101,21 @@ type forwarder struct {
 	resolver   approuting.Resolver
 	listing    appcatalog.ModelListing
 	limiter    ratelimitapp.Checker
+	codec      guardCodec
 	maxRetries int
 	logger     *slog.Logger
+}
+
+// ForwarderOption configures an optional forwarder capability.
+type ForwarderOption func(*forwarder)
+
+// WithStreamCodec attaches the codec the stream guard segments SSE events
+// with. Omitting it leaves the guard unbuilt, which is what keeps tests that do
+// not exercise streaming inspection off the path entirely.
+func WithStreamCodec(codec guardCodec) ForwarderOption {
+	return func(f *forwarder) {
+		f.codec = codec
+	}
 }
 
 // NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
@@ -106,11 +131,12 @@ func NewForwarder(
 	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
+	opts ...ForwarderOption,
 ) Forwarder {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
-	return &forwarder{
+	fwd := &forwarder{
 		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
 		invoker:    invoker,
 		executor:   executor,
@@ -121,6 +147,10 @@ func NewForwarder(
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(fwd)
+	}
+	return fwd
 }
 
 func maxRetriesFromConfig(cfg *config.Config) int {
@@ -133,6 +163,9 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
+	}
+	if ambiguousChatBody(in.Request) {
+		return nil, ErrAmbiguousRequestBody
 	}
 
 	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
@@ -183,6 +216,18 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	return f.invokeWithFailover(ctx, in.Consumer, dto, stream, route)
 }
 
+// ambiguousChatBody reports a chat request whose body the decoder may read
+// otherwise than the upstream. It runs before routing and before any plugin.
+// Only chat bodies are checked: the tool and prompt plugins judge them
+// through the canonical decode, whose struct shapes HasAmbiguousKeys knows.
+func ambiguousChatBody(req *infracontext.RequestContext) bool {
+	if req == nil || len(req.Body) == 0 {
+		return false
+	}
+	format := sourceFormatFromRequest(req)
+	return adapter.IsChatRequest(req.ProxyCapability, format) && adapter.HasAmbiguousKeys(format, req.Body)
+}
+
 func (f *forwarder) invokeWithFailover(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
@@ -202,6 +247,7 @@ func (f *forwarder) invokeWithFailover(
 
 	last := failoverState{}
 	lastKind := failureNone
+	var misses []modelMiss
 	current := route.route
 	fromFallback := route.fromFallback
 	sequential := len(route.chain) > 0
@@ -253,11 +299,15 @@ func (f *forwarder) invokeWithFailover(
 				if !route.pinned && filesIDNotFound(dto.request, resp) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
+					if sequential {
+						misses = append(misses, newModelMiss(bk, resp))
+					}
 					break
 				}
 				if sequential && responseCarriesModelNotFound(resp) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
+					misses = append(misses, newModelMiss(bk, resp))
 					break
 				}
 				reportSuccess(lb, bk)
@@ -265,7 +315,7 @@ func (f *forwarder) invokeWithFailover(
 			case OutcomeRetryable:
 				modelMissOnly = false
 				reason := failureReason(resp, err)
-				reportFailure(lb, bk, reason)
+				reportFailure(ctx, lb, bk, reason)
 				last = failoverState{resp: resp, err: err}
 				lastKind = classifyFailure(resp, err)
 				f.logRetry(bk, reason, budget)
@@ -286,8 +336,7 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, f.noRegistryServesModelError(
-			ctx, rc, dto.request.RequestedModel, excludedRegistries(excluded))
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, rc.Consumer.Slug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
 }
@@ -331,9 +380,6 @@ func (f *forwarder) nextCandidate(
 	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
 ) (*routingdomain.Route, bool) {
-	if isRoleBased(rc) {
-		return nil, false
-	}
 	if len(chain) > 0 {
 		return nextChainRoute(chain, excluded), false
 	}
@@ -360,9 +406,9 @@ func reportSuccess(lb *loadbalancer.LoadBalancer, bk *domain.Registry) {
 	}
 }
 
-func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
+func reportFailure(ctx context.Context, lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
 	if lb != nil {
-		lb.ReportFailure(bk, reason)
+		lb.ReportFailure(ctx, bk, reason)
 	}
 }
 
@@ -542,18 +588,131 @@ func (f *forwarder) finalizeStream(
 ) *ForwardResult {
 	pluginResp := dto.response
 	mergeStreamingResponse(pluginResp, providerResp)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+	outcome, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	if pe != nil {
 		f.drainAsync(providerResp.Stream)
 		return pluginErrorResult(pe)
 	}
-	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
+	if outcome != nil && outcome.ShortCircuit {
+		f.drainAsync(providerResp.Stream)
+		return f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome)
+	}
+	stream := providerResp.Stream
+	var cutBarrier func() <-chan struct{}
+	if guard := f.newStreamGuard(dto, pluginResp); guard != nil {
+		remaining, pe := guard.Run(ctx, stream)
+		if pe != nil {
+			f.drainAsync(remaining)
+			return pluginErrorResult(pe)
+		}
+		stream = remaining
+		cutBarrier = guard.cutBarrier
+	}
+	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
-		StatusCode: providerResp.StatusCode,
-		Headers:    pluginResp.Headers,
-		Stream:     out,
+		StatusCode:    providerResp.StatusCode,
+		Headers:       pluginResp.Headers,
+		Stream:        out,
+		StreamSettled: cutBarrier,
 	}
+}
+
+// shortCircuitStream renders a pre_response stop on the streaming leg. What it
+// returns is a buffered response — a status, headers and a body, with no stream
+// behind it — so it runs the two tails finalizeBodyGated runs after its own
+// short circuit. Without them a plugin-stopped streamed response would be
+// invisible to post_response auditing and to session recording while the
+// identical buffered response is not, which is an asymmetry nothing downstream
+// could explain.
+//
+// The headers cannot be the ones the outcome carries. They were cloned from the
+// provider's streaming response, and text/event-stream in front of a plugin's
+// body is a content type the body does not have: an SSE client reads it as a
+// stream that never yields an event and never ends. Content-Type is replaced
+// for the same reason pluginErrorResult sets it, and Transfer-Encoding goes
+// with it because it described a response that is no longer being sent.
+func (f *forwarder) shortCircuitStream(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	providerResp *ProviderResponse,
+	pluginResp *infracontext.ResponseContext,
+	outcome *appplugins.StageOutcome,
+) *ForwardResult {
+	// The response leg is no longer streaming, and saying so is what lets
+	// post_response read the body: every output-inspecting plugin skips a
+	// response marked streaming, because on that leg the body is empty by
+	// construction. Here it is not — it is whatever the plugin handed back.
+	pluginResp.Streaming = false
+	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	f.recordSession(
+		ctx, dto.request, providerResp.ResponseID,
+		dto.backend.Provider(), providerResp.Model, providerResp.StatusCode,
+	)
+	headers := cloneResponseHeaders(outcome.Headers)
+	deleteResponseHeader(headers, "Transfer-Encoding")
+	if len(outcome.Body) > 0 {
+		setResponseHeader(headers, "Content-Type", "application/json")
+	}
+	return &ForwardResult{
+		StatusCode: outcome.StatusCode,
+		Headers:    headers,
+		Body:       outcome.Body,
+	}
+}
+
+// newStreamGuard builds the head gate, and returns nil when no policy enabled
+// per-segment inspection. A gateway whose policies do not participate keeps the
+// streaming path it has today: not a wrapper that passes through, no wrapper at
+// all, so not one extra allocation or indirection sits between the provider and
+// the client.
+//
+// head_chars, on_error and the block-loop knobs come from StreamPlan rather
+// than from a literal, so a policy that sets on_error to fail_closed is not
+// silently run as fail_open.
+func (f *forwarder) newStreamGuard(
+	dto *forwardRequestDTO,
+	resp *infracontext.ResponseContext,
+) *streamGuard {
+	if f.executor == nil || f.codec == nil {
+		return nil
+	}
+	enabled, opts := dto.plan.StreamPlan(policydomain.StagePreResponse)
+	if !enabled {
+		return nil
+	}
+	runner, ok := f.executor.(segmentRunner)
+	if !ok {
+		return nil
+	}
+	guard := newStreamGuard(
+		runner,
+		f.codec,
+		sourceFormatFromRequest(dto.request),
+		appplugins.StageInput{
+			Stage:    policydomain.StagePreResponse,
+			Policies: dto.policies,
+			Plan:     dto.plan,
+			Request:  dto.request,
+			Response: resp,
+		},
+		streamGuardConfig{
+			headChars:     opts.HeadChars,
+			onError:       streamOnError(opts.OnError),
+			minChars:      opts.MinCharsBetweenEvals,
+			maxHold:       time.Duration(opts.MaxHoldMS) * time.Millisecond,
+			maxAccumBytes: opts.MaxAccumulatedBytes,
+		},
+		f.logger,
+	)
+	// A cut abandons the upstream mid-response, which is the same situation
+	// drainAsync already exists for: the usage the last chunk carries is read
+	// on the way through adaptStream, so draining is what keeps a cut stream
+	// charged. post_response then orders itself behind guard.cutBarrier, which
+	// is what makes "charged" true rather than aspirational.
+	guard.drain = f.drainAsync
+	return guard
 }
 
 // retimeSpanOnStreamEnd re-times the provider LLM span so its latency spans the
@@ -612,7 +771,7 @@ func (f *forwarder) finalizeBodyGated(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeBufferedResponse(pluginResp, providerResp)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+	if _, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
 	}
 	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)

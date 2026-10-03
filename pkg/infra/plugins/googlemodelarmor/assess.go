@@ -1,0 +1,233 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package googlemodelarmor
+
+const (
+	matchStateMatchFound    = "MATCH_FOUND"
+	invocationResultFailure = "FAILURE"
+	executionStateSuccess   = "EXECUTION_SUCCESS"
+)
+
+// Reasons a filter selected in block_on produced no verdict. They are recorded
+// on the event so an operator can tell a template that never enabled a filter
+// (fix it in Google Cloud) from one whose filter failed on this call.
+const (
+	reasonFilterNotInTemplate = "filter_not_in_template"
+	reasonFilterNotExecuted   = "filter_not_executed"
+)
+
+// unevaluatedFilter names the first filter selected in block_on that produced
+// no verdict, and why, or "" when every selected filter ran.
+//
+// This matters because a filter that did not run and a filter that found
+// nothing are otherwise indistinguishable to us: both arrive with no match,
+// and the envelope's own invocationResult can still say SUCCESS. Treating the
+// two alike would mean a guardrail quietly not guarding, which is the failure
+// mode with no symptom.
+//
+// A filter can fail to run in two ways, and both count:
+//   - it is absent from filterResults, which is what a template that never
+//     enabled it returns. block_on defaults to every filter, so without this a
+//     template enabling one filter would silently pass the other four.
+//   - it is present with an executionState other than EXECUTION_SUCCESS.
+//
+// An empty executionState on a present filter is treated as success: the
+// field is absent on older filter versions, and inventing a failure from
+// silence would fail every call closed against them.
+func unevaluatedFilter(result *SanitizationResult, on map[string]bool) (filter, reason string) {
+	if result == nil {
+		return "", ""
+	}
+	failed := func(state string) bool { return state != "" && state != executionStateSuccess }
+	fr := result.FilterResults
+
+	checks := []struct {
+		name    string
+		present bool
+		failed  bool
+	}{
+		{filterSDP, result.sdp() != nil, sdpFailed(result.sdp(), failed)},
+		{filterRAI, fr.RAI != nil && fr.RAI.RaiFilterResult != nil,
+			fr.RAI != nil && fr.RAI.RaiFilterResult != nil && failed(fr.RAI.RaiFilterResult.ExecutionState)},
+		{filterPIAndJailbreak, fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil,
+			fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil &&
+				failed(fr.PIAndJailbreak.PiAndJailbreakFilterResult.ExecutionState)},
+		{filterMaliciousURIs, fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil,
+			fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil &&
+				failed(fr.MaliciousURIs.MaliciousURIFilterResult.ExecutionState)},
+		{filterCSAM, fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil,
+			fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil && failed(fr.CSAM.CSAMFilterFilterResult.ExecutionState)},
+	}
+	for _, c := range checks {
+		if !on[c.name] {
+			continue
+		}
+		if !c.present {
+			return c.name, reasonFilterNotInTemplate
+		}
+		if c.failed {
+			return c.name, reasonFilterNotExecuted
+		}
+	}
+	return "", ""
+}
+
+// sdpFailed reports whether any branch the SDP filter answered with — inspect,
+// de-identify or redact — says it did not run.
+func sdpFailed(sdp *SDPResult, failed func(string) bool) bool {
+	if sdp == nil {
+		return false
+	}
+	return (sdp.DeidentifyResult != nil && failed(sdp.DeidentifyResult.ExecutionState)) ||
+		(sdp.InspectResult != nil && failed(sdp.InspectResult.ExecutionState)) ||
+		(sdp.RedactResult != nil && failed(sdp.RedactResult.ExecutionState))
+}
+
+// finding names the single filter that decided the outcome, plus the SDP
+// info types when the match came from the sensitive-data-protection filter.
+type finding struct {
+	filter    string
+	infoTypes []string
+	// confidence is Model Armor's own confidence in the match, for the
+	// filters that report one. Empty for those that do not (SDP, malicious
+	// URIs and CSAM answer matched or not, with no degree).
+	confidence string
+	// category names the RAI sub-filter that matched — hate_speech,
+	// dangerous, harassment, sexually_explicit. RAI reports confidence per
+	// category rather than overall, so a confidence without the category it
+	// belongs to would say nothing.
+	category string
+}
+
+type assessmentResult struct {
+	block     *finding
+	anonymize *finding
+}
+
+// inspect walks a sanitize response's filterResults and decides the single
+// outcome for this call: a block (the first matching filter, evaluated in a
+// fixed order so the same response always names the same filter), or an
+// anonymize when only SDP matched and its action is "anonymize".
+//
+// Block always wins over anonymize: if SDP matches with sdp_action=anonymize
+// but another block_on filter also matches, the request is blocked, not
+// silently anonymized and let through.
+func inspect(result *SanitizationResult, cfg Settings) assessmentResult {
+	var res assessmentResult
+	if result == nil {
+		return res
+	}
+	on := cfg.blockOnSet()
+
+	var sdpAnonymize *finding
+	if on[filterSDP] {
+		f, isAnonymize := inspectSDP(result.FilterResults.SDP, cfg.SDPAction)
+		if f != nil {
+			if isAnonymize {
+				sdpAnonymize = f
+			} else {
+				res.block = f
+			}
+		}
+	}
+	if res.block == nil && on[filterRAI] {
+		res.block = inspectRAI(result.FilterResults.RAI)
+	}
+	if res.block == nil && on[filterPIAndJailbreak] {
+		res.block = inspectPIAndJailbreak(result.FilterResults.PIAndJailbreak)
+	}
+	if res.block == nil && on[filterMaliciousURIs] {
+		res.block = inspectMaliciousURIs(result.FilterResults.MaliciousURIs)
+	}
+	if res.block == nil && on[filterCSAM] {
+		res.block = inspectCSAM(result.FilterResults.CSAM)
+	}
+	if res.block == nil && sdpAnonymize != nil {
+		res.anonymize = sdpAnonymize
+	}
+	return res
+}
+
+// inspectSDP reports the SDP finding (if any) and whether it is an anonymize
+// candidate rather than a block: SDP only anonymizes when the caller asked
+// for it (sdp_action=anonymize) and Model Armor actually returned
+// de-identified text to reinject.
+// A template configured with only an inspect template reports inspectResult
+// and never deidentifyResult, so reading deidentifyResult alone would miss
+// the match entirely and let sensitive data through unflagged. Both shapes
+// count as a match; only de-identified text can be anonymized.
+func inspectSDP(f *SDPFilterResult, action string) (*finding, bool) {
+	if f == nil || f.SdpFilterResult == nil {
+		return nil, false
+	}
+	if d := f.SdpFilterResult.DeidentifyResult; d != nil && d.MatchState == matchStateMatchFound {
+		find := &finding{filter: filterSDP, infoTypes: d.InfoTypes}
+		if action == sdpActionAnonymize && d.Data != nil && d.Data.Text != "" {
+			return find, true
+		}
+		return find, false
+	}
+	if i := f.SdpFilterResult.InspectResult; i != nil && i.MatchState == matchStateMatchFound {
+		return &finding{filter: filterSDP, infoTypes: i.InfoTypes}, false
+	}
+	return nil, false
+}
+
+// RAI reports an overall match plus a per-category breakdown, and the
+// confidence lives on the category rather than on the overall result. Pick
+// the category that actually matched so "blocked by rai" becomes "blocked by
+// rai/hate_speech at HIGH", which is the difference between a number someone
+// can act on and one they cannot. Categories iterate in map order, so ties
+// are broken by name to keep the same response naming the same category.
+func inspectRAI(f *RAIFilterResult) *finding {
+	if f == nil || f.RaiFilterResult == nil || f.RaiFilterResult.MatchState != matchStateMatchFound {
+		return nil
+	}
+	found := &finding{filter: filterRAI}
+	for name, cat := range f.RaiFilterResult.RaiFilterTypeResults {
+		if cat.MatchState != matchStateMatchFound {
+			continue
+		}
+		if found.category == "" || name < found.category {
+			found.category = name
+			found.confidence = cat.ConfidenceLevel
+		}
+	}
+	return found
+}
+
+func inspectPIAndJailbreak(f *PIAndJailbreakFilterResult) *finding {
+	if f == nil || f.PiAndJailbreakFilterResult == nil || f.PiAndJailbreakFilterResult.MatchState != matchStateMatchFound {
+		return nil
+	}
+	return &finding{
+		filter:     filterPIAndJailbreak,
+		confidence: f.PiAndJailbreakFilterResult.ConfidenceLevel,
+	}
+}
+
+func inspectMaliciousURIs(f *MaliciousURIsFilterResult) *finding {
+	if f == nil || f.MaliciousURIFilterResult == nil || f.MaliciousURIFilterResult.MatchState != matchStateMatchFound {
+		return nil
+	}
+	return &finding{filter: filterMaliciousURIs}
+}
+
+func inspectCSAM(f *CSAMFilterResult) *finding {
+	if f == nil || f.CSAMFilterFilterResult == nil || f.CSAMFilterFilterResult.MatchState != matchStateMatchFound {
+		return nil
+	}
+	return &finding{filter: filterCSAM}
+}

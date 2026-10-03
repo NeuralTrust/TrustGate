@@ -22,9 +22,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+func testTransport(t *testing.T) http.RoundTripper {
+	t.Helper()
+	transport := &http.Transport{}
+	t.Cleanup(transport.CloseIdleConnections)
+	return transport
+}
+
+func newTestClient(t *testing.T, timeout time.Duration) *client {
+	t.Helper()
+	return newClient(timeout, withBaseTransport(testTransport(t)))
+}
 
 func sampleRequest() GuardRequest {
 	payload, err := llmPayload("hello world")
@@ -118,7 +132,7 @@ func TestGuardDecodesResponses(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			c := newClient(2 * time.Second)
+			c := newTestClient(t, 2*time.Second)
 			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", "", sampleRequest(), false)
 			if tt.wantErr {
 				if err == nil {
@@ -157,6 +171,39 @@ func TestGuardDecodesResponses(t *testing.T) {
 	}
 }
 
+type recordingTransport struct {
+	calls  int
+	target string
+}
+
+func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.calls++
+	rt.target = req.URL.String()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{contentTypeJSON}},
+		Body:       io.NopCloser(strings.NewReader(`{"status":"allow"}`)),
+		Request:    req,
+	}, nil
+}
+
+func TestNewClientSendsThroughTheInjectedBaseTransport(t *testing.T) {
+	t.Parallel()
+	base := &recordingTransport{}
+
+	c := newClient(time.Second, withBaseTransport(base))
+	if _, err := c.Guard(context.Background(), "http://guard.invalid", "k", "", sampleRequest(), false); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	if base.calls != 1 {
+		t.Fatalf("base transport calls = %d, want 1: the client must not fall back to http.DefaultTransport", base.calls)
+	}
+	if want := "http://guard.invalid" + evaluatePath; base.target != want {
+		t.Fatalf("target = %q, want %q", base.target, want)
+	}
+}
+
 func TestGuardTrimsTrailingSlash(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +214,7 @@ func TestGuardTrimsTrailingSlash(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
@@ -178,7 +225,7 @@ func TestGuardTransportError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err == nil {
 		t.Fatal("expected transport error, got nil")
 	}
@@ -191,7 +238,7 @@ func TestGuardUnauthorizedReturnsSentinel(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	_, err := c.Guard(context.Background(), srv.URL, "stale-token", "", sampleRequest(), false)
 	if !errors.Is(err, errUnauthorized) {
 		t.Fatalf("err = %v, want errUnauthorized", err)
@@ -206,7 +253,7 @@ func TestGuardUnavailableReturnsTypedError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var unavailable *entitlementsUnavailableError
 	if !errors.As(err, &unavailable) {
@@ -229,7 +276,7 @@ func TestGuardRateLimitedReturnsTypedError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var limited *rateLimitedError
 	if !errors.As(err, &limited) {
@@ -254,7 +301,7 @@ func TestGuardRateLimitedWithoutHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var limited *rateLimitedError
 	if !errors.As(err, &limited) {
@@ -279,7 +326,7 @@ func TestGuardRateLimitedIgnoresUnrelatedHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var limited *rateLimitedError
 	if !errors.As(err, &limited) {
@@ -306,7 +353,7 @@ func TestGuardContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	if _, err := c.Guard(ctx, srv.URL, "k", "", sampleRequest(), false); err == nil {
 		t.Fatal("expected context error, got nil")
 	}
@@ -323,7 +370,7 @@ func TestGuardSetsTraceIDHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	if _, err := c.Guard(context.Background(), srv.URL, "k", wantTraceID, sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
@@ -339,8 +386,49 @@ func TestGuardOmitsTraceIDHeaderWhenEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(time.Second)
+	c := newTestClient(t, time.Second)
 	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
+	}
+}
+
+func timeoutHeaderServer(t *testing.T) (*httptest.Server, <-chan string) {
+	t.Helper()
+	got := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get(evaluateTimeoutHeader)
+		_, _ = io.WriteString(w, `{"status":"allow"}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, got
+}
+
+func TestGuardSendsTheTimeLeftOnTheCall(t *testing.T) {
+	t.Parallel()
+	srv, got := timeoutHeaderServer(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := newTestClient(t, time.Second).Guard(ctx, srv.URL, "k", "", sampleRequest(), false); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	header := <-got
+	ms, err := strconv.ParseInt(header, 10, 64)
+	if err != nil || ms < 14_000 || ms > 15_000 {
+		t.Fatalf("%s = %q, want the ~15000ms left on the call", evaluateTimeoutHeader, header)
+	}
+}
+
+func TestGuardWithoutDeadlineSendsNoTimeout(t *testing.T) {
+	t.Parallel()
+	srv, got := timeoutHeaderServer(t)
+
+	if _, err := newTestClient(t, time.Second).Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	if header := <-got; header != "" {
+		t.Fatalf("%s = %q, want none for a call without a deadline", evaluateTimeoutHeader, header)
 	}
 }

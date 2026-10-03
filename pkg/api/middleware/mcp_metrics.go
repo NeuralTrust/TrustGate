@@ -19,6 +19,7 @@ import (
 	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -28,6 +29,7 @@ import (
 )
 
 type MCPMetricsMiddleware struct {
+	resolveClientIP     func(string, string) string
 	worker              appmetrics.Worker
 	telemetryEnabled    bool
 	enableRequestTraces bool
@@ -36,6 +38,7 @@ type MCPMetricsMiddleware struct {
 
 func NewMCPMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MCPMetricsMiddleware {
 	return &MCPMetricsMiddleware{
+		resolveClientIP:     requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs),
 		worker:              worker,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
@@ -60,12 +63,11 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 
-		req := m.buildRequestContext(c, gatewayID)
-
 		defer func() {
 			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
 				return
 			}
+			req := m.buildRequestContext(c, gatewayID)
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
@@ -83,7 +85,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		GatewayID: gatewayID,
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
-		IP:        strings.Clone(c.IP()),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 		Kind:      events.KindMCP,
 	}
 	if gw != nil {
@@ -110,7 +112,7 @@ func (m *MCPMetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID strin
 		Method:    strings.Clone(c.Method()),
 		Path:      strings.Clone(c.Path()),
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        strings.Clone(c.IP()),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 	}
 }
 

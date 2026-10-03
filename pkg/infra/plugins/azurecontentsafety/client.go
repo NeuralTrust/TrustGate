@@ -22,6 +22,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const (
@@ -34,8 +36,15 @@ type client struct {
 }
 
 func newClient() *client {
+	// endpoint is a policy setting a tenant controls, so the transport comes
+	// from the guarded provider pool: it refuses private, loopback and
+	// link-local destinations at dial time, redirects included. Only the
+	// transport is borrowed: the client needs its own CheckRedirect, which the
+	// pool's client does not set.
+	pooled := providers.NewHTTPClientPool().Get(PluginName, defaultTimeout)
 	return &client{http: &http.Client{
-		Timeout: defaultTimeout,
+		Transport: pooled.Transport,
+		Timeout:   defaultTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

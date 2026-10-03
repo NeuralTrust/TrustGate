@@ -35,9 +35,11 @@ type mcpRouter struct {
 	authorizeHandler           *oauthhttp.AuthorizeHandler
 	callbackHandler            *oauthhttp.CallbackHandler
 	tokenHandler               *oauthhttp.TokenHandler
-	apiKeyConnectHandler       *oauthhttp.APIKeyConnectHandler
+	endUserConnectionsHandler  *oauthhttp.EndUserConnectionsHandler
 	connectHandler             *oauthhttp.ConnectHandler
+	configureHandler           *oauthhttp.ConfigureHandler
 	jwksHandler                *oauthhttp.JWKSHandler
+	whoAmIHandler              *mcphttp.WhoAmIHandler
 }
 
 func NewMCPRouter(
@@ -51,9 +53,11 @@ func NewMCPRouter(
 	authorizeHandler *oauthhttp.AuthorizeHandler,
 	callbackHandler *oauthhttp.CallbackHandler,
 	tokenHandler *oauthhttp.TokenHandler,
-	apiKeyConnectHandler *oauthhttp.APIKeyConnectHandler,
+	endUserConnectionsHandler *oauthhttp.EndUserConnectionsHandler,
 	connectHandler *oauthhttp.ConnectHandler,
+	configureHandler *oauthhttp.ConfigureHandler,
 	jwksHandler *oauthhttp.JWKSHandler,
+	whoAmIHandler *mcphttp.WhoAmIHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
 ) ServerRouter {
 	return &mcpRouter{
@@ -68,9 +72,11 @@ func NewMCPRouter(
 		authorizeHandler:           authorizeHandler,
 		callbackHandler:            callbackHandler,
 		tokenHandler:               tokenHandler,
-		apiKeyConnectHandler:       apiKeyConnectHandler,
+		endUserConnectionsHandler:  endUserConnectionsHandler,
 		connectHandler:             connectHandler,
+		configureHandler:           configureHandler,
 		jwksHandler:                jwksHandler,
+		whoAmIHandler:              whoAmIHandler,
 	}
 }
 
@@ -88,6 +94,14 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.WellKnownProtectedResourcePath+"/*", r.protectedResourceHandler.Handle)
 	app.Get(oauthhttp.WellKnownAuthorizationServerPath, r.authorizationServerHandler.Handle)
 	app.Post(oauthhttp.RegisterPath, r.registerHandler.Handle)
+	// The RFC 7592 management URI authenticates with the registration access
+	// token the registration response returned, not with the gateway's auth
+	// chain, so it sits here on the base transport. It must also precede the
+	// catch-all GET and DELETE routes below, which Fiber would otherwise match
+	// first and answer with the MCP stream or a 405.
+	app.Get(oauthhttp.RegisterClientPath, r.registerHandler.Read)
+	app.Put(oauthhttp.RegisterClientPath, r.registerHandler.Update)
+	app.Delete(oauthhttp.RegisterClientPath, r.registerHandler.Delete)
 	app.Get(oauthhttp.AuthorizePath, r.authorizeHandler.Handle)
 	app.Get(appoauth.CallbackPath, r.callbackHandler.Handle)
 	app.Post(oauthhttp.TokenPath, r.tokenHandler.Handle)
@@ -95,19 +109,38 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.JWKSPath, r.jwksHandler.Handle)
 
 	app.Get(oauthhttp.BrandAssetPath, oauthhttp.ServeBrandAsset)
+	// Starting an upstream OAuth flow has side effects (a fresh state + an
+	// authorize request the IdP records against the browser session), so the
+	// connect page submits it as a POST: a GET link is fair game for browser
+	// prefetching, and a prefetched start followed by the real click gives the
+	// IdP two pending approvals — Linear then rejects the first callback with
+	// "Invalid approval". GET stays for clients that already deep-link into it.
+	app.Post(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)
-	app.Get("/:slug/connect", r.apiKeyConnectHandler.Get)
-	app.Post("/:slug/connect", r.apiKeyConnectHandler.Post)
+	if r.endUserConnectionsHandler != nil {
+		app.Post("/:slug/connections/links", r.endUserConnectionsHandler.Link)
+		app.Get("/:slug/connections", r.endUserConnectionsHandler.List)
+	}
+	// Ahead of the catch-all below, which would otherwise answer this as an
+	// unserved path. It is the one question a client asks before it knows any
+	// slug at all, so it carries none.
+	if r.whoAmIHandler != nil {
+		app.Get(mcphttp.WhoAmIPath, r.whoAmIHandler.Handle)
+	}
 	app.Get("/+/connect", r.connectHandler.Page)
+	if r.configureHandler != nil {
+		app.Get("/+/configure", r.configureHandler.Page)
+		app.Post("/+/configure", r.configureHandler.Submit)
+	}
 
 	// The streamable-HTTP notification stream is a GET, so it has to be
 	// registered before the catch-all 405 and carry authentication as route
 	// middleware: a GET that is not asking for the event stream still answers
 	// 405 without authenticating.
 	app.Get("/*", r.mcpHandler.StreamRoute(r.authTransport.GetMiddlewares())...)
-	app.Delete("/*", r.mcpHandler.MethodNotAllowed)
+	app.Delete("/*", r.mcpHandler.NotServedHere)
 
 	installMiddlewares(app, r.authTransport)
 	app.Post("/*", r.mcpHandler.Handle)

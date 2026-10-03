@@ -17,6 +17,7 @@ package auth
 import (
 	"errors"
 	"testing"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
@@ -59,7 +60,7 @@ func TestConfig_ResolveSecretsFrom_KeepsOAuth2Secret(t *testing.T) {
 func TestNewAPIKeyAuth_GeneratesKey(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	a, err := NewAPIKeyAuth(gwID, "client-key", true)
+	a, err := NewAPIKeyAuth(gwID, "client-key", true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestAPIKeyPreview(t *testing.T) {
 
 func TestNewAPIKeyAuth_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
-	_, err := NewAPIKeyAuth(ids.New[ids.GatewayKind](), "  ", true)
+	_, err := NewAPIKeyAuth(ids.New[ids.GatewayKind](), "  ", true, nil)
 	if !errors.Is(err, ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
 	}
@@ -229,7 +230,7 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOIDC,
-			config:    Config{OIDC: &OIDCConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "issuer-without-scheme", Audiences: []string{"gateway"}}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -237,11 +238,11 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOIDC,
-			config: Config{OIDC: &OIDCConfig{
-				Issuer:            "https://issuer",
-				Audiences:         []string{"gateway"},
-				JWKSURL:           "https://issuer/.well-known/jwks.json",
-				AllowedAlgorithms: []string{"HS256"},
+			config: Config{OAuth2: &OAuth2Config{
+				Issuer:     "https://issuer",
+				Audiences:  []string{"gateway"},
+				JWKSURL:    "https://issuer/.well-known/jwks.json",
+				Algorithms: []string{"HS256"},
 			}},
 			wantErr: ErrInvalidConfig,
 		},
@@ -287,11 +288,13 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			Audiences: []string{"trustgate"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
-		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{
-			Issuer:            "https://issuer",
-			Audiences:         []string{"gateway"},
-			JWKSURL:           "https://issuer/.well-known/jwks.json",
-			AllowedAlgorithms: []string{"RS256"},
+		// The deprecated alias validates as oauth2 and is canonicalized on the
+		// way in, so a caller still pinned to it keeps working.
+		"oidc alias": {TypeOIDC, Config{OAuth2: &OAuth2Config{
+			Issuer:     "https://issuer",
+			Audiences:  []string{"gateway"},
+			JWKSURL:    "https://issuer/.well-known/jwks.json",
+			Algorithms: []string{"RS256"},
 		}}},
 	}
 	for name, tc := range cases {
@@ -311,7 +314,7 @@ func TestConfig_ScanNil(t *testing.T) {
 	if err := c.Scan(nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.OAuth2 != nil || c.OIDC != nil || c.MTLS != nil {
+	if c.OAuth2 != nil || c.MTLS != nil {
 		t.Fatal("expected empty config after scanning nil")
 	}
 }
@@ -337,5 +340,95 @@ func TestConfig_ValueRoundTrip(t *testing.T) {
 	}
 	if got.OAuth2 == nil || got.OAuth2.Issuer != original.OAuth2.Issuer {
 		t.Fatalf("round trip mismatch: %+v", got)
+	}
+}
+
+func TestSetExpiry(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+
+	t.Run("refuses an expiry that has already passed", func(t *testing.T) {
+		t.Parallel()
+		a, err := NewAPIKeyAuth(gwID, "k", true, nil)
+		if err != nil {
+			t.Fatalf("NewAPIKeyAuth: %v", err)
+		}
+		past := time.Now().UTC().Add(-time.Minute)
+		if err := a.SetExpiry(&past); !errors.Is(err, ErrExpiryInThePast) {
+			t.Fatalf("err = %v, want ErrExpiryInThePast", err)
+		}
+	})
+
+	t.Run("refuses an expiry on anything but an api key", func(t *testing.T) {
+		t.Parallel()
+		a, err := NewAuth(gwID, "idp", TypeOAuth2, true, Config{OAuth2: &OAuth2Config{
+			Issuer:    "https://issuer.example.com",
+			Audiences: []string{"gateway"},
+			JWKSURL:   "https://issuer.example.com/jwks",
+		}})
+		if err != nil {
+			t.Fatalf("NewAuth: %v", err)
+		}
+		future := time.Now().UTC().Add(time.Hour)
+		if err := a.SetExpiry(&future); !errors.Is(err, ErrInvalidType) {
+			t.Fatalf("err = %v, want ErrInvalidType", err)
+		}
+	})
+
+	t.Run("clears the expiry with nil", func(t *testing.T) {
+		t.Parallel()
+		future := time.Now().UTC().Add(time.Hour)
+		a, err := NewAPIKeyAuth(gwID, "k", true, &future)
+		if err != nil {
+			t.Fatalf("NewAPIKeyAuth: %v", err)
+		}
+		if a.ExpiresAt == nil {
+			t.Fatal("expected the expiry to be stored")
+		}
+		if err := a.SetExpiry(nil); err != nil {
+			t.Fatalf("SetExpiry(nil): %v", err)
+		}
+		if a.ExpiresAt != nil {
+			t.Fatal("expected the expiry to be cleared")
+		}
+	})
+}
+
+func TestIsExpired(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	past, future := now.Add(-time.Second), now.Add(time.Second)
+
+	// A key with no expiry is the default and never retires itself.
+	if (&Auth{}).IsExpired(now) {
+		t.Fatal("a key with no expiry must never read as expired")
+	}
+	if !(&Auth{ExpiresAt: &past}).IsExpired(now) {
+		t.Fatal("a key past its expiry must read as expired")
+	}
+	if (&Auth{ExpiresAt: &future}).IsExpired(now) {
+		t.Fatal("a key with time left must not read as expired")
+	}
+	// The instant itself counts as expired: "expires at 09:00" means it is no
+	// good at 09:00.
+	if !(&Auth{ExpiresAt: &now}).IsExpired(now) {
+		t.Fatal("a key must be expired at its own expiry instant")
+	}
+}
+
+// Rotating replaces the secret. It says nothing about the expiry, so a key with
+// three weeks left keeps them unless the caller asks for something else.
+func TestRotateAPIKey_KeepsTheExpiry(t *testing.T) {
+	t.Parallel()
+	future := time.Now().UTC().Add(72 * time.Hour)
+	a, err := NewAPIKeyAuth(ids.New[ids.GatewayKind](), "k", true, &future)
+	if err != nil {
+		t.Fatalf("NewAPIKeyAuth: %v", err)
+	}
+	if _, err := a.RotateAPIKey(); err != nil {
+		t.Fatalf("RotateAPIKey: %v", err)
+	}
+	if a.ExpiresAt == nil || !a.ExpiresAt.Equal(future) {
+		t.Fatalf("ExpiresAt = %v, want it untouched at %v", a.ExpiresAt, future)
 	}
 }

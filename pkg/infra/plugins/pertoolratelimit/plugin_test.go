@@ -18,8 +18,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +29,9 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -1313,7 +1317,6 @@ func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
 		{name: "nil request", req: nil},
 		{name: "empty body", req: openAIReq(nil)},
 		{name: "no tools declared", req: openAIReq(openAIReqBody(t))},
-		{name: "undecodable body", req: openAIReq([]byte("{not-json"))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1323,6 +1326,427 @@ func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, res)
 			assert.Equal(t, http.StatusOK, res.StatusCode)
+		})
+	}
+}
+
+func TestPlugin_PreRequest_UndecodableBodyFailsClosed(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+	body := []byte(`{"model":"gpt-4o","messages":123,"tools":[{"type":"function","function":{"name":"send_email"}}]}`)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(body), nil))
+
+	assert.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, http.StatusBadRequest, pe.StatusCode)
+	assert.Equal(t, "invalid_request_body", pe.Type)
+}
+
+func TestPlugin_PreRequest_ResponsesInputItemItCannotDecode(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+	body := []byte(`{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"mail it"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"mail"}},` +
+		`{"type":"input_text","text":42}` +
+		`],"tools":[{"type":"function","name":"send_email","parameters":{"type":"object"}}]}`)
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_responses", Body: body}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode, "the tool over budget is still enforced")
+}
+
+func TestPlugin_PreRequest_NonChatRequestsPassThrough(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
+		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
+		`{"model":"m","input":[1,"a"]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", "reject_response", "1m", 5)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+			req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_embeddings", ProxyCapability: "embeddings", Body: []byte(body)}
+
+			res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+		})
+	}
+}
+
+func mcpReqWithToolCallID(body []byte, toolCallID string) *infracontext.RequestContext {
+	req := mcpReq(body)
+	req.MCPToolCallID = toolCallID
+	return req
+}
+
+func globalInput(
+	stage policy.Stage,
+	settings map[string]any,
+	req *infracontext.RequestContext,
+) appplugins.ExecInput {
+	in := input(stage, settings, req, nil)
+	in.Scope = appplugins.RuntimeScope{GatewayID: "gw-1", Global: true}
+	return in
+}
+
+func globalKey(tool string, win int) string {
+	return counterKey("pt-1", "global", "gw-1", tool, win)
+}
+
+func TestPlugin_GlobalScope_CrossProtocolCountsOnce(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	mcp := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+	_, err := p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})))
+	_, err = p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", val)
+}
+
+// A tools/call is the only observation that witnesses a real execution: the
+// `role: tool` message only reports one. So a slot already claimed from a
+// conversation must not excuse an MCP count, or a client could fabricate one
+// tool result and then run the tool for free. The real order never needs it —
+// the tool runs before its result can be in the conversation, so the MCP path
+// always observes first.
+func TestPlugin_GlobalScope_ConversationClaimDoesNotExcuseMCPCount(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})))
+	_, err := p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	mcp := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+	_, err = p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
+}
+
+func TestPlugin_GlobalScope_CrossProtocolWithoutCorrelationCountsBoth(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	mcp := globalInput(policy.StagePreResponse, settings, mcpReq(mcpBody(t, "send_email")))
+	_, err := p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})))
+	_, err = p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
+}
+
+func TestPlugin_MCP_PreResponse_RepeatedToolCallIDStillCounts(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	for i := 0; i < 3; i++ {
+		in := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+		_, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+	}
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "3", val)
+}
+
+func TestPlugin_MCP_PreResponse_ClaimsDedupeSlotWithLargestWindowTTL(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := map[string]any{
+		"rules": []any{map[string]any{
+			"tool": "send_email", "behavior": "reject_response",
+			"windows": []any{
+				map[string]any{"duration": "1m", "max": 10},
+				map[string]any{"duration": "1h", "max": 100},
+			},
+		}},
+	}
+
+	in := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+
+	key := dedupeKey("pt-1", "global", "gw-1", "call_1")
+	ttl, err := rdb.TTL(context.Background(), key).Result()
+	require.NoError(t, err)
+	assert.Equal(t, time.Hour, ttl)
+}
+
+func TestPlugin_ConsumerScope_CrossProtocolChargesEachBudget(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	mcp := input(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"), nil)
+	mcp.Scope = appplugins.RuntimeScope{ConsumerID: "c-mcp", GatewayID: "gw-1"}
+	_, err := p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	llm := input(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})), nil)
+	llm.Scope = appplugins.RuntimeScope{ConsumerID: "c-llm", GatewayID: "gw-1"}
+	_, err = p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	mcpVal, err := rdb.Get(context.Background(), counterKey("pt-1", "consumer", "c-mcp", "send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", mcpVal)
+	llmVal, err := rdb.Get(context.Background(), counterKey("pt-1", "consumer", "c-llm", "send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", llmVal)
+}
+
+func TestPlugin_GlobalScope_CrossProtocolBudgetReachesMax(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 3)
+
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("call_%d", i)
+		mcp := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), id))
+		_, err := p.Execute(context.Background(), mcp)
+		require.NoError(t, err)
+
+		llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{id, "send_email"})))
+		_, err = p.Execute(context.Background(), llm)
+		require.NoError(t, err)
+	}
+
+	blocked := globalInput(policy.StagePreRequest, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_3"))
+	_, err := p.Execute(context.Background(), blocked)
+	var pe *appplugins.PluginError
+	require.ErrorAs(t, err, &pe)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+}
+
+// commandBreakerHook fails any command (plain or inside a pipeline/script)
+// whose name is in targets, letting everything else through untouched —
+// including go-redis's own internal connection handshake, which a
+// blanket break would take down too. It is how the tests below simulate a
+// counter-store outage on exactly one leg (a GET read, or the
+// EVALSHA/EVAL a counting script runs as) while leaving the other leg
+// free to succeed, without needing to shut miniredis down outright.
+type commandBreakerHook struct {
+	targets map[string]struct{}
+	err     error
+}
+
+func (h commandBreakerHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h commandBreakerHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if _, ok := h.targets[cmd.Name()]; ok {
+			return h.err
+		}
+		return next(ctx, cmd)
+	}
+}
+func (h commandBreakerHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, c := range cmds {
+			if _, ok := h.targets[c.Name()]; ok {
+				return h.err
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func breakReads(err error) commandBreakerHook {
+	return commandBreakerHook{targets: map[string]struct{}{"get": {}}, err: err}
+}
+
+func breakRecords(err error) commandBreakerHook {
+	return commandBreakerHook{targets: map[string]struct{}{"evalsha": {}, "eval": {}}, err: err}
+}
+
+func assertCounterFailedOpen(t *testing.T, res *appplugins.Result, err error, span *trace.Span, wantDetail string) {
+	t.Helper()
+	require.NoError(t, err, "a counter-store failure must never reject the request")
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	require.NotNil(t, span.Plugin)
+	assert.Equal(t, "failed_open", span.Plugin.Decision)
+	data, ok := span.Plugin.Extras.(PerToolRateLimiterData)
+	require.True(t, ok, "extras should carry per-tool rate limiter data")
+	assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+	assert.Equal(t, wantDetail, data.FailureDetail)
+}
+
+// TestPlugin_PreRequest_CounterStoreReadFailureFailsOpen proves RUN-1675 for
+// the LLM preRequest path's read leg (spentBefore/overLimit's GET): a
+// counter-store outage never refuses the request, even though this plugin
+// only supports enforce mode — "our own infrastructure fails open" holds in
+// every mode, not just the non-blocking ones.
+func TestPlugin_PreRequest_CounterStoreReadFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakReads(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, openAIReq(body), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "read")
+}
+
+// TestPlugin_PreRequest_CounterStoreRecordFailureFailsOpen proves the same
+// rule for the record leg (countExecuted/recordOnce's counting script): the
+// read (spentBefore) succeeds against the still-live counter store, and only
+// the write-back fails, which must not turn a request that already cleared
+// its budget check into a refusal.
+func TestPlugin_PreRequest_CounterStoreRecordFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakRecords(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, openAIReq(body), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "record")
+}
+
+// TestPlugin_PreRequest_CounterStoreRecordFailureAfterExceededReadKeepsToolTelemetry
+// proves the per_tool_rate_limiter half of item 3 of the RUN-1675 review:
+// spentBefore already found a tool over its window in this same request, so
+// a countExecuted (record) failure right after it must not lose that signal
+// to a bare failure record — see spentTelemetry in plugin.go.
+func TestPlugin_PreRequest_CounterStoreRecordFailureAfterExceededReadKeepsToolTelemetry(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	seed(t, rdb, consumerKey("send_email", 0), 5) // already well over the max of 1
+
+	rdb.AddHook(breakRecords(errors.New("dial tcp: connection refused")))
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, openAIReq(body), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "record")
+
+	data, ok := span.Plugin.Extras.(PerToolRateLimiterData)
+	require.True(t, ok, "extras should carry per-tool rate limiter data")
+	assert.Equal(t, "send_email", data.Tool, "the tool spentBefore already found over budget must survive the record failure")
+	assert.True(t, data.LimitExceeded)
+	assert.Equal(t, 5, data.CurrentCount)
+}
+
+// TestPlugin_MCP_PreRequest_CounterStoreReadFailureFailsOpen is the same read
+// failure, on the MCP tools/call path (mcpPreRequest/overLimit's GET).
+func TestPlugin_MCP_PreRequest_CounterStoreReadFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakReads(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "read")
+}
+
+// TestPlugin_MCP_PreResponse_CounterStoreRecordFailureFailsOpen is the same
+// record failure, on the MCP tools/call path (mcpPreResponse's counting
+// script, which has no preceding read of its own).
+func TestPlugin_MCP_PreResponse_CounterStoreRecordFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakRecords(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreResponse, settings, mcpReq(mcpBody(t, "send_email")), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "record")
+}
+
+func geminiReqBody(t *testing.T, tools ...string) []byte {
+	t.Helper()
+	decls := make([]map[string]any, 0, len(tools))
+	for _, name := range tools {
+		decls = append(decls, map[string]any{"name": name, "parameters": map[string]any{"type": "object"}})
+	}
+	b, err := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+		"tools":    []any{map[string]any{"functionDeclarations": decls}},
+	})
+	require.NoError(t, err)
+	return b
+}
+
+// RUN-1745: Gemini and Vertex signal a stream in the URL and their bodies carry
+// no stream flag. Inject read only the decoded flag, so on a Gemini stream the
+// request leg left the tool in and the response leg skipped the stream: an
+// over-budget tool went through.
+func TestPlugin_PreRequest_InjectGeminiURLStreamDegradesToStrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		query url.Values
+		strip bool
+	}{
+		{name: "streamGenerateContent action", path: "/v1beta/models/gemini-2.0-flash:streamGenerateContent", strip: true},
+		{name: "alt=sse query", path: "/v1beta/models/gemini-2.0-flash:generateContent", query: url.Values{"alt": {"sse"}}, strip: true},
+		{name: "buffered generateContent", path: "/v1beta/models/gemini-2.0-flash:generateContent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", "inject_error_result", "1m", 5)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+			req := &infracontext.RequestContext{
+				Provider: "google", SourceFormat: "google",
+				Path: tt.path, Query: tt.query,
+				Body: geminiReqBody(t, "send_email", "lookup"),
+			}
+
+			res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+			require.NoError(t, err)
+
+			if !tt.strip {
+				assert.Nil(t, res.RequestBody, "buffered inject is handled at pre_response")
+				return
+			}
+			require.NotNil(t, res.RequestBody, "a Gemini stream must strip the tool at pre_request")
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatGemini)
+			require.NoError(t, err)
+			require.Len(t, decoded.Tools, 1)
+			assert.Equal(t, "lookup", decoded.Tools[0].Name)
 		})
 	}
 }

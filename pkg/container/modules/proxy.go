@@ -18,9 +18,16 @@ import (
 	"log/slog"
 
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -33,8 +40,13 @@ func Proxy(c *container.Container) error {
 	}
 	// NewProviderInvoker depends on a segregated codec view; the concrete adapter
 	// registry satisfies it, but dig resolves by exact type so we bind it here.
-	if err := c.Provide(func(locator factory.ProviderLocator, registry *adapter.Registry, logger *slog.Logger) appproxy.ProviderInvoker {
-		return appproxy.NewProviderInvoker(locator, registry, logger)
+	if err := c.Provide(func(
+		locator factory.ProviderLocator,
+		registry *adapter.Registry,
+		logger *slog.Logger,
+		catalog catalogdomain.Repository,
+	) appproxy.ProviderInvoker {
+		return appproxy.NewProviderInvoker(locator, registry, logger, appproxy.WithCatalog(catalog))
 	}); err != nil {
 		return err
 	}
@@ -43,13 +55,36 @@ func Proxy(c *container.Container) error {
 	if err := c.Provide(func(client cache.Client) loadbalancer.RedisProvider { return client }); err != nil {
 		return err
 	}
-	if err := c.Provide(appproxy.NewForwarder); err != nil {
+	// The stream guard needs the same adapter registry under its own narrow
+	// view; dig resolves by exact type, so bind it here as the invoker does.
+	if err := c.Provide(func(
+		factory loadbalancer.Factory,
+		cacheClient loadbalancer.RedisProvider,
+		manager *cache.TTLMapManager,
+		invoker appproxy.ProviderInvoker,
+		executor appplugins.Executor,
+		sessions appsession.Store,
+		resolver approuting.Resolver,
+		listing appcatalog.ModelListing,
+		limiter ratelimitapp.Checker,
+		registry *adapter.Registry,
+		cfg *config.Config,
+		logger *slog.Logger,
+	) appproxy.Forwarder {
+		return appproxy.NewForwarder(
+			factory, cacheClient, manager, invoker, executor, sessions, resolver, listing, limiter, cfg, logger,
+			appproxy.WithStreamCodec(registry),
+		)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appproxy.NewModelsLister); err != nil {
 		return err
 	}
-	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister) *proxyhttp.ForwardedHandler {
-		return proxyhttp.NewForwardedHandler(fwd).WithModels(models)
+	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister, cfg *config.Config, logger *slog.Logger) *proxyhttp.ForwardedHandler {
+		return proxyhttp.NewForwardedHandler(fwd).
+			WithModels(models).
+			WithClientIPResolver(requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs)).
+			WithLogger(logger)
 	})
 }

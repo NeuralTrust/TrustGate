@@ -73,8 +73,14 @@ type MCPAuthRequest struct {
 	Audience string `json:"audience,omitempty"`
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
+	// IdentityID is the gateway oauth2 auth that signs an obo or
+	// token_exchange call.
+	IdentityID string `json:"identity_id,omitempty"`
 
-	Provider                string   `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Account is whose account a forwarded credential is: the caller's own
+	// (empty, or "user") or the one the instance holds for everyone ("shared").
+	Account                 string   `json:"account,omitempty"`
 	Registration            string   `json:"registration,omitempty"`
 	ClientID                string   `json:"client_id,omitempty"`
 	ClientSecret            string   `json:"client_secret,omitempty"` // #nosec G117
@@ -251,7 +257,9 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 			Audience:                t.Auth.Audience,
 			Scope:                   t.Auth.Scope,
 			Actor:                   t.Auth.Actor,
+			IdentityID:              t.Auth.IdentityID,
 			Provider:                t.Auth.Provider,
+			Account:                 domain.MCPAccount(t.Auth.Account),
 			Registration:            domain.MCPClientRegistration(t.Auth.Registration),
 			ClientID:                t.Auth.ClientID,
 			ClientSecret:            t.Auth.ClientSecret,

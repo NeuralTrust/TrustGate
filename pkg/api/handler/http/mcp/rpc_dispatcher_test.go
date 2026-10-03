@@ -235,9 +235,7 @@ func TestRPCGateway_ToolsCall_ForwardsRawResult(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
-		Return(raw, nil).Once()
+	expectToolCall(composer, "echo", raw, nil)
 
 	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
 	res, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
@@ -296,6 +294,7 @@ func blockErr(traceID string) *appplugins.PluginError {
 func TestRPCGateway_ToolsCall_PreRequestBlock_SkipsUpstream(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
+	expectResolve(composer, "echo")
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, blockErr("pre")).Once()
 
@@ -311,14 +310,14 @@ func TestRPCGateway_ToolsCall_PreRequestBlock_SkipsUpstream(t *testing.T) {
 	var rpcErr *appmcp.RPCError
 	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
 	assert.Equal(t, int64(-32001), rpcErr.Code)
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ToolsCall_PreResponseBlock_DiscardsResult(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"content":[{"type":"text","text":"secret"}]}`)
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).Return(raw, nil).Once()
+	expectToolCall(composer, "echo", raw, nil)
 
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
@@ -346,7 +345,7 @@ func TestRPCGateway_ToolsCall_Allow_ReturnsResultUnchanged(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).Return(raw, nil).Once()
+	expectToolCall(composer, "echo", raw, nil)
 
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(&appplugins.StageOutcome{}, nil).Twice()
@@ -456,6 +455,7 @@ func TestRPCGateway_ToolsList_ThreatBlockStopsDiscovery(t *testing.T) {
 func TestHandler_ToolsCall_PreRequestBlock_RidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
+	expectResolve(composer, "echo")
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, blockErr("e2e")).Once()
 
@@ -469,12 +469,13 @@ func TestHandler_ToolsCall_PreRequestBlock_RidesOn200(t *testing.T) {
 	if rpcErr["code"].(float64) != -32001 {
 		t.Fatalf("code = %v, want -32001 policy blocked", rpcErr["code"])
 	}
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
+	expectResolve(composer, "echo")
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, &appplugins.PluginError{
 		StatusCode: 429,
@@ -508,7 +509,7 @@ func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	rpcErr := body["error"].(map[string]any)
 	require.Equal(t, float64(-32004), rpcErr["code"])
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ToolsList_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
@@ -560,7 +561,8 @@ func TestRPCGateway_ToolsCall_GatewayPlanExceeded_ReturnsRPCErrorWithHeaders(t *
 	assert.Equal(t, []string{"60"}, rpcErr.HTTPHeaders["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, rpcErr.HTTPHeaders["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonBurst}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Resolve", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ResourcesRead_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
@@ -627,7 +629,8 @@ func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_ReturnsRPCError(t *testing.
 	var rpcErr *appmcp.RPCError
 	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
 	assert.Equal(t, appmcp.CodeUnavailable, rpcErr.Code)
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Resolve", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // End to end: TrustGuard masks the tool input, and the masked arguments — not
@@ -637,8 +640,9 @@ func TestHandler_ToolsCall_MaskedArgumentsReachUpstream(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	var forwarded json.RawMessage
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
-		Run(func(_ context.Context, _ *appconsumer.RoutableConsumer, _ string, args json.RawMessage) {
+	target := expectResolve(composer, "echo")
+	composer.EXPECT().Invoke(mock.Anything, mock.Anything, target, mock.Anything).
+		Run(func(_ context.Context, _ *appconsumer.RoutableConsumer, _ *appmcp.ResolvedTool, args json.RawMessage) {
 			forwarded = args
 		}).
 		Return(json.RawMessage(`{"content":[]}`), nil).Once()
@@ -666,8 +670,7 @@ func TestHandler_ToolsCall_MaskedArgumentsReachUpstream(t *testing.T) {
 func TestHandler_ToolsCall_MaskedResultReachesClient(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
-		Return(json.RawMessage(`{"content":[{"type":"text","text":"555-1234"}]}`), nil).Once()
+	expectToolCall(composer, "echo", json.RawMessage(`{"content":[{"type":"text","text":"555-1234"}]}`), nil)
 
 	masked := `{"content":[{"type":"text","text":"[REDACTED]"}]}`
 	exec := pluginmocks.NewExecutor(t)
@@ -690,5 +693,7 @@ func TestHandler_ToolsCall_MaskedResultReachesClient(t *testing.T) {
 	require.Nil(t, body["error"], "masking must not fail the call: %v", body["error"])
 	got, err := json.Marshal(body["result"])
 	require.NoError(t, err)
-	assert.JSONEq(t, masked, string(got))
+	// The masked body reaches the client as the plugin wrote it, plus the
+	// envelope every result carries.
+	assert.JSONEq(t, `{"content":[{"type":"text","text":"[REDACTED]"}],"resultType":"complete"}`, string(got))
 }

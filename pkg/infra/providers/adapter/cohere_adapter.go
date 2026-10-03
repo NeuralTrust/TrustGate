@@ -22,27 +22,28 @@ import (
 type CohereAdapter struct{}
 
 type cohereRequest struct {
-	Model       string                 `json:"model,omitempty"`
-	Messages    []cohereMessage        `json:"messages"`
-	MaxTokens   *int                   `json:"max_tokens,omitempty"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	TopP        *float64               `json:"p,omitempty"`
-	Stream      *bool                  `json:"stream,omitempty"`
-	Tools       []cohereTool           `json:"tools,omitempty"`
-	ToolChoice  *cohereToolChoice      `json:"tool_choice,omitempty"`
-	StopSeqs    []string               `json:"stop_sequences,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Messages    []cohereMessage   `json:"messages"`
+	MaxTokens   *int              `json:"max_tokens,omitempty"`
+	Temperature *float64          `json:"temperature,omitempty"`
+	TopP        *float64          `json:"p,omitempty"`
+	Stream      *bool             `json:"stream,omitempty"`
+	Tools       []cohereTool      `json:"tools,omitempty"`
+	ToolChoice  *cohereToolChoice `json:"tool_choice,omitempty"`
+	StopSeqs    []string          `json:"stop_sequences,omitempty"`
 }
 
 type cohereMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"`
+	ToolPlan   string           `json:"tool_plan,omitempty"`
 	ToolCalls  []cohereToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type cohereTool struct {
-	Type     string              `json:"type"`
-	Function cohereToolFunction  `json:"function"`
+	Type     string             `json:"type"`
+	Function cohereToolFunction `json:"function"`
 }
 
 type cohereToolFunction struct {
@@ -51,9 +52,41 @@ type cohereToolFunction struct {
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
+// cohereToolChoice is the v2 tool_choice, the string "REQUIRED" or "NONE".
+// The object form with a type and a name is still read.
 type cohereToolChoice struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
+}
+
+func (c *cohereToolChoice) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*c = cohereToolChoice{Type: strings.ToLower(s)}
+		return nil
+	}
+	type plain cohereToolChoice
+	return json.Unmarshal(b, (*plain)(c))
+}
+
+func (c cohereToolChoice) MarshalJSON() ([]byte, error) {
+	return json.Marshal(strings.ToUpper(c.Type))
+}
+
+// cohereToolChoiceFrom returns the v2 choice for tc: REQUIRED for any
+// forced call, since v2 cannot name the tool, NONE for none, and nil for
+// auto, which is the default.
+func cohereToolChoiceFrom(tc *CanonicalToolChoice) *cohereToolChoice {
+	if tc == nil {
+		return nil
+	}
+	switch strings.ToLower(tc.Type) {
+	case "required", "any", "tool":
+		return &cohereToolChoice{Type: "required"}
+	case "none":
+		return &cohereToolChoice{Type: "none"}
+	}
+	return nil
 }
 
 type cohereToolCall struct {
@@ -75,9 +108,10 @@ type cohereResponse struct {
 }
 
 type cohereAssistantMessage struct {
-	Role      string                  `json:"role"`
-	Content   []cohereContentBlock    `json:"content,omitempty"`
-	ToolCalls []cohereToolCall        `json:"tool_calls,omitempty"`
+	Role      string               `json:"role"`
+	Content   []cohereContentBlock `json:"content,omitempty"`
+	ToolPlan  string               `json:"tool_plan,omitempty"`
+	ToolCalls []cohereToolCall     `json:"tool_calls,omitempty"`
 }
 
 type cohereContentBlock struct {
@@ -86,7 +120,9 @@ type cohereContentBlock struct {
 }
 
 type cohereUsage struct {
-	Tokens *cohereUsageTokens `json:"tokens,omitempty"`
+	BilledUnits  *cohereUsageTokens `json:"billed_units,omitempty"`
+	Tokens       *cohereUsageTokens `json:"tokens,omitempty"`
+	CachedTokens int                `json:"cached_tokens,omitempty"`
 }
 
 type cohereUsageTokens struct {
@@ -95,6 +131,7 @@ type cohereUsageTokens struct {
 }
 
 type cohereStreamEvent struct {
+	ID    string          `json:"id,omitempty"`
 	Type  string          `json:"type"`
 	Index int             `json:"index,omitempty"`
 	Delta json.RawMessage `json:"delta,omitempty"`
@@ -110,19 +147,44 @@ type cohereContentDeltaMessage struct {
 
 type cohereMessageEndDelta struct {
 	FinishReason string       `json:"finish_reason,omitempty"`
+	Error        string       `json:"error,omitempty"`
 	Usage        *cohereUsage `json:"usage,omitempty"`
 }
 
-type cohereToolCallDelta struct {
-	ID       string                 `json:"id,omitempty"`
-	Function *cohereToolCallFunction `json:"function,omitempty"`
+type cohereToolPlanDelta struct {
+	Message *struct {
+		ToolPlan string `json:"tool_plan"`
+	} `json:"message"`
 }
 
 func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
-	if u == nil || u.Tokens == nil {
+	if u == nil || (u.Tokens == nil && u.BilledUnits == nil) {
 		return nil
 	}
-	return newCanonicalUsage(u.Tokens.InputTokens, u.Tokens.OutputTokens, 0)
+	var in, out int
+	for _, t := range []*cohereUsageTokens{u.Tokens, u.BilledUnits} {
+		if t != nil {
+			in, out = max(in, t.InputTokens), max(out, t.OutputTokens)
+		}
+	}
+	// Billed input omits uncharged prompt tokens, so without usage.tokens this is only a lower bound.
+	cu := newCanonicalUsage(max(in, u.CachedTokens), out, 0)
+	if cu != nil && u.CachedTokens > 0 {
+		cu.setCache(u.CachedTokens, 0, 0)
+	}
+	return cu
+}
+
+func cohereUsageFromCanonical(u *CanonicalUsage) *cohereUsage {
+	if u == nil {
+		return nil
+	}
+	tokens := &cohereUsageTokens{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
+	return &cohereUsage{
+		BilledUnits:  tokens,
+		Tokens:       tokens,
+		CachedTokens: u.CachedInputTokens,
+	}
 }
 
 func cohereFinishToCanonical(reason string) string {
@@ -135,11 +197,32 @@ func cohereFinishToCanonical(reason string) string {
 		return "tool_calls"
 	case "STOP_SEQUENCE":
 		return "stop"
+	case "ERROR_TOXIC":
+		return "content_filter"
+	case "TIMEOUT", "ERROR_LIMIT":
+		return "error"
 	default:
 		return strings.ToLower(reason)
 	}
 }
 
+// cohereFinishError is the one member of Cohere's finish_reason enum that is
+// not a claim the response finished cleanly.
+const cohereFinishError = "ERROR"
+
+// canonicalFinishToCohere maps a canonical finish reason onto the finish_reason
+// enum Cohere v2 defines on message-end. content_filter becomes ERROR: a cut
+// returning COMPLETE is indistinguishable from a normal ending. ERROR also
+// carries the whole signal on its own, because Cohere's streamed-response union
+// has no error member for StreamBlockedEvent to use.
+//
+// ERROR alone is not enough on its own, though. No Cohere SDK in Python, TS or
+// Go branches on the member: it appears only at its own declaration in all
+// three, and v2/raw_client.py ignores finish_reason outright. A client that
+// concatenates content-delta therefore sees a clean, non-raising end, which is
+// why the streamed encode also fills delta.error — the dialect's only "why"
+// channel, documented as "An error message if an error occurred during the
+// generation."
 func canonicalFinishToCohere(reason string) string {
 	switch reason {
 	case "stop":
@@ -148,6 +231,8 @@ func canonicalFinishToCohere(reason string) string {
 		return "MAX_TOKENS"
 	case "tool_calls":
 		return "TOOL_CALL"
+	case "content_filter", "refusal":
+		return cohereFinishError
 	default:
 		return "COMPLETE"
 	}
@@ -210,6 +295,9 @@ func (a *CohereAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 			for _, cm := range decodeCohereMessageContent(m.Role, m.Content) {
 				msg.Content = cm.Content
 			}
+			if msg.Content == "" {
+				msg.Content = m.ToolPlan
+			}
 			for _, tc := range m.ToolCalls {
 				msg.ToolCalls = append(msg.ToolCalls, CanonicalToolCall{
 					ID:        tc.ID,
@@ -266,11 +354,7 @@ func (a *CohereAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			continue
 		}
 		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-			msg := cohereMessage{Role: "assistant"}
-			if m.Content != "" {
-				block, _ := json.Marshal([]cohereContentBlock{{Type: "text", Text: m.Content}})
-				msg.Content = block
-			}
+			msg := cohereMessage{Role: "assistant", ToolPlan: m.Content}
 			for _, tc := range m.ToolCalls {
 				msg.ToolCalls = append(msg.ToolCalls, cohereToolCall{
 					ID:   tc.ID,
@@ -303,12 +387,7 @@ func (a *CohereAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			},
 		})
 	}
-	if req.ToolChoice != nil {
-		out.ToolChoice = &cohereToolChoice{
-			Type: req.ToolChoice.Type,
-			Name: req.ToolChoice.Name,
-		}
-	}
+	out.ToolChoice = cohereToolChoiceFrom(req.ToolChoice)
 	return json.Marshal(out)
 }
 
@@ -328,6 +407,9 @@ func (a *CohereAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 			cr.Content += block.Text
 		}
 	}
+	if cr.Content == "" {
+		cr.Content = resp.Message.ToolPlan
+	}
 	for _, tc := range resp.Message.ToolCalls {
 		cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
 			ID:        tc.ID,
@@ -340,7 +422,11 @@ func (a *CohereAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 
 func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
 	var content []cohereContentBlock
-	if resp.Content != "" {
+	var toolPlan string
+	switch {
+	case len(resp.ToolCalls) > 0:
+		toolPlan = resp.Content
+	case resp.Content != "":
 		content = append(content, cohereContentBlock{Type: "text", Text: resp.Content})
 	}
 	var toolCalls []cohereToolCall
@@ -354,23 +440,21 @@ func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 			},
 		})
 	}
+	finishReason, _ := cohereFinish(resp.FinishReason)
+	if len(toolCalls) > 0 {
+		finishReason, _ = cohereStreamFinishReason(resp.FinishReason, true)
+	}
 	out := cohereResponse{
 		ID:           resp.ID,
-		FinishReason: canonicalFinishToCohere(resp.FinishReason),
+		FinishReason: finishReason,
 		Message: cohereAssistantMessage{
 			Role:      "assistant",
 			Content:   content,
+			ToolPlan:  toolPlan,
 			ToolCalls: toolCalls,
 		},
 	}
-	if resp.Usage != nil {
-		out.Usage = &cohereUsage{
-			Tokens: &cohereUsageTokens{
-				InputTokens:  resp.Usage.InputTokens,
-				OutputTokens: resp.Usage.OutputTokens,
-			},
-		}
-	}
+	out.Usage = cohereUsageFromCanonical(resp.Usage)
 	return json.Marshal(out)
 }
 
@@ -380,6 +464,8 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		return nil, nil
 	}
 	switch event.Type {
+	case "message-start":
+		return &CanonicalStreamChunk{ID: event.ID, Role: "assistant"}, nil
 	case "content-delta":
 		var delta cohereContentDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.Content == nil {
@@ -392,23 +478,25 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 			return nil, nil
 		}
 		return &CanonicalStreamChunk{Delta: delta.Message.Content.Text}, nil
-	case "tool-call-delta":
-		var delta cohereToolCallDelta
-		if err := json.Unmarshal(event.Delta, &delta); err != nil {
+	case "tool-plan-delta":
+		var delta cohereToolPlanDelta
+		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.ToolPlan == "" {
 			return nil, nil
 		}
-		args := ""
-		if delta.Function != nil {
-			args = delta.Function.Arguments
+		return &CanonicalStreamChunk{Delta: delta.Message.ToolPlan}, nil
+	case "tool-call-start", "tool-call-delta":
+		var delta cohereToolCallsDelta
+		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.ToolCalls == nil {
+			return nil, nil
 		}
-		return &CanonicalStreamChunk{
-			ToolCallDeltas: []StreamToolCallDelta{{
-				Index:          event.Index,
-				ID:             delta.ID,
-				Name:           deltaFunctionName(delta.Function),
-				ArgumentsDelta: args,
-			}},
-		}, nil
+		tc := StreamToolCallDelta{Index: event.Index, ID: delta.Message.ToolCalls.ID}
+		if fn := delta.Message.ToolCalls.Function; fn != nil {
+			tc.Name, tc.ArgumentsDelta = fn.Name, fn.Arguments
+		}
+		if tc.ID == "" && tc.Name == "" && tc.ArgumentsDelta == "" {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{tc}}, nil
 	case "message-end":
 		var delta cohereMessageEndDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
@@ -428,60 +516,41 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 	}
 }
 
-func deltaFunctionName(fn *cohereToolCallFunction) string {
-	if fn == nil {
-		return ""
-	}
-	return fn.Name
-}
-
+// EncodeStreamChunk encodes chunk on its own, without the state a Cohere
+// client needs across the stream: it never ends content or tool calls, and
+// every finish or usage becomes a message-end. Cross-format streams use a
+// CohereStreamEncoder instead.
 func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	if chunk == nil {
 		return nil, nil
 	}
 	var lines [][]byte
-	if chunk.Delta != "" {
-		payload, _ := json.Marshal(cohereStreamEvent{
-			Type: "content-delta",
-			Delta: mustMarshal(cohereContentDelta{
-				Message: &cohereContentDeltaMessage{
-					Content: &cohereContentBlock{Type: "text", Text: chunk.Delta},
-				},
-			}),
-		})
-		lines = append(lines, SSEEvent("content-delta", payload)...)
+	if chunk.Role != "" {
+		lines = append(lines, cohereMessageStart(chunk.ID)...)
 	}
-	if len(chunk.ToolCallDeltas) > 0 {
-		for _, tc := range chunk.ToolCallDeltas {
-			payload, _ := json.Marshal(cohereStreamEvent{
-				Type:  "tool-call-delta",
-				Index: tc.Index,
-				Delta: mustMarshal(cohereToolCallDelta{
-					ID: tc.ID,
-					Function: &cohereToolCallFunction{
-						Name:      tc.Name,
-						Arguments: tc.ArgumentsDelta,
-					},
-				}),
-			})
-			lines = append(lines, SSEEvent("tool-call-delta", payload)...)
+	if chunk.Delta != "" {
+		lines = append(lines, cohereContentDeltaEvent(0, chunk.Delta)...)
+	}
+	for _, tc := range chunk.ToolCallDeltas {
+		if tc.ID != "" || tc.Name != "" {
+			lines = append(lines, cohereToolCallStart(tc.Index, tc.ID, tc.Name)...)
+		}
+		if tc.ArgumentsDelta != "" {
+			lines = append(lines, cohereToolCallDeltaEvent(tc.Index, tc.ArgumentsDelta)...)
 		}
 	}
 	if chunk.FinishReason != "" || chunk.Usage != nil {
-		delta := cohereMessageEndDelta{FinishReason: canonicalFinishToCohere(chunk.FinishReason)}
-		if chunk.Usage != nil {
-			delta.Usage = &cohereUsage{
-				Tokens: &cohereUsageTokens{
-					InputTokens:  chunk.Usage.InputTokens,
-					OutputTokens: chunk.Usage.OutputTokens,
-				},
-			}
+		// A trailing usage-only chunk must not assert a finish reason. Upstreams
+		// that send usage separately (OpenAI-family with include_usage) would
+		// otherwise emit a second message-end saying COMPLETE after the one that
+		// said ERROR, and the client reads the last one. For the same reason a
+		// finish without usage carries no usage: zeroed billed_units ahead of
+		// the real report would read as a second, empty one.
+		var reason, errMessage string
+		if chunk.FinishReason != "" {
+			reason, errMessage = cohereFinish(chunk.FinishReason)
 		}
-		payload, _ := json.Marshal(cohereStreamEvent{
-			Type:  "message-end",
-			Delta: mustMarshal(delta),
-		})
-		lines = append(lines, SSEEvent("message-end", payload)...)
+		lines = append(lines, cohereMessageEndLines(reason, errMessage, cohereUsageFromCanonical(chunk.Usage))...)
 	}
 	if len(lines) == 0 {
 		return nil, nil

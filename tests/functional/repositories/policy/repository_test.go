@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -117,11 +120,53 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 func validPolicy(t *testing.T, gwID ids.GatewayID, name string) *domain.Policy {
 	t.Helper()
 	p, err := domain.NewPolicy(gwID, name, "rate_limiter", true, 0, false,
-		map[string]any{"limit": 100}, []domain.Stage{domain.StagePreRequest}, "round-trip description", domain.ModeEnforce)
+		map[string]any{"limit": 100}, []domain.Stage{domain.StagePreRequest}, "round-trip description", domain.ModeEnforce, nil)
 	if err != nil {
 		t.Fatalf("policy domain.NewPolicy: %v", err)
 	}
 	return p
+}
+
+func scopedPolicy(t *testing.T, gwID ids.GatewayID, name string, scope *domain.MCPScope) *domain.Policy {
+	t.Helper()
+	p, err := domain.NewPolicy(gwID, name, "trustguard", true, 0, false,
+		nil, []domain.Stage{domain.StagePreRequest}, "", domain.ModeEnforce, scope)
+	if err != nil {
+		t.Fatalf("policy domain.NewPolicy: %v", err)
+	}
+	return p
+}
+
+func seedMCPRegistry(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.RegistryID {
+	t.Helper()
+	reg, err := registrydomain.NewMCPRegistry(gwID, name, "", &registrydomain.MCPTarget{
+		URL: "https://" + name + ".example.com/mcp",
+	})
+	if err != nil {
+		t.Fatalf("registry domain.NewMCPRegistry: %v", err)
+	}
+	if err := newRegistryRepo(conn).Save(context.Background(), reg); err != nil {
+		t.Fatalf("registry Save: %v", err)
+	}
+	return reg.ID
+}
+
+func rawMCPScope(t *testing.T, conn *database.Connection, id ids.PolicyID) (isNull bool, text string) {
+	t.Helper()
+	if err := conn.Pool.QueryRow(context.Background(),
+		"SELECT mcp_scope IS NULL, COALESCE(mcp_scope::text, '') FROM policies WHERE id = $1", id,
+	).Scan(&isNull, &text); err != nil {
+		t.Fatalf("read raw mcp_scope: %v", err)
+	}
+	return isNull, text
+}
+
+func policyIDs(items []*domain.Policy) []ids.PolicyID {
+	out := make([]ids.PolicyID, 0, len(items))
+	for _, p := range items {
+		out = append(out, p.ID)
+	}
+	return out
 }
 
 func TestRepository_SaveAndFindByID(t *testing.T) {
@@ -163,7 +208,7 @@ func TestRepository_SaveAndFindByID_EmptySettings(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-empty")
 
-	p, err := domain.NewPolicy(gwID, "empty", "rate_limiter", true, 0, false, nil, nil, "", domain.ModeEnforce)
+	p, err := domain.NewPolicy(gwID, "empty", "rate_limiter", true, 0, false, nil, nil, "", domain.ModeEnforce, nil)
 	if err != nil {
 		t.Fatalf("domain.NewPolicy: %v", err)
 	}
@@ -235,7 +280,7 @@ func TestRepository_Update(t *testing.T) {
 	p.Enabled = false
 	p.Stages = []domain.Stage{domain.StagePostResponse}
 	p.UpdatedAt = time.Now().UTC()
-	if err := r.Update(ctx, p); err != nil {
+	if err := r.Update(ctx, p, true); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -258,7 +303,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	gwID := seedGateway(t, gw, "pgw-upd2")
 	p := validPolicy(t, gwID, "ghost")
-	err := r.Update(context.Background(), p)
+	err := r.Update(context.Background(), p, true)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -341,7 +386,7 @@ func TestRepository_List_RestrictToSlugs(t *testing.T) {
 	}
 	mustSave(validPolicy(t, gwID, "rate-one"))
 	p2, err := domain.NewPolicy(gwID, "size-one", "request_size_limiter", true, 0, false,
-		map[string]any{"allowed_payload_size": 10, "size_unit": "megabytes"}, []domain.Stage{domain.StagePreRequest}, "", domain.ModeEnforce)
+		map[string]any{"allowed_payload_size": 10, "size_unit": "megabytes"}, []domain.Stage{domain.StagePreRequest}, "", domain.ModeEnforce, nil)
 	if err != nil {
 		t.Fatalf("NewPolicy: %v", err)
 	}
@@ -383,7 +428,7 @@ func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
 	if err := r.Save(ctx, global); err != nil {
 		t.Fatalf("Save global: %v", err)
 	}
-	if err := r.SetGlobal(ctx, gwID, global.ID, true); err != nil {
+	if _, err := r.SetGlobal(ctx, gwID, global.ID, true, time.Time{}); err != nil {
 		t.Fatalf("SetGlobal: %v", err)
 	}
 
@@ -417,6 +462,278 @@ func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
 	}
 	if globals != 1 || scopedCount != 1 {
 		t.Fatalf("expected 1 global + 1 scoped, got %d/%d", globals, scopedCount)
+	}
+}
+
+func TestRepository_PlacementSetters_SwapAndDemote(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement")
+
+	p := validPolicy(t, gwID, "placement")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	setGlobal := func(on bool) func() (domain.Placement, error) {
+		return func() (domain.Placement, error) { return r.SetGlobal(ctx, gwID, p.ID, on, time.Time{}) }
+	}
+	setMCPWide := func(on bool) func() (domain.Placement, error) {
+		return func() (domain.Placement, error) { return r.SetMCPWide(ctx, gwID, p.ID, on, time.Time{}) }
+	}
+	steps := []struct {
+		name        string
+		write       func() (domain.Placement, error)
+		wantGlobal  bool
+		wantMCPWide bool
+	}{
+		{name: "promote to mcp-wide", write: setMCPWide(true), wantMCPWide: true},
+		{name: "swap to global clears mcp-wide", write: setGlobal(true), wantGlobal: true},
+		{name: "demoting mcp-wide keeps global", write: setMCPWide(false), wantGlobal: true},
+		{name: "swap to mcp-wide clears global", write: setMCPWide(true), wantMCPWide: true},
+		{name: "demoting global keeps mcp-wide", write: setGlobal(false), wantMCPWide: true},
+		{name: "demoting mcp-wide leaves a draft", write: setMCPWide(false)},
+	}
+	previous, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	for _, step := range steps {
+		written, err := step.write()
+		if err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		got, err := r.FindByID(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("%s: FindByID: %v", step.name, err)
+		}
+		if got.Global != step.wantGlobal || got.MCPWide != step.wantMCPWide {
+			t.Fatalf("%s: global, mcp_wide = %t, %t, want %t, %t",
+				step.name, got.Global, got.MCPWide, step.wantGlobal, step.wantMCPWide)
+		}
+		if written.Global != got.Global || written.MCPWide != got.MCPWide || !written.UpdatedAt.Equal(got.UpdatedAt) {
+			t.Fatalf("%s: returned %+v, want the row as stored (global %t, mcp_wide %t, updated_at %s)",
+				step.name, written, got.Global, got.MCPWide, got.UpdatedAt)
+		}
+		if !got.UpdatedAt.After(previous.UpdatedAt) {
+			t.Fatalf("%s: updated_at %s did not move past %s", step.name, got.UpdatedAt, previous.UpdatedAt)
+		}
+		previous = got
+	}
+
+	if _, err := r.SetMCPWide(ctx, ids.New[ids.GatewayKind](), p.ID, true, time.Time{}); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetMCPWide on a foreign gateway: err = %v, want ErrNotFound", err)
+	}
+	if _, err := r.SetGlobal(ctx, ids.New[ids.GatewayKind](), p.ID, true, time.Time{}); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetGlobal on a foreign gateway: err = %v, want ErrNotFound", err)
+	}
+
+	saved := validPolicy(t, gwID, "saved mcp-wide")
+	saved.MCPWide = true
+	if err := r.Save(ctx, saved); err != nil {
+		t.Fatalf("Save mcp-wide: %v", err)
+	}
+	if got, err := r.FindByID(ctx, saved.ID); err != nil || !got.MCPWide || got.Global {
+		t.Fatalf("FindByID after Save = %+v, %v, want mcp_wide round-tripped", got, err)
+	}
+}
+
+func TestRepository_PlacementCheck_RefusesBothFlags(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement-check")
+
+	p := validPolicy(t, gwID, "both flags")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	_, err := conn.Pool.Exec(ctx, `UPDATE policies SET global = true, mcp_wide = true WHERE id = $1`, p.ID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "policies_global_mcp_wide_check" {
+		t.Fatalf("err = %v, want a 23514 from policies_global_mcp_wide_check", err)
+	}
+
+	both := validPolicy(t, gwID, "saved with both flags")
+	both.Global, both.MCPWide = true, true
+	if err := r.Save(ctx, both); !errors.Is(err, domain.ErrInvalidPlacement) {
+		t.Fatalf("Save with both flags: err = %v, want ErrInvalidPlacement", err)
+	}
+}
+
+// The level guard approves a PUT on the placement the caller read. A promotion
+// that commits in between must fail the update, or the row would end up with a
+// placement and a scope that were never checked together.
+func TestRepository_Update_RefusesAStalePlacement(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement-update")
+
+	p := validPolicy(t, gwID, "stale placement")
+	p.Enabled = false
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	stale := *p
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, true, time.Time{}); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+
+	stale.Name = "renamed"
+	stale.Enabled = true
+	stale.UpdatedAt = time.Now().UTC()
+	err := r.Update(ctx, &stale, false)
+	if !errors.Is(err, domain.ErrPlacementChanged) || !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrPlacementChanged wrapping ErrConflict", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !got.Global || got.MCPWide {
+		t.Fatalf("global, mcp_wide = %t, %t, want the promotion to stand", got.Global, got.MCPWide)
+	}
+	if got.Name != p.Name || got.Enabled {
+		t.Fatalf("name, enabled = %q, %t, want the stale update unwritten", got.Name, got.Enabled)
+	}
+}
+
+func TestRepository_Update_LandsWhileThePlacementMatches(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement-match")
+
+	p := validPolicy(t, gwID, "matching placement")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, time.Time{}); err != nil {
+		t.Fatalf("SetMCPWide: %v", err)
+	}
+	current, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	current.Name = "renamed"
+	current.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, current, false); err != nil {
+		t.Fatalf("Update with the current placement: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
+	if got.Name != "renamed" || !got.MCPWide || got.Global {
+		t.Fatalf("got name %q, global %t, mcp_wide %t, want the rename with the placement kept", got.Name, got.Global, got.MCPWide)
+	}
+}
+
+// The level guard decides a promotion on the row the scoper read, and takes no
+// lock when the promoted policy occupies nothing, as a disabled one does. A PUT
+// that turns the policy on in between must fail the promotion, or it would land
+// on an enabled row nobody checked.
+func TestRepository_PlacementSetters_RefuseAStalePromotion(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-stale-promotion")
+
+	p := validPolicy(t, gwID, "stale promotion")
+	p.Enabled = false
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	read, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	enabled := *read
+	enabled.Enabled = true
+	enabled.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, &enabled, false); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	promotions := map[string]func(readAt time.Time) error{
+		"SetGlobal": func(readAt time.Time) error {
+			_, err := r.SetGlobal(ctx, gwID, p.ID, true, readAt)
+			return err
+		},
+		"SetMCPWide": func(readAt time.Time) error {
+			_, err := r.SetMCPWide(ctx, gwID, p.ID, true, readAt)
+			return err
+		},
+	}
+	for name, promote := range promotions {
+		err := promote(read.UpdatedAt)
+		if !errors.Is(err, domain.ErrPlacementChanged) || !errors.Is(err, commonerrors.ErrConflict) {
+			t.Fatalf("%s with a stale read: err = %v, want ErrPlacementChanged wrapping ErrConflict", name, err)
+		}
+	}
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after the stale promotions: %v", err)
+	}
+	if got.Global || got.MCPWide || !got.Enabled {
+		t.Fatalf("global, mcp_wide, enabled = %t, %t, %t, want the update alone", got.Global, got.MCPWide, got.Enabled)
+	}
+
+	if _, err := r.SetMCPWide(ctx, ids.New[ids.GatewayKind](), p.ID, true, got.UpdatedAt); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetMCPWide on a foreign gateway: err = %v, want ErrNotFound", err)
+	}
+	written, err := r.SetMCPWide(ctx, gwID, p.ID, true, got.UpdatedAt)
+	if err != nil {
+		t.Fatalf("SetMCPWide with the current read: %v", err)
+	}
+	promoted, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after the promotion: %v", err)
+	}
+	if !promoted.MCPWide {
+		t.Fatal("a promotion matching the current row must land")
+	}
+	if !written.MCPWide || written.Global || !written.UpdatedAt.Equal(promoted.UpdatedAt) {
+		t.Fatalf("returned %+v, want the row as stored (updated_at %s)", written, promoted.UpdatedAt)
+	}
+}
+
+// Every placement write moves updated_at, so of two promotions decided on the
+// same read only the first lands.
+func TestRepository_PlacementSetters_RacingPromotionsConflict(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-racing-promotions")
+
+	p := validPolicy(t, gwID, "racing promotions")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	read, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, true, read.UpdatedAt); err != nil {
+		t.Fatalf("first promotion: %v", err)
+	}
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, read.UpdatedAt); !errors.Is(err, domain.ErrPlacementChanged) {
+		t.Fatalf("second promotion on the same read: err = %v, want ErrPlacementChanged", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !got.Global || got.MCPWide {
+		t.Fatalf("global, mcp_wide = %t, %t, want the first promotion to stand", got.Global, got.MCPWide)
+	}
+	if got.UpdatedAt.Equal(read.UpdatedAt) {
+		t.Fatal("a placement write must move updated_at")
+	}
+
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, false, time.Time{}); err != nil {
+		t.Fatalf("an unconditional demotion after the read: %v", err)
 	}
 }
 
@@ -465,6 +782,197 @@ func TestRepository_ConsumerPolicyJunction_AttachDetachRoundTrip(t *testing.T) {
 	}
 }
 
+func junctionRows(t *testing.T, conn *database.Connection, id ids.PolicyID) int {
+	t.Helper()
+	var count int
+	if err := conn.Pool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM consumer_policy WHERE policy_id = $1", id).Scan(&count); err != nil {
+		t.Fatalf("count junction: %v", err)
+	}
+	return count
+}
+
+// An MCP-wide policy runs on every MCP consumer without links, so the promotion
+// removes them in its own transaction and a refused one removes nothing. The
+// demotion has nothing to revive, an attach is refused while the flag holds,
+// and a global promotion keeps its links as before.
+func TestRepository_SetMCPWide_RemovesTheConsumerLinks(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-mcp-wide-links")
+	c1 := seedConsumer(t, conn, gwID, "mcp-wide-links-a")
+	c2 := seedConsumer(t, conn, gwID, "mcp-wide-links-b")
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
+
+	p := validPolicy(t, gwID, "mcp-wide links")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, c := range []ids.ConsumerID{c1, c2} {
+		if err := consumers.AttachPolicy(ctx, c, p.ID); err != nil {
+			t.Fatalf("AttachPolicy: %v", err)
+		}
+	}
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, true, time.Time{}); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 2 {
+		t.Fatalf("links after a global promotion = %d, want both kept", n)
+	}
+
+	read, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, read.UpdatedAt.Add(-time.Second)); !errors.Is(err, domain.ErrPlacementChanged) {
+		t.Fatalf("stale SetMCPWide: err = %v, want ErrPlacementChanged", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 2 {
+		t.Fatalf("links after a refused promotion = %d, want both kept", n)
+	}
+
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, read.UpdatedAt); err != nil {
+		t.Fatalf("SetMCPWide: %v", err)
+	}
+	promoted, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after the promotion: %v", err)
+	}
+	if !promoted.MCPWide || promoted.Global || len(promoted.ConsumerIDs) != 0 {
+		t.Fatalf("global, mcp_wide, consumers = %t, %t, %v, want MCP-wide with no links",
+			promoted.Global, promoted.MCPWide, promoted.ConsumerIDs)
+	}
+
+	err = consumers.AttachPolicy(ctx, c1, p.ID)
+	if !errors.Is(err, consumerdomain.ErrPolicyMCPWide) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("AttachPolicy on an MCP-wide policy: err = %v, want ErrPolicyMCPWide", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 0 {
+		t.Fatalf("links after a refused attach = %d, want none", n)
+	}
+
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, false, time.Time{}); err != nil {
+		t.Fatalf("demotion: %v", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 0 {
+		t.Fatalf("links after the demotion = %d, want none revived", n)
+	}
+	if err := consumers.AttachPolicy(ctx, c1, p.ID); err != nil {
+		t.Fatalf("AttachPolicy on the demoted policy: %v", err)
+	}
+}
+
+// The attach reads the policy row FOR SHARE, so it cannot interleave with a
+// promotion to MCP-wide: whichever commits first, no link outlives the flag.
+func TestRepository_AttachPolicy_RacingAnMCPWidePromotion(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-mcp-wide-race")
+	consumerID := seedConsumer(t, conn, gwID, "mcp-wide-race")
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
+
+	run := func(t *testing.T, name string, first func(ctx context.Context, id ids.PolicyID) error, second func(ctx context.Context, id ids.PolicyID) error) error {
+		t.Helper()
+		p := validPolicy(t, gwID, name)
+		if err := r.Save(ctx, p); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		done := make(chan error, 1)
+		var secondErr error
+		returned := false
+		err := database.WithTx(ctx, conn, func(tx pgx.Tx) error {
+			if err := first(database.TxContext(ctx, tx), p.ID); err != nil {
+				return err
+			}
+			go func() { done <- second(ctx, p.ID) }()
+			select {
+			case secondErr = <-done:
+				returned = true
+				t.Errorf("the second write returned %v while the first held the row", secondErr)
+			case <-time.After(300 * time.Millisecond):
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("first write: %v", err)
+		}
+		if !returned {
+			secondErr = <-done
+		}
+		got, err := r.FindByID(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if !got.MCPWide || len(got.ConsumerIDs) != 0 || junctionRows(t, conn, p.ID) != 0 {
+			t.Fatalf("mcp_wide, consumers = %t, %v, want MCP-wide with no links", got.MCPWide, got.ConsumerIDs)
+		}
+		return secondErr
+	}
+	promote := func(ctx context.Context, id ids.PolicyID) error {
+		_, err := r.SetMCPWide(ctx, gwID, id, true, time.Time{})
+		return err
+	}
+	attach := func(ctx context.Context, id ids.PolicyID) error {
+		return consumers.AttachPolicy(ctx, consumerID, id)
+	}
+
+	t.Run("an attach behind the promotion is refused", func(t *testing.T) {
+		err := run(t, "race promote first", promote, attach)
+		if !errors.Is(err, consumerdomain.ErrPolicyMCPWide) {
+			t.Fatalf("attach after the promotion: err = %v, want ErrPolicyMCPWide", err)
+		}
+	})
+	t.Run("a promotion behind the attach removes the link", func(t *testing.T) {
+		if err := run(t, "race attach first", attach, promote); err != nil {
+			t.Fatalf("promotion after the attach: %v", err)
+		}
+	})
+}
+
+// A registry delete locks every consumer of the gateway and then the policies
+// whose scope names the registry. The attach locks the same two rows, so it
+// must take the consumer first too. Here the delete already holds the consumer
+// when the attach starts and only then asks for the policy: an attach that had
+// locked the policy first would close the cycle, and one side would fail with
+// 40P01.
+func TestRepository_AttachPolicy_DoesNotDeadlockWithARegistryDelete(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-attach-vs-prune")
+	consumerID := seedConsumer(t, conn, gwID, "attach-vs-prune")
+	registryID := seedMCPRegistry(t, conn, gwID, "attach-vs-prune-mcp")
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
+
+	p := scopedPolicy(t, gwID, "attach vs prune", &domain.MCPScope{RegistryIDs: []ids.RegistryID{registryID}})
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	done := make(chan error, 1)
+	err := database.WithTx(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := consumers.PruneRegistryReferencesTx(ctx, tx, gwID, registryID); err != nil {
+			return err
+		}
+		go func() { done <- consumers.AttachPolicy(ctx, consumerID, p.ID) }()
+		time.Sleep(300 * time.Millisecond)
+		_, err := r.PruneRegistryReferencesTx(ctx, tx, gwID, registryID)
+		return err
+	})
+	attachErr := <-done
+	var pgErr *pgconn.PgError
+	for name, err := range map[string]error{"registry prune": err, "attach": attachErr} {
+		if errors.As(err, &pgErr) && pgErr.Code == "40P01" {
+			t.Fatalf("%s deadlocked: %v", name, err)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if n := junctionRows(t, conn, p.ID); n != 1 {
+		t.Fatalf("links after the attach = %d, want 1", n)
+	}
+}
+
 func TestRepository_DeletePolicy_CascadesJunction(t *testing.T) {
 	r, gw, conn := setupRepo(t)
 	ctx := context.Background()
@@ -490,5 +998,331 @@ func TestRepository_DeletePolicy_CascadesJunction(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected junction rows to be cascaded on policy delete, got %d", count)
+	}
+}
+
+func TestRepository_MCPScope_RoundTrip(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-scope")
+	snowflake := seedMCPRegistry(t, conn, gwID, "scope-snowflake")
+	jira := seedMCPRegistry(t, conn, gwID, "scope-jira")
+
+	full := &domain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{jira},
+		Tools:        []domain.MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}},
+		Groups:       []string{"Finanzas"},
+		ExceptGroups: []string{"Contractors"},
+	}
+	unscoped := scopedPolicy(t, gwID, "unscoped", nil)
+	pruned := scopedPolicy(t, gwID, "pruned", &domain.MCPScope{})
+	scoped := scopedPolicy(t, gwID, "scoped", full)
+	for _, p := range []*domain.Policy{unscoped, pruned, scoped} {
+		if err := r.Save(ctx, p); err != nil {
+			t.Fatalf("Save %s: %v", p.Name, err)
+		}
+	}
+
+	got, err := r.FindByID(ctx, unscoped.ID)
+	if err != nil {
+		t.Fatalf("FindByID unscoped: %v", err)
+	}
+	if got.MCPScope != nil {
+		t.Fatalf("nil scope came back as %+v, want nil", got.MCPScope)
+	}
+	if isNull, _ := rawMCPScope(t, conn, unscoped.ID); !isNull {
+		t.Fatal("nil scope must be stored as SQL NULL")
+	}
+
+	got, err = r.FindByID(ctx, pruned.ID)
+	if err != nil {
+		t.Fatalf("FindByID pruned: %v", err)
+	}
+	if got.MCPScope == nil || !got.MCPScope.IsEmpty() {
+		t.Fatalf("empty scope came back as %+v, want &MCPScope{}", got.MCPScope)
+	}
+	if isNull, text := rawMCPScope(t, conn, pruned.ID); isNull || text != "{}" {
+		t.Fatalf("empty scope stored as (null=%v, %q), want '{}'", isNull, text)
+	}
+
+	got, err = r.FindByID(ctx, scoped.ID)
+	if err != nil {
+		t.Fatalf("FindByID scoped: %v", err)
+	}
+	if !reflect.DeepEqual(got.MCPScope, full) {
+		t.Fatalf("scope round-trip lost data:\n got %+v\nwant %+v", got.MCPScope, full)
+	}
+
+	byIDs, err := r.FindByIDs(ctx, gwID, []ids.PolicyID{scoped.ID, pruned.ID})
+	if err != nil {
+		t.Fatalf("FindByIDs: %v", err)
+	}
+	if len(byIDs) != 2 {
+		t.Fatalf("FindByIDs len = %d, want 2", len(byIDs))
+	}
+	for _, p := range byIDs {
+		if p.ID == scoped.ID && !reflect.DeepEqual(p.MCPScope, full) {
+			t.Fatalf("FindByIDs lost scope: %+v", p.MCPScope)
+		}
+		if p.ID == pruned.ID && (p.MCPScope == nil || !p.MCPScope.IsEmpty()) {
+			t.Fatalf("FindByIDs turned {} into %+v", p.MCPScope)
+		}
+	}
+	all, err := r.ListByGateway(ctx, gwID)
+	if err != nil {
+		t.Fatalf("ListByGateway: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("ListByGateway len = %d, want 3", len(all))
+	}
+}
+
+func TestRepository_MCPScope_UpdateTransitions(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-scope-upd")
+	snowflake := seedMCPRegistry(t, conn, gwID, "upd-snowflake")
+
+	p := scopedPolicy(t, gwID, "transitions", nil)
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	p.MCPScope = &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}
+	p.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, p, true); err != nil {
+		t.Fatalf("Update nil -> scope: %v", err)
+	}
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.MCPScope == nil || len(got.MCPScope.RegistryIDs) != 1 || got.MCPScope.RegistryIDs[0] != snowflake {
+		t.Fatalf("scope not persisted on update: %+v", got.MCPScope)
+	}
+
+	p.MCPScope = &domain.MCPScope{}
+	if err := r.Update(ctx, p, true); err != nil {
+		t.Fatalf("Update scope -> {}: %v", err)
+	}
+	if isNull, text := rawMCPScope(t, conn, p.ID); isNull || text != "{}" {
+		t.Fatalf("empty scope stored as (null=%v, %q), want '{}'", isNull, text)
+	}
+
+	p.MCPScope = nil
+	if err := r.Update(ctx, p, true); err != nil {
+		t.Fatalf("Update {} -> nil: %v", err)
+	}
+	if isNull, _ := rawMCPScope(t, conn, p.ID); !isNull {
+		t.Fatal("clearing the scope must write SQL NULL")
+	}
+	got, err = r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after clear: %v", err)
+	}
+	if got.MCPScope != nil {
+		t.Fatalf("cleared scope came back as %+v, want nil", got.MCPScope)
+	}
+}
+
+// An update that did not carry an mcp_scope must leave the column alone. The
+// caller read the policy before a registry delete pruned it; writing the value
+// it read back would resurrect a registry that no longer exists, and the prune
+// cannot defend itself because the caller never took its row lock.
+func TestRepository_Update_WithoutScopeWriteKeepsTheStoredScope(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-scope-nowrite")
+	snowflake := seedMCPRegistry(t, conn, gwID, "nowrite-snowflake")
+
+	p := scopedPolicy(t, gwID, "no-write", &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}})
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Somebody else prunes the scope to {} while this caller holds a stale read.
+	stale := *p
+	if _, err := conn.Pool.Exec(ctx, `UPDATE policies SET mcp_scope = '{}' WHERE id = $1`, p.ID); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	stale.Name = "renamed"
+	stale.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, &stale, false); err != nil {
+		t.Fatalf("Update without scope write: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Name != "renamed" {
+		t.Fatalf("Name = %q, want the update to have landed", got.Name)
+	}
+	if got.MCPScope == nil || !got.MCPScope.IsEmpty() {
+		t.Fatalf("MCPScope = %+v, want the pruned {} to have survived", got.MCPScope)
+	}
+	if isNull, text := rawMCPScope(t, conn, p.ID); isNull || text != "{}" {
+		t.Fatalf("stored scope = (null=%v, %q), want '{}'", isNull, text)
+	}
+}
+
+func TestRepository_List_FilterByRegistryID(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-scope-list")
+	snowflake := seedMCPRegistry(t, conn, gwID, "list-snowflake")
+	jira := seedMCPRegistry(t, conn, gwID, "list-jira")
+
+	byRegistry := scopedPolicy(t, gwID, "by-registry", &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}})
+	byTool := scopedPolicy(t, gwID, "by-tool", &domain.MCPScope{Tools: []domain.MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}})
+	other := scopedPolicy(t, gwID, "other-registry", &domain.MCPScope{RegistryIDs: []ids.RegistryID{jira}})
+	pruned := scopedPolicy(t, gwID, "pruned", &domain.MCPScope{})
+	unscoped := scopedPolicy(t, gwID, "unscoped", nil)
+	for _, p := range []*domain.Policy{byRegistry, byTool, other, pruned, unscoped} {
+		if err := r.Save(ctx, p); err != nil {
+			t.Fatalf("Save %s: %v", p.Name, err)
+		}
+	}
+
+	page := listing.Page{Number: 1, Size: 10}
+	items, total, err := r.List(ctx, domain.ListFilter{GatewayID: gwID, RegistryID: &snowflake, Page: page})
+	if err != nil {
+		t.Fatalf("List registry_id=snowflake: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("List(snowflake) total=%d len=%d, want 2/2: %v", total, len(items), policyIDs(items))
+	}
+	for _, p := range items {
+		if p.ID != byRegistry.ID && p.ID != byTool.ID {
+			t.Fatalf("List(snowflake) returned unexpected policy %s (%s)", p.ID, p.Name)
+		}
+	}
+
+	items, total, err = r.List(ctx, domain.ListFilter{GatewayID: gwID, RegistryID: &jira, Page: page})
+	if err != nil {
+		t.Fatalf("List registry_id=jira: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].ID != other.ID {
+		t.Fatalf("List(jira) total=%d items=%v, want only %s", total, policyIDs(items), other.ID)
+	}
+
+	unknown := ids.New[ids.RegistryKind]()
+	items, total, err = r.List(ctx, domain.ListFilter{GatewayID: gwID, RegistryID: &unknown, Page: page})
+	if err != nil {
+		t.Fatalf("List registry_id=unknown: %v", err)
+	}
+	if total != 0 || len(items) != 0 {
+		t.Fatalf("List(unknown) total=%d len=%d, want 0/0", total, len(items))
+	}
+
+	items, total, err = r.List(ctx, domain.ListFilter{GatewayID: gwID, Page: page})
+	if err != nil {
+		t.Fatalf("List without registry_id: %v", err)
+	}
+	if total != 5 || len(items) != 5 {
+		t.Fatalf("List(all) total=%d len=%d, want 5/5", total, len(items))
+	}
+}
+
+func TestRepository_DeleteRegistry_PrunesMCPScopeInSameTx(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-scope-prune")
+	otherGW := seedGateway(t, gw, "pgw-scope-prune-other")
+	keeper := seedMCPRegistry(t, conn, gwID, "prune-keeper")
+	victim := seedMCPRegistry(t, conn, gwID, "prune-victim")
+
+	several := scopedPolicy(t, gwID, "several-registries", &domain.MCPScope{
+		RegistryIDs: []ids.RegistryID{keeper, victim},
+		Groups:      []string{"Finanzas"},
+	})
+	only := scopedPolicy(t, gwID, "only-victim-tool", &domain.MCPScope{
+		Tools: []domain.MCPToolRef{{RegistryID: victim, Tool: "run_query"}},
+	})
+	untouched := scopedPolicy(t, gwID, "keeper-only", &domain.MCPScope{RegistryIDs: []ids.RegistryID{keeper}})
+	unscoped := scopedPolicy(t, gwID, "unscoped", nil)
+	foreign := scopedPolicy(t, otherGW, "foreign-reference", &domain.MCPScope{RegistryIDs: []ids.RegistryID{victim}})
+	for _, p := range []*domain.Policy{several, only, untouched, unscoped, foreign} {
+		if err := r.Save(ctx, p); err != nil {
+			t.Fatalf("Save %s: %v", p.Name, err)
+		}
+	}
+	before, err := r.FindByID(ctx, untouched.ID)
+	if err != nil {
+		t.Fatalf("FindByID untouched: %v", err)
+	}
+
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	registries := registryrepo.NewRepository(conn, cipher, outboxrepo.NewRepository(conn),
+		registryrepo.WithDeleteHook(r.PruneRegistryReferencesTx))
+	report, err := registries.Delete(ctx, gwID, victim)
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if report.Empty() || len(report.Policies) != 2 {
+		t.Fatalf("report = %+v, want exactly the two pruned policies", report)
+	}
+	emptied := map[ids.PolicyID]bool{}
+	for _, prune := range report.Policies {
+		emptied[prune.PolicyID] = prune.Emptied
+	}
+	if got, ok := emptied[several.ID]; !ok || got {
+		t.Fatalf("report for %s = (present=%v, emptied=%v), want present and not emptied", several.Name, ok, got)
+	}
+	if got, ok := emptied[only.ID]; !ok || !got {
+		t.Fatalf("report for %s = (present=%v, emptied=%v), want present and emptied", only.Name, ok, got)
+	}
+
+	got, err := r.FindByID(ctx, several.ID)
+	if err != nil {
+		t.Fatalf("FindByID several: %v", err)
+	}
+	if got.MCPScope == nil || len(got.MCPScope.RegistryIDs) != 1 || got.MCPScope.RegistryIDs[0] != keeper {
+		t.Fatalf("several-registries scope = %+v, want only %s", got.MCPScope, keeper)
+	}
+	if len(got.MCPScope.Groups) != 1 || got.MCPScope.Groups[0] != "Finanzas" {
+		t.Fatalf("prune must keep the principal dimension: %+v", got.MCPScope)
+	}
+	if !got.UpdatedAt.After(several.UpdatedAt) {
+		t.Fatalf("updated_at not bumped: %s <= %s", got.UpdatedAt, several.UpdatedAt)
+	}
+
+	got, err = r.FindByID(ctx, only.ID)
+	if err != nil {
+		t.Fatalf("FindByID only: %v", err)
+	}
+	if got.MCPScope == nil || !got.MCPScope.IsEmpty() {
+		t.Fatalf("only-victim-tool scope = %+v, want {}", got.MCPScope)
+	}
+	if isNull, text := rawMCPScope(t, conn, only.ID); isNull || text != "{}" {
+		t.Fatalf("pruned scope stored as (null=%v, %q), want '{}' and never NULL", isNull, text)
+	}
+	if ok, _ := got.MCPScope.Matches(domain.MCPTarget{RegistryID: keeper, Tool: "run_query"}, domain.MCPCaller{}); ok {
+		t.Fatal("a pruned {} scope must not match any target")
+	}
+
+	got, err = r.FindByID(ctx, untouched.ID)
+	if err != nil {
+		t.Fatalf("FindByID untouched: %v", err)
+	}
+	if !reflect.DeepEqual(got.MCPScope, before.MCPScope) || !got.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("keeper-only policy was rewritten: %+v (updated_at %s -> %s)", got.MCPScope, before.UpdatedAt, got.UpdatedAt)
+	}
+	if isNull, _ := rawMCPScope(t, conn, unscoped.ID); !isNull {
+		t.Fatal("an unscoped policy must stay NULL after a prune")
+	}
+	got, err = r.FindByID(ctx, foreign.ID)
+	if err != nil {
+		t.Fatalf("FindByID foreign: %v", err)
+	}
+	if got.MCPScope == nil || len(got.MCPScope.RegistryIDs) != 1 || got.MCPScope.RegistryIDs[0] != victim {
+		t.Fatalf("prune crossed the gateway boundary: %+v", got.MCPScope)
+	}
+	if _, err := newRegistryRepo(conn).FindByID(ctx, victim); !errors.Is(err, registrydomain.ErrNotFound) {
+		t.Fatalf("registry FindByID after delete err = %v, want ErrNotFound", err)
 	}
 }

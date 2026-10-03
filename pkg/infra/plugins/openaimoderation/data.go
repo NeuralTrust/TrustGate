@@ -14,7 +14,10 @@
 
 package openaimoderation
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 type moderationRequest struct {
 	Model string            `json:"model"`
@@ -46,6 +49,16 @@ type ModerationData struct {
 	FlaggedByOpenAI   bool               `json:"flagged_by_openai"`
 	FlaggedCategories []violation        `json:"flagged_categories,omitempty"`
 	Decision          string             `json:"decision,omitempty"`
+	// FailureReason and FailureDetail are set only on a failed_open/failed_closed
+	// decision: FailureReason is one of appplugins.FailureReason (transport,
+	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
+	// the thresholded category missing from the response on a
+	// verdict_incomplete.
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailureDetail string `json:"failure_detail,omitempty"`
+	// Streaming is present only on a streamed response leg, written once when
+	// the stream closes.
+	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`
 }
 
 type violation struct {

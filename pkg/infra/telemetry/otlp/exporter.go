@@ -111,6 +111,20 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	return nil
 }
 
+func (e *Exporter) PublishTrafficLabels(ctx context.Context, evt *events.TrafficLabels) error {
+	if evt == nil {
+		return nil
+	}
+	if e.closed.Load() {
+		return errExporterClosed
+	}
+	if e.class == metrics.Raw {
+		return nil
+	}
+	e.logger.Emit(ctx, labelsToRecord(evt))
+	return nil
+}
+
 // Close flushes buffered records then shuts the provider down, bounded by the
 // configured timeout so shutdown can never hang.
 func (e *Exporter) Close() {

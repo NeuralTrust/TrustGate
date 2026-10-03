@@ -21,18 +21,70 @@ import (
 )
 
 type chainEntry struct {
-	plugin      Plugin
-	config      policy.PluginConfig
-	mode        policy.Mode
-	priority    int
-	parallel    bool
-	global      bool
-	mutatesReq  bool
-	mutatesResp bool
-	mutatesMeta bool
+	plugin       Plugin
+	config       policy.PluginConfig
+	mode         policy.Mode
+	priority     int
+	specificity  uint8
+	parallel     bool
+	global       bool
+	mutatesReq   bool
+	mutatesResp  bool
+	mutatesMeta  bool
+	readsContent bool
+	local        bool
 }
 
-func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
+// rewritesAt reports whether the entry rewrites the content the given stage
+// carries: the request body on the request stages, the response body on the
+// response stages.
+func (e chainEntry) rewritesAt(stage policy.Stage) bool {
+	switch stage {
+	case policy.StagePreResponse, policy.StagePostResponse:
+		return e.mutatesResp
+	default:
+		return e.mutatesReq
+	}
+}
+
+// onlyReadsAt reports whether the entry inspects content at the stage without
+// rewriting it. Such an entry must run after the rewriters of its priority.
+func (e chainEntry) onlyReadsAt(stage policy.Stage) bool {
+	return e.readsContent && !e.rewritesAt(stage)
+}
+
+// rewritesOffBoxAt reports whether the entry rewrites the stage's content and
+// did not opt in as a local rewriter, so it may send that content to a third
+// party. Such an entry must run after the local rewriters of its priority.
+func (e chainEntry) rewritesOffBoxAt(stage policy.Stage) bool {
+	return e.rewritesAt(stage) && !e.local
+}
+
+func lessEntry(a, b chainEntry) bool {
+	if a.priority != b.priority {
+		return a.priority < b.priority
+	}
+	if a.specificity != b.specificity {
+		return a.specificity > b.specificity
+	}
+	if a.config.Slug != b.config.Slug {
+		return a.config.Slug < b.config.Slug
+	}
+	return a.config.ID < b.config.ID
+}
+
+// entrySpecificity flattens the scope tie-break to zero on an inert plane. The
+// only scope that reaches such a plane narrows by group alone and scores 1,
+// which sorted descending would place it ahead of the unscoped policies of its
+// priority and change the first writer of the batch (RUN-1621, rule 4).
+func entrySpecificity(scope *policy.MCPScope, flatSpecificity bool) uint8 {
+	if flatSpecificity {
+		return 0
+	}
+	return scope.Specificity()
+}
+
+func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage, flatSpecificity bool) []chainEntry {
 	entries := make([]chainEntry, 0, len(policies))
 	seen := make(map[string]struct{}, len(policies))
 
@@ -60,18 +112,21 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
-			mode:        pol.Mode.Normalize(),
-			priority:    pol.Priority,
-			parallel:    pol.Parallel,
-			global:      pol.IsGlobal(),
-			mutatesReq:  plugin.MutatesRequestBody(),
-			mutatesResp: plugin.MutatesResponseBody(),
-			mutatesMeta: plugin.MutatesMetadata(),
+			mode:         pol.Mode.Normalize(),
+			priority:     pol.Priority,
+			specificity:  entrySpecificity(pol.MCPScope, flatSpecificity),
+			parallel:     pol.Parallel,
+			global:       pol.GatewayWide(),
+			mutatesReq:   plugin.MutatesRequestBody(),
+			mutatesResp:  plugin.MutatesResponseBody(),
+			mutatesMeta:  plugin.MutatesMetadata(),
+			readsContent: IsContentReader(plugin),
+			local:        RewritesLocally(plugin),
 		})
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].priority < entries[j].priority
+		return lessEntry(entries[i], entries[j])
 	})
 	return entries
 }

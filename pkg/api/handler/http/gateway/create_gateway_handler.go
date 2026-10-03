@@ -76,6 +76,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
+		TrafficLabeling: req.TrafficLabeling,
 		Entitlements:    req.Entitlements,
 	})
 	if err != nil {

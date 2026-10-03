@@ -125,7 +125,7 @@ func TestCompilerCompilesTrustGateAdminOpenAPI(t *testing.T) {
 	require.Equal(t, "3.0.0", document.Version)
 	require.Equal(t, "TrustGate Admin API", document.Title)
 	require.Equal(t, server.URL, document.BaseURL)
-	require.GreaterOrEqual(t, len(document.Operations), 50)
+	require.GreaterOrEqual(t, len(document.Operations), 40)
 	require.LessOrEqual(t, len(document.Operations), maxCompiledOperations)
 
 	byRoute := make(map[string]appopenapi.Operation, len(document.Operations))

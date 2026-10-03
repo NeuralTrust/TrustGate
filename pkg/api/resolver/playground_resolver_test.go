@@ -74,12 +74,10 @@ func playgroundTestConsumer() (*gatewaydomain.Gateway, *appconsumer.RoutableCons
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	rc := &appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeRoleBased,
-			Active:      true,
-			RoleIDs:     []ids.RoleID{ids.New[ids.RoleKind]()},
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "cons1234",
+			Active:    true,
 		},
 	}
 	return gw, rc
@@ -100,7 +98,6 @@ func TestPlaygroundResolver_ValidToken(t *testing.T) {
 	require.Equal(t, gw.ID, authCtx.GatewayID)
 	require.Equal(t, rc.Consumer.ID, authCtx.ConsumerID)
 	require.Equal(t, "user-1", authCtx.Subject)
-	require.Equal(t, rc.Consumer.RoleIDs, authCtx.RoleIDs)
 }
 
 func TestPlaygroundResolver_Rejections(t *testing.T) {

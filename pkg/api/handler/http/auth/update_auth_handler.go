@@ -71,6 +71,7 @@ func (h *UpdateAuthHandler) Handle(c *fiber.Ctx) error {
 		Type:      req.ToType(),
 		Enabled:   req.Enabled,
 		Config:    req.ToConfig(),
+		Expiry:    req.ToExpiry(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

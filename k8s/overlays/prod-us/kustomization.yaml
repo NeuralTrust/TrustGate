@@ -12,6 +12,7 @@ resources:
 - psc-services.yaml
 - psc-httproutes.yaml
 - psc-healthchecks.yaml
+- psc-backendpolicies.yaml
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
 - patches/resources-patch.yaml

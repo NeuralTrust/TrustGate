@@ -21,6 +21,8 @@ import (
 
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
@@ -136,20 +138,100 @@ func TestDecodeDefaultsEmptyEntitlementsToFree(t *testing.T) {
 	assert.Equal(t, gatewaydomain.TierFree, snap.Data().Gateways[0].Entitlements.Tier)
 }
 
-func TestCodecRoundTripPlaygroundTokenKeys(t *testing.T) {
+func TestCodecRoundTripsStoreGrants(t *testing.T) {
+	t.Parallel()
 	codec := configsnapshot.NewCodec()
-	raw, err := codec.Encode(readmodel.Build(readmodel.Data{
-		Version: "v1",
-		PlaygroundTokenKeys: []readmodel.VerificationKey{
-			{KID: "2026-09", PEM: "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----\n"},
-		},
-	}))
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	code, err := storeaccessdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
+	require.NoError(t, err)
+	inst, err := storeaccessdomain.New(gw, "snowflake", reg, nil, []string{"ana"})
 	require.NoError(t, err)
 
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", StoreGrants: []storeaccessdomain.Grant{*code, *inst}}))
+	require.NoError(t, err)
 	snap, err := codec.Decode(raw)
 	require.NoError(t, err)
-	keys := snap.PlaygroundTokenKeys()
-	require.Len(t, keys, 1)
-	assert.Equal(t, "2026-09", keys[0].KID)
-	assert.Contains(t, keys[0].PEM, "BEGIN PUBLIC KEY")
+
+	got := snap.StoreGrantsByGateway(gw)
+	require.Len(t, got, 2)
+	assert.Equal(t, "github", got[0].CatalogCode)
+	assert.True(t, got[0].RegistryID.IsNil(), "code-level grant stays code-level")
+	assert.Equal(t, []string{"eng"}, got[0].Groups)
+	assert.Equal(t, reg, got[1].RegistryID)
+	assert.Equal(t, []string{"ana"}, got[1].Users)
+	assert.Empty(t, snap.StoreGrantsByGateway(ids.New[ids.GatewayKind]()))
+}
+
+func TestCodecRoundTripsPolicyMCPScope(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	snowflake := ids.New[ids.RegistryKind]()
+	jira := ids.New[ids.RegistryKind]()
+
+	newPolicy := func(name string, scope *policydomain.MCPScope) policydomain.Policy {
+		p, err := policydomain.NewPolicy(gw, name, "trustguard", true, 0, false, nil, nil, "", policydomain.ModeEnforce, scope)
+		require.NoError(t, err)
+		return *p
+	}
+	full := &policydomain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{jira},
+		Tools:        []policydomain.MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}},
+		Groups:       []string{"Finanzas"},
+		ExceptGroups: []string{"Contractors"},
+	}
+	unscoped := newPolicy("unscoped", nil)
+	pruned := newPolicy("pruned", &policydomain.MCPScope{})
+	scoped := newPolicy("scoped", full)
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", Policies: []policydomain.Policy{unscoped, pruned, scoped}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.Data().Policies
+	require.Len(t, got, 3)
+	assert.Nil(t, got[0].MCPScope, "nil scope stays nil so the policy keeps applying consumer-wide")
+	require.NotNil(t, got[1].MCPScope, "an empty scope must survive as {} rather than collapse to nil")
+	assert.True(t, got[1].MCPScope.IsEmpty())
+	require.NotNil(t, got[2].MCPScope)
+	assert.Equal(t, full, got[2].MCPScope)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsPolicyMCPWide(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	newPolicy := func(name string, mcpWide bool) policydomain.Policy {
+		p, err := policydomain.NewPolicy(gw, name, "tool_allowlist", true, 0, false, nil, nil, "", policydomain.ModeEnforce, nil)
+		require.NoError(t, err)
+		p.SetMCPWide(mcpWide)
+		return *p
+	}
+	plain := newPolicy("plain", false)
+	wide := newPolicy("wide", true)
+
+	plainRaw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", Policies: []policydomain.Policy{plain}}))
+	require.NoError(t, err)
+	assert.False(t, bytes.Contains(plainRaw, []byte(`"mcp_wide"`)), "a policy that is not MCP-wide must encode as it did before the field existed")
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", Policies: []policydomain.Policy{plain, wide}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.Data().Policies
+	require.Len(t, got, 2)
+	assert.False(t, got[0].MCPWide)
+	assert.True(t, got[1].MCPWide)
+	assert.False(t, got[1].Global)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
 }

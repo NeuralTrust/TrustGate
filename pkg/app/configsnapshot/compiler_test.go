@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"testing"
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
@@ -30,8 +31,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
-	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
 
 func mustGatewayID(t *testing.T, s string) ids.GatewayID {
@@ -175,33 +174,6 @@ func (f fakeAuths) List(_ context.Context, filter authdomain.ListFilter) ([]*aut
 	return items, len(items), nil
 }
 
-type fakeRoles struct {
-	byGateway map[string][]*roledomain.Role
-	err       error
-}
-
-func (f fakeRoles) ListByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*roledomain.Role, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.byGateway[gatewayID.String()], nil
-}
-
-func (f fakeRoles) List(_ context.Context, filter roledomain.ListFilter) ([]*roledomain.Role, int, error) {
-	if f.err != nil {
-		return nil, 0, f.err
-	}
-	if filter.Page.Number > 1 {
-		return nil, 0, nil
-	}
-	if filter.GatewayID != (ids.GatewayID{}) {
-		items := f.byGateway[filter.GatewayID.String()]
-		return items, len(items), nil
-	}
-	items := flattenByGateway(f.byGateway)
-	return items, len(items), nil
-}
-
 // flattenByGateway mirrors the SQL repos' zero-GatewayID List semantics for
 // the fakes: all gateways' rows in one deterministic (key-sorted) list.
 func flattenByGateway[T any](byGateway map[string][]T) []T {
@@ -265,7 +237,6 @@ func TestCompilerDeterministicSortedData(t *testing.T) {
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		catalog,
 		nil,
 	)
@@ -308,7 +279,6 @@ func TestCompilerStableAcrossRuns(t *testing.T) {
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -334,7 +304,6 @@ func TestCompilerToleratesNotFound(t *testing.T) {
 		fakeRegistries{err: commonerrors.ErrNotFound},
 		fakePolicies{err: commonerrors.ErrNotFound},
 		fakeAuths{err: commonerrors.ErrNotFound},
-		fakeRoles{err: commonerrors.ErrNotFound},
 		fakeCatalog{err: commonerrors.ErrNotFound},
 		nil,
 	)
@@ -358,7 +327,6 @@ func TestCompilerGatewaysNotFoundYieldsEmpty(t *testing.T) {
 		fakeRegistries{},
 		fakePolicies{},
 		fakeAuths{},
-		fakeRoles{},
 		fakeCatalog{},
 		nil,
 	)
@@ -386,7 +354,6 @@ func TestCompilerSkipsGatewayWithCorruptData(t *testing.T) {
 		}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -417,7 +384,6 @@ func TestCompilerFailsWhenAllGatewaysCorrupt(t *testing.T) {
 		}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -439,7 +405,6 @@ func TestCompilerPropagatesNonCorruptErrors(t *testing.T) {
 		fakeRegistries{errByGateway: map[string]error{gwA.String(): boom}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -451,28 +416,59 @@ func TestCompilerPropagatesNonCorruptErrors(t *testing.T) {
 	}
 }
 
-func hybridEntitlements() gatewaydomain.Entitlements {
-	return gatewaydomain.Entitlements{Tier: "enterprise", DataPlane: gatewaydomain.DataPlaneHybrid}
+// skippingPolicies mimics the policy repository after RUN-1663: a page is built
+// from the rows the query matched, unreadable rows are dropped from it, and the
+// total still counts them. A full page therefore comes back one row short.
+type skippingPolicies struct {
+	rows       []*policydomain.Policy
+	unreadable map[int]bool
+	// cancelFirstCall makes the first List call block until its context is done
+	// and fail with ctx.Err(), so the bulk policies scan is always the one an
+	// errgroup cancellation kills.
+	cancelFirstCall *atomic.Bool
 }
 
-func TestCompilerGlobalSnapshotExcludesHybridGateways(t *testing.T) {
-	hosted := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
-	hybrid := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+func (f skippingPolicies) ListByGateway(context.Context, ids.GatewayID) ([]*policydomain.Policy, error) {
+	return nil, nil
+}
+
+func (f skippingPolicies) List(ctx context.Context, filter policydomain.ListFilter) ([]*policydomain.Policy, int, error) {
+	if f.cancelFirstCall != nil && f.cancelFirstCall.CompareAndSwap(false, true) {
+		<-ctx.Done()
+		return nil, 0, ctx.Err()
+	}
+	number, size := filter.Page.Number, filter.Page.Size
+	start := (number - 1) * size
+	if start >= len(f.rows) {
+		return nil, len(f.rows), nil
+	}
+	end := min(start+size, len(f.rows))
+	out := make([]*policydomain.Policy, 0, end-start)
+	for i := start; i < end; i++ {
+		if f.unreadable[i] {
+			continue
+		}
+		out = append(out, f.rows[i])
+	}
+	return out, len(f.rows), nil
+}
+
+func TestCompilerKeepsPagingWhenARepositorySkipsUnreadableRows(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	rows := make([]*policydomain.Policy, 0, 501)
+	for range 501 {
+		rows = append(rows, &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw})
+	}
+	// Row 3 sits on the first, full page: the page comes back with 499 rows, and
+	// the 501st row lives on the second page.
+	policies := skippingPolicies{rows: rows, unreadable: map[int]bool{3: true}}
 
 	compiler := appsnapshot.NewCompiler(
-		fakeGateways{items: []*gatewaydomain.Gateway{
-			{ID: hosted},
-			{ID: hybrid, Entitlements: hybridEntitlements()},
-		}},
-		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{
-			hybrid.String(): {
-				{ID: mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GatewayID: hybrid},
-			},
-		}},
+		fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
-		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
+		policies,
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -481,134 +477,104 @@ func TestCompilerGlobalSnapshotExcludesHybridGateways(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	data := snapshot.Data()
-	if len(data.Gateways) != 1 || data.Gateways[0].ID != hosted {
-		t.Fatalf("global snapshot must only carry hosted gateways, got %+v", data.Gateways)
-	}
-	if len(data.Consumers) != 0 {
-		t.Fatalf("global snapshot must not carry hybrid gateway consumers, got %+v", data.Consumers)
+	if got := len(snapshot.Data().Policies); got != 500 {
+		t.Fatalf("expected the 500 readable policies, got %d (a short page ended the walk early)", got)
 	}
 }
 
-func TestCompilerScopedSnapshotKeepsHybridGateway(t *testing.T) {
-	hybrid := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+func compileWithSkippedPolicies(t *testing.T, total int, unreadable ...int) (int, error) {
+	t.Helper()
+	return compileWithSkippedPoliciesAndRegistries(t, fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}}, false, total, unreadable...)
+}
 
+func compileWithSkippedPoliciesAndRegistries(t *testing.T, registries appsnapshot.RegistryReader, cancelFirstPoliciesCall bool, total int, unreadable ...int) (int, error) {
+	t.Helper()
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	rows := make([]*policydomain.Policy, 0, total)
+	for range total {
+		rows = append(rows, &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw})
+	}
+	skip := map[int]bool{}
+	for _, i := range unreadable {
+		skip[i] = true
+	}
+	policies := skippingPolicies{rows: rows, unreadable: skip}
+	if cancelFirstPoliciesCall {
+		policies.cancelFirstCall = &atomic.Bool{}
+	}
 	compiler := appsnapshot.NewCompiler(
-		fakeGateways{items: []*gatewaydomain.Gateway{
-			{ID: hybrid, Entitlements: hybridEntitlements()},
-		}},
-		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{
-			hybrid.String(): {
-				{ID: mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GatewayID: hybrid},
-			},
-		}},
-		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
-		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
-		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
-		fakeCatalog{},
-		nil,
-	)
-
-	snapshot, err := compiler.CompileFor(context.Background(), hybrid.String())
-	if err != nil {
-		t.Fatalf("compile for scope: %v", err)
-	}
-	data := snapshot.Data()
-	if len(data.Gateways) != 1 || data.Gateways[0].ID != hybrid {
-		t.Fatalf("scoped snapshot must carry its hybrid gateway, got %+v", data.Gateways)
-	}
-	if len(data.Consumers) != 1 {
-		t.Fatalf("scoped snapshot must carry the hybrid gateway's consumers, got %+v", data.Consumers)
-	}
-}
-
-func TestCompileAllPartitionsHybridGateways(t *testing.T) {
-	hosted := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
-	hybrid := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
-
-	compiler := appsnapshot.NewCompiler(
-		fakeGateways{items: []*gatewaydomain.Gateway{
-			{ID: hosted},
-			{ID: hybrid, Entitlements: hybridEntitlements()},
-		}},
-		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{
-			hybrid.String(): {
-				{ID: mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GatewayID: hybrid},
-			},
-		}},
-		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
-		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
-		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
-		fakeCatalog{},
-		nil,
-	)
-
-	global, scoped, _, err := compiler.CompileAll(context.Background())
-	if err != nil {
-		t.Fatalf("compile all: %v", err)
-	}
-	if len(global.Data().Gateways) != 1 || global.Data().Gateways[0].ID != hosted {
-		t.Fatalf("global must exclude hybrid gateways, got %+v", global.Data().Gateways)
-	}
-	hybridSnap, ok := scoped[hybrid.String()]
-	if !ok {
-		t.Fatalf("hybrid gateway must keep its scoped snapshot, scopes: %v", scopeKeys(scoped))
-	}
-	if len(hybridSnap.Data().Gateways) != 1 || hybridSnap.Data().Gateways[0].ID != hybrid {
-		t.Fatalf("scoped snapshot must carry the hybrid gateway, got %+v", hybridSnap.Data().Gateways)
-	}
-	if len(hybridSnap.Data().Consumers) != 1 {
-		t.Fatalf("scoped snapshot must carry the hybrid gateway's consumers, got %+v", hybridSnap.Data().Consumers)
-	}
-}
-
-func scopeKeys(scoped map[string]*readmodel.Snapshot) []string {
-	keys := make([]string, 0, len(scoped))
-	for k := range scoped {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func TestCompilerStampsPlaygroundTokenKeysEverywhere(t *testing.T) {
-	hosted := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
-	keys := []readmodel.VerificationKey{{KID: "2026-09", PEM: "pem"}}
-
-	compiler := appsnapshot.NewCompiler(
-		fakeGateways{items: []*gatewaydomain.Gateway{{ID: hosted}}},
+		fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}}},
 		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
-		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
-		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
+		registries,
+		policies,
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
-		appsnapshot.WithPlaygroundTokenKeys(keys),
 	)
-
-	global, scoped, _, err := compiler.CompileAll(context.Background())
+	snapshot, err := compiler.Compile(context.Background())
 	if err != nil {
-		t.Fatalf("compile all: %v", err)
+		return 0, err
 	}
-	if got := global.PlaygroundTokenKeys(); len(got) != 1 || got[0].KID != "2026-09" {
-		t.Fatalf("global snapshot keys = %+v", got)
-	}
-	hostedSnap, ok := scoped[hosted.String()]
-	if !ok {
-		t.Fatalf("missing scoped snapshot for %s", hosted)
-	}
-	if got := hostedSnap.PlaygroundTokenKeys(); len(got) != 1 || got[0].KID != "2026-09" {
-		t.Fatalf("scoped snapshot keys = %+v", got)
-	}
+	return len(snapshot.Data().Policies), nil
+}
 
-	single, err := compiler.Compile(context.Background())
-	if err != nil {
-		t.Fatalf("compile: %v", err)
+// A few corrupt rows are skipped so the rest keep enforcing; a mass failure is a
+// systemic bug and must fail the compile so running pods keep their last known
+// good snapshot instead of swapping in one without the guardrails.
+func TestCompilerMassUnreadablePoliciesFailTheCompile(t *testing.T) {
+	tests := []struct {
+		name       string
+		total      int
+		unreadable []int
+		wantErr    bool
+		wantCount  int
+	}{
+		{name: "1 of 1 unreadable fails", total: 1, unreadable: []int{0}, wantErr: true},
+		{name: "1 of 10 unreadable keeps the other 9", total: 10, unreadable: []int{4}, wantCount: 9},
+		{name: "2 of 10 unreadable fails", total: 10, unreadable: []int{1, 2}, wantErr: true},
+		{name: "2 of 19 unreadable fails", total: 19, unreadable: []int{1, 2}, wantErr: true},
+		{name: "2 of 21 unreadable keeps the other 19", total: 21, unreadable: []int{1, 2}, wantCount: 19},
+		{name: "3 of 21 unreadable fails", total: 21, unreadable: []int{1, 2, 3}, wantErr: true},
+		{name: "1 of 5 unreadable keeps the other 4", total: 5, unreadable: []int{2}, wantCount: 4},
+		{name: "2 of 5 unreadable fails", total: 5, unreadable: []int{1, 2}, wantErr: true},
+		{name: "5 of 5 unreadable fails", total: 5, unreadable: []int{0, 1, 2, 3, 4}, wantErr: true},
+		{name: "1 of 20 unreadable keeps the other 19", total: 20, unreadable: []int{4}, wantCount: 19},
+		{name: "exactly 10 percent is still skipped", total: 20, unreadable: []int{4, 9}, wantCount: 18},
+		{name: "more than 10 percent fails", total: 20, unreadable: []int{1, 2, 3}, wantErr: true},
+		{name: "every row unreadable fails", total: 3, unreadable: []int{0, 1, 2}, wantErr: true},
 	}
-	if got := single.PlaygroundTokenKeys(); len(got) != 1 {
-		t.Fatalf("single snapshot keys = %+v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compileWithSkippedPolicies(t, tt.total, tt.unreadable...)
+			if tt.wantErr {
+				if !errors.Is(err, commonerrors.ErrCorruptData) {
+					t.Fatalf("expected an error wrapping ErrCorruptData, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got != tt.wantCount {
+				t.Fatalf("expected %d policies, got %d", tt.wantCount, got)
+			}
+		})
+	}
+}
+
+// A corrupt registries row makes the bulk collect fail with ErrCorruptData and
+// cancels the other scans, so the compile falls back to per-gateway collection.
+// The mass-skip breaker must still hold on that path. The first policies List is
+// blocked until the registries error cancels it, so the bulk policies scan never
+// reaches its own check and only the fallback's re-check can trip.
+func TestCompilerMassUnreadablePoliciesFailEvenWhenRegistriesAreCorrupt(t *testing.T) {
+	// Only the bulk scan trips on the corrupt row; the compiled gateway's own
+	// registries read fine, so the fallback would otherwise succeed.
+	registries := fakeRegistries{errByGateway: map[string]error{
+		"99999999-9999-9999-9999-999999999999": fmt.Errorf("scan auth: %w", commonerrors.ErrCorruptData),
+	}}
+	_, err := compileWithSkippedPoliciesAndRegistries(t, registries, true, 20, 1, 2, 3)
+	if !errors.Is(err, appsnapshot.ErrUnreadablePolicies) {
+		t.Fatalf("expected ErrUnreadablePolicies, got %v", err)
 	}
 }

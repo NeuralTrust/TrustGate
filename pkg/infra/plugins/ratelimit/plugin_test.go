@@ -17,6 +17,7 @@ package ratelimit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -188,7 +189,17 @@ func TestPlugin_Execute_RejectsOverLimit(t *testing.T) {
 	assert.Equal(t, "consumer", payload["reason"])
 	assert.Equal(t, float64(2), payload["limit"])
 	assert.Equal(t, float64(30), payload["retry_after_seconds"])
-	assert.Contains(t, payload["message"], "consumer rate limit exceeded")
+	// Clients such as Zed show the message verbatim, so it has to say who
+	// blocked the request and which limit it hit.
+	assert.Equal(t, "TrustGate blocked this request: consumer rate limit exceeded (2 requests per 1m). Retry in 30s.",
+		payload["message"])
+	assert.Equal(t, payload["message"], pe.Message)
+}
+
+func TestBlockedMessage_SingularLimit(t *testing.T) {
+	cfg := &config{Limit: 1, Window: "10s", RetryAfter: "10"}
+	assert.Equal(t, "TrustGate blocked this request: global rate limit exceeded (1 request per 10s). Retry in 10s.",
+		blockedMessage("global", cfg))
 }
 
 // A client that reads "1 remaining" must be able to spend it, so the countdown
@@ -406,6 +417,157 @@ func TestPlugin_Execute_DefaultRetryAfterIsTheWindow(t *testing.T) {
 			require.Error(t, err)
 			pe, _ := appplugins.AsPluginError(err)
 			assert.Equal(t, []string{tt.want}, pe.Headers["Retry-After"])
+		})
+	}
+}
+
+// pipelineBreakerHook fails only a pipeline (TxPipeline) call carrying a
+// command named target, letting plain commands and any other pipeline
+// (including go-redis's own internal handshake) through untouched. It is how
+// TestPlugin_Execute_CounterStoreRecordFailureFailsOpen simulates a record
+// (write-back) failure on a counter store that answered the read (ZCount)
+// just fine — closing miniredis outright would fail both indiscriminately.
+type pipelineBreakerHook struct {
+	target string
+	err    error
+}
+
+func (h pipelineBreakerHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h pipelineBreakerHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error { return next(ctx, cmd) }
+}
+func (h pipelineBreakerHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, c := range cmds {
+			if c.Name() == h.target {
+				return h.err
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// TestPlugin_Execute_CounterStoreReadFailureFailsOpen proves RUN-1675: our
+// own counter store being unreachable for the read (ZCount) never rejects
+// the request, in enforce or in observe, unlike a rejected/exceeded limit.
+// The event still records it — decision failed_open, with
+// failure_reason/failure_detail on the plugin's own extras.
+func TestPlugin_Execute_CounterStoreReadFailureFailsOpen(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			// MaxRetries: -1 skips go-redis's own retry-with-backoff, so the
+			// closed connection below fails fast instead of adding several
+			// seconds of retry sleep to every run of this test.
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+			t.Cleanup(func() { _ = rdb.Close() })
+			p := New(rdb)
+			mr.Close()
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			in := execInput(limitSettings(1, "1m"), consumerScope("c-1"))
+			in.Mode = mode
+			in.Event = metrics.NewEventContext(span)
+
+			res, err := p.Execute(context.Background(), in)
+			require.NoError(t, err, "a counter-store read failure must never reject the request")
+			require.NotNil(t, res)
+			assert.Equal(t, 200, res.StatusCode)
+
+			require.NotNil(t, span.Plugin)
+			assert.Equal(t, "failed_open", span.Plugin.Decision)
+			data, ok := span.Plugin.Extras.(RateLimiterData)
+			require.True(t, ok, "extras should carry rate limiter data")
+			assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+			assert.Equal(t, "read", data.FailureDetail)
+		})
+	}
+}
+
+// TestPlugin_Execute_CounterStoreRecordFailureFailsOpen proves the second
+// half of RUN-1675: a read that already allowed the request must not turn
+// into a refusal just because the write-back (record) failed.
+func TestPlugin_Execute_CounterStoreRecordFailureFailsOpen(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			p, _ := newTestPlugin(t)
+			p.redis.AddHook(pipelineBreakerHook{target: "zadd", err: errors.New("dial tcp: connection refused")})
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			in := execInput(limitSettings(1, "1m"), consumerScope("c-1"))
+			in.Mode = mode
+			in.Event = metrics.NewEventContext(span)
+
+			res, err := p.Execute(context.Background(), in)
+			require.NoError(t, err, "a counter-store record failure must never reject the request")
+			require.NotNil(t, res)
+			assert.Equal(t, 200, res.StatusCode)
+
+			require.NotNil(t, span.Plugin)
+			assert.Equal(t, "failed_open", span.Plugin.Decision)
+			data, ok := span.Plugin.Extras.(RateLimiterData)
+			require.True(t, ok, "extras should carry rate limiter data")
+			assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+			assert.Equal(t, "record", data.FailureDetail)
+		})
+	}
+}
+
+// TestPlugin_Execute_CounterStoreRecordFailureAfterExceededReadKeepsModeDecision
+// proves item 3 of the RUN-1675 review: when the read already found the
+// window exceeded (only reachable here in throttle/observe — enforce would
+// already have returned its PluginError), a record failure on top of that
+// must not throw the exceeded signal away. The throttle/observe decision
+// wins over HandleCounterFailure's default failed_open (the exceed signal is
+// what those modes exist to report), the X-RateLimit-* headers still
+// describe the exceeded window, and failure_reason/failure_detail still
+// travel in the same extras to say the write-back failed on top of it.
+func TestPlugin_Execute_CounterStoreRecordFailureAfterExceededReadKeepsModeDecision(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeThrottle, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			p, _ := newTestPlugin(t)
+			settings := limitSettings(1, "1m")
+
+			// First call fills the window to its limit, cleanly.
+			first := execInput(settings, consumerScope("c-1"))
+			first.Mode = mode
+			_, err := p.Execute(context.Background(), first)
+			require.NoError(t, err)
+
+			// The second call's read now finds the window exceeded; break
+			// only the record leg so the read — and the exceeded verdict it
+			// already produced — survives untouched.
+			p.redis.AddHook(pipelineBreakerHook{target: "zadd", err: errors.New("dial tcp: connection refused")})
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			second := execInput(settings, consumerScope("c-1"))
+			second.Mode = mode
+			second.Event = metrics.NewEventContext(span)
+
+			res, err := p.Execute(context.Background(), second)
+			require.NoError(t, err, "throttle/observe must still pass the request through")
+			require.NotNil(t, res)
+			assert.Equal(t, 200, res.StatusCode)
+			assert.NotEmpty(t, res.Headers["X-RateLimit-consumer-Limit"],
+				"the exceeded-window headers must survive the record failure")
+
+			require.NotNil(t, span.Plugin)
+			assert.Equal(t, string(mode), span.Plugin.Decision,
+				"the throttle/observe decision must win over failed_open")
+
+			data, ok := span.Plugin.Extras.(RateLimiterData)
+			require.True(t, ok, "extras should carry rate limiter data")
+			assert.True(t, data.RateLimitExceeded, "the exceeded signal from the read must survive")
+			assert.Equal(t, int64(1), data.CurrentCount)
+			assert.Equal(t, 1, data.Limit)
+			assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+			assert.Equal(t, "record", data.FailureDetail)
 		})
 	}
 }

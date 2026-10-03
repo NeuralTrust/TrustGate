@@ -1,0 +1,1 @@
+{"contents": [{"parts": [{"text": "compute"}, {"fileData": {"file_uri": "gs://b/a.pdf", "mime_type": "application/pdf"}}], "role": "user"}, {"parts": [{"executableCode": {"code": "print(1)", "language": "PYTHON"}}, {"codeExecutionResult": {"outcome": "OUTCOME_OK", "output": "1"}}], "role": "model"}]}

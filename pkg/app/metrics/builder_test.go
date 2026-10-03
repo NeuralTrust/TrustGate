@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -836,4 +837,106 @@ func TestBuilder_StampsRetentionOnMCPTracesToo(t *testing.T) {
 	require.NotNil(t, evt.Retention)
 	assert.Equal(t, "free", evt.Retention.Plan)
 	assert.Equal(t, evt.OccurredOn+(7*24*time.Hour).Milliseconds(), evt.Retention.ExpiresAt)
+}
+
+// streamingChainTrace is a paced streamed request: a 1s wall clock of which the
+// provider took 900ms, inspected by len(holds) streaming policies whose spans
+// carry the latency each was charged rather than the span's own wall clock.
+func streamingChainTrace(holds ...time.Duration) *trace.RequestTrace {
+	rt := trace.New("trace-stream", trace.Metadata{GatewayID: "gw-1"})
+	for i, hold := range holds {
+		_ = rt.AddSpan(pluginSpan(fmt.Sprintf("trustguard_%d", i),
+			&trace.PluginAttrs{
+				Stage:    "pre_response",
+				Decision: "allow",
+				Extras:   map[string]any{"streaming": map[string]any{"enabled": true}},
+			}, 200, hold, ""))
+	}
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+		200, 900*time.Millisecond, ""))
+	return rt
+}
+
+// TestBuilder_StreamingChainChargesTheHoldOnce is the other half of the
+// per-entry split in pkg/app/plugins: it proves the shares actually arrive in
+// blocking_policies_ms, and that a chain-wide figure repeated on every entry is
+// summed once per streaming policy. The provider share here is deliberately
+// small, so the fold's arithmetic is what the two cases differ on and nothing
+// else.
+func TestBuilder_StreamingChainChargesTheHoldOnce(t *testing.T) {
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Method:       "POST",
+		Path:         "/v1/chat/completions",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+	start := time.UnixMilli(1_000_000)
+	end := start.Add(time.Second)
+
+	shared := newBuilder(appcatalog.Pricing{}).Build(context.Background(),
+		streamingChainTrace(40*time.Millisecond, 20*time.Millisecond), req, resp, start, end)
+
+	assert.Equal(t, int64(60), shared.Latency.PoliciesMs,
+		"two streaming policies sum to the one hold the guard measured")
+	assert.Equal(t, int64(40), shared.Latency.GatewayMs,
+		"gateway_ms is what is left of the wall clock once the provider and the hold are removed")
+	require.Len(t, shared.PolicyChain, 2, "a streamed leg emits one entry per streaming policy")
+
+	// The regression this pins: the guard's chain-wide 60ms written unchanged
+	// onto both spans is summed twice, so the remainder goes negative and the
+	// gateway's own time disappears.
+	duplicated := newBuilder(appcatalog.Pricing{}).Build(context.Background(),
+		streamingChainTrace(60*time.Millisecond, 60*time.Millisecond), req, resp, start, end)
+	assert.Equal(t, int64(120), duplicated.Latency.PoliciesMs)
+	assert.Zero(t, duplicated.Latency.GatewayMs,
+		"a per-chain aggregate on every span is what clamps gateway_ms; the split is what prevents it")
+}
+
+// TestBuilder_StreamedPoliciesLeaveProviderMs pins the streamed-leg
+// reconciliation. A policy that inspects the response block by block runs while
+// the response drains, so its latency elapses inside the LLM span and the raw
+// attempt sum already contains it. Counted in both buckets the remainder goes
+// negative and gateway_ms clamps to zero, which is what shipped before: the
+// second half of this test is that regression, held in place as the control.
+func TestBuilder_StreamedPoliciesLeaveProviderMs(t *testing.T) {
+	build := func(streamed bool) events.Latency {
+		rt := trace.New("trace-stream", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(pluginSpan("rate_limiter",
+			&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 6*time.Millisecond, ""))
+		_ = rt.AddSpan(pluginSpan("trustguard",
+			&trace.PluginAttrs{Stage: "pre_response", Decision: "allow", Streamed: streamed},
+			200, 120*time.Millisecond, ""))
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+			200, 500*time.Millisecond, ""))
+
+		req := &infracontext.RequestContext{
+			GatewayID:    "gw-1",
+			Method:       "POST",
+			Path:         "/v1/chat/completions",
+			Body:         []byte(openAIRequestBody),
+			SourceFormat: string(adapter.FormatOpenAI),
+		}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+		start := time.UnixMilli(1_000_000)
+		end := start.Add(530 * time.Millisecond)
+		return newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end).Latency
+	}
+
+	got := build(true)
+	assert.Equal(t, int64(380), got.ProviderMs,
+		"the 120ms the guard held bytes elapsed inside the 500ms drain, so it is not the provider's")
+	assert.Equal(t, int64(126), got.PoliciesMs, "policies_ms still reports the full chain cost")
+	assert.Equal(t, int64(24), got.GatewayMs)
+	assert.Equal(t, got.TotalMs, got.ProviderMs+got.PoliciesMs+got.GatewayMs,
+		"the three buckets must reconcile against total_ms on a streamed leg")
+
+	unmarked := build(false)
+	assert.Equal(t, int64(500), unmarked.ProviderMs)
+	assert.Zero(t, unmarked.GatewayMs,
+		"without the marker the guard's hold is counted twice and the remainder clamps to zero")
 }

@@ -55,12 +55,12 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 		// tenant, so a small value would give the whole suite a budget that
 		// the next test to be added would exhaust. Tests that exercise the cap
 		// itself stamp their own entitlements.
-		payload["entitlements"] = map[string]any{
-			"tier":            "free",
-			"burst_per_min":   60,
-			"quota_per_month": 10000,
-			"max_instances":   1000,
-		}
+		//
+		// The plan counter is per tenant and every test here shares one tenant,
+		// so the burst is a budget for the whole suite, not for one gateway. The
+		// first stamped create also seeds the tenant's row, so every default
+		// stamp in this package has to be this generous.
+		payload["entitlements"] = functionalSuitePlan()
 	}
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, payload)
 	require.Equal(t, http.StatusCreated, status, "create gateway failed: %v", body)
@@ -90,20 +90,6 @@ func CreateRegistry(t *testing.T, gatewayID string, payload map[string]any) stri
 
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create registry response missing id: %v", body)
-	require.NotEmpty(t, id)
-	return id
-}
-
-// CreateRole issues a POST /v1/gateways/:gateway_id/roles and returns the new
-// role id. Aborts the calling test on any failure.
-func CreateRole(t *testing.T, gatewayID string, payload map[string]any) string {
-	t.Helper()
-	url := fmt.Sprintf("%s/v1/gateways/%s/roles", AdminURL, gatewayID)
-	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
-	require.Equal(t, http.StatusCreated, status, "create role failed: %v", body)
-
-	id, ok := body["id"].(string)
-	require.True(t, ok, "create role response missing id: %v", body)
 	require.NotEmpty(t, id)
 	return id
 }
@@ -234,6 +220,16 @@ func SetPolicyGlobal(t *testing.T, gatewayID, policyID string) {
 	require.Equal(t, http.StatusOK, status, "set policy global failed: %v", body)
 }
 
+// SetPolicyMCPWide promotes a policy to every MCP consumer of the gateway and
+// the MCP Store, asserting the 200 contract, and returns the echoed policy.
+func SetPolicyMCPWide(t *testing.T, gatewayID, policyID string) map[string]any {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s/mcp-wide", AdminURL, gatewayID, policyID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Equal(t, http.StatusOK, status, "set policy mcp-wide failed: %v", body)
+	return body
+}
+
 // UpdateConsumer issues a PUT /v1/gateways/:gateway_id/consumers/:id, asserting
 // the 200 contract. Registry-referencing config (nested registries policies,
 // fallback) must reference registries already attached to the consumer.
@@ -312,6 +308,19 @@ func validRegistryPayload(name string) map[string]any {
 	}
 }
 
+// responseWarnings returns the non-blocking warnings of an admin response, empty
+// when it carries none.
+func responseWarnings(body map[string]any) []string {
+	raw, _ := body["warnings"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, w := range raw {
+		if text, ok := w.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
 // sendRequest performs an HTTP call, JSON-encoding `body` when
 // provided, and returns the status plus decoded JSON map (empty on
 // 204).
@@ -365,4 +374,27 @@ func sendRequest(
 	}
 	assert.NotNil(t, out)
 	return resp.StatusCode, out
+}
+
+// functionalSuitePlan is the plan the shared functional tenant runs under: no
+// monthly cap and a burst the whole suite cannot reach in a minute.
+//
+// The first stamped create of a tenant seeds its tenant_entitlements row, and
+// the seed is ON CONFLICT DO NOTHING. A database reused from an older run
+// therefore keeps the functional-tenant row it already has, with whatever plan
+// that run stamped (60 requests a minute, for instance), and the suite starts
+// answering 429. The row has to be dropped before running against a reused
+// local database:
+//
+//	DELETE FROM tenant_entitlements WHERE tenant_id = 'functional-tenant';
+//
+// (or recreate the database). A test that needs a small plan of its own must use
+// its own tenant id, as TestPlanRateLimitE2E does.
+func functionalSuitePlan() map[string]any {
+	return map[string]any{
+		"tier":            "enterprise",
+		"burst_per_min":   1_000_000,
+		"quota_per_month": 0,
+		"max_instances":   1000,
+	}
 }

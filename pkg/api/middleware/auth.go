@@ -23,10 +23,11 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -35,7 +36,6 @@ type AuthMiddleware struct {
 	resolver        resolver.IdentityResolver
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
-	roleResolver    approle.OIDCResolver
 	logger          *slog.Logger
 }
 
@@ -43,14 +43,12 @@ func NewAuthMiddleware(
 	identityResolver resolver.IdentityResolver,
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
-	roleResolver approle.OIDCResolver,
 	logger *slog.Logger,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
 		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
-		roleResolver:    roleResolver,
 		logger:          logger,
 	}
 }
@@ -91,30 +89,11 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		authCtx.GatewayID = gw.ID
 		authCtx.GatewaySlug = gw.Slug
 		authCtx.ConsumerID = rc.Consumer.ID
-		if authCtx.Method == appauth.MethodOIDC {
-			if m.roleResolver == nil {
-				return internalError(c, "failed to resolve idp roles")
-			}
-			roleIDs, err := m.roleResolver.ResolveOIDCRoles(c.UserContext(), data.Roles, authCtx.Claims)
-			if err != nil {
-				m.debug(c).Debug("idp role resolution error",
-					slog.String("subject", authCtx.Subject),
-					slog.String("error", err.Error()))
-				return invalidAuthRequest(c, err)
-			}
-			authCtx.RoleIDs = intersectRoleIDs(roleIDs, rc.Consumer.RoleIDs)
-			m.debug(c).Debug("idp roles resolved",
-				slog.String("subject", authCtx.Subject),
-				slog.Int("gateway_roles_resolved", len(roleIDs)),
-				slog.Int("consumer_roles_assigned", len(rc.Consumer.RoleIDs)),
-				slog.Int("effective_roles", len(authCtx.RoleIDs)),
-				slog.Any("roles_claim", authCtx.Claims["roles"]),
-				slog.Any("groups_claim", authCtx.Claims["groups"]))
-			if len(authCtx.RoleIDs) == 0 {
-				m.debug(c).Debug("oidc authorization denied: no matching role between token claims and consumer assignment",
-					slog.String("subject", authCtx.Subject))
-				return forbidden(c, resolver.ErrForbidden)
-			}
+		if !consumerAdmitsCaller(rc.Consumer, authCtx) {
+			m.debug(c).Debug("caller not bound to consumer",
+				slog.String("consumer_slug", route.ConsumerSlug),
+				slog.String("method", string(authCtx.Method)))
+			return forbidden(c, resolver.ErrForbidden)
 		}
 		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
@@ -133,7 +112,7 @@ func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
 }
 
 func writeAuthError(c *fiber.Ctx, err error) error {
-	if errors.Is(err, appauth.ErrInvalidAuthRequest) || errors.Is(err, appauth.ErrAmbiguousOIDCConfig) {
+	if errors.Is(err, appauth.ErrInvalidAuthRequest) {
 		return invalidAuthRequest(c, err)
 	}
 	if errors.Is(err, commonerrors.ErrInvalidConfig) || errors.Is(err, commonerrors.ErrValidation) {
@@ -147,7 +126,6 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 
 func isAuthMappableError(err error) bool {
 	return errors.Is(err, appauth.ErrInvalidAuthRequest) ||
-		errors.Is(err, appauth.ErrAmbiguousOIDCConfig) ||
 		errors.Is(err, commonerrors.ErrInvalidConfig) ||
 		errors.Is(err, commonerrors.ErrValidation) ||
 		errors.Is(err, resolver.ErrForbidden) ||
@@ -202,6 +180,9 @@ func (m *AuthMiddleware) attach(
 	c.Locals(string(appconsumer.ConsumerDataKey), data)
 	c.Locals(string(appconsumer.ConsumerKey), rc)
 	ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+	if authCtx.Principal != nil {
+		ctx = identity.WithPrincipal(ctx, authCtx.Principal)
+	}
 	ctx = appconsumer.WithGatewayID(ctx, authCtx.GatewayID)
 	if authCtx.AuthID != (ids.AuthID{}) {
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
@@ -231,16 +212,20 @@ func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsu
 	return false
 }
 
-func intersectRoleIDs(resolved, assigned []ids.RoleID) []ids.RoleID {
-	assignedSet := make(map[ids.RoleID]struct{}, len(assigned))
-	for _, id := range assigned {
-		assignedSet[id] = struct{}{}
+// consumerAdmitsCaller applies the consumer's auth binding to a verified
+// caller: a bearer token from a shared IdP must have been issued to one of the
+// consumer's allowed clients, and a client certificate must carry an allowed
+// subject. API keys and playground tokens are already bound to one consumer.
+func consumerAdmitsCaller(cons *consumerdomain.Consumer, authCtx *appauth.AuthContext) bool {
+	if cons == nil || authCtx == nil {
+		return false
 	}
-	out := make([]ids.RoleID, 0, len(resolved))
-	for _, id := range resolved {
-		if _, ok := assignedSet[id]; ok {
-			out = append(out, id)
-		}
+	switch authCtx.Method {
+	case appauth.MethodOAuth2, appauth.MethodOIDC:
+		return cons.AuthBinding.AllowsClient(authCtx.Claims)
+	case appauth.MethodMTLS:
+		return cons.AuthBinding.AllowsCertificateClaims(authCtx.Claims)
+	default:
+		return true
 	}
-	return out
 }

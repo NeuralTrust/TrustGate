@@ -17,197 +17,11 @@ package ratelimit
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"strings"
 	"testing"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
-
-var stubTierLimits = map[string]domain.Limits{
-	domain.TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 5},
-	domain.TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 5},
-	domain.TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 5},
-}
-
-type stubTiers struct {
-	tier string
-	err  error
-}
-
-func (s stubTiers) Limits(context.Context, ids.GatewayID) (domain.Limits, error) {
-	if s.err != nil {
-		return domain.Limits{}, s.err
-	}
-	tier := strings.ToLower(strings.TrimSpace(s.tier))
-	if tier == "" {
-		tier = domain.TierFree
-	}
-	limits, ok := stubTierLimits[tier]
-	if !ok {
-		return domain.Limits{}, ErrUnavailable
-	}
-	return limits, nil
-}
-
-type stubCounter struct {
-	burst      int64
-	burstTTL   time.Duration
-	burstErr   error
-	quota      int64
-	quotaErr   error
-	quotaCalls int
-}
-
-func (s *stubCounter) IncrBurst(context.Context, ids.GatewayID) (int64, time.Duration, error) {
-	return s.burst, s.burstTTL, s.burstErr
-}
-
-func (s *stubCounter) IncrQuota(context.Context, ids.GatewayID, string) (int64, error) {
-	s.quotaCalls++
-	return s.quota, s.quotaErr
-}
-
-func TestCheckerBurstExceeded(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 61, burstTTL: 42 * time.Second}, nil)
-	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
-	var ex *Exceeded
-	if !errors.As(err, &ex) {
-		t.Fatalf("err = %v, want Exceeded", err)
-	}
-	if ex.Reason != ReasonBurst || ex.Limit != 60 {
-		t.Fatalf("got %+v", ex)
-	}
-	if ex.Remaining != 0 {
-		t.Fatalf("Remaining = %d, want 0", ex.Remaining)
-	}
-	if ex.RetryAfter != 42*time.Second {
-		t.Fatalf("RetryAfter = %v, want 42s", ex.RetryAfter)
-	}
-}
-
-func TestCheckerBurstAtLimitAllowed(t *testing.T) {
-	counter := &stubCounter{burst: 60, burstTTL: time.Minute, quota: 1}
-	c := NewChecker(stubTiers{tier: "free"}, counter, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("count==limit must allow, got %v", err)
-	}
-	if counter.quotaCalls != 1 {
-		t.Fatalf("quotaCalls = %d, want 1 (burst allowed then quota checked)", counter.quotaCalls)
-	}
-}
-
-func TestCheckerQuotaExceeded(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quota: 10_001}, nil)
-	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
-	var ex *Exceeded
-	if !errors.As(err, &ex) {
-		t.Fatalf("err = %v, want Exceeded", err)
-	}
-	if ex.Reason != ReasonQuota || ex.Limit != 10_000 {
-		t.Fatalf("got %+v", ex)
-	}
-}
-
-func TestCheckerQuotaAtLimitAllowed(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quota: 10_000}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("quota==limit must allow, got %v", err)
-	}
-}
-
-func TestCheckerStandardLimits(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "standard"}, &stubCounter{burst: 301, burstTTL: time.Second}, nil)
-	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
-	var ex *Exceeded
-	if !errors.As(err, &ex) {
-		t.Fatalf("err = %v, want Exceeded", err)
-	}
-	if ex.Reason != ReasonBurst || ex.Limit != 300 {
-		t.Fatalf("got %+v", ex)
-	}
-}
-
-func TestCheckerEnterpriseSkipsQuota(t *testing.T) {
-	counter := &stubCounter{burst: 1, burstTTL: time.Minute}
-	c := NewChecker(stubTiers{tier: "enterprise"}, counter, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if counter.quotaCalls != 0 {
-		t.Fatalf("quotaCalls = %d, want 0", counter.quotaCalls)
-	}
-}
-
-func TestCheckerEnterpriseBurstExceeded(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "enterprise"}, &stubCounter{burst: 1_001, burstTTL: 15 * time.Second}, nil)
-	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
-	var ex *Exceeded
-	if !errors.As(err, &ex) {
-		t.Fatalf("err = %v, want Exceeded", err)
-	}
-	if ex.Reason != ReasonBurst || ex.Limit != 1_000 {
-		t.Fatalf("got %+v", ex)
-	}
-}
-
-func TestCheckerUnmeteredSkipsPlanLimits(t *testing.T) {
-	c := NewChecker(stubTiers{err: ErrUnmetered}, &stubCounter{burst: 999}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("want skip plan limits nil, got %v", err)
-	}
-}
-
-func TestCheckerUnavailableFailOpen(t *testing.T) {
-	c := NewChecker(stubTiers{err: ErrUnavailable}, &stubCounter{burst: 1}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("want fail-open nil, got %v", err)
-	}
-}
-
-func TestCheckerMissingGatewayFailOpen(t *testing.T) {
-	c := NewChecker(stubTiers{err: commonerrors.ErrNotFound}, &stubCounter{}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("want fail-open nil, got %v", err)
-	}
-}
-
-func TestCheckerTierLoadErrorFailOpen(t *testing.T) {
-	c := NewChecker(stubTiers{err: errors.New("db down")}, &stubCounter{burst: 999}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("want fail-open nil, got %v", err)
-	}
-}
-
-func TestCheckerRedisFailOpen(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burstErr: errors.New("redis down")}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("want fail-open nil, got %v", err)
-	}
-}
-
-func TestCheckerQuotaRedisFailOpen(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quotaErr: errors.New("redis down")}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
-		t.Fatalf("want fail-open nil, got %v", err)
-	}
-}
-
-func TestCheckerBurstBlocksBeforeQuota(t *testing.T) {
-	counter := &stubCounter{burst: 61, burstTTL: time.Second, quota: 1}
-	c := NewChecker(stubTiers{tier: "free"}, counter, nil)
-	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
-	var ex *Exceeded
-	if !errors.As(err, &ex) || ex.Reason != ReasonBurst {
-		t.Fatalf("err = %v, want burst Exceeded", err)
-	}
-	if counter.quotaCalls != 0 {
-		t.Fatalf("quota must not run after burst exceed, calls=%d", counter.quotaCalls)
-	}
-}
 
 func TestNoopChecker(t *testing.T) {
 	if err := NewNoopChecker().Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
@@ -258,8 +72,8 @@ func TestExceededBodyExplainsReason(t *testing.T) {
 		t.Fatalf("retry_after_seconds = %v", payload["retry_after_seconds"])
 	}
 	msg, _ := payload["message"].(string)
-	if msg == "" || !strings.Contains(msg, "burst") {
-		t.Fatalf("message = %q, want burst explanation", msg)
+	if want := "TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 42s."; msg != want {
+		t.Fatalf("message = %q, want %q", msg, want)
 	}
 }
 

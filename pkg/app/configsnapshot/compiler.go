@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -29,8 +30,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"golang.org/x/sync/errgroup"
 )
@@ -54,16 +56,51 @@ type Compiler struct {
 	registries RegistryReader
 	policies   PolicyReader
 	auths      AuthReader
-	roles      RoleReader
 	catalog    CatalogReader
-	logger     *slog.Logger
+	// grants is optional: the MCP Store's access grants ride the snapshot when a
+	// reader is wired (WithStoreGrants). Without one the snapshot carries no
+	// grants, which fails closed (nobody is granted under Selected access).
+	grants        StoreGrantReader
+	storePolicies StorePolicyReader
+	logger        *slog.Logger
 	// playgroundTokenKeys are stamped into every compiled snapshot so data
 	// planes can verify RS256 playground tokens without any local key config.
 	playgroundTokenKeys []readmodel.VerificationKey
+
+	tenantCaps ratelimitdomain.TenantCapsLister
+	// lastCaps is the last caps listing that succeeded. It is replaced whole and
+	// never mutated, so readers can use it without holding the lock.
+	capsMu   sync.Mutex
+	lastCaps map[string]ratelimitdomain.TenantCaps
 }
 
-// CompilerOption customizes an optional compiler input.
+// StoreGrantReader is the read side the compiler needs for MCP Store grants.
+type StoreGrantReader interface {
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Grant, error)
+	// List pages every grant across gateways (bulk collect path).
+	List(ctx context.Context, page, size int) ([]*storeaccessdomain.Grant, int, error)
+}
+
+// StorePolicyReader is the read side the compiler needs for per-principal MCP
+// Store access policies.
+type StorePolicyReader interface {
+	ListPoliciesByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Policy, error)
+	ListPolicies(ctx context.Context, page, size int) ([]*storeaccessdomain.Policy, int, error)
+}
+
+// CompilerOption tunes NewCompiler.
 type CompilerOption func(*Compiler)
+
+// WithStoreGrants includes the MCP Store access grants in every snapshot.
+func WithStoreGrants(r StoreGrantReader) CompilerOption {
+	return func(c *Compiler) { c.grants = r }
+}
+
+// WithStorePolicies includes the per-principal Store access policies in every
+// snapshot.
+func WithStorePolicies(r StorePolicyReader) CompilerOption {
+	return func(c *Compiler) { c.storePolicies = r }
+}
 
 // WithPlaygroundTokenKeys sets the verification keys every compiled snapshot
 // carries for RS256 playground tokens.
@@ -73,13 +110,18 @@ func WithPlaygroundTokenKeys(keys []readmodel.VerificationKey) CompilerOption {
 	}
 }
 
+// WithTenantCaps stamps each snapshot with the plan caps of the tenants whose
+// gateways it carries.
+func WithTenantCaps(r ratelimitdomain.TenantCapsLister) CompilerOption {
+	return func(c *Compiler) { c.tenantCaps = r }
+}
+
 func NewCompiler(
 	gateways GatewayReader,
 	consumers ConsumerReader,
 	registries RegistryReader,
 	policies PolicyReader,
 	auths AuthReader,
-	roles RoleReader,
 	catalog CatalogReader,
 	logger *slog.Logger,
 	opts ...CompilerOption,
@@ -93,12 +135,13 @@ func NewCompiler(
 		registries: registries,
 		policies:   policies,
 		auths:      auths,
-		roles:      roles,
 		catalog:    catalog,
 		logger:     logger,
 	}
 	for _, opt := range opts {
-		opt(c)
+		if opt != nil {
+			opt(c)
+		}
 	}
 	return c
 }
@@ -152,6 +195,7 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	}
 	mergeCatalog(&data, cat)
 	data.PlaygroundTokenKeys = c.playgroundTokenKeys
+	stampTenantCaps(&data, c.listTenantCaps(ctx))
 
 	sortData(&data)
 	return readmodel.Build(data), nil
@@ -209,6 +253,14 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		bucket.PlaygroundTokenKeys = c.playgroundTokenKeys
 	}
 
+	// Plan caps follow the gateways in each flavor: the global snapshot carries
+	// the tenants of the gateways it carries, and a scoped one only its own.
+	caps := c.listTenantCaps(ctx)
+	stampTenantCaps(&global, caps)
+	for _, bucket := range buckets {
+		stampTenantCaps(bucket, caps)
+	}
+
 	cat, err := c.collectCatalogData(ctx)
 	if err != nil {
 		return nil, nil, nil, err
@@ -225,6 +277,60 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		scoped[scope] = readmodel.Build(*bucket)
 	}
 	return readmodel.Build(global), scoped, readmodel.Build(catData), nil
+}
+
+// listTenantCaps reads the plan caps of every tenant. A failure does not fail the
+// compile: caps are an enrichment, and a snapshot that cannot be published would
+// freeze every gateway, key and policy change behind a plan-table outage. The
+// failure is logged and counted, and the snapshot goes out with the last listing
+// that succeeded: dropping the caps instead would send every data plane back to
+// the stamp on each gateway, which can disagree with the table. Only a compiler
+// that has never listed them publishes without caps, which sends the data planes
+// to the stamp (the same fallback as before the table existed).
+func (c *Compiler) listTenantCaps(ctx context.Context) map[string]ratelimitdomain.TenantCaps {
+	if c.tenantCaps == nil {
+		return nil
+	}
+	list, err := c.tenantCaps.ListTenantCaps(ctx)
+	if err != nil {
+		c.capsMu.Lock()
+		last := c.lastCaps
+		c.capsMu.Unlock()
+		c.logger.Warn("configsnapshot: failed to list tenant caps; reusing the last listing, or the gateway stamp if there is none",
+			slog.String("component", component),
+			slog.Bool("reusing_last", last != nil),
+			slog.Any("error", err))
+		recordTenantCapsError(ctx)
+		return last
+	}
+	byTenant := make(map[string]ratelimitdomain.TenantCaps, len(list))
+	for _, caps := range list {
+		byTenant[caps.TenantID] = caps
+	}
+	c.capsMu.Lock()
+	c.lastCaps = byTenant
+	c.capsMu.Unlock()
+	return byTenant
+}
+
+// stampTenantCaps attaches the caps of exactly the tenants that own a gateway in
+// data. A scoped snapshot is handed to a data plane that serves one gateway, and
+// it must not learn the plan of any other tenant.
+func stampTenantCaps(data *readmodel.Data, caps map[string]ratelimitdomain.TenantCaps) {
+	seen := make(map[string]struct{}, len(data.Gateways))
+	for i := range data.Gateways {
+		tenantID := data.Gateways[i].TenantID()
+		if tenantID == "" {
+			continue
+		}
+		if _, dup := seen[tenantID]; dup {
+			continue
+		}
+		seen[tenantID] = struct{}{}
+		if c, ok := caps[tenantID]; ok {
+			data.TenantCaps = append(data.TenantCaps, c)
+		}
+	}
 }
 
 // withoutHybridGateways drops gateways whose entitlements bind them to a
@@ -246,7 +352,8 @@ func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwDat
 	dst.Registries = append(dst.Registries, gwData.Registries...)
 	dst.Policies = append(dst.Policies, gwData.Policies...)
 	dst.Auths = append(dst.Auths, gwData.Auths...)
-	dst.Roles = append(dst.Roles, gwData.Roles...)
+	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
+	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
 }
 
 func mergeCatalog(dst *readmodel.Data, catalog readmodel.Data) {
@@ -303,8 +410,18 @@ func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain
 		}
 		return out, nil
 	}
-	if !errors.Is(err, commonerrors.ErrCorruptData) {
+	if !errors.Is(err, commonerrors.ErrCorruptData) || errors.Is(err, ErrUnreadablePolicies) {
+		// A mass of unreadable policies is systemic, not one tenant's problem:
+		// the per-gateway fallback would skip them silently and publish a
+		// snapshot without their guardrails.
 		return nil, err
+	}
+	// The bulk scans run in one errgroup, so a corrupt registries row can cancel
+	// the policies scan before its check ran. Re-run that check on its own, or the
+	// per-gateway fallback below (whose ListByGateway skips unreadable rows with no
+	// breaker) would publish a snapshot without the guardrails.
+	if _, perr := c.listPolicies(ctx); perr != nil {
+		return nil, perr
 	}
 	c.logger.Warn("bulk snapshot collect hit corrupt persisted config; falling back to per-gateway collect",
 		slog.String("component", component),
@@ -317,11 +434,12 @@ func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain
 // sorted before encoding, so grouping order never affects version hashes.
 func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readmodel.Data, error) {
 	var (
-		consumers  []*consumerdomain.Consumer
-		registries []*registrydomain.Registry
-		policies   []*policydomain.Policy
-		auths      []*authdomain.Auth
-		roles      []*roledomain.Role
+		consumers     []*consumerdomain.Consumer
+		registries    []*registrydomain.Registry
+		policies      []*policydomain.Policy
+		auths         []*authdomain.Auth
+		grants        []*storeaccessdomain.Grant
+		storePolicies []*storeaccessdomain.Policy
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
@@ -337,9 +455,7 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		return err
 	})
 	g.Go(func() (err error) {
-		policies, err = listAll(gctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
-			return c.policies.List(ctx, policydomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
-		})
+		policies, err = c.listPolicies(gctx)
 		return err
 	})
 	g.Go(func() (err error) {
@@ -348,56 +464,107 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		})
 		return err
 	})
-	g.Go(func() (err error) {
-		roles, err = listAll(gctx, "roles", func(ctx context.Context, page int) ([]*roledomain.Role, int, error) {
-			return c.roles.List(ctx, roledomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
+	if c.grants != nil {
+		g.Go(func() (err error) {
+			grants, err = listAll(gctx, "store grants", func(ctx context.Context, page int) ([]*storeaccessdomain.Grant, int, error) {
+				return c.grants.List(ctx, page, compilerBulkPageSize)
+			})
+			return err
 		})
-		return err
-	})
+	}
+	if c.storePolicies != nil {
+		g.Go(func() (err error) {
+			storePolicies, err = listAll(gctx, "store policies", func(ctx context.Context, page int) ([]*storeaccessdomain.Policy, int, error) {
+				return c.storePolicies.ListPolicies(ctx, page, compilerBulkPageSize)
+			})
+			return err
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
 	byGateway := make(map[ids.GatewayID]*readmodel.Data)
-	bucket := func(id ids.GatewayID) *readmodel.Data {
-		d, ok := byGateway[id]
-		if !ok {
-			d = &readmodel.Data{}
-			byGateway[id] = d
-		}
-		return d
-	}
-	for _, x := range consumers {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Consumers = append(b.Consumers, *x)
-		}
-	}
-	for _, x := range registries {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Registries = append(b.Registries, *x)
-		}
-	}
-	for _, x := range policies {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Policies = append(b.Policies, *x)
-		}
-	}
-	for _, x := range auths {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Auths = append(b.Auths, *x)
-		}
-	}
-	for _, x := range roles {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Roles = append(b.Roles, *x)
-		}
-	}
+	groupByGateway(byGateway, consumers, func(x *consumerdomain.Consumer) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x consumerdomain.Consumer) { data.Consumers = append(data.Consumers, x) })
+	groupByGateway(byGateway, registries, func(x *registrydomain.Registry) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x registrydomain.Registry) { data.Registries = append(data.Registries, x) })
+	groupByGateway(byGateway, policies, func(x *policydomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x policydomain.Policy) { data.Policies = append(data.Policies, x) })
+	groupByGateway(byGateway, auths, func(x *authdomain.Auth) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x authdomain.Auth) { data.Auths = append(data.Auths, x) })
+	groupByGateway(byGateway, grants, func(x *storeaccessdomain.Grant) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Grant) { data.StoreGrants = append(data.StoreGrants, x) })
+	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
+		data.StorePolicies = append(data.StorePolicies, x)
+	})
 	return byGateway, nil
+}
+
+func groupByGateway[T any](
+	buckets map[ids.GatewayID]*readmodel.Data,
+	items []*T,
+	gatewayID func(*T) ids.GatewayID,
+	appendItem func(*readmodel.Data, T),
+) {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		id := gatewayID(item)
+		bucket, ok := buckets[id]
+		if !ok {
+			bucket = &readmodel.Data{}
+			buckets[id] = bucket
+		}
+		appendItem(bucket, *item)
+	}
+}
+
+// maxUnreadablePolicyPercent is how much of the policies table may be
+// unreadable before the compile fails. A few corrupt rows are skipped so the rest
+// keep enforcing; a larger share (or every row) is a systemic bug, for instance a
+// deploy that changed how settings, stages or mcp_scope decode, and publishing a
+// snapshot without those policies would drop their guardrails on every data
+// plane. Failing the compile instead leaves running pods on their last known
+// good snapshot. The share is global across all tenants, not per tenant. On a
+// small table the share rounds down to nothing, so one row is always tolerated
+// (see checkUnreadablePolicies).
+const maxUnreadablePolicyPercent = 10
+
+// ErrUnreadablePolicies marks the mass-skip failure. It always travels wrapped
+// together with commonerrors.ErrCorruptData.
+var ErrUnreadablePolicies = errors.New("too many unreadable policies")
+
+// checkUnreadablePolicies fails when the repository skipped too many of the
+// total rows it matched. Skipped rows are the ones counted by total but missing
+// from the pages. The repository counts and selects in separate statements, so a
+// concurrent write can skew skipped slightly; that is accepted. An OFFSET shift
+// from concurrent deletes can false-trip, in the safe direction (the last known
+// good snapshot is kept and the compile is retried). It trips when no
+// row is readable, or when skipped exceeds max(1, total*percent/100): the floor
+// keeps a small install from failing on a single bad row (1 of 5 is skipped, 2 of
+// 5 trips).
+func checkUnreadablePolicies(readable, total int) error {
+	skipped := total - readable
+	if skipped <= 0 {
+		return nil
+	}
+	limit := max(1, total*maxUnreadablePolicyPercent/100)
+	if readable == 0 || skipped > limit {
+		return fmt.Errorf("configsnapshot: %d of %d policies are unreadable (limit %d); refusing to publish a snapshot without their guardrails: %w: %w",
+			skipped, total, limit, ErrUnreadablePolicies, commonerrors.ErrCorruptData)
+	}
+	return nil
+}
+
+// listPolicies pages every policy and applies the mass-skip breaker.
+func (c *Compiler) listPolicies(ctx context.Context) ([]*policydomain.Policy, error) {
+	policies, total, err := listAllSkipping(ctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
+		return c.policies.List(ctx, policydomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkUnreadablePolicies(len(policies), total); err != nil {
+		return nil, err
+	}
+	return policies, nil
 }
 
 // listAll pages one entity table to exhaustion via fetch(page).
@@ -414,6 +581,27 @@ func listAll[T any](ctx context.Context, entity string, fetch func(ctx context.C
 		out = append(out, items...)
 		if len(items) < compilerBulkPageSize {
 			return out, nil
+		}
+	}
+}
+
+// listAllSkipping is listAll for a table whose repository skips rows it cannot
+// read (policies, RUN-1663), and also returns the total the last page reported.
+// A full page can then come back short, so a short page ends the walk only once
+// the total is exhausted too.
+func listAllSkipping[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, int, error) {
+	out := make([]T, 0)
+	for page := 1; ; page++ {
+		items, total, err := fetch(ctx, page)
+		if err != nil {
+			if errors.Is(err, commonerrors.ErrNotFound) {
+				return out, 0, nil
+			}
+			return nil, 0, fmt.Errorf("configsnapshot: list %s: %w", entity, err)
+		}
+		out = append(out, items...)
+		if len(items) < compilerBulkPageSize && page*compilerBulkPageSize >= total {
+			return out, total, nil
 		}
 	}
 }
@@ -485,15 +673,29 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 	}
 	data.Auths = append(data.Auths, auths...)
 
-	roles, err := c.roles.ListByGateway(ctx, gatewayID)
-	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
-		return fmt.Errorf("configsnapshot: list roles for gateway %s: %w", gatewayID, err)
-	}
-	for _, r := range roles {
-		if r == nil {
-			continue
+	if c.grants != nil {
+		grants, err := c.grants.ListByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list store grants for gateway %s: %w", gatewayID, err)
 		}
-		data.Roles = append(data.Roles, *r)
+		for _, g := range grants {
+			if g == nil {
+				continue
+			}
+			data.StoreGrants = append(data.StoreGrants, *g)
+		}
+	}
+	if c.storePolicies != nil {
+		storePolicies, err := c.storePolicies.ListPoliciesByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list store policies for gateway %s: %w", gatewayID, err)
+		}
+		for _, p := range storePolicies {
+			if p == nil {
+				continue
+			}
+			data.StorePolicies = append(data.StorePolicies, *p)
+		}
 	}
 	return nil
 }
@@ -585,12 +787,32 @@ func (c *Compiler) collectCatalog(ctx context.Context, data *readmodel.Data) err
 }
 
 func sortData(data *readmodel.Data) {
+	sort.SliceStable(data.TenantCaps, func(i, j int) bool { return data.TenantCaps[i].TenantID < data.TenantCaps[j].TenantID })
 	sort.SliceStable(data.Gateways, func(i, j int) bool { return data.Gateways[i].ID.String() < data.Gateways[j].ID.String() })
 	sort.SliceStable(data.Consumers, func(i, j int) bool { return data.Consumers[i].ID.String() < data.Consumers[j].ID.String() })
 	sort.SliceStable(data.Registries, func(i, j int) bool { return data.Registries[i].ID.String() < data.Registries[j].ID.String() })
 	sort.SliceStable(data.Policies, func(i, j int) bool { return data.Policies[i].ID.String() < data.Policies[j].ID.String() })
 	sort.SliceStable(data.Auths, func(i, j int) bool { return data.Auths[i].ID.String() < data.Auths[j].ID.String() })
-	sort.SliceStable(data.Roles, func(i, j int) bool { return data.Roles[i].ID.String() < data.Roles[j].ID.String() })
+	sort.SliceStable(data.StoreGrants, func(i, j int) bool {
+		a, b := data.StoreGrants[i], data.StoreGrants[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.CatalogCode != b.CatalogCode {
+			return a.CatalogCode < b.CatalogCode
+		}
+		return a.RegistryID.String() < b.RegistryID.String()
+	})
+	sort.SliceStable(data.StorePolicies, func(i, j int) bool {
+		a, b := data.StorePolicies[i], data.StorePolicies[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.PrincipalType != b.PrincipalType {
+			return a.PrincipalType < b.PrincipalType
+		}
+		return a.PrincipalID < b.PrincipalID
+	})
 	sort.SliceStable(data.Providers, func(i, j int) bool { return data.Providers[i].Code < data.Providers[j].Code })
 	sort.SliceStable(data.CatalogModels, func(i, j int) bool {
 		if data.CatalogModels[i].ProviderCode != data.CatalogModels[j].ProviderCode {

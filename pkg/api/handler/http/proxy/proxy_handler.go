@@ -17,10 +17,13 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/textproto"
 	"net/url"
+	"runtime/debug"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
@@ -32,6 +35,7 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -39,13 +43,12 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
 var newline = []byte("\n")
-
-var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
 
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
@@ -53,19 +56,21 @@ var errForbidden = errors.New("credential is not authorized for the matched cons
 var errMethodNotAllowed = errors.New("method is not allowed for this route")
 
 const (
-	errCodePluginRejected       = "plugin_rejected"
-	errCodeUnauthenticated      = "unauthenticated"
-	errCodeForbidden            = "forbidden"
-	errCodeNotFound             = "not_found"
-	errCodeMethodNotAllowed     = "method_not_allowed"
-	errCodeNoBackendAvailable   = "no_backend_available"
-	errCodeInvalidRequest       = "invalid_request"
-	errCodeInvalidModel         = "invalid_model"
-	errCodeModelNotAllowed      = "model_not_allowed"
-	errCodeModelNotSupported    = "model_not_supported"
-	errCodeProviderCredential   = "provider_credential_error"
-	errCodeBackendError         = "backend_error"
-	errCodeRateLimitUnavailable = "rate_limit_unavailable"
+	errCodePluginRejected        = "plugin_rejected"
+	errCodeUnauthenticated       = "unauthenticated"
+	errCodeForbidden             = "forbidden"
+	errCodeNotFound              = "not_found"
+	errCodeMethodNotAllowed      = "method_not_allowed"
+	errCodeNoBackendAvailable    = "no_backend_available"
+	errCodeInvalidRequest        = "invalid_request"
+	errCodeInvalidRequestBody    = "invalid_request_body"
+	errCodeContextLengthExceeded = "context_length_exceeded"
+	errCodeInvalidModel          = "invalid_model"
+	errCodeModelNotAllowed       = "model_not_allowed"
+	errCodeModelNotSupported     = "model_not_supported"
+	errCodeProviderCredential    = "provider_credential_error"
+	errCodeBackendError          = "backend_error"
+	errCodeRateLimitUnavailable  = "rate_limit_unavailable"
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -81,12 +86,34 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 type ForwardedHandler struct {
-	forwarder appproxy.Forwarder
-	models    appproxy.ModelsLister
+	resolveClientIP func(string, string) string
+	forwarder       appproxy.Forwarder
+	models          appproxy.ModelsLister
+	logger          *slog.Logger
 }
 
 func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
-	return &ForwardedHandler{forwarder: forwarder}
+	return &ForwardedHandler{
+		forwarder:       forwarder,
+		resolveClientIP: requestmeta.NewIPResolver("peer", nil),
+		logger:          slog.Default(),
+	}
+}
+
+func (h *ForwardedHandler) WithClientIPResolver(resolve func(string, string) string) *ForwardedHandler {
+	if resolve != nil {
+		h.resolveClientIP = resolve
+	}
+	return h
+}
+
+// WithLogger sets the logger the handler reports stream writer panics to.
+// A nil logger keeps the current one.
+func (h *ForwardedHandler) WithLogger(logger *slog.Logger) *ForwardedHandler {
+	if logger != nil {
+		h.logger = logger
+	}
+	return h
 }
 
 func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHandler {
@@ -114,6 +141,7 @@ func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHa
 // @Failure      502                {object}  httpio.ErrorBody
 // @Router       /{consumer_slug}/v1/chat/completions [post]
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
 	route, err := proxyRoute(c)
 	if err != nil {
 		return writeProxyError(c, err)
@@ -123,10 +151,19 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		return writeProxyError(c, err)
 	}
 
-	stampConsumerTrace(c, consumer, authCtx)
+	stampConsumerTrace(c, consumer)
 	if !route.AllowsMethod(c.Method()) {
 		c.Set(fiber.HeaderAllow, strings.Join(route.AllowedMethods(), ", "))
 		return writeProxyError(c, errMethodNotAllowed)
+	}
+	endUser, err := endUserAttribution(consumer, c.Get(domainconsumer.EndUserHeader))
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	if endUser != "" {
+		if rt := trace.FromContext(c.UserContext()); rt != nil {
+			rt.SetEndUser(endUser)
+		}
 	}
 
 	if route.Capability == apiresolver.CapabilityModels {
@@ -135,11 +172,20 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID, route)
-	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
+	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
+	// The user context is never cancelled when the client goes away, so the
+	// upstream request gets a context of its own that ends with the response.
+	ctx, cancel := context.WithCancel(c.UserContext())
+	streaming := false
+	defer func() {
+		if !streaming {
+			cancel()
+		}
+	}()
+	result, err := h.forwarder.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
-		RoleIDs:   authCtx.RoleIDs,
 		Request:   reqCtx,
 	})
 	if err != nil {
@@ -149,7 +195,8 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	relayHeaders(c, result.Headers)
 
 	if result.Stream != nil {
-		return writeStream(c, result, reqCtx)
+		streaming = true
+		return writeStream(c, result, reqCtx, cancel, h.logger)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
 }
@@ -169,7 +216,26 @@ func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 	}
 }
 
-func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext.RequestContext) error {
+// writeStream relays result.Stream from the body stream writer and calls
+// cancel once the writer returns, which a client that went away makes happen
+// at the first write that fails. When the stream left an upstream read
+// running, as a stream guard cut does to charge the usage the rest of the
+// upstream carries, cancel waits for result.StreamSettled instead.
+//
+// fasthttp runs the writer on a goroutine of its own that does not recover,
+// so a panic from the stream, including one a Responses reader raises again,
+// is recovered here and logged, and ends the stream with the stream error
+// event unless the stream had already ended.
+func writeStream(
+	c *fiber.Ctx,
+	result *appproxy.ForwardResult,
+	req *infracontext.RequestContext,
+	cancel context.CancelFunc,
+	logger *slog.Logger,
+) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	finalizer, _ := c.Locals(infracontext.StreamMetricsFinalizerKey).(infracontext.StreamMetricsFinalizer)
 	statusCode := result.StatusCode
 	headers := result.Headers
@@ -182,45 +248,100 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 
 	c.Status(statusCode)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer cancelWhenSettled(result, cancel)
 		var captured bytes.Buffer
 		if finalizer != nil {
 			defer func() {
-				req.Body = append([]byte(nil), req.Body...)
 				finalizer(req, captured.Bytes(), statusCode, headers)
 			}()
 		}
-		for line, err := range result.Stream {
-			if err != nil {
-				// The response is already a 200 SSE stream, so a mid-stream
-				// failure cannot change the status code. Emit an explicit error
-				// event (instead of a silent truncation that looks like a clean
-				// finish) so clients can distinguish an aborted stream.
-				if finalizer != nil {
-					captured.Write(streamErrorEvent)
-					captured.Write(newline)
+		// A stream that already ended, with an error event, a failed write or
+		// a client already told, can still panic while its iterator unwinds;
+		// a second error event after that would corrupt what the client got.
+		terminated := false
+		format := adapter.FormatOpenAI
+		if req != nil {
+			format = adapter.Format(req.SourceFormat)
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				value, stack := appproxy.PanicDetails(r, debug.Stack())
+				logger.Error("panic writing proxy stream",
+					slog.Any("panic", value),
+					slog.String("stack", string(stack)))
+				if !terminated {
+					writeStreamError(w, &captured, finalizer != nil, format)
 				}
-				_, _ = w.Write(streamErrorEvent)
-				_, _ = w.Write(newline)
-				_, _ = w.Write(newline)
+			}
+		}()
+		for line, err := range result.Stream {
+			if _, notified := errors.AsType[*appproxy.ClientNotifiedStreamError](err); notified {
+				terminated = true
 				_ = w.Flush()
+				return
+			}
+			if err != nil {
+				terminated = true
+				writeStreamError(w, &captured, finalizer != nil, format)
 				return
 			}
 			if finalizer != nil {
 				captured.Write(line)
 				captured.Write(newline)
 			}
-			if _, werr := w.Write(line); werr != nil {
-				return
-			}
-			if _, werr := w.Write(newline); werr != nil {
-				return
-			}
-			if flushErr := w.Flush(); flushErr != nil {
+			if !writeStreamLine(w, line) {
+				terminated = true
 				return
 			}
 		}
 	})
 	return nil
+}
+
+// cancelWhenSettled cancels the forward context now, or once the upstream
+// read the stream left behind has finished. It runs after the stream has
+// returned, which is when StreamSettled may be read.
+func cancelWhenSettled(result *appproxy.ForwardResult, cancel context.CancelFunc) {
+	if result.StreamSettled != nil {
+		if settled := result.StreamSettled(); settled != nil {
+			go func() {
+				<-settled
+				cancel()
+			}()
+			return
+		}
+	}
+	cancel()
+}
+
+func writeStreamLine(w *bufio.Writer, line []byte) bool {
+	if _, err := w.Write(line); err != nil {
+		return false
+	}
+	if _, err := w.Write(newline); err != nil {
+		return false
+	}
+	return w.Flush() == nil
+}
+
+// writeStreamError ends a stream that failed after its 200 went out. The
+// status can no longer change, so an explicit error event, in the client's
+// dialect, tells the client the stream was aborted rather than finished.
+func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format) {
+	event := adapter.StreamErrorEvent(
+		format,
+		fiber.StatusInternalServerError,
+		adapter.StreamErrorTypeUpstream,
+		adapter.StreamErrorMessageUpstreamTerminated,
+	)
+	if capture {
+		captured.Write(event)
+		captured.Write(newline)
+	}
+	_, _ = w.Write(event)
+	_, _ = w.Write(newline)
+	_, _ = w.Write(newline)
+	_ = w.Flush()
 }
 
 func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {
@@ -279,7 +400,6 @@ func (h *ForwardedHandler) handleModels(
 	in := appproxy.ListModelsInput{
 		Consumer: consumer,
 		Data:     data,
-		RoleIDs:  authCtx.RoleIDs,
 	}
 	id := apiresolver.ModelsIDFromRest(route.Rest)
 	if id == "" {
@@ -296,7 +416,7 @@ func (h *ForwardedHandler) handleModels(
 	return c.Status(fiber.StatusOK).JSON(card)
 }
 
-func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) {
+func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	if rc == nil || rc.Consumer == nil {
 		return
 	}
@@ -307,21 +427,29 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer, authCtx 
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
 		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
-		return
-	}
-	// The proxy plane resolves a bearer token into an AuthContext, never a
-	// Principal. A token the gateway verified names a person, so it is the
-	// principal; an API key names the application and stays out of it.
-	if isVerifiedUserToken(authCtx) {
-		rt.SetPrincipalIdentity(authCtx.Subject, string(authCtx.Method), identity.EmailFromClaims(authCtx.Claims))
 	}
 }
 
-func isVerifiedUserToken(authCtx *appauth.AuthContext) bool {
-	if authCtx == nil {
-		return false
+// endUserAttribution returns the end-user id the application named, validated;
+// empty when it named none. A malformed value is rejected rather than silently
+// dropped from the audit trail.
+//
+// No opt-in: naming the person a call is for is the application's to decide,
+// per call, and a consumer flag only ever meant the header was thrown away for
+// everyone. What it is worth is attribution — traces, audit, rate limiting —
+// which is the same whether or not anybody turned a switch on.
+func endUserAttribution(rc *appconsumer.RoutableConsumer, header string) (string, error) {
+	if rc == nil || rc.Consumer == nil {
+		return "", nil
 	}
-	return authCtx.Method == appauth.MethodOAuth2 || authCtx.Method == appauth.MethodOIDC
+	endUser := strings.TrimSpace(header)
+	if endUser == "" {
+		return "", nil
+	}
+	if err := domainconsumer.ValidateEndUser(endUser); err != nil {
+		return "", fmt.Errorf("%w: %s", appproxy.ErrInvalidRequestPayload, err.Error())
+	}
+	return endUser, nil
 }
 
 func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
@@ -330,23 +458,16 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 	}
 	// Playground tokens are validated upstream (signature, purpose, and
 	// consumer-slug binding in the playground identity resolver), so they are
-	// authorized for the matched consumer regardless of routing mode.
+	// authorized for the matched consumer.
 	if authCtx.Method == appauth.MethodPlayground {
 		return true
 	}
-	switch rc.Consumer.RoutingMode {
-	case "", domainconsumer.RoutingModeInline:
-		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
-	case domainconsumer.RoutingModeRoleBased:
-		return authCtx.Method == appauth.MethodOIDC && consumerHasRole(rc, authCtx.RoleIDs)
-	default:
-		return false
-	}
+	return isCredentialAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
 }
 
-func isInlineAuthMethod(method appauth.Method) bool {
+func isCredentialAuthMethod(method appauth.Method) bool {
 	switch method {
-	case appauth.MethodAPIKey, appauth.MethodOAuth2:
+	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOIDC, appauth.MethodMTLS:
 		return true
 	default:
 		return false
@@ -359,22 +480,6 @@ func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
 	}
 	for _, id := range rc.Consumer.AuthIDs {
 		if id == authID {
-			return true
-		}
-	}
-	return false
-}
-
-func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) bool {
-	if rc == nil || rc.Consumer == nil {
-		return false
-	}
-	effective := make(map[ids.RoleID]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		effective[id] = struct{}{}
-	}
-	for _, id := range rc.Consumer.RoleIDs {
-		if _, ok := effective[id]; ok {
 			return true
 		}
 	}
@@ -396,12 +501,12 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 	return &infracontext.RequestContext{
 		GatewayID:       gatewayID.String(),
 		Headers:         headers,
-		Method:          c.Method(),
-		Path:            c.Path(),
+		Method:          strings.Clone(c.Method()),
+		Path:            strings.Clone(c.Path()),
 		Query:           query,
-		Body:            c.Body(),
-		IP:              c.IP(),
-		SessionID:       sessionIDFromContext(c),
+		Body:            append([]byte(nil), c.Body()...),
+		IP:              strings.Clone(c.IP()),
+		SessionID:       strings.Clone(sessionIDFromContext(c)),
 		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
@@ -435,6 +540,17 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 			slog.String("error", err.Error()),
 		)
 	}
+	format := adapter.FormatOpenAI
+	if route, rerr := proxyRoute(c); rerr == nil && route.SourceFormat != "" {
+		format = route.SourceFormat
+	}
+	if adapter.NeedsAdaptedError(format) {
+		msg := body.Message
+		if msg == "" {
+			msg = err.Error()
+		}
+		return c.Status(status).Type("json").Send(adapter.EncodeErrorBody(format, status, msg))
+	}
 	return c.Status(status).JSON(body)
 }
 
@@ -459,9 +575,13 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, ratelimitapp.ErrUnavailable):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrAmbiguousRequestBody):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequestBody, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
 		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrContextWindowExceeded):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeContextLengthExceeded, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}

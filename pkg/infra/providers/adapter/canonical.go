@@ -25,6 +25,7 @@ const MetadataUsageKey = "usage"
 type CanonicalRequest struct {
 	Model             string                     `json:"model,omitempty"`
 	System            string                     `json:"system,omitempty"`
+	SystemCache       *CanonicalCacheBreakpoint  `json:"system_cache,omitempty"`
 	Messages          []CanonicalMessage         `json:"messages,omitempty"`
 	Tools             []CanonicalTool            `json:"tools,omitempty"`
 	ToolChoice        *CanonicalToolChoice       `json:"tool_choice,omitempty"`
@@ -34,9 +35,15 @@ type CanonicalRequest struct {
 	TopK              *int                       `json:"top_k,omitempty"`
 	Stop              []string                   `json:"stop,omitempty"`
 	Stream            bool                       `json:"stream,omitempty"`
+	Seed              *int64                     `json:"seed,omitempty"`
+	ParallelToolCalls *bool                      `json:"parallel_tool_calls,omitempty"`
 	ResponseFormat    *CanonicalRespFormat       `json:"response_format,omitempty"`
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
+	CacheOptions      *CanonicalCacheOptions     `json:"cache_options,omitempty"`
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
+	// DroppedInputItems counts the input items a decoder left out because it
+	// could not read them; callers that inspect the request log it.
+	DroppedInputItems int `json:"-"`
 }
 
 // CanonicalImage is one image attached to a message. Exactly one of Data or
@@ -50,11 +57,12 @@ type CanonicalImage struct {
 
 // CanonicalMessage represents a single turn in the conversation.
 type CanonicalMessage struct {
-	Role       string              `json:"role"`
-	Content    string              `json:"content"`
-	Images     []CanonicalImage    `json:"images,omitempty"`
-	ToolCalls  []CanonicalToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Role       string                    `json:"role"`
+	Content    string                    `json:"content"`
+	Images     []CanonicalImage          `json:"images,omitempty"`
+	ToolCalls  []CanonicalToolCall       `json:"tool_calls,omitempty"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	Cache      *CanonicalCacheBreakpoint `json:"cache,omitempty"`
 }
 
 // CanonicalToolKind distinguishes the tool shapes the gateway can represent.
@@ -78,7 +86,8 @@ type CanonicalTool struct {
 	Schema      map[string]interface{} `json:"schema,omitempty"`
 	// Format carries the grammar/format payload of a ToolKindCustom tool
 	// verbatim. It is nil for function tools.
-	Format json.RawMessage `json:"format,omitempty"`
+	Format json.RawMessage           `json:"format,omitempty"`
+	Cache  *CanonicalCacheBreakpoint `json:"cache,omitempty"`
 }
 
 // CanonicalToolChoice controls how the model selects tools.
@@ -102,11 +111,10 @@ type CanonicalToolCall struct {
 // CanonicalRespFormat controls the response format.
 type CanonicalRespFormat struct {
 	Type string `json:"type"` // "json_object", "text"
+	// JSONSchema is the OpenAI Chat json_schema object (name, schema,
+	// strict) of a "json_schema" format, kept verbatim.
+	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
 }
-
-// ---------------------------------------------------------------------------
-// Response types
-// ---------------------------------------------------------------------------
 
 // CanonicalResponse is the internal neutral representation of a provider
 // response.
@@ -149,13 +157,15 @@ type CanonicalUsage struct {
 	ToolUseInputTokens    int `json:"tool_use_input_tokens,omitempty"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
 
-	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with
-	// Anthropic's one-hour TTL, which bills at 2x input where the five-minute
-	// default bills at 1.25x. Carried because the wire reports it; not yet priced
-	// separately, since the catalog publishes a single cache-write rate.
+	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with a
+	// one-hour TTL rather than the five-minute default: Anthropic reports it as
+	// ephemeral_1h_input_tokens and Bedrock Converse as the cacheDetails entry
+	// whose ttl is 1h. It is never larger than CacheWriteInputTokens.
 	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
 
 	ServiceTier string `json:"service_tier,omitempty"`
+
+	cacheTTLKnown bool
 }
 
 // PlainInputTokens is the share of the prompt that bills at the plain input
@@ -164,11 +174,17 @@ func (u *CanonicalUsage) PlainInputTokens() int {
 	if u == nil {
 		return 0
 	}
-	plain := u.InputTokens - u.CachedInputTokens - u.CacheWriteInputTokens
-	if plain < 0 {
-		return u.InputTokens
-	}
-	return plain
+	return max(0, u.InputTokens-u.CachedInputTokens-u.CacheWriteInputTokens)
+}
+
+func (u *CanonicalUsage) hasCacheTTLBreakdown() bool {
+	return u.cacheTTLKnown || u.CacheWrite1hInputTokens > 0
+}
+
+func (u *CanonicalUsage) setCache(read, write, write1h int) {
+	u.CachedInputTokens, u.CacheWriteInputTokens = read, write
+	u.CacheWrite1hInputTokens = min(write1h, write)
+	u.TotalTokens = max(u.TotalTokens, u.InputTokens+u.OutputTokens)
 }
 
 // MergeUsage folds a later usage report into an earlier one, keeping the larger
@@ -193,6 +209,7 @@ func MergeUsage(prev, next *CanonicalUsage) *CanonicalUsage {
 	out.CacheWrite1hInputTokens = maxTokens(prev.CacheWrite1hInputTokens, next.CacheWrite1hInputTokens)
 	out.ToolUseInputTokens = maxTokens(prev.ToolUseInputTokens, next.ToolUseInputTokens)
 	out.ReasoningOutputTokens = maxTokens(prev.ReasoningOutputTokens, next.ReasoningOutputTokens)
+	out.cacheTTLKnown = prev.cacheTTLKnown || next.cacheTTLKnown
 	if next.ServiceTier != "" {
 		out.ServiceTier = next.ServiceTier
 	}
@@ -228,10 +245,6 @@ func newCanonicalUsage(in, out, total int) *CanonicalUsage {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Stream chunk types
-// ---------------------------------------------------------------------------
-
 // StreamToolCallDelta is one tool-call delta in a streamed response (OpenAI
 // streams tool_calls with incremental arguments; Anthropic uses input_json_delta).
 type StreamToolCallDelta struct {
@@ -255,4 +268,54 @@ type CanonicalStreamChunk struct {
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers
 	ProviderExtensions map[string]json.RawMessage `json:"provider_extensions,omitempty"`
+	// UpstreamError is the error object the upstream sent in this chunk's
+	// payload, if any.
+	UpstreamError *UpstreamStreamError `json:"-"`
+	// ContentBlockIndex is the index of the content block this chunk belongs
+	// to, for the dialects that number blocks on the wire. Only Anthropic does;
+	// every other encoder ignores it. The zero value is the first block, so a
+	// caller that does not track blocks keeps the single-block shape.
+	//
+	// Decoders leave it alone: it describes the block of the stream being
+	// written, which is the upstream's numbering only when that stream is
+	// passed through unchanged. A caller synthesising a terminator sets it to
+	// the block it last saw on the wire.
+	ContentBlockIndex int `json:"content_block_index,omitempty"`
+	// ContentBlockClosed says the wire has no content block open any more, so a
+	// synthesised terminator must not emit a content_block_stop of its own. It
+	// is inverted on purpose: the zero value keeps the shape every existing
+	// caller relies on, where a finish reason closes the block the encoder
+	// itself opened. Only a caller that tracks what the client actually saw —
+	// the stream guard's cut — can know the other case, which is a stream whose
+	// last released event was already a content_block_stop. Closing it twice
+	// asks the SDK to apply a stop it has no open block left for.
+	ContentBlockClosed bool `json:"content_block_closed,omitempty"`
+	// OpenItem names the output item this chunk belongs to or interrupts, for
+	// the dialects that number and type the items of one response. Only
+	// Responses does; every other encoder ignores it. It carries a delta as
+	// well as a terminator, because a delta written into a stream someone else
+	// opened has the same problem a terminator has: it belongs to an item the
+	// encoder did not add. nil means nothing is known to be open,
+	// which is not the same as item 0: a message item and a function_call item
+	// both open at output index 0, so a terminator that closed index 0 blind
+	// would leave the real item unterminated and close one that was never
+	// added.
+	//
+	// Decoders leave it alone, as they do ContentBlockIndex: it describes the
+	// stream being written, and only the caller synthesising a terminator
+	// knows which item the wire still has open.
+	OpenItem *StreamOpenItem `json:"open_item,omitempty"`
+}
+
+// StreamOpenItem is one output item a synthesised terminator has to close. It
+// carries the identity fields as well as the index, because the SDK types a
+// close event decodes into are strict: ResponseOutputMessage requires an id and
+// ResponseFunctionToolCall requires a call_id and a name, so a close built from
+// the index alone raises a validation error instead of delivering the refusal.
+type StreamOpenItem struct {
+	Index  int    `json:"index"`
+	Kind   string `json:"kind"`
+	ID     string `json:"id,omitempty"`
+	CallID string `json:"call_id,omitempty"`
+	Name   string `json:"name,omitempty"`
 }

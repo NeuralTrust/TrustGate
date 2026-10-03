@@ -16,6 +16,8 @@ package adapters
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -97,12 +99,67 @@ func (r *gatewayRepository) Delete(_ context.Context, _ ids.GatewayID) error {
 	return configsync.ErrReadOnly
 }
 
-func (r *gatewayRepository) List(_ context.Context, _ domain.ListFilter) ([]*domain.Gateway, int, error) {
-	return nil, 0, configsync.ErrReadOnly
+func (r *gatewayRepository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return []*domain.Gateway{}, 0, nil
+	}
+	data := snap.Data()
+	matched := make([]domain.Gateway, 0, len(data.Gateways))
+	needle := strings.ToLower(strings.TrimSpace(filter.SlugContains))
+	for _, gateway := range data.Gateways {
+		if needle != "" && !strings.Contains(strings.ToLower(gateway.Slug), needle) {
+			continue
+		}
+		if filter.TenantID != "" && gateway.TenantID() != filter.TenantID {
+			continue
+		}
+		matched = append(matched, gateway)
+	}
+	sort.SliceStable(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].ID.String() < matched[j].ID.String()
+		}
+		return matched[i].CreatedAt.After(matched[j].CreatedAt)
+	})
+	total := len(matched)
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.Size < 1 {
+		filter.Size = 20
+	}
+	start := min((filter.Page-1)*filter.Size, total)
+	end := min(start+filter.Size, total)
+	items := make([]*domain.Gateway, 0, end-start)
+	for i := start; i < end; i++ {
+		cloned, err := cloneJSON(&matched[i])
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, cloned)
+	}
+	return items, total, nil
 }
 
-func (r *gatewayRepository) CountByTenantID(_ context.Context, _ string) (int, error) {
-	return 0, configsync.ErrReadOnly
+func (r *gatewayRepository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return 0, nil
+	}
+	count := 0
+	for _, gateway := range snap.Data().Gateways {
+		if gateway.TenantID() == tenantID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 var _ domain.Repository = (*gatewayRepository)(nil)

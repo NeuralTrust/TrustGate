@@ -30,6 +30,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -111,6 +112,13 @@ func (s *memFlowStore) GetGatewayClient(_ context.Context, clientID string) (*Re
 		return nil, nil
 	}
 	return &c, nil
+}
+
+func (s *memFlowStore) DeleteGatewayClient(_ context.Context, clientID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, clientID)
+	return nil
 }
 
 func (s *memFlowStore) SavePending(_ context.Context, state string, p PendingAuthorization) error {
@@ -465,6 +473,18 @@ func (f *fakePathResolver) Match(_ context.Context, _, path string) ([]appconsum
 	return f.byPath[path], nil
 }
 
+// mcpConsumer takes no identity: a consumer declares nothing about its callers
+// any more, and what a request runs as is read from the request. What decides
+// whether a login may be brokered here is what is attached to the consumer.
+func mcpConsumer(gatewayID ids.GatewayID) *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gatewayID,
+		Type:      consumerdomain.TypeMCP,
+		Active:    true,
+	}
+}
+
 // enabledOAuth2Auth builds an Auth entry that passes the Enabled/Type filters
 // of resource-scoped selection (the bare oauth2Auth fake does not).
 func enabledOAuth2Auth(t *testing.T, cfg authdomain.OAuth2Config) *authdomain.Auth {
@@ -598,7 +618,7 @@ func assertClientToldOfError(t *testing.T, location, redirectURI, code string) {
 func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}

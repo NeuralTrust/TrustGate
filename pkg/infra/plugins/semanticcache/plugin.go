@@ -51,8 +51,6 @@ const (
 	cacheStatusMiss = "MISS"
 )
 
-const geminiStreamAction = ":streamGenerateContent"
-
 const (
 	toolCallsFinishReason = "tool_calls"
 
@@ -118,6 +116,13 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return true }
 
+// ReadsContent opts into being sequenced after any same-priority rewriter at
+// pre_request, where it only reads the prompt to key its cache lookup, so the
+// lookup key matches the one post_response stores under (the rewritten body).
+// At post_response MutatesResponseBody is true, so the planner treats it as a
+// rewriter there and this opt-in has no effect (RUN-1693).
+func (p *Plugin) ReadsContent() bool { return true }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
@@ -137,6 +142,14 @@ func (p *Plugin) SupportedModes() []policy.Mode {
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
+}
+
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read: the embedding provider key, "embedding.api_key" (see
+// embeddingConfig). There is no credentials.api_key variant in this plugin's
+// config; only embedding_provider and embedding_model have top-level aliases.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"embedding.api_key"}
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
@@ -187,7 +200,7 @@ func (p *Plugin) bypassed(req *infracontext.RequestContext, cfg *config) bool {
 	if req.HeaderValue(cfg.bypassHeader()) != "" {
 		return true
 	}
-	if cfg.SkipIfStreaming && p.requestWantsStream(req) {
+	if cfg.skipIfStreaming() && p.requestWantsStream(req) {
 		return true
 	}
 	return false
@@ -197,10 +210,7 @@ func (p *Plugin) requestWantsStream(req *infracontext.RequestContext) bool {
 	if req == nil {
 		return false
 	}
-	if strings.Contains(req.Path, geminiStreamAction) {
-		return true
-	}
-	if req.Query != nil && req.Query.Get("alt") == "sse" {
+	if adapter.URLRequestsStream(req.Path, req.Query) {
 		return true
 	}
 	if req.Provider != "" && p.registry != nil {
@@ -415,7 +425,7 @@ func (p *Plugin) postResponse(
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope(), Mode: cfg.mode()})
 		return passThrough(), nil
 	}
-	if cfg.SkipIfStreaming && resp.Streaming {
+	if cfg.skipIfStreaming() && resp.Streaming {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonStreaming})
 		return passThrough(), nil
 	}

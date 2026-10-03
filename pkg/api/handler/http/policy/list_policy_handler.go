@@ -20,17 +20,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
 )
 
 type ListPolicyHandler struct {
-	finder apppolicy.Finder
+	finder   apppolicy.Finder
+	status   apppolicy.StatusEvaluator
+	registry appplugins.Registry
 }
 
-func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
-	return &ListPolicyHandler{finder: finder}
+func NewListPolicyHandler(finder apppolicy.Finder, status apppolicy.StatusEvaluator, registry appplugins.Registry) *ListPolicyHandler {
+	return &ListPolicyHandler{finder: finder, status: status, registry: registry}
 }
 
 // Handle godoc
@@ -43,10 +47,11 @@ func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
 // @Param        search      query     string  false  "Substring match on name or slug (alias: name)"
 // @Param        name        query     string  false  "Alias of search"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
-// @Param        global      query     bool    false  "Filter by global flag"
+// @Param        global      query     bool    false  "Filter by global flag; global=false also lists MCP-wide policies"
 // @Param        mode        query     string  false  "Filter by mode (enforce, throttle, observe)"
 // @Param        category    query     string  false  "Catalog category (group type); comma-separated multi"
 // @Param        type        query     string  false  "Plugin slug (FE type filter); comma-separated multi"
+// @Param        registry_id query     string  false  "Only policies whose mcp_scope names this registry (in registry_ids or tools)"  format(uuid)
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, priority)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
@@ -84,6 +89,10 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "mode"))
 		}
 	}
+	registryID, err := parseRegistryIDFilter(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 	req := request.ListPolicyRequest{
 		Search:     httpio.ParseSearch(c),
 		Enabled:    enabled,
@@ -91,6 +100,7 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 		Mode:       mode,
 		Categories: httpio.ParseCSVQuery(c, "category"),
 		Types:      httpio.ParseCSVQuery(c, "type"),
+		RegistryID: registryID,
 		Page:       page,
 		Sort:       sort,
 	}
@@ -103,6 +113,7 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 		Mode:       req.Mode,
 		Categories: req.Categories,
 		Types:      req.Types,
+		RegistryID: req.RegistryID,
 		Page:       req.Page,
 		Sort:       req.Sort,
 	})
@@ -117,7 +128,20 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 		Total: total,
 	}
 	for _, p := range items {
-		out.Items = append(out.Items, response.FromPolicy(p))
+		status, message := h.status.Evaluate(p)
+		out.Items = append(out.Items, response.FromPolicy(p, h.registry).WithStatus(string(status), message))
 	}
 	return httpio.WriteOK(c, out)
+}
+
+func parseRegistryIDFilter(c *fiber.Ctx) (*ids.RegistryID, error) {
+	raw := c.Query("registry_id")
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := ids.Parse[ids.RegistryKind](raw)
+	if err != nil {
+		return nil, fmt.Errorf("registry_id must be a uuid: %w", httpio.ErrInvalidQuery)
+	}
+	return &id, nil
 }

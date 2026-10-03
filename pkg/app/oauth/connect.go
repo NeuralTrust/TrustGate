@@ -19,17 +19,29 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 var _ ConnectService = (*connectService)(nil)
+
+// registryLister finds a gateway's registries so the connect flow can attach the
+// installed registry a Store-scoped ticket points at (the synthetic Store
+// consumer carries no registries of its own). registrydomain.Repository satisfies
+// it. May be nil, in which case Store-scoped connect is unavailable.
+type RegistryLister interface {
+	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
+}
+
+const storeRegistryScanPageSize = 500
 
 type connectService struct {
 	store       ConnectStore
@@ -41,6 +53,26 @@ type connectService struct {
 	sharedOAuth mcpoauth.Provider
 	userinfo    UserInfoClient
 	catalog     authCatalog
+	registries  RegistryLister
+	urlValues   URLValueSource
+}
+
+// URLValueSource returns a principal's values for a registry's URL
+// placeholders — the same ones the dial path substitutes. appmcp's
+// URLValueResolver satisfies it.
+type URLValueSource interface {
+	Values(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (map[string]string, error)
+}
+
+// ConnectOption tunes NewConnectService.
+type ConnectOption func(*connectService)
+
+// WithConnectURLValues lets the connect flow discover a templated server's OAuth
+// server at the URL the principal will dial ({region} filled in) rather than at
+// the template. Without it only a registry that carries its own instance values
+// resolves; any other templated one fails with ErrUpstreamSetupRequired.
+func WithConnectURLValues(v URLValueSource) ConnectOption {
+	return func(s *connectService) { s.urlValues = v }
 }
 
 type authCatalog interface {
@@ -57,8 +89,10 @@ func NewConnectService(
 	sharedOAuth mcpoauth.Provider,
 	userinfo UserInfoClient,
 	catalog authCatalog,
+	registries RegistryLister,
+	opts ...ConnectOption,
 ) ConnectService {
-	return &connectService{
+	s := &connectService{
 		store:       store,
 		vault:       vault,
 		consumers:   consumers,
@@ -68,7 +102,14 @@ func NewConnectService(
 		sharedOAuth: sharedOAuth,
 		userinfo:    userinfo,
 		catalog:     catalog,
+		registries:  registries,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
 func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error) {
@@ -79,7 +120,50 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 	})
 }
 
-func (s *connectService) CreateAPIKeyTicket(
+// CreateProviderTicket mints a ticket that can only act on one provider.
+//
+// A link handed to an end user to connect one server is authority over that
+// server and nothing else: unpinned, the same ticket reaches every forwarded
+// server of the consumer, and whoever holds it can revoke accounts nobody asked
+// them about. Pinning also narrows the page the callback lands on, which is
+// what makes it show the server the link was for.
+func (s *connectService) CreateProviderTicket(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, consumerPath, provider string,
+) (string, error) {
+	return s.mintTicket(ctx, ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Provider:     strings.TrimSpace(provider),
+	})
+}
+
+func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error) {
+	return s.CreateResumableServerTicket(ctx, gatewayID, principalSub, consumerPath, code, instanceID, "")
+}
+
+func (s *connectService) CreateResumableServerTicket(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, consumerPath, code, instanceID, resumeURL string,
+) (string, error) {
+	resume, err := NormalizeResumeURL(resumeURL)
+	if err != nil {
+		return "", err
+	}
+	return s.mintTicket(ctx, ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Code:         strings.TrimSpace(code),
+		InstanceID:   strings.TrimSpace(instanceID),
+		ResumeURL:    resume,
+	})
+}
+
+func (s *connectService) CreateAppTicket(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub,
@@ -87,15 +171,28 @@ func (s *connectService) CreateAPIKeyTicket(
 	consumerID ids.ConsumerID,
 	authID ids.AuthID,
 	providers []string,
+	code string,
 ) (string, error) {
-	providerSnapshot := append([]string(nil), providers...)
+	// A non-nil snapshot is what marks the ticket as pinned to a provider list;
+	// nil means "any forwarded provider of the consumer". An empty list must stay
+	// empty and not degrade into nil — appending nothing to a nil slice yields
+	// nil, which serialises as `"providers":null` and comes back as unpinned,
+	// which routable() then rejects: a valid api key answered with a 401 for
+	// every consumer that has no forwarded registry at all.
+	providerSnapshot := make([]string, 0, len(providers))
+	providerSnapshot = append(providerSnapshot, providers...)
 	ticket := ConnectTicket{
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
 		ConsumerID:   consumerID.String(),
-		AuthID:       authID.String(),
 		Providers:    &providerSnapshot,
+		Code:         strings.TrimSpace(code),
+	}
+	// A nil auth id must stay an empty string, not the zero uuid: it is what
+	// marks the ticket as standing on the consumer alone.
+	if !authID.IsNil() {
+		ticket.AuthID = authID.String()
 	}
 	id, err := s.mintTicket(ctx, ticket)
 	if err != nil {
@@ -130,7 +227,44 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
-	return &ConnectPage{ConsumerPath: ticket.ConsumerPath, ResumeURL: ticket.ResumeURL, Providers: providers}, nil
+	page := &ConnectPage{
+		ConsumerPath: ticket.ConsumerPath,
+		ResumeURL:    ticket.ResumeURL,
+		Providers:    providers,
+		Code:         ticket.Code,
+		Instance:     ticket.InstanceID,
+	}
+	// A ticket pinned to one provider is the one-server case, so it gets the
+	// focused card rather than a picker with a single entry in it: the user was
+	// sent here to connect that server, and a grid of one is a picker with
+	// nothing to pick.
+	if page.Code == "" {
+		page.Code = pinnedPageCode(ticket, providers)
+	}
+	return page, nil
+}
+
+// pinnedPageCode is the catalog code a provider-pinned ticket's page is focused
+// on, or empty when there is not exactly one.
+//
+// The pin is by provider and the page focuses by code, which are the same thing
+// for a server whose provider is its code and not in general — so this asks the
+// rows rather than assuming, and stands down when they disagree.
+func pinnedPageCode(ticket *ConnectTicket, providers []ProviderStatus) string {
+	if strings.TrimSpace(ticket.Provider) == "" {
+		return ""
+	}
+	code := ""
+	for _, status := range providers {
+		if status.Provider != ticket.Provider {
+			continue
+		}
+		if status.Code == "" || (code != "" && status.Code != code) {
+			return ""
+		}
+		code = status.Code
+	}
+	return code
 }
 
 func (s *connectService) Statuses(
@@ -171,17 +305,35 @@ func (s *connectService) providerStatuses(
 		if !connectProviderAllowed(ticket, data, rc, cfg.Provider) {
 			continue
 		}
-		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
+		status := ProviderStatus{
+			Provider: cfg.Provider,
+			Registry: reg.Name,
+			Instance: reg.ID.String(),
+		}
 		if reg.MCPTarget != nil {
 			status.Code = reg.MCPTarget.Code
 		}
-		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
+		// Whose account this instance reads, which is not always the caller's:
+		// a shared instance holds one for everyone, and the runtime injects it
+		// through the same subject. Reading the caller's own key here would
+		// report a connected server as unconnected and stop a batch that gates
+		// on this endpoint — with nothing the caller could do about it.
+		subject := registrydomain.CredentialSubject(reg, ticket.PrincipalSub)
+		status.Shared = subject != ticket.PrincipalSub
+		cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
 		switch {
 		case err == nil:
 			status.Linked = true
 			status.AccountRef = cred.AccountRef
+			status.Scopes = cred.Scopes
 			status.ExpiresAt = cred.ExpiresAt
 			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
+			if !status.NeedsReconnect {
+				// A lookup failure answers "usable" (see CredentialUsable), so a
+				// cache blip cannot tell every user to reconnect.
+				usable, _ := s.CredentialUsable(ctx, gatewayID, reg)
+				status.NeedsReconnect = !usable
+			}
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
 			status.Linked = true
 			status.NeedsReconnect = true
@@ -193,7 +345,10 @@ func (s *connectService) providerStatuses(
 	return providers, nil
 }
 
-func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider string) (string, error) {
+func (s *connectService) Start(
+	ctx context.Context,
+	baseURL, ticketID, provider, instanceID string,
+) (string, error) {
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return "", err
@@ -201,11 +356,14 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	if !connectProviderAllowed(ticket, data, rc, provider) {
 		return "", ErrProviderNotFound
 	}
-	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
+	reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)
 	if reg == nil {
 		return "", ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
+	if !ownsSharedAccount(reg, ticket.PrincipalSub) {
+		return "", ErrSharedAccountNotYours
+	}
+	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, ticket.PrincipalSub, reg)
 	if err != nil {
 		return "", err
 	}
@@ -217,10 +375,15 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	if err != nil {
 		return "", err
 	}
+	// The callback stores the credential for the instance this authorization was
+	// started from, so the instance travels in the state and is not re-derived
+	// there: two instances of one provider are otherwise indistinguishable on
+	// the way back, and the first one always won.
 	if err := s.store.SaveConnect(ctx, state, ConnectState{
 		Ticket:   *ticket,
 		TicketID: ticketID,
 		Provider: provider,
+		Instance: reg.ID.String(),
 		Verifier: verifier,
 	}); err != nil {
 		return "", err
@@ -246,11 +409,11 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if !connectProviderAllowed(&st.Ticket, data, rc, provider) {
 		return st.TicketID, ErrProviderNotFound
 	}
-	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
+	reg := connectRegistry(data.EffectiveRegistries(rc), provider, st.Instance, st.Ticket.InstanceID)
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
+	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg)
 	if err != nil {
 		return st.TicketID, err
 	}
@@ -259,7 +422,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, cfg.Provider,
+		gatewayID, st.Ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg),
 		resolveAccountRef(ctx, s.userinfo, cfg, token),
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
@@ -275,7 +438,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	return st.TicketID, nil
 }
 
-func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
+func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, instanceID string) error {
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return err
@@ -283,11 +446,53 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider stri
 	if !connectProviderAllowed(ticket, data, rc, provider) {
 		return ErrProviderNotFound
 	}
-	if err := s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider); err != nil {
+	// Revoking is keyed by instance while the instance is there, and by provider
+	// once it is not: a ticket pinned to a provider whose registry the admin has
+	// since removed must still be able to clear the stored credential, or the
+	// user is left holding an account they cannot revoke.
+	if reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID); reg != nil {
+		if !ownsSharedAccount(reg, ticket.PrincipalSub) {
+			return ErrSharedAccountNotYours
+		}
+		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
+	} else {
+		err = s.deleteProviderCredentials(ctx, gatewayID, ticket.PrincipalSub, provider)
+	}
+	if err != nil {
 		return err
 	}
 	if identity, ok := connectAuditIdentity(ticket); ok {
 		s.auditor.ProviderUnlinked(ctx, identity, provider)
+	}
+	return nil
+}
+
+// deleteProviderCredentials clears every credential this principal holds for a
+// provider, whichever upstream each was minted against. It is the fallback for
+// a revoke that can no longer name an instance, so it answers ErrNotFound when
+// the principal holds none — the same answer a keyed delete gives, which is
+// what keeps two concurrent revokes to one audit entry.
+func (s *connectService) deleteProviderCredentials(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, provider string,
+) error {
+	creds, err := s.vault.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return err
+	}
+	deleted := 0
+	for _, cred := range creds {
+		if registrydomain.ForwardedVaultProviderName(cred.Provider) != provider {
+			continue
+		}
+		if err := s.vault.Delete(ctx, gatewayID, principalSub, cred.Provider); err != nil {
+			return err
+		}
+		deleted++
+	}
+	if deleted == 0 {
+		return vaultdomain.ErrNotFound
 	}
 	return nil
 }
@@ -307,35 +512,113 @@ func (s *connectService) resolve(ctx context.Context, ticketID string) (*Connect
 	return ticket, gatewayID, data, rc, nil
 }
 
-func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
+// baseRoutable recovers the gateway and routable consumer a ticket points at,
+// with no ticket-kind-specific checks. It is shared by the OAuth connect routable
+// (which adds api-key checks) and the configure flow (which needs only this).
+func baseRoutable(
+	ctx context.Context,
+	consumers appconsumer.DataFinder,
+	ticket *ConnectTicket,
+) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	gatewayID, err := ids.Parse[ids.GatewayKind](ticket.GatewayID)
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: bad gateway id in ticket: %w", err)
 	}
-	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	data, err := consumers.FindByGateway(ctx, gatewayID)
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, err
+	}
+	// The MCP Store consumer is synthetic (never persisted), so it is not in the
+	// consumer data and MatchPath would report it "no longer exists". Build it the
+	// same way the request path does; its installed registries are attached by the
+	// caller (see connectService.routable) since the persisted data has none.
+	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(ticket.ConsumerPath)) {
+		rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}
+		return gatewayID, data, rc, nil
 	}
 	rc, ok := data.MatchPath(ticket.ConsumerPath)
 	if !ok {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
 	}
-	if apiKeyConnectTicket(ticket) &&
+	return gatewayID, data, rc, nil
+}
+
+func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
+	gatewayID, data, rc, err := baseRoutable(ctx, s.consumers, ticket)
+	if err != nil {
+		return ids.GatewayID{}, nil, nil, err
+	}
+	// A Store-scoped ticket points at one installed server by catalog code, but the
+	// synthetic Store consumer carries no registries — attach the materialised
+	// registry for that code so the forwarded-auth (OAuth) provider resolves.
+	if consumerdomain.IsStoreConsumer(rc.Consumer) &&
+		(strings.TrimSpace(ticket.Code) != "" || strings.TrimSpace(ticket.InstanceID) != "") {
+		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code, ticket.InstanceID); reg != nil {
+			rc.Registries = []*registrydomain.Registry{reg}
+		}
+	}
+	if appConnectTicket(ticket) &&
 		(ticket.Providers == nil ||
 			ticket.ConsumerID == "" ||
-			ticket.AuthID == "" ||
-			!currentAPIKeyIdentity(ticket, rc, gatewayID)) {
+			!currentAppIdentity(ticket, rc, gatewayID)) {
 		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
 	}
 	return gatewayID, data, rc, nil
 }
 
-func apiKeyConnectTicket(ticket *ConnectTicket) bool {
+// storeRegistry finds the server a Store-scoped connect targets. The instance
+// decides when the ticket pins one: two instances of a catalog code are two
+// servers with two accounts, and picking whichever row carries the code would
+// connect the wrong one. Without an instance it falls back to the code, which
+// is all an install-time ticket knows. Returns nil when no registry lister is
+// wired or none matches.
+func (s *connectService) storeRegistry(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	code, instanceID string,
+) *registrydomain.Registry {
+	if s.registries == nil {
+		return nil
+	}
+	items, _, err := s.registries.List(ctx, registrydomain.ListFilter{
+		GatewayID: gatewayID,
+		Page:      1,
+		Size:      storeRegistryScanPageSize,
+	})
+	if err != nil {
+		return nil
+	}
+	code = strings.TrimSpace(code)
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID != "" {
+		for _, reg := range items {
+			if reg != nil && reg.ID.String() == instanceID {
+				return reg
+			}
+		}
+		return nil
+	}
+	for _, reg := range items {
+		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
+			return reg
+		}
+	}
+	return nil
+}
+
+func appConnectTicket(ticket *ConnectTicket) bool {
 	return ticket != nil &&
 		(ticket.Providers != nil || ticket.ConsumerID != "" || ticket.AuthID != "")
 }
 
-func currentAPIKeyIdentity(
+// currentAppIdentity revalidates an application connect ticket against the
+// gateway as it stands now, since anything could have changed in the fifteen
+// minutes it lives: the consumer must still be that same active machine MCP
+// consumer, and a ticket minted from an api key (the self-service page) needs
+// that key to still be an enabled key of it, so revoking a leaked key kills
+// the tickets it spawned. A ticket an admin minted carries no key — its
+// authority was the admin API — and stands on the consumer alone.
+func currentAppIdentity(
 	ticket *ConnectTicket,
 	rc *appconsumer.RoutableConsumer,
 	gatewayID ids.GatewayID,
@@ -343,6 +626,12 @@ func currentAPIKeyIdentity(
 	if ticket == nil || rc == nil || rc.Consumer == nil ||
 		rc.Consumer.ID.String() != ticket.ConsumerID {
 		return false
+	}
+	if !validMCPConsumer(rc, gatewayID) {
+		return false
+	}
+	if ticket.AuthID == "" {
+		return true
 	}
 	for _, auth := range rc.Auths {
 		if auth != nil && auth.ID.String() == ticket.AuthID {
@@ -358,6 +647,9 @@ func connectProviderAllowed(
 	rc *appconsumer.RoutableConsumer,
 	provider string,
 ) bool {
+	if pinned := strings.TrimSpace(ticket.Provider); pinned != "" && pinned != provider {
+		return false
+	}
 	if ticket.Providers == nil {
 		return providerRegistry(data.EffectiveRegistries(rc), provider) != nil
 	}
@@ -397,6 +689,34 @@ func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {
 	return reg.MCPTarget.Auth
 }
 
+// connectRegistry picks the instance a connect action acts on: the one the
+// caller named (a per-instance button on the connect page), else the one the
+// ticket was minted for (a Store install's single-server page), else the sole
+// registry serving that provider.
+//
+// The named instance still has to serve the provider, so a stale or foreign id
+// cannot redirect the credential somewhere the ticket does not reach.
+func connectRegistry(
+	regs []*registrydomain.Registry,
+	provider string,
+	instanceIDs ...string,
+) *registrydomain.Registry {
+	for _, instanceID := range instanceIDs {
+		if strings.TrimSpace(instanceID) == "" {
+			continue
+		}
+		for _, reg := range regs {
+			if reg.ID.String() != instanceID {
+				continue
+			}
+			if cfg := forwardedAuth(reg); cfg != nil && cfg.Provider == provider {
+				return reg
+			}
+		}
+	}
+	return providerRegistry(regs, provider)
+}
+
 func providerRegistry(regs []*registrydomain.Registry, provider string) *registrydomain.Registry {
 	for _, reg := range regs {
 		if cfg := forwardedAuth(reg); cfg != nil && cfg.Provider == provider {
@@ -408,4 +728,17 @@ func providerRegistry(regs []*registrydomain.Registry, provider string) *registr
 
 func connectCallbackURL(baseURL, provider string) string {
 	return baseURL + "/oauth/callback/" + provider
+}
+
+// ownsSharedAccount reports whether this ticket may write the account behind an
+// instance — connect it, or revoke it.
+//
+// An instance that holds one account for everyone has exactly one ticket that
+// may: the one an administrator minted against the instance itself. A caller's
+// own ticket may not, in either direction. Letting them connect it would store
+// a credential under a subject the runtime never reads, so they would walk the
+// whole page and still be told the server is not connected; letting them revoke
+// it would take from every other caller an account none of them can put back.
+func ownsSharedAccount(reg *registrydomain.Registry, principalSub string) bool {
+	return registrydomain.CredentialSubject(reg, principalSub) == principalSub
 }

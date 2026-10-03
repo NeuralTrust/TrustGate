@@ -17,30 +17,38 @@ package bedrockguardrail
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
 const typeGuardrailBlocked = "guardrail_blocked"
 
-func blockError(f finding) *appplugins.PluginError {
+func blockError(message string, f finding) *appplugins.PluginError {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = appplugins.DefaultBlockMessage
+	}
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,
 		Type:       typeGuardrailBlocked,
+		Message:    msg,
 		Headers:    map[string][]string{"Content-Type": {"application/json"}},
-		Body:       blockBody(f),
+		Body:       blockBody(msg, f),
 	}
 }
 
-func blockBody(f finding) []byte {
+func blockBody(message string, f finding) []byte {
 	body := struct {
 		Error struct {
-			Type   string `json:"type"`
-			Policy string `json:"policy"`
-			Name   string `json:"name,omitempty"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Policy  string `json:"policy"`
+			Name    string `json:"name,omitempty"`
 		} `json:"error"`
 	}{}
 	body.Error.Type = typeGuardrailBlocked
+	body.Error.Message = message
 	body.Error.Policy = f.policy
 	body.Error.Name = f.name
 	raw, err := json.Marshal(body)

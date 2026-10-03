@@ -32,9 +32,6 @@ type Candidate struct {
 }
 
 func (c Candidate) PolicyAllowsModel(model string) bool {
-	if modelmatch.IsPattern(model) {
-		return false
-	}
 	if c.Allowed == nil {
 		return true
 	}

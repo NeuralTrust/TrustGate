@@ -15,12 +15,71 @@
 package response
 
 import (
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
+
+// maskSecretURLVariables returns the target URL with the value of every secret
+// URL variable masked, the same way auth secrets are masked in this response.
+// A registry that declares a secret query variable (Bright Data's ?token=,
+// Browserbase's ?browserbaseApiKey=) normally stores the template placeholder
+// — which is not a value and stays visible — but a URL that carries a concrete
+// value in that parameter would otherwise hand the token to anyone with
+// registry read access, including app READ_ONLY users. The query is rewritten
+// pair by pair so the rest of the URL is returned byte-for-byte as stored.
+func maskSecretURLVariables(t *domain.MCPTarget) string {
+	raw := t.URL
+	if raw == "" || len(t.URLVariables) == 0 {
+		return raw
+	}
+	secrets := make(map[string]struct{}, len(t.URLVariables))
+	for _, v := range t.URLVariables {
+		if v.Secret {
+			secrets[v.Name] = struct{}{}
+		}
+	}
+	if len(secrets) == 0 {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.RawQuery == "" {
+		return raw
+	}
+	pairs := strings.Split(u.RawQuery, "&")
+	changed := false
+	for i, pair := range pairs {
+		key, rawValue, hasValue := strings.Cut(pair, "=")
+		if !hasValue || rawValue == "" {
+			continue
+		}
+		name, err := url.QueryUnescape(key)
+		if err != nil {
+			continue
+		}
+		if _, isSecret := secrets[name]; !isSecret {
+			continue
+		}
+		value, err := url.QueryUnescape(rawValue)
+		if err != nil {
+			value = rawValue
+		}
+		if value == "{"+name+"}" {
+			continue // the template placeholder, not a value
+		}
+		pairs[i] = key + "=" + secret.Mask(value)
+		changed = true
+	}
+	if !changed {
+		return raw
+	}
+	u.RawQuery = strings.Join(pairs, "&")
+	return u.String()
+}
 
 type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
@@ -40,7 +99,10 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code      string                 `json:"code,omitempty"`
+	Code string `json:"code,omitempty"`
+	// Origin is "store" when the gateway materialised this registry from the
+	// catalog itself (self-service install, approval, consumer binding).
+	Origin    string                 `json:"origin,omitempty"`
 	Source    string                 `json:"source,omitempty"`
 	URL       string                 `json:"url,omitempty"`
 	Transport string                 `json:"transport,omitempty"`
@@ -64,8 +126,14 @@ type MCPAuthResponse struct {
 	Audience string `json:"audience,omitempty"`
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
+	// IdentityID is the gateway oauth2 auth that signs an obo or
+	// token_exchange call.
+	IdentityID string `json:"identity_id,omitempty"`
 
-	Provider                string   `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Account is whose account a forwarded credential is; empty means the
+	// caller's own.
+	Account                 string   `json:"account,omitempty"`
 	Registration            string   `json:"registration,omitempty"`
 	ClientID                string   `json:"client_id,omitempty"`
 	ClientSecret            string   `json:"client_secret,omitempty"` // #nosec G117 -- masked before serialization
@@ -204,8 +272,9 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	out := &MCPTargetResponse{
 		Code:      t.Code,
+		Origin:    string(t.Origin),
 		Source:    string(t.Source),
-		URL:       t.URL,
+		URL:       maskSecretURLVariables(t),
 		Transport: string(t.Transport),
 		Headers:   t.Headers,
 	}
@@ -222,7 +291,9 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 			Audience:                t.Auth.Audience,
 			Scope:                   t.Auth.Scope,
 			Actor:                   t.Auth.Actor,
+			IdentityID:              t.Auth.IdentityID,
 			Provider:                t.Auth.Provider,
+			Account:                 string(t.Auth.Account),
 			Registration:            string(t.Auth.Registration),
 			ClientID:                t.Auth.ClientID,
 			ClientSecret:            secret.Mask(t.Auth.ClientSecret),

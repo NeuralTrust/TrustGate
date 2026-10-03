@@ -17,6 +17,7 @@ package request
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -27,6 +28,10 @@ type CreateAuthRequest struct {
 	Type    string        `json:"type"`
 	Enabled *bool         `json:"enabled,omitempty"`
 	Config  ConfigRequest `json:"config"`
+	// ExpiresAt retires an api key on its own, as an RFC 3339 instant. Omitted
+	// or empty is no expiry, which is what every key was before the field
+	// existed.
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 type ConfigRequest struct {
@@ -39,6 +44,7 @@ type OAuth2ConfigRequest struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -49,8 +55,17 @@ type OAuth2ConfigRequest struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
+	// ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token
+	// exchanges without enabling brokered login. Omit the secret on update to
+	// keep the stored one.
+	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
+	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117
 }
 
+// OIDCConfigRequest is the deprecated alias of OAuth2ConfigRequest. It is
+// accepted on create and update and mapped onto the oauth2 payload;
+// responses always carry the oauth2 shape. It cannot carry client or
+// exchange credentials, so an update sent through it clears them.
 type OIDCConfigRequest struct {
 	Issuer            string   `json:"issuer"`
 	Audiences         []string `json:"audiences"`
@@ -78,7 +93,20 @@ func (r CreateAuthRequest) Validate() error {
 	if strings.TrimSpace(r.Type) == "" {
 		return fmt.Errorf("type is required: %w", commonerrors.ErrValidation)
 	}
+	if _, err := parseExpiresAt(r.ExpiresAt); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ToExpiresAt returns the parsed expiry. Validate has already rejected a
+// malformed one, so the error here can only repeat itself.
+func (r CreateAuthRequest) ToExpiresAt() *time.Time {
+	at, err := parseExpiresAt(r.ExpiresAt)
+	if err != nil {
+		return nil
+	}
+	return at
 }
 
 func (r CreateAuthRequest) IsEnabled() bool {
@@ -95,6 +123,7 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			Issuer:           c.OAuth2.Issuer,
 			Audiences:        c.OAuth2.Audiences,
 			JWKSURL:          c.OAuth2.JWKSURL,
+			PublicKeys:       c.OAuth2.PublicKeys,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     c.OAuth2.ClientSecret,
@@ -105,17 +134,22 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			SubjectClaim:     c.OAuth2.SubjectClaim,
 			AuthorizeURL:     c.OAuth2.AuthorizeURL,
 			TokenURL:         c.OAuth2.TokenURL,
+
+			ExchangeClientID:     strings.TrimSpace(c.OAuth2.ExchangeClientID),
+			ExchangeClientSecret: c.OAuth2.ExchangeClientSecret,
 		}
 	}
-	if c.OIDC != nil {
-		out.OIDC = &domain.OIDCConfig{
-			Issuer:            c.OIDC.Issuer,
-			Audiences:         c.OIDC.Audiences,
-			JWKSURL:           c.OIDC.JWKSURL,
-			PublicKeys:        c.OIDC.PublicKeys,
-			RequiredScopes:    c.OIDC.RequiredScopes,
-			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
-			SubjectClaim:      c.OIDC.SubjectClaim,
+	// The deprecated oidc payload maps onto oauth2. An explicit oauth2 payload
+	// wins, so a caller sending both is not silently overridden by the alias.
+	if c.OIDC != nil && out.OAuth2 == nil {
+		out.OAuth2 = &domain.OAuth2Config{
+			Issuer:         c.OIDC.Issuer,
+			Audiences:      c.OIDC.Audiences,
+			JWKSURL:        c.OIDC.JWKSURL,
+			PublicKeys:     c.OIDC.PublicKeys,
+			RequiredScopes: c.OIDC.RequiredScopes,
+			Algorithms:     c.OIDC.AllowedAlgorithms,
+			SubjectClaim:   c.OIDC.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

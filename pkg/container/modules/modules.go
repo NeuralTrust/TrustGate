@@ -24,7 +24,7 @@ func All(plane string, dbless bool) []container.Option {
 }
 
 func isDataPlane(plane string) bool {
-	return plane == "proxy" || plane == "mcp"
+	return plane == "proxy" || plane == "mcp" || plane == "worker"
 }
 
 func fullModules() []container.Option {
@@ -41,12 +41,13 @@ func fullModules() []container.Option {
 		container.WithModule(LoadBalancer),
 		container.WithModule(Gateway),
 		container.WithModule(Registry),
-		container.WithModule(Role),
 		container.WithModule(Consumer),
 		container.WithModule(Catalog),
+		container.WithModule(Store),
 		container.WithModule(Providers),
 		container.WithModule(RateLimit),
 		container.WithModule(Proxy),
+		container.WithModule(TrafficLabels),
 		container.WithModule(MCP),
 		container.WithModule(MCPVaultPostgres),
 		container.WithModule(ServerAdmin),
@@ -69,6 +70,7 @@ func dataPlaneModules() []container.Option {
 		container.WithModule(Providers),
 		container.WithModule(RateLimit),
 		container.WithModule(Proxy),
+		container.WithModule(TrafficLabels),
 		container.WithModule(MCP),
 		container.WithModule(MCPVaultRedis),
 		container.WithModule(ServerProxy),

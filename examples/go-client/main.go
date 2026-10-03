@@ -6,13 +6,14 @@
 //   - TrustGate running (make up)
 //   - Gateway, registry, and consumer configured
 //   - Environment variables:
-//       CONSUMER_API_KEY - your consumer API key (required)
-//       CONSUMER_SLUG    - consumer slug (default: my-app)
-//       GATEWAY_SLUG    - gateway slug (default: demo)
-//       PROXY_URL       - proxy URL (default: http://localhost:8081)
+//     CONSUMER_API_KEY - your consumer API key (required)
+//     CONSUMER_SLUG    - consumer slug (default: my-app)
+//     GATEWAY_SLUG    - gateway slug (default: demo)
+//     PROXY_URL       - proxy URL (default: http://localhost:8081)
 //
 // Usage:
-//   go run .
+//
+//	go run .
 package main
 
 import (
@@ -42,7 +43,7 @@ func main() {
 			base: http.DefaultTransport,
 			headers: map[string]string{
 				"X-AG-Gateway-Slug": gatewaySlug,
-				"X-AG-API-Key":     consumerAPIKey,
+				"X-AG-API-Key":      consumerAPIKey,
 			},
 		},
 	}

@@ -18,8 +18,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -79,5 +81,60 @@ func TestAPIKeyFinder_NotFound_Propagates(t *testing.T) {
 	finder := appauth.NewAPIKeyFinder(repo, newCacheManager(), newTestLogger())
 	if _, err := finder.FindByAPIKey(context.Background(), rawKey); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAPIKeyFinder_ExpiredKey_IsRefused(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	rawKey := "ag_expired"
+	hash := domain.HashAPIKey(rawKey)
+	yesterday := time.Now().UTC().Add(-24 * time.Hour)
+	expired := &domain.Auth{ID: ids.New[ids.AuthKind](), Type: domain.TypeAPIKey, Enabled: true, KeyHash: hash, ExpiresAt: &yesterday}
+	repo.EXPECT().FindByAPIKeyHash(mock.Anything, hash).Return(expired, nil).Once()
+
+	finder := appauth.NewAPIKeyFinder(repo, newCacheManager(), newTestLogger())
+	if _, err := finder.FindByAPIKey(context.Background(), rawKey); !errors.Is(err, domain.ErrExpired) {
+		t.Fatalf("err = %v, want ErrExpired", err)
+	}
+}
+
+// The expiry travels with the cached entry, so a key that expires while it is
+// cached is refused without waiting for the entry to fall out.
+func TestAPIKeyFinder_ExpiredWhileCached_IsRefused(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t) // no expectations: the cache answers
+	rawKey := "ag_cached-expired"
+	hash := domain.HashAPIKey(rawKey)
+	justNow := time.Now().UTC().Add(-time.Second)
+	cached := &domain.Auth{ID: ids.New[ids.AuthKind](), Type: domain.TypeAPIKey, Enabled: true, KeyHash: hash, ExpiresAt: &justNow}
+
+	mgr := newCacheManager()
+	mgr.GetTTLMap(cache.AuthKeyTTLName).Set(hash, cached)
+
+	finder := appauth.NewAPIKeyFinder(repo, mgr, newTestLogger())
+	// commonerrors.ErrNotFound, not the auth package's own: what matters is that
+	// the funnel answers an expired key exactly as it answers an unknown one.
+	if _, err := finder.FindByAPIKey(context.Background(), rawKey); !errors.Is(err, commonerrors.ErrNotFound) {
+		t.Fatalf("err = %v, want a refusal indistinguishable from an unknown key", err)
+	}
+}
+
+func TestAPIKeyFinder_KeyWithTimeLeft_IsServed(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	rawKey := "ag_still-good"
+	hash := domain.HashAPIKey(rawKey)
+	tomorrow := time.Now().UTC().Add(24 * time.Hour)
+	want := &domain.Auth{ID: ids.New[ids.AuthKind](), Type: domain.TypeAPIKey, Enabled: true, KeyHash: hash, ExpiresAt: &tomorrow}
+	repo.EXPECT().FindByAPIKeyHash(mock.Anything, hash).Return(want, nil).Once()
+
+	finder := appauth.NewAPIKeyFinder(repo, newCacheManager(), newTestLogger())
+	got, err := finder.FindByAPIKey(context.Background(), rawKey)
+	if err != nil {
+		t.Fatalf("FindByAPIKey: %v", err)
+	}
+	if got != want {
+		t.Fatal("a key with time left must be served")
 	}
 }

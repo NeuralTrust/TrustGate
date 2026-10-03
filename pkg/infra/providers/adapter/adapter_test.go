@@ -74,10 +74,6 @@ func runUsageCases(t *testing.T, dec usageDecoder, cases []usageCase) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DetectFormat
-// ---------------------------------------------------------------------------
-
 func TestDetectFormat(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -134,10 +130,6 @@ func TestDetectFormat(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ResolveAgentFormat
-// ---------------------------------------------------------------------------
-
 func TestResolveAgentFormat_SourceFormatOverrides(t *testing.T) {
 	got, err := ResolveAgentFormat("ignored", "openai_responses", nil)
 	require.NoError(t, err)
@@ -185,10 +177,6 @@ func TestResolveAgentFormat_UnknownProvider(t *testing.T) {
 	_, err := ResolveAgentFormat("unknown-provider", "", nil)
 	require.Error(t, err)
 }
-
-// ---------------------------------------------------------------------------
-// IsSameWireFormat
-// ---------------------------------------------------------------------------
 
 func TestIsSameWireFormat(t *testing.T) {
 	assert.True(t, IsSameWireFormat(FormatOpenAI, FormatAzure))
@@ -370,10 +358,6 @@ func TestResolveTargetFormatForCapability_NonChatCapabilitiesIgnoreRoute(t *test
 		ResolveTargetFormatForCapability("mistral", "audio_transcription", FormatOpenAI, nil))
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Anthropic
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_OpenAIToAnthropic(t *testing.T) {
 	input := `{
 		"model": "gpt-4",
@@ -430,10 +414,6 @@ func TestAdaptRequest_OpenAIToAnthropic(t *testing.T) {
 	assert.Equal(t, "auto", tc["type"])
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: Anthropic → OpenAI
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_AnthropicToOpenAI(t *testing.T) {
 	input := `{
 		"model": "claude-3-sonnet",
@@ -485,10 +465,6 @@ func TestAdaptRequest_AnthropicServerToolBlockToOpenAI(t *testing.T) {
 	assert.NotContains(t, string(out), `"name":""`)
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Gemini
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_OpenAIToGemini(t *testing.T) {
 	input := `{
 		"model": "gpt-4",
@@ -529,9 +505,86 @@ func TestAdaptRequest_OpenAIToGemini(t *testing.T) {
 	assert.Equal(t, 0.5, gc["temperature"])
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Bedrock (Converse wire format)
-// ---------------------------------------------------------------------------
+func TestAdaptRequest_AnthropicToGemini(t *testing.T) {
+	input := `{
+		"model": "claude-3-sonnet",
+		"system": "Be concise.",
+		"max_tokens": 50,
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi"}
+		],
+		"tools": [{
+			"name": "lookup",
+			"description": "find",
+			"input_schema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {"q": {"type": "string"}}
+			}
+		}]
+	}`
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatGemini)
+	require.NoError(t, err)
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.Contains(t, result, "systemInstruction")
+	contents := result["contents"].([]interface{})
+	assert.Len(t, contents, 2)
+	gc := result["generationConfig"].(map[string]interface{})
+	assert.Equal(t, float64(50), gc["maxOutputTokens"])
+	params := geminiToolParameters(t, out)
+	assert.Equal(t, "OBJECT", params["type"])
+	assert.NotContains(t, params, "$schema")
+	assert.NotContains(t, params, "additionalProperties")
+}
+
+func TestAdaptRequest_AnthropicServerToolWithoutNameIsDropped(t *testing.T) {
+	input := `{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 64,
+		"messages": [{"role": "user", "content": "Hello"}],
+		"tools": [
+			{
+				"name": "edit_file",
+				"description": "Replace a string in a file.",
+				"input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}
+			},
+			{"type": "web_search_20250305"}
+		]
+	}`
+
+	t.Run("openai egress sends only the named tool", func(t *testing.T) {
+		out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatOpenAI)
+		require.NoError(t, err)
+		assert.NotContains(t, string(out), `"name":""`)
+
+		var result map[string]interface{}
+		require.NoError(t, json.Unmarshal(out, &result))
+		tools, ok := result["tools"].([]interface{})
+		require.True(t, ok)
+		require.Len(t, tools, 1)
+
+		fn := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+		assert.Equal(t, "edit_file", fn["name"])
+		params := fn["parameters"].(map[string]interface{})
+		assert.Contains(t, params["properties"], "path")
+	})
+
+	t.Run("gemini egress declares only the named tool", func(t *testing.T) {
+		out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatGemini)
+		require.NoError(t, err)
+
+		var result map[string]interface{}
+		require.NoError(t, json.Unmarshal(out, &result))
+		tools := result["tools"].([]interface{})
+		require.Len(t, tools, 1)
+		decls := tools[0].(map[string]interface{})["functionDeclarations"].([]interface{})
+		require.Len(t, decls, 1)
+		assert.Equal(t, "edit_file", decls[0].(map[string]interface{})["name"])
+	})
+}
 
 func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	input := `{
@@ -557,10 +610,6 @@ func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	assert.Equal(t, 100, result.InferenceConfig.MaxTokens)
 }
 
-// ---------------------------------------------------------------------------
-// Same format passthrough
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_SameFormat(t *testing.T) {
 	input := `{"model":"gpt-4","messages":[]}`
 	out, err := testRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatOpenAI)
@@ -574,10 +623,6 @@ func TestAdaptRequest_AzureToOpenAI(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, input, string(out))
 }
-
-// ---------------------------------------------------------------------------
-// Response: Anthropic → OpenAI
-// ---------------------------------------------------------------------------
 
 func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 	input := `{
@@ -595,7 +640,7 @@ func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 		}
 	}`
 
-	// target=anthropic produced this response, source=openai wants it.
+	// The anthropic target produced this response and the openai source expects it.
 	out, err := testRegistry().AdaptResponse([]byte(input), FormatOpenAI, FormatAnthropic)
 	require.NoError(t, err)
 
@@ -619,10 +664,6 @@ func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 	assert.Equal(t, float64(5), usage["completion_tokens"])
 	assert.Equal(t, float64(15), usage["total_tokens"])
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Anthropic → OpenAI
-// ---------------------------------------------------------------------------
 
 func TestAdaptStreamChunk_AnthropicContentDelta(t *testing.T) {
 	input := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`
@@ -657,8 +698,8 @@ func TestAdaptStreamChunk_AnthropicNonContentSkipped(t *testing.T) {
 }
 
 // TestAdaptStreamChunk_OpenAIToolCallsToAnthropic ensures OpenAI stream chunks
-// with tool_calls are converted to Anthropic content_block_start(tool_use) and
-// content_block_delta(input_json_delta) so the agent receives a valid stream.
+// with tool_calls are converted to Anthropic tool_use content_block_start and
+// input_json_delta content_block_delta events so the agent receives a valid stream.
 func TestAdaptStreamChunk_OpenAIToolCallsToAnthropic(t *testing.T) {
 	// First chunk: role + tool_calls with id, name, empty arguments
 	input := `{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"database_agent","arguments":""}}]}}]}`
@@ -693,10 +734,6 @@ func TestAdaptStreamChunk_OpenAIToolCallsToAnthropic(t *testing.T) {
 	assert.True(t, seenInputDelta, "expected content_block_delta with input_json_delta")
 }
 
-// ---------------------------------------------------------------------------
-// Cross-format: Gemini → Anthropic (via canonical, no two-hop hack)
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_GeminiToAnthropic(t *testing.T) {
 	input := `{
 		"contents": [
@@ -717,10 +754,6 @@ func TestAdaptRequest_GeminiToAnthropic(t *testing.T) {
 	assert.Len(t, msgs, 1)
 	assert.Equal(t, float64(100), result["max_tokens"])
 }
-
-// ---------------------------------------------------------------------------
-// OpenAI Completions vs Responses dispatcher (OpenAIAdapter handles both)
-// ---------------------------------------------------------------------------
 
 func TestCanonical_OpenAI_CompletionsVsResponsesDispatch(t *testing.T) {
 	adapter := &OpenAIAdapter{}
@@ -774,10 +807,6 @@ func TestCanonical_OpenAI_CompletionsVsResponsesDispatch(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// DetectFormat: Responses API distinction
-// ---------------------------------------------------------------------------
-
 func TestDetectFormat_ResponsesAPIInput(t *testing.T) {
 	body := `{"model":"gpt-4o","input":"Hello"}`
 	got := DetectFormat([]byte(body))
@@ -795,10 +824,6 @@ func TestDetectFormat_CompletionsStillDetected(t *testing.T) {
 	got := DetectFormat([]byte(body))
 	assert.Equal(t, FormatOpenAI, got)
 }
-
-// ---------------------------------------------------------------------------
-// Cross-provider: Responses API request → Anthropic (via canonical)
-// ---------------------------------------------------------------------------
 
 func TestAdaptRequest_ResponsesAPIToAnthropic(t *testing.T) {
 	input := `{
@@ -823,10 +848,6 @@ func TestAdaptRequest_ResponsesAPIToAnthropic(t *testing.T) {
 	assert.Equal(t, float64(100), result["max_tokens"])
 }
 
-// ---------------------------------------------------------------------------
-// FormatOpenAIResponses: wire format isolation
-// ---------------------------------------------------------------------------
-
 func TestIsSameWireFormat_ResponsesVsCompletions(t *testing.T) {
 	assert.False(t, IsSameWireFormat(FormatOpenAIResponses, FormatOpenAI),
 		"Responses API and Completions are NOT wire-compatible")
@@ -835,10 +856,6 @@ func TestIsSameWireFormat_ResponsesVsCompletions(t *testing.T) {
 	assert.False(t, IsSameWireFormat(FormatOpenAIResponses, FormatAnthropic),
 		"Responses API and Anthropic are NOT wire-compatible")
 }
-
-// ---------------------------------------------------------------------------
-// Cross-provider full roundtrip: Responses API client → Completions upstream
-// ---------------------------------------------------------------------------
 
 func TestAdaptResponse_CompletionsToResponsesAPI(t *testing.T) {
 	completionsResp := `{
@@ -1101,4 +1118,184 @@ func TestAdaptRequest_ImageRegression(t *testing.T) {
 			assert.JSONEq(t, string(plain), string(stripped))
 		})
 	}
+}
+
+func decodeUsageFromSSE(t *testing.T, a ProviderAdapter, lines [][]byte) *CanonicalUsage {
+	t.Helper()
+	var merged *CanonicalUsage
+	for _, line := range lines {
+		payload, ok := bytes.CutPrefix(line, []byte("data: "))
+		if !ok {
+			continue
+		}
+		chunk, err := a.DecodeStreamChunk(payload)
+		require.NoError(t, err)
+		if chunk != nil {
+			merged = MergeUsage(merged, chunk.Usage)
+		}
+	}
+	return merged
+}
+
+func TestUsageRoundTrip_ClientEncoders(t *testing.T) {
+	chat := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 500, ReasoningOutputTokens: 4,
+	}
+	withTTL := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200, cacheTTLKnown: true,
+	}
+	fiveMinuteOnly := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 300, cacheTTLKnown: true,
+	}
+	ttlUnknown := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 300,
+	}
+	noCache := &CanonicalUsage{InputTokens: 20, OutputTokens: 10, TotalTokens: 30}
+
+	tests := []struct {
+		name   string
+		format Format
+		usage  *CanonicalUsage
+	}{
+		{name: "openai chat", format: FormatOpenAI, usage: chat},
+		{name: "openai chat without cache", format: FormatOpenAI, usage: noCache},
+		{name: "openai responses", format: FormatOpenAIResponses, usage: chat},
+		{name: "openai responses without cache", format: FormatOpenAIResponses, usage: noCache},
+		{name: "cohere", format: FormatCohere, usage: &CanonicalUsage{InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010, CachedInputTokens: 1000}},
+		{name: "cohere without cache", format: FormatCohere, usage: noCache},
+		{name: "anthropic with a 1h share", format: FormatAnthropic, usage: withTTL},
+		{name: "anthropic five-minute only", format: FormatAnthropic, usage: fiveMinuteOnly},
+		{name: "anthropic ttl unknown", format: FormatAnthropic, usage: ttlUnknown},
+		{name: "anthropic without cache", format: FormatAnthropic, usage: noCache},
+		{name: "bedrock with a 1h share", format: FormatBedrock, usage: withTTL},
+		{name: "bedrock five-minute only", format: FormatBedrock, usage: fiveMinuteOnly},
+		{name: "bedrock ttl unknown", format: FormatBedrock, usage: ttlUnknown},
+		{name: "bedrock without cache", format: FormatBedrock, usage: noCache},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := testRegistry().GetAdapter(tt.format)
+			require.NoError(t, err)
+
+			body, err := a.EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: tt.usage})
+			require.NoError(t, err)
+			back, err := a.DecodeResponse(body)
+			require.NoError(t, err)
+			assert.Equal(t, tt.usage, back.Usage, "buffered")
+
+			var lines [][]byte
+			for _, chunk := range []*CanonicalStreamChunk{
+				{Role: "assistant"},
+				{Delta: "ok"},
+				{FinishReason: "stop", Usage: tt.usage},
+			} {
+				out, err := a.EncodeStreamChunk(chunk)
+				require.NoError(t, err)
+				lines = append(lines, out...)
+			}
+			assert.Equal(t, tt.usage, decodeUsageFromSSE(t, a, lines), "stream")
+		})
+	}
+}
+
+func TestAnthropicSSEUsage_CacheCreationBreakdown(t *testing.T) {
+	usage := &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200}
+
+	lines, err := (&AnthropicAdapter{}).EncodeStreamChunk(&CanonicalStreamChunk{Role: "assistant", Usage: usage})
+	require.NoError(t, err)
+
+	var start struct {
+		Message struct {
+			Usage map[string]json.RawMessage `json:"usage"`
+		} `json:"message"`
+	}
+	for _, line := range lines {
+		if payload, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+			require.NoError(t, json.Unmarshal(payload, &start))
+			break
+		}
+	}
+	assert.JSONEq(t, `{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200}`, string(start.Message.Usage["cache_creation"]))
+	assert.JSONEq(t, `100`, string(start.Message.Usage["input_tokens"]))
+}
+
+func TestAnthropicUsage_CacheCreationWireCarriesBothKeys(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *CanonicalUsage
+		want  string
+	}{
+		{
+			name:  "five-minute-only write",
+			usage: &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CacheWriteInputTokens: 300, cacheTTLKnown: true},
+			want:  `{"ephemeral_5m_input_tokens":300,"ephemeral_1h_input_tokens":0}`,
+		},
+		{
+			name:  "ttl known without a write",
+			usage: &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CachedInputTokens: 100, cacheTTLKnown: true},
+			want:  `{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &AnthropicAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: tt.usage})
+			require.NoError(t, err)
+			var buffered struct {
+				Usage map[string]json.RawMessage `json:"usage"`
+			}
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			assert.JSONEq(t, tt.want, string(buffered.Usage["cache_creation"]), "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Role: "assistant", Usage: tt.usage})
+			require.NoError(t, err)
+			var start struct {
+				Message struct {
+					Usage map[string]json.RawMessage `json:"usage"`
+				} `json:"message"`
+			}
+			for _, line := range lines {
+				if payload, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+					require.NoError(t, json.Unmarshal(payload, &start))
+					break
+				}
+			}
+			assert.JSONEq(t, tt.want, string(start.Message.Usage["cache_creation"]), "stream")
+		})
+	}
+}
+
+func TestAnthropicUsage_OneHourShareClampedToWrite(t *testing.T) {
+	body := []byte(`{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
+		"usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`)
+
+	cr, err := (&AnthropicAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+
+	assert.Equal(t, 50, cr.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 50, cr.Usage.CacheWrite1hInputTokens)
+}
+
+func TestUsageUnfold_CacheAboveInput(t *testing.T) {
+	usage := &CanonicalUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12, CachedInputTokens: 8, CacheWriteInputTokens: 5}
+	require.Equal(t, 0, usage.PlainInputTokens())
+
+	anthropicBody, err := (&AnthropicAdapter{}).EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: usage})
+	require.NoError(t, err)
+	var anthropicWire anthropicResponse
+	require.NoError(t, json.Unmarshal(anthropicBody, &anthropicWire))
+	assert.Equal(t, 0, anthropicWire.Usage.InputTokens)
+
+	bedrockBody, err := (&BedrockAdapter{}).EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: usage})
+	require.NoError(t, err)
+	var bedrockWire ConverseResponse
+	require.NoError(t, json.Unmarshal(bedrockBody, &bedrockWire))
+	assert.Equal(t, 0, bedrockWire.Usage.InputTokens)
 }

@@ -1,0 +1,1 @@
+{"messages":[{"role":"user","content":"hi"}],"model":"gpt-5","tools":[{"type":"custom","custom":{"name":"grammar","description":"d","format":{"type":"grammar","grammar":{"syntax":"lark","definition":"start: \"a\""}}}}]}

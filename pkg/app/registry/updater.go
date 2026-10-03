@@ -17,12 +17,14 @@ package registry
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -58,6 +60,7 @@ type updater struct {
 	signaler    configsyncport.SnapshotSignaler
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
+	auths       AuthLookup
 }
 
 func NewUpdater(
@@ -67,12 +70,9 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	catalog MCPAuthCatalog,
-	compilers ...appopenapi.Compiler,
+	opts ...Option,
 ) Updater {
-	var compiler appopenapi.Compiler
-	if len(compilers) > 0 {
-		compiler = compilers[0]
-	}
+	o := applyOptions(opts)
 	return &updater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
@@ -80,7 +80,8 @@ func NewUpdater(
 		logger:      logger,
 		signaler:    signaler,
 		catalog:     catalog,
-		openapi:     compiler,
+		openapi:     o.openapi,
+		auths:       o.auths,
 	}
 }
 
@@ -102,8 +103,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 		existing.Enabled = *in.Enabled
 	}
 	applyLLMTargetUpdate(existing, in)
+	prevAuth := storedMCPAuth(existing)
 	if err := applyMCPTargetUpdate(ctx, existing, in, u.catalog, u.openapi); err != nil {
 		return nil, err
+	}
+	if exchangeIdentityChanged(prevAuth, storedMCPAuth(existing)) {
+		if err := validateExchangeIdentity(ctx, u.auths, existing.GatewayID, existing.MCPTarget); err != nil {
+			return nil, err
+		}
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if !existing.IsMCP() {
@@ -141,7 +148,11 @@ func applyMCPTargetUpdate(
 		if incoming.Source == "" {
 			incoming.Source = prev.Source
 		}
-		if strings.TrimSpace(incoming.URL) == "" {
+		// A masked URL is the read API's rendering of the stored one (a secret
+		// URL variable shown as ***xxxx), echoed back by a client that edited
+		// other fields — the same round-trip secret.Resolve handles for auth
+		// secrets. Persisting it would replace the real token with the mask.
+		if strings.TrimSpace(incoming.URL) == "" || urlCarriesMaskedSecret(incoming.URL) {
 			incoming.URL = prev.URL
 		}
 		if incoming.Transport == "" {
@@ -156,6 +167,9 @@ func applyMCPTargetUpdate(
 		if strings.TrimSpace(incoming.Code) == "" {
 			incoming.Code = prev.Code
 		}
+		// Origin is gateway-owned: an admin renaming or re-authing the default
+		// instance keeps it recognisable as the one the gateway materialised.
+		incoming.Origin = prev.Origin
 		if incoming.OpenAPI == nil && !sourceChanged {
 			incoming.OpenAPI = prev.OpenAPI
 		}
@@ -170,6 +184,30 @@ func applyMCPTargetUpdate(
 	}
 	existing.MCPTarget = incoming
 	return nil
+}
+
+// urlCarriesMaskedSecret reports whether an mcp_target.url holds a masked
+// secret — the redaction marker as (a prefix of) any query value or path
+// segment — i.e. it is the read API's masked form, not a new value.
+func urlCarriesMaskedSecret(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return strings.Contains(raw, secret.Redacted)
+	}
+	for _, values := range u.Query() {
+		for _, v := range values {
+			if secret.IsMasked(v) {
+				return true
+			}
+		}
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if secret.IsMasked(segment) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedMCPSource(source domain.MCPSource) domain.MCPSource {
@@ -203,4 +241,26 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 	if in.SetPricing {
 		target.Pricing = in.Pricing
 	}
+}
+
+func storedMCPAuth(r *domain.Registry) *domain.MCPAuth {
+	if r.MCPTarget == nil || r.MCPTarget.Auth == nil {
+		return nil
+	}
+	a := *r.MCPTarget.Auth
+	return &a
+}
+
+// exchangeIdentityChanged limits the identity check to a pin this request
+// introduces. Re-sending the stored one, as a client echoing a read does,
+// must not refuse unrelated edits because the identity has since gone; the
+// exchange refuses that at call time.
+func exchangeIdentityChanged(prev, next *domain.MCPAuth) bool {
+	if next == nil || next.IdentityID == "" || !next.UsesIdPClient() {
+		return false
+	}
+	if prev == nil || !prev.UsesIdPClient() {
+		return true
+	}
+	return !strings.EqualFold(prev.IdentityID, next.IdentityID)
 }

@@ -33,8 +33,10 @@ func minimumEnv(t *testing.T) {
 	t.Setenv("DB_USER", "u")
 	t.Setenv("DB_NAME", "n")
 	t.Setenv("REDIS_HOST", "redis.example")
-	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("SERVER_SECRET_KEY", testSecretKey())
 }
+
+func testSecretKey() string { return strings.Repeat("s", serverSecretKeyMinLen) }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	minimumEnv(t)
@@ -228,6 +230,45 @@ func TestGetFirewallComplexityConfig(t *testing.T) {
 	if cfg.Timeout != 30*time.Second {
 		t.Errorf("Timeout = %s, want 30s", cfg.Timeout)
 	}
+}
+
+func TestGetModelArmorConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("MODEL_ARMOR_BASE_URL", "")
+		if err := os.Unsetenv("MODEL_ARMOR_BASE_URL"); err != nil {
+			t.Fatalf("unset MODEL_ARMOR_BASE_URL: %v", err)
+		}
+		if err := os.Unsetenv("MODEL_ARMOR_TIMEOUT"); err != nil {
+			t.Fatalf("unset MODEL_ARMOR_TIMEOUT: %v", err)
+		}
+		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "")
+		cfg := getModelArmorConfig()
+		if cfg.AllowAmbientIdentity {
+			t.Error("AllowAmbientIdentity must default to false: the pod identity is shared across tenants")
+		}
+		if cfg.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty so the client derives the regional host per call", cfg.BaseURL)
+		}
+		if cfg.Timeout != defaultModelArmorTimeout {
+			t.Errorf("Timeout = %s, want default %s", cfg.Timeout, defaultModelArmorTimeout)
+		}
+	})
+
+	t.Run("explicit values", func(t *testing.T) {
+		t.Setenv("MODEL_ARMOR_BASE_URL", "https://modelarmor.example.internal")
+		t.Setenv("MODEL_ARMOR_TIMEOUT", "5s")
+		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "true")
+		cfg := getModelArmorConfig()
+		if !cfg.AllowAmbientIdentity {
+			t.Error("AllowAmbientIdentity = false, want true")
+		}
+		if cfg.BaseURL != "https://modelarmor.example.internal" {
+			t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://modelarmor.example.internal")
+		}
+		if cfg.Timeout != 5*time.Second {
+			t.Errorf("Timeout = %s, want 5s", cfg.Timeout)
+		}
+	})
 }
 
 func TestGetProviderConfig_ResponseHeaderTimeout(t *testing.T) {
@@ -437,7 +478,7 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	t.Setenv("SERVER_ADMIN_PORT", "9090")
 	t.Setenv("DB_MAX_CONNS", "50")
 	t.Setenv("LOG_LEVEL", "DEBUG")
-	t.Setenv("KAFKA_BROKERS", "k1:9092,k2:9092, k3:9092 ")
+	t.Setenv("MCP_EXTRA_BASE_DOMAINS", "a.example,b.example, c.example ")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -452,11 +493,11 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	if cfg.Logger.Level != slog.LevelDebug {
 		t.Errorf("Logger.Level = %v, want DEBUG", cfg.Logger.Level)
 	}
-	if got, want := len(cfg.Kafka.Brokers), 3; got != want {
-		t.Fatalf("Kafka.Brokers len = %d, want %d", got, want)
+	if got, want := len(cfg.Server.MCPExtraBaseDomains), 3; got != want {
+		t.Fatalf("Server.MCPExtraBaseDomains len = %d, want %d", got, want)
 	}
-	if cfg.Kafka.Brokers[2] != "k3:9092" {
-		t.Errorf("Kafka.Brokers[2] = %q, want trimmed %q", cfg.Kafka.Brokers[2], "k3:9092")
+	if cfg.Server.MCPExtraBaseDomains[2] != "c.example" {
+		t.Errorf("Server.MCPExtraBaseDomains[2] = %q, want trimmed %q", cfg.Server.MCPExtraBaseDomains[2], "c.example")
 	}
 }
 
@@ -535,8 +576,8 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	if cfg.Redis.Username != "" {
 		t.Errorf("Redis.Username default = %q, want empty", cfg.Redis.Username)
 	}
-	if cfg.Telemetry.KafkaTopic != defaultTelemetryKafkaTopic {
-		t.Errorf("Telemetry.KafkaTopic = %q, want %q", cfg.Telemetry.KafkaTopic, defaultTelemetryKafkaTopic)
+	if cfg.Telemetry.ExportersFile != defaultTelemetryExportersFile {
+		t.Errorf("Telemetry.ExportersFile = %q, want %q", cfg.Telemetry.ExportersFile, defaultTelemetryExportersFile)
 	}
 	if cfg.Telemetry.OpsMetricsEnabled {
 		t.Errorf("Telemetry.OpsMetricsEnabled default = true, want false")
@@ -554,7 +595,7 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("REDIS_TLS_ENABLED", "true")
 	t.Setenv("REDIS_TLS_INSECURE_VERIFY", "true")
 	t.Setenv("REDIS_USERNAME", "cacheuser")
-	t.Setenv("TELEMETRY_KAFKA_TOPIC", "custom.requests")
+	t.Setenv("TELEMETRY_ENABLE_PLUGIN_TRACES", "false")
 	t.Setenv("METRICS_QUEUE_SIZE", "42")
 	t.Setenv("METRICS_WORKER_COUNT", "3")
 	t.Setenv("METRICS_FLUSH_INTERVAL", "250ms")
@@ -573,7 +614,7 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	if cfg.Redis.Username != "cacheuser" {
 		t.Errorf("Redis.Username override = %q, want %q", cfg.Redis.Username, "cacheuser")
 	}
-	if cfg.Telemetry.KafkaTopic != "custom.requests" {
+	if cfg.Telemetry.EnablePluginTraces {
 		t.Errorf("Telemetry override not applied: %+v", cfg.Telemetry)
 	}
 	if cfg.Metrics.QueueSize != 42 || cfg.Metrics.WorkerCount != 3 || cfg.Metrics.FlushInterval != 250*time.Millisecond {
@@ -739,30 +780,18 @@ func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_KafkaBrokersAllBlankFailsValidation(t *testing.T) {
-	minimumEnv(t)
-	t.Setenv("KAFKA_BROKERS", " , , ")
-
-	_, err := LoadConfig()
-	if err == nil {
-		t.Fatal("expected validation error for blank KAFKA_BROKERS")
-	}
-	if !stderrors.Is(err, errors.ErrInvalidConfig) {
-		t.Errorf("error %v is not ErrInvalidConfig", err)
-	}
-}
-
 func valid() *Config {
 	return &Config{
+		Server:   validServer(),
 		Database: DatabaseConfig{Host: "db", User: "u", Name: "n"},
 		Redis:    RedisConfig{Host: "r"},
-		Kafka:    KafkaConfig{Brokers: []string{"k:9092"}},
 	}
 }
 
 func validServer() ServerConfig {
 	return ServerConfig{
 		GatewayBaseDomain: "gw.example",
+		SecretKey:         testSecretKey(),
 	}
 }
 
@@ -771,7 +800,6 @@ func postgresValid() *Config {
 		Server:   validServer(),
 		Database: DatabaseConfig{Host: "db", User: "u", Name: "n"},
 		Redis:    RedisConfig{Host: "r"},
-		Kafka:    KafkaConfig{Brokers: []string{"k:9092"}},
 	}
 }
 
@@ -783,7 +811,6 @@ func dbLessValid() *Config {
 	return &Config{
 		Server: validServer(),
 		Redis:  RedisConfig{Host: "r"},
-		Kafka:  KafkaConfig{Brokers: []string{"k:9092"}},
 		ConfigSync: ConfigSyncConfig{
 			DataPlaneEnabled: true,
 			Token:            "config-sync-token",
@@ -804,7 +831,7 @@ func TestValidate_RejectsBlankRequiredFields(t *testing.T) {
 		{"DB_USER", func(c *Config) { c.Database.User = "" }},
 		{"DB_NAME", func(c *Config) { c.Database.Name = "" }},
 		{"REDIS_HOST", func(c *Config) { c.Redis.Host = "" }},
-		{"KAFKA_BROKERS", func(c *Config) { c.Kafka.Brokers = nil }},
+		{"SERVER_SECRET_KEY", func(c *Config) { c.Server.SecretKey = "" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -824,6 +851,36 @@ func TestValidate_RejectsBlankRequiredFields(t *testing.T) {
 func TestValidate_PostgresGraphStillValidates(t *testing.T) {
 	if err := postgresValid().Validate(); err != nil {
 		t.Fatalf("postgres graph should validate: %v", err)
+	}
+}
+
+func TestValidate_ServerSecretKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		appEnv  string
+		secret  string
+		wantErr bool
+	}{
+		{name: "dev rejects empty", appEnv: "dev", wantErr: true},
+		{name: "dev rejects short", appEnv: "dev", secret: strings.Repeat("s", serverSecretKeyMinLen-1), wantErr: true},
+		{name: "dev accepts minimum length", appEnv: "dev", secret: testSecretKey()},
+		{name: "staging rejects empty", appEnv: "staging", wantErr: true},
+		{name: "prod resolves the secret from Redis", appEnv: "prod"},
+		{name: "production is normalized", appEnv: " PRODUCTION "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := postgresValid()
+			cfg.AppEnv = tc.appEnv
+			cfg.Server.SecretKey = tc.secret
+			err := cfg.Validate()
+			if tc.wantErr && !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Fatalf("expected ErrInvalidConfig, got %v", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
 	}
 }
 
@@ -918,13 +975,12 @@ func TestValidate_DBLessAcceptsValid32ByteKey(t *testing.T) {
 	}
 }
 
-func TestValidate_DBLessStillRequiresRedisAndKafka(t *testing.T) {
+func TestValidate_DBLessStillRequiresRedis(t *testing.T) {
 	tests := []struct {
 		name string
 		mut  func(c *Config)
 	}{
 		{"REDIS_HOST", func(c *Config) { c.Redis.Host = "" }},
-		{"KAFKA_BROKERS", func(c *Config) { c.Kafka.Brokers = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -974,7 +1030,7 @@ func TestLoadConfig_ConfigSyncDefaults(t *testing.T) {
 
 func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redis.example")
-	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("SERVER_SECRET_KEY", testSecretKey())
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
 	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
@@ -1000,7 +1056,7 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 
 func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redis.example")
-	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("SERVER_SECRET_KEY", testSecretKey())
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
@@ -1143,6 +1199,99 @@ func TestParseAdminM2MPublicKeys(t *testing.T) {
 				if got[i] != tc.want[i] {
 					t.Errorf("key %d = %+v, want %+v", i, got[i], tc.want[i])
 				}
+			}
+		})
+	}
+}
+
+func TestLoadConfig_RateLimitSyncDefaults(t *testing.T) {
+	minimumEnv(t)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	rl := cfg.RateLimit
+	if !rl.Enabled || rl.SyncInterval != time.Second || rl.SyncTimeout != 200*time.Millisecond ||
+		rl.FailedRetention != 30*time.Second {
+		t.Fatalf("rate limit defaults = %+v", rl)
+	}
+}
+
+func TestLoadConfig_RateLimitSyncConfigured(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("RATE_LIMIT_SYNC_INTERVAL", "2s")
+	t.Setenv("RATE_LIMIT_SYNC_TIMEOUT", "500ms")
+	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "45s")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	rl := cfg.RateLimit
+	if rl.SyncInterval != 2*time.Second || rl.SyncTimeout != 500*time.Millisecond ||
+		rl.FailedRetention != 45*time.Second {
+		t.Fatalf("rate limit = %+v", rl)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidRateLimitSync(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "malformed interval", key: "RATE_LIMIT_SYNC_INTERVAL", value: "fast"},
+		{name: "zero timeout", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "0s"},
+		{name: "timeout over the cap", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "6s"},
+		{name: "retention over the cap", key: "RATE_LIMIT_FAILED_RETENTION", value: "11m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(tt.key, tt.value)
+			_, err := LoadConfig()
+			if !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Fatalf("error = %v, want ErrInvalidConfig", err)
+			}
+		})
+	}
+}
+
+// A token that expires before the last resend of a retained round would count
+// that round twice, so the whole combination is checked, not each value alone.
+func TestLoadConfig_RejectsARetentionTheTokenCannotOutlive(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "30s")
+	t.Setenv("RATE_LIMIT_SYNC_INTERVAL", "20s")
+	t.Setenv("RATE_LIMIT_SYNC_TIMEOUT", "5s")
+	if _, err := LoadConfig(); !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestLoadConfig_RateLimitDisabledIgnoresTheSyncTuning(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("RATE_LIMIT_ENABLED", "false")
+	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "11m")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("a disabled limiter must not be validated: %v", err)
+	}
+}
+
+func TestProviderAllowPrivateNetworks(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{"unset defaults to off", "", false},
+		{"explicit true", "true", true},
+		{"explicit false", "false", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", tc.env)
+			if got := getProviderConfig().AllowPrivateNetworks; got != tc.want {
+				t.Fatalf("AllowPrivateNetworks = %v, want %v", got, tc.want)
 			}
 		})
 	}

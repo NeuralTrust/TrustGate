@@ -53,6 +53,11 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
@@ -94,7 +99,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	case policy.StagePreRequest:
 		return p.preRequest(ctx, cfg, base, dimension, in.Request, in.Mode, in.Event)
 	case policy.StagePostResponse:
-		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Event)
+		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Mode, in.Event)
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
@@ -165,9 +170,10 @@ func (p *Plugin) postResponse(
 	base string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, event)
+	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, mode, event)
 }
 
 func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {

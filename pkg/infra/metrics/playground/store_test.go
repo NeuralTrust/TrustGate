@@ -42,7 +42,8 @@ func newTestStore(t *testing.T, cfg config.PlaygroundConfig) (*playground.Store,
 
 func playgroundRequest() *infracontext.RequestContext {
 	return &infracontext.RequestContext{
-		Headers: map[string][]string{"X-AG-Playground-Token": {"a.jwt.token"}},
+		Headers:            map[string][]string{"X-AG-Playground-Token": {"a.jwt.token"}},
+		PlaygroundVerified: true,
 	}
 }
 
@@ -103,4 +104,18 @@ func TestStore_SaveSkipsEmptyTraceID(t *testing.T) {
 	store.Save(context.Background(), playgroundRequest(), &events.Event{TraceID: ""})
 
 	assert.Empty(t, mr.Keys(), "events without a TraceID must not be stored")
+}
+
+func TestStore_SaveSkipsForgedPlaygroundHeader(t *testing.T) {
+	cfg := config.PlaygroundConfig{TraceStoreEnabled: true, TraceStoreTTL: 10 * time.Minute}
+	store, mr, _ := newTestStore(t, cfg)
+
+	// A client-supplied header with no verification behind it (the MCP plane,
+	// where no resolver ever checks the token) must not reach the store.
+	req := &infracontext.RequestContext{
+		Headers: map[string][]string{"X-AG-Playground-Token": {"anything"}},
+	}
+	store.Save(context.Background(), req, &events.Event{TraceID: "trace-forged"})
+
+	assert.Empty(t, mr.Keys(), "an unverified playground header must not be stored")
 }
