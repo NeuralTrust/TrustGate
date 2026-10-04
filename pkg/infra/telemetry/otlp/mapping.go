@@ -61,6 +61,8 @@ const (
 	attrMCPRPCErrorCode      = "trustgate.mcp.rpc_error_code"
 	attrMCPAccountRef        = "trustgate.mcp.account_ref"
 	attrMCPDecision          = "trustgate.mcp.decision"
+	attrMCPToolRisk          = "trustgate.mcp.tool_risk"
+	attrMCPToolOpenWorld     = "trustgate.mcp.tool_open_world"
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
@@ -195,6 +197,10 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		}
 		appendStr(attrMCPAccountRef, evt.MCP.AccountRef)
 		appendStr(attrMCPDecision, evt.MCP.Decision)
+		appendStr(attrMCPToolRisk, evt.MCP.ToolRisk)
+		if evt.MCP.ToolOpenWorld != nil {
+			attrs = append(attrs, attribute.Bool(attrMCPToolOpenWorld, *evt.MCP.ToolOpenWorld))
+		}
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
