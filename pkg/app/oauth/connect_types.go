@@ -142,6 +142,16 @@ type ConnectService interface {
 		gatewayID ids.GatewayID,
 		principalSub, consumerPath, provider string,
 	) (string, error)
+	// CreateInstanceTicket mints a ticket for one provider on one instance: it
+	// can act on that provider and no other, like CreateProviderTicket, and the
+	// page opens on that instance's own card. It is what a link handed to an end
+	// user should carry when the application named the instance, because two
+	// instances of one provider are two servers with two accounts.
+	CreateInstanceTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, provider, code, instanceID string,
+	) (string, error)
 	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
 	// the connect page opens focused on that server (e.g. from a Store install).
 	// instanceID optionally pins the ticket to the exact installation instance

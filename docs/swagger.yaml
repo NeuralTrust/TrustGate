@@ -3145,10 +3145,21 @@ definitions:
         type: string
       expires_at:
         type: string
+      instance:
+        description: |-
+          Instance is the registry id of the server's instance, which tells two
+          instances of one provider apart.
+        type: string
       provider:
         type: string
       registry:
         type: string
+      shared:
+        description: |-
+          Shared is true for an instance that holds one account for every caller:
+          its status is that account's, and only an administrator can connect it,
+          so a connect link is never the remedy for this row.
+        type: boolean
       status:
         type: string
     type: object
@@ -3171,6 +3182,12 @@ definitions:
     properties:
       end_user:
         type: string
+      instance:
+        description: |-
+          Instance narrows the link to one instance of the server, by registry id,
+          as /connections reports it. Two instances of one provider are two
+          servers with two accounts, and the provider alone cannot say which.
+        type: string
       provider:
         type: string
     type: object
@@ -3179,6 +3196,8 @@ definitions:
       connect_url:
         type: string
       expires_at:
+        type: string
+      instance:
         type: string
       provider:
         type: string
@@ -3487,11 +3506,13 @@ paths:
     post:
       consumes:
       - application/json
-      description: Returns the URL an application shows one of its end users to connect
-        that person's own account on one of the consumer's servers (or on any of them
-        when provider is omitted). Any MCP consumer may name an end user — who a request
-        runs as is read from the request, not declared on the consumer. Authenticated
-        with the consumer's API key.
+      description: 'Returns the URL an application shows one of its end users to connect
+        that person''s own account on one of the consumer''s servers (or on any of them when
+        provider is omitted; instance narrows it to one instance of that server). A server
+        whose instance holds one shared account for every caller is refused with 400: no end
+        user can connect it, and an administrator does in the console. Any MCP consumer may
+        name an end user — who a request runs as is read from the request, not declared on the
+        consumer. Authenticated with the consumer''s API key.'
       parameters:
       - description: Consumer slug
         in: path

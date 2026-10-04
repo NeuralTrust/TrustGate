@@ -67,6 +67,10 @@ func NewEndUserConnectionsHandler(
 type EndUserLinkRequest struct {
 	EndUser  string `json:"end_user"`
 	Provider string `json:"provider,omitempty"`
+	// Instance narrows the link to one instance of the server, by registry id,
+	// as /connections reports it. Two instances of one provider are two
+	// servers with two accounts, and the provider alone cannot say which.
+	Instance string `json:"instance,omitempty"`
 }
 
 // EndUserLinkResponse is the link the application shows its user.
@@ -74,17 +78,25 @@ type EndUserLinkResponse struct {
 	ConnectURL string    `json:"connect_url"`
 	Ticket     string    `json:"ticket"`
 	Provider   string    `json:"provider,omitempty"`
+	Instance   string    `json:"instance,omitempty"`
 	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 // EndUserConnectionResponse is one upstream connection state of an end user.
 type EndUserConnectionResponse struct {
-	Provider   string     `json:"provider"`
-	Registry   string     `json:"registry,omitempty"`
+	Provider string `json:"provider"`
+	Registry string `json:"registry,omitempty"`
+	// Instance is the registry id of the server's instance, which tells two
+	// instances of one provider apart.
+	Instance   string     `json:"instance,omitempty"`
 	Code       string     `json:"code,omitempty"`
 	Status     string     `json:"status"`
 	AccountRef string     `json:"account_ref,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	// Shared is true for an instance that holds one account for every caller:
+	// its status is that account's, and only an administrator can connect it,
+	// so a connect link is never the remedy for this row.
+	Shared bool `json:"shared"`
 }
 
 // EndUserConnectionsResponse lists the connection states of one actor: the end
@@ -106,7 +118,7 @@ const (
 
 // Link godoc
 // @Summary      Mint a connect link for an application's end user
-// @Description  Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted). Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.
+// @Description  Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted; instance narrows it to one instance of that server). A server whose instance holds one shared account for every caller is refused with 400: no end user can connect it, and an administrator does in the console. Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.
 // @Tags         connections
 // @Accept       json
 // @Produce      json
@@ -132,7 +144,7 @@ func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 		return writeConnectionsError(c, fiber.StatusBadRequest, "invalid_request", "invalid request body")
 	}
 	slug := c.Params("slug")
-	link, err := h.connections.Link(c.UserContext(), gateway.ID, slug, resolver.APIKeyFromRequest(c), body.EndUser, body.Provider)
+	link, err := h.connections.Link(c.UserContext(), gateway.ID, slug, resolver.APIKeyFromRequest(c), body.EndUser, body.Provider, body.Instance)
 	if err != nil {
 		return h.writeServiceError(c, err)
 	}
@@ -144,6 +156,7 @@ func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 		ConnectURL: connectURL,
 		Ticket:     link.Ticket,
 		Provider:   link.Provider,
+		Instance:   link.Instance,
 		ExpiresAt:  link.ExpiresAt,
 	})
 }
@@ -192,9 +205,11 @@ func (h *EndUserConnectionsHandler) List(c *fiber.Ctx) error {
 		entry := EndUserConnectionResponse{
 			Provider:   item.Provider,
 			Registry:   item.Registry,
+			Instance:   item.Instance,
 			Code:       item.Code,
 			Status:     item.Status,
 			AccountRef: item.AccountRef,
+			Shared:     item.Shared,
 		}
 		if !item.ExpiresAt.IsZero() {
 			expires := item.ExpiresAt
