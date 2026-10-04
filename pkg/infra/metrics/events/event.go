@@ -137,6 +137,12 @@ type MCP struct {
 	// when nothing at that level failed; a per-plugin decision still lives on
 	// its own PolicyChain entry.
 	Decision string `json:"decision,omitempty"`
+	// ToolRisk is the called tool's declared risk class (read_only, additive
+	// or destructive) and ToolOpenWorld its open-world hint, both from the MCP
+	// annotations its server publishes. Empty and nil when the tool declares
+	// no hint: the server's claim, advisory only.
+	ToolRisk      string `json:"tool_risk,omitempty"`
+	ToolOpenWorld *bool  `json:"tool_open_world,omitempty"`
 }
 
 // MCPPolicyScope tells which scoped policies of the consumer applied to a
