@@ -44,11 +44,12 @@ type stubEndUserConnections struct {
 	gotKey      string
 	gotEndUser  string
 	gotProvider string
+	gotInstance string
 	askedForApp bool
 }
 
-func (s *stubEndUserConnections) Link(_ context.Context, _ ids.GatewayID, _, rawKey, endUser, provider string) (*appoauth.EndUserLink, error) {
-	s.gotKey, s.gotEndUser, s.gotProvider = rawKey, endUser, provider
+func (s *stubEndUserConnections) Link(_ context.Context, _ ids.GatewayID, _, rawKey, endUser, provider, instance string) (*appoauth.EndUserLink, error) {
+	s.gotKey, s.gotEndUser, s.gotProvider, s.gotInstance = rawKey, endUser, provider, instance
 	return s.link, s.err
 }
 
@@ -117,6 +118,8 @@ func TestEndUserConnectionsHandler_ErrorMapping(t *testing.T) {
 	}{
 		"wrong key":                {appoauth.ErrAPIKeyConnectUnauthorized, fiber.StatusUnauthorized},
 		"unknown provider":         {appoauth.ErrUnknownConnectProvider, fiber.StatusBadRequest},
+		"unknown instance":         {appoauth.ErrUnknownConnectInstance, fiber.StatusBadRequest},
+		"shared account":           {appoauth.ErrSharedAccountNotLinkable, fiber.StatusBadRequest},
 		"rate limiter unavailable": {appoauth.ErrConnectRateLimitUnavailable, fiber.StatusServiceUnavailable},
 	}
 	for name, tc := range cases {
@@ -136,7 +139,7 @@ func TestEndUserConnectionsHandler_ListReportsStates(t *testing.T) {
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	svc := &stubEndUserConnections{connections: []appoauth.EndUserConnection{
 		{Provider: "github", Registry: "GitHub", Code: "github", Status: appoauth.ConnectionConnected, AccountRef: "octocat", ExpiresAt: expires},
-		{Provider: "notion", Registry: "Notion", Code: "notion", Status: appoauth.ConnectionNotConnected},
+		{Provider: "notion", Registry: "Notion", Code: "notion", Status: appoauth.ConnectionNotConnected, Instance: "reg-notion", Shared: true},
 	}}
 	app := newEndUserApp(svc)
 	req := httptest.NewRequest(fiber.MethodGet, "/assistant/connections?end_user=user_123", nil)
@@ -153,6 +156,28 @@ func TestEndUserConnectionsHandler_ListReportsStates(t *testing.T) {
 	require.NotNil(t, body.Connections[0].ExpiresAt)
 	require.Equal(t, "not_connected", body.Connections[1].Status)
 	require.Nil(t, body.Connections[1].ExpiresAt)
+	require.False(t, body.Connections[0].Shared)
+	require.True(t, body.Connections[1].Shared, "a shared account is not the user's to connect")
+	require.Equal(t, "reg-notion", body.Connections[1].Instance)
+}
+
+// The instance travels to the service and back, so a link can name one of two
+// instances of a provider.
+func TestEndUserConnectionsHandler_LinkNamesAnInstance(t *testing.T) {
+	svc := &stubEndUserConnections{link: &appoauth.EndUserLink{Ticket: "t-3", Provider: "github", Instance: "reg-1"}}
+	app := newEndUserApp(svc)
+	req := httptest.NewRequest(fiber.MethodPost, "/assistant/connections/links", strings.NewReader(`{"end_user":"user_123","instance":"reg-1"}`))
+	req.Host = "acme.mcp.test"
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	req.Header.Set("X-AG-API-Key", "ag_secret")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
+	require.Equal(t, "reg-1", svc.gotInstance)
+	var body EndUserLinkResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "reg-1", body.Instance)
+	require.Equal(t, "http://acme.mcp.test/oauth/connect/github?ticket=t-3", body.ConnectURL)
 }
 
 // A batch has nobody to hand a connect link to once it is running, so it has to

@@ -36,6 +36,16 @@ const (
 	InventoryStateNoTools = "no_tools"
 )
 
+// Causes of a needs_connect server that this caller cannot connect itself.
+const (
+	// InventoryCauseSharedAccountNotConnected: the instance holds one account for
+	// every caller and nobody has connected it; an administrator does.
+	InventoryCauseSharedAccountNotConnected = "shared_account_not_connected"
+	// InventoryCauseEndUserNotNamed: the instance keeps one account per person
+	// and the request named nobody; the application names the user it acts for.
+	InventoryCauseEndUserNotNamed = "end_user_not_named"
+)
+
 // ToolInventory is the calling principal's whole MCP surface, server by server:
 // what each bound server serves right now and, for the ones serving nothing,
 // why. tools/list can only show the tools of servers that answered, so it is
@@ -56,7 +66,8 @@ type InventoryServer struct {
 	// Provider names the upstream account a server awaiting consent needs.
 	Provider string
 	// Cause is why a needs_connect server is not serving, as one of the
-	// ConsentCause codes. Empty for every other state. It is what keeps a
+	// ConsentCause codes, or an InventoryCause one when this caller cannot
+	// connect it. Empty for every other state. It is what keeps a
 	// client from having to guess ("the session expired") when the gateway
 	// already knows.
 	Cause string
@@ -130,6 +141,13 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 			server.State = InventoryStateNeedsConnect
 			server.Provider = surface.consent.Provider
 			server.Cause = surface.consent.Cause
+		case surface.notConnected != nil:
+			server.State = InventoryStateNeedsConnect
+			server.Provider = surface.notConnected.Provider
+			server.Cause = InventoryCauseEndUserNotNamed
+			if surface.notConnected.Shared {
+				server.Cause = InventoryCauseSharedAccountNotConnected
+			}
 		case surface.err != nil:
 			// The upstream's own error is logged, not handed to the caller: it
 			// carries hosts and transport detail the caller cannot act on.
@@ -161,7 +179,7 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 // serves reports whether the server answered discovery, so its bindings took
 // part in name resolution.
 func (s serverSurface) serves() bool {
-	return s.consent == nil && s.err == nil
+	return s.consent == nil && s.notConnected == nil && s.err == nil
 }
 
 func inventoryServerName(reg *registrydomain.Registry) string {

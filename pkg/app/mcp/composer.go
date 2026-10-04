@@ -137,6 +137,9 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if comp.consent != nil {
 		return nil, comp.consent
 	}
+	if comp.notConnected != nil {
+		return nil, comp.notConnected
+	}
 	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
 }
 
@@ -206,6 +209,11 @@ type serverSurface struct {
 	// consent is set when the server is waiting for this principal to connect
 	// their account: it holds no tools yet, and connecting is what changes that.
 	consent *ConsentRequiredError
+	// notConnected is set when the server has no account for this caller and
+	// this caller cannot connect one: its instance's shared account is not
+	// connected, or it keeps one per person and the request named nobody. It
+	// is waiting on someone like consent is, not broken like err.
+	notConnected *ApplicationNotConnectedError
 	// err is any other reason discovery failed (unreachable, misconfigured).
 	err error
 }
@@ -228,6 +236,10 @@ func (c *composer) serverSurfaces(
 				surface.consent = consentErr
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
+			} else if notConnected, ok := errors.AsType[*ApplicationNotConnectedError](err); ok {
+				surface.notConnected = notConnected
+				c.logger.Info("mcp composer: skipping upstream with no account for this caller",
+					"registry", reg.Name, "provider", notConnected.Provider, "shared", notConnected.Shared)
 			} else {
 				surface.err = err
 			}
@@ -264,6 +276,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 
 	var candidates []binding
 	var pendingConsent *ConsentRequiredError
+	var pendingNotConnected *ApplicationNotConnectedError
 
 	var firstSkipped error
 	denied := make(map[string]struct{})
@@ -273,6 +286,15 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		if surface.consent != nil {
 			if pendingConsent == nil {
 				pendingConsent = surface.consent
+			}
+			continue
+		}
+		// Skipped like a pending consent, and for the same reason: an account is
+		// what is missing, so it is not an unreachable upstream, and a consumer
+		// that fails closed must not refuse its whole surface over it.
+		if surface.notConnected != nil {
+			if pendingNotConnected == nil {
+				pendingNotConnected = surface.notConnected
 			}
 			continue
 		}
@@ -298,6 +320,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		if pendingConsent != nil {
 			return nil, pendingConsent
 		}
+		if pendingNotConnected != nil {
+			return nil, pendingNotConnected
+		}
 		if firstSkipped != nil {
 			return nil, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, firstSkipped)
 		}
@@ -308,13 +333,14 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	for _, b := range bindings {
 		delete(denied, b.exposed)
 	}
-	return &composition{bindings: bindings, denied: denied, consent: pendingConsent}, nil
+	return &composition{bindings: bindings, denied: denied, consent: pendingConsent, notConnected: pendingNotConnected}, nil
 }
 
 type composition struct {
-	bindings []binding
-	denied   map[string]struct{}
-	consent  *ConsentRequiredError
+	bindings     []binding
+	denied       map[string]struct{}
+	consent      *ConsentRequiredError
+	notConnected *ApplicationNotConnectedError
 }
 
 type toolPolicy struct {
