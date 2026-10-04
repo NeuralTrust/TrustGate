@@ -318,8 +318,10 @@ func sharedAccountStatus(t *testing.T, gatewayID, registryID string) map[string]
 }
 
 // requireNotConnected is the refusal a machine caller gets instead of a connect
-// ticket: it carries no capability, because nobody calling could redeem one.
-func requireNotConnected(t *testing.T, status int, body map[string]any) string {
+// ticket: it carries no capability, because nobody calling could redeem one. Its
+// data says so and says who fixes it, so a client reading only the code does not
+// take it for a consent prompt and hand its user an empty link.
+func requireNotConnected(t *testing.T, status int, body map[string]any, shared bool) string {
 	t.Helper()
 	require.Equal(t, http.StatusOK, status)
 	rpcErr, ok := body["error"].(map[string]any)
@@ -327,7 +329,11 @@ func requireNotConnected(t *testing.T, status int, body map[string]any) string {
 	require.Equal(t, float64(-32003), rpcErr["code"])
 	message, _ := rpcErr["message"].(string)
 	require.NotContains(t, message, "ticket=", "a refusal must not hand out a connect ticket")
-	require.Nil(t, rpcErr["data"], "a refusal carries no connect url")
+	data, ok := rpcErr["data"].(map[string]any)
+	require.True(t, ok, "a refusal says why in its data: %v", rpcErr)
+	require.Equal(t, "application_not_connected", data["reason"])
+	require.Equal(t, shared, data["shared"])
+	require.NotContains(t, data, "connect_url", "a refusal carries no connect url")
 	return message
 }
 
@@ -363,7 +369,7 @@ func TestMCPSharedAccount_ForwardedFlowEndToEnd(t *testing.T) {
 
 	t.Run("before the admin connects it, the call is refused and says who fixes it", func(t *testing.T) {
 		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
-		message := requireNotConnected(t, status, body)
+		message := requireNotConnected(t, status, body, true)
 		require.Contains(t, message, "administrator")
 		_, seen := fx.capture.observed()
 		require.Zero(t, seen, "an unconnected instance must not reach the upstream")
@@ -458,7 +464,7 @@ func TestMCPUserInstance_RefusesARequestThatRunsAsTheApplication(t *testing.T) {
 	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 
 	status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
-	message := requireNotConnected(t, status, body)
+	message := requireNotConnected(t, status, body, false)
 	require.Contains(t, message, "end user")
 	require.Contains(t, message, "shared account")
 
