@@ -139,6 +139,11 @@ const (
 	codePolicyBlocked = -32001
 )
 
+// reasonApplicationNotConnected tells a -32003 that carries no connect link
+// apart from a consent prompt: the account is missing, but it belongs to the
+// server's instance or to an end user the request did not name.
+const reasonApplicationNotConnected = "application_not_connected"
+
 type Handler struct {
 	resolveClientIP func(string, string) string
 	gateway         *RPCGateway
@@ -434,10 +439,20 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	case errors.As(err, &appNotLinked):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
 		logRPCError(c, codeConsentRequired, appNotLinked.Error())
+		// Same code as a consent prompt, because it is the same kind of refusal:
+		// an account is missing. But there is no page for this caller to open, and
+		// a client reading only the code would hand its user an empty link. The
+		// reason says which case this is, and shared says who fixes it.
+		data, _ := json.Marshal(fiber.Map{
+			"reason":   reasonApplicationNotConnected,
+			"provider": appNotLinked.Provider,
+			"registry": appNotLinked.Registry,
+			"shared":   appNotLinked.Shared,
+		})
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
-			Error:   &rpcError{Code: codeConsentRequired, Message: appNotLinked.Error()},
+			Error:   &rpcError{Code: codeConsentRequired, Message: appNotLinked.Error(), Data: data},
 		})
 	case errors.As(err, &notPermitted):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)

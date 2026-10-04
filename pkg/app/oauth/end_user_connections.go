@@ -26,6 +26,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 // ConnectTicketTTL is how long a connect ticket (and so a connect link handed
@@ -36,6 +37,15 @@ var (
 	// ErrUnknownConnectProvider: the requested provider is not a forwarded-auth
 	// server of the consumer.
 	ErrUnknownConnectProvider = fmt.Errorf("oauth end-user connections: unknown provider: %w", commonerrors.ErrValidation)
+	// ErrUnknownConnectInstance: the requested instance is not a forwarded-auth
+	// server of the consumer.
+	ErrUnknownConnectInstance = fmt.Errorf("oauth end-user connections: unknown instance: %w", commonerrors.ErrValidation)
+	// ErrSharedAccountNotLinkable: what was named holds one account for every
+	// caller. No end user can connect it, so a link for it would open a page
+	// that offers nothing; an administrator connects it in the console.
+	ErrSharedAccountNotLinkable = fmt.Errorf(
+		"oauth end-user connections: this server uses one shared account for every caller; an administrator connects it in the console: %w",
+		commonerrors.ErrValidation)
 )
 
 // Connection states reported to the application, the equivalent of Composio's
@@ -48,19 +58,28 @@ const (
 
 // EndUserLink is a connect link minted for one end user of an application.
 type EndUserLink struct {
-	Ticket    string
-	Provider  string
+	Ticket   string
+	Provider string
+	// Instance is the registry id the link was narrowed to, when one was named.
+	Instance  string
 	ExpiresAt time.Time
 }
 
 // EndUserConnection is the state of one upstream connection of an end user.
 type EndUserConnection struct {
-	Provider   string
-	Registry   string
+	Provider string
+	Registry string
+	// Instance is the registry id of the server's instance: two instances of one
+	// provider are two rows, and this is what tells them apart.
+	Instance   string
 	Code       string
 	Status     string
 	AccountRef string
 	ExpiresAt  time.Time
+	// Shared marks an instance that holds one account for every caller. Its
+	// status is that account's, and no caller can connect it: an administrator
+	// does, in the console.
+	Shared bool
 }
 
 // EndUserConnectionsService lets an application that identifies its own end
@@ -71,7 +90,9 @@ type EndUserConnection struct {
 //
 //go:generate mockery --name=EndUserConnectionsService --dir=. --output=./mocks --filename=oauth_end_user_connections_service_mock.go --case=underscore --with-expecter
 type EndUserConnectionsService interface {
-	Link(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey, endUser, provider string) (*EndUserLink, error)
+	// Link mints a connect link for one end user. provider narrows it to one
+	// server, and instance to one instance of it; both may be empty.
+	Link(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey, endUser, provider, instance string) (*EndUserLink, error)
 	Connections(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey, endUser string) ([]EndUserConnection, error)
 	// AppConnections reads what the application itself has connected, for a
 	// consumer that acts as itself. It is what a batch asks before it starts:
@@ -98,6 +119,11 @@ type endUserTickets interface {
 		ctx context.Context,
 		gatewayID ids.GatewayID,
 		principalSub, consumerPath, provider string,
+	) (string, error)
+	CreateInstanceTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, provider, code, instanceID string,
 	) (string, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
 }
@@ -135,7 +161,7 @@ func NewEndUserConnectionsService(
 func (s *endUserConnectionsService) Link(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
-	slug, rawKey, endUser, provider string,
+	slug, rawKey, endUser, provider, instance string,
 ) (*EndUserLink, error) {
 	data, target, err := s.authenticate(ctx, gatewayID, slug, rawKey)
 	if err != nil {
@@ -144,9 +170,34 @@ func (s *endUserConnectionsService) Link(
 	if err := consumerdomain.ValidateEndUser(endUser); err != nil {
 		return nil, err
 	}
+	registries := data.EffectiveRegistries(target)
 	provider = strings.TrimSpace(provider)
-	if provider != "" && !containsProvider(forwardedProviderIDs(data.EffectiveRegistries(target)), provider) {
-		return nil, fmt.Errorf("%w: %q is not a connectable server of this consumer", ErrUnknownConnectProvider, provider)
+	instance = strings.TrimSpace(instance)
+	var reg *registrydomain.Registry
+	switch {
+	case instance != "":
+		reg = forwardedInstance(registries, instance)
+		if reg == nil {
+			return nil, fmt.Errorf("%w: %q is not a connectable server of this consumer", ErrUnknownConnectInstance, instance)
+		}
+		cfg := forwardedAuth(reg)
+		if provider != "" && provider != cfg.Provider {
+			return nil, fmt.Errorf("%w: instance %q serves %q, not %q", ErrUnknownConnectInstance, instance, cfg.Provider, provider)
+		}
+		if cfg.Shared() {
+			return nil, ErrSharedAccountNotLinkable
+		}
+		provider = cfg.Provider
+	case provider != "":
+		if !containsProvider(forwardedProviderIDs(registries), provider) {
+			return nil, fmt.Errorf("%w: %q is not a connectable server of this consumer", ErrUnknownConnectProvider, provider)
+		}
+		// A provider served only by shared instances has nothing for this user
+		// to connect. One per-user instance among them is enough: the page then
+		// offers it, and shows the shared ones as the administrator's.
+		if !hasPerCallerInstance(registries, provider) {
+			return nil, ErrSharedAccountNotLinkable
+		}
 	}
 	if err := s.limiter.Check(ctx, ConnectAttemptScopeConsumer, target.Consumer.ID.String()); err != nil {
 		var exceeded *ConnectRateLimitExceeded
@@ -162,15 +213,43 @@ func (s *endUserConnectionsService) Link(
 	path := appconsumer.MCPPath(slug)
 	var ticket string
 	var err2 error
-	if provider != "" {
+	switch {
+	case reg != nil:
+		code := ""
+		if reg.MCPTarget != nil {
+			code = reg.MCPTarget.Code
+		}
+		ticket, err2 = s.tickets.CreateInstanceTicket(ctx, gatewayID, subject, path, provider, code, instance)
+	case provider != "":
 		ticket, err2 = s.tickets.CreateProviderTicket(ctx, gatewayID, subject, path, provider)
-	} else {
+	default:
 		ticket, err2 = s.tickets.CreateTicket(ctx, gatewayID, subject, path)
 	}
 	if err2 != nil {
 		return nil, fmt.Errorf("oauth end-user connections: create ticket: %w", err2)
 	}
-	return &EndUserLink{Ticket: ticket, Provider: provider, ExpiresAt: s.now().UTC().Add(ConnectTicketTTL)}, nil
+	return &EndUserLink{Ticket: ticket, Provider: provider, Instance: instance, ExpiresAt: s.now().UTC().Add(ConnectTicketTTL)}, nil
+}
+
+// forwardedInstance is the forwarded-auth registry with this id, or nil.
+func forwardedInstance(registries []*registrydomain.Registry, id string) *registrydomain.Registry {
+	for _, reg := range registries {
+		if reg.ID.String() == id && forwardedAuth(reg) != nil {
+			return reg
+		}
+	}
+	return nil
+}
+
+// hasPerCallerInstance reports whether any forwarded instance of the provider
+// keeps an account per caller, which is the only kind an end user connects.
+func hasPerCallerInstance(registries []*registrydomain.Registry, provider string) bool {
+	for _, reg := range registries {
+		if cfg := forwardedAuth(reg); cfg != nil && cfg.Provider == provider && !cfg.Shared() {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *endUserConnectionsService) Connections(
@@ -192,14 +271,7 @@ func (s *endUserConnectionsService) Connections(
 	}
 	out := make([]EndUserConnection, 0, len(statuses))
 	for _, st := range statuses {
-		out = append(out, EndUserConnection{
-			Provider:   st.Provider,
-			Registry:   st.Registry,
-			Code:       st.Code,
-			Status:     connectionStatus(st),
-			AccountRef: st.AccountRef,
-			ExpiresAt:  st.ExpiresAt,
-		})
+		out = append(out, endUserConnectionOf(st))
 	}
 	return out, nil
 }
@@ -228,14 +300,7 @@ func (s *endUserConnectionsService) AppConnections(
 	}
 	out := make([]EndUserConnection, 0, len(statuses))
 	for _, st := range statuses {
-		out = append(out, EndUserConnection{
-			Provider:   st.Provider,
-			Registry:   st.Registry,
-			Code:       st.Code,
-			Status:     connectionStatus(st),
-			AccountRef: st.AccountRef,
-			ExpiresAt:  st.ExpiresAt,
-		})
+		out = append(out, endUserConnectionOf(st))
 	}
 	return out, nil
 }
@@ -300,6 +365,19 @@ func (s *endUserConnectionsService) authenticateApp(
 		return nil, ErrAPIKeyConnectUnauthorized
 	}
 	return target, nil
+}
+
+func endUserConnectionOf(st ProviderStatus) EndUserConnection {
+	return EndUserConnection{
+		Provider:   st.Provider,
+		Registry:   st.Registry,
+		Instance:   st.Instance,
+		Code:       st.Code,
+		Status:     connectionStatus(st),
+		AccountRef: st.AccountRef,
+		ExpiresAt:  st.ExpiresAt,
+		Shared:     st.Shared,
+	}
 }
 
 func connectionStatus(st ProviderStatus) string {

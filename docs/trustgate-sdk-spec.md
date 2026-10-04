@@ -297,15 +297,23 @@ with the consumer's API key in `X-AG-API-Key`
 
 ```jsonc
 // request
-{ "end_user": "user_123", "provider": "github" }   // provider optional
+{ "end_user": "user_123", "provider": "github", "instance": "0190…" }   // provider and instance optional
 // response
 {
   "connect_url": "https://…/oauth/connect/github?ticket=…",  // or /<slug>/mcp/connect?ticket=… without a provider
   "ticket": "…",
   "provider": "github",
+  "instance": "0190…",
   "expires_at": "2026-09-08T12:15:00Z"
 }
 ```
+
+`instance` is the registry id `/connections` reports, and it narrows the link to
+one instance of the server: two instances of one provider are two servers with
+two accounts, and the provider alone cannot say which. A server whose instance
+holds one shared account for every caller is refused with `400
+invalid_request`, by instance or by a provider served only by shared instances:
+no end user can connect it, and a link would open a page that offers nothing.
 
 The ticket is redeemable for **15 minutes** (`appoauth.ConnectTicketTTL`). The
 SDK surfaces `expiresAt` as a `Date` and never caches a link past it.
@@ -320,6 +328,8 @@ SDK surfaces `expiresAt` as a `Date` and never caches a link past it.
       "provider": "app.github/mcp",
       "code": "github",
       "registry": "GitHub",
+      "instance": "0190…",
+      "shared": false,
       "status": "connected",
       "account_ref": "octocat",
       "expires_at": "2026-10-01T00:00:00Z"
@@ -327,6 +337,11 @@ SDK surfaces `expiresAt` as a `Date` and never caches a link past it.
   ]
 }
 ```
+
+`shared` is true for an instance that holds one account for every caller. Its
+`status` is that account's — a shared account nobody connected reads
+`not_connected` like the user's own — and only `shared` says a connect link is
+not the remedy: an administrator connects it in the console.
 
 The SDK camel-cases the payload (`account_ref` → `accountRef`) and parses
 timestamps into `Date`. It does **not** invent fields the gateway does not send.
@@ -367,6 +382,21 @@ two `409`s this section used to document (`consumer_acts_for_users`,
 
 Standard MCP, with `X-AG-API-Key` and, for the end-user actor,
 `X-NeuralTrust-End-User`. The SDK only supplies the URL and headers.
+
+A missing upstream account answers JSON-RPC `-32003` in two shapes. A consent
+prompt carries `data.connect_url`, the page this caller opens. A server this
+caller cannot connect — its instance's shared account is not connected, or it
+keeps one account per person and the request named nobody — carries no link and
+says so:
+
+```jsonc
+{ "code": -32003, "message": "…",
+  "data": { "reason": "application_not_connected", "provider": "linear", "registry": "Linear", "shared": true } }
+```
+
+`shared: true` is an administrator's to fix; `false` wants the person the call
+is for (`forEndUser`). The SDK raises `UpstreamNotConnectedError` for it, never
+a `ConsentRequiredError` with an empty link.
 
 ### `GET {host}/whoami` → `200`
 

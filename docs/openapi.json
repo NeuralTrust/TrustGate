@@ -5687,7 +5687,7 @@
         },
         "/{slug}/connections/links": {
             "post": {
-                "description": "Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted). Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.",
+                "description": "Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted; instance narrows it to one instance of that server). A server whose instance holds one shared account for every caller is refused with 400: no end user can connect it, and an administrator does in the console. Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.",
                 "tags": [
                     "connections"
                 ],
@@ -10227,11 +10227,19 @@
                     "expires_at": {
                         "type": "string"
                     },
+                    "instance": {
+                        "description": "Instance is the registry id of the server's instance, which tells two\ninstances of one provider apart.",
+                        "type": "string"
+                    },
                     "provider": {
                         "type": "string"
                     },
                     "registry": {
                         "type": "string"
+                    },
+                    "shared": {
+                        "description": "Shared is true for an instance that holds one account for every caller:\nits status is that account's, and only an administrator can connect it,\nso a connect link is never the remedy for this row.",
+                        "type": "boolean"
                     },
                     "status": {
                         "type": "string"
@@ -10263,6 +10271,10 @@
                     "end_user": {
                         "type": "string"
                     },
+                    "instance": {
+                        "description": "Instance narrows the link to one instance of the server, by registry id,\nas /connections reports it. Two instances of one provider are two\nservers with two accounts, and the provider alone cannot say which.",
+                        "type": "string"
+                    },
                     "provider": {
                         "type": "string"
                     }
@@ -10275,6 +10287,9 @@
                         "type": "string"
                     },
                     "expires_at": {
+                        "type": "string"
+                    },
+                    "instance": {
                         "type": "string"
                     },
                     "provider": {

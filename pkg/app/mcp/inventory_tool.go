@@ -182,7 +182,7 @@ func (t *inventoryTool) Call(
 			// happened.
 			entry["cause"] = server.Cause
 		}
-		if server.Provider != "" {
+		if server.Provider != "" && !callerCannotConnect(server.Cause) {
 			entry["provider"] = server.Provider
 			// The connection meta-tool for this provider, so a caller can chain
 			// straight into it. It is the name that tool derives from the same
@@ -460,6 +460,12 @@ func inventoryStateText(server map[string]any) string {
 	case InventoryStateReady:
 		return "ready"
 	case InventoryStateNeedsConnect:
+		switch displayString(server["cause"]) {
+		case InventoryCauseSharedAccountNotConnected:
+			return "not connected: it uses one shared account for every caller and nobody has connected it; an administrator connects it in the console"
+		case InventoryCauseEndUserNotNamed:
+			return "not connected: it keeps one account per person and this request named nobody; the application has to name the user it acts for"
+		}
 		text := "not connected: its tools cannot be called until the user connects their account"
 		if connect := displayString(server["connect_tool"]); connect != "" {
 			text += ", which " + connect + " gives them a link for"
@@ -536,4 +542,10 @@ func inventoryDefinition() (Tool, error) {
 		return Tool{}, err
 	}
 	return def, nil
+}
+
+// callerCannotConnect reports a needs_connect cause no connect link fixes, so
+// no connection meta-tool is offered for it.
+func callerCannotConnect(cause string) bool {
+	return cause == InventoryCauseSharedAccountNotConnected || cause == InventoryCauseEndUserNotNamed
 }
