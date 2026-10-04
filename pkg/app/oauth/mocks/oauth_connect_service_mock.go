@@ -334,6 +334,57 @@ func (_c *ConnectService_CreateProviderTicket_Call) RunAndReturn(run func(contex
 	_c.Call.Return(run)
 	return _c
 }
+func (_m *ConnectService) CreateInstanceTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, provider string, code string, instanceID string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, provider, code, instanceID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateInstanceTicket")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string, string) (string, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath, provider, code, instanceID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string, string) string); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath, provider, code, instanceID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string, string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath, provider, code, instanceID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_CreateInstanceTicket_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) CreateInstanceTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, provider interface{}, code interface{}, instanceID interface{}) *ConnectService_CreateInstanceTicket_Call {
+	return &ConnectService_CreateInstanceTicket_Call{Call: _e.mock.On("CreateInstanceTicket", ctx, gatewayID, principalSub, consumerPath, provider, code, instanceID)}
+}
+
+func (_c *ConnectService_CreateInstanceTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, provider string, code string, instanceID string)) *ConnectService_CreateInstanceTicket_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(string), args[5].(string), args[6].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_CreateInstanceTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateInstanceTicket_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_CreateInstanceTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string, string) (string, error)) *ConnectService_CreateInstanceTicket_Call {
+	_c.Call.Return(run)
+	return _c
+}
 func (_m *ConnectService) CreateResumableServerTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, code string, instanceID string, resumeURL string) (string, error) {
 	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, code, instanceID, resumeURL)
 
