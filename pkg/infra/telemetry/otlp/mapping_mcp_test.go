@@ -53,6 +53,8 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			UpstreamLatencyMs: 120,
 			AccountRef:        "ada@asana.com",
 			Decision:          "failed_open",
+			ToolRisk:          "destructive",
+			ToolOpenWorld:     new(false),
 		},
 	}
 
@@ -75,6 +77,8 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
 	assert.Equal(t, "ada@asana.com", attrs[attrMCPAccountRef].AsString())
 	assert.Equal(t, "failed_open", attrs[attrMCPDecision].AsString())
+	assert.Equal(t, "destructive", attrs[attrMCPToolRisk].AsString())
+	assert.False(t, attrs[attrMCPToolOpenWorld].AsBool())
 }
 
 // TestEventToRecord_MCPDecisionEmptyWhenNothingFailed proves the new
@@ -96,6 +100,9 @@ func TestEventToRecord_MCPDecisionEmptyWhenNothingFailed(t *testing.T) {
 
 	_, hasDecision := attrs[attrMCPDecision]
 	assert.False(t, hasDecision, "an unset decision must not appear as an empty attribute")
+	_, hasRisk := attrs[attrMCPToolRisk]
+	_, hasOpenWorld := attrs[attrMCPToolOpenWorld]
+	assert.False(t, hasRisk || hasOpenWorld, "an unannotated tool must emit neither risk attribute")
 }
 
 func TestEventToRecord_LLMKindNoMCP(t *testing.T) {
