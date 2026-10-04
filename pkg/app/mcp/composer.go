@@ -146,6 +146,9 @@ func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	}
 	stop := annotateUpstream(ctx, target.Registry, target.Tool.Name)
 	defer stop()
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPToolRisk(target.Tool.Risk())
+	}
 	return invokeUpstream(c, ctx, rc, target.Registry, func(up Upstream) (json.RawMessage, error) {
 		return up.CallTool(ctx, target.Tool.Name, arguments)
 	})
