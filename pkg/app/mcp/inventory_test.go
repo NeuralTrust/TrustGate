@@ -206,3 +206,36 @@ func TestComposer_ToolInventory_AnswersEmptyForAConsumerWithNoServer(t *testing.
 		t.Fatalf("servers = %+v, want none", inv.Servers)
 	}
 }
+
+// A server this caller cannot connect is listed as waiting, with who has to
+// act, and never with a connection tool that would hand the caller a link.
+func TestComposer_ToolInventory_NamesWhoConnectsAServerTheCallerCannot(t *testing.T) {
+	t.Parallel()
+	regShared := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPerUser := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {tools: tools("search")},
+		"https://notion.example.com/mcp": {tools: tools("query")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://linear.example.com/mcp": &ApplicationNotConnectedError{Provider: "linear", Registry: "linear", Shared: true},
+		"https://notion.example.com/mcp": &ApplicationNotConnectedError{Provider: "com.notion/mcp", Registry: "notion"},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	inv, err := c.ToolInventory(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regShared, regPerUser))
+	if err != nil {
+		t.Fatalf("inventory: %v", err)
+	}
+	shared := inventoryByName(inv, "linear")
+	if shared == nil || shared.State != InventoryStateNeedsConnect || shared.Cause != InventoryCauseSharedAccountNotConnected {
+		t.Fatalf("linear = %+v, want needs_connect by the administrator", shared)
+	}
+	perUser := inventoryByName(inv, "notion")
+	if perUser == nil || perUser.State != InventoryStateNeedsConnect || perUser.Cause != InventoryCauseEndUserNotNamed {
+		t.Fatalf("notion = %+v, want needs_connect for a named user", perUser)
+	}
+	if !callerCannotConnect(shared.Cause) || !callerCannotConnect(perUser.Cause) || callerCannotConnect(ConsentCauseNoCredential) {
+		t.Fatal("only the causes no link fixes withhold the connection tool")
+	}
+}
