@@ -35,7 +35,7 @@ func NewEnableToolPinningHandler(tools appregistry.PinnedToolService) *EnableToo
 
 // Handle godoc
 // @Summary      Enable tool pinning with a confirmed list
-// @Description  Approves exactly the listed tools (fingerprints are computed by the server) and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.
+// @Description  Makes the listed tools exactly the approved set (fingerprints are computed by the server): listed tools become approved, any other approved definition goes back to pending, and unlisted rejections stay rejected. Also sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.
 // @Tags         registries
 // @Accept       json
 // @Produce      json

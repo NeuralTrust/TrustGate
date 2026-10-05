@@ -229,9 +229,11 @@ type PinnedToolRepository interface {
 		tools []ToolCandidate,
 		decidedBy string,
 	) error
-	// Pin does ApproveAll and sets the registry's tool policy to pinned in one
-	// transaction: the confirmed list and the policy switch commit together or
-	// not at all. The registry must be an MCP registry (ErrInvalidToolPolicy
+	// Pin makes the confirmed list exact and sets the registry's tool policy to
+	// pinned in one transaction, so the list and the policy switch commit
+	// together or not at all. Listed tools become approved (overriding a stored
+	// rejection); any other approved row goes back to pending with its decision
+	// cleared; rejected rows that are not listed stay rejected. The registry must be an MCP registry (ErrInvalidToolPolicy
 	// otherwise) and the gateway's (ErrNotFound otherwise). An empty list is
 	// allowed.
 	Pin(

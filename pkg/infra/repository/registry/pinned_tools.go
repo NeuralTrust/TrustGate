@@ -368,6 +368,11 @@ func (r *PinnedToolRepository) Pin(
 		if domain.Type(kind) != domain.TypeMCP {
 			return false, fmt.Errorf("%w: pinned is only valid for MCP registries", domain.ErrInvalidToolPolicy)
 		}
+		// The confirmed list is exact: whatever was approved and is not on it goes
+		// back to pending, so unchecking a tool in the console withdraws it.
+		if err := demoteUnlisted(ctx, tx, registryID, tools); err != nil {
+			return false, err
+		}
 		if _, err := approveAllTx(ctx, tx, registryID, tools, decidedBy); err != nil {
 			return false, err
 		}
@@ -376,6 +381,24 @@ func (r *PinnedToolRepository) Pin(
 		}
 		return true, nil
 	})
+}
+
+// demoteUnlisted returns every approved row that is not in tools to pending,
+// clearing its decision. Rejected rows are left alone.
+func demoteUnlisted(ctx context.Context, tx pgx.Tx, registryID ids.RegistryID, tools []domain.ToolCandidate) error {
+	names, fingerprints, _ := splitCandidates(tools)
+	const query = `
+		UPDATE registry_tools t
+		   SET status = 'pending', decided_at = NULL, decided_by = NULL
+		 WHERE t.registry_id = $1
+		   AND t.status = 'approved'
+		   AND NOT EXISTS (
+		       SELECT 1 FROM unnest($2::text[], $3::text[]) AS x(name, fp)
+		        WHERE x.name = t.tool_name AND x.fp = t.fingerprint)`
+	if _, err := tx.Exec(ctx, query, registryID, names, fingerprints); err != nil {
+		return fmt.Errorf("pinned tool repository: withdraw unlisted approvals: %w", err)
+	}
+	return nil
 }
 
 func approveAllTx(

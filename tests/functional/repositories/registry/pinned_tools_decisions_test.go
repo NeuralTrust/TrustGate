@@ -310,3 +310,106 @@ func TestRepository_Update_WithoutAPolicyDoesNotRevertAConcurrentPin(t *testing.
 		t.Fatalf("an explicit policy change was ignored: %q", again.ToolPolicy)
 	}
 }
+
+// Pin makes the confirmed list exact: an approved tool left off the list is
+// withdrawn, a rejection that is not listed stays, a listed rejection is lifted.
+func TestPinnedTools_Pin_MakesTheListExact(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	keep, drop, rej, lift := cand(t, "keep", "K"), cand(t, "drop", "D"), cand(t, "rej", "R"), cand(t, "lift", "L")
+	if err := tools.ApproveAll(ctx, gwID, reg.ID, []domain.ToolCandidate{keep, drop}, "admin-1"); err != nil {
+		t.Fatalf("ApproveAll: %v", err)
+	}
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{rej, lift}); err != nil {
+		t.Fatalf("UpsertPending: %v", err)
+	}
+	if err := tools.Decide(ctx, gwID, reg.ID, nil, refs(rej, lift), "admin-1"); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{keep, lift}, "admin-2"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	for ref, want := range map[domain.ToolRef]domain.ToolStatus{
+		keep.ToolRef: domain.ToolStatusApproved,
+		lift.ToolRef: domain.ToolStatusApproved,
+		drop.ToolRef: domain.ToolStatusPending,
+		rej.ToolRef:  domain.ToolStatusRejected,
+	} {
+		if s := statusOf(t, got, ref); s != want {
+			t.Errorf("%+v = %q, want %q", ref, s, want)
+		}
+	}
+	for _, row := range got {
+		if row.Ref() == drop.ToolRef && (!row.DecidedAt.IsZero() || row.DecidedBy != "") {
+			t.Errorf("a withdrawn approval must lose its decision: %+v", row)
+		}
+	}
+}
+
+// pinned -> auto -> pinned with a tool unchecked in between: the unchecked tool
+// must not come back exposed. The decided set is what the snapshot carries.
+func TestPinnedTools_Pin_UncheckedToolIsNotExposedAfterRepin(t *testing.T) {
+	r, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	a, b := cand(t, "a", "A"), cand(t, "b", "B")
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}, "admin"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	loaded, _ := r.FindByID(ctx, reg.ID)
+	loaded.ToolPolicy = domain.ToolPolicyAuto
+	loaded.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, loaded); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, "admin"); err != nil { // b unchecked
+		t.Fatalf("re-Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	decided := domain.DecisionsOf(got)
+	if len(decided) != 1 || decided[0].Name != "a" {
+		t.Fatalf("decided set = %+v, want only a (b must be pending again)", decided)
+	}
+}
+
+func TestPinnedTools_Pin_EmptyListWithdrawsEveryApproval(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	a := cand(t, "a", "A")
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, "admin"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, "admin"); err != nil {
+		t.Fatalf("Pin(empty): %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if len(domain.DecisionsOf(got)) != 0 {
+		t.Fatalf("an empty confirmed list must leave nothing approved: %+v", got)
+	}
+}
+
+// Q2: deciding on a registry that is still auto is allowed (pre-staging) and does
+// not switch it to pinned.
+func TestPinnedTools_Decide_OnAnAutoRegistryIsAllowedAndKeepsItAuto(t *testing.T) {
+	r, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	if policy, _ := registryState(t, r, reg.ID); policy != domain.ToolPolicyAuto {
+		t.Fatalf("precondition: policy = %q", policy)
+	}
+	a := cand(t, "a", "A")
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{a}); err != nil {
+		t.Fatalf("UpsertPending: %v", err)
+	}
+	if err := tools.Decide(ctx, gwID, reg.ID, refs(a), nil, "admin"); err != nil {
+		t.Fatalf("Decide on an auto registry: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if s := statusOf(t, got, a.ToolRef); s != domain.ToolStatusApproved {
+		t.Fatalf("status = %q, want approved", s)
+	}
+	if policy, _ := registryState(t, r, reg.ID); policy != domain.ToolPolicyAuto {
+		t.Fatalf("a decision must not change the policy, got %q", policy)
+	}
+}
