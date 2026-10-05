@@ -16,10 +16,11 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -41,11 +42,25 @@ type PinnedToolList struct {
 	Items      []PinnedToolView
 }
 
+// DecideToolsInput is one admin decision over stored tool definitions.
+type DecideToolsInput struct {
+	GatewayID  ids.GatewayID
+	RegistryID ids.RegistryID
+	Approve    []domain.ToolRef
+	Reject     []domain.ToolRef
+	// DecidedBy is the authenticated admin, never taken from the request body.
+	DecidedBy string
+}
+
 //go:generate mockery --name=PinnedToolService --dir=. --output=./mocks --filename=pinned_tool_service_mock.go --case=underscore --with-expecter
 type PinnedToolService interface {
 	// List returns the registry's tool definitions, optionally only those in one
 	// status. ErrNotFound when the registry is not the gateway's.
 	List(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, status *domain.ToolStatus) (*PinnedToolList, error)
+	// Decide approves and rejects stored definitions atomically, then propagates
+	// the change. A definition the registry has no row for is ErrUnknownToolRefs
+	// and nothing is applied; one in both lists is ErrInvalidToolDecision.
+	Decide(ctx context.Context, in DecideToolsInput) error
 }
 
 var _ PinnedToolService = (*pinnedToolService)(nil)
@@ -57,7 +72,6 @@ type pinnedToolService struct {
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
-	now         func() time.Time
 }
 
 func NewPinnedToolService(
@@ -75,7 +89,6 @@ func NewPinnedToolService(
 		publisher:   publisher,
 		logger:      logger,
 		signaler:    signaler,
-		now:         time.Now,
 	}
 }
 
@@ -130,4 +143,52 @@ func (s *pinnedToolService) List(
 		out.Items = append(out.Items, view)
 	}
 	return out, nil
+}
+
+func (s *pinnedToolService) Decide(ctx context.Context, in DecideToolsInput) error {
+	if err := rejectOverlap(in.Approve, in.Reject); err != nil {
+		return err
+	}
+	if len(in.Approve)+len(in.Reject) == 0 {
+		return nil
+	}
+	// The repository decides, checks the refs and bumps the registry (updated_at
+	// plus the snapshot change marker) in one transaction.
+	if err := s.tools.Decide(ctx, in.GatewayID, in.RegistryID, in.Approve, in.Reject, in.DecidedBy); err != nil {
+		return err
+	}
+	s.propagate(ctx, in.GatewayID, in.RegistryID)
+	return nil
+}
+
+func rejectOverlap(approve, reject []domain.ToolRef) error {
+	approved := make(map[domain.ToolRef]struct{}, len(approve))
+	for _, r := range approve {
+		approved[r] = struct{}{}
+	}
+	for _, r := range reject {
+		if _, both := approved[r]; both {
+			return fmt.Errorf("%w: %q is in both approve and reject", domain.ErrInvalidToolDecision, r.Name)
+		}
+	}
+	return nil
+}
+
+// propagate is what a registry update does once its write committed: refresh
+// this pod's cached registry, tell every other replica to drop theirs, and wake
+// the snapshot dispatcher. The change marker the repository wrote in the same
+// transaction is the durable part: if the invalidation or the signal is lost,
+// the dispatcher's backstop still recompiles from the marker.
+func (s *pinnedToolService) propagate(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) {
+	if fresh, err := s.registries.FindByID(ctx, registryID); err == nil {
+		s.memoryCache.Set(registryID.String(), fresh)
+	} else {
+		s.memoryCache.Delete(registryID.String())
+		s.logger.Warn("pinned tools: could not reload the registry after a decision; its cache entry was dropped",
+			"registry_id", registryID.String(), "error", err)
+	}
+	invalidation.Registry(ctx, s.publisher, s.logger, gatewayID, registryID)
+	if s.signaler != nil {
+		s.signaler.Signal(ctx)
+	}
 }
