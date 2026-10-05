@@ -17,12 +17,14 @@ package middleware_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -355,6 +357,7 @@ func TestAuthMiddleware_NilClockFallsBackToTheWallClock(t *testing.T) {
 		resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(nil), nil, nil),
 		fakeDataFinder{data: appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherConsumerWithKey(gw, otherKey, &expired)})},
 		fakeGatewayResolver{gateway: gw},
+		nil,
 		slog.Default(),
 		nil,
 	)
@@ -567,6 +570,7 @@ func newAuthTestAppWithResolver(
 		resolver.NewIdentityResolver(playground, apiKey, oauth2, nil),
 		fakeDataFinder{data: data},
 		gatewayResolver,
+		nil,
 		slog.Default(),
 		authTestClock,
 	)
@@ -802,4 +806,163 @@ func TestAuthMiddleware_AliasedAndNativeIdPsBothResolve(t *testing.T) {
 			require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		})
 	}
+}
+
+const storeChatPath = "/store/v1/chat/completions"
+
+type countingKeyFinder struct {
+	keys  map[string]*authdomain.Auth
+	err   error
+	calls atomic.Int32
+}
+
+func (f *countingKeyFinder) FindByAPIKey(_ context.Context, rawKey string) (*authdomain.Auth, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if a, ok := f.keys[rawKey]; ok {
+		return a, nil
+	}
+	return nil, authdomain.ErrNotFound
+}
+
+type storeFixture struct {
+	gw        *gatewaydomain.Gateway
+	consumers []appconsumer.RoutableConsumer
+	data      *appconsumer.Data
+	dataErr   error
+	finder    *countingKeyFinder
+	storeKeys appconsumer.StoreKeyResolver
+	appKey    string
+	ownedID   ids.AuthID
+}
+
+func newStoreFixture(t *testing.T) *storeFixture {
+	t.Helper()
+	gw, rc, appKey := inlineConsumerWithAPIKey(t)
+	personal := personalConsumerWithKey(gw, "ag_alice")
+	finder := &countingKeyFinder{keys: map[string]*authdomain.Auth{"ag_alice": personal.Auths[0], appKey: rc.Auths[0]}}
+	return &storeFixture{
+		gw: gw, consumers: []appconsumer.RoutableConsumer{rc, personal}, appKey: appKey, ownedID: personal.Auths[0].ID,
+		finder: finder, storeKeys: appconsumer.NewStoreKeyResolver(finder, authTestClock),
+	}
+}
+
+func (f *storeFixture) app(next fiber.Handler) *fiber.App {
+	f.data = appconsumer.NewData(f.gw.ID, f.consumers)
+	if next == nil {
+		next = func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) }
+	}
+	authMiddleware := middleware.NewAuthMiddleware(
+		resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(authTestClock), nil, nil),
+		fakeDataFinder{data: f.data, err: f.dataErr},
+		fakeGatewayResolver{gateway: f.gw},
+		f.storeKeys,
+		slog.Default(),
+		authTestClock,
+	)
+	app := fiber.New()
+	app.Post("/*", authMiddleware.Middleware(), next)
+	return app
+}
+
+func callStore(t *testing.T, app *fiber.App, path, header, value string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(fiber.MethodPost, path, nil)
+	if header != "" {
+		req.Header.Set(header, value)
+	}
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, body
+}
+
+func TestAuthMiddleware_StoreAnswersNotFoundBeforeAnyKeyLookup(t *testing.T) {
+	t.Parallel()
+	cases := map[string]func(f *storeFixture){
+		"no personal consumers":            func(f *storeFixture) { f.consumers = f.consumers[:1] },
+		"only inactive personal consumers": func(f *storeFixture) { f.consumers[1].Consumer.Active = false },
+		"hybrid gateway":                   func(f *storeFixture) { f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid },
+		"hybrid gateway with a data load error": func(f *storeFixture) {
+			f.gw.Entitlements.DataPlane, f.dataErr = gatewaydomain.DataPlaneHybrid, errors.New("down")
+		},
+		"store not wired": func(f *storeFixture) { f.storeKeys = nil },
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, unknownSlug := callStore(t, newStoreFixture(t).app(nil), "/zzzzzzzz/v1/chat/completions", "", "")
+			f := newStoreFixture(t)
+			arrange(f)
+			app := f.app(nil)
+			for _, key := range []string{"", f.appKey, "ag_alice"} {
+				status, body := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, key)
+				require.Equal(t, fiber.StatusNotFound, status)
+				require.Equal(t, unknownSlug, body)
+				status, _ = callStore(t, app, "/store/v1/models", resolver.HeaderAPIKey, key)
+				require.Equal(t, fiber.StatusNotFound, status)
+			}
+			require.Zero(t, f.finder.calls.Load())
+		})
+	}
+}
+
+func TestAuthMiddleware_StoreRejectsKeysItDoesNotAcceptAndLeavesOtherSlugsUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.finder.keys["ag_expired"] = &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: authdomain.HashAPIKey("ag_expired"), OwnerID: "alice", ExpiresAt: &authTestNow}
+	f.finder.keys["ag_disabled"] = &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gw.ID, Type: authdomain.TypeAPIKey, KeyHash: authdomain.HashAPIKey("ag_disabled"), OwnerID: "alice"}
+	f.finder.keys["ag_other_gw"] = &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: ids.New[ids.GatewayKind](), Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: authdomain.HashAPIKey("ag_other_gw"), OwnerID: "alice"}
+	app := f.app(nil)
+	status, noKey := callStore(t, app, storeChatPath, "", "")
+	require.Equal(t, fiber.StatusUnauthorized, status)
+	require.Equal(t, "unauthenticated", decodeErrorBytes(t, noKey).Error)
+	for _, key := range []string{"ag_unknown", "ag_expired", "ag_disabled", "ag_other_gw", f.appKey} {
+		status, body := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, key)
+		require.Equal(t, fiber.StatusUnauthorized, status, key)
+		require.Equal(t, noKey, body, key)
+	}
+	lookups := f.finder.calls.Load()
+	status, _ = callStore(t, app, "/cons1234/v1/chat/completions", resolver.HeaderAPIKey, f.appKey)
+	require.Equal(t, fiber.StatusOK, status)
+	status, _ = callStore(t, app, "/cons1234/v1/chat/completions", resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusUnauthorized, status)
+	require.Equal(t, lookups, f.finder.calls.Load())
+}
+
+func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	app := f.app(func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		principal := &identity.Principal{Subject: "alice", Method: identity.MethodAPIKey}
+		authCtx, _ := appauth.AuthContextFromContext(ctx)
+		require.Equal(t, &appauth.AuthContext{Principal: principal, Method: appauth.MethodAPIKey, GatewayID: f.gw.ID, GatewaySlug: f.gw.Slug, AuthID: f.ownedID, OwnerID: "alice", Subject: "alice"}, authCtx)
+		require.Equal(t, principal, identity.PrincipalFromContext(ctx))
+		require.True(t, ctx.Value(appconsumer.ConsumerKey) == nil && c.Locals(string(appconsumer.ConsumerKey)) == nil)
+		data, _ := appconsumer.DataFromContext(ctx)
+		require.Same(t, f.data, data)
+		route, _ := c.Locals(resolver.ProxyRouteLocalsKey).(resolver.ProxyRoute)
+		require.Equal(t, consumerdomain.StoreSlug, route.ConsumerSlug)
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	for _, h := range [][2]string{{resolver.HeaderAPIKey, "ag_alice"}, {resolver.HeaderAPIKeyCompat, "ag_alice"}, {resolver.HeaderAPIKeyGoogle, "ag_alice"}, {fiber.HeaderAuthorization, "Bearer ag_alice"}} {
+		status, _ := callStore(t, app, storeChatPath, h[0], h[1])
+		require.Equal(t, fiber.StatusNoContent, status, h[0])
+	}
+}
+
+func TestAuthMiddleware_StoreAnswersInternalErrorWhenALookupFails(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.dataErr = errors.New("down")
+	status, _ := callStore(t, f.app(nil), storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusInternalServerError, status)
+	require.Zero(t, f.finder.calls.Load())
+	f.dataErr, f.finder.err = nil, errors.New("database unavailable")
+	status, _ = callStore(t, f.app(nil), storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusInternalServerError, status)
 }

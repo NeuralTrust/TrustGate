@@ -213,6 +213,23 @@ func TestHandle_PathNotFound(t *testing.T) {
 	}
 }
 
+func TestHandle_StoreSlugIsNotFoundWithoutStoreWiring(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), domainconsumer.StoreSlug))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithModels(stubModelsLister{}).Handle)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/store/v1/chat/completions", strings.NewReader(`{"model":"gpt"}`)),
+		httptest.NewRequest(http.MethodGet, "/store/v1/models", nil),
+	} {
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusNotFound, resp.StatusCode, req.URL.Path)
+		require.Equal(t, "not_found", decodeError(t, resp.Body).Error)
+	}
+}
+
 func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()

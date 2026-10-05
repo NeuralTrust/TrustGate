@@ -4,9 +4,9 @@ Change `llm-store` (RUN-1763), slice S5 (decisions B6, B8, B9, D1, D2, D10, D12,
 
 ## ADDED Requirements
 
-### Requirement: The store branch slots in after the gateway's data
+### Requirement: The store branch slots in after the path is resolved
 
-In `AuthMiddleware` (`pkg/api/middleware/auth.go`), after `ResolveProxyPath` and `FindByGateway`, a path slug equal to `store` MUST take the store branch instead of `MatchSlug`. Every other slug MUST follow today's flow. `store` MUST NOT collide with a consumer slug, which is exactly 8 alphanumerics.
+In `AuthMiddleware` (`pkg/api/middleware/auth.go`), right after `ResolveProxyPath`, a path slug equal to `store` MUST take the store branch instead of today's `FindByGateway` → `MatchSlug` flow. The branch MUST run, in order: the hybrid check, the gateway's `Data` load (`FindByGateway`), the personal-consumer check, the key check. Every other slug MUST follow today's flow. `store` MUST NOT collide with a consumer slug, which is exactly 8 alphanumerics.
 
 #### Scenario: Other slugs unchanged
 

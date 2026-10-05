@@ -108,6 +108,11 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewAuthConsumers); err != nil {
 		return err
 	}
+	if err := c.Provide(func(apiKeys appauth.APIKeyFinder) appconsumer.StoreKeyResolver {
+		return appconsumer.NewStoreKeyResolver(apiKeys, utcNow)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, policyLevels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
 		return appconsumer.NewAssociator(repo, registryRepo, authRepo, policyRepo, policyLevels, manager, publisher, logger, sig.Signaler, resolver)
 	}); err != nil {

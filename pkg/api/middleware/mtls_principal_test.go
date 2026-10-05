@@ -58,7 +58,7 @@ func TestLLMMTLSMiddlewarePreservesVerifiedPrincipal(t *testing.T) {
 				peers = []string{"0.0.0.0/32"}
 			}
 			mtlsResolver := resolver.NewMTLSIdentityResolver(mtls.NewValidator(), mtls.NewXFCCExtractor(), peers)
-			authMiddleware := middleware.NewAuthMiddleware(resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(authTestClock), nil, mtlsResolver), fakeDataFinder{data: appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc})}, fakeGatewayResolver{gateway: gw}, slog.Default(), authTestClock)
+			authMiddleware := middleware.NewAuthMiddleware(resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(authTestClock), nil, mtlsResolver), fakeDataFinder{data: appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc})}, fakeGatewayResolver{gateway: gw}, nil, slog.Default(), authTestClock)
 			app := fiber.New()
 			called := false
 			app.Post("/*", authMiddleware.Middleware(), func(c *fiber.Ctx) error {
