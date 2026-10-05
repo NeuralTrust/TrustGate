@@ -735,15 +735,8 @@ func (c *Compiler) attachPinnedTools(ctx context.Context, registries []*registry
 	if c.pinnedTools == nil {
 		return nil
 	}
-	for _, r := range registries {
-		if r == nil || !r.ToolPolicy.IsPinned() {
-			continue
-		}
-		tools, err := c.pinnedTools.ListByRegistry(ctx, r.GatewayID, r.ID)
-		if err != nil {
-			return fmt.Errorf("configsnapshot: list pinned tools for registry %s: %w", r.ID, err)
-		}
-		r.PinnedTools = registrydomain.DecisionsOf(tools)
+	if err := registrydomain.StampPinnedTools(ctx, c.pinnedTools, registries); err != nil {
+		return fmt.Errorf("configsnapshot: %w", err)
 	}
 	return nil
 }
