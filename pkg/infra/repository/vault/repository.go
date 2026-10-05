@@ -27,7 +27,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var _ domain.Repository = (*Repository)(nil)
+var (
+	_ domain.Repository        = (*Repository)(nil)
+	_ domain.ReconnectRequirer = (*Repository)(nil)
+)
 
 type Repository struct {
 	conn         *database.Connection
@@ -123,6 +126,31 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, princi
 		}
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
+// RequireReconnect drops the refresh token of a credential the provider refused for
+// good and expires it, keeping the row and its account so every status view
+// reports it as needing a reconnect. It only applies to the row exactly as it
+// was read: one rewritten since (a reconnect, a rotation) returns
+// ErrCredentialChanged untouched.
+func (r *Repository) RequireReconnect(ctx context.Context, c *domain.Credential) error {
+	if c == nil {
+		return errors.New("vault repository: nil credential")
+	}
+	const query = `
+		UPDATE vault_credentials
+		SET refresh_token = '', expires_at = $5, updated_at = $5
+		WHERE gateway_id = $1 AND principal_sub = $2 AND provider = $3 AND updated_at = $4`
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, query, c.GatewayID, c.PrincipalSub, c.Provider, c.UpdatedAt, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("vault repository: require reconnect: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrCredentialChanged
 		}
 		return nil
 	})
