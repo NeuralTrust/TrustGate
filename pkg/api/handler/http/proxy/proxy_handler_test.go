@@ -36,11 +36,15 @@ import (
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -1432,4 +1436,151 @@ func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 			assert.Equal(t, tt.wantOwner, got.OwnerID)
 		})
 	}
+}
+
+type personalSpec struct {
+	provider string
+	allowed  []string
+}
+
+func storeData(gatewayID ids.GatewayID, authID ids.AuthID, specs ...personalSpec) *appconsumer.Data {
+	global := &policydomain.Policy{Name: "global", Global: true}
+	consumers := make([]appconsumer.RoutableConsumer, 0, len(specs))
+	for i, spec := range specs {
+		reg := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gatewayID, Type: registrydomain.TypeLLM,
+			LLMTarget: &registrydomain.LLMTarget{Provider: spec.provider}}
+		name := fmt.Sprintf("P%d", i+1)
+		consumers = append(consumers, appconsumer.RoutableConsumer{
+			Consumer: &domainconsumer.Consumer{
+				ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Name: name, Active: true,
+				Audience: domainconsumer.AudiencePersonal, AuthIDs: []ids.AuthID{authID},
+				AuthLinks: map[ids.AuthID]domainconsumer.AuthLink{
+					authID: {Level: domainconsumer.GrantLevelGroup, Priority: i, GrantedAt: time.Unix(0, 0)},
+				},
+				ModelPolicies: domainconsumer.ModelPolicies{reg.ID: {Allowed: spec.allowed}},
+			},
+			Registries: []*registrydomain.Registry{reg},
+			Policies:   []*policydomain.Policy{{Name: name}, global},
+			PolicyPlan: &appplugins.StagePlan{},
+		})
+	}
+	data := appconsumer.NewData(gatewayID, consumers)
+	data.StoreConsumer = &appconsumer.RoutableConsumer{Policies: []*policydomain.Policy{{Name: "mcp-wide"}}}
+	return data
+}
+
+func ownerAuth(gatewayID ids.GatewayID, authID ids.AuthID) *appauth.AuthContext {
+	return &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: authID, OwnerID: "alice", Subject: "alice"}
+}
+
+func newStoreApp(t *testing.T, data *appconsumer.Data, authCtx *appauth.AuthContext) (*fiber.App, *proxymocks.Forwarder, *trace.RequestTrace) {
+	t.Helper()
+	fwd := proxymocks.NewForwarder(t)
+	rt := trace.New("store-trace", trace.Metadata{})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appauth.WithAuthContext(trace.NewContext(c.UserContext(), rt), authCtx)
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: authCtx.OwnerID, Method: identity.MethodAPIKey})
+		c.SetUserContext(appconsumer.WithData(appconsumer.WithGatewayID(ctx, data.GatewayID), data))
+		return c.Next()
+	})
+	resolver := approuting.NewResolver()
+	selector := appproxy.NewStoreSelector(resolver, nil, slog.New(slog.DiscardHandler))
+	models := appproxy.NewStoreModels(appproxy.NewModelsLister(resolver, nil))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithStore(selector, models).Handle)
+	return app, fwd, rt
+}
+
+func storeChat(model string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/store/v1/chat/completions", strings.NewReader(`{"model":"`+model+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func TestHandleStore_ForbiddenWithoutAnUpstreamCall(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	cases := []struct {
+		name   string
+		linked ids.AuthID
+		model  string
+	}{
+		{name: "denied model", linked: authID, model: "claude-sonnet-4-5"},
+		{name: "no links", linked: ids.New[ids.AuthKind](), model: "gpt-4o-mini"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := storeData(gatewayID, tc.linked, personalSpec{provider: "openai", allowed: []string{"gpt-4o*"}})
+			app, _, _ := newStoreApp(t, data, ownerAuth(gatewayID, authID))
+			resp, err := app.Test(storeChat(tc.model))
+			require.NoError(t, err)
+			assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+			assert.Equal(t, "model_not_allowed", decodeError(t, resp.Body).Error)
+		})
+	}
+}
+
+func TestHandleStore_ServesThroughTheSelectedConsumer(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID,
+		personalSpec{provider: "anthropic", allowed: []string{"claude-*"}},
+		personalSpec{provider: "openai", allowed: []string{"gpt-4o*"}})
+	selected := data.StoreLinks(authID)[1].Consumer
+	app, fwd, rt := newStoreApp(t, data, ownerAuth(gatewayID, authID))
+	var in appproxy.ForwardInput
+	var forwardedAuth *appauth.AuthContext
+	fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, got appproxy.ForwardInput) {
+			in = got
+			forwardedAuth, _ = appauth.AuthContextFromContext(ctx)
+		}).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+
+	resp, err := app.Test(storeChat("gpt-4o-mini"))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	assert.Same(t, selected, in.Consumer)
+	require.Len(t, in.Consumer.Policies, 2)
+	assert.Equal(t, []string{"P2", "global"}, []string{in.Consumer.Policies[0].Name, in.Consumer.Policies[1].Name})
+	require.NotNil(t, in.Resolved)
+	assert.Equal(t, "gpt-4o-mini", in.Resolved.Ref)
+	assert.Equal(t, authID.String(), in.Request.AuthID)
+	assert.Equal(t, "alice", in.Request.OwnerID)
+	require.NotNil(t, forwardedAuth)
+	assert.Equal(t, selected.Consumer.ID, forwardedAuth.ConsumerID)
+	meta := rt.Metadata()
+	assert.Equal(t, selected.Consumer.ID.String(), meta.ConsumerID)
+	assert.Equal(t, authID.String(), meta.AuthID)
+	assert.Equal(t, "alice", meta.PrincipalSubject)
+	assert.Equal(t, string(identity.MethodAPIKey), meta.PrincipalMethod)
+}
+
+func TestHandleStore_ModelsListTheUnionAndStampNoConsumer(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID,
+		personalSpec{provider: "anthropic", allowed: []string{"claude-sonnet-4-5"}},
+		personalSpec{provider: "openai", allowed: []string{"gpt-4o-mini"}})
+	app, _, rt := newStoreApp(t, data, ownerAuth(gatewayID, authID))
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/store/v1/models", nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	var list appproxy.ModelsList
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
+	require.Len(t, list.Data, 2)
+	assert.Equal(t, []string{"claude-sonnet-4-5", "gpt-4o-mini"}, []string{list.Data[0].ID, list.Data[1].ID})
+	resp, err = app.Test(httptest.NewRequest(http.MethodGet, "/store/v1/models/gpt-4.1", nil))
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+	assert.Empty(t, rt.Metadata().ConsumerID)
+	assert.Empty(t, rt.Metadata().AuthID)
+}
+
+func TestHandleStore_RequiresAPersonalKey(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID, personalSpec{provider: "openai"})
+	app, _, _ := newStoreApp(t, data, &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: authID})
+	resp, err := app.Test(storeChat("gpt-4o"))
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }

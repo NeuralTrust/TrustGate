@@ -89,6 +89,8 @@ type ForwardedHandler struct {
 	resolveClientIP func(string, string) string
 	forwarder       appproxy.Forwarder
 	models          appproxy.ModelsLister
+	storeSelector   appproxy.StoreSelector
+	storeModels     appproxy.StoreModels
 	logger          *slog.Logger
 }
 
@@ -121,6 +123,12 @@ func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHa
 	return h
 }
 
+func (h *ForwardedHandler) WithStore(selector appproxy.StoreSelector, models appproxy.StoreModels) *ForwardedHandler {
+	h.storeSelector = selector
+	h.storeModels = models
+	return h
+}
+
 // Handle godoc
 // @Summary      Proxy chat completion
 // @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….
@@ -147,7 +155,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		return writeProxyError(c, err)
 	}
 	if domainconsumer.IsStoreSlug(route.ConsumerSlug) {
-		return writeProxyError(c, errPathNotFound)
+		return h.handleStore(c, route)
 	}
 	gatewayID, consumer, authCtx, err := resolveConsumer(c, route)
 	if err != nil {
@@ -156,17 +164,10 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	stampConsumerTrace(c, consumer, authCtx)
 	if !route.AllowsMethod(c.Method()) {
-		c.Set(fiber.HeaderAllow, strings.Join(route.AllowedMethods(), ", "))
-		return writeProxyError(c, errMethodNotAllowed)
+		return methodNotAllowed(c, route)
 	}
-	endUser, err := endUserAttribution(consumer, c.Get(domainconsumer.EndUserHeader))
-	if err != nil {
+	if err := stampEndUser(c, consumer); err != nil {
 		return writeProxyError(c, err)
-	}
-	if endUser != "" {
-		if rt := trace.FromContext(c.UserContext()); rt != nil {
-			rt.SetEndUser(endUser)
-		}
 	}
 
 	if route.Capability == apiresolver.CapabilityModels {
@@ -174,9 +175,54 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
-	reqCtx := buildRequestContext(c, gatewayID, route)
-	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
-	stampAuth(reqCtx, authCtx)
+	return h.forward(c, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  consumer,
+		Data:      data,
+		Request:   newForwardRequest(c, gatewayID, route, authCtx),
+	})
+}
+
+func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRoute) error {
+	if h.storeSelector == nil || h.storeModels == nil {
+		return writeProxyError(c, errPathNotFound)
+	}
+	gatewayID, authCtx, data, err := requestCaller(c)
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	if authCtx.Method != appauth.MethodAPIKey || authCtx.OwnerID == "" {
+		return writeProxyError(c, errNotAuthenticated)
+	}
+	if !route.AllowsMethod(c.Method()) {
+		return methodNotAllowed(c, route)
+	}
+	links := data.StoreLinks(authCtx.AuthID)
+	if route.Capability == apiresolver.CapabilityModels {
+		return serveModels(c, route, h.storeModels, appproxy.StoreModelsInput{Links: links, Data: data})
+	}
+	reqCtx := newForwardRequest(c, gatewayID, route, authCtx)
+	sel, err := h.storeSelector.Select(c.UserContext(), appproxy.StoreSelectInput{Links: links, Data: data, Request: reqCtx})
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	consumer := sel.Link.Consumer
+	authCtx.ConsumerID = consumer.Consumer.ID
+	stampConsumerTrace(c, consumer, authCtx)
+	if err := stampEndUser(c, consumer); err != nil {
+		return writeProxyError(c, err)
+	}
+	return h.forward(c, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  consumer,
+		Data:      data,
+		Request:   reqCtx,
+		Keep:      sel.Keep,
+		Resolved:  &sel.ResolvedRouting,
+	})
+}
+
+func (h *ForwardedHandler) forward(c *fiber.Ctx, in appproxy.ForwardInput) error {
 	// The user context is never cancelled when the client goes away, so the
 	// upstream request gets a context of its own that ends with the response.
 	ctx, cancel := context.WithCancel(c.UserContext())
@@ -186,12 +232,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 			cancel()
 		}
 	}()
-	result, err := h.forwarder.Forward(ctx, appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  consumer,
-		Data:      data,
-		Request:   reqCtx,
-	})
+	result, err := h.forwarder.Forward(ctx, in)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
@@ -200,9 +241,37 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if result.Stream != nil {
 		streaming = true
-		return writeStream(c, result, reqCtx, cancel, h.logger)
+		return writeStream(c, result, in.Request, cancel, h.logger)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
+}
+
+func methodNotAllowed(c *fiber.Ctx, route apiresolver.ProxyRoute) error {
+	c.Set(fiber.HeaderAllow, strings.Join(route.AllowedMethods(), ", "))
+	return writeProxyError(c, errMethodNotAllowed)
+}
+
+func stampEndUser(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) error {
+	endUser, err := endUserAttribution(rc, c.Get(domainconsumer.EndUserHeader))
+	if err != nil || endUser == "" {
+		return err
+	}
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.SetEndUser(endUser)
+	}
+	return nil
+}
+
+func newForwardRequest(
+	c *fiber.Ctx,
+	gatewayID ids.GatewayID,
+	route apiresolver.ProxyRoute,
+	authCtx *appauth.AuthContext,
+) *infracontext.RequestContext {
+	reqCtx := buildRequestContext(c, gatewayID, route)
+	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
+	stampAuth(reqCtx, authCtx)
+	return reqCtx
 }
 
 func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
@@ -359,10 +428,7 @@ func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {
 	return route, nil
 }
 
-func resolveConsumer(
-	c *fiber.Ctx,
-	route apiresolver.ProxyRoute,
-) (ids.GatewayID, *appconsumer.RoutableConsumer, *appauth.AuthContext, error) {
+func requestCaller(c *fiber.Ctx) (ids.GatewayID, *appauth.AuthContext, *appconsumer.Data, error) {
 	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 	if !ok {
 		return ids.GatewayID{}, nil, nil, errNotAuthenticated
@@ -374,6 +440,17 @@ func resolveConsumer(
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
 		return ids.GatewayID{}, nil, nil, errNotAuthenticated
+	}
+	return gatewayID, authCtx, data, nil
+}
+
+func resolveConsumer(
+	c *fiber.Ctx,
+	route apiresolver.ProxyRoute,
+) (ids.GatewayID, *appconsumer.RoutableConsumer, *appauth.AuthContext, error) {
+	gatewayID, authCtx, data, err := requestCaller(c)
+	if err != nil {
+		return ids.GatewayID{}, nil, nil, err
 	}
 	rc, ok := appconsumer.ConsumerFromContext(c.UserContext())
 	if !ok {
@@ -401,19 +478,24 @@ func (h *ForwardedHandler) handleModels(
 		return writeProxyError(c, appproxy.ErrNoBackendAvailable)
 	}
 	data, _ := appconsumer.DataFromContext(c.UserContext())
-	in := appproxy.ListModelsInput{
-		Consumer: consumer,
-		Data:     data,
-	}
+	return serveModels(c, route, h.models, appproxy.ListModelsInput{Consumer: consumer, Data: data})
+}
+
+type modelsSource[In any] interface {
+	List(ctx context.Context, in In) (*appproxy.ModelsList, error)
+	Get(ctx context.Context, in In, id string) (*appproxy.ModelCard, error)
+}
+
+func serveModels[In any](c *fiber.Ctx, route apiresolver.ProxyRoute, models modelsSource[In], in In) error {
 	id := apiresolver.ModelsIDFromRest(route.Rest)
 	if id == "" {
-		list, err := h.models.List(c.UserContext(), in)
+		list, err := models.List(c.UserContext(), in)
 		if err != nil {
 			return writeProxyError(c, err)
 		}
 		return c.Status(fiber.StatusOK).JSON(list)
 	}
-	card, err := h.models.Get(c.UserContext(), in, id)
+	card, err := models.Get(c.UserContext(), in, id)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
