@@ -105,7 +105,7 @@ func (m *memPinnedRepo) ApproveAll(context.Context, ids.GatewayID, ids.RegistryI
 	return nil
 }
 
-func (m *memPinnedRepo) Pin(_ context.Context, _ ids.GatewayID, id ids.RegistryID, tools []registrydomain.ToolCandidate, _ string) error {
+func (m *memPinnedRepo) Pin(_ context.Context, _ ids.GatewayID, id ids.RegistryID, tools, _ []registrydomain.ToolCandidate, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, t := range tools {

@@ -316,17 +316,17 @@ func (_c *PinnedToolRepository_ListPage_Call) RunAndReturn(run func(context.Cont
 	return _c
 }
 
-// Pin provides a mock function with given fields: ctx, gatewayID, registryID, tools, decidedBy
-func (_m *PinnedToolRepository) Pin(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate, decidedBy string) error {
-	ret := _m.Called(ctx, gatewayID, registryID, tools, decidedBy)
+// Pin provides a mock function with given fields: ctx, gatewayID, registryID, tools, unchecked, decidedBy
+func (_m *PinnedToolRepository) Pin(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate, unchecked []registry.ToolCandidate, decidedBy string) error {
+	ret := _m.Called(ctx, gatewayID, registryID, tools, unchecked, decidedBy)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Pin")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate, string) error); ok {
-		r0 = rf(ctx, gatewayID, registryID, tools, decidedBy)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate, []registry.ToolCandidate, string) error); ok {
+		r0 = rf(ctx, gatewayID, registryID, tools, unchecked, decidedBy)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -344,14 +344,15 @@ type PinnedToolRepository_Pin_Call struct {
 //   - gatewayID ids.ID[ids.GatewayKind]
 //   - registryID ids.ID[ids.RegistryKind]
 //   - tools []registry.ToolCandidate
+//   - unchecked []registry.ToolCandidate
 //   - decidedBy string
-func (_e *PinnedToolRepository_Expecter) Pin(ctx interface{}, gatewayID interface{}, registryID interface{}, tools interface{}, decidedBy interface{}) *PinnedToolRepository_Pin_Call {
-	return &PinnedToolRepository_Pin_Call{Call: _e.mock.On("Pin", ctx, gatewayID, registryID, tools, decidedBy)}
+func (_e *PinnedToolRepository_Expecter) Pin(ctx interface{}, gatewayID interface{}, registryID interface{}, tools interface{}, unchecked interface{}, decidedBy interface{}) *PinnedToolRepository_Pin_Call {
+	return &PinnedToolRepository_Pin_Call{Call: _e.mock.On("Pin", ctx, gatewayID, registryID, tools, unchecked, decidedBy)}
 }
 
-func (_c *PinnedToolRepository_Pin_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate, decidedBy string)) *PinnedToolRepository_Pin_Call {
+func (_c *PinnedToolRepository_Pin_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate, unchecked []registry.ToolCandidate, decidedBy string)) *PinnedToolRepository_Pin_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].([]registry.ToolCandidate), args[4].(string))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].([]registry.ToolCandidate), args[4].([]registry.ToolCandidate), args[5].(string))
 	})
 	return _c
 }
@@ -361,7 +362,7 @@ func (_c *PinnedToolRepository_Pin_Call) Return(_a0 error) *PinnedToolRepository
 	return _c
 }
 
-func (_c *PinnedToolRepository_Pin_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate, string) error) *PinnedToolRepository_Pin_Call {
+func (_c *PinnedToolRepository_Pin_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate, []registry.ToolCandidate, string) error) *PinnedToolRepository_Pin_Call {
 	_c.Call.Return(run)
 	return _c
 }

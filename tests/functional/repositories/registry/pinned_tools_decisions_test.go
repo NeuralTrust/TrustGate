@@ -97,7 +97,7 @@ func TestPinnedTools_Pin_ApprovesAndFlipsPolicyTogether(t *testing.T) {
 	_, before := registryState(t, r, reg.ID)
 	markers := outboxCount(t, conn)
 
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, "admin-1"); err != nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, nil, "admin-1"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
 	policy, after := registryState(t, r, reg.ID)
@@ -115,7 +115,7 @@ func TestPinnedTools_Pin_ApprovesAndFlipsPolicyTogether(t *testing.T) {
 
 func TestPinnedTools_Pin_EmptyListIsAllowed(t *testing.T) {
 	r, tools, gwID, reg, _ := setupPinnedConn(t)
-	if err := tools.Pin(context.Background(), gwID, reg.ID, nil, "admin-1"); err != nil {
+	if err := tools.Pin(context.Background(), gwID, reg.ID, nil, nil, "admin-1"); err != nil {
 		t.Fatalf("Pin(empty): %v", err)
 	}
 	if policy, _ := registryState(t, r, reg.ID); policy != domain.ToolPolicyPinned {
@@ -134,7 +134,7 @@ func TestPinnedTools_Pin_RefusesLLMRegistry(t *testing.T) {
 	tools := newPinnedRepo(conn)
 	markers := outboxCount(t, conn)
 
-	err := tools.Pin(ctx, gwID, llm.ID, []domain.ToolCandidate{cand(t, "a", "A")}, "admin-1")
+	err := tools.Pin(ctx, gwID, llm.ID, []domain.ToolCandidate{cand(t, "a", "A")}, nil, "admin-1")
 	if !errors.Is(err, domain.ErrInvalidToolPolicy) {
 		t.Fatalf("err = %v, want ErrInvalidToolPolicy", err)
 	}
@@ -158,7 +158,7 @@ func TestPinnedTools_Pin_RollsBackOnFailure(t *testing.T) {
 	broken := domain.ToolCandidate{ToolRef: domain.ToolRef{Name: "broken", Fingerprint: "f"}, Definition: []byte(`{not json`)}
 	markers := outboxCount(t, conn)
 
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{good, broken}, "admin-1"); err == nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{good, broken}, nil, "admin-1"); err == nil {
 		t.Fatal("a batch with an unstorable definition must fail")
 	}
 	if policy, _ := registryState(t, r, reg.ID); policy != domain.ToolPolicyAuto {
@@ -281,7 +281,7 @@ func TestRepository_Update_WithoutAPolicyDoesNotRevertAConcurrentPin(t *testing.
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if err := tools.Pin(ctx, gwID, reg.ID, nil, "admin"); err != nil { // lands in between
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, nil, "admin"); err != nil { // lands in between
 		t.Fatalf("Pin: %v", err)
 	}
 
@@ -327,7 +327,7 @@ func TestPinnedTools_Pin_MakesTheListExact(t *testing.T) {
 		t.Fatalf("Decide: %v", err)
 	}
 
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{keep, lift}, "admin-2"); err != nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{keep, lift}, nil, "admin-2"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
 	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
@@ -354,7 +354,7 @@ func TestPinnedTools_Pin_UncheckedToolIsNotExposedAfterRepin(t *testing.T) {
 	r, tools, gwID, reg, _ := setupPinnedConn(t)
 	ctx := context.Background()
 	a, b := cand(t, "a", "A"), cand(t, "b", "B")
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}, "admin"); err != nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}, nil, "admin"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
 	loaded, _ := r.FindByID(ctx, reg.ID)
@@ -364,7 +364,7 @@ func TestPinnedTools_Pin_UncheckedToolIsNotExposedAfterRepin(t *testing.T) {
 		t.Fatalf("disable: %v", err)
 	}
 
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, "admin"); err != nil { // b unchecked
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, nil, "admin"); err != nil { // b unchecked
 		t.Fatalf("re-Pin: %v", err)
 	}
 	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
@@ -378,10 +378,10 @@ func TestPinnedTools_Pin_EmptyListWithdrawsEveryApproval(t *testing.T) {
 	_, tools, gwID, reg, _ := setupPinnedConn(t)
 	ctx := context.Background()
 	a := cand(t, "a", "A")
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, "admin"); err != nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a}, nil, "admin"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
-	if err := tools.Pin(ctx, gwID, reg.ID, nil, "admin"); err != nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, nil, "admin"); err != nil {
 		t.Fatalf("Pin(empty): %v", err)
 	}
 	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
@@ -465,5 +465,84 @@ func TestPinnedTools_ListPage_IsStableFilteredAndScoped(t *testing.T) {
 	otherGW := ids.New[ids.GatewayKind]()
 	if page, total, _ := tools.ListPage(ctx, otherGW, reg.ID, nil, 100, 0); len(page) != 0 || total != 0 {
 		t.Fatalf("another gateway read %d rows", len(page))
+	}
+}
+
+// 3 live tools, 2 confirmed: 2 approved, the third recorded as pending, and the
+// policy and the bump in the same transaction.
+func TestPinnedTools_Pin_RecordsUncheckedToolsAsPendingInTheSameTransaction(t *testing.T) {
+	r, tools, gwID, reg, conn := setupPinnedConn(t)
+	ctx := context.Background()
+	a, b, c3 := cand(t, "a", "A"), cand(t, "b", "B"), cand(t, "create_branch", "C")
+	_, before := registryState(t, r, reg.ID)
+	markers := outboxCount(t, conn)
+
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}, []domain.ToolCandidate{c3}, "admin"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	for ref, want := range map[domain.ToolRef]domain.ToolStatus{
+		a.ToolRef: domain.ToolStatusApproved, b.ToolRef: domain.ToolStatusApproved, c3.ToolRef: domain.ToolStatusPending,
+	} {
+		if s := statusOf(t, got, ref); s != want {
+			t.Errorf("%s = %q, want %q", ref.Name, s, want)
+		}
+	}
+	policy, after := registryState(t, r, reg.ID)
+	if policy != domain.ToolPolicyPinned || !after.After(before) || outboxCount(t, conn) != markers+1 {
+		t.Fatalf("policy=%q bumped=%v markers %d->%d", policy, after.After(before), markers, outboxCount(t, conn))
+	}
+}
+
+func TestPinnedTools_Pin_UncheckedNeverOverwritesARejection(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	rej := cand(t, "rej", "R")
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{rej}); err != nil {
+		t.Fatalf("UpsertPending: %v", err)
+	}
+	if err := tools.Decide(ctx, gwID, reg.ID, nil, refs(rej), "admin"); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, []domain.ToolCandidate{rej}, "admin"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if s := statusOf(t, got, rej.ToolRef); s != domain.ToolStatusRejected {
+		t.Fatalf("a rejected tool left unchecked is %q, want rejected", s)
+	}
+}
+
+func TestPinnedTools_Pin_UncheckedRespectsThePendingCaps(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	var variants []domain.ToolCandidate
+	for i := 0; i < domain.MaxPendingPerToolName+5; i++ {
+		variants = append(variants, cand(t, "shape-shifter", fmt.Sprintf("v%d", i)))
+	}
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, variants, "admin"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if n := pendingCount(t, tools, gwID, reg.ID); n != domain.MaxPendingPerToolName {
+		t.Fatalf("pending = %d, want the per-name cap %d", n, domain.MaxPendingPerToolName)
+	}
+}
+
+// A failure while recording the unchecked tools undoes the approvals and the
+// policy switch too: no pending rows survive.
+func TestPinnedTools_Pin_RollbackLeavesNoPendingRows(t *testing.T) {
+	r, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	good := cand(t, "good", "G")
+	broken := domain.ToolCandidate{ToolRef: domain.ToolRef{Name: "broken", Fingerprint: "f"}, Definition: []byte(`{not json`)}
+
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{good}, []domain.ToolCandidate{cand(t, "other", "O"), broken}, "admin"); err == nil {
+		t.Fatal("an unstorable unchecked definition must fail the pin")
+	}
+	if got, _ := tools.ListByRegistry(ctx, gwID, reg.ID); len(got) != 0 {
+		t.Fatalf("rows survived a failed pin: %+v", got)
+	}
+	if policy, _ := registryState(t, r, reg.ID); policy != domain.ToolPolicyAuto {
+		t.Fatalf("policy = %q after a failed pin", policy)
 	}
 }

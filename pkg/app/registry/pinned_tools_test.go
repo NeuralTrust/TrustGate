@@ -177,7 +177,7 @@ func TestPinnedToolService_Pin_WritesOnceThenPropagates(t *testing.T) {
 	regs := repomocks.NewRepository(t)
 	regs.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil)
 	tools := repomocks.NewPinnedToolRepository(t)
-	tools.EXPECT().Pin(mock.Anything, reg.GatewayID, reg.ID, list, "ana").Return(nil).Once()
+	tools.EXPECT().Pin(mock.Anything, reg.GatewayID, reg.ID, list, []domain.ToolCandidate(nil), "ana").Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
 		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: reg.GatewayID.String(), RegistryID: reg.ID.String()}).
