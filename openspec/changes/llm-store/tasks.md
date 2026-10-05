@@ -270,23 +270,24 @@ Depends: P9. Est.: ≈345 (code 130 / test 215). Commit boundary: (a) `feat`: ha
 
 Depends: P5 (rebase on P1, A3). Est.: ≈325 (code 110 / test 215). Commit boundary: (a) `feat(routing)`: `SourceFallback` and `FallbackOnly` (A2); (b) `feat`: `Data` index and D11.
 
-- [ ] 11.1 `pkg/domain/routing/candidate.go`: `SourceFallback`, `Candidate.FallbackOnly()` (true when every source is `fallback`). `pkg/app/routing/resolver.go` uses the domain const instead of `sourceFallback`.
-- [ ] 11.2 `pkg/app/consumer/consumer_data.go`: the `StoreLink` type; `storeLinks map[ids.AuthID][]StoreLink` and `personal int`, built in `NewData` over **active** personal consumers, each slice sorted once by `(Rank, Priority, GrantedAt, consumer id)`; an auth id with no `AuthLinks` entry is skipped; `HasPersonalConsumers()`, `StoreLinks(id)` (shared, never mutated). `indexBySlug` (`:124`) skips personal consumers.
-- [ ] 11.3 `pkg/app/consumer/data_finder.go:349` `loadAuths`: skip the auth ids of personal consumers (DD12).
-- [ ] 11.4 D11 rejections:
+- [x] 11.1 `pkg/domain/routing/candidate.go`: `SourceFallback`, `Candidate.FallbackOnly()` (true when every source is `fallback`). `pkg/app/routing/resolver.go` uses the domain const instead of `sourceFallback`.
+- [x] 11.2 `pkg/app/consumer/consumer_data.go`: the `StoreLink` type; `storeLinks map[ids.AuthID][]StoreLink` and `personal int`, built in `NewData` over **active** personal consumers, each slice sorted once by `(Rank, Priority, GrantedAt, consumer id)`; an auth id with no `AuthLinks` entry is skipped; `HasPersonalConsumers()`, `StoreLinks(id)` (shared, never mutated). `indexBySlug` (`:124`) skips personal consumers. Each slice is also capacity-clipped (`slices.Clip`), so an `append` by a reader reallocates instead of writing into the shared array.
+- [x] 11.3 `pkg/app/consumer/data_finder.go:349` `loadAuths`: skip the auth ids of personal consumers (DD12).
+- [x] 11.4 D11 rejections:
   - `pkg/api/middleware/auth.go:196` `apiKeyAttachedElsewhere` skips personal consumers.
   - `pkg/api/middleware/auth_chain.go:370` `resolveAPIKey` and `pkg/app/consumer/api_key_consumers.go:148-164` `ForAPIKey` treat `IsOwned()` as an unknown key.
   - `pkg/app/consumer/path_resolver.go:145`: a personal consumer is no match (DD13).
-- [ ] 11.5 Test `pkg/domain/routing/candidate_test.go`: the `FallbackOnly` table.
-- [ ] 11.6 Test `consumer_data_test.go`:
+  - Review additions (defense in depth, in case the admin audience rule is bypassed): `data_finder.go` `collectAuths` never puts an owned auth into an application consumer's `rc.Auths`; `pkg/api/handler/http/mcp/whoami_handler.go` `gatewayForKey` and `pkg/app/oauth/consumer_api_key.go` `validAPIKeyAuth` refuse an owned key as an unknown one (`gatewayForKey` also refuses a disabled key).
+- [x] 11.5 Test `pkg/domain/routing/candidate_test.go`: the `FallbackOnly` table.
+- [x] 11.6 Test `consumer_data_test.go`:
   - The order P4, P2, P1, P3.
   - An inactive consumer is left out, and a gateway with only inactive personal consumers gives `HasPersonalConsumers() == false`.
   - N = 0 gives an empty slice.
   - A personal slug is not in `bySlug`.
   - 64 concurrent readers under `-race`.
   - Accept: `llm-store-gateway › Index order`, `› No links` (index half), `› Inactive consumer is not a link` (index half); `personal-key-isolation › Personal consumer by slug` (unit).
-- [ ] 11.7 Test `pkg/api/middleware/auth_test.go`: a personal key on an application slug → 401; an application key of another application consumer → 403. Test `auth_chain_test.go` and `api_key_consumers_test.go`: an owned key → 401 even without a path scope; an application key is unchanged. Test `path_resolver_test.go`. Accept: `personal-key-isolation › Personal key on an application consumer`, `› Application key of another consumer`, `› Personal key on MCP`, `› Application key on MCP`.
-- [ ] 11.8 Run VG.
+- [x] 11.7 Test `pkg/api/middleware/auth_test.go` (there is no such file: the `AuthMiddleware` suite lives in `auth_resolver_test.go`, so the test went there): a personal key on an application slug answers exactly as an unknown key (401 with an api-key consumer, and the same status and body on an OAuth-only one); an application key of another application consumer → 403. Test `auth_chain_test.go` and `api_key_consumers_test.go`: an owned key → 401 even without a path scope; an application key is unchanged. Test `path_resolver_test.go`. Accept: `personal-key-isolation › Personal key on an application consumer`, `› Personal key on an OAuth-only application consumer`, `› Application key of another consumer`, `› Personal key on MCP`, `› Application key on MCP`. Also tested: `data_finder_test.go` (no owned key in an application consumer's credentials), `whoami_handler_test.go` (owned and disabled keys answer as unknown), `end_user_connections_test.go` (owned key refused even when the consumer holds it).
+- [x] 11.8 Run VG.
 
 ## Phase 12: S5b middleware store branch (base P11, after P7)
 
@@ -314,6 +315,7 @@ Depends: P11. Est.: ≈375 (code 130 / test 245). Commit boundary: (a) `refactor
 - [ ] 13.2 `pkg/app/proxy/routing.go`: `candidatePipeline(ctx, intent, needed, rc, data, keep, listingMode)` runs Resolve → Keep → capability → files → listing. The store mode drops a deferring candidate on `VerdictAbsent` with no keep-all fallback (DD17); `VerdictListed` and `VerdictUnknown` keep it (OQ3). The slug mode keeps `routing.go:115-117`.
 - [ ] 13.3 Create `pkg/app/proxy/store_selector.go`: `StoreSelector`, `StoreSelectInput`, `StoreSelection`, `ErrNoStoreConsumer` (wraps `ErrModelDenied`), with mockery.
   - A link admits when a `!FallbackOnly()` candidate remains, and for a zero intent that candidate also has a `Default`.
+  - Pool intents (P11 review note): `resolveInlinePool` (`pkg/app/routing/resolver.go`) looks members up through `registriesByID`, which includes `FallbackBackends`, and tags every member `pool:<alias>`, so `FallbackOnly()` is false for a fallback-chain member. Admission must not go through such a registry: tag fallback-chain members with `SourceFallback` there, or base pool admission on membership in `rc.Registries`.
   - Specificity: 0 for a literal allow entry, 1 for a glob, 2 with no allow-list, 0 for the other intent kinds.
   - The winner is the minimum of `(Rank, Priority, specificity, GrantedAt, id)`.
   - Pool alias: when every link refuses, the first resolver error decides, so an unknown alias → 400 and a known alias with no member left → 403.

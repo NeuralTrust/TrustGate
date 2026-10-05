@@ -26,10 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
-const (
-	sourceConsumer = "consumer"
-	sourceFallback = "fallback"
-)
+const sourceConsumer = "consumer"
 
 type RegistryLookup func(ids.RegistryID) (*registrydomain.Registry, bool)
 
@@ -70,7 +67,7 @@ func (r *resolver) resolveInline(in ResolveInput) (*routingdomain.CandidateSet, 
 		base.Add(inlineCandidate(reg, policies, pinned, sourceConsumer))
 	}
 	for _, reg := range in.Consumer.FallbackBackends {
-		base.Add(inlineCandidate(reg, policies, pinned, sourceFallback))
+		base.Add(inlineCandidate(reg, policies, pinned, routingdomain.SourceFallback))
 	}
 	return base.ResolveIntent(in.Intent)
 }

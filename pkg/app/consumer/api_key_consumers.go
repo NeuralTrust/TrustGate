@@ -160,7 +160,7 @@ func (s *apiKeyConsumers) ForAPIKey(
 		}
 		return nil, fmt.Errorf("consumer api key consumers: find api key: %w", err)
 	}
-	if auth == nil || !auth.Enabled ||
+	if auth == nil || !auth.Enabled || auth.IsOwned() ||
 		auth.Type != authdomain.TypeAPIKey || auth.GatewayID != gatewayID {
 		return nil, ErrAPIKeyUnknown
 	}

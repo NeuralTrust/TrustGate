@@ -14,15 +14,21 @@ Change `llm-store` (RUN-1763), slice S5 (decisions B7, D11). New capability. Per
 - WHEN `alice`'s key calls `/pslug001/v1/chat/completions`
 - THEN 404, the same response as an unknown slug
 
-### Requirement: A personal key on an application route answers 401
+### Requirement: A personal key on an application route answers as an unknown key
 
-A personal key presented on `/<application slug>/v1/*` MUST answer 401, never 403. `apiKeyAttachedElsewhere` (`pkg/api/middleware/auth.go`) MUST skip personal consumers, so it also stops scanning their owned keys. An application key attached to another application consumer MUST keep getting 403, as today.
+A personal key presented on `/<application slug>/v1/*` MUST answer exactly as an unknown key does, with the same status and body. It MUST never get the 403 that a valid key of another application consumer gets. `apiKeyAttachedElsewhere` (`pkg/api/middleware/auth.go`) MUST skip personal consumers, so it also stops scanning their owned keys, and an application consumer's loaded credentials MUST NOT include owned keys. An application key attached to another application consumer MUST keep getting 403, as today.
 
 #### Scenario: Personal key on an application consumer
 
 - GIVEN application consumer X with an application key, and `alice`'s key linked to personal consumer P on the same gateway
 - WHEN `alice`'s key calls `/<X slug>/v1/chat/completions`
-- THEN 401
+- THEN the same status and body as an unknown key, which is 401 here
+
+#### Scenario: Personal key on an OAuth-only application consumer
+
+- GIVEN application consumer Z with only an OAuth2 credential, and `alice`'s key linked to personal consumer P on the same gateway
+- WHEN `alice`'s key and an unknown key each call `/<Z slug>/v1/chat/completions`
+- THEN both get the same status and body
 
 #### Scenario: Application key of another consumer
 
@@ -42,7 +48,7 @@ An application key MUST answer 401 on `/store/v1/*`, even when the gateway has p
 
 ### Requirement: Personal keys are unknown on the MCP plane
 
-On the MCP plane, `chainIdentityResolver.resolveAPIKey` (`auth_chain.go`) and `apiKeyConsumers.ForAPIKey` (`pkg/app/consumer/api_key_consumers.go`) MUST treat an auth with `IsOwned()` as an unknown key: the request MUST be unauthenticated (401), even when no path scope narrows the candidates. Application keys on MCP MUST behave as today.
+On the MCP plane, `chainIdentityResolver.resolveAPIKey` (`auth_chain.go`) and `apiKeyConsumers.ForAPIKey` (`pkg/app/consumer/api_key_consumers.go`) MUST treat an auth with `IsOwned()` as an unknown key: the request MUST be unauthenticated (401), even when no path scope narrows the candidates. The `whoami` key lookup on a host that names no gateway and the api-key check of the connection endpoints (`validAPIKeyAuth`) MUST refuse an owned key as they refuse an unknown one. Application keys on MCP MUST behave as today.
 
 #### Scenario: Personal key on MCP
 

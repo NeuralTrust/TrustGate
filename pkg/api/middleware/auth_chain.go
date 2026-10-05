@@ -369,7 +369,7 @@ func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string,
 
 func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope) (Identity, error) {
 	a, err := r.apiKeys.FindByAPIKey(ctx, rawKey)
-	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
+	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey || a.IsOwned() {
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if !scope.allows(a.ID) {

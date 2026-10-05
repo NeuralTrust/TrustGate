@@ -150,6 +150,9 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 		"a credential that is not an api key": {
 			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeOAuth2, Enabled: true,
 		},
+		"a personal key": {
+			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice",
+		},
 	}
 	for name, auth := range cases {
 		t.Run(name, func(t *testing.T) {
