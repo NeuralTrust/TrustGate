@@ -50,8 +50,8 @@ func NewPinnedToolRepository(conn *database.Connection, appender outbox.Appender
 }
 
 // withBump runs fn in a transaction that holds the registry row with
-// FOR NO KEY UPDATE (it does not block the foreign-key lock UpsertPending takes
-// while inserting), and when fn reports a change bumps the registry's updated_at
+// FOR NO KEY UPDATE (it queues other writers of the same registry, including
+// recorders, and does not block the foreign-key lock of an insert), and when fn reports a change bumps the registry's updated_at
 // and appends the snapshot marker before committing. kind is the registry type,
 // for fn to check. A registry that is not the gateway's is ErrNotFound.
 func (r *PinnedToolRepository) withBump(
@@ -125,30 +125,102 @@ func (r *PinnedToolRepository) ListByRegistry(
 	return out, nil
 }
 
+// UpsertPending inserts the missing definitions as pending while the registry
+// stays under MaxPendingPerRegistry and each tool name under
+// MaxPendingPerToolName pending rows.
+//
+// The caps are race-free because the whole check-and-insert runs in one
+// transaction that first takes the registry row FOR NO KEY UPDATE. That lock
+// conflicts with itself, so concurrent recorders of the same registry (other
+// pods, the RPC) queue up and each counts what the previous one committed. FOR
+// KEY SHARE would not do: shared holders do not exclude each other, so two
+// callers could both read "499" and both insert. NO KEY UPDATE still does not
+// conflict with the foreign-key lock an insert into registry_tools takes on
+// other registries, and a recorder only waits for another writer of the same
+// registry (a decision or another recorder), which is short.
 func (r *PinnedToolRepository) UpsertPending(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	registryID ids.RegistryID,
 	tools []domain.ToolCandidate,
-) (int, error) {
+) (inserted, dropped int, err error) {
 	names, fingerprints, definitions := splitCandidates(tools)
 	if len(names) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
-	// DO NOTHING is what keeps an approved or rejected row's status: a tool the
-	// admin already decided on is never pushed back to pending by a re-discovery.
+	err = r.withBump(ctx, gatewayID, registryID, func(tx pgx.Tx, _ string) (bool, error) {
+		var err error
+		inserted, dropped, err = insertPendingCapped(ctx, tx, registryID, names, fingerprints, definitions)
+		return false, err // pending rows are not in the snapshot: no bump
+	})
+	if errors.Is(err, domain.ErrNotFound) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("pinned tool repository: upsert pending: %w", err)
+	}
+	return inserted, dropped, nil
+}
+
+func insertPendingCapped(
+	ctx context.Context,
+	tx pgx.Tx,
+	registryID ids.RegistryID,
+	names, fingerprints, definitions []string,
+) (inserted, dropped int, err error) {
+	// DO NOTHING semantics: a stored row, whatever its status, is never touched
+	// and never counted against the caps again.
+	stored := map[domain.ToolRef]struct{}{}
+	pendingByName := map[string]int{}
+	var pendingTotal int
+	rows, err := tx.Query(ctx,
+		`SELECT tool_name, fingerprint, status FROM registry_tools WHERE registry_id = $1`, registryID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for rows.Next() {
+		var name, fp, status string
+		if err := rows.Scan(&name, &fp, &status); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		stored[domain.ToolRef{Name: name, Fingerprint: fp}] = struct{}{}
+		if domain.ToolStatus(status) == domain.ToolStatusPending {
+			pendingTotal++
+			pendingByName[name]++
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	var inNames, inFPs, inDefs []string
+	for i := range names {
+		if _, ok := stored[domain.ToolRef{Name: names[i], Fingerprint: fingerprints[i]}]; ok {
+			continue
+		}
+		if pendingTotal >= domain.MaxPendingPerRegistry || pendingByName[names[i]] >= domain.MaxPendingPerToolName {
+			dropped++
+			continue
+		}
+		pendingTotal++
+		pendingByName[names[i]]++
+		inNames, inFPs, inDefs = append(inNames, names[i]), append(inFPs, fingerprints[i]), append(inDefs, definitions[i])
+	}
+	if len(inNames) == 0 {
+		return 0, dropped, nil
+	}
 	const query = `
 		INSERT INTO registry_tools (registry_id, tool_name, fingerprint, definition, status)
-		SELECT r.id, x.name, x.fp, x.def::jsonb, 'pending'
-		  FROM registries r, unnest($3::text[], $4::text[], $5::text[]) AS x(name, fp, def)
-		 WHERE r.id = $1
-		   AND r.gateway_id = $2
+		SELECT $1::uuid, x.name, x.fp, x.def::jsonb, 'pending'
+		  FROM unnest($2::text[], $3::text[], $4::text[]) AS x(name, fp, def)
 		ON CONFLICT (registry_id, tool_name, fingerprint) DO NOTHING`
-	cmd, err := r.conn.Pool.Exec(ctx, query, registryID, gatewayID, names, fingerprints, definitions)
+	cmd, err := tx.Exec(ctx, query, registryID, inNames, inFPs, inDefs)
 	if err != nil {
-		return 0, fmt.Errorf("pinned tool repository: upsert pending: %w", err)
+		return 0, 0, err
 	}
-	return int(cmd.RowsAffected()), nil
+	return int(cmd.RowsAffected()), dropped, nil
 }
 
 func (r *PinnedToolRepository) SetStatus(

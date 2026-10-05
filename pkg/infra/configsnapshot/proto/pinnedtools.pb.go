@@ -161,7 +161,11 @@ func (x *RecordPendingToolsRequest) GetTools() []*PendingTool {
 type RecordPendingToolsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// recorded is how many new pending rows were inserted.
-	Recorded      int32 `protobuf:"varint,1,opt,name=recorded,proto3" json:"recorded,omitempty"`
+	Recorded int32 `protobuf:"varint,1,opt,name=recorded,proto3" json:"recorded,omitempty"`
+	// dropped is how many new definitions were not stored because the registry or
+	// the tool name is at its pending cap. The data plane keeps offering them; they
+	// are accepted again once an admin decides some of the pending rows.
+	Dropped       int32 `protobuf:"varint,2,opt,name=dropped,proto3" json:"dropped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -203,6 +207,13 @@ func (x *RecordPendingToolsResponse) GetRecorded() int32 {
 	return 0
 }
 
+func (x *RecordPendingToolsResponse) GetDropped() int32 {
+	if x != nil {
+		return x.Dropped
+	}
+	return 0
+}
+
 var File_pinnedtools_proto protoreflect.FileDescriptor
 
 const file_pinnedtools_proto_rawDesc = "" +
@@ -218,9 +229,10 @@ const file_pinnedtools_proto_rawDesc = "" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x1f\n" +
 	"\vregistry_id\x18\x02 \x01(\tR\n" +
 	"registryId\x12-\n" +
-	"\x05tools\x18\x03 \x03(\v2\x17.snapshotpb.PendingToolR\x05tools\"8\n" +
+	"\x05tools\x18\x03 \x03(\v2\x17.snapshotpb.PendingToolR\x05tools\"R\n" +
 	"\x1aRecordPendingToolsResponse\x12\x1a\n" +
-	"\brecorded\x18\x01 \x01(\x05R\brecorded2m\n" +
+	"\brecorded\x18\x01 \x01(\x05R\brecorded\x12\x18\n" +
+	"\adropped\x18\x02 \x01(\x05R\adropped2m\n" +
 	"\vPinnedTools\x12^\n" +
 	"\rRecordPending\x12%.snapshotpb.RecordPendingToolsRequest\x1a&.snapshotpb.RecordPendingToolsResponseBLZJgithub.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpbb\x06proto3"
 
