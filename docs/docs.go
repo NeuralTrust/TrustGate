@@ -8601,6 +8601,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt"
                     }
                 },
+                "auth_id": {
+                    "type": "string"
+                },
                 "consumer": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer"
                 },

@@ -15,6 +15,8 @@
 package resolver
 
 import (
+	"time"
+
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -23,10 +25,15 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-type APIKeyIdentityResolver struct{}
+type APIKeyIdentityResolver struct {
+	now func() time.Time
+}
 
-func NewAPIKeyIdentityResolver() *APIKeyIdentityResolver {
-	return &APIKeyIdentityResolver{}
+func NewAPIKeyIdentityResolver(now func() time.Time) *APIKeyIdentityResolver {
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	return &APIKeyIdentityResolver{now: now}
 }
 
 func (r *APIKeyIdentityResolver) Resolve(
@@ -42,8 +49,9 @@ func (r *APIKeyIdentityResolver) Resolve(
 		return nil, ErrForbidden
 	}
 	hash := authdomain.HashAPIKey(rawKey)
+	now := r.now()
 	for _, a := range rc.Auths {
-		if a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey || a.KeyHash != hash {
+		if !a.AcceptsAPIKey(hash, now) {
 			continue
 		}
 		// The key's name is the only identity an API key carries, and the

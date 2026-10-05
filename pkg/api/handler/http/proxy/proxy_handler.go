@@ -151,7 +151,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		return writeProxyError(c, err)
 	}
 
-	stampConsumerTrace(c, consumer)
+	stampConsumerTrace(c, consumer, authCtx)
 	if !route.AllowsMethod(c.Method()) {
 		c.Set(fiber.HeaderAllow, strings.Join(route.AllowedMethods(), ", "))
 		return writeProxyError(c, errMethodNotAllowed)
@@ -416,7 +416,7 @@ func (h *ForwardedHandler) handleModels(
 	return c.Status(fiber.StatusOK).JSON(card)
 }
 
-func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
+func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) {
 	if rc == nil || rc.Consumer == nil {
 		return
 	}
@@ -425,6 +425,9 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 		return
 	}
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+	if authCtx != nil && !authCtx.AuthID.IsNil() {
+		rt.SetAuthID(authCtx.AuthID.String())
+	}
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
 		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
 	}

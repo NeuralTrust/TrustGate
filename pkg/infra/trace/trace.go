@@ -29,6 +29,7 @@ type Metadata struct {
 	TenantID     string
 	ConsumerID   string
 	ConsumerName string
+	AuthID       string
 	Path         string
 	Method       string
 	IP           string
@@ -140,6 +141,15 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 	t.mu.Lock()
 	t.meta.ConsumerID = id
 	t.meta.ConsumerName = name
+	t.mu.Unlock()
+}
+
+func (t *RequestTrace) SetAuthID(id string) {
+	if id == "" {
+		return
+	}
+	t.mu.Lock()
+	t.meta.AuthID = id
 	t.mu.Unlock()
 }
 
