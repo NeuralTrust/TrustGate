@@ -327,3 +327,10 @@ func TestStoreSelector_SelectionCarriesTheRouting(t *testing.T) {
 	require.Len(t, sel.Candidates.Registries(), 1)
 	assert.Equal(t, "mistral", sel.Candidates.Registries()[0].Provider())
 }
+
+func TestStoreSelector_RefusesAnAmbiguousChatBody(t *testing.T) {
+	req := &infracontext.RequestContext{ProxyCapability: "chat", Body: []byte(`{"model":"gpt6","model":"gpt-4.1"}`)}
+	sel, err := newStoreFixture(grantD).choose(newStoreSelector(workedCatalog), req)
+	require.ErrorIs(t, err, appproxy.ErrAmbiguousRequestBody)
+	assert.Nil(t, sel)
+}

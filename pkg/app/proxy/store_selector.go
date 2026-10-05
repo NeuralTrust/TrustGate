@@ -41,11 +41,9 @@ type StoreSelectInput struct {
 }
 
 type StoreSelection struct {
-	Link       appconsumer.StoreLink
-	Keep       CandidateFilter
-	Intent     routingdomain.Intent
-	Ref        string
-	Candidates *routingdomain.CandidateSet
+	Link appconsumer.StoreLink
+	Keep CandidateFilter
+	ResolvedRouting
 }
 
 // StoreSelector picks the personal consumer that serves a store request from
@@ -80,6 +78,9 @@ func NewStoreSelector(resolver approuting.Resolver, listing appcatalog.ModelList
 }
 
 func (s *storeSelector) Select(ctx context.Context, in StoreSelectInput) (*StoreSelection, error) {
+	if ambiguousChatBody(in.Request) {
+		return nil, ErrAmbiguousRequestBody
+	}
 	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
 		return nil, err
@@ -112,7 +113,8 @@ func (s *storeSelector) Select(ctx context.Context, in StoreSelectInput) (*Store
 	switch {
 	case best.link != nil:
 		return &StoreSelection{
-			Link: best.link.StoreLink, Keep: best.keep, Intent: intent, Ref: ref, Candidates: best.candidates,
+			Link: best.link.StoreLink, Keep: best.keep,
+			ResolvedRouting: ResolvedRouting{Intent: intent, Ref: ref, Candidates: best.candidates},
 		}, nil
 	case unknownPool:
 		return nil, fmt.Errorf("%w: pool %q is not configured for any linked consumer",
