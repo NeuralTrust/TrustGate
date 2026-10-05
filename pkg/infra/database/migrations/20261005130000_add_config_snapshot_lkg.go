@@ -31,7 +31,7 @@ func init() {
 }
 
 // config_snapshot_lkg holds the last good compiled snapshot of each scope, one
-// row per scope (” is the global snapshot). payload is zstd-compressed then
+// row per scope (the empty string is the global snapshot). payload is zstd-compressed then
 // AES-GCM encrypted, so it is incompressible: EXTERNAL storage keeps TOAST from
 // spending CPU trying. compiled_at guards the upsert so an older compile never
 // overwrites a newer one. key_id names the key that sealed the row, so a row

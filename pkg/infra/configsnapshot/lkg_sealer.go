@@ -24,9 +24,9 @@ import (
 const (
 	lkgPurpose = "config-snapshot-lkg/v1"
 	// lkgMaxDecoded bounds the decompressed size so a payload that authenticates
-	// but expands without limit cannot exhaust the admin. A real snapshot is a few
-	// megabytes per scope.
-	lkgMaxDecoded = 512 << 20
+	// but expands without limit cannot exhaust the admin (limit 1Gi). A real
+	// snapshot is about 1.7 MB per scope.
+	lkgMaxDecoded = 64 << 20
 )
 
 // LKGSealer compresses a snapshot with zstd, then encrypts it with AES-256-GCM

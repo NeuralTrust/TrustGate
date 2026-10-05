@@ -45,8 +45,9 @@ type LKGVersion struct {
 type LKGStore interface {
 	// Save upserts the record only when it is newer than the stored one by
 	// CompiledAt, so a slow compile from another replica never overwrites a newer
-	// one. It reports whether the row was written.
-	Save(ctx context.Context, rec LKGRecord) (written bool, err error)
+	// one. It reports whether the row was written and, when it was not, the
+	// version the stored row holds.
+	Save(ctx context.Context, rec LKGRecord) (written bool, storedVersion string, err error)
 	// Touch advances CompiledAt of the rows that still hold the given versions,
 	// without rewriting their payload, so an unchanged snapshot does not age out.
 	Touch(ctx context.Context, held []LKGVersion, compiledAt time.Time) error

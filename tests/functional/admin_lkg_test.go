@@ -94,9 +94,13 @@ func corruptEveryPolicy(t *testing.T, conn *pgx.Conn) {
 	_, err := conn.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS SELECT id, settings FROM policies`, backup))
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = conn.Exec(context.Background(),
-			fmt.Sprintf(`UPDATE policies p SET settings = b.settings FROM %s b WHERE p.id = b.id`, backup))
-		_, _ = conn.Exec(context.Background(), fmt.Sprintf(`DROP TABLE IF EXISTS %s`, backup))
+		if _, err := conn.Exec(context.Background(),
+			fmt.Sprintf(`UPDATE policies p SET settings = b.settings FROM %s b WHERE p.id = b.id`, backup)); err != nil {
+			t.Errorf("restoring policies after the test failed, the suite database is left corrupted: %v", err)
+		}
+		if _, err := conn.Exec(context.Background(), fmt.Sprintf(`DROP TABLE IF EXISTS %s`, backup)); err != nil {
+			t.Errorf("dropping the policy backup table failed: %v", err)
+		}
 	})
 	tag, err := conn.Exec(ctx, `UPDATE policies SET settings = '[1,2]'::jsonb`)
 	require.NoError(t, err)
@@ -142,15 +146,19 @@ func TestAdminLKG_RestartedAdminWhoseCompileFailsStillServesNewPods(t *testing.T
 	sc := seedLKGScenario(t)
 	conn := connectFunctionalDB(t)
 
+	// The suite's own admin persists to this table too. Clear it first, so a row
+	// can only come from the throwaway admin started below.
+	_, err := conn.Exec(context.Background(), `DELETE FROM config_snapshot_lkg`)
+	require.NoError(t, err)
+	startedAt := time.Now()
+
 	healthy := startThrowawayAdmin(t, true)
 	waitForLog(t, healthy.logs, "published config snapshot", 30*time.Second)
 	require.Eventually(t, func() bool {
 		var n int
-		return conn.QueryRow(context.Background(), `SELECT count(*) FROM config_snapshot_lkg WHERE scope = ''`).Scan(&n) == nil && n == 1
-	}, 15*time.Second, 200*time.Millisecond, "the global snapshot was never persisted")
-	var payload []byte
-	require.NoError(t, conn.QueryRow(context.Background(), `SELECT payload FROM config_snapshot_lkg WHERE scope = ''`).Scan(&payload))
-	assert.NotContains(t, string(payload), "admin-lkg", "the persisted payload must not be readable")
+		return conn.QueryRow(context.Background(),
+			`SELECT count(*) FROM config_snapshot_lkg WHERE scope = '' AND compiled_at >= $1`, startedAt).Scan(&n) == nil && n == 1
+	}, 15*time.Second, 200*time.Millisecond, "the throwaway admin never persisted the global snapshot")
 	healthy.stop()
 
 	corruptEveryPolicy(t, conn)

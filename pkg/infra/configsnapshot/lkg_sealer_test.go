@@ -89,3 +89,21 @@ func TestLKGSealer_GlobalScopeIsBoundToo(t *testing.T) {
 		t.Fatalf("Open global = %q, %v", got, err)
 	}
 }
+
+func TestLKGSealer_RejectsAnAuthenticatedPayloadThatDecompressesPastTheCap(t *testing.T) {
+	t.Parallel()
+	s, _ := NewLKGSealer(lkgSecret(t))
+	// Zeros compress to a few bytes, so the payload is tiny but expands past the
+	// cap. It is built at run time and authenticates correctly.
+	big := make([]byte, lkgMaxDecoded+1<<20)
+	payload, err := s.Seal("scope", "v1", big)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	if len(payload) > 1<<20 {
+		t.Fatalf("setup: payload is %d bytes, expected a tiny compressed one", len(payload))
+	}
+	if _, err := s.Open("scope", "v1", payload); err == nil {
+		t.Fatal("a payload that decompresses past the cap must be rejected")
+	}
+}

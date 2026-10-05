@@ -29,6 +29,7 @@ import (
 
 type poolQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
@@ -45,7 +46,7 @@ func NewRepository(conn *database.Connection) *Repository {
 }
 
 // Save upserts rec only when it is newer than the stored row by compiled_at.
-func (r *Repository) Save(ctx context.Context, rec appsnapshot.LKGRecord) (bool, error) {
+func (r *Repository) Save(ctx context.Context, rec appsnapshot.LKGRecord) (bool, string, error) {
 	const upsert = `
 		INSERT INTO config_snapshot_lkg (scope, version, compiled_at, key_id, payload)
 		VALUES ($1, $2, $3, $4, $5)
@@ -57,9 +58,18 @@ func (r *Repository) Save(ctx context.Context, rec appsnapshot.LKGRecord) (bool,
 		WHERE config_snapshot_lkg.compiled_at < EXCLUDED.compiled_at`
 	tag, err := r.pool.Exec(ctx, upsert, rec.Scope, rec.Version, rec.CompiledAt, rec.KeyID, rec.Payload)
 	if err != nil {
-		return false, fmt.Errorf("configsnapshotlkg: save scope %q: %w", rec.Scope, err)
+		return false, "", fmt.Errorf("configsnapshotlkg: save scope %q: %w", rec.Scope, err)
 	}
-	return tag.RowsAffected() > 0, nil
+	if tag.RowsAffected() > 0 {
+		return true, rec.Version, nil
+	}
+	// Not applied: a row at least as new is stored. Report which version it holds
+	// so the caller can tell "same data, newer stamp" from "someone else's data".
+	var stored string
+	if err := r.pool.QueryRow(ctx, `SELECT version FROM config_snapshot_lkg WHERE scope = $1`, rec.Scope).Scan(&stored); err != nil {
+		return false, "", fmt.Errorf("configsnapshotlkg: read stored version of scope %q: %w", rec.Scope, err)
+	}
+	return false, stored, nil
 }
 
 // Touch advances compiled_at of the rows that still hold the given versions.
