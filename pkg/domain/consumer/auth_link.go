@@ -68,3 +68,17 @@ func (l AuthLink) Validate() error {
 	}
 	return nil
 }
+
+// ValidateAuthLink checks the link attributes an attach carries: a personal
+// consumer needs a valid link and an application consumer takes none.
+func (c *Consumer) ValidateAuthLink(link *AuthLink) error {
+	switch {
+	case !c.IsPersonal() && link != nil:
+		return fmt.Errorf("%w: an application consumer takes no link attributes", ErrInvalidAuthLink)
+	case !c.IsPersonal():
+		return nil
+	case link == nil:
+		return fmt.Errorf("%w: level and granted_at are required on a personal consumer", ErrInvalidAuthLink)
+	}
+	return link.Validate()
+}

@@ -380,6 +380,25 @@ definitions:
       param_value:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest:
+    properties:
+      granted_at:
+        example: "2026-10-01T09:00:00Z"
+        format: date-time
+        type: string
+      level:
+        enum:
+        - user
+        - group
+        - all
+        example: group
+        type: string
+      priority:
+        example: 1
+        maximum: 2147483647
+        minimum: 0
+        type: integer
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachRegistryRequest:
     properties:
       weight:
@@ -4337,7 +4356,13 @@ paths:
       tags:
       - consumers
     post:
-      description: Associates an auth credential with a consumer (idempotent).
+      consumes:
+      - application/json
+      description: 'Associates an auth credential with a consumer (idempotent). An
+        application consumer takes only unowned auths and no link attributes (an empty
+        body or {}). A personal consumer takes only owned keys, and the body is required:
+        level and granted_at must be present, and priority defaults to 1. Re-attaching
+        a key to a personal consumer replaces that one link''s attributes.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4357,6 +4382,11 @@ paths:
         name: auth_id
         required: true
         type: string
+      - description: Link attributes, for an owned key on a personal consumer
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest'
       produces:
       - application/json
       responses:
@@ -4372,6 +4402,11 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: The auth does not match the consumer audience, or the link
+            attributes are missing, invalid or not allowed
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
