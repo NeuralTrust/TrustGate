@@ -16,12 +16,14 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -108,11 +110,31 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 
 func (a *associator) DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
 	cons, err := a.repo.DetachRegistryIfUnreferenced(ctx, gatewayID, consumerID, registryID)
+	if errors.Is(err, commonerrors.ErrConflict) {
+		return a.explainDetachConflict(ctx, gatewayID, consumerID, registryID, err)
+	}
 	if err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
 	return nil
+}
+
+func (a *associator) explainDetachConflict(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	consumerID ids.ConsumerID,
+	registryID ids.RegistryID,
+	conflict error,
+) error {
+	current, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	if err != nil {
+		return conflict
+	}
+	if err := current.ValidateRegistryDetach(registryID); err != nil {
+		return err
+	}
+	return conflict
 }
 
 func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {

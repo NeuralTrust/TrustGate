@@ -845,9 +845,13 @@ func TestRepository_AudienceRoundTripAndUpdateKeepsIt(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "audience-gw")
+	regID := seedRegistry(t, f.be, gwID, "audience-reg")
 
 	for audience, overwrite := range map[domain.Audience]domain.Audience{"": domain.AudiencePersonal, domain.AudiencePersonal: ""} {
-		c, err := domain.New(domain.CreateParams{GatewayID: gwID, Name: "chat-" + string(audience), Type: domain.TypeLLM, Audience: audience})
+		c, err := domain.New(domain.CreateParams{
+			GatewayID: gwID, Name: "chat-" + string(audience), Type: domain.TypeLLM, Audience: audience,
+			RegistryIDs: []ids.RegistryID{regID}, ModelPolicies: domain.ModelPolicies{regID: {Default: "gpt-4o"}},
+		})
 		require.NoError(t, err)
 		require.NoError(t, f.repo.Save(ctx, c))
 		var stored string

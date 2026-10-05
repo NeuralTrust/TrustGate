@@ -49,6 +49,7 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id} [put]
 func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.ConsumerKind](c)
@@ -94,6 +95,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		GatewayID:     gatewayID,
 		Name:          req.Name,
 		Type:          req.ToType(),
+		Audience:      req.ToAudience(),
 		LBConfig:      lbConfig,
 		Headers:       req.Headers,
 		Active:        req.Active,

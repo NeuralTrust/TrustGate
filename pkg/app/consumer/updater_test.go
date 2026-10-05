@@ -544,3 +544,57 @@ func TestUpdater_Update_ReplacingAuthsChecksTheyExist(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdater_Update_PersonalRules(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		personal bool
+		in       appconsumer.UpdateInput
+		wantErr  error
+	}{
+		{name: "switch to application refused", personal: true, in: appconsumer.UpdateInput{Audience: ptr(domain.AudienceApplication)}, wantErr: domain.ErrAudienceImmutable},
+		{name: "switch to personal refused", in: appconsumer.UpdateInput{Audience: ptr(domain.AudiencePersonal)}, wantErr: domain.ErrAudienceImmutable},
+		{name: "invalid audience", in: appconsumer.UpdateInput{Audience: ptr(domain.Audience("team"))}, wantErr: domain.ErrInvalidAudience},
+		{name: "empty auths on personal", personal: true, in: appconsumer.UpdateInput{Auths: &[]ids.AuthID{}}, wantErr: domain.ErrPersonalAuthsBulk},
+		{name: "drops the last default", personal: true, in: appconsumer.UpdateInput{ModelPolicies: &domain.ModelPolicies{}}, wantErr: domain.ErrPersonalNoDefault},
+		{name: "type change to MCP", personal: true, in: appconsumer.UpdateInput{Type: ptr(domain.TypeMCP)}, wantErr: domain.ErrInvalidAudience},
+		{name: "same value accepted", personal: true, in: appconsumer.UpdateInput{Audience: ptr(domain.AudiencePersonal), Name: ptr("new")}},
+		{name: "application value accepted", in: appconsumer.UpdateInput{Audience: ptr(domain.AudienceApplication), Name: ptr("new")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			beID := ids.New[ids.RegistryKind]()
+			existing := existingConsumer(gwID, beID)
+			if tc.personal {
+				existing.Audience = domain.AudiencePersonal
+				existing.ModelPolicies = domain.ModelPolicies{beID: {Default: "gpt-4o"}}
+			}
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tc.wantErr == nil {
+				repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything, (*[]ids.AuthID)(nil)).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+			updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+
+			in := tc.in
+			in.ID, in.GatewayID = existing.ID, gwID
+			got, err := updater.Update(context.Background(), in)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Update error: %v", err)
+			}
+			if got.Name != "new" || got.IsPersonal() != tc.personal {
+				t.Fatalf("got name %q, personal %v", got.Name, got.IsPersonal())
+			}
+		})
+	}
+}

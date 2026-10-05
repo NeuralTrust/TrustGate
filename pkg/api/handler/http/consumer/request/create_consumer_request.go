@@ -38,6 +38,9 @@ type CreateConsumerRequest struct {
 	FailMode      string                   `json:"fail_mode,omitempty"`
 	Identity      *IdentityRequest         `json:"identity,omitempty"`
 	AuthBinding   *AuthBindingRequest      `json:"auth_binding,omitempty"`
+	// Audience is application (the default) or personal. It is set at create
+	// and cannot change afterwards.
+	Audience string `json:"audience,omitempty" enums:"application,personal" default:"application"`
 }
 
 // AuthBindingRequest narrows which callers of a shared auth (external IdP,
@@ -68,8 +71,8 @@ func (r *AuthBindingRequest) ToDomain() *domain.AuthBinding {
 // who a request runs as is read from the request — a verified person is their
 // token's subject, a machine credential naming an end user acts for that
 // person, one naming nobody acts as the application. The fields stay on the
-// wire so a client written against the old shape is not refused; what it asks
-// for is what it now gets by sending (or not sending) the end-user header.
+// wire so a client written against the old shape is not refused; what it asks for
+// is what it now gets by sending (or not sending) the end-user header.
 type IdentityRequest struct {
 	ActsForUsers  bool   `json:"acts_for_users"`
 	Source        string `json:"source,omitempty"`
@@ -262,11 +265,16 @@ func (r CreateConsumerRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	return nil
+	_, err := domain.ParseAudience(r.Audience)
+	return err
 }
 
 func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
+}
+
+func (r CreateConsumerRequest) ToAudience() domain.Audience {
+	return domain.Audience(r.Audience)
 }
 
 func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {

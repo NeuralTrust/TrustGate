@@ -121,7 +121,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	onMCP := partitionScoped(loaded.onMCP)
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
-		chain := fallbackChainOf(c)
+		chain := c.ActiveFallbackChain()
 		fallbackBackends := collectBackends(chain, backendByID)
 		f.warnUnresolvedFallbackChain(c, fallbackBackends)
 		gatewayWide := everywhere
@@ -287,7 +287,7 @@ func (f *dataFinder) loadBackends(
 	consumers []*domain.Consumer,
 ) (map[ids.RegistryID]*registrydomain.Registry, error) {
 	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
-		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
+		return append(append([]ids.RegistryID{}, c.RegistryIDs...), c.ActiveFallbackChain()...)
 	})
 	if len(idList) == 0 {
 		return map[ids.RegistryID]*registrydomain.Registry{}, nil
@@ -382,7 +382,7 @@ func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Con
 }
 
 func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []*registrydomain.Registry) {
-	chain := fallbackChainOf(c)
+	chain := c.ActiveFallbackChain()
 	if len(chain) == len(resolved) {
 		return
 	}
@@ -391,17 +391,6 @@ func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []
 		slog.Int("chain_size", len(chain)),
 		slog.Int("resolved", len(resolved)),
 	)
-}
-
-func fallbackChainOf(c *domain.Consumer) []ids.RegistryID {
-	if c == nil {
-		return nil
-	}
-	fb := c.Fallback
-	if fb == nil || !fb.Enabled {
-		return nil
-	}
-	return []ids.RegistryID(fb.Chain)
 }
 
 func poolRegistryIDs(all []ids.RegistryID, chain []ids.RegistryID) []ids.RegistryID {

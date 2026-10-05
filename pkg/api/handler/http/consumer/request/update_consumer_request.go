@@ -46,6 +46,9 @@ type UpdateConsumerRequest struct {
 	// AuthBinding replaces the whole binding. Omit to keep it; send empty lists
 	// to clear it.
 	AuthBinding *AuthBindingRequest `json:"auth_binding,omitempty"`
+	// Audience is set at create and cannot change: a value other than the stored
+	// one answers 422.
+	Audience *string `json:"audience,omitempty" enums:"application,personal"`
 }
 
 // MaxAuthAssociations bounds how many auth ids one update may associate.
@@ -58,6 +61,11 @@ func (r UpdateConsumerRequest) Validate() error {
 		}
 		if len(*r.Name) > 255 {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+		}
+	}
+	if r.Audience != nil {
+		if _, err := domain.ParseAudience(*r.Audience); err != nil {
+			return err
 		}
 	}
 	if r.Auths != nil && len(*r.Auths) > MaxAuthAssociations {
@@ -84,6 +92,14 @@ func (r UpdateConsumerRequest) ToType() *domain.Type {
 	}
 	t := domain.Type(strings.ToUpper(strings.TrimSpace(*r.Type)))
 	return &t
+}
+
+func (r UpdateConsumerRequest) ToAudience() *domain.Audience {
+	if r.Audience == nil {
+		return nil
+	}
+	audience := domain.Audience(*r.Audience)
+	return &audience
 }
 
 func (r UpdateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {

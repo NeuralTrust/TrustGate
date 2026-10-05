@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -32,6 +33,7 @@ type CreateInput struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            domain.Type
+	Audience        domain.Audience
 	LBConfig        *domain.LBConfig
 	Headers         map[string]string
 	Active          *bool
@@ -44,6 +46,10 @@ type CreateInput struct {
 	AuthBinding     *domain.AuthBinding
 }
 
+type gatewayFinder interface {
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
+}
+
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
 type Creator interface {
 	Create(ctx context.Context, in CreateInput) (*domain.Consumer, error)
@@ -54,6 +60,7 @@ var _ Creator = (*creator)(nil)
 type creator struct {
 	repo         domain.Writer
 	registryRepo registrydomain.Repository
+	gateways     gatewayFinder
 	memoryCache  *cache.TTLMap
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
@@ -63,6 +70,7 @@ type creator struct {
 func NewCreator(
 	repo domain.Writer,
 	registryRepo registrydomain.Repository,
+	gateways gatewayFinder,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -71,6 +79,7 @@ func NewCreator(
 	return &creator{
 		repo:         repo,
 		registryRepo: registryRepo,
+		gateways:     gateways,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
 		publisher:    publisher,
 		logger:       logger,
@@ -85,6 +94,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,
 		Type:            in.Type,
+		Audience:        in.Audience,
 		LBConfig:        in.LBConfig,
 		Headers:         in.Headers,
 		Active:          in.Active,
@@ -102,6 +112,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
+	if err := c.refusePersonalCreate(ctx, cons); err != nil {
+		return nil, err
+	}
 	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
 		return nil, err
 	}
@@ -114,6 +127,20 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		c.signaler.Signal(ctx)
 	}
 	return cons, nil
+}
+
+func (c *creator) refusePersonalCreate(ctx context.Context, cons *domain.Consumer) error {
+	if !cons.IsPersonal() {
+		return nil
+	}
+	gw, err := c.gateways.FindByID(ctx, cons.GatewayID)
+	if err != nil {
+		return err
+	}
+	if gw.ServedByHybridDataPlane() {
+		return domain.ErrHybridPersonal
+	}
+	return nil
 }
 
 func (c *creator) saveWithSlugRetry(ctx context.Context, cons *domain.Consumer) error {

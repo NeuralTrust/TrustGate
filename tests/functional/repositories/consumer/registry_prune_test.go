@@ -4,9 +4,11 @@ package consumer_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -259,5 +261,40 @@ func TestRepository_DeleteRegistry_PruneKeepsUnrelatedGatewayConsumer(t *testing
 	}
 	if _, ok := got.ModelPolicies[otherReg]; !ok {
 		t.Fatalf("ModelPolicies = %+v, want the other gateway's policy untouched", got.ModelPolicies)
+	}
+}
+
+func TestRepository_DeleteRegistry_KeepsThePersonalDefault(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "gw-prune-personal")
+	withDefault := seedRegistry(t, f.be, gwID, "personal-default")
+	plain := seedRegistry(t, f.be, gwID, "personal-plain")
+	c, err := domain.New(domain.CreateParams{
+		GatewayID: gwID, Name: "personal", Type: domain.TypeLLM, Audience: domain.AudiencePersonal,
+		RegistryIDs:   []ids.RegistryID{withDefault, plain},
+		ModelPolicies: domain.ModelPolicies{withDefault: {Default: "gpt-4o"}, plain: {Allowed: []string{"gpt-4o"}}},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	saveWithRegistries(t, f, c)
+
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	if _, err := registries.Delete(ctx, gwID, withDefault); !errors.Is(err, commonerrors.ErrHasDependents) {
+		t.Fatalf("Delete(default registry) = %v, want ErrHasDependents", err)
+	}
+	report, err := registries.Delete(ctx, gwID, plain)
+	if err != nil {
+		t.Fatalf("Delete(plain registry): %v", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, []string{registrydomain.PrunedModelPolicies}, nil)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !slices.Equal(got.RegistryIDs, []ids.RegistryID{withDefault}) || got.ModelPolicies[withDefault].Default != "gpt-4o" {
+		t.Fatalf("got registries %v and policies %+v, want the default registry kept", got.RegistryIDs, got.ModelPolicies)
 	}
 }

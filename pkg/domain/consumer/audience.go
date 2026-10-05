@@ -14,7 +14,12 @@
 
 package consumer
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+)
 
 type Audience string
 
@@ -49,4 +54,40 @@ func (c *Consumer) AudienceName() Audience {
 		return AudienceApplication
 	}
 	return c.Audience
+}
+
+// ValidateRegistryDetach refuses to detach from a personal consumer the
+// registry that carries its last primary default model. A consumer that has no
+// primary default already is never refused, so it can still be cleaned up.
+func (c *Consumer) ValidateRegistryDetach(registryID ids.RegistryID) error {
+	if c.IsPersonal() && c.hasPrimaryDefault(ids.RegistryID{}) && !c.hasPrimaryDefault(registryID) {
+		return ErrPersonalNoDefault
+	}
+	return nil
+}
+
+func (c *Consumer) validatePersonal() error {
+	if !c.IsPersonal() {
+		return nil
+	}
+	if c.Type != TypeLLM {
+		return fmt.Errorf("%w: only LLM consumers can be personal", ErrInvalidAudience)
+	}
+	if !c.hasPrimaryDefault(ids.RegistryID{}) {
+		return ErrPersonalNoDefault
+	}
+	return nil
+}
+
+func (c *Consumer) hasPrimaryDefault(excluded ids.RegistryID) bool {
+	fallback := c.ActiveFallbackChain()
+	for _, id := range c.RegistryIDs {
+		if id == excluded || slices.Contains(fallback, id) {
+			continue
+		}
+		if c.ModelPolicies[id].Default != "" {
+			return true
+		}
+	}
+	return false
 }
