@@ -123,6 +123,12 @@ func (a *Auth) IsExpired(now time.Time) bool {
 	return a.ExpiresAt != nil && !now.Before(*a.ExpiresAt)
 }
 
+// AcceptsAPIKey reports whether a is an enabled, unexpired api_key auth whose
+// stored hash is hash.
+func (a *Auth) AcceptsAPIKey(hash string, now time.Time) bool {
+	return a != nil && a.Enabled && a.Type == TypeAPIKey && a.KeyHash == hash && !a.IsExpired(now)
+}
+
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
 	id, err := ids.NewV7[ids.AuthKind]()
 	if err != nil {

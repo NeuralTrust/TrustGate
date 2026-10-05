@@ -286,11 +286,16 @@ func CreateAPIKeyAuth(t *testing.T, gatewayID, name string) (string, string) {
 func createAndAttachAPIKey(t *testing.T, gatewayID, consumerID string) string {
 	t.Helper()
 	authID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("proxy-key"))
+	registerProxyKey(t, gatewayID, consumerID, authID, key)
+	return key
+}
+
+func registerProxyKey(t *testing.T, gatewayID, consumerID, authID, key string) {
+	t.Helper()
 	AttachAuth(t, gatewayID, consumerID, authID)
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
 	proxyHosts.Store(key, host.(string))
-	return key
 }
 
 // validRegistryPayload returns a minimal payload accepted by Validate(): a

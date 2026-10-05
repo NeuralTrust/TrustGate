@@ -47,6 +47,7 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	consumerDataMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	loadBalancerMap := cache.NewTTLMap(cache.LoadBalancerCacheTTL)
 	authMap := cache.NewTTLMap(cache.AuthCacheTTL)
+	authKeyMap := cache.NewTTLMap(cache.AuthKeyCacheTTL)
 	consumerPathMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	registryMap := cache.NewTTLMap(cache.RegistryCacheTTL)
 	policyMap := cache.NewTTLMap(cache.PolicyCacheTTL)
@@ -59,6 +60,7 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	loadBalancerMap.Set(gatewayID+":consumer-1", "lb")
 	loadBalancerMap.Set(otherID+":consumer-9", "keep")
 	authMap.Set("enabled:oauth2", "candidate-list")
+	authKeyMap.Set("rotated-key-hash", "auth")
 	consumerPathMap.Set("|/v1/mcp/linear", "path-match")
 	registryID := ids.New[ids.RegistryKind]().String()
 	registryMap.Set(registryID, "registry")
@@ -71,6 +73,7 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	client.EXPECT().GetTTLMap(cache.ConsumerDataTTLName).Return(consumerDataMap).Once()
 	client.EXPECT().GetTTLMap(cache.LoadBalancerTTLName).Return(loadBalancerMap).Once()
 	client.EXPECT().GetTTLMap(cache.AuthTTLName).Return(authMap).Once()
+	client.EXPECT().GetTTLMap(cache.AuthKeyTTLName).Return(authKeyMap).Once()
 	client.EXPECT().GetTTLMap(cache.ConsumerPathTTLName).Return(consumerPathMap).Once()
 	client.EXPECT().GetTTLMap(cache.RegistryTTLName).Return(registryMap).Once()
 	client.EXPECT().GetTTLMap(cache.PolicyTTLName).Return(policyMap).Once()
@@ -112,6 +115,9 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	}
 	if _, ok := authMap.Get("enabled:oauth2"); ok {
 		t.Fatal("auth credential candidate list was not evicted")
+	}
+	if _, ok := authKeyMap.Get("rotated-key-hash"); ok {
+		t.Fatal("auth_key entry was not evicted; a rotated or revoked key keeps resolving on other replicas")
 	}
 	if _, ok := consumerPathMap.Get("|/v1/mcp/linear"); ok {
 		t.Fatal("consumer-path entry was not evicted")
