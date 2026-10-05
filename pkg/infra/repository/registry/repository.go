@@ -170,19 +170,23 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       health_checks    = $9,
 		       mcp_target       = $10,
 		       pricing          = $11,
-		       tool_policy      = $12,
+		       tool_policy      = CASE WHEN $15 THEN tool_policy ELSE $12 END,
 		       updated_at       = $13
-		 WHERE id = $1 AND gateway_id = $14`
+		 WHERE id = $1 AND gateway_id = $14
+		RETURNING tool_policy`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, toolPolicy(b), b.UpdatedAt, b.GatewayID,
-		)
+		var stored string
+		err := tx.QueryRow(ctx, query,
+			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, toolPolicy(b), b.UpdatedAt, b.GatewayID, b.KeepStoredToolPolicy,
+		).Scan(&stored)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
 		if err != nil {
 			return mapPgError(err)
 		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
-		}
+		// Hand back what is stored, so the caller caches and returns the truth.
+		b.ToolPolicy = domain.ToolPolicy(stored).Normalize()
 		return nil
 	})
 }

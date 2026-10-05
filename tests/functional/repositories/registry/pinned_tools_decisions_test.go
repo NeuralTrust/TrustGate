@@ -269,3 +269,44 @@ func TestPinnedTools_UpsertPending_CapHoldsUnderConcurrency(t *testing.T) {
 		t.Fatalf("pending rows = %d, want exactly %d", n, domain.MaxPendingPerRegistry)
 	}
 }
+
+// "Enable pinning" can commit between an update's read and its write. The update
+// does not mention the policy, so it must leave the stored one alone: writing the
+// stale "auto" back would turn pinning off, which fails open.
+func TestRepository_Update_WithoutAPolicyDoesNotRevertAConcurrentPin(t *testing.T) {
+	r, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+
+	loaded, err := r.FindByID(ctx, reg.ID) // the updater's read: policy is auto
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, "admin"); err != nil { // lands in between
+		t.Fatalf("Pin: %v", err)
+	}
+
+	loaded.Description = "edited"
+	loaded.KeepStoredToolPolicy = true // what the updater sets when the request has no tool_policy
+	loaded.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, loaded); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if loaded.ToolPolicy != domain.ToolPolicyPinned {
+		t.Fatalf("Update must hand back the stored policy, got %q", loaded.ToolPolicy)
+	}
+	got, _ := r.FindByID(ctx, reg.ID)
+	if got.ToolPolicy != domain.ToolPolicyPinned || got.Description != "edited" {
+		t.Fatalf("policy=%q description=%q; want pinned/edited", got.ToolPolicy, got.Description)
+	}
+
+	// A request that does set the policy still wins.
+	got.ToolPolicy = domain.ToolPolicyAuto
+	got.KeepStoredToolPolicy = false
+	got.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if again, _ := r.FindByID(ctx, reg.ID); again.ToolPolicy != domain.ToolPolicyAuto {
+		t.Fatalf("an explicit policy change was ignored: %q", again.ToolPolicy)
+	}
+}
