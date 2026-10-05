@@ -68,6 +68,21 @@ services:
       REDIS_DB: "3"
 
       # ----------------------------------------------------------------------
+      # TrustGate proxy — outbound guard
+      # TrustGate refuses configured outbound URLs (providers, Azure endpoints,
+      # OIDC/introspection/STS, OTLP) that resolve to private, loopback or
+      # link-local addresses, and refuses Model Armor auth through this
+      # container's own cloud identity, unless opted in here. A self-hosted data
+      # plane serves one operator and normally reaches that operator's private
+      # model hosts and IdPs, so both default to true. Set them to false only if
+      # tenants you do not trust can configure this gateway.
+      # PROVIDER_ALLOW_PRIVATE_NETWORKS is the name older images read; both take
+      # the same shell variable so they cannot drift.
+      OUTBOUND_ALLOW_PRIVATE_NETWORKS: ${OUTBOUND_ALLOW_PRIVATE_NETWORKS:-true}
+      PROVIDER_ALLOW_PRIVATE_NETWORKS: ${OUTBOUND_ALLOW_PRIVATE_NETWORKS:-true}
+      MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY: ${MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY:-true}
+
+      # ----------------------------------------------------------------------
       # TrustGate proxy — telemetry / OTel egress
       # TrustGate exports OTLP/HTTP logs to the loopback egress collector baked
       # into the image. The path /v1/logs is required: with an http:// URL the
