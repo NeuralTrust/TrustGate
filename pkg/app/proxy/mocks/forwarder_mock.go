@@ -6,6 +6,8 @@ import (
 	context "context"
 
 	ids "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+
 	mock "github.com/stretchr/testify/mock"
 
 	proxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
@@ -22,65 +24,6 @@ type Forwarder_Expecter struct {
 
 func (_m *Forwarder) EXPECT() *Forwarder_Expecter {
 	return &Forwarder_Expecter{mock: &_m.Mock}
-}
-
-// CheckRateLimit provides a mock function with given fields: ctx, gatewayID
-func (_m *Forwarder) CheckRateLimit(ctx context.Context, gatewayID ids.ID[ids.GatewayKind]) (*proxy.ForwardResult, error) {
-	ret := _m.Called(ctx, gatewayID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for CheckRateLimit")
-	}
-
-	var r0 *proxy.ForwardResult
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) (*proxy.ForwardResult, error)); ok {
-		return rf(ctx, gatewayID)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) *proxy.ForwardResult); ok {
-		r0 = rf(ctx, gatewayID)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*proxy.ForwardResult)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
-		r1 = rf(ctx, gatewayID)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// Forwarder_CheckRateLimit_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CheckRateLimit'
-type Forwarder_CheckRateLimit_Call struct {
-	*mock.Call
-}
-
-// CheckRateLimit is a helper method to define mock.On call
-//   - ctx context.Context
-//   - gatewayID ids.ID[ids.GatewayKind]
-func (_e *Forwarder_Expecter) CheckRateLimit(ctx interface{}, gatewayID interface{}) *Forwarder_CheckRateLimit_Call {
-	return &Forwarder_CheckRateLimit_Call{Call: _e.mock.On("CheckRateLimit", ctx, gatewayID)}
-}
-
-func (_c *Forwarder_CheckRateLimit_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind])) *Forwarder_CheckRateLimit_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
-	})
-	return _c
-}
-
-func (_c *Forwarder_CheckRateLimit_Call) Return(_a0 *proxy.ForwardResult, _a1 error) *Forwarder_CheckRateLimit_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *Forwarder_CheckRateLimit_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) (*proxy.ForwardResult, error)) *Forwarder_CheckRateLimit_Call {
-	_c.Call.Return(run)
-	return _c
 }
 
 // Forward provides a mock function with given fields: ctx, in
@@ -138,6 +81,66 @@ func (_c *Forwarder_Forward_Call) Return(_a0 *proxy.ForwardResult, _a1 error) *F
 }
 
 func (_c *Forwarder_Forward_Call) RunAndReturn(run func(context.Context, proxy.ForwardInput) (*proxy.ForwardResult, error)) *Forwarder_Forward_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Precheck provides a mock function with given fields: ctx, gatewayID, req
+func (_m *Forwarder) Precheck(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], req *infracontext.RequestContext) (*proxy.ForwardResult, error) {
+	ret := _m.Called(ctx, gatewayID, req)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Precheck")
+	}
+
+	var r0 *proxy.ForwardResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *infracontext.RequestContext) (*proxy.ForwardResult, error)); ok {
+		return rf(ctx, gatewayID, req)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *infracontext.RequestContext) *proxy.ForwardResult); ok {
+		r0 = rf(ctx, gatewayID, req)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proxy.ForwardResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], *infracontext.RequestContext) error); ok {
+		r1 = rf(ctx, gatewayID, req)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Forwarder_Precheck_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Precheck'
+type Forwarder_Precheck_Call struct {
+	*mock.Call
+}
+
+// Precheck is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - req *infracontext.RequestContext
+func (_e *Forwarder_Expecter) Precheck(ctx interface{}, gatewayID interface{}, req interface{}) *Forwarder_Precheck_Call {
+	return &Forwarder_Precheck_Call{Call: _e.mock.On("Precheck", ctx, gatewayID, req)}
+}
+
+func (_c *Forwarder_Precheck_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], req *infracontext.RequestContext)) *Forwarder_Precheck_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(*infracontext.RequestContext))
+	})
+	return _c
+}
+
+func (_c *Forwarder_Precheck_Call) Return(_a0 *proxy.ForwardResult, _a1 error) *Forwarder_Precheck_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Forwarder_Precheck_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], *infracontext.RequestContext) (*proxy.ForwardResult, error)) *Forwarder_Precheck_Call {
 	_c.Call.Return(run)
 	return _c
 }

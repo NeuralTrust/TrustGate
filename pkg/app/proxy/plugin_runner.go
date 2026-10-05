@@ -70,12 +70,23 @@ func (f *forwarder) runPreRequest(
 	return nil, nil
 }
 
-// CheckRateLimit enforces the gateway plan burst/quota before the request
+// Precheck runs what a request answers before anything routes it: a chat body
+// the decoder may read otherwise than the upstream is refused with
+// ErrAmbiguousRequestBody, so a malformed body never consumes a rate-limit
+// token, and then the gateway plan limit is charged.
+func (f *forwarder) Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error) {
+	if ambiguousChatBody(req) {
+		return nil, ErrAmbiguousRequestBody
+	}
+	return f.checkRateLimit(ctx, gatewayID)
+}
+
+// checkRateLimit enforces the gateway plan burst/quota before the request
 // reaches the upstream. An exceeded limit renders a 429 ForwardResult with the
 // standard rate-limit headers; an unavailable plan (unknown/missing tier)
 // propagates as an error so mapProxyError maps it to HTTP 503, matching how an
 // unusable guard is treated.
-func (f *forwarder) CheckRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
+func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
 	err := f.limiter.Check(ctx, gatewayID)
 	if err == nil {
 		return nil, nil

@@ -37,6 +37,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	sessiondomain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -102,13 +103,15 @@ func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker,
 type fakeSessionStore struct {
 	last     string
 	recorded []appsession.RecordInput
+	looked   []appsession.Scope
 }
 
 func (f *fakeSessionStore) Record(_ context.Context, in appsession.RecordInput) {
 	f.recorded = append(f.recorded, in)
 }
 
-func (f *fakeSessionStore) LastTurnID(_ context.Context, _, _ string) string {
+func (f *fakeSessionStore) LastTurnID(_ context.Context, scope appsession.Scope, _ string) string {
+	f.looked = append(f.looked, scope)
 	return f.last
 }
 
@@ -597,7 +600,7 @@ func TestForward_RecordsSessionTurnOnSuccess(t *testing.T) {
 	require.Len(t, store.recorded, 1)
 	assert.Equal(t, "resp_turn", store.recorded[0].TurnID)
 	assert.Equal(t, "sess-1", store.recorded[0].SessionID)
-	assert.Equal(t, gatewayID.String(), store.recorded[0].GatewayID)
+	assert.Equal(t, appsession.Scope{GatewayID: gatewayID.String()}, store.recorded[0].Scope)
 	assert.Equal(t, "openai", store.recorded[0].Provider)
 }
 
@@ -708,6 +711,60 @@ func TestForward_StampsContinuationFromStore(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "resp_prev", req.PreviousResponseID, "last turn id is stamped for the invoker to thread")
+	assert.Equal(t, []appsession.Scope{{GatewayID: gatewayID.String()}}, store.looked)
+}
+
+type memSessionRepo struct {
+	sessions map[string]sessiondomain.Session
+	turns    map[string]string
+}
+
+func (m *memSessionRepo) Save(_ context.Context, s *sessiondomain.Session) error {
+	m.sessions[fmt.Sprintf("session:%s:%s", s.GatewayID, s.ID)] = *s
+	m.turns[fmt.Sprintf("session_turn:%s:%s", s.GatewayID, s.LastTurnID)] = s.ID
+	return nil
+}
+
+func (m *memSessionRepo) Get(_ context.Context, gatewayID, sessionID string) (*sessiondomain.Session, error) {
+	s, ok := m.sessions[fmt.Sprintf("session:%s:%s", gatewayID, sessionID)]
+	if !ok {
+		return nil, nil
+	}
+	return &s, nil
+}
+
+func (m *memSessionRepo) FindSessionIDByTurn(_ context.Context, gatewayID, turnID string) (string, error) {
+	return m.turns[fmt.Sprintf("session_turn:%s:%s", gatewayID, turnID)], nil
+}
+
+func TestForward_SessionTurnsStayWithTheirOwner(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+	repo := &memSessionRepo{sessions: map[string]sessiondomain.Session{}, turns: map[string]string{}}
+	store := appsession.NewService(repo, &config.Config{SessionStore: config.SessionStoreConfig{Enabled: true}}, nil)
+	turns := 0
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(context.Context, *registrydomain.Registry, *infracontext.RequestContext) (*appproxy.ProviderResponse, error) {
+			turns++
+			return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok"), ResponseID: fmt.Sprintf("resp_%d", turns)}, nil
+		})
+	fwd := newTestForwarderWithStore(t, invoker, store)
+	send := func(owner string) string {
+		req := &infracontext.RequestContext{GatewayID: gatewayID.String(), SessionID: "sess-1", OwnerID: owner}
+		_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
+		require.NoError(t, err)
+		return req.PreviousResponseID
+	}
+
+	assert.Empty(t, send("alice"))
+	assert.Empty(t, send("bob"), "another owner's same session id never continues alice's turn")
+	assert.Empty(t, send(""), "nor does an application key's")
+	assert.Equal(t, "resp_1", send("alice"))
+	assert.Equal(t, "resp_2", send("bob"))
+	assert.Equal(t, "resp_3", send(""))
+	assert.Contains(t, repo.sessions, "session:"+gatewayID.String()+":sess-1", "an application key keeps its session key")
+	assert.Equal(t, "sess-1", repo.turns["session_turn:"+gatewayID.String()+":resp_6"])
 }
 
 func TestForward_BackendErrorStatusPassthrough(t *testing.T) {
@@ -1070,46 +1127,99 @@ func invokerByProvider(t *testing.T, status map[string]int) (*proxymocks.Provide
 	})
 }
 
-func TestForward_KeepExcludesSubstitutedRegistries(t *testing.T) {
-	notOpenAI := func(c routingdomain.Candidate) bool { return c.Registry.Provider() != "openai" }
+func TestForward_ResolvedRoutingNeverReachesASubstitutedProvider(t *testing.T) {
+	userOpenAI := storeGrant{name: "D", level: levelUser, priority: 1, regs: []storeRegistry{{provider: "openai", allowed: []string{"gpt6"}}}}
+	pooled := storeGrant{name: "P", level: levelGroup, priority: 1, pool: "fast", regs: []storeRegistry{
+		{provider: "openai", def: "gpt-4.1", pooled: true}, {provider: "mistral", def: "mistral-large", pooled: true},
+	}}
+	balanced := storeGrant{name: "A", level: levelGroup, priority: 1, regs: []storeRegistry{
+		{provider: "openai", def: "gpt-4.1"}, {provider: "mistral", def: "mistral-large"},
+	}}
+	withFallback := storeGrant{name: "F", level: levelGroup, priority: 1, regs: []storeRegistry{
+		{provider: "mistral", def: "mistral-large"}, {provider: "openai", fallback: true},
+	}}
 	cases := []struct {
-		name     string
-		fallback bool
-		model    string
-		keep     appproxy.CandidateFilter
-		want     []string
-		status   int
-		err      error
+		name   string
+		grants []storeGrant
+		model  string
+		want   string
 	}{
-		{name: "substituted load balancer route", keep: notOpenAI, want: []string{"mistral"}, status: 503},
-		{name: "substituted fallback after the balancer", fallback: true, keep: notOpenAI, want: []string{"mistral"}, status: 503},
-		{name: "no filter keeps the fallback", fallback: true, want: []string{"mistral", "openai"}, status: 200},
-		{name: "nothing kept is denied", keep: func(routingdomain.Candidate) bool { return false }, err: routingdomain.ErrModelDenied},
+		{name: "pool member on a substituted provider", grants: []storeGrant{userOpenAI, pooled}, model: "pool:fast", want: "P"},
+		{name: "auto default on a substituted provider", grants: []storeGrant{userOpenAI, balanced}, model: "auto", want: "A"},
+		{name: "fallback on a substituted provider", grants: []storeGrant{userOpenAI, withFallback}, model: "auto", want: "F"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gatewayID := ids.New[ids.GatewayKind]()
-			mistral, openai := backendFor(gatewayID, "mistral"), backendFor(gatewayID, "openai")
-			rc := routableConsumerWith(gatewayID, mistral, openai)
-			if tc.fallback {
-				rc = routableConsumerWith(gatewayID, mistral)
-				rc.Consumer.Fallback = enabledFallback(openai.ID)
-				rc.FallbackBackends = []*registrydomain.Registry{openai}
-			}
-			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 200})
-			res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
-				GatewayID: gatewayID, Consumer: rc, Request: &infracontext.RequestContext{Body: chatBody(tc.model)}, Keep: tc.keep,
-			})
-			if tc.err != nil {
-				require.ErrorIs(t, err, tc.err)
-				assert.Empty(t, *invoked)
-				return
-			}
+			fx := newStoreFixture(tc.grants...)
+			req := storeRequest(tc.model, "", "")
+			sel, err := fx.choose(newStoreSelector(workedCatalog), req)
 			require.NoError(t, err)
-			assert.Equal(t, tc.status, res.StatusCode)
-			assert.Equal(t, tc.want, *invoked)
+			require.Equal(t, tc.want, sel.Link.Consumer.Consumer.Name)
+			sel.Link.Consumer.Consumer.Fallback = enabledFallback()
+			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 200})
+			fwd := newTestForwarder(t, invoker)
+			for range 3 {
+				res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+					GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+					Resolved: &sel.ResolvedRouting, Prechecked: true,
+				})
+				require.NoError(t, err)
+				assert.Equal(t, 503, res.StatusCode)
+				assert.Equal(t, "mistral-large", req.DefaultModel)
+			}
+			assert.Equal(t, []string{"mistral", "mistral", "mistral"}, *invoked)
 		})
 	}
+}
+
+func TestForward_PrecheckedIsExplicit(t *testing.T) {
+	fx := newStoreFixture(grantB)
+	ambiguous := []byte(`{"model":"opus-4.8","model":"opus-5.5"}`)
+	sel, err := fx.choose(newStoreSelector(workedCatalog), storeRequest("opus-4.8", "", ""))
+	require.NoError(t, err)
+
+	t.Run("prechecked skips the body check and the plan limit", func(t *testing.T) {
+		invoker, invoked := invokerByProvider(t, map[string]int{"anthropic": 200})
+		fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+		req := &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: ambiguous}
+		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+			Resolved: &sel.ResolvedRouting, Prechecked: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 200, res.StatusCode)
+		assert.Equal(t, []string{"anthropic"}, *invoked)
+	})
+
+	t.Run("a resolved request that is not prechecked is charged", func(t *testing.T) {
+		limiter := ratelimitmocks.NewChecker(t)
+		limiter.EXPECT().Check(mock.Anything, fx.data.GatewayID).
+			Return(&ratelimitapp.Exceeded{Reason: ratelimitapp.ReasonQuota, Limit: 1, RetryAfter: time.Second}).Once()
+		fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter)
+		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: storeRequest("opus-4.8", "", ""),
+			Resolved: &sel.ResolvedRouting,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+	})
+}
+
+func TestPrecheck_RefusesAnAmbiguousBodyBeforeTheRateLimit(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), ratelimitmocks.NewChecker(t))
+	res, err := fwd.Precheck(context.Background(), gatewayID, &infracontext.RequestContext{
+		ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"a","model":"b"}`),
+	})
+	require.ErrorIs(t, err, appproxy.ErrAmbiguousRequestBody)
+	assert.Nil(t, res)
+
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, gatewayID).Return(nil).Once()
+	res, err = newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter).
+		Precheck(context.Background(), gatewayID, &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: chatBody("a")})
+	require.NoError(t, err)
+	assert.Nil(t, res)
 }
 
 func TestForward_ServesTheStoreSelection(t *testing.T) {
@@ -1139,7 +1249,7 @@ func TestForward_ServesTheStoreSelection(t *testing.T) {
 			fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
 			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 				GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
-				Keep: sel.Keep, Resolved: &sel.ResolvedRouting,
+				Resolved: &sel.ResolvedRouting, Prechecked: true,
 			})
 			require.NoError(t, err)
 			assert.Equal(t, tc.status, res.StatusCode)
@@ -1162,7 +1272,7 @@ func TestForward_StoreConsumerSharesOneBalancerAcrossOwners(t *testing.T) {
 		require.NoError(t, err)
 		_, err = fwd.Forward(context.Background(), appproxy.ForwardInput{
 			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
-			Keep: sel.Keep, Resolved: &sel.ResolvedRouting,
+			Resolved: &sel.ResolvedRouting, Prechecked: true,
 		})
 		require.NoError(t, err)
 	}
@@ -1185,7 +1295,7 @@ func TestForward_StoreModelMissPointsAtTheStoreListing(t *testing.T) {
 	})
 	_, err = newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
-		Keep: sel.Keep, Resolved: &sel.ResolvedRouting, RouteSlug: domainconsumer.StoreSlug,
+		Resolved: &sel.ResolvedRouting, RouteSlug: domainconsumer.StoreSlug, Prechecked: true,
 	})
 	require.ErrorIs(t, err, routingdomain.ErrNoRegistryServesModel)
 	assert.Contains(t, err.Error(), "GET /store/v1/models")

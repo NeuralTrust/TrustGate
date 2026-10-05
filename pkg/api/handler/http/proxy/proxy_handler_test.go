@@ -42,6 +42,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	ratelimitmocks "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	labelmocks "github.com/NeuralTrust/TrustGate/pkg/app/trafficlabels/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
@@ -54,6 +55,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -1428,7 +1430,10 @@ func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 			app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
 			var got *infracontext.RequestContext
 			fwd.EXPECT().Forward(mock.Anything, mock.Anything).
-				Run(func(_ context.Context, in appproxy.ForwardInput) { got = in.Request }).
+				Run(func(_ context.Context, in appproxy.ForwardInput) {
+					got = in.Request
+					assert.False(t, in.Prechecked)
+				}).
 				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
 
 			req := newProxyRequest()
@@ -1502,7 +1507,17 @@ func newStoreApp(
 ) (*fiber.App, *proxymocks.Forwarder, *trace.RequestTrace) {
 	t.Helper()
 	fwd := proxymocks.NewForwarder(t)
-	fwd.EXPECT().CheckRateLimit(mock.Anything, data.GatewayID).Return(limited, nil).Maybe()
+	fwd.EXPECT().Precheck(mock.Anything, data.GatewayID, mock.Anything).Return(limited, nil).Maybe()
+	app, rt := newStoreAppWith(data, authCtx, fwd, before...)
+	return app, fwd, rt
+}
+
+func newStoreAppWith(
+	data *appconsumer.Data,
+	authCtx *appauth.AuthContext,
+	fwd appproxy.Forwarder,
+	before ...fiber.Handler,
+) (*fiber.App, *trace.RequestTrace) {
 	rt := trace.New("store-trace", trace.Metadata{})
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
@@ -1517,7 +1532,7 @@ func newStoreApp(
 	resolver := approuting.NewResolver()
 	selector := appproxy.NewStoreSelector(resolver, nil, slog.New(slog.DiscardHandler))
 	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithStore(selector, appproxy.NewStoreModels(resolver, nil)).Handle)
-	return app, fwd, rt
+	return app, rt
 }
 
 func storeChat(model string) *http.Request {
@@ -1558,23 +1573,18 @@ func TestHandleStore_ForbiddenWithoutAnUpstreamCall(t *testing.T) {
 func TestHandleStore_RejectionsBeforeForwarding(t *testing.T) {
 	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
 	data := storeData(gatewayID, authID, personalSpec{provider: "openai", allowed: []string{"gpt-4o*"}})
-	badEndUser := storeChat("gpt-4o-mini")
-	badEndUser.Header.Set(domainconsumer.EndUserHeader, strings.Repeat("x", domainconsumer.MaxEndUserLength+1))
 	limited := &appproxy.ForwardResult{StatusCode: fiber.StatusTooManyRequests, Headers: map[string][]string{"Retry-After": {"10"}}}
 	cases := []struct {
-		name     string
-		req      *http.Request
-		limited  *appproxy.ForwardResult
-		status   int
-		code     string
-		selected bool
+		name    string
+		req     *http.Request
+		limited *appproxy.ForwardResult
+		status  int
+		code    string
 	}{
 		{name: "method not allowed", req: httptest.NewRequest(http.MethodGet, "/store/v1/chat/completions", nil),
 			status: fiber.StatusMethodNotAllowed, code: "method_not_allowed"},
 		{name: "ambiguous body", req: storeChatBody(`{"model":"gpt-4o-mini","model":"gpt-4o"}`),
 			status: fiber.StatusBadRequest, code: "invalid_request_body"},
-		{name: "invalid end user after selection", req: badEndUser, status: fiber.StatusBadRequest, code: "invalid_request",
-			selected: true},
 		{name: "rate limited before selection", req: storeChat("claude-sonnet-4-5"), limited: limited,
 			status: fiber.StatusTooManyRequests},
 	}
@@ -1588,7 +1598,89 @@ func TestHandleStore_RejectionsBeforeForwarding(t *testing.T) {
 				assert.Equal(t, tc.code, decodeError(t, resp.Body).Error)
 			}
 			assert.Equal(t, authID.String(), rt.Metadata().AuthID)
-			assert.Equal(t, tc.selected, rt.Metadata().ConsumerID != "")
+			assert.Empty(t, rt.Metadata().ConsumerID)
+		})
+	}
+}
+
+func TestHandleStore_AmbiguousBodyAnswers400WithoutARateLimitToken(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID, personalSpec{provider: "openai", allowed: []string{"gpt-4o*"}})
+	forwarder := appproxy.NewForwarder(nil, nil, cache.NewTTLMapManager(time.Minute), nil, nil, nil, nil, nil,
+		ratelimitmocks.NewChecker(t), nil, slog.New(slog.DiscardHandler))
+	app, _ := newStoreAppWith(data, ownerAuth(gatewayID, authID), forwarder)
+
+	resp, err := app.Test(storeChatBody(`{"model":"gpt-4o-mini","model":"gpt-4o"}`))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_request_body", decodeError(t, resp.Body).Error)
+}
+
+func TestHandleStore_FilesRoutesAreNotServed(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID, personalSpec{provider: "openai"})
+	unknownApp, _, _ := newStoreApp(t, data, ownerAuth(gatewayID, authID), nil)
+	unknown, err := unknownApp.Test(httptest.NewRequest(http.MethodGet, "/store/v1/nowhere", nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusNotFound, unknown.StatusCode)
+	wantBody, err := io.ReadAll(unknown.Body)
+	require.NoError(t, err)
+
+	upload := httptest.NewRequest(http.MethodPost, "/store/v1/files", strings.NewReader("--b\r\n"))
+	upload.Header.Set("Content-Type", "multipart/form-data; boundary=b")
+	for name, req := range map[string]*http.Request{
+		"list":    httptest.NewRequest(http.MethodGet, "/store/v1/files", nil),
+		"get":     httptest.NewRequest(http.MethodGet, "/store/v1/files/file-abc123", nil),
+		"content": httptest.NewRequest(http.MethodGet, "/store/v1/files/file-abc123/content", nil),
+		"delete":  httptest.NewRequest(http.MethodDelete, "/store/v1/files/file-abc123", nil),
+		"upload":  upload,
+	} {
+		t.Run(name, func(t *testing.T) {
+			app, fwd, rt := newStoreApp(t, data, ownerAuth(gatewayID, authID), nil)
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Equal(t, string(wantBody), string(body))
+			fwd.AssertNotCalled(t, "Precheck", mock.Anything, mock.Anything, mock.Anything)
+			assert.Empty(t, rt.Metadata().ConsumerID)
+		})
+	}
+}
+
+func TestHandleStore_AttributesTheRequestToTheKeyOwner(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID, personalSpec{provider: "openai", allowed: []string{"gpt-4o-mini"}})
+	named := storeChat("gpt-4o-mini")
+	named.Header.Set(domainconsumer.EndUserHeader, "mallory")
+	malformed := storeChat("gpt-4o-mini")
+	malformed.Header.Set(domainconsumer.EndUserHeader, strings.Repeat("x", domainconsumer.MaxEndUserLength+1))
+	cases := []struct {
+		name    string
+		req     *http.Request
+		forward bool
+	}{
+		{name: "end-user header naming someone else", req: named, forward: true},
+		{name: "malformed end-user header", req: malformed, forward: true},
+		{name: "models listing", req: httptest.NewRequest(http.MethodGet, "/store/v1/models", nil)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frontEnd := trace.New("front-end", trace.Metadata{EndUser: &trace.EndUser{ID: "someone", Email: "x@acme.test", Source: "open_webui"}})
+			withFrontEnd := func(c *fiber.Ctx) error {
+				c.SetUserContext(trace.NewContext(c.UserContext(), frontEnd))
+				return c.Next()
+			}
+			app, fwd, _ := newStoreApp(t, data, ownerAuth(gatewayID, authID), nil, withFrontEnd)
+			if tc.forward {
+				fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+					Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+			}
+			resp, err := app.Test(tc.req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			assert.Equal(t, &trace.EndUser{ID: "alice", Source: trace.EndUserSourceNeuralTrust}, frontEnd.Metadata().EndUser)
 		})
 	}
 }
@@ -1634,6 +1726,7 @@ func TestHandleStore_ServesThroughTheSelectedConsumer(t *testing.T) {
 	assert.Equal(t, []string{"P2", "global"}, []string{in.Consumer.Policies[0].Name, in.Consumer.Policies[1].Name})
 	require.NotNil(t, in.Resolved)
 	assert.Equal(t, "gpt-4o-mini", in.Resolved.Ref)
+	assert.True(t, in.Prechecked)
 	assert.Equal(t, domainconsumer.StoreSlug, in.RouteSlug)
 	assert.Equal(t, authID.String(), in.Request.AuthID)
 	assert.Equal(t, "alice", in.Request.OwnerID)
@@ -1663,9 +1756,6 @@ func TestHandleStore_UserLinkKeepsTheSubstitutedProviderOut(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	assert.Same(t, group, in.Consumer)
-	require.NotNil(t, in.Keep)
-	assert.False(t, in.Keep(routingdomain.Candidate{Registry: group.Registries[0]}))
-	assert.True(t, in.Keep(routingdomain.Candidate{Registry: group.Registries[1]}))
 	assert.Equal(t, []*registrydomain.Registry{group.Registries[1]}, in.Resolved.Candidates.Registries())
 }
 

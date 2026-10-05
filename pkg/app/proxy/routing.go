@@ -78,8 +78,7 @@ func (f *forwarder) resolveRouting(
 ) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
 	if in.Resolved != nil {
 		in.Request.RequestedModel = in.Resolved.Ref
-		candidates, err := keepCandidates(in.Resolved.Candidates, in.Keep)
-		return in.Resolved.Intent, candidates, err
+		return in.Resolved.Intent, in.Resolved.Candidates, nil
 	}
 	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
@@ -88,7 +87,7 @@ func (f *forwarder) resolveRouting(
 	}
 	in.Request.RequestedModel = ref
 	needed := capabilityRequiresProviderSupport(in.Request)
-	if intent.IsZero() && needed == "" && in.Keep == nil {
+	if intent.IsZero() && needed == "" {
 		return intent, nil, nil
 	}
 	candidates, err := f.pipeline.run(ctx, candidateQuery{
@@ -97,7 +96,6 @@ func (f *forwarder) resolveRouting(
 		consumer: in.Consumer,
 		data:     in.Data,
 		request:  in.Request,
-		keep:     in.Keep,
 	})
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
@@ -562,20 +560,26 @@ func (f *forwarder) stampRoutingPolicy(
 	rc *appconsumer.RoutableConsumer,
 	route routingdomain.Route,
 ) {
-	bk := route.Registry
-	dto.routeSource = routeSourceFor(dto.candidates, bk)
-	allowed, defaultModel := candidatePolicy(dto.candidates, rc, bk)
+	dto.routeSource = routeSourceFor(dto.candidates, route.Registry)
+	dto.request.AllowedModels, dto.request.DefaultModel = routePolicy(dto.candidates, rc, route)
+}
+
+func routePolicy(
+	candidates *routingdomain.CandidateSet,
+	rc *appconsumer.RoutableConsumer,
+	route routingdomain.Route,
+) ([]string, string) {
+	allowed, defaultModel := candidatePolicy(candidates, rc, route.Registry)
 	if route.Allowed != nil {
 		allowed = route.Allowed
 	}
 	if route.Default != "" {
 		defaultModel = route.Default
 	}
-	dto.request.AllowedModels = allowed
 	if modelmatch.IsPattern(defaultModel) {
 		defaultModel = ""
 	}
-	dto.request.DefaultModel = defaultModel
+	return allowed, defaultModel
 }
 
 func candidatePolicy(
