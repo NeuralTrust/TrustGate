@@ -111,7 +111,7 @@
         {
           "slug": "token_rate_limiter",
           "name": "LLM Budget",
-          "description": "Cap LLM spend with token or dollar budgets over time windows, either as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer.",
+          "description": "Cap LLM spend with token or dollar budgets over time windows, either as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer. Partition key counts per API key instead.",
           "mandatory_stages": [
             "pre_request",
             "post_response"
@@ -188,7 +188,7 @@
                       "key": "time_window",
                       "label": "Time Window",
                       "type": "string",
-                      "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s."
+                      "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day."
                     }
                   ]
                 }
@@ -210,7 +210,7 @@
                     "key": "time_window",
                     "label": "Time Window",
                     "type": "string",
-                    "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s."
+                    "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day."
                   }
                 ]
               },
@@ -248,7 +248,7 @@
                 "key": "custom_pricing",
                 "label": "Custom Pricing",
                 "type": "map",
-                "description": "Per-token USD rates keyed by model slug or wildcard pattern, consulted before registry pricing and the models.dev catalog. Used for dollar budgets.",
+                "description": "Per-token USD rates keyed by model slug or wildcard pattern, consulted before registry pricing and the models.dev catalog. Used for dollar budgets. Not allowed with partition key.",
                 "value": {
                   "key": "price",
                   "label": "Price",
@@ -273,7 +273,19 @@
                 "key": "group_by_header",
                 "label": "Group By Header",
                 "type": "string",
-                "description": "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer."
+                "description": "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer. Not allowed with partition key."
+              },
+              {
+                "key": "partition",
+                "label": "Partition",
+                "type": "enum",
+                "description": "Set to key to count the budget per API key: per owner when the key has one, so rotating or re-creating it keeps the spend, otherwise per key. Requests without an API key pass uncounted. In enforce mode a key budget fails closed: 503 budget_unavailable when the counter store is unavailable, and 403 model_unpriced on a dollar budget for a model with no catalog or registry price. Not allowed with custom_pricing or group_by_header.",
+                "enum": [
+                  {
+                    "value": "key",
+                    "label": "Key"
+                  }
+                ]
               }
             ]
           }
