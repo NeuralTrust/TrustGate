@@ -16,6 +16,7 @@ package registry_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	"testing"
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appmocks "github.com/NeuralTrust/TrustGate/pkg/app/registry/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -42,13 +44,13 @@ func pinnedMCPRegistry(t *testing.T) *domain.Registry {
 	return reg
 }
 
-func enablePinningApp(svc appregistry.PinnedToolService) *fiber.App {
+func enablePinningApp(svc appregistry.PinnedToolService, intro appmcp.Introspector) *fiber.App {
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals(string(infracontext.UserEmailContextKey), "ana@acme.io")
 		return c.Next()
 	})
-	app.Put("/v1/gateways/:gateway_id/registries/:id/tool-pinning", registryhttp.NewEnableToolPinningHandler(svc).Handle)
+	app.Put("/v1/gateways/:gateway_id/registries/:id/tool-pinning", registryhttp.NewEnableToolPinningHandler(svc, intro).Handle)
 	return app
 }
 
@@ -63,52 +65,97 @@ func putPinning(t *testing.T, app *fiber.App, gw ids.GatewayID, reg ids.Registry
 	return resp
 }
 
-func TestEnableToolPinningHandler_ComputesFingerprintsServerSide(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
+// upstreamTool builds a Tool from raw upstream bytes, as the client does.
+func upstreamTool(t *testing.T, raw string) appmcp.Tool {
+	t.Helper()
+	var tool appmcp.Tool
+	require.NoError(t, json.Unmarshal([]byte(raw), &tool))
+	return tool
+}
+
+func refBody(t *testing.T, tools ...appmcp.Tool) string {
+	t.Helper()
+	var parts []string
+	for _, tool := range tools {
+		cand, err := appmcp.ToolCandidate(tool)
+		require.NoError(t, err)
+		parts = append(parts, fmt.Sprintf(`{"name":%q,"fingerprint":%q}`, cand.Name, cand.Fingerprint))
+	}
+	return `{"tools":[` + strings.Join(parts, ",") + `]}`
+}
+
+const numericTool = `{"name":"calc","description":"d","inputSchema":{"type":"object","properties":{"a":{"default":1.0},"b":{"maximum":1e3},"c":{"const":9007199254740993}}}}`
+
+func TestEnableToolPinningHandler_ApprovesTheLiveDefinitionsNotTheClients(t *testing.T) {
 	reg := pinnedMCPRegistry(t)
-	reg.GatewayID = gw
-	want, err := domain.NewToolCandidate("search", "Search the web", json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`))
+	live := upstreamTool(t, numericTool)
+	want, err := appmcp.ToolCandidate(live)
 	require.NoError(t, err)
 
 	svc := appmocks.NewPinnedToolService(t)
 	svc.EXPECT().Pin(mock.Anything, appregistry.PinToolsInput{
-		GatewayID: gw, RegistryID: reg.ID, Tools: []domain.ToolCandidate{want}, DecidedBy: "ana@acme.io",
+		GatewayID: reg.GatewayID, RegistryID: reg.ID, Tools: []domain.ToolCandidate{want}, DecidedBy: "ana@acme.io",
 	}).Return(reg, nil)
 
-	// A fingerprint sent by the client is not a field of the body: it is dropped.
-	resp := putPinning(t, enablePinningApp(svc), gw, reg.ID,
-		`{"tools":[{"name":"search","description":"Search the web","inputSchema":{"properties":{"q":{"type":"string"}},"type":"object"},"fingerprint":"forged"}]}`)
+	resp := putPinning(t, enablePinningApp(svc, &stubIntrospector{tools: []appmcp.Tool{live}}), reg.GatewayID, reg.ID, refBody(t, live))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	raw, _ := io.ReadAll(resp.Body)
 	assert.Contains(t, string(raw), `"tool_policy":"pinned"`)
 }
 
-func TestEnableToolPinningHandler_EmptyListIsAllowed(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
+func TestEnableToolPinningHandler_StaleRefIs422AndAppliesNothing(t *testing.T) {
+	reg := pinnedMCPRegistry(t)
+	reviewed := upstreamTool(t, `{"name":"search","description":"old"}`)
+	nowLive := upstreamTool(t, `{"name":"search","description":"changed upstream"}`)
+	svc := appmocks.NewPinnedToolService(t) // Pin must not run
+
+	resp := putPinning(t, enablePinningApp(svc, &stubIntrospector{tools: []appmcp.Tool{nowLive}}), reg.GatewayID, reg.ID, refBody(t, reviewed))
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	raw, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(raw), "search")
+}
+
+func TestEnableToolPinningHandler_EmptyListNeedsNoUpstream(t *testing.T) {
 	reg := pinnedMCPRegistry(t)
 	svc := appmocks.NewPinnedToolService(t)
 	svc.EXPECT().Pin(mock.Anything, mock.MatchedBy(func(in appregistry.PinToolsInput) bool { return len(in.Tools) == 0 })).Return(reg, nil)
-	resp := putPinning(t, enablePinningApp(svc), gw, reg.ID, `{"tools":[]}`)
+	// An introspector that would fail proves it is not consulted.
+	intro := &stubIntrospector{err: appmcp.ErrUpstreamUnavailable}
+	resp := putPinning(t, enablePinningApp(svc, intro), reg.GatewayID, reg.ID, `{"tools":[]}`)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Zero(t, intro.calls)
+}
+
+func TestEnableToolPinningHandler_NotIntrospectableAcceptsOnlyAnEmptyList(t *testing.T) {
+	reg := pinnedMCPRegistry(t)
+	svc := appmocks.NewPinnedToolService(t) // Pin must not run
+	intro := &stubIntrospector{err: fmt.Errorf("%w: per-principal", appmcp.ErrRegistryNotIntrospectable)}
+	resp := putPinning(t, enablePinningApp(svc, intro), reg.GatewayID, reg.ID, `{"tools":[{"name":"a","fingerprint":"f"}]}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	raw, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(raw), "empty list")
+}
+
+func TestEnableToolPinningHandler_UnreachableUpstreamIs502AndAppliesNothing(t *testing.T) {
+	reg := pinnedMCPRegistry(t)
+	svc := appmocks.NewPinnedToolService(t)
+	intro := &stubIntrospector{err: fmt.Errorf("%w: dial", appmcp.ErrUpstreamUnavailable)}
+	resp := putPinning(t, enablePinningApp(svc, intro), reg.GatewayID, reg.ID, `{"tools":[{"name":"a","fingerprint":"f"}]}`)
+	assert.Equal(t, http.StatusBadGateway, resp.StatusCode)
 }
 
 func TestEnableToolPinningHandler_BadBodies(t *testing.T) {
-	big := strings.Repeat("x", 70<<10)
-	cases := map[string]struct {
-		body string
-		want int
-	}{
-		"tools missing":   {`{}`, http.StatusBadRequest},
-		"not json":        {`nope`, http.StatusBadRequest},
-		"nameless tool":   {`{"tools":[{"description":"d"}]}`, http.StatusBadRequest},
-		"oversized tool":  {`{"tools":[{"name":"a","description":"` + big + `"}]}`, http.StatusBadRequest},
-		"NUL in a string": {`{"tools":[{"name":"a","description":"x\u0000y"}]}`, http.StatusUnprocessableEntity},
+	cases := map[string]string{
+		"tools missing":        `{}`,
+		"not json":             `nope`,
+		"missing fingerprint":  `{"tools":[{"name":"a"}]}`,
+		"old definition shape": `{"tools":[{"name":"a","description":"d","inputSchema":{}}]}`,
 	}
-	for name, tc := range cases {
+	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			svc := appmocks.NewPinnedToolService(t) // must not be called
-			resp := putPinning(t, enablePinningApp(svc), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), tc.body)
-			assert.Equal(t, tc.want, resp.StatusCode)
+			resp := putPinning(t, enablePinningApp(svc, &stubIntrospector{}), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), body)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		})
 	}
 }
@@ -116,6 +163,6 @@ func TestEnableToolPinningHandler_BadBodies(t *testing.T) {
 func TestEnableToolPinningHandler_LLMRegistryIs422(t *testing.T) {
 	svc := appmocks.NewPinnedToolService(t)
 	svc.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil, domain.ErrInvalidToolPolicy)
-	resp := putPinning(t, enablePinningApp(svc), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), `{"tools":[]}`)
+	resp := putPinning(t, enablePinningApp(svc, &stubIntrospector{}), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), `{"tools":[]}`)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
