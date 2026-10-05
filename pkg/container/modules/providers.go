@@ -15,6 +15,8 @@
 package modules
 
 import (
+	"log/slog"
+
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -29,9 +31,11 @@ func Providers(c *container.Container) error {
 	if err := c.Provide(factory.NewProviderLocator); err != nil {
 		return err
 	}
-	return c.Invoke(func(cfg *config.Config) {
+	return c.Invoke(func(cfg *config.Config, logger *slog.Logger) {
 		providers.SetDefaultHTTPTimeout(cfg.Provider.RequestTimeout)
 		providers.SetDefaultResponseHeaderTimeout(cfg.Provider.ResponseHeaderTimeout)
 		providers.SetAllowPrivateNetworks(cfg.Provider.AllowPrivateNetworks)
+		logger.Info("provider outbound network policy",
+			slog.Bool("allow_private_networks", cfg.Provider.AllowPrivateNetworks))
 	})
 }
