@@ -441,7 +441,7 @@ func (r *PinnedToolRepository) Pin(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	registryID ids.RegistryID,
-	tools []domain.ToolCandidate,
+	tools, unchecked []domain.ToolCandidate,
 	decidedBy string,
 ) error {
 	const setPolicy = `UPDATE registries SET tool_policy = 'pinned' WHERE id = $1 AND gateway_id = $2`
@@ -456,6 +456,13 @@ func (r *PinnedToolRepository) Pin(
 		}
 		if _, err := approveAllTx(ctx, tx, registryID, tools, decidedBy); err != nil {
 			return false, err
+		}
+		// Unchecked live tools become pending rows in this same transaction, after
+		// the demotions so the caps see the final pending count.
+		if names, fps, defs := splitCandidates(unchecked); len(names) > 0 {
+			if _, _, err := insertPendingCapped(ctx, tx, registryID, names, fps, defs); err != nil {
+				return false, fmt.Errorf("pinned tool repository: record unchecked tools: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx, setPolicy, registryID, gatewayID); err != nil {
 			return false, fmt.Errorf("pinned tool repository: set policy: %w", err)

@@ -303,7 +303,7 @@ func TestPinnedTools_GatewayIsolation(t *testing.T) {
 	if err := tools.Decide(ctx, gwB, reg.ID, refs(c), nil, "attacker"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("foreign Decide err = %v, want ErrNotFound", err)
 	}
-	if err := tools.Pin(ctx, gwB, reg.ID, nil, "attacker"); !errors.Is(err, domain.ErrNotFound) {
+	if err := tools.Pin(ctx, gwB, reg.ID, nil, nil, "attacker"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("foreign Pin err = %v, want ErrNotFound", err)
 	}
 	if err := tools.ApproveAll(ctx, gwB, reg.ID, []domain.ToolCandidate{c}, "attacker"); !errors.Is(err, domain.ErrNotFound) {
