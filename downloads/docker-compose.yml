@@ -69,8 +69,8 @@ services:
 
       # ----------------------------------------------------------------------
       # TrustGate proxy — outbound guard
-      # TrustGate refuses configured outbound URLs (providers, Azure endpoints,
-      # OIDC/introspection/STS, OTLP) that resolve to private, loopback or
+      # TrustGate refuses configured outbound URLs (model providers, guardrail
+      # services such as Azure Content Safety) that resolve to private, loopback or
       # link-local addresses, and refuses Model Armor auth through this
       # container's own cloud identity, unless opted in here. A self-hosted data
       # plane serves one operator and normally reaches that operator's private
