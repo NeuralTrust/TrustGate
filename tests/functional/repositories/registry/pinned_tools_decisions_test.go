@@ -468,25 +468,40 @@ func TestPinnedTools_ListPage_IsStableFilteredAndScoped(t *testing.T) {
 	}
 }
 
-// 3 live tools, 2 confirmed: 2 approved, the third recorded as pending, and the
-// policy and the bump in the same transaction.
-func TestPinnedTools_Pin_RecordsUncheckedToolsAsPendingInTheSameTransaction(t *testing.T) {
+func rowOf(t *testing.T, rows []domain.PinnedTool, ref domain.ToolRef) domain.PinnedTool {
+	t.Helper()
+	for _, r := range rows {
+		if r.Ref() == ref {
+			return r
+		}
+	}
+	t.Fatalf("ref %+v not stored", ref)
+	return domain.PinnedTool{}
+}
+
+// 3 live tools, 2 confirmed: 2 approved, the third is the admin's explicit
+// decline, rejected by the caller, with the policy and the bump in the same
+// transaction.
+func TestPinnedTools_Pin_RejectsUncheckedLiveToolsInTheSameTransaction(t *testing.T) {
 	r, tools, gwID, reg, conn := setupPinnedConn(t)
 	ctx := context.Background()
 	a, b, c3 := cand(t, "a", "A"), cand(t, "b", "B"), cand(t, "create_branch", "C")
 	_, before := registryState(t, r, reg.ID)
 	markers := outboxCount(t, conn)
 
-	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}, []domain.ToolCandidate{c3}, "admin"); err != nil {
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}, []domain.ToolCandidate{c3}, "ana@acme.io"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
 	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
 	for ref, want := range map[domain.ToolRef]domain.ToolStatus{
-		a.ToolRef: domain.ToolStatusApproved, b.ToolRef: domain.ToolStatusApproved, c3.ToolRef: domain.ToolStatusPending,
+		a.ToolRef: domain.ToolStatusApproved, b.ToolRef: domain.ToolStatusApproved, c3.ToolRef: domain.ToolStatusRejected,
 	} {
 		if s := statusOf(t, got, ref); s != want {
 			t.Errorf("%s = %q, want %q", ref.Name, s, want)
 		}
+	}
+	if row := rowOf(t, got, c3.ToolRef); row.DecidedBy != "ana@acme.io" || row.DecidedAt.IsZero() {
+		t.Errorf("the decline must be attributed: %+v", row)
 	}
 	policy, after := registryState(t, r, reg.ID)
 	if policy != domain.ToolPolicyPinned || !after.After(before) || outboxCount(t, conn) != markers+1 {
@@ -494,26 +509,83 @@ func TestPinnedTools_Pin_RecordsUncheckedToolsAsPendingInTheSameTransaction(t *t
 	}
 }
 
-func TestPinnedTools_Pin_UncheckedNeverOverwritesARejection(t *testing.T) {
+func TestPinnedTools_Pin_UncheckedPendingRowBecomesRejected(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	p := cand(t, "p", "P")
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{p}); err != nil {
+		t.Fatalf("UpsertPending: %v", err)
+	}
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, []domain.ToolCandidate{p}, "ana"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if row := rowOf(t, got, p.ToolRef); row.Status != domain.ToolStatusRejected || row.DecidedBy != "ana" {
+		t.Fatalf("pending row = %+v, want rejected by ana", row)
+	}
+}
+
+func TestPinnedTools_Pin_AlreadyRejectedUncheckedToolIsUntouched(t *testing.T) {
 	_, tools, gwID, reg, _ := setupPinnedConn(t)
 	ctx := context.Background()
 	rej := cand(t, "rej", "R")
 	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{rej}); err != nil {
 		t.Fatalf("UpsertPending: %v", err)
 	}
-	if err := tools.Decide(ctx, gwID, reg.ID, nil, refs(rej), "admin"); err != nil {
+	if err := tools.Decide(ctx, gwID, reg.ID, nil, refs(rej), "first-admin"); err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
-	if err := tools.Pin(ctx, gwID, reg.ID, nil, []domain.ToolCandidate{rej}, "admin"); err != nil {
+	before, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, []domain.ToolCandidate{rej}, "second-admin"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
-	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
-	if s := statusOf(t, got, rej.ToolRef); s != domain.ToolStatusRejected {
-		t.Fatalf("a rejected tool left unchecked is %q, want rejected", s)
+	after, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	b, a := rowOf(t, before, rej.ToolRef), rowOf(t, after, rej.ToolRef)
+	if a.Status != domain.ToolStatusRejected || a.DecidedBy != "first-admin" || !a.DecidedAt.Equal(b.DecidedAt) {
+		t.Fatalf("an already rejected tool was rewritten: before %+v after %+v", b, a)
 	}
 }
 
-func TestPinnedTools_Pin_UncheckedRespectsThePendingCaps(t *testing.T) {
+// Approved earlier, absent from the live list and from the request: nobody saw
+// it this time, so it goes back to pending rather than being rejected.
+func TestPinnedTools_Pin_ApprovedToolMissingFromTheLiveListBecomesPending(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	gone, live := cand(t, "gone", "G"), cand(t, "live", "L")
+	if err := tools.ApproveAll(ctx, gwID, reg.ID, []domain.ToolCandidate{gone}, "admin"); err != nil {
+		t.Fatalf("ApproveAll: %v", err)
+	}
+	if err := tools.Pin(ctx, gwID, reg.ID, []domain.ToolCandidate{live}, nil, "admin"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if s := statusOf(t, got, gone.ToolRef); s != domain.ToolStatusPending {
+		t.Fatalf("gone = %q, want pending", s)
+	}
+}
+
+// Empty confirmed list on an introspectable server: every live tool is declined.
+func TestPinnedTools_Pin_EmptyListRejectsEveryLiveTool(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	live := []domain.ToolCandidate{cand(t, "a", "A"), cand(t, "b", "B")}
+	if err := tools.Pin(ctx, gwID, reg.ID, nil, live, "ana"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	for _, c := range live {
+		if s := statusOf(t, got, c.ToolRef); s != domain.ToolStatusRejected {
+			t.Errorf("%s = %q, want rejected", c.Name, s)
+		}
+	}
+	if len(domain.DecisionsOf(got)) != 2 {
+		t.Fatalf("decisions = %+v", domain.DecisionsOf(got))
+	}
+}
+
+// Explicit declines are admin decisions, not discoveries: the pending caps do
+// not apply to them.
+func TestPinnedTools_Pin_UncheckedRejectionsIgnoreThePendingCaps(t *testing.T) {
 	_, tools, gwID, reg, _ := setupPinnedConn(t)
 	ctx := context.Background()
 	var variants []domain.ToolCandidate
@@ -523,14 +595,15 @@ func TestPinnedTools_Pin_UncheckedRespectsThePendingCaps(t *testing.T) {
 	if err := tools.Pin(ctx, gwID, reg.ID, nil, variants, "admin"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
-	if n := pendingCount(t, tools, gwID, reg.ID); n != domain.MaxPendingPerToolName {
-		t.Fatalf("pending = %d, want the per-name cap %d", n, domain.MaxPendingPerToolName)
+	got, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	if len(got) != len(variants) {
+		t.Fatalf("stored %d of %d declined definitions", len(got), len(variants))
 	}
 }
 
-// A failure while recording the unchecked tools undoes the approvals and the
-// policy switch too: no pending rows survive.
-func TestPinnedTools_Pin_RollbackLeavesNoPendingRows(t *testing.T) {
+// A failure while rejecting the unchecked tools undoes the approvals and the
+// policy switch too: nothing survives.
+func TestPinnedTools_Pin_RollbackLeavesNothingBehind(t *testing.T) {
 	r, tools, gwID, reg, _ := setupPinnedConn(t)
 	ctx := context.Background()
 	good := cand(t, "good", "G")
