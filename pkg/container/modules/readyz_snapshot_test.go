@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,7 +58,7 @@ func TestReadyz_ReportsSnapshotState(t *testing.T) {
 		return store
 	}
 
-	t.Run("none is 503 without version or age", func(t *testing.T) {
+	t.Run("none is 503 without age", func(t *testing.T) {
 		t.Parallel()
 		status := configsync.NewSnapshotStatus(clock)
 		code, body := readyz(t, configsync.NewMemoryStore[*readmodel.Snapshot](), status)
@@ -68,7 +69,7 @@ func TestReadyz_ReportsSnapshotState(t *testing.T) {
 		assert.Equal(t, map[string]any{"state": "none"}, body["snapshot"])
 	})
 
-	t.Run("lkg reports version and age", func(t *testing.T) {
+	t.Run("lkg reports age", func(t *testing.T) {
 		t.Parallel()
 		status := configsync.NewSnapshotStatus(clock)
 		status.MarkLKG("v1", 90*time.Second)
@@ -79,13 +80,12 @@ func TestReadyz_ReportsSnapshotState(t *testing.T) {
 		assert.Equal(t, map[string]any{"snapshot": "ok"}, body["dependencies"])
 		assert.Equal(t, map[string]any{
 			"state":       "lkg",
-			"version":     "v1",
 			"applied_at":  now.Add(-90 * time.Second).Format(time.RFC3339),
 			"age_seconds": float64(90),
 		}, body["snapshot"])
 	})
 
-	t.Run("live reports version and age", func(t *testing.T) {
+	t.Run("live reports age", func(t *testing.T) {
 		t.Parallel()
 		status := configsync.NewSnapshotStatus(clock)
 		status.MarkLive("v2")
@@ -94,11 +94,34 @@ func TestReadyz_ReportsSnapshotState(t *testing.T) {
 		assert.Equal(t, http.StatusOK, code)
 		assert.Equal(t, map[string]any{
 			"state":       "live",
-			"version":     "v2",
 			"applied_at":  now.Format(time.RFC3339),
 			"age_seconds": float64(0),
 		}, body["snapshot"])
 	})
+}
+
+func TestReadyz_DoesNotExposeSnapshotVersion(t *testing.T) {
+	t.Parallel()
+
+	const etag = "3f2a9c1de8b74a55b0c6d41e9f7a2c88d5e1b6a04c93f7e2a1d8b5c60e4f9a37"
+	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
+	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: etag, Snapshot: &readmodel.Snapshot{}})
+	status := configsync.NewSnapshotStatus(nil)
+	status.MarkLive(etag)
+
+	h := apihandler.NewHealthHandler(apihandler.ReadinessCheck{Name: "snapshot", Ping: configsync.ReadinessCheck(store)}).
+		WithSnapshotReport(snapshotReport(status))
+	app := fiber.New()
+	app.Get("/readyz", h.Readiness)
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(raw), etag)
+	assert.NotContains(t, string(raw), "version\":\""+etag)
+	assert.Contains(t, string(raw), `"state":"live"`)
 }
 
 func TestReadyz_WithoutReporterKeepsOriginalShape(t *testing.T) {

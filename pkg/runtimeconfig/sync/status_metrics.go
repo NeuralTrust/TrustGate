@@ -52,7 +52,7 @@ func RegisterSnapshotGauges(meter metric.Meter, status *SnapshotStatus) error {
 	}
 	if _, err := meter.Int64ObservableGauge(
 		SnapshotSourceMetric,
-		metric.WithDescription("1 for the source of the served snapshot (none, lkg or live), 0 for the others"),
+		metric.WithDescription("1 for the source of the served snapshot (none, lkg or live), 0 for the others; live means applied by a successful converge, not currently connected to the control plane"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
 			current := status.Info().State
 			for _, state := range []SnapshotState{SnapshotNone, SnapshotLKG, SnapshotLive} {
@@ -70,7 +70,7 @@ func RegisterSnapshotGauges(meter metric.Meter, status *SnapshotStatus) error {
 	if _, err := meter.Float64ObservableGauge(
 		SnapshotAgeMetric,
 		metric.WithUnit("s"),
-		metric.WithDescription("seconds since the served snapshot was applied; absent while none is loaded"),
+		metric.WithDescription("seconds since the served snapshot was applied by a converge, not since the last control-plane contact; absent while none is loaded"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
 			if age, ok := status.Age(); ok {
 				o.Observe(age.Seconds())

@@ -236,7 +236,7 @@ func TestDBLessDataPlane_ConvergesServesAtParityAndKeepsSecretsOutOfLogs(t *test
 	snap, ok := ready["snapshot"].(map[string]any)
 	require.True(t, ok, "readiness body must expose the snapshot state: %v", ready)
 	assert.Equal(t, "live", snap["state"], "snapshot state must be live after a converge: %v", ready)
-	assert.NotEmpty(t, snap["version"], "snapshot version must be reported: %v", ready)
+	assert.NotContains(t, snap, "version", "snapshot version must not be exposed on an unauthenticated probe: %v", ready)
 	assert.Contains(t, snap, "age_seconds", "snapshot age must be reported: %v", ready)
 	_, hasPostgres := deps["postgres"]
 	assert.False(t, hasPostgres, "db-less plane must not expose a postgres dependency: %v", ready)

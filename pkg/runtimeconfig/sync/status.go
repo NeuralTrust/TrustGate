@@ -29,6 +29,7 @@ const (
 	// and no converge has confirmed or refreshed it since.
 	SnapshotLKG SnapshotState = "lkg"
 	// SnapshotLive means a successful converge applied or confirmed the snapshot.
+	// It does not mean the pod is currently connected to the control plane.
 	SnapshotLive SnapshotState = "live"
 )
 
@@ -44,6 +45,11 @@ type SnapshotInfo struct {
 // SnapshotStatus tracks the source of the served snapshot so /readyz and the
 // gauges can tell a live snapshot from a stale restored one. It never affects
 // convergence; the worker only reports into it. Safe for concurrent use.
+//
+// Age counts from when the snapshot was applied (or, for a restored LKG that a
+// converge found unchanged, from that confirmation), never from the last poll
+// or control-plane contact: a pod that lost the control plane keeps ageing.
+// live means "applied by a successful converge", not "connected right now".
 type SnapshotStatus struct {
 	mu    sync.RWMutex
 	clock func() time.Time

@@ -32,8 +32,9 @@ type ReadinessCheck struct {
 // SnapshotReport describes the config snapshot a data-plane pod is serving.
 type SnapshotReport struct {
 	// State is none, lkg (restored last-known-good, not yet refreshed) or live.
+	// The snapshot version is deliberately absent: /readyz is unauthenticated and
+	// the etag is a sha256 fingerprint of tenant config. It stays in logs only.
 	State      string     `json:"state"`
-	Version    string     `json:"version,omitempty"`
 	AppliedAt  *time.Time `json:"applied_at,omitempty"`
 	AgeSeconds *int64     `json:"age_seconds,omitempty"`
 }
