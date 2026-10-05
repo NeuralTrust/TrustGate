@@ -4,7 +4,13 @@ Opt in on a consumer's load balancing configuration:
 
 ```json
 {
+  "enabled": true,
   "algorithm": "smart-routing",
+  "members": [
+    {"registry_id": "<cheap registry UUID>", "model": "<cheap model>"},
+    {"registry_id": "<workhorse registry UUID>", "model": "<workhorse model>"},
+    {"registry_id": "<strong registry UUID>", "model": "<strong model>"}
+  ],
   "smart_routing": {
     "sr1": {"cache_ttl_seconds": 300},
     "tiers": [
@@ -15,6 +21,9 @@ Opt in on a consumer's load balancing configuration:
   }
 }
 ```
+
+Each tier must match a member with the same registry and model. The Admin API
+response must retain `smart_routing.sr1`; verify this after creating/updating a consumer.
 
 For two rungs use thresholds `0` and `0.45`. Models must be explicitly named,
 with distinct registry/model pairs. The owner supplies the order of capability.
