@@ -48,7 +48,10 @@ finds a user's key. These calls answer 422:
 
 - `personal` on an MCP consumer, a personal consumer without a primary default,
   a personal consumer on a hybrid gateway, or a change of `audience`;
-- `auths` in the update body of a personal consumer (create ignores `auths`);
+- `auths` in the update body of a personal consumer (create never takes
+  `auths`, for any audience: keys arrive only through attach);
+- detaching from a personal consumer, or deleting, the registry that holds its
+  last primary default model;
 - an owned key attached to an application consumer, an application key attached
   to a personal consumer, link attributes on an application consumer, or a link
   without `level` or `granted_at`;
@@ -78,13 +81,18 @@ snapshot apply.
 
 Send the key in `X-AG-API-Key`, `x-api-key`, `x-goog-api-key` or
 `Authorization: Bearer ag_…`, to any route of `/store/v1` (`chat/completions`,
-`models`, `embeddings`, `files`, …).
+`responses`, `messages`, `models`, `embeddings`, …). The Files API is refused in
+v1: with a valid key, `/store/v1/files` and `/store/v1/files/{id}` answer the
+404 of an unknown route, because file operations would run on the registry's
+shared credential for every user it serves.
 
 1. **404 before any key lookup** when the gateway is served by a hybrid data
    plane or has no active personal consumer. The answer is the one an unknown
    consumer slug gets.
 2. **401** for no key, an unknown, disabled, expired or revoked key, an
-   application key, or another gateway's key.
+   application key, or another gateway's key. An unknown key's digest is
+   remembered for 30 s (and forgotten on the next `InvalidateGatewayDataEvent`),
+   so the same random key sent again does not reach the database.
 3. **Substitution.** Let S be the providers of the primary registries of the
    key's `user`-level consumers. Every registry of a `group` or `all` consumer
    whose provider is in S is ignored, fallback included. A consumer left with no
@@ -104,7 +112,7 @@ Send the key in `X-AG-API-Key`, `x-api-key`, `x-goog-api-key` or
 
 | Model in the request | A consumer admits it when |
 |---|---|
-| none | a primary registry has a default model (not needed on a route that takes no model, such as `GET /files/{id}`) |
+| none | a primary registry has a default model |
 | `auto` | routing resolves with a primary candidate |
 | `pool:<alias>` | its pool has that alias and a member survives substitution. No consumer defines it → 400; one defines it but nothing survives → 403 |
 | `@provider/model` | a primary registry of that provider allows the model |
@@ -114,6 +122,11 @@ The selected consumer then serves the request with its registries minus the
 substituted ones, its model policies, its load balancer (`gateway:consumer`,
 shared by every user it serves), its fallback, and its own policies plus the
 gateway's global ones. MCP-wide policies never apply.
+
+A session id (`X-Session-Id` or a known client header) names a conversation of
+the key's owner. Two owners sending the same session id never continue each
+other's conversation, and a `previous_response_id` recorded for another owner
+starts a new session. On `/<slug>/v1` sessions stay per gateway.
 
 `/store/v1/models` lists the union, deduplicated and sorted, of what each
 remaining consumer lists through its surviving primary registries. A key with no
@@ -139,13 +152,14 @@ left.
 Without D, `gpt-4.1` goes to A, and when OpenAI fails A's fallback serves it as
 A's own route would: a fallback registry without an allow-list is skipped for a
 short model its provider's catalog does not list. `deepseek-chat` is still
-refused, because a fallback never admits.
+refused, because a fallback never admits. A's open OpenAI registry now lists
+the OpenAI catalog, so `/store/v1/models` gains it.
 
 ## Errors
 
 | Status | When |
 |---|---|
-| 404 `not_found` | hybrid gateway, or no active personal consumer |
+| 404 `not_found` | hybrid gateway, no active personal consumer, or the Files API |
 | 401 `unauthenticated` | the key is missing or not a valid personal key of this gateway |
 | 403 `model_not_allowed` | no consumer admits the request, including a key with no links |
 | 400 `invalid_model` | malformed model reference, or a pool alias no consumer defines |
@@ -156,9 +170,10 @@ refused, because a fallback never admits.
 A `token_rate_limiter` policy with `"partition": "key"` counts per owner: the
 counter is `owner:<owner_id>`, so a rotation or a revoke and re-create keeps the
 spend, and one owner shares one counter across every consumer that serves her.
-A key without an owner counts as `auth:<auth_id>`; a request without a key (the
-playground) is not counted. Make it a global policy to cap a user across all of
-her consumers.
+A key without an owner counts as `auth:<auth_id>`. A request that no API key
+authenticated (OAuth2, OIDC, mTLS, the playground) has no key and is not
+counted by `partition: key`. Make it a global policy to cap a user across all
+of her consumers.
 
 ```json
 {"slug": "token_rate_limiter", "settings": {"partition": "key", "aggregate": {"max": 500000, "time_window": "calendar_month"}}}
@@ -168,14 +183,22 @@ her consumers.
 `custom_pricing` and `group_by_header` are refused with it. In a blocking mode,
 over budget answers 429, a Redis read error 503 `budget_unavailable` (the
 default partition stays fail-open), and a dollar budget on a model without a
-price 403 `model_unpriced`.
+price 403 `model_unpriced`. A dollar budget prices the model that will be
+served: for a request with no model, `auto` or `pool:<alias>` that is the
+selected route's default model, so such a request is served and charged, and
+403 `model_unpriced` answers only when that model has no catalog or registry
+price.
 
 ## Telemetry
 
 A store request's usage event carries `trustgate.auth.id` (the key),
 `trustgate.principal.subject` (the owner) and `trustgate.consumer.id` (the
-selected consumer). A denied request carries the key and the owner and no
-consumer, and so does `/store/v1/models`. Each snapshot publish records
+selected consumer). A request refused after authentication (403, 400, 405, 429)
+carries the key and the owner and no consumer, and so does `/store/v1/models`.
+A 401 carries neither the key nor the owner: nothing authenticated it. The end
+user (`trustgate.end_user.id`) is always the key's owner:
+`X-NeuralTrust-End-User`, the `X-TG-User-*` and Open WebUI headers and the
+body's `user` field are ignored on `/store/v1`. Each snapshot publish records
 `trustgate.configsnapshot.encoded_bytes`, `trustgate.configsnapshot.scopes` and
 `trustgate.configsnapshot.entities` (`auths`, `owned_auths`,
 `personal_consumers`, `personal_links`).
@@ -200,9 +223,31 @@ columns can stay.
 ## Out of scope
 
 - Hybrid gateways: `/store/v1` answers 404 and personal consumers are refused.
+- The Files API on `/store/v1` (404, see Request routing).
 - Personal keys on MCP and on `/<slug>/v1`: they answer as unknown keys.
 - Traffic labeling of `/store/v1` requests, and the playground on personal
   consumers.
 - The grants, the reconcile and the UI, which live in the app.
 - Admin consumer responses keep listing every linked key in `auth_ids`; the link
   attributes are not exposed.
+
+## Release notes
+
+What changes for a deployment that never creates a personal consumer or a
+personal key, OSS included. Everything else in this document is inert until
+the first personal consumer exists.
+
+| # | Change | Before |
+|---|---|---|
+| a | An application key whose `expires_at` has passed gets 401 on `/<slug>/v1/*`. An expired key attached to another consumer also gets 401. | The key kept working; on another consumer it got 403. |
+| b | `InvalidateGatewayDataEvent` clears the whole `auth_key` cache and the new unknown-key cache (30 s) on every full-plane replica, so a rotation or a revocation stops the old secret on every replica at once. | Other replicas kept resolving the old secret for up to 5 minutes. |
+| c | Usage events carry `auth_id`, and OTLP records `trustgate.auth.id`, on LLM proxy requests authenticated by an API key. | No auth id. |
+| d | Admin consumer responses always carry `audience` (`application` for every existing consumer). | No `audience` field. |
+| e | `whoami` on the fixed host resolves a gateway only from an enabled, unexpired application key. A disabled, expired or personal key answers like an unknown key. | Any key the key finder returned resolved its gateway, including a disabled one still in its cache. |
+| f | `POST /v1/gateways/{gateway_id}/consumers/{consumer_id}/auths/{auth_id}` parses a non-empty body as link attributes: malformed JSON answers 422, and link attributes on an application consumer answer 422. No body behaves as before. | The body was ignored. |
+| g | Deleting a registry that holds a personal consumer's last primary default model answers 422 `validation_failed`, like detaching it. | Personal consumers are new; an earlier build of this change answered 409 `has_dependents`. |
+| h | The MCP connect ticket re-check refuses an expired or personal key. | Only enabled, type and gateway were checked. |
+| i | `token_rate_limiter` gains `partition: key`, the `calendar_month` and `calendar_day` windows and the hard limits (503 `budget_unavailable`, 403 `model_unpriced`). All are opt-in: a policy without `partition` counts, fails open and prices exactly as before. | — |
+
+Roll back (a) by reverting it; the rest needs no action.
+

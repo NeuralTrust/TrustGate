@@ -3838,6 +3838,16 @@
                                 }
                             }
                         }
+                    },
+                    "422": {
+                        "description": "The registry carries the last primary default model of a personal consumer",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
                     }
                 },
                 "security": [
