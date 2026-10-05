@@ -36,6 +36,7 @@ func TestSaaSOverlaysKeepOutboundGuard(t *testing.T) {
 	for _, path := range overlays {
 		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
 			// Start from the code defaults, whatever the test process inherited.
+			t.Setenv("OUTBOUND_ALLOW_PRIVATE_NETWORKS", "")
 			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", "")
 			t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "")
 
@@ -58,8 +59,8 @@ func TestSaaSOverlaysKeepOutboundGuard(t *testing.T) {
 				t.Fatalf("read overlay: %v", err)
 			}
 
-			if getProviderConfig().AllowPrivateNetworks {
-				t.Error("shared gateway allows tenant provider URLs to reach private addresses")
+			if getOutboundConfig().AllowPrivateNetworks {
+				t.Error("shared gateway allows tenant-steered outbound URLs to reach private addresses")
 			}
 			if getModelArmorConfig().AllowAmbientIdentity {
 				t.Error("shared gateway allows Model Armor auth through the pod identity")

@@ -29,6 +29,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var (
@@ -93,7 +94,7 @@ type asCacheEntry struct {
 
 func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, client *http.Client, clients FlowStore) MetadataService {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = netguard.NewHTTPClient(10 * time.Second)
 	}
 	return &metadataService{credentials: credentials, paths: paths, client: client, clients: clients, asCache: map[string]asCacheEntry{}}
 }
@@ -279,8 +280,14 @@ func isLegacyPrivateUseRedirectURI(raw string) bool {
 }
 
 func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (map[string]any, error) {
+	// A trusted (operator) fetch and a tenant fetch of the same issuer string
+	// are different requests with different network rules, so never share an entry.
+	cacheKey := issuer
+	if netguard.IsTrusted(ctx) {
+		cacheKey = "trusted\x00" + issuer
+	}
 	s.mu.Lock()
-	if e, ok := s.asCache[issuer]; ok && time.Since(e.fetchedAt) < asMetadataTTL {
+	if e, ok := s.asCache[cacheKey]; ok && time.Since(e.fetchedAt) < asMetadataTTL {
 		s.mu.Unlock()
 		return e.doc, nil
 	}
@@ -298,7 +305,7 @@ func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (m
 			continue
 		}
 		s.mu.Lock()
-		s.asCache[issuer] = asCacheEntry{doc: doc, fetchedAt: time.Now()}
+		s.asCache[cacheKey] = asCacheEntry{doc: doc, fetchedAt: time.Now()}
 		s.mu.Unlock()
 		return doc, nil
 	}

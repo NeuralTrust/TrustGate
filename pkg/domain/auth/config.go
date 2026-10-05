@@ -77,6 +77,13 @@ type OAuth2Config struct {
 	// so setting them does not turn on brokered login.
 	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
 	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117 -- stored credential, masked in responses
+
+	// Trusted marks an identity provider the operator configured through the
+	// environment (the built-in default IdP): its endpoints may be on a private
+	// address, so its outbound calls skip the network guard. It is never
+	// serialised, so a stored or API-supplied config cannot carry it; the only
+	// place that sets it is the in-process builder of the default IdP.
+	Trusted bool `json:"-"`
 }
 
 // ExchangeCredentials returns the client token exchanges are signed with: the

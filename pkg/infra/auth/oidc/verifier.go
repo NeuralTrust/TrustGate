@@ -24,6 +24,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -64,6 +65,7 @@ func (v *Verifier) Peek(token string) (appauth.TokenHints, error) {
 }
 
 func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.OAuth2Config) (*appauth.VerifiedClaims, error) {
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	headerToken, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse token", ErrInvalidToken)

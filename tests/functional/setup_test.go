@@ -88,7 +88,7 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL string) []string {
 	// the pod identity (the fake ADC above); the gateway refuses that by default.
 	env = append(env, "MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=true")
 	// Upstream stubs in the functional suite listen on loopback.
-	env = append(env, "PROVIDER_ALLOW_PRIVATE_NETWORKS=true")
+	env = append(env, "OUTBOUND_ALLOW_PRIVATE_NETWORKS=true")
 	env = append(env, "TRUSTGUARD_CLIENT_ID="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_ID", trustGuardFunctionalClientID))
 	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_SECRET", trustGuardFunctionalClientSecret))
 	if trustGuardBaseURL != "" {
