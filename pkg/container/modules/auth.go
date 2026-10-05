@@ -16,7 +16,6 @@ package modules
 
 import (
 	"log/slog"
-	"time"
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -30,10 +29,6 @@ import (
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
-
-func utcNow() time.Time {
-	return time.Now().UTC()
-}
 
 func Auth(c *container.Container) error {
 	if err := provideAuthRepository(c); err != nil {
