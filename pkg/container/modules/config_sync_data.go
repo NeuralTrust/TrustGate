@@ -92,8 +92,8 @@ func ConfigSyncData(c *container.Container) error {
 	}
 	// Pending pinned tools reach the control plane over the same connection; the
 	// recorder in MCP wraps this port with the queue, dedupe and retries.
-	if err := c.Provide(func(client *configsyncgrpc.Client) appmcp.PendingToolRecorder {
-		return configsyncgrpc.NewPinnedToolsClient(client.ClientConn())
+	if err := c.Provide(func(client *configsyncgrpc.Client, logger *slog.Logger) appmcp.PendingToolRecorder {
+		return configsyncgrpc.NewPinnedToolsClient(client.ClientConn(), logger)
 	}); err != nil {
 		return err
 	}
