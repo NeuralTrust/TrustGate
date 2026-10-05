@@ -16,10 +16,14 @@ package proxy
 
 import (
 	"context"
+	"iter"
 	"slices"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 )
 
 type StoreModelsInput struct {
@@ -36,26 +40,23 @@ type StoreModels interface {
 var _ StoreModels = (*storeModels)(nil)
 
 type storeModels struct {
-	lister ModelsLister
+	lister *modelsLister
 }
 
-func NewStoreModels(lister ModelsLister) StoreModels {
-	return &storeModels{lister: lister}
+func NewStoreModels(resolver approuting.Resolver, catalog appcatalog.Service) StoreModels {
+	return &storeModels{lister: &modelsLister{resolver: resolver, catalog: catalog}}
 }
 
 func (s *storeModels) List(ctx context.Context, in StoreModelsInput) (*ModelsList, error) {
 	cards := make([]ModelCard, 0)
 	seen := make(map[string]struct{})
-	for _, link := range storeScope(in.Links) {
-		list, err := s.lister.List(ctx, ListModelsInput{Consumer: link.Consumer, Data: in.Data, Keep: link.primaryFilter()})
+	for card, err := range s.cards(ctx, in) {
 		if err != nil {
 			return nil, err
 		}
-		for _, card := range list.Data {
-			if _, dup := seen[card.ID]; !dup {
-				seen[card.ID] = struct{}{}
-				cards = append(cards, card)
-			}
+		if _, dup := seen[card.ID]; !dup {
+			seen[card.ID] = struct{}{}
+			cards = append(cards, card)
 		}
 	}
 	slices.SortFunc(cards, func(a, b ModelCard) int { return strings.Compare(a.ID, b.ID) })
@@ -63,14 +64,31 @@ func (s *storeModels) List(ctx context.Context, in StoreModelsInput) (*ModelsLis
 }
 
 func (s *storeModels) Get(ctx context.Context, in StoreModelsInput, id string) (*ModelCard, error) {
-	list, err := s.List(ctx, in)
-	if err != nil {
-		return nil, err
-	}
-	for i := range list.Data {
-		if list.Data[i].ID == id {
-			return &list.Data[i], nil
+	for card, err := range s.cards(ctx, in) {
+		if err != nil {
+			return nil, err
+		}
+		if card.ID == id {
+			return &card, nil
 		}
 	}
 	return nil, ErrModelNotFound
+}
+
+func (s *storeModels) cards(ctx context.Context, in StoreModelsInput) iter.Seq2[ModelCard, error] {
+	return func(yield func(ModelCard, error) bool) {
+		listed := make(map[string][]catalogdomain.Model)
+		for _, link := range storeScope(in.Links) {
+			cards, err := s.lister.collect(ctx, ListModelsInput{Consumer: link.Consumer, Data: in.Data, Keep: link.primaryFilter()}, listed)
+			if err != nil {
+				yield(ModelCard{}, err)
+				return
+			}
+			for _, card := range cards {
+				if !yield(card, nil) {
+					return
+				}
+			}
+		}
+	}
 }
