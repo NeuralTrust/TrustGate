@@ -74,6 +74,57 @@ func (_c *PinnedToolRepository_ApproveAll_Call) RunAndReturn(run func(context.Co
 	return _c
 }
 
+// Decide provides a mock function with given fields: ctx, gatewayID, registryID, approve, reject, decidedBy
+func (_m *PinnedToolRepository) Decide(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], approve []registry.ToolRef, reject []registry.ToolRef, decidedBy string) error {
+	ret := _m.Called(ctx, gatewayID, registryID, approve, reject, decidedBy)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Decide")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolRef, []registry.ToolRef, string) error); ok {
+		r0 = rf(ctx, gatewayID, registryID, approve, reject, decidedBy)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// PinnedToolRepository_Decide_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Decide'
+type PinnedToolRepository_Decide_Call struct {
+	*mock.Call
+}
+
+// Decide is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - registryID ids.ID[ids.RegistryKind]
+//   - approve []registry.ToolRef
+//   - reject []registry.ToolRef
+//   - decidedBy string
+func (_e *PinnedToolRepository_Expecter) Decide(ctx interface{}, gatewayID interface{}, registryID interface{}, approve interface{}, reject interface{}, decidedBy interface{}) *PinnedToolRepository_Decide_Call {
+	return &PinnedToolRepository_Decide_Call{Call: _e.mock.On("Decide", ctx, gatewayID, registryID, approve, reject, decidedBy)}
+}
+
+func (_c *PinnedToolRepository_Decide_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], approve []registry.ToolRef, reject []registry.ToolRef, decidedBy string)) *PinnedToolRepository_Decide_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].([]registry.ToolRef), args[4].([]registry.ToolRef), args[5].(string))
+	})
+	return _c
+}
+
+func (_c *PinnedToolRepository_Decide_Call) Return(_a0 error) *PinnedToolRepository_Decide_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *PinnedToolRepository_Decide_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolRef, []registry.ToolRef, string) error) *PinnedToolRepository_Decide_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListByRegistry provides a mock function with given fields: ctx, gatewayID, registryID
 func (_m *PinnedToolRepository) ListByRegistry(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind]) ([]registry.PinnedTool, error) {
 	ret := _m.Called(ctx, gatewayID, registryID)
@@ -130,6 +181,56 @@ func (_c *PinnedToolRepository_ListByRegistry_Call) Return(_a0 []registry.Pinned
 }
 
 func (_c *PinnedToolRepository_ListByRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind]) ([]registry.PinnedTool, error)) *PinnedToolRepository_ListByRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Pin provides a mock function with given fields: ctx, gatewayID, registryID, tools, decidedBy
+func (_m *PinnedToolRepository) Pin(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate, decidedBy string) error {
+	ret := _m.Called(ctx, gatewayID, registryID, tools, decidedBy)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Pin")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate, string) error); ok {
+		r0 = rf(ctx, gatewayID, registryID, tools, decidedBy)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// PinnedToolRepository_Pin_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Pin'
+type PinnedToolRepository_Pin_Call struct {
+	*mock.Call
+}
+
+// Pin is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - registryID ids.ID[ids.RegistryKind]
+//   - tools []registry.ToolCandidate
+//   - decidedBy string
+func (_e *PinnedToolRepository_Expecter) Pin(ctx interface{}, gatewayID interface{}, registryID interface{}, tools interface{}, decidedBy interface{}) *PinnedToolRepository_Pin_Call {
+	return &PinnedToolRepository_Pin_Call{Call: _e.mock.On("Pin", ctx, gatewayID, registryID, tools, decidedBy)}
+}
+
+func (_c *PinnedToolRepository_Pin_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate, decidedBy string)) *PinnedToolRepository_Pin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].([]registry.ToolCandidate), args[4].(string))
+	})
+	return _c
+}
+
+func (_c *PinnedToolRepository_Pin_Call) Return(_a0 error) *PinnedToolRepository_Pin_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *PinnedToolRepository_Pin_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate, string) error) *PinnedToolRepository_Pin_Call {
 	_c.Call.Return(run)
 	return _c
 }

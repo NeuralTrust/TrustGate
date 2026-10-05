@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -33,14 +34,51 @@ var _ domain.PinnedToolRepository = (*PinnedToolRepository)(nil)
 // registry_tools. The table carries no gateway_id of its own: every query joins
 // registries and filters on its gateway_id, the same ownership check the
 // registry repository applies, so a registry id from another gateway matches
-// nothing. It does not append a config-snapshot marker: the decisions are not
-// part of the snapshot.
+// nothing.
+//
+// A write that changes a decision runs in one transaction with a bump of the
+// registry (updated_at plus a config-snapshot change marker, the same marker a
+// registry update appends), because the decisions are part of the compiled
+// snapshot. UpsertPending does not bump: pending rows are not in the snapshot.
 type PinnedToolRepository struct {
-	conn *database.Connection
+	conn   *database.Connection
+	outbox outbox.Appender
 }
 
-func NewPinnedToolRepository(conn *database.Connection) *PinnedToolRepository {
-	return &PinnedToolRepository{conn: conn}
+func NewPinnedToolRepository(conn *database.Connection, appender outbox.Appender) *PinnedToolRepository {
+	return &PinnedToolRepository{conn: conn, outbox: appender}
+}
+
+// withBump runs fn in a transaction that holds the registry row with
+// FOR NO KEY UPDATE (it does not block the foreign-key lock UpsertPending takes
+// while inserting), and when fn reports a change bumps the registry's updated_at
+// and appends the snapshot marker before committing. kind is the registry type,
+// for fn to check. A registry that is not the gateway's is ErrNotFound.
+func (r *PinnedToolRepository) withBump(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	registryID ids.RegistryID,
+	fn func(tx pgx.Tx, kind string) (changed bool, err error),
+) error {
+	const lock = `SELECT type FROM registries WHERE id = $1 AND gateway_id = $2 FOR NO KEY UPDATE`
+	const bump = `UPDATE registries SET updated_at = now() WHERE id = $1 AND gateway_id = $2`
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		var kind string
+		if err := tx.QueryRow(ctx, lock, registryID, gatewayID).Scan(&kind); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.ErrNotFound
+			}
+			return fmt.Errorf("pinned tool repository: lock registry: %w", err)
+		}
+		changed, err := fn(tx, kind)
+		if err != nil || !changed {
+			return err
+		}
+		if _, err := tx.Exec(ctx, bump, registryID, gatewayID); err != nil {
+			return fmt.Errorf("pinned tool repository: bump registry: %w", err)
+		}
+		return r.outbox.AppendTx(ctx, tx)
+	})
 }
 
 func (r *PinnedToolRepository) ListByRegistry(
@@ -124,24 +162,110 @@ func (r *PinnedToolRepository) SetStatus(
 	if !status.IsValid() {
 		return 0, fmt.Errorf("pinned tool repository: invalid status %q", status)
 	}
+	var n int
+	err := r.withBump(ctx, gatewayID, registryID, func(tx pgx.Tx, _ string) (bool, error) {
+		var err error
+		n, err = setStatusTx(ctx, tx, registryID, refs, status, decidedBy)
+		return n > 0, err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (r *PinnedToolRepository) Decide(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	registryID ids.RegistryID,
+	approve, reject []domain.ToolRef,
+	decidedBy string,
+) error {
+	return r.withBump(ctx, gatewayID, registryID, func(tx pgx.Tx, _ string) (bool, error) {
+		if err := requireStored(ctx, tx, registryID, approve, reject); err != nil {
+			return false, err
+		}
+		a, err := setStatusTx(ctx, tx, registryID, approve, domain.ToolStatusApproved, decidedBy)
+		if err != nil {
+			return false, err
+		}
+		b, err := setStatusTx(ctx, tx, registryID, reject, domain.ToolStatusRejected, decidedBy)
+		if err != nil {
+			return false, err
+		}
+		return a+b > 0, nil
+	})
+}
+
+// requireStored fails with ErrUnknownToolRefs, naming up to maxNamedUnknown
+// refs, when any ref has no row for the registry. The registry row is already
+// locked, so a concurrent approve cannot slip between this check and the writes.
+func requireStored(ctx context.Context, tx pgx.Tx, registryID ids.RegistryID, groups ...[]domain.ToolRef) error {
+	var all []domain.ToolRef
+	for _, g := range groups {
+		all = append(all, g...)
+	}
+	names, fingerprints := splitRefs(all)
+	if len(names) == 0 {
+		return nil
+	}
+	const query = `
+		SELECT x.name
+		  FROM unnest($2::text[], $3::text[]) AS x(name, fp)
+		 WHERE NOT EXISTS (
+		       SELECT 1 FROM registry_tools t
+		        WHERE t.registry_id = $1 AND t.tool_name = x.name AND t.fingerprint = x.fp)`
+	rows, err := tx.Query(ctx, query, registryID, names, fingerprints)
+	if err != nil {
+		return fmt.Errorf("pinned tool repository: check refs: %w", err)
+	}
+	defer rows.Close()
+	var missing []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("pinned tool repository: scan refs: %w", err)
+		}
+		missing = append(missing, name)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("pinned tool repository: check refs: %w", err)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	const maxNamedUnknown = 10
+	listed := missing
+	if len(listed) > maxNamedUnknown {
+		listed = listed[:maxNamedUnknown]
+	}
+	return fmt.Errorf("%w: %d not found for this registry (%q)", domain.ErrUnknownToolRefs, len(missing), listed)
+}
+
+func setStatusTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	registryID ids.RegistryID,
+	refs []domain.ToolRef,
+	status domain.ToolStatus,
+	decidedBy string,
+) (int, error) {
 	names, fingerprints := splitRefs(refs)
 	if len(names) == 0 {
 		return 0, nil
 	}
-	// Going back to pending clears the decision; any other status stamps it.
+	// Going back to pending clears the decision; any other status stamps it. The
+	// registry is already locked as the gateway's, so the join is not repeated.
 	const query = `
 		UPDATE registry_tools t
-		   SET status     = $3,
-		       decided_at = CASE WHEN $3 = 'pending' THEN NULL ELSE now() END,
-		       decided_by = CASE WHEN $3 = 'pending' THEN NULL ELSE NULLIF($4, '') END
-		  FROM unnest($5::text[], $6::text[]) AS x(name, fp),
-		       registries r
+		   SET status     = $2,
+		       decided_at = CASE WHEN $2 = 'pending' THEN NULL ELSE now() END,
+		       decided_by = CASE WHEN $2 = 'pending' THEN NULL ELSE NULLIF($3, '') END
+		  FROM unnest($4::text[], $5::text[]) AS x(name, fp)
 		 WHERE t.registry_id = $1
-		   AND r.id = t.registry_id
-		   AND r.gateway_id = $2
 		   AND t.tool_name = x.name
 		   AND t.fingerprint = x.fp`
-	cmd, err := r.conn.Pool.Exec(ctx, query, registryID, gatewayID, string(status), decidedBy, names, fingerprints)
+	cmd, err := tx.Exec(ctx, query, registryID, string(status), decidedBy, names, fingerprints)
 	if err != nil {
 		return 0, fmt.Errorf("pinned tool repository: set status: %w", err)
 	}
@@ -155,8 +279,44 @@ func (r *PinnedToolRepository) ApproveAll(
 	tools []domain.ToolCandidate,
 	decidedBy string,
 ) error {
+	return r.withBump(ctx, gatewayID, registryID, func(tx pgx.Tx, _ string) (bool, error) {
+		return approveAllTx(ctx, tx, registryID, tools, decidedBy)
+	})
+}
+
+func (r *PinnedToolRepository) Pin(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	registryID ids.RegistryID,
+	tools []domain.ToolCandidate,
+	decidedBy string,
+) error {
+	const setPolicy = `UPDATE registries SET tool_policy = 'pinned' WHERE id = $1 AND gateway_id = $2`
+	return r.withBump(ctx, gatewayID, registryID, func(tx pgx.Tx, kind string) (bool, error) {
+		if domain.Type(kind) != domain.TypeMCP {
+			return false, fmt.Errorf("%w: pinned is only valid for MCP registries", domain.ErrInvalidToolPolicy)
+		}
+		if _, err := approveAllTx(ctx, tx, registryID, tools, decidedBy); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, setPolicy, registryID, gatewayID); err != nil {
+			return false, fmt.Errorf("pinned tool repository: set policy: %w", err)
+		}
+		return true, nil
+	})
+}
+
+func approveAllTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	registryID ids.RegistryID,
+	tools []domain.ToolCandidate,
+	decidedBy string,
+) (bool, error) {
 	names, fingerprints, definitions := splitCandidates(tools)
-	const lock = `SELECT 1 FROM registries WHERE id = $1 AND gateway_id = $2 FOR SHARE`
+	if len(names) == 0 {
+		return false, nil
+	}
 	// Unlike UpsertPending this overwrites: approving is an explicit admin act
 	// and wins over a stored pending or rejected decision for the same ref.
 	const upsert = `
@@ -167,22 +327,10 @@ func (r *PinnedToolRepository) ApproveAll(
 		   SET status     = 'approved',
 		       decided_at = now(),
 		       decided_by = NULLIF($2::text, '')`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		var one int
-		if err := tx.QueryRow(ctx, lock, registryID, gatewayID).Scan(&one); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return domain.ErrNotFound
-			}
-			return fmt.Errorf("pinned tool repository: lock registry: %w", err)
-		}
-		if len(names) == 0 {
-			return nil
-		}
-		if _, err := tx.Exec(ctx, upsert, registryID, decidedBy, names, fingerprints, definitions); err != nil {
-			return fmt.Errorf("pinned tool repository: approve all: %w", err)
-		}
-		return nil
-	})
+	if _, err := tx.Exec(ctx, upsert, registryID, decidedBy, names, fingerprints, definitions); err != nil {
+		return false, fmt.Errorf("pinned tool repository: approve all: %w", err)
+	}
+	return true, nil
 }
 
 // splitRefs flattens refs into the two parallel arrays unnest zips back into
