@@ -163,6 +163,9 @@ func (f fakeAuths) List(_ context.Context, filter authdomain.ListFilter) ([]*aut
 	if f.err != nil {
 		return nil, 0, f.err
 	}
+	if filter.ExcludeOwned || filter.OwnerID != "" {
+		return nil, 0, errors.New("the compiler must read every auth, owned keys included")
+	}
 	if filter.Page.Number > 1 {
 		return nil, 0, nil
 	}

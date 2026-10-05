@@ -122,6 +122,19 @@ func (a *Auth) IsOwned() bool {
 	return a.OwnerID != ""
 }
 
+// ManagedBy reports whether caller may change the auth: the admin (empty
+// caller) only an application key, a user only their own key.
+func (a *Auth) ManagedBy(caller string) error {
+	switch {
+	case caller == "" && a.IsOwned():
+		return ErrOwnedKey
+	case caller != "" && caller != a.OwnerID:
+		return ErrNotFound
+	default:
+		return nil
+	}
+}
+
 // IsExpired reports whether the credential has passed its expiry. An auth
 // without one never does.
 func (a *Auth) IsExpired(now time.Time) bool {

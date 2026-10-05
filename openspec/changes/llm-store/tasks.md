@@ -170,17 +170,17 @@ Depends: P2a. Est.: ≈320 (code 120 / test 200). Commit boundary: (a) `feat`: d
 
 Depends: P2b. Est.: ≈285 (code 120 / test 165). Commit boundary: (a) `feat`; (b) `chore(docs)`: `make docs`.
 
-- [ ] 4.1 `pkg/domain/auth/repository.go`: `ListFilter.ExcludeOwned bool`, `ListFilter.OwnerID string` (A1). `pkg/infra/repository/auth/repository.go`: list and count add `AND ($k::boolean IS NOT TRUE OR owner_id IS NULL) AND ($m = '' OR owner_id = $m)`. The compiler keeps the unfiltered `List` (`compiler.go:462,725`).
-- [ ] 4.2 `pkg/common/errors/errors.go`: `ErrManagedByOwner`. `pkg/domain/auth/errors.go`: `ErrOwnedKey`. `httpio/errors.go` `MapDomainError`: → 422 `owned_key` (DD10).
-- [ ] 4.3 `pkg/api/handler/http/auth/list_auth_handler.go` (`:61-93`): always sets `ExcludeOwned`; `?owner_id=<sub>` sets `OwnerID` and clears `ExcludeOwned`. Swag `@Param owner_id`. `response/auth_response.go`: `OwnerID json:"owner_id,omitempty"`. The secret and hash are never present.
-- [ ] 4.4 `pkg/app/auth/updater.go`: an owned key → `ErrOwnedKey`. `pkg/app/auth/rotator.go`: `RotateInput.OwnerID`; an owned key needs `OwnerID == existing.OwnerID`, else `ErrOwnedKey` (DD14). The admin rotate handler passes `""`. Swag `@Failure 422` on PUT and rotate.
-- [ ] 4.5 The admin auth create DTO has no `owner_id`. Assert that the decoder drops it and that the creator never sets it.
-- [ ] 4.6 `pkg/app/policy/warnings.go:285` `apiKeyAuths`: skip `IsOwned()`.
-- [ ] 4.7 Test `tests/functional/repositories/auth/repository_test.go`: with 3 application keys and 2 owned keys, `ExcludeOwned` → 3 items and total 3. `OwnerID=alice` → 1 item. The default filter → 5.
-- [ ] 4.8 Test `list_auth_handler_test.go`, `get_auth_handler_test.go` and the update/rotate handler tests: list hides owned keys, `?owner_id` lists the owner's key, get shows `owner_id` without the hash, and PUT and rotate → 422 `owned_key` with no repo write.
-- [ ] 4.9 Test `pkg/app/auth/{updater,rotator}_test.go`: owner match and mismatch. Admin `DELETE` on an owned key goes through the deleter unchanged (detach, TTL eviction, invalidation, `Signal`). Test `pkg/app/policy/warnings_test.go`: owned keys only → no api-key warning.
+- [x] 4.1 `pkg/domain/auth/repository.go`: `ListFilter.ExcludeOwned bool`, `ListFilter.OwnerID string` (A1). `pkg/infra/repository/auth/repository.go`: list and count add `AND ($k::boolean IS NOT TRUE OR owner_id IS NULL) AND ($m = '' OR owner_id = $m)`. The compiler keeps the unfiltered `List` (`compiler.go:462,725`).
+- [x] 4.2 `pkg/common/errors/errors.go`: `ErrManagedByOwner`. `pkg/domain/auth/errors.go`: `ErrOwnedKey`. `httpio/errors.go` `MapDomainError`: → 422 `owned_key` (DD10).
+- [x] 4.3 `pkg/api/handler/http/auth/list_auth_handler.go` (`:61-93`): always sets `ExcludeOwned`; `?owner_id=<sub>` sets `OwnerID` and clears `ExcludeOwned`. Swag `@Param owner_id`. `response/auth_response.go`: `OwnerID json:"owner_id,omitempty"`. The secret and hash are never present.
+- [x] 4.4 `pkg/app/auth/updater.go`: an owned key → `ErrOwnedKey`. `pkg/app/auth/rotator.go`: `RotateInput.OwnerID`; an owned key needs `OwnerID == existing.OwnerID`, else `ErrOwnedKey` (DD14). The admin rotate handler passes `""`. Swag `@Failure 422` on PUT and rotate.
+- [x] 4.5 The admin auth create DTO has no `owner_id`. Assert that the decoder drops it and that the creator never sets it.
+- [x] 4.6 `pkg/app/policy/warnings.go:285` `apiKeyAuths`: skip `IsOwned()`.
+- [x] 4.7 Test `tests/functional/repositories/auth/repository_test.go`: with 3 application keys and 2 owned keys, `ExcludeOwned` → 3 items and total 3. `OwnerID=alice` → 1 item. The default filter → 5.
+- [x] 4.8 Test `list_auth_handler_test.go`, `get_auth_handler_test.go` and the update/rotate handler tests: list hides owned keys, `?owner_id` lists the owner's key, get shows `owner_id` without the hash, and PUT and rotate → 422 `owned_key` with no repo write.
+- [x] 4.9 Test `pkg/app/auth/{updater,rotator}_test.go`: owner match and mismatch. Admin `DELETE` on an owned key goes through the deleter unchanged (detach, TTL eviction, invalidation, `Signal`). Test `pkg/app/policy/warnings_test.go`: owned keys only → no api-key warning.
 - Accept (4.1–4.9): `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (unit half; the end-to-end check is in 10.8 and 15b.2), `› Owner in an admin create body`, `› Owned keys only`.
-- [ ] 4.10 Run VG and VR.
+- [x] 4.10 Run VG and VR.
 
 ## Phase 5: S3d `consumer_auth` link columns (base P2a)
 

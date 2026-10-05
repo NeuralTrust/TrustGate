@@ -457,3 +457,38 @@ func TestRepository_ConcurrentOwnedKeysForOneOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 }
+
+func TestRepository_List_OwnedKeyFilters(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "owner-list")
+	for _, name := range []string{"app-1", "app-2", "app-3"} {
+		require.NoError(t, r.Save(ctx, validAuth(t, gwID, name)))
+	}
+	alice := ownedAuth(t, gwID, "alice")
+	require.NoError(t, r.Save(ctx, alice))
+	require.NoError(t, r.Save(ctx, ownedAuth(t, gwID, "bob")))
+
+	for name, tc := range map[string]struct {
+		filter       domain.ListFilter
+		total, items int
+	}{
+		"default lists every key":   {filter: domain.ListFilter{}, total: 5, items: 5},
+		"exclude owned":             {filter: domain.ListFilter{ExcludeOwned: true}, total: 3, items: 3},
+		"exclude owned on page two": {filter: domain.ListFilter{ExcludeOwned: true, Page: listing.Page{Number: 2, Size: 2}}, total: 3, items: 1},
+		"one owner":                 {filter: domain.ListFilter{OwnerID: "alice"}, total: 1, items: 1},
+		"owner without a key":       {filter: domain.ListFilter{OwnerID: "carol"}, total: 0, items: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tc.filter.GatewayID = gwID
+			items, total, err := r.List(ctx, tc.filter)
+			require.NoError(t, err)
+			require.Equal(t, tc.total, total)
+			require.Len(t, items, tc.items)
+			for _, a := range items {
+				require.False(t, tc.filter.ExcludeOwned && a.IsOwned(), "owned key %s listed", a.ID)
+				require.True(t, tc.filter.OwnerID == "" || (a.ID == alice.ID && a.OwnerID == "alice"), "unexpected key %s", a.ID)
+			}
+		})
+	}
+}
