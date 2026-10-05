@@ -69,6 +69,7 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Type:        req.ToType(),
 		Enabled:     req.Enabled,
 		Description: req.Description,
+		ToolPolicy:  req.ToToolPolicy(),
 		LLMTarget:   req.ToLLMTarget(),
 		MCPTarget:   req.ToMCPTarget(),
 	})

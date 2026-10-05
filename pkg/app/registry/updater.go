@@ -38,6 +38,7 @@ type UpdateInput struct {
 	Provider        *string
 	ProviderOptions *map[string]any
 	Description     *string
+	ToolPolicy      *domain.ToolPolicy
 	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
 	Pricing         *domain.Pricing
@@ -101,6 +102,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	}
 	if in.Enabled != nil {
 		existing.Enabled = *in.Enabled
+	}
+	if in.ToolPolicy != nil {
+		existing.ToolPolicy = *in.ToolPolicy
 	}
 	applyLLMTargetUpdate(existing, in)
 	prevAuth := storedMCPAuth(existing)
