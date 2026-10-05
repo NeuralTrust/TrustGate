@@ -130,7 +130,7 @@ func TestUpdateAndRotateAuth_RefuseAnOwnedKey(t *testing.T) {
 			signaler := &configsynctest.FakeSignaler{}
 			app := fiber.New()
 			app.Put("/gateways/:gateway_id/auths/:id", authhttp.NewUpdateAuthHandler(
-				appauth.NewUpdater(repo, consumermocks.NewRepository(t), manager, publisher, logger, signaler)).Handle)
+				appauth.NewUpdater(repo, consumermocks.NewRepository(t), manager, publisher, logger, signaler, nil)).Handle)
 			app.Post("/gateways/:gateway_id/auths/:id/rotate", authhttp.NewRotateAuthHandler(
 				appauth.NewRotator(repo, manager, publisher, logger, signaler, time.Now), nil).Handle)
 

@@ -58,10 +58,14 @@ const consumerSelectColumns = `
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
 		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids,
-		       COALESCE((SELECT json_object_agg(cl.auth_id, json_build_object('level', cl.level, 'priority', cl.priority, 'granted_at', cl.granted_at))
+		       COALESCE((SELECT json_object_agg(cl.auth_id, json_build_object('level', cl.level, 'priority', cl.priority,
+		                          'granted_at', to_char(cl.granted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
 		                   FROM consumer_auth cl WHERE cl.consumer_id = c.id AND cl.level IS NOT NULL), '{}')::jsonb AS auth_links`
 
-var _ domain.Repository = (*Repository)(nil)
+var (
+	_ domain.Repository = (*Repository)(nil)
+	_ domain.LinkReader = (*Repository)(nil)
+)
 
 type Repository struct {
 	conn   *database.Connection
@@ -556,6 +560,38 @@ func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.C
 		return nil, fmt.Errorf("consumer repository: find: %w", err)
 	}
 	return c, nil
+}
+
+func (r *Repository) FindSummaryByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
+	const query = `SELECT id, gateway_id, type, audience, active FROM consumers WHERE id = $1`
+	c := &domain.Consumer{}
+	var consumerType, audience string
+	if err := r.conn.Pool.QueryRow(ctx, query, id).Scan(&c.ID, &c.GatewayID, &consumerType, &audience, &c.Active); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("consumer repository: find summary: %w", err)
+	}
+	parsedAudience, err := domain.ParseAudience(audience)
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: scan audience: %w", err)
+	}
+	c.Type = domain.Type(consumerType)
+	c.Audience = parsedAudience
+	return c, nil
+}
+
+func (r *Repository) ListIDsByAuthID(ctx context.Context, authID ids.AuthID) ([]ids.ConsumerID, error) {
+	const query = `SELECT consumer_id FROM consumer_auth WHERE auth_id = $1 ORDER BY consumer_id`
+	rows, err := r.conn.Pool.Query(ctx, query, authID)
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: list ids by auth: %w", err)
+	}
+	consumerIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: scan ids by auth: %w", err)
+	}
+	return ids.FromUUIDs[ids.ConsumerKind](consumerIDs), nil
 }
 
 func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain.Consumer, error) {

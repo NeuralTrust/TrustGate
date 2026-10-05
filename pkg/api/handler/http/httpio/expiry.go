@@ -22,11 +22,8 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
-// ParseExpiresAt reads an RFC 3339 instant out of the wire.
-//
-// The empty string is the only way to say "no expiry" on a request that omits
-// the field to mean "leave it alone": an absent field and a null one are the
-// same thing to encoding/json, so a third word was needed for clearing.
+// ParseExpiresAt parses an RFC 3339 instant and returns it in UTC; an empty
+// string returns nil.
 func ParseExpiresAt(raw string) (*time.Time, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil

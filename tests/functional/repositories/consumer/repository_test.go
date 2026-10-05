@@ -46,6 +46,11 @@ type fixture struct {
 
 func setupRepo(t *testing.T) fixture {
 	t.Helper()
+	return setupRepoInTimeZone(t, "")
+}
+
+func setupRepoInTimeZone(t *testing.T, timeZone string) fixture {
+	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
 	if dsn == "" {
 		t.Skip("PG_TEST_URL not set; skipping consumer repository integration test")
@@ -57,6 +62,9 @@ func setupRepo(t *testing.T) fixture {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse PG_TEST_URL: %v", err)
+	}
+	if timeZone != "" {
+		cfg.ConnConfig.RuntimeParams["timezone"] = timeZone
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -960,4 +968,105 @@ func TestRepository_LargePersonalConsumerReadsEveryLink(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, wantIDs, got.AuthIDs)
 	require.Equal(t, wantLinks, got.AuthLinks)
+}
+
+func TestRepository_PersonalLinksRoundTripUnderANonUTCSession(t *testing.T) {
+	for _, timeZone := range []string{"Asia/Kolkata", "America/Bogota"} {
+		t.Run(timeZone, func(t *testing.T) {
+			f := setupRepoInTimeZone(t, timeZone)
+			ctx := context.Background()
+			var session string
+			require.NoError(t, f.conn.Pool.QueryRow(ctx, `SHOW TimeZone`).Scan(&session))
+			require.Equal(t, timeZone, session)
+
+			gwID := seedGateway(t, f.gw, "tz-links-gw")
+			auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+			personal := seedLLMConsumer(t, f, gwID, "tz-personal", domain.AudiencePersonal)
+			want := make(map[ids.AuthID]domain.AuthLink, 3)
+			for i, grantedAt := range []time.Time{
+				time.Unix(0, 0).UTC(),
+				time.Date(2026, time.October, 1, 4, 0, 0, 123456000, time.FixedZone("-05:00", -5*60*60)),
+				time.Date(9999, time.December, 31, 23, 59, 59, 999999000, time.UTC),
+			} {
+				key, err := authdomain.NewAPIKeyAuth(gwID, fmt.Sprintf("tz-owned-%d", i), true, nil)
+				require.NoError(t, err)
+				key.OwnerID = fmt.Sprintf("tz-user-%d", i)
+				require.NoError(t, auths.Save(ctx, key))
+				link := domain.AuthLink{Level: domain.GrantLevelUser, Priority: i, GrantedAt: grantedAt}
+				require.NoError(t, f.repo.AttachAuth(ctx, personal, key.ID, &link))
+				link.GrantedAt = grantedAt.UTC()
+				want[key.ID] = link
+			}
+
+			got, err := f.repo.FindByID(ctx, personal)
+			require.NoError(t, err)
+			require.Equal(t, want, got.AuthLinks)
+			for _, link := range got.AuthLinks {
+				require.Equal(t, time.UTC, link.GrantedAt.Location())
+			}
+		})
+	}
+}
+
+func TestRepository_AttachAuthRefusesAGrantTimeOutOfRange(t *testing.T) {
+	f := setupRepoInTimeZone(t, "Asia/Kolkata")
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "tz-range-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	personal := seedLLMConsumer(t, f, gwID, "tz-range", domain.AudiencePersonal)
+	key, err := authdomain.NewAPIKeyAuth(gwID, "tz-range-key", true, nil)
+	require.NoError(t, err)
+	key.OwnerID = "tz-range-user"
+	require.NoError(t, auths.Save(ctx, key))
+
+	for name, grantedAt := range map[string]time.Time{
+		"year 0000":           time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC),
+		"near 9999 at -05:00": time.Date(9999, time.December, 31, 23, 0, 0, 0, time.FixedZone("-05:00", -5*60*60)),
+	} {
+		link := domain.AuthLink{Level: domain.GrantLevelUser, GrantedAt: grantedAt}
+		require.ErrorIs(t, f.repo.AttachAuth(ctx, personal, key.ID, &link), domain.ErrInvalidAuthLink, name)
+	}
+	const insert = `INSERT INTO consumer_auth (consumer_id, auth_id, level, priority, granted_at) VALUES ($1, $2, 'user', 0, $3::timestamptz)`
+	_, err = f.conn.Pool.Exec(ctx, insert, personal, key.ID, "9999-12-31 23:00:00-05")
+	require.Error(t, err)
+	var remaining int
+	require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, key.ID).Scan(&remaining))
+	require.Zero(t, remaining)
+}
+
+func TestRepository_LinkReaderReadsOnlyWhatALinkChangeNeeds(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "light-read-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	owned, err := authdomain.NewAPIKeyAuth(gwID, "light-owned", true, nil)
+	require.NoError(t, err)
+	owned.OwnerID = "light-user"
+	require.NoError(t, auths.Save(ctx, owned))
+	unlinked, err := authdomain.NewAPIKeyAuth(gwID, "light-unlinked", true, nil)
+	require.NoError(t, err)
+	require.NoError(t, auths.Save(ctx, unlinked))
+
+	p1 := seedLLMConsumer(t, f, gwID, "light-p1", domain.AudiencePersonal)
+	p2 := seedLLMConsumer(t, f, gwID, "light-p2", domain.AudiencePersonal)
+	link := domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 1, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)}
+	for _, consumerID := range []ids.ConsumerID{p1, p2} {
+		require.NoError(t, f.repo.AttachAuth(ctx, consumerID, owned.ID, &link))
+	}
+	_, err = f.conn.Pool.Exec(ctx, `UPDATE consumers SET active = FALSE WHERE id = $1`, p2)
+	require.NoError(t, err)
+
+	summary, err := f.repo.FindSummaryByID(ctx, p2)
+	require.NoError(t, err)
+	require.Equal(t, &domain.Consumer{ID: p2, GatewayID: gwID, Type: domain.TypeLLM, Audience: domain.AudiencePersonal}, summary)
+	_, err = f.repo.FindSummaryByID(ctx, ids.New[ids.ConsumerKind]())
+	require.ErrorIs(t, err, domain.ErrNotFound)
+
+	linked, err := f.repo.ListIDsByAuthID(ctx, owned.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []ids.ConsumerID{p1, p2}, linked)
+	none, err := f.repo.ListIDsByAuthID(ctx, unlinked.ID)
+	require.NoError(t, err)
+	require.NotNil(t, none)
+	require.Empty(t, none)
 }

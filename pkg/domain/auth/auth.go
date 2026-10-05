@@ -152,6 +152,14 @@ func (a *Auth) AcceptsAPIKey(hash string, now time.Time) bool {
 	return a != nil && a.Enabled && a.Type == TypeAPIKey && a.KeyHash == hash && !a.IsExpired(now)
 }
 
+// AcceptsApplicationKey reports whether a authenticates as an application on
+// gatewayID at now: an enabled, unexpired api key of that gateway that no user
+// owns.
+func (a *Auth) AcceptsApplicationKey(gatewayID ids.GatewayID, now time.Time) bool {
+	return a != nil && a.Enabled && a.Type == TypeAPIKey && !a.IsOwned() &&
+		!gatewayID.IsNil() && a.GatewayID == gatewayID && !a.IsExpired(now)
+}
+
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
 	id, err := ids.NewV7[ids.AuthKind]()
 	if err != nil {

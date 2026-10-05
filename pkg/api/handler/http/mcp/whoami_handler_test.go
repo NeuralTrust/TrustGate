@@ -335,7 +335,7 @@ func TestWhoAmI_FindsTheGatewayFromTheKeyOnAFixedHost(t *testing.T) {
 		{Slug: "support-llm", Type: consumerdomain.TypeLLM, Active: true},
 	}}
 	limiter := &countingLimiter{}
-	app := fixedHostApp(service, keyStore{"ag_secret": {GatewayID: gw.ID, Enabled: true}}, gatewaysByID{gw.ID: gw}, limiter)
+	app := fixedHostApp(service, keyStore{"ag_secret": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true}}, gatewaysByID{gw.ID: gw}, limiter)
 
 	status, body, _ := callFixedHost(t, app, "ag_secret")
 
@@ -363,10 +363,12 @@ func TestWhoAmI_RefusesAnUnknownKeyOnTheFixedHost(t *testing.T) {
 func TestWhoAmI_RefusesPersonalAndDisabledKeysOnTheFixedHostAsUnknown(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	expired := time.Now().UTC().Add(-time.Minute)
 	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true}}}
 	keys := keyStore{
-		"ag_alice":    {GatewayID: gw.ID, Enabled: true, OwnerID: "alice"},
-		"ag_disabled": {GatewayID: gw.ID},
+		"ag_alice":    {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice"},
+		"ag_disabled": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey},
+		"ag_expired":  {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, ExpiresAt: &expired},
 	}
 	handler := mcphttp.NewWhoAmIHandler(noGateway{}, service, "acme.neuraltrust.ai",
 		mcphttp.WithWhoAmIGatewayFromKey(keys, gatewaysByID{gw.ID: gw}, "mcp.neuraltrust.ai", &countingLimiter{}, nil),
@@ -382,20 +384,21 @@ func TestWhoAmI_RefusesPersonalAndDisabledKeysOnTheFixedHostAsUnknown(t *testing
 
 	unknownStatus, unknownBody := call("ag_nobody")
 	require.Equal(t, fiber.StatusUnauthorized, unknownStatus)
-	for _, key := range []string{"ag_alice", "ag_disabled"} {
+	for _, key := range []string{"ag_alice", "ag_disabled", "ag_expired"} {
 		status, body := call(key)
 		require.Equal(t, unknownStatus, status, key)
 		require.Equal(t, unknownBody, body, key)
 	}
 }
 
-// An unknown key is never cached, so each guess reaches the key store: the
-// fixed host counts them per source and stops answering past the limit.
+// An unknown key is remembered only briefly and only by its exact digest, so
+// each new guess reaches the key store: the fixed host counts them per source
+// and stops answering past the limit.
 func TestWhoAmI_RateLimitsKeyLookupsOnTheFixedHost(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	limiter := &countingLimiter{err: &appoauth.ConnectRateLimitExceeded{RetryAfter: 1500 * time.Millisecond}}
-	app := fixedHostApp(&whoAmIConsumers{}, keyStore{"ag_secret": {GatewayID: gw.ID, Enabled: true}}, gatewaysByID{gw.ID: gw}, limiter)
+	app := fixedHostApp(&whoAmIConsumers{}, keyStore{"ag_secret": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true}}, gatewaysByID{gw.ID: gw}, limiter)
 
 	status, _, header := callFixedHost(t, app, "ag_secret")
 
@@ -451,7 +454,7 @@ func TestWhoAmI_PointsAHybridKeyAtItsOwnDataPlane(t *testing.T) {
 	gw := hybridGateway()
 	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true}}}
 	handler := mcphttp.NewWhoAmIHandler(noGateway{}, service, "acme.neuraltrust.ai",
-		mcphttp.WithWhoAmIGatewayFromKey(keyStore{"ag_secret": {GatewayID: gw.ID, Enabled: true}}, gatewaysByID{gw.ID: gw},
+		mcphttp.WithWhoAmIGatewayFromKey(keyStore{"ag_secret": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true}}, gatewaysByID{gw.ID: gw},
 			"mcp.neuraltrust.ai", &countingLimiter{}, func(string, string) string { return "203.0.113.7" }),
 		mcphttp.WithWhoAmIRefuseHybrid(),
 	)

@@ -46,6 +46,7 @@ var _ Associator = (*associator)(nil)
 
 type associator struct {
 	repo         domain.Repository
+	links        domain.LinkReader
 	registryRepo registrydomain.Repository
 	authRepo     authdomain.Repository
 	policyRepo   policydomain.Repository
@@ -60,6 +61,7 @@ type associator struct {
 
 func NewAssociator(
 	repo domain.Repository,
+	links domain.LinkReader,
 	registryRepo registrydomain.Repository,
 	authRepo authdomain.Repository,
 	policyRepo policydomain.Repository,
@@ -72,6 +74,7 @@ func NewAssociator(
 ) Associator {
 	return &associator{
 		repo:         repo,
+		links:        links,
 		registryRepo: registryRepo,
 		authRepo:     authRepo,
 		policyRepo:   policyRepo,
@@ -127,8 +130,8 @@ func (a *associator) explainDetachConflict(
 	registryID ids.RegistryID,
 	conflict error,
 ) error {
-	current, err := a.consumerInGateway(ctx, gatewayID, consumerID)
-	if err != nil {
+	current, err := a.repo.FindByID(ctx, consumerID)
+	if err != nil || current.GatewayID != gatewayID {
 		return conflict
 	}
 	if err := current.ValidateRegistryDetach(registryID); err != nil {
@@ -254,7 +257,7 @@ func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 }
 
 func (a *associator) consumerInGateway(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*domain.Consumer, error) {
-	cons, err := a.repo.FindByID(ctx, consumerID)
+	cons, err := a.links.FindSummaryByID(ctx, consumerID)
 	if err != nil {
 		return nil, err
 	}

@@ -28,6 +28,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
@@ -136,7 +137,7 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, domain.ErrOwnedExpiry).Once()
 		}},
 		"create on a hybrid gateway": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, appauth.ErrPersonalKeyHybrid).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
 		}},
 		"create failing unexpectedly": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusInternalServerError, hides: "10.0.0.7", expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, errors.New("dial tcp 10.0.0.7:5432: refused")).Once()

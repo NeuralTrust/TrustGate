@@ -25,7 +25,7 @@ import (
 func TestAddAuthOwnerMigration(t *testing.T) {
 	const gatewayG, gatewayH = "aaaaaaaa-0000-0000-0000-00000000000a", "bbbbbbbb-0000-0000-0000-00000000000b"
 	ctx, tx := beginShadowTx(t, `
-		CREATE TEMP TABLE auths (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), gateway_id UUID NOT NULL) ON COMMIT DROP;
+		CREATE TEMP TABLE auths (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), gateway_id UUID NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE) ON COMMIT DROP;
 		INSERT INTO auths (gateway_id) VALUES ('`+gatewayG+`'), ('`+gatewayG+`')`)
 
 	runTwice(t, ctx, tx, upAddAuthOwner)
@@ -36,7 +36,11 @@ func TestAddAuthOwnerMigration(t *testing.T) {
 	require.Equal(t, "23505", sqlStateOf(t, ctx, tx, insert, gatewayG, "alice"))
 	require.Empty(t, sqlStateOf(t, ctx, tx, insert, gatewayH, "alice"))
 	require.Empty(t, sqlStateOf(t, ctx, tx, insert, gatewayG, nil))
+	_, err = tx.Exec(ctx, insert, gatewayH, "alice")
+	require.NoError(t, err)
 
 	runTwice(t, ctx, tx, downAddAuthOwner)
 	require.Zero(t, countOf(t, ctx, tx, `SELECT COUNT(*) FROM pg_attribute WHERE attrelid = 'auths'::regclass AND attname = 'owner_id' AND NOT attisdropped`))
+	require.Equal(t, 2, countOf(t, ctx, tx, `SELECT COUNT(*) FROM auths WHERE NOT enabled`))
+	require.Equal(t, 2, countOf(t, ctx, tx, `SELECT COUNT(*) FROM auths WHERE enabled`))
 }

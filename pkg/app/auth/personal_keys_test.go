@@ -46,33 +46,35 @@ var (
 )
 
 type personalKeysFixture struct {
-	gwID      ids.GatewayID
-	repo      *repomocks.Repository
-	consumers *consumermocks.Repository
-	gateways  *gatewaymocks.Repository
-	publisher *cachemocks.EventPublisher
-	signaler  *configsynctest.FakeSignaler
-	keyCache  *cache.TTLMap
-	keys      appauth.PersonalKeys
+	gwID       ids.GatewayID
+	repo       *repomocks.Repository
+	consumers  *consumermocks.Repository
+	linkReader *consumermocks.LinkReader
+	gateways   *gatewaymocks.Repository
+	publisher  *cachemocks.EventPublisher
+	signaler   *configsynctest.FakeSignaler
+	keyCache   *cache.TTLMap
+	keys       appauth.PersonalKeys
 }
 
 func newPersonalKeysFixture(t *testing.T) *personalKeysFixture {
 	t.Helper()
 	manager := newCacheManager()
 	f := &personalKeysFixture{
-		gwID:      ids.New[ids.GatewayKind](),
-		repo:      repomocks.NewRepository(t),
-		consumers: consumermocks.NewRepository(t),
-		gateways:  gatewaymocks.NewRepository(t),
-		publisher: cachemocks.NewEventPublisher(t),
-		signaler:  &configsynctest.FakeSignaler{},
-		keyCache:  manager.GetTTLMap(cache.AuthKeyTTLName),
+		gwID:       ids.New[ids.GatewayKind](),
+		repo:       repomocks.NewRepository(t),
+		consumers:  consumermocks.NewRepository(t),
+		linkReader: consumermocks.NewLinkReader(t),
+		gateways:   gatewaymocks.NewRepository(t),
+		publisher:  cachemocks.NewEventPublisher(t),
+		signaler:   &configsynctest.FakeSignaler{},
+		keyCache:   manager.GetTTLMap(cache.AuthKeyTTLName),
 	}
 	logger := newTestLogger()
 	clock := func() time.Time { return personalNow }
 	rotator := appauth.NewRotator(f.repo, manager, f.publisher, logger, f.signaler, clock)
 	deleter := appauth.NewDeleter(f.repo, f.consumers, manager, f.publisher, logger, f.signaler)
-	f.keys = appauth.NewPersonalKeys(f.repo, f.consumers, f.gateways, rotator, deleter, manager, f.publisher, logger, f.signaler, clock)
+	f.keys = appauth.NewPersonalKeys(f.repo, f.linkReader, f.gateways, rotator, deleter, manager, f.publisher, logger, f.signaler, clock)
 	return f
 }
 
@@ -98,10 +100,19 @@ func (f *personalKeysFixture) existingKey(t *testing.T) *domain.Auth {
 }
 
 func (f *personalKeysFixture) links(authID ids.AuthID, n int) []ids.ConsumerID {
+	consumerIDs := make([]ids.ConsumerID, 0, n)
+	for range n {
+		consumerIDs = append(consumerIDs, ids.New[ids.ConsumerKind]())
+	}
+	f.linkReader.EXPECT().ListIDsByAuthID(mock.Anything, authID).Return(consumerIDs, nil).Once()
+	return consumerIDs
+}
+
+func (f *personalKeysFixture) referencedBy(authID ids.AuthID, n int) []ids.ConsumerID {
 	var consumers []*consumerdomain.Consumer
 	consumerIDs := make([]ids.ConsumerID, 0, n)
 	for range n {
-		c := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: f.gwID, Type: consumerdomain.TypeLLM}
+		c := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: f.gwID, Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal}
 		consumers = append(consumers, c)
 		consumerIDs = append(consumerIDs, c.ID)
 	}
@@ -110,7 +121,7 @@ func (f *personalKeysFixture) links(authID ids.AuthID, n int) []ids.ConsumerID {
 }
 
 func (f *personalKeysFixture) listingFails(authID ids.AuthID) {
-	f.consumers.EXPECT().ListByAuthID(mock.Anything, authID).Return(nil, errStore).Once()
+	f.linkReader.EXPECT().ListIDsByAuthID(mock.Anything, authID).Return(nil, errStore).Once()
 }
 
 func TestPersonalKeys_Create_FirstKey(t *testing.T) {
@@ -146,7 +157,7 @@ func TestPersonalKeys_Create_Refused(t *testing.T) {
 		"expiry at now":       {owner: "alice", expiresAt: personalNow, want: domain.ErrOwnedExpiry},
 		"expiry past 90 days": {owner: "alice", expiresAt: personalLimit.Add(time.Second), want: domain.ErrOwnedExpiry},
 		"blank owner":         {owner: " ", expiresAt: personalLimit, want: domain.ErrInvalidOwner},
-		"hybrid gateway":      {owner: "alice", expiresAt: personalLimit, want: appauth.ErrPersonalKeyHybrid, setup: func(_ *testing.T, f *personalKeysFixture) { f.gateway(gatewaydomain.DataPlaneHybrid) }},
+		"hybrid gateway":      {owner: "alice", expiresAt: personalLimit, want: consumerdomain.ErrHybridPersonal, setup: func(_ *testing.T, f *personalKeysFixture) { f.gateway(gatewaydomain.DataPlaneHybrid) }},
 		"second key":          {owner: "alice", expiresAt: personalLimit, want: domain.ErrOwnedKeyExists, setup: func(t *testing.T, f *personalKeysFixture) { f.gateway(""); f.existingKey(t) }},
 		"concurrent create 409": {owner: "alice", expiresAt: personalLimit, want: domain.ErrOwnedKeyExists, setup: func(_ *testing.T, f *personalKeysFixture) {
 			f.gateway("")
@@ -306,7 +317,7 @@ func TestPersonalKeys_RevokeThenCreate(t *testing.T) {
 	t.Parallel()
 	f := newPersonalKeysFixture(t)
 	existing := f.existingKey(t)
-	for _, consumerID := range f.links(existing.ID, 2) {
+	for _, consumerID := range f.referencedBy(existing.ID, 2) {
 		f.consumers.EXPECT().DetachAuth(mock.Anything, consumerID, existing.ID).Return(nil).Once()
 	}
 	f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
@@ -327,4 +338,74 @@ func TestPersonalKeys_RevokeThenCreate(t *testing.T) {
 	require.NotEqual(t, existing.ID, key.Auth.ID)
 	require.Empty(t, key.ConsumerIDs)
 	require.Equal(t, 2, f.signaler.Count())
+}
+
+func TestPersonalKeys_RotateAndRevoke_FailuresChangeNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		run func(t *testing.T, f *personalKeysFixture, existing *domain.Auth) error
+	}{
+		"rotate when the update fails": {run: func(_ *testing.T, f *personalKeysFixture, existing *domain.Auth) error {
+			f.links(existing.ID, 1)
+			f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			f.repo.EXPECT().Update(mock.Anything, existing).Return(errStore).Once()
+			_, err := f.keys.Rotate(ctx, f.gwID, "alice", nil)
+			return err
+		}},
+		"revoke when a detach fails": {run: func(_ *testing.T, f *personalKeysFixture, existing *domain.Auth) error {
+			consumerIDs := f.referencedBy(existing.ID, 2)
+			f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			f.consumers.EXPECT().DetachAuth(mock.Anything, consumerIDs[0], existing.ID).Return(errStore).Once()
+			return f.keys.Revoke(ctx, f.gwID, "alice")
+		}},
+		"revoke when the delete fails": {run: func(_ *testing.T, f *personalKeysFixture, existing *domain.Auth) error {
+			for _, consumerID := range f.referencedBy(existing.ID, 2) {
+				f.consumers.EXPECT().DetachAuth(mock.Anything, consumerID, existing.ID).Return(nil).Once()
+			}
+			f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			f.repo.EXPECT().Delete(mock.Anything, f.gwID, existing.ID).Return(errStore).Once()
+			return f.keys.Revoke(ctx, f.gwID, "alice")
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newPersonalKeysFixture(t)
+			existing := f.existingKey(t)
+			oldHash := existing.KeyHash
+			cached := *existing
+			f.keyCache.Set(oldHash, &cached)
+
+			require.ErrorIs(t, tc.run(t, f, existing), errStore)
+			entry, ok := f.keyCache.Get(oldHash)
+			require.True(t, ok, "the old key's cache entry must survive a failed write")
+			require.Same(t, &cached, entry)
+			require.Equal(t, oldHash, cached.KeyHash)
+			require.Zero(t, f.signaler.Count())
+			f.publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestPersonalKeys_NilClockReadsUTCNow(t *testing.T) {
+	t.Parallel()
+	manager := newCacheManager()
+	repo := repomocks.NewRepository(t)
+	gateways := gatewaymocks.NewRepository(t)
+	publisher := cachemocks.NewEventPublisher(t)
+	gwID := ids.New[ids.GatewayKind]()
+	gateways.EXPECT().FindByID(mock.Anything, gwID).Return(&gatewaydomain.Gateway{ID: gwID}, nil).Once()
+	repo.EXPECT().FindByOwner(mock.Anything, gwID, "alice").Return(nil, domain.ErrNotFound).Once()
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+	logger := newTestLogger()
+	keys := appauth.NewPersonalKeys(repo, consumermocks.NewLinkReader(t), gateways,
+		appauth.NewRotator(repo, manager, publisher, logger, nil, nil), appauth.NewDeleter(repo, consumermocks.NewRepository(t), manager, publisher, logger, nil),
+		manager, publisher, logger, nil, nil)
+
+	before := time.Now().UTC()
+	key, err := keys.Create(context.Background(), gwID, "alice", before.Add(day))
+	require.NoError(t, err)
+	require.Equal(t, time.UTC, key.Auth.CreatedAt.Location())
+	require.False(t, key.Auth.CreatedAt.Before(before))
 }

@@ -49,7 +49,10 @@ func provideConsumerRepository(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r })
+	if err := c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r }); err != nil {
+		return err
+	}
+	return c.Provide(func(r *consumerrepo.Repository) domain.LinkReader { return r })
 }
 
 // provideConsumerRepositoryViews exposes the consumer repository under its
@@ -113,8 +116,8 @@ func provideConsumerServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, policyLevels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
-		return appconsumer.NewAssociator(repo, registryRepo, authRepo, policyRepo, policyLevels, manager, publisher, logger, sig.Signaler, resolver)
+	if err := c.Provide(func(repo domain.Repository, links domain.LinkReader, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, policyLevels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
+		return appconsumer.NewAssociator(repo, links, registryRepo, authRepo, policyRepo, policyLevels, manager, publisher, logger, sig.Signaler, resolver)
 	}); err != nil {
 		return err
 	}

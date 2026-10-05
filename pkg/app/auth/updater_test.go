@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -74,7 +75,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -112,7 +113,7 @@ func TestUpdater_Update_Partial_PreservesTypeAndConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -149,7 +150,7 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -171,7 +172,7 @@ func TestUpdater_Update_GatewayMismatch(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -193,7 +194,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:     id,
 		Name:   ptr("x"),
@@ -242,7 +243,7 @@ func TestUpdater_Update_AliasedTypeKeepsMCPConsumerValid(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -278,7 +279,7 @@ func TestUpdater_Update_AliasedTypeIsCanonicalizedOnWrite(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -307,7 +308,7 @@ func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -346,7 +347,7 @@ func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -367,7 +368,7 @@ func TestUpdater_Update_RefusesAnOwnedKey(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err = updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -379,5 +380,45 @@ func TestUpdater_Update_RefusesAnOwnedKey(t *testing.T) {
 	}
 	if existing.Name != "personal-alice" || !existing.Enabled {
 		t.Fatalf("owned key was modified: %+v", existing)
+	}
+}
+
+func TestUpdater_Update_ReadsTheInjectedClock(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	clock := time.Date(2031, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		expiresAt time.Time
+		wantErr   error
+	}{
+		"expiry after the injected now":  {expiresAt: clock.Add(time.Hour)},
+		"expiry before the injected now": {expiresAt: clock.Add(-time.Hour), wantErr: domain.ErrExpiryInThePast},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			existing, err := domain.NewAPIKeyAuth(gwID, "client-key", true, nil)
+			if err != nil {
+				t.Fatalf("NewAPIKeyAuth: %v", err)
+			}
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tc.wantErr == nil {
+				repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+			updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil,
+				func() time.Time { return clock })
+
+			updated, err := updater.Update(context.Background(), appauth.UpdateInput{
+				ID: existing.ID, GatewayID: gwID, Expiry: &appauth.ExpiryChange{At: &tc.expiresAt},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Update() = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && !updated.UpdatedAt.Equal(clock) {
+				t.Fatalf("UpdatedAt = %v, want the injected clock %v", updated.UpdatedAt, clock)
+			}
+		})
 	}
 }

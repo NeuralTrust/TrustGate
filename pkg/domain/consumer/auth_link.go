@@ -30,6 +30,11 @@ const (
 
 const DefaultGrantPriority = 1
 
+var (
+	minGrantedAt = time.Unix(0, 0).UTC()
+	maxGrantedAt = time.Date(9999, time.December, 31, 23, 59, 59, 999999000, time.UTC)
+)
+
 func ParseGrantLevel(s string) (GrantLevel, error) {
 	switch level := GrantLevel(s); level {
 	case GrantLevelUser, GrantLevelGroup, GrantLevelAll:
@@ -65,6 +70,10 @@ func (l AuthLink) Validate() error {
 	}
 	if l.GrantedAt.IsZero() {
 		return fmt.Errorf("%w: granted_at is required", ErrInvalidAuthLink)
+	}
+	if l.GrantedAt.Before(minGrantedAt) || l.GrantedAt.After(maxGrantedAt) {
+		return fmt.Errorf("%w: granted_at must be between %s and %s, got %s", ErrInvalidAuthLink,
+			minGrantedAt.Format(time.RFC3339), maxGrantedAt.Format(time.RFC3339), l.GrantedAt.UTC().Format(time.RFC3339))
 	}
 	return nil
 }

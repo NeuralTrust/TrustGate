@@ -22,16 +22,12 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
-	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
-
-var ErrPersonalKeyHybrid = fmt.Errorf("auth: personal keys are unavailable on hybrid gateways: %w", commonerrors.ErrValidation)
 
 type PersonalKey struct {
 	Auth        *domain.Auth
@@ -49,22 +45,18 @@ type PersonalKeys interface {
 var _ PersonalKeys = (*personalKeys)(nil)
 
 type personalKeys struct {
-	repo        domain.Repository
-	consumers   consumerdomain.Reader
-	gateways    gatewaydomain.Repository
-	rotator     Rotator
-	deleter     Deleter
-	memoryCache *cache.TTLMap
-	keyCache    *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
-	signaler    configsyncport.SnapshotSignaler
-	now         func() time.Time
+	repo     domain.Repository
+	links    consumerdomain.LinkReader
+	gateways gatewaydomain.Repository
+	rotator  Rotator
+	deleter  Deleter
+	creator  *creator
+	now      func() time.Time
 }
 
 func NewPersonalKeys(
 	repo domain.Repository,
-	consumers consumerdomain.Reader,
+	links consumerdomain.LinkReader,
 	gateways gatewaydomain.Repository,
 	rotator Rotator,
 	deleter Deleter,
@@ -75,17 +67,13 @@ func NewPersonalKeys(
 	now func() time.Time,
 ) PersonalKeys {
 	return &personalKeys{
-		repo:        repo,
-		consumers:   consumers,
-		gateways:    gateways,
-		rotator:     rotator,
-		deleter:     deleter,
-		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
-		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
-		publisher:   publisher,
-		logger:      logger,
-		signaler:    signaler,
-		now:         now,
+		repo:     repo,
+		links:    links,
+		gateways: gateways,
+		rotator:  rotator,
+		deleter:  deleter,
+		creator:  newCreator(repo, manager, publisher, logger, signaler),
+		now:      utcClock(now),
 	}
 }
 
@@ -94,15 +82,14 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	if err != nil {
 		return nil, err
 	}
-	consumers, err := p.consumers.ListByAuthID(ctx, a.ID)
+	consumerIDs, err := p.links.ListIDsByAuthID(ctx, a.ID)
 	if err != nil {
 		return nil, fmt.Errorf("auth: list consumers of personal key: %w", err)
 	}
-	key := &PersonalKey{Auth: a, ConsumerIDs: make([]ids.ConsumerID, 0, len(consumers))}
-	for _, c := range consumers {
-		key.ConsumerIDs = append(key.ConsumerIDs, c.ID)
+	if consumerIDs == nil {
+		consumerIDs = []ids.ConsumerID{}
 	}
-	return key, nil
+	return &PersonalKey{Auth: a, ConsumerIDs: consumerIDs}, nil
 }
 
 func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt time.Time) (*PersonalKey, error) {
@@ -122,12 +109,7 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	if err := p.repo.Save(ctx, a); err != nil {
 		return nil, fmt.Errorf("auth: save personal key: %w", err)
 	}
-	p.memoryCache.Set(a.ID.String(), a)
-	p.keyCache.Set(a.KeyHash, a)
-	invalidation.GatewayData(ctx, p.publisher, p.logger, gatewayID)
-	if p.signaler != nil {
-		p.signaler.Signal(ctx)
-	}
+	p.creator.saved(ctx, a)
 	return &PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil
 }
 
@@ -182,7 +164,7 @@ func (p *personalKeys) ensureNotHybrid(ctx context.Context, gatewayID ids.Gatewa
 		return fmt.Errorf("auth: load gateway: %w", err)
 	}
 	if gw.ServedByHybridDataPlane() {
-		return ErrPersonalKeyHybrid
+		return consumerdomain.ErrHybridPersonal
 	}
 	return nil
 }

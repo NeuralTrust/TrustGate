@@ -89,8 +89,8 @@ type WhoAmIOption func(*WhoAmIHandler)
 // mcpDomain is MCP_BASE_DOMAIN, the suffix a gateway's MCP plane is published
 // under: the request's own host is the fixed one and addresses no gateway, so
 // the MCP URL is built from it instead. Attempts on this path are counted per
-// source, like the connect pages', because an unknown key is never cached and
-// each one reaches the key store.
+// source, like the connect pages', because an unknown key is remembered only
+// briefly and only by its exact digest, so each new guess reaches the key store.
 func WithWhoAmIGatewayFromKey(
 	keys WhoAmIKeyFinder,
 	gateways WhoAmIGatewayFinder,
@@ -344,7 +344,7 @@ func (h *WhoAmIHandler) gatewayForKey(c *fiber.Ctx) *gatewaydomain.Gateway {
 		return nil
 	}
 	auth, err := h.byKey.keys.FindByAPIKey(c.UserContext(), key)
-	if err != nil || auth == nil || auth.GatewayID.IsNil() || auth.IsOwned() || !auth.Enabled {
+	if err != nil || auth == nil || !auth.AcceptsApplicationKey(auth.GatewayID, time.Now().UTC()) {
 		return nil
 	}
 	gateway, err := h.byKey.gateways.FindByID(c.UserContext(), auth.GatewayID)

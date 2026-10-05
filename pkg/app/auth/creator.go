@@ -54,6 +54,10 @@ type creator struct {
 }
 
 func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
+	return newCreator(repo, manager, publisher, logger, signaler)
+}
+
+func newCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) *creator {
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
@@ -75,6 +79,11 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 	if err := c.repo.Save(ctx, a); err != nil {
 		return nil, err
 	}
+	c.saved(ctx, a)
+	return a, nil
+}
+
+func (c *creator) saved(ctx context.Context, a *domain.Auth) {
 	c.memoryCache.Set(a.ID.String(), a)
 	if a.KeyHash != "" {
 		c.keyCache.Set(a.KeyHash, a)
@@ -83,7 +92,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 	if c.signaler != nil {
 		c.signaler.Signal(ctx)
 	}
-	return a, nil
 }
 
 func (c *creator) build(in CreateInput) (*domain.Auth, error) {

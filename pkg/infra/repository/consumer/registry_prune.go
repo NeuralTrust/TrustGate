@@ -63,8 +63,7 @@ func (r *Repository) PruneRegistryReferencesTx(
 	var report registrydomain.PruneReport
 	for _, consumer := range consumers {
 		if err := consumer.ValidateRegistryDetach(registryID); err != nil {
-			return registrydomain.PruneReport{}, fmt.Errorf("%w: registry %s carries the last primary default model of personal consumer %s",
-				domain.ErrHasDependents, registryID, consumer.ID)
+			return registrydomain.PruneReport{}, err
 		}
 		prune, changed := consumer.PruneRegistry(registryID)
 		if !changed {

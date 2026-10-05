@@ -276,8 +276,9 @@ func (w *warner) apiKeyReach(ctx context.Context, p *domain.Policy, reach []reac
 	return warnings, nil
 }
 
-// apiKeyAuths is the gateway's enabled application api-key credentials. A disabled auth
-// authenticates nobody, the same exemption the collision warnings make.
+// apiKeyAuths is the gateway's enabled application api-key credentials. A
+// disabled auth authenticates nobody, the same exemption the collision warnings
+// make.
 func (w *warner) apiKeyAuths(ctx context.Context, gatewayID ids.GatewayID) (map[ids.AuthID]struct{}, error) {
 	if w.auths == nil {
 		return nil, nil
