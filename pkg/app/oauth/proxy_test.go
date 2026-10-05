@@ -700,8 +700,12 @@ func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	if got := u.Query().Get("state"); got != "client-state" {
 		t.Fatalf("state must survive the refusal, got %q", got)
 	}
-	if desc := u.Query().Get("error_description"); !strings.Contains(desc, "X-AG-API-Key") {
-		t.Fatalf("the refusal should name the credential the client is missing, got %q", desc)
+	desc := u.Query().Get("error_description")
+	if !strings.Contains(desc, "sign in through") {
+		t.Fatalf("the refusal should say the consumer has no identity to sign in through, got %q", desc)
+	}
+	if strings.Contains(desc, "X-AG-API-Key") || strings.Contains(strings.ToLower(desc), "api key") {
+		t.Fatalf("the refusal must not talk about api keys, got %q", desc)
 	}
 }
 

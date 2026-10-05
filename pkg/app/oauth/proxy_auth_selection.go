@@ -34,13 +34,13 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 		return m.auth, nil
 	}
 	if m.matched {
-		// The consumer authenticates with a credential of its own, so a session
-		// brokered here would be refused by the auth chain. Advertising a login
-		// would only walk the user through a flow that cannot reach it.
+		// None of the consumer's identities lets people sign in, so a session
+		// brokered here would be refused by the auth chain. Saying so points the
+		// admin at the identity to attach, whatever credential the consumer has.
 		if m.protected {
 			return nil, oauthErr("invalid_target",
-				"this MCP server authenticates with a credential of its own: send it on every request "+
-					"(an api key travels in the X-AG-API-Key header) instead of signing in here")
+				"this MCP server's consumer has no identity provider people can sign in through; "+
+					"attach an identity that lets people sign in, or call it with the consumer's own credential")
 		}
 		// The resource pinned a consumer but it has no OAuth2 identity provider of
 		// its own: fall back to the single IdP configured on that consumer's
