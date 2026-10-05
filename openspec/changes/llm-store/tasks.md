@@ -413,10 +413,10 @@ Depends: P15a. Est.: ≈180 (test 110 / docs 70). Commit boundary: (a) `test`; (
 
 Depends: P5. Est.: ≈140 (code 75 / test 65). Commit boundary: one `feat` commit.
 
-- [ ] 16.1 Create `pkg/app/configsnapshot/snapshot_metrics.go`, following the pattern in `tenant_caps_metrics.go:29`: `otel.Meter("trustgate/configsnapshot")`, `trustgate.configsnapshot.encoded_bytes{flavour, scope}` and `trustgate.configsnapshot.entities{kind=auths|owned_auths|personal_consumers|personal_links}`. An instrument error is logged and never returned.
-- [ ] 16.2 `pkg/app/configsnapshot/dispatcher.go:231-319`: record on publish only, never on a dedup. The non-partitioned path records as `global`. The "published config snapshot" log stays.
-- [ ] 16.3 Test `snapshot_metrics_test.go` (manual reader): the byte values equal the published lengths per flavour; the counts with 2 owned keys and 3 links; OSS data gives zero personal counts; nothing is recorded on a dedup; a no-op meter provider does not fail the publish. Accept: `config-snapshot-metrics › Partitioned publish`, `› Counts`, `› OSS data`, `› No meter provider`.
-- [ ] 16.4 Run VG.
+- [x] 16.1 Create `pkg/app/configsnapshot/snapshot_metrics.go`, following the pattern in `tenant_caps_metrics.go:29`: `otel.Meter("trustgate/configsnapshot")`, `trustgate.configsnapshot.encoded_bytes{flavour, stat=max|total on scoped}`, `trustgate.configsnapshot.scopes` and `trustgate.configsnapshot.entities{kind=auths|owned_auths|personal_consumers|personal_links}` (every scope, hybrid included). No attribute carries a gateway, tenant or scope id; the publish log line gains `scopes`, `largest_scope`, `largest_scope_bytes`. An instrument error is logged and never returned.
+- [x] 16.2 `pkg/app/configsnapshot/dispatcher.go:231-319`: record on publish only, never on a dedup. The non-partitioned path records as `global`. The "published config snapshot" log stays.
+- [x] 16.3 Test `snapshot_metrics_test.go` (manual reader): catalog, global, scoped max/total and scopes match the published lengths, with 4 attribute sets after a scope is removed; the counts with 2 owned keys and 3 links, and a hybrid gateway's personal consumer counted; OSS data gives zero personal counts; nothing is recorded on a dedup; a no-op meter provider or a refused gauge does not fail the publish nor skip the other gauges. Accept: `config-snapshot-metrics › Partitioned publish`, `› Bounded series`, `› Counts`, `› Hybrid gateway`, `› OSS data`, `› No meter provider`.
+- [x] 16.4 Run VG.
 
 ## Deploy order
 
