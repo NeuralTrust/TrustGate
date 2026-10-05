@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
@@ -144,5 +145,51 @@ func TestDeleter_Delete_DetachesReferencingConsumers(t *testing.T) {
 	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
+	}
+}
+
+func TestDeleter_Delete_RevokesAnOwnedKeyLikeAnyOther(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	owned, err := domain.NewAPIKeyAuth(gwID, "personal-alice", true, nil)
+	if err != nil {
+		t.Fatalf("NewAPIKeyAuth: %v", err)
+	}
+	owned.OwnerID = "alice"
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, owned.ID).Return(owned, nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, owned.ID).Return(nil).Once()
+
+	personalA, personalB := ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind]()
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, owned.ID).Return([]*consumerdomain.Consumer{
+		{ID: personalA, Slug: "alice-gpt", Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal},
+		{ID: personalB, Slug: "alice-claude", Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal},
+	}, nil).Once()
+	consumerRepo.EXPECT().DetachAuth(mock.Anything, personalA, owned.ID).Return(nil).Once()
+	consumerRepo.EXPECT().DetachAuth(mock.Anything, personalB, owned.ID).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+	mgr := newCacheManager()
+	mgr.GetTTLMap(cache.AuthTTLName).Set(owned.ID.String(), owned)
+	mgr.GetTTLMap(cache.AuthKeyTTLName).Set(owned.KeyHash, owned)
+	signaler := &configsynctest.FakeSignaler{}
+
+	if err := appauth.NewDeleter(repo, consumerRepo, mgr, publisher, newTestLogger(), signaler).
+		Delete(context.Background(), gwID, owned.ID); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+	if _, ok := mgr.GetTTLMap(cache.AuthTTLName).Get(owned.ID.String()); ok {
+		t.Fatal("auth cache entry must be evicted")
+	}
+	if _, ok := mgr.GetTTLMap(cache.AuthKeyTTLName).Get(owned.KeyHash); ok {
+		t.Fatal("auth key cache entry must be evicted")
+	}
+	if got := signaler.Count(); got != 1 {
+		t.Fatalf("Signal count = %d, want 1", got)
 	}
 }

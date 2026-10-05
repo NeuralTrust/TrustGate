@@ -36,6 +36,7 @@ type AuthResponse struct {
 	KeySuffix string `json:"key_suffix,omitempty"`
 	// When the key retires itself. Absent means it never does.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	OwnerID   string     `json:"owner_id,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	// Consumers are the consumers this auth reaches, which is what a caller
@@ -113,6 +114,7 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		KeyPrefix: a.KeyPrefix,
 		KeySuffix: a.KeySuffix,
 		ExpiresAt: a.ExpiresAt,
+		OwnerID:   a.OwnerID,
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}

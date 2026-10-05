@@ -132,6 +132,7 @@ type AdminRouterDeps struct {
 	// admin's request (POST registries/from-catalog). Present only on the full
 	// plane; nil-guarded when absent.
 	StoreMaterialize *storehttp.MaterializeHandler
+	StoreLLMKey      *storehttp.LLMKeyHandler
 }
 
 type adminRouter struct {
@@ -225,7 +226,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// MCP Store administration: access grants and the install-approval queue.
 	// Curating the Store is a registry-admin concern, so it reuses the
 	// registries access guard. Registered only when wired (full plane).
-	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StorePrincipal != nil {
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
@@ -246,6 +247,13 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Post("/principal/installs", r.deps.StorePrincipal.Install)
 			store.Post("/principal/connect-link", r.deps.StorePrincipal.ConnectLink)
 			store.Post("/principal/configure-link", r.deps.StorePrincipal.ConfigureLink)
+		}
+		if r.deps.StoreLLMKey != nil {
+			selfOnly := r.deps.AdminAuthz.RequireInteractiveIdentity()
+			store.Get("/principal/llm-key", selfOnly, r.deps.StoreLLMKey.Get)
+			store.Post("/principal/llm-key", selfOnly, r.deps.StoreLLMKey.Create)
+			store.Post("/principal/llm-key/rotate", selfOnly, r.deps.StoreLLMKey.Rotate)
+			store.Delete("/principal/llm-key", selfOnly, r.deps.StoreLLMKey.Revoke)
 		}
 	}
 

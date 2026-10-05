@@ -16,6 +16,7 @@ package modules
 
 import (
 	"log/slog"
+	"time"
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -23,11 +24,16 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
+
+func utcNow() time.Time {
+	return time.Now().UTC()
+}
 
 func Auth(c *container.Container) error {
 	if err := provideAuthRepository(c); err != nil {
@@ -54,12 +60,17 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Rotator {
-		return appauth.NewRotator(repo, manager, publisher, logger, sig.Signaler)
+		return appauth.NewRotator(repo, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Deleter {
 		return appauth.NewDeleter(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, gateways gatewaydomain.Repository, rotator appauth.Rotator, deleter appauth.Deleter, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.PersonalKeys {
+		return appauth.NewPersonalKeys(repo, consumerRepo, gateways, rotator, deleter, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
 		return err
 	}

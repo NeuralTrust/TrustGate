@@ -182,6 +182,8 @@ definitions:
         type: string
       name:
         type: string
+      owner_id:
+        type: string
       type:
         type: string
       updated_at:
@@ -1927,6 +1929,13 @@ definitions:
           empty leaves them on the page.
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest:
+    properties:
+      expires_at:
+        example: "2026-12-31T12:00:00Z"
+        format: date-time
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide:
     properties:
       code:
@@ -1954,6 +1963,13 @@ definitions:
         description: |-
           Reason is why the user wants the server, in their own words. Kept only on
           a request an approver has to decide, and shown to them there.
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest:
+    properties:
+      expires_at:
+        example: "2026-12-31T12:00:00Z"
+        format: date-time
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetGrant:
@@ -2079,6 +2095,29 @@ definitions:
       registry_id:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse:
+    properties:
+      consumer_ids:
+        items:
+          type: string
+        type: array
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      expires_at:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      key_prefix:
+        type: string
+      key_suffix:
+        type: string
+      updated_at:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest:
     properties:
       code:
@@ -2114,6 +2153,27 @@ definitions:
         type: array
       total:
         type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse:
+    properties:
+      consumer_ids:
+        items:
+          type: string
+        type: array
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      expires_at:
+        type: string
+      id:
+        type: string
+      key_prefix:
+        type: string
+      key_suffix:
+        type: string
+      updated_at:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Policies:
     properties:
@@ -3779,6 +3839,11 @@ paths:
         in: query
         name: enabled
         type: boolean
+      - description: List only the personal key of this owner. Without it, personal
+          keys are excluded
+        in: query
+        name: owner_id
+        type: string
       - description: Sort field (name, created_at, updated_at, type)
         in: query
         name: sort
@@ -3948,7 +4013,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing auth.
+      description: Updates an existing auth. A personal (owned) key answers 422 owned_key;
+        only its owner can change it, the admin can only delete it.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3991,6 +4057,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update an auth
@@ -4001,7 +4071,8 @@ paths:
       description: Replaces the secret of an api_key auth and returns the new one.
         The auth keeps its id, its name and every consumer it is attached to; the
         previous secret stops authenticating immediately. The new secret is returned
-        once and is not retrievable afterwards.
+        once and is not retrievable afterwards. A personal (owned) key answers 422
+        owned_key; only its owner can change it, the admin can only delete it.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4037,6 +4108,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -6077,6 +6152,194 @@ paths:
       security:
       - BearerAuth: []
       summary: Install or request a Store server for a principal
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/principal/llm-key:
+    delete:
+      description: Deletes the caller's personal key and every consumer link it holds.
+        The caller may create a new one afterwards.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: 'Not a signed-in tenant user: service credential, platform
+            token or no user id'
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: No key for the caller, or no such gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Revoke your personal LLM key
+      tags:
+      - store
+    get:
+      description: 'Returns the caller''s own personal key on the gateway: its id,
+        recognition prefix and suffix, the consumers it is linked to, its expiry and
+        timestamps. The secret is never returned. Acts on the signed-in tenant user
+        only; a service credential or a platform token answers 403.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: 'Not a signed-in tenant user: service credential, platform
+            token or no user id'
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: No key for the caller, or no such gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Read your personal LLM key
+      tags:
+      - store
+    post:
+      consumes:
+      - application/json
+      description: Issues the caller's personal key on the gateway, linked to no consumer,
+        and returns its secret once. expires_at is required and must fall within the
+        next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id
+        in the body are ignored.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Expiry of the key
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: 'Not a signed-in tenant user: service credential, platform
+            token or no user id'
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: No such gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The caller already holds a key on this gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Missing or out-of-range expires_at, or a hybrid gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create your personal LLM key
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/principal/llm-key/rotate:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the secret of the caller's personal key and returns the
+        new one once. The key keeps its id and every consumer link. Without expires_at
+        the current expiry stays, unless it has passed; with it, it must fall within
+        the next 90 days.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Expiry of the new secret
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: 'Not a signed-in tenant user: service credential, platform
+            token or no user id'
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: No key for the caller, or no such gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Out-of-range expires_at, or an expired key rotated without
+            one
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Rotate your personal LLM key
       tags:
       - store
   /v1/gateways/{gateway_id}/store/requests:

@@ -15,20 +15,15 @@
 package request
 
 import (
+	"time"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 )
 
-// expiryChange maps an optional wire field onto the change the service takes:
-// absent leaves the stored expiry alone, an empty string clears it, and an
-// instant sets it.
-func expiryChange(raw *string) (*appauth.ExpiryChange, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	at, err := httpio.ParseExpiresAt(*raw)
-	if err != nil {
-		return nil, err
-	}
-	return &appauth.ExpiryChange{At: at}, nil
+type RotateLLMKeyRequest struct {
+	ExpiresAt string `json:"expires_at,omitempty" format:"date-time" example:"2026-12-31T12:00:00Z"`
+}
+
+func (r RotateLLMKeyRequest) Expiry() (*time.Time, error) {
+	return httpio.ParseExpiresAt(r.ExpiresAt)
 }

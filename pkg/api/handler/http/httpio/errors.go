@@ -46,6 +46,8 @@ const (
 	msgHasDependentsHint  = "Remove or reassign dependent resources first, then retry the delete."
 	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
 	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
+	msgOwnedKeyHint       = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
+	msgPersonalKeyHint    = "You already hold a key on this gateway. Rotate or revoke it instead."
 )
 
 // MapDomainError translates an application/domain error into the matching
@@ -74,12 +76,16 @@ func MapDomainError(err error) (int, ErrorBody) {
 		body := NotFoundBody()
 		body.Message = notFoundMessage(err)
 		return fiber.StatusNotFound, body
+	case errors.Is(err, commonerrors.ErrPersonalKeyExists):
+		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgPersonalKeyHint)}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
 	case errors.Is(err, commonerrors.ErrHasDependents):
 		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: publicMessage(err, msgHasDependentsHint)}
 	case errors.Is(err, commonerrors.ErrConflict):
 		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: publicMessage(err, msgConflictHint)}
+	case errors.Is(err, commonerrors.ErrManagedByOwner):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "owned_key", Message: publicMessage(err, msgOwnedKeyHint)}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
@@ -117,7 +123,8 @@ func isBareSentinel(msg string) bool {
 		commonerrors.ErrHasDependents.Error(),
 		commonerrors.ErrValidation.Error(),
 		commonerrors.ErrInvalidConfig.Error(),
-		commonerrors.ErrResultTooLarge.Error():
+		commonerrors.ErrResultTooLarge.Error(),
+		commonerrors.ErrManagedByOwner.Error():
 		return true
 	default:
 		return false
