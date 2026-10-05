@@ -30,7 +30,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var _ domain.Repository = (*redisRepository)(nil)
+var (
+	_ domain.Repository        = (*redisRepository)(nil)
+	_ domain.ReconnectRequirer = (*redisRepository)(nil)
+)
 
 const (
 	redisKeyPrefix     = "vault"
@@ -241,8 +244,57 @@ func (r *redisRepository) Delete(ctx context.Context, gatewayID ids.GatewayID, p
 	return nil
 }
 
+// RequireReconnect drops the refresh token of a credential the provider refused for
+// good and expires it, keeping the account so every status view reports it as
+// needing a reconnect. It only applies to the credential exactly as it was
+// read: one rewritten since (a reconnect, a rotation) returns
+// ErrCredentialChanged untouched.
+func (r *redisRepository) RequireReconnect(ctx context.Context, c *domain.Credential) error {
+	if c == nil {
+		return errors.New("vault repository: nil credential")
+	}
+	key := redisKey(c.GatewayID, c.PrincipalSub, c.Provider)
+	err := r.rc.Watch(ctx, func(tx *redis.Tx) error {
+		stored, err := loadFrom(ctx, tx, key)
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.ErrCredentialChanged
+		}
+		if err != nil {
+			return err
+		}
+		if !stored.matches(c.GatewayID, c.PrincipalSub, c.Provider) || !stored.UpdatedAt.Equal(c.UpdatedAt) {
+			return domain.ErrCredentialChanged
+		}
+		now := time.Now().UTC()
+		stored.RefreshToken = ""
+		stored.ExpiresAt = &now
+		stored.UpdatedAt = now
+		// #nosec G117 -- token fields are still the encrypted values loaded from the store.
+		payload, err := json.Marshal(stored)
+		if err != nil {
+			return fmt.Errorf("vault repository: marshal credential: %w", err)
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, key, payload, 0)
+			return nil
+		})
+		return err
+	}, key)
+	if errors.Is(err, redis.TxFailedErr) {
+		return domain.ErrCredentialChanged
+	}
+	if err != nil && !errors.Is(err, domain.ErrCredentialChanged) {
+		return fmt.Errorf("vault repository: require reconnect: %w", err)
+	}
+	return err
+}
+
 func (r *redisRepository) load(ctx context.Context, key string) (*storedCredential, error) {
-	val, err := r.rc.Get(ctx, key).Result()
+	return loadFrom(ctx, r.rc, key)
+}
+
+func loadFrom(ctx context.Context, rc redis.Cmdable, key string) (*storedCredential, error) {
+	val, err := rc.Get(ctx, key).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, domain.ErrNotFound
 	}

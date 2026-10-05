@@ -261,3 +261,39 @@ func TestFallbackRepositorySharesRedisRefreshLock(t *testing.T) {
 		t.Fatalf("expected shared lock contention, got %v", err)
 	}
 }
+
+func TestFallbackRepositoryRequiresReconnectInOriginalStore(t *testing.T) {
+	type requirer interface {
+		RequireReconnect(context.Context, *domain.Credential) error
+	}
+	ctx := context.Background()
+	for _, inPrimary := range []bool{true, false} {
+		t.Run(fmt.Sprint(inPrimary), func(t *testing.T) {
+			primary, _, _ := newRedisVaultRepo(t)
+			fallback, _, _ := newRedisVaultRepo(t)
+			gw := ids.New[ids.GatewayKind]()
+			holder := fallback
+			if inPrimary {
+				holder = primary
+			}
+			if err := holder.Upsert(ctx, newTestCredential(t, gw, "user", "linear", "access", "dead-refresh")); err != nil {
+				t.Fatal(err)
+			}
+			repo := vaultrepo.NewFallbackRepository(primary, fallback)
+			read, err := repo.Find(ctx, gw, "user", "linear")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.(requirer).RequireReconnect(ctx, read); err != nil {
+				t.Fatalf("require reconnect: %v", err)
+			}
+			got, err := repo.Find(ctx, gw, "user", "linear")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.RefreshToken != "" || !got.Expired(0) || got.AccountRef != "acct-linear" {
+				t.Fatalf("the store the reads reach was not marked: %+v", got)
+			}
+		})
+	}
+}

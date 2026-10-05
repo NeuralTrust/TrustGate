@@ -243,8 +243,8 @@ func TestGetModelArmorConfig(t *testing.T) {
 		}
 		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "")
 		cfg := getModelArmorConfig()
-		if cfg.AllowAmbientIdentity {
-			t.Error("AllowAmbientIdentity must default to false: the pod identity is shared across tenants")
+		if !cfg.AllowAmbientIdentity {
+			t.Error("AllowAmbientIdentity must default to true: hybrid and self-hosted gateways set nothing")
 		}
 		if cfg.BaseURL != "" {
 			t.Errorf("BaseURL = %q, want empty so the client derives the regional host per call", cfg.BaseURL)
@@ -257,10 +257,10 @@ func TestGetModelArmorConfig(t *testing.T) {
 	t.Run("explicit values", func(t *testing.T) {
 		t.Setenv("MODEL_ARMOR_BASE_URL", "https://modelarmor.example.internal")
 		t.Setenv("MODEL_ARMOR_TIMEOUT", "5s")
-		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "true")
+		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "false")
 		cfg := getModelArmorConfig()
-		if !cfg.AllowAmbientIdentity {
-			t.Error("AllowAmbientIdentity = false, want true")
+		if cfg.AllowAmbientIdentity {
+			t.Error("AllowAmbientIdentity = true, want false")
 		}
 		if cfg.BaseURL != "https://modelarmor.example.internal" {
 			t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://modelarmor.example.internal")
@@ -1279,17 +1279,21 @@ func TestLoadConfig_RateLimitDisabledIgnoresTheSyncTuning(t *testing.T) {
 
 func TestOutboundAllowPrivateNetworks(t *testing.T) {
 	tests := []struct {
-		name string
-		env  string
-		want bool
+		name   string
+		env    string
+		legacy string
+		want   bool
 	}{
-		{"unset defaults to off", "", false},
-		{"explicit true", "true", true},
-		{"explicit false", "false", false},
+		{"unset defaults to on", "", "", true},
+		{"explicit true", "true", "", true},
+		{"explicit false", "false", "", false},
+		{"legacy false keeps the guard", "", "false", false},
+		{"new name wins over legacy", "true", "false", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("OUTBOUND_ALLOW_PRIVATE_NETWORKS", tc.env)
+			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", tc.legacy)
 			if got := getOutboundConfig().AllowPrivateNetworks; got != tc.want {
 				t.Fatalf("AllowPrivateNetworks = %v, want %v", got, tc.want)
 			}
