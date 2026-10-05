@@ -46,6 +46,24 @@ type routedBackend struct {
 	baseline     *trace.RouteBaseline
 }
 
+type CandidateFilter func(routingdomain.Candidate) bool
+
+type candidateQuery struct {
+	intent        routingdomain.Intent
+	needed        string
+	consumer      *appconsumer.RoutableConsumer
+	data          *appconsumer.Data
+	request       *infracontext.RequestContext
+	keep          CandidateFilter
+	strictListing bool
+}
+
+type candidatePipeline struct {
+	resolver approuting.Resolver
+	listing  appcatalog.ModelListing
+	logger   *slog.Logger
+}
+
 func (f *forwarder) resolveRouting(
 	ctx context.Context,
 	in ForwardInput,
@@ -60,43 +78,58 @@ func (f *forwarder) resolveRouting(
 	if intent.IsZero() && needed == "" {
 		return intent, nil, nil
 	}
-	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
-		Intent:     intent,
-		Consumer:   in.Consumer,
-		Registries: registryLookup(in.Data),
+	candidates, err := f.pipeline.run(ctx, candidateQuery{
+		intent:   intent,
+		needed:   needed,
+		consumer: in.Consumer,
+		data:     in.Data,
+		request:  in.Request,
 	})
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
-	if needed != "" {
-		capable := filterCandidatesByCapability(candidates, needed)
-		if capable.Len() == 0 && candidates.Len() > 0 {
-			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
-			f.logRejectedIntent(in.Consumer, ref, err)
-			return intent, nil, err
-		}
-		candidates = capable
-	}
-	if needed == capabilityFiles {
-		candidates = filterCandidatesByFilesID(candidates, in.Request)
-	}
-	if candidates.Len() == 0 {
-		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
-		return intent, nil, ErrNoBackendsInPool
-	}
-	if intent.IsShortModel() {
-		candidates = f.filterCandidatesByProviderListing(ctx, candidates, intent.Model)
-	}
 	return intent, candidates, nil
 }
 
-func (f *forwarder) filterCandidatesByProviderListing(
+func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingdomain.CandidateSet, error) {
+	candidates, err := p.resolver.Resolve(approuting.ResolveInput{
+		Intent:     q.intent,
+		Consumer:   q.consumer,
+		Registries: registryLookup(q.data),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if q.keep != nil {
+		candidates = candidates.Filter(q.keep)
+	}
+	if q.needed != "" {
+		capable := filterCandidatesByCapability(candidates, q.needed)
+		if capable.Len() == 0 && candidates.Len() > 0 {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, q.needed)
+		}
+		candidates = capable
+	}
+	if q.needed == capabilityFiles {
+		candidates = filterCandidatesByFilesID(candidates, q.request)
+	}
+	if candidates.Len() == 0 {
+		return nil, ErrNoBackendsInPool
+	}
+	if q.intent.IsShortModel() {
+		candidates = p.filterCandidatesByProviderListing(ctx, candidates, q.intent.Model, q.strictListing)
+	}
+	return candidates, nil
+}
+
+func (p candidatePipeline) filterCandidatesByProviderListing(
 	ctx context.Context,
 	candidates *routingdomain.CandidateSet,
 	model string,
+	strict bool,
 ) *routingdomain.CandidateSet {
-	if f.listing == nil {
+	if p.listing == nil {
 		return candidates
 	}
 	served := candidates.Filter(func(c routingdomain.Candidate) bool {
@@ -106,23 +139,23 @@ func (f *forwarder) filterCandidatesByProviderListing(
 		if !c.DefersModelChoice() {
 			return true
 		}
-		if f.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
+		if p.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
 			return true
 		}
-		f.logSkippedRegistry(c.Registry, model)
+		p.logSkippedRegistry(c.Registry, model)
 		return false
 	})
-	if served.Len() == 0 {
+	if served.Len() == 0 && !strict {
 		return candidates
 	}
 	return served
 }
 
-func (f *forwarder) logSkippedRegistry(reg *domain.Registry, model string) {
-	if f.logger == nil {
+func (p candidatePipeline) logSkippedRegistry(reg *domain.Registry, model string) {
+	if p.logger == nil {
 		return
 	}
-	f.logger.Debug("registry skipped: provider catalog does not list model",
+	p.logger.Debug("registry skipped: provider catalog does not list model",
 		slog.String("registry_id", reg.ID.String()),
 		slog.String("provider", reg.Provider()),
 		slog.String("model", model),
