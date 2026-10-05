@@ -73,9 +73,9 @@ func (_c *PinnedToolService_Decide_Call) RunAndReturn(run func(context.Context, 
 	return _c
 }
 
-// List provides a mock function with given fields: ctx, gatewayID, registryID, status
-func (_m *PinnedToolService) List(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], status *domainregistry.ToolStatus) (*registry.PinnedToolList, error) {
-	ret := _m.Called(ctx, gatewayID, registryID, status)
+// List provides a mock function with given fields: ctx, gatewayID, registryID, status, page
+func (_m *PinnedToolService) List(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], status *domainregistry.ToolStatus, page registry.PinnedToolPage) (*registry.PinnedToolList, error) {
+	ret := _m.Called(ctx, gatewayID, registryID, status, page)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
@@ -83,19 +83,19 @@ func (_m *PinnedToolService) List(ctx context.Context, gatewayID ids.ID[ids.Gate
 
 	var r0 *registry.PinnedToolList
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus) (*registry.PinnedToolList, error)); ok {
-		return rf(ctx, gatewayID, registryID, status)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus, registry.PinnedToolPage) (*registry.PinnedToolList, error)); ok {
+		return rf(ctx, gatewayID, registryID, status, page)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus) *registry.PinnedToolList); ok {
-		r0 = rf(ctx, gatewayID, registryID, status)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus, registry.PinnedToolPage) *registry.PinnedToolList); ok {
+		r0 = rf(ctx, gatewayID, registryID, status, page)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*registry.PinnedToolList)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus) error); ok {
-		r1 = rf(ctx, gatewayID, registryID, status)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus, registry.PinnedToolPage) error); ok {
+		r1 = rf(ctx, gatewayID, registryID, status, page)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -113,13 +113,14 @@ type PinnedToolService_List_Call struct {
 //   - gatewayID ids.ID[ids.GatewayKind]
 //   - registryID ids.ID[ids.RegistryKind]
 //   - status *domainregistry.ToolStatus
-func (_e *PinnedToolService_Expecter) List(ctx interface{}, gatewayID interface{}, registryID interface{}, status interface{}) *PinnedToolService_List_Call {
-	return &PinnedToolService_List_Call{Call: _e.mock.On("List", ctx, gatewayID, registryID, status)}
+//   - page registry.PinnedToolPage
+func (_e *PinnedToolService_Expecter) List(ctx interface{}, gatewayID interface{}, registryID interface{}, status interface{}, page interface{}) *PinnedToolService_List_Call {
+	return &PinnedToolService_List_Call{Call: _e.mock.On("List", ctx, gatewayID, registryID, status, page)}
 }
 
-func (_c *PinnedToolService_List_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], status *domainregistry.ToolStatus)) *PinnedToolService_List_Call {
+func (_c *PinnedToolService_List_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], status *domainregistry.ToolStatus, page registry.PinnedToolPage)) *PinnedToolService_List_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].(*domainregistry.ToolStatus))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].(*domainregistry.ToolStatus), args[4].(registry.PinnedToolPage))
 	})
 	return _c
 }
@@ -129,7 +130,7 @@ func (_c *PinnedToolService_List_Call) Return(_a0 *registry.PinnedToolList, _a1 
 	return _c
 }
 
-func (_c *PinnedToolService_List_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus) (*registry.PinnedToolList, error)) *PinnedToolService_List_Call {
+func (_c *PinnedToolService_List_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *domainregistry.ToolStatus, registry.PinnedToolPage) (*registry.PinnedToolList, error)) *PinnedToolService_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -191,6 +191,14 @@ type PinnedToolRepository interface {
 	// ListByRegistry returns every stored definition of the registry. Each
 	// PinnedTool.Definition is display data, not the hashed bytes.
 	ListByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]PinnedTool, error)
+	// ListPage returns one page of the registry's definitions in a stable order
+	// (first_seen_at, name, fingerprint), optionally only those in one status, and
+	// how many match in total. The admin list uses it; the snapshot compiler reads
+	// the whole set with ListByRegistry.
+	ListPage(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, status *ToolStatus, limit, offset int) (items []PinnedTool, total int, err error)
+	// ListApproved returns the approved definitions of the given tool names, so a
+	// page of pending rows can show what is currently exposed.
+	ListApproved(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, names []string) ([]PinnedTool, error)
 	// UpsertPending records the tools as pending when they are not stored yet.
 	// It is idempotent and never changes the status of a stored row. It returns
 	// how many rows it inserted and how many new definitions it dropped because

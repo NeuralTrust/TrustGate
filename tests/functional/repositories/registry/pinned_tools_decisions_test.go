@@ -413,3 +413,57 @@ func TestPinnedTools_Decide_OnAnAutoRegistryIsAllowedAndKeepsItAuto(t *testing.T
 		t.Fatalf("a decision must not change the policy, got %q", policy)
 	}
 }
+
+func TestPinnedTools_ListPage_IsStableFilteredAndScoped(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	var all []domain.ToolCandidate
+	for i := 0; i < 7; i++ {
+		all = append(all, cand(t, fmt.Sprintf("t%d", i), "d"))
+	}
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, all); err != nil {
+		t.Fatalf("UpsertPending: %v", err)
+	}
+	if err := tools.Decide(ctx, gwID, reg.ID, refs(all[0], all[1]), nil, "admin"); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+
+	var seen []string
+	for offset := 0; ; offset += 3 {
+		page, total, err := tools.ListPage(ctx, gwID, reg.ID, nil, 3, offset)
+		if err != nil || total != 7 {
+			t.Fatalf("ListPage(offset %d) = %d items, total %d, %v", offset, len(page), total, err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, p := range page {
+			seen = append(seen, p.Name)
+		}
+	}
+	if len(seen) != 7 {
+		t.Fatalf("pages covered %d rows, want 7 with no repeats: %v", len(seen), seen)
+	}
+	dup := map[string]bool{}
+	for _, n := range seen {
+		if dup[n] {
+			t.Fatalf("row %s appeared on two pages", n)
+		}
+		dup[n] = true
+	}
+
+	pending := domain.ToolStatusPending
+	page, total, _ := tools.ListPage(ctx, gwID, reg.ID, &pending, 100, 0)
+	if total != 5 || len(page) != 5 {
+		t.Fatalf("pending filter = %d items, total %d; want 5/5", len(page), total)
+	}
+	approved, err := tools.ListApproved(ctx, gwID, reg.ID, []string{"t0", "t5"})
+	if err != nil || len(approved) != 1 || approved[0].Name != "t0" {
+		t.Fatalf("ListApproved = %+v, %v; want only t0", approved, err)
+	}
+
+	otherGW := ids.New[ids.GatewayKind]()
+	if page, total, _ := tools.ListPage(ctx, otherGW, reg.ID, nil, 100, 0); len(page) != 0 || total != 0 {
+		t.Fatalf("another gateway read %d rows", len(page))
+	}
+}

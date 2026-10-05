@@ -81,6 +81,87 @@ func (r *PinnedToolRepository) withBump(
 	})
 }
 
+func (r *PinnedToolRepository) ListPage(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	registryID ids.RegistryID,
+	status *domain.ToolStatus,
+	limit, offset int,
+) ([]domain.PinnedTool, int, error) {
+	var filter *string
+	if status != nil {
+		s := string(*status)
+		filter = &s
+	}
+	const count = `
+		SELECT count(*)
+		  FROM registry_tools t JOIN registries r ON r.id = t.registry_id
+		 WHERE t.registry_id = $1 AND r.gateway_id = $2 AND ($3::text IS NULL OR t.status = $3)`
+	var total int
+	if err := r.conn.Pool.QueryRow(ctx, count, registryID, gatewayID, filter).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("pinned tool repository: count: %w", err)
+	}
+	const query = `
+		SELECT t.registry_id, t.tool_name, t.fingerprint, t.definition, t.status, t.first_seen_at, t.decided_at, t.decided_by
+		  FROM registry_tools t
+		  JOIN registries r ON r.id = t.registry_id
+		 WHERE t.registry_id = $1 AND r.gateway_id = $2 AND ($3::text IS NULL OR t.status = $3)
+		 ORDER BY t.first_seen_at, t.tool_name, t.fingerprint
+		 LIMIT $4 OFFSET $5`
+	items, err := r.scanTools(ctx, query, registryID, gatewayID, filter, limit, offset)
+	return items, total, err
+}
+
+func (r *PinnedToolRepository) ListApproved(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	registryID ids.RegistryID,
+	names []string,
+) ([]domain.PinnedTool, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	const query = `
+		SELECT t.registry_id, t.tool_name, t.fingerprint, t.definition, t.status, t.first_seen_at, t.decided_at, t.decided_by
+		  FROM registry_tools t
+		  JOIN registries r ON r.id = t.registry_id
+		 WHERE t.registry_id = $1 AND r.gateway_id = $2 AND t.status = 'approved' AND t.tool_name = ANY($3::text[])
+		 ORDER BY t.tool_name, t.fingerprint`
+	return r.scanTools(ctx, query, registryID, gatewayID, names)
+}
+
+func (r *PinnedToolRepository) scanTools(ctx context.Context, query string, args ...any) ([]domain.PinnedTool, error) {
+	rows, err := r.conn.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pinned tool repository: list: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.PinnedTool
+	for rows.Next() {
+		var (
+			t         domain.PinnedTool
+			status    string
+			decidedAt *time.Time
+			decidedBy *string
+		)
+		if err := rows.Scan(&t.RegistryID, &t.Name, &t.Fingerprint, &t.Definition, &status, &t.FirstSeenAt, &decidedAt, &decidedBy); err != nil {
+			return nil, fmt.Errorf("pinned tool repository: scan: %w", err)
+		}
+		t.Status = domain.ToolStatus(status)
+		if decidedAt != nil {
+			t.DecidedAt = *decidedAt
+		}
+		if decidedBy != nil {
+			t.DecidedBy = *decidedBy
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pinned tool repository: iter: %w", err)
+	}
+	return out, nil
+}
+
 func (r *PinnedToolRepository) ListByRegistry(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
