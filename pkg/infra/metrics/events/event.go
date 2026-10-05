@@ -27,6 +27,7 @@ type Event struct {
 	TraceID          string `json:"trace_id"`
 	GatewayID        string `json:"gateway_id"`
 	TenantID         string `json:"tenant_id,omitempty"`
+	AuthID           string `json:"auth_id,omitempty"`
 	PrincipalSubject string `json:"principal_subject,omitempty"`
 	PrincipalMethod  string `json:"principal_method,omitempty"`
 	PrincipalEmail   string `json:"principal_email,omitempty"`

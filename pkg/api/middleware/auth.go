@@ -17,6 +17,7 @@ package middleware
 import (
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
@@ -37,6 +38,7 @@ type AuthMiddleware struct {
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
 	logger          *slog.Logger
+	now             func() time.Time
 }
 
 func NewAuthMiddleware(
@@ -44,12 +46,17 @@ func NewAuthMiddleware(
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
 	logger *slog.Logger,
+	now func() time.Time,
 ) *AuthMiddleware {
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
 	return &AuthMiddleware{
 		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
 		logger:          logger,
+		now:             now,
 	}
 }
 
@@ -81,7 +88,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 				slog.String("gateway_slug", gw.Slug),
 				slog.String("consumer_slug", route.ConsumerSlug),
 				slog.String("error", err.Error()))
-			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(resolver.APIKeyFromRequest(c), data, rc) {
+			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(resolver.APIKeyFromRequest(c), data, rc, m.now()) {
 				return forbidden(c, resolver.ErrForbidden)
 			}
 			return writeAuthError(c, err)
@@ -193,7 +200,7 @@ func (m *AuthMiddleware) attach(
 	c.SetUserContext(ctx)
 }
 
-func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsumer.RoutableConsumer) bool {
+func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsumer.RoutableConsumer, now time.Time) bool {
 	if rawKey == "" || data == nil || rc == nil || rc.Consumer == nil {
 		return false
 	}
@@ -204,7 +211,7 @@ func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsu
 			continue
 		}
 		for _, a := range other.Auths {
-			if a != nil && a.Enabled && a.Type == authdomain.TypeAPIKey && a.KeyHash == hash {
+			if a.AcceptsAPIKey(hash, now) {
 				return true
 			}
 		}

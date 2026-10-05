@@ -140,6 +140,28 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Contains(t, attrs["trustgate.attempts"].AsString(), "openai")
 }
 
+func TestEventToRecord_EmitsTheAuthIDOnlyWhenPresent(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"application key on a consumer": "auth-1",
+		"no auth id":                    "",
+	}
+	for name, authID := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			evt := fullEvent()
+			evt.AuthID = authID
+
+			got, present := attrsOf(eventToRecord(evt))["trustgate.auth.id"]
+
+			assert.Equal(t, authID != "", present)
+			if present {
+				assert.Equal(t, authID, got.AsString())
+			}
+		})
+	}
+}
+
 func TestEventToRecord_OmitsBodies(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()

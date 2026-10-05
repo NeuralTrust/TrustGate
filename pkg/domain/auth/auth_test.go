@@ -416,6 +416,35 @@ func TestIsExpired(t *testing.T) {
 	}
 }
 
+func TestAcceptsAPIKey(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	past, future := now.Add(-time.Second), now.Add(time.Hour)
+	hash := HashAPIKey("ag_key")
+	live := func() *Auth { return &Auth{Type: TypeAPIKey, Enabled: true, KeyHash: hash} }
+	cases := map[string]struct {
+		auth func() *Auth
+		want bool
+	}{
+		"never expires":     {live, true},
+		"expires later":     {func() *Auth { a := live(); a.ExpiresAt = &future; return a }, true},
+		"expired":           {func() *Auth { a := live(); a.ExpiresAt = &past; return a }, false},
+		"expires right now": {func() *Auth { a := live(); a.ExpiresAt = &now; return a }, false},
+		"disabled":          {func() *Auth { a := live(); a.Enabled = false; return a }, false},
+		"other hash":        {func() *Auth { a := live(); a.KeyHash = HashAPIKey("ag_other"); return a }, false},
+		"not an api key":    {func() *Auth { a := live(); a.Type = TypeOAuth2; return a }, false},
+		"nil auth":          {func() *Auth { return nil }, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.auth().AcceptsAPIKey(hash, now); got != tc.want {
+				t.Fatalf("AcceptsAPIKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // Rotating replaces the secret. It says nothing about the expiry, so a key with
 // three weeks left keeps them unless the caller asks for something else.
 func TestRotateAPIKey_KeepsTheExpiry(t *testing.T) {
