@@ -434,6 +434,27 @@ func TestExecutor_RunStage_PropagatesConsumerScope(t *testing.T) {
 	assert.Equal(t, "c-1", id)
 }
 
+func TestScopeFromRequest_Key(t *testing.T) {
+	tests := []struct {
+		name          string
+		req           *infracontext.RequestContext
+		wantDimension string
+		wantID        string
+	}{
+		{name: "owned key counts per owner", req: &infracontext.RequestContext{ConsumerID: "c-1", AuthID: "auth-1", OwnerID: "alice"}, wantDimension: "owner", wantID: "alice"},
+		{name: "application key counts per auth", req: &infracontext.RequestContext{ConsumerID: "c-1", AuthID: "auth-1"}, wantDimension: "auth", wantID: "auth-1"},
+		{name: "no auth is not counted", req: &infracontext.RequestContext{GatewayID: "gw-1", ConsumerID: "c-1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dimension, id, ok := scopeFromRequest(tt.req, true).Key()
+			assert.Equal(t, tt.wantDimension != "", ok)
+			assert.Equal(t, tt.wantDimension, dimension)
+			assert.Equal(t, tt.wantID, id)
+		})
+	}
+}
+
 func TestExecutor_RunStage_PropagatesGlobalScopeFromPlan(t *testing.T) {
 	p := &scopeCapturePlugin{name: "rate", seen: make(chan ExecInput, 1)}
 	reg := newRegistry(t, p)

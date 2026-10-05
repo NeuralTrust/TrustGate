@@ -1369,3 +1369,50 @@ func TestHandle_Streaming_FinalizerReqCarriesPlaygroundVerdict(t *testing.T) {
 		})
 	}
 }
+
+func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
+	authID := ids.New[ids.AuthKind]()
+	tests := []struct {
+		name                string
+		authCtx             appauth.AuthContext
+		wantAuth, wantOwner string
+	}{
+		{name: "owned key", authCtx: appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, OwnerID: "alice"}, wantAuth: authID.String(), wantOwner: "alice"},
+		{name: "application key", authCtx: appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID}, wantAuth: authID.String()},
+		{name: "playground", authCtx: appauth.AuthContext{Method: appauth.MethodPlayground}},
+		{name: "oidc", authCtx: appauth.AuthContext{Method: appauth.MethodOIDC, AuthID: authID, OwnerID: "alice"}},
+		{name: "mtls", authCtx: appauth.AuthContext{Method: appauth.MethodMTLS, AuthID: authID, OwnerID: "alice"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			authCtx := tt.authCtx
+			authCtx.GatewayID = gatewayID
+			data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+				{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: consumerSlug, Active: true, AuthIDs: []ids.AuthID{authID}}},
+			})
+			fwd := proxymocks.NewForwarder(t)
+			app := fiber.New()
+			app.Use(func(c *fiber.Ctx) error {
+				c.SetUserContext(appconsumer.WithData(appconsumer.WithGatewayID(appauth.WithAuthContext(c.UserContext(), &authCtx), gatewayID), data))
+				return c.Next()
+			})
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+			var got *infracontext.RequestContext
+			fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+				Run(func(_ context.Context, in appproxy.ForwardInput) { got = in.Request }).
+				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+
+			req := newProxyRequest()
+			req.Header.Set("X-AG-Owner-Id", "mallory")
+			req.Header.Set("X-AG-Auth-Id", "forged")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantAuth, got.AuthID)
+			assert.Equal(t, tt.wantOwner, got.OwnerID)
+		})
+	}
+}

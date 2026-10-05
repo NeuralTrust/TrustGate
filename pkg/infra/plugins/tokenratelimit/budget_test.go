@@ -17,6 +17,7 @@ package tokenratelimit
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -64,7 +65,7 @@ func TestWindowsFor(t *testing.T) {
 
 	t.Run("aggregate only", func(t *testing.T) {
 		cfg := &config{Aggregate: &aggregateConfig{Max: 1000, TimeWindow: "1h"}}
-		windows := windowsFor(cfg, base, "gpt-5")
+		windows := windowsFor(cfg, base, "gpt-5", time.Time{})
 		require.Len(t, windows, 1)
 		assert.Equal(t, base, windows[0].key)
 		assert.Equal(t, float64(1000), windows[0].max)
@@ -79,7 +80,7 @@ func TestWindowsFor(t *testing.T) {
 				{Model: "gpt-5", Max: 100, TimeWindow: "30m"},
 			},
 		}
-		windows := windowsFor(cfg, base, "gpt-5")
+		windows := windowsFor(cfg, base, "gpt-5", time.Time{})
 		require.Len(t, windows, 1)
 		assert.Equal(t, base+":model:gpt-5", windows[0].key)
 		assert.Equal(t, float64(100), windows[0].max)
@@ -92,7 +93,7 @@ func TestWindowsFor(t *testing.T) {
 			PerModel: true,
 			Rules:    []budgetRule{{Model: "claude-opus-*", Max: 200, TimeWindow: "1h"}},
 		}
-		windows := windowsFor(cfg, base, "claude-opus-4")
+		windows := windowsFor(cfg, base, "claude-opus-4", time.Time{})
 		require.Len(t, windows, 1)
 		assert.Equal(t, base+":model:claude-opus-*", windows[0].key)
 	})
@@ -103,7 +104,7 @@ func TestWindowsFor(t *testing.T) {
 			Rules:     []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}},
 			Aggregate: &aggregateConfig{Max: 1000, TimeWindow: "1h"},
 		}
-		windows := windowsFor(cfg, base, "gpt-5")
+		windows := windowsFor(cfg, base, "gpt-5", time.Time{})
 		require.Len(t, windows, 2)
 		primary := windows[primaryWindowIndex(windows)]
 		assert.Equal(t, base, primary.key)
@@ -115,7 +116,7 @@ func TestWindowsFor(t *testing.T) {
 			PerModel: true,
 			Rules:    []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}},
 		}
-		windows := windowsFor(cfg, base, "gemini-2")
+		windows := windowsFor(cfg, base, "gemini-2", time.Time{})
 		assert.Empty(t, windows)
 	})
 }
