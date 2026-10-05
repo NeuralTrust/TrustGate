@@ -432,3 +432,13 @@ func TestRotateAPIKey_KeepsTheExpiry(t *testing.T) {
 		t.Fatalf("ExpiresAt = %v, want it untouched at %v", a.ExpiresAt, future)
 	}
 }
+
+func TestAuth_IsOwned(t *testing.T) {
+	t.Parallel()
+	if (&Auth{}).IsOwned() || !(&Auth{OwnerID: "alice"}).IsOwned() {
+		t.Fatal("IsOwned() must be true only for an auth with an owner")
+	}
+	if !errors.Is(ErrOwnedKeyExists, commonerrors.ErrAlreadyExists) {
+		t.Fatal("ErrOwnedKeyExists must answer as an already-exists conflict")
+	}
+}

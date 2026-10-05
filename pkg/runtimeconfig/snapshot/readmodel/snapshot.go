@@ -477,6 +477,18 @@ func (s *Snapshot) AuthByAPIKeyHash(keyHash string) (*authdomain.Auth, bool) {
 	return a, ok
 }
 
+func (s *Snapshot) AuthByOwner(gatewayID ids.GatewayID, ownerID string) (*authdomain.Auth, bool) {
+	if ownerID == "" {
+		return nil, false
+	}
+	for _, a := range s.authsByGateway[gatewayID] {
+		if a.OwnerID == ownerID {
+			return a, true
+		}
+	}
+	return nil, false
+}
+
 func (s *Snapshot) AuthsEnabledByTypes(types []authdomain.Type) []*authdomain.Auth {
 	if len(types) == 0 {
 		return nil

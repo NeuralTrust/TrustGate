@@ -384,3 +384,25 @@ func TestCatalogNotReady(t *testing.T) {
 	_, err := repo.FindModel(context.Background(), "openai", "gpt-4")
 	assert.ErrorIs(t, err, commonerrors.ErrNotFound)
 }
+
+func TestAuthAdapterFindByOwner(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	owned := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gateway.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice"}
+	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
+	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{f.auth, owned}})})
+	repo := adapters.NewAuthRepository(store)
+	ctx := context.Background()
+
+	got, err := repo.FindByOwner(ctx, f.gateway.ID, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, owned.ID, got.ID)
+	assert.Equal(t, "owned-hash", got.KeyHash)
+	for _, miss := range []struct {
+		gateway ids.GatewayID
+		owner   string
+	}{{f.other, "alice"}, {f.gateway.ID, "bob"}, {f.gateway.ID, ""}} {
+		_, err := repo.FindByOwner(ctx, miss.gateway, miss.owner)
+		assert.ErrorIs(t, err, authdomain.ErrNotFound)
+	}
+}
