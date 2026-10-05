@@ -52,6 +52,17 @@ type DecideToolsInput struct {
 	DecidedBy string
 }
 
+// PinToolsInput is the "enable pinning with this confirmed list" request.
+type PinToolsInput struct {
+	GatewayID  ids.GatewayID
+	RegistryID ids.RegistryID
+	// Tools is the list the admin confirmed; it may be empty (a server whose
+	// tools are per principal starts with none).
+	Tools []domain.ToolCandidate
+	// DecidedBy is the authenticated admin, never taken from the request body.
+	DecidedBy string
+}
+
 //go:generate mockery --name=PinnedToolService --dir=. --output=./mocks --filename=pinned_tool_service_mock.go --case=underscore --with-expecter
 type PinnedToolService interface {
 	// List returns the registry's tool definitions, optionally only those in one
@@ -61,6 +72,10 @@ type PinnedToolService interface {
 	// the change. A definition the registry has no row for is ErrUnknownToolRefs
 	// and nothing is applied; one in both lists is ErrInvalidToolDecision.
 	Decide(ctx context.Context, in DecideToolsInput) error
+	// Pin approves the confirmed tools and switches the registry to the pinned
+	// policy in one transaction, then propagates. LLM registries are refused with
+	// ErrInvalidToolPolicy. Disabling is a plain registry update to auto.
+	Pin(ctx context.Context, in PinToolsInput) (*domain.Registry, error)
 }
 
 var _ PinnedToolService = (*pinnedToolService)(nil)
@@ -161,6 +176,26 @@ func (s *pinnedToolService) Decide(ctx context.Context, in DecideToolsInput) err
 	return nil
 }
 
+func (s *pinnedToolService) Pin(ctx context.Context, in PinToolsInput) (*domain.Registry, error) {
+	reg, err := s.owned(ctx, in.GatewayID, in.RegistryID)
+	if err != nil {
+		return nil, err
+	}
+	if !reg.IsMCP() {
+		return nil, fmt.Errorf("%w: pinned is only valid for MCP registries", domain.ErrInvalidToolPolicy)
+	}
+	// One transaction: the approvals, the policy switch, the registry bump and
+	// the snapshot change marker commit together or not at all.
+	if err := s.tools.Pin(ctx, in.GatewayID, in.RegistryID, in.Tools, in.DecidedBy); err != nil {
+		return nil, err
+	}
+	if fresh := s.propagate(ctx, in.GatewayID, in.RegistryID); fresh != nil {
+		return fresh, nil
+	}
+	reg.ToolPolicy = domain.ToolPolicyPinned
+	return reg, nil
+}
+
 func rejectOverlap(approve, reject []domain.ToolRef) error {
 	approved := make(map[domain.ToolRef]struct{}, len(approve))
 	for _, r := range approve {
@@ -179,10 +214,12 @@ func rejectOverlap(approve, reject []domain.ToolRef) error {
 // the snapshot dispatcher. The change marker the repository wrote in the same
 // transaction is the durable part: if the invalidation or the signal is lost,
 // the dispatcher's backstop still recompiles from the marker.
-func (s *pinnedToolService) propagate(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) {
-	if fresh, err := s.registries.FindByID(ctx, registryID); err == nil {
+func (s *pinnedToolService) propagate(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) *domain.Registry {
+	fresh, err := s.registries.FindByID(ctx, registryID)
+	if err == nil {
 		s.memoryCache.Set(registryID.String(), fresh)
 	} else {
+		fresh = nil
 		s.memoryCache.Delete(registryID.String())
 		s.logger.Warn("pinned tools: could not reload the registry after a decision; its cache entry was dropped",
 			"registry_id", registryID.String(), "error", err)
@@ -191,4 +228,5 @@ func (s *pinnedToolService) propagate(ctx context.Context, gatewayID ids.Gateway
 	if s.signaler != nil {
 		s.signaler.Signal(ctx)
 	}
+	return fresh
 }

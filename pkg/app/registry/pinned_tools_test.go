@@ -164,3 +164,53 @@ func TestPinnedToolService_Decide_SameRefInBothListsIsRefusedBeforeAnyWrite(t *t
 	err := svc.Decide(context.Background(), appregistry.DecideToolsInput{GatewayID: reg.GatewayID, RegistryID: reg.ID, Approve: ref, Reject: ref})
 	assert.ErrorIs(t, err, domain.ErrInvalidToolDecision)
 }
+
+func TestPinnedToolService_Pin_WritesOnceThenPropagates(t *testing.T) {
+	t.Parallel()
+	reg := pinnedMCPRegistry(t)
+	cand, err := domain.NewToolCandidate("a", "d", nil)
+	require.NoError(t, err)
+	list := []domain.ToolCandidate{cand}
+
+	regs := repomocks.NewRepository(t)
+	regs.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil)
+	tools := repomocks.NewPinnedToolRepository(t)
+	tools.EXPECT().Pin(mock.Anything, reg.GatewayID, reg.ID, list, "ana").Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: reg.GatewayID.String(), RegistryID: reg.ID.String()}).
+		Return(nil).Once()
+	signaler := &countingSignaler{}
+	svc := appregistry.NewPinnedToolService(regs, tools, newCacheManager(), publisher, newTestLogger(), signaler)
+
+	got, err := svc.Pin(context.Background(), appregistry.PinToolsInput{GatewayID: reg.GatewayID, RegistryID: reg.ID, Tools: list, DecidedBy: "ana"})
+	require.NoError(t, err)
+	assert.Equal(t, domain.ToolPolicyPinned, got.ToolPolicy)
+	assert.Equal(t, 1, signaler.n)
+}
+
+func TestPinnedToolService_Pin_RefusesAnLLMRegistryBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	llm, err := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "llm", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")})
+	require.NoError(t, err)
+	regs := repomocks.NewRepository(t)
+	regs.EXPECT().FindByID(mock.Anything, llm.ID).Return(llm, nil)
+	tools := repomocks.NewPinnedToolRepository(t) // must not be written
+	signaler := &countingSignaler{}
+	svc := appregistry.NewPinnedToolService(regs, tools, newCacheManager(), nil, newTestLogger(), signaler)
+
+	_, err = svc.Pin(context.Background(), appregistry.PinToolsInput{GatewayID: llm.GatewayID, RegistryID: llm.ID})
+	assert.ErrorIs(t, err, domain.ErrInvalidToolPolicy)
+	assert.Zero(t, signaler.n)
+}
+
+func TestPinnedToolService_Pin_ForeignGatewayIsNotFound(t *testing.T) {
+	t.Parallel()
+	reg := pinnedMCPRegistry(t)
+	regs := repomocks.NewRepository(t)
+	regs.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil)
+	svc := appregistry.NewPinnedToolService(regs, repomocks.NewPinnedToolRepository(t), newCacheManager(), nil, newTestLogger(), nil)
+
+	_, err := svc.Pin(context.Background(), appregistry.PinToolsInput{GatewayID: ids.New[ids.GatewayKind](), RegistryID: reg.ID})
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}

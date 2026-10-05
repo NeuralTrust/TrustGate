@@ -134,6 +134,65 @@ func (_c *PinnedToolService_List_Call) RunAndReturn(run func(context.Context, id
 	return _c
 }
 
+// Pin provides a mock function with given fields: ctx, in
+func (_m *PinnedToolService) Pin(ctx context.Context, in registry.PinToolsInput) (*domainregistry.Registry, error) {
+	ret := _m.Called(ctx, in)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Pin")
+	}
+
+	var r0 *domainregistry.Registry
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, registry.PinToolsInput) (*domainregistry.Registry, error)); ok {
+		return rf(ctx, in)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, registry.PinToolsInput) *domainregistry.Registry); ok {
+		r0 = rf(ctx, in)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*domainregistry.Registry)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, registry.PinToolsInput) error); ok {
+		r1 = rf(ctx, in)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// PinnedToolService_Pin_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Pin'
+type PinnedToolService_Pin_Call struct {
+	*mock.Call
+}
+
+// Pin is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in registry.PinToolsInput
+func (_e *PinnedToolService_Expecter) Pin(ctx interface{}, in interface{}) *PinnedToolService_Pin_Call {
+	return &PinnedToolService_Pin_Call{Call: _e.mock.On("Pin", ctx, in)}
+}
+
+func (_c *PinnedToolService_Pin_Call) Run(run func(ctx context.Context, in registry.PinToolsInput)) *PinnedToolService_Pin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(registry.PinToolsInput))
+	})
+	return _c
+}
+
+func (_c *PinnedToolService_Pin_Call) Return(_a0 *domainregistry.Registry, _a1 error) *PinnedToolService_Pin_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *PinnedToolService_Pin_Call) RunAndReturn(run func(context.Context, registry.PinToolsInput) (*domainregistry.Registry, error)) *PinnedToolService_Pin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewPinnedToolService creates a new instance of PinnedToolService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewPinnedToolService(t interface {
