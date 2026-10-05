@@ -49,7 +49,7 @@ const (
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.audience, c.slug, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
 		       c.identity, c.auth_binding, c.label_sets, c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
@@ -121,9 +121,9 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, auth_binding, created_at, updated_at, label_sets
+			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, auth_binding, created_at, updated_at, label_sets, audience
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
@@ -132,6 +132,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, authBindingBytes, c.CreatedAt, c.UpdatedAt, labelSetsBytes,
+			string(c.AudienceName()),
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -768,18 +769,24 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		labelSetsRaw     []byte
 		failModeRaw      *string
 		consumerType     string
+		audience         string
 		registryIDs      []uuid.UUID
 		registryWeights  []byte
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &audience, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&identityRaw, &authBindingRaw, &labelSetsRaw, &c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &registryWeights, &authIDs,
 	); err != nil {
 		return nil, err
 	}
 	c.Type = domain.Type(consumerType)
+	parsedAudience, err := domain.ParseAudience(audience)
+	if err != nil {
+		return nil, fmt.Errorf("scan audience: %w", err)
+	}
+	c.Audience = parsedAudience
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)

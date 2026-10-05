@@ -65,6 +65,7 @@ type Consumer struct {
 	GatewayID       ids.GatewayID          `json:"gateway_id"`
 	Name            string                 `json:"name"`
 	Type            Type                   `json:"type"`
+	Audience        Audience               `json:"audience,omitempty"`
 	Slug            string                 `json:"slug"`
 	LBConfig        *LBConfig              `json:"lb_config,omitempty"`
 	Headers         map[string]string      `json:"headers,omitempty"`
@@ -113,6 +114,7 @@ type CreateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            Type
+	Audience        Audience
 	LBConfig        *LBConfig
 	Headers         map[string]string
 	Active          *bool
@@ -145,6 +147,7 @@ func New(params CreateParams) (*Consumer, error) {
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
+		Audience:        params.Audience,
 		Slug:            slug,
 		LBConfig:        params.LBConfig,
 		Headers:         params.Headers,
@@ -175,6 +178,7 @@ type RehydrateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            Type
+	Audience        Audience
 	Slug            string
 	LBConfig        *LBConfig
 	Headers         map[string]string
@@ -198,6 +202,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
+		Audience:        params.Audience.canonical(),
 		Slug:            params.Slug,
 		LBConfig:        params.LBConfig,
 		Headers:         params.Headers,
@@ -229,6 +234,11 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
+	audience, err := ParseAudience(string(c.Audience))
+	if err != nil {
+		return err
+	}
+	c.Audience = audience
 	if !IsValidSlug(c.Slug) {
 		return fmt.Errorf("%w: %q", ErrInvalidSlug, c.Slug)
 	}

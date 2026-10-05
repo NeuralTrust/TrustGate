@@ -18,16 +18,22 @@ import (
 	"bytes"
 	"encoding/hex"
 	"testing"
+	"time"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
+	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCodecRoundTrip(t *testing.T) {
@@ -234,4 +240,49 @@ func TestCodecRoundTripsPolicyMCPWide(t *testing.T) {
 	reraw, err := codec.Encode(snap)
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+const (
+	goldenApplicationConsumerJSON = `{"id":"0199a000-0000-7000-8000-000000000002","gateway_id":"0199a000-0000-7000-8000-000000000001","name":"chat","type":"LLM","slug":"chat0001","active":true,"registry_ids":["0199a000-0000-7000-8000-000000000004"],"auth_ids":["0199a000-0000-7000-8000-000000000003"],"identity":{},"auth_binding":{},"created_at":"2026-10-01T12:00:00Z","updated_at":"2026-10-01T12:00:00Z"}`
+	goldenApplicationAuthJSON     = `{"id":"0199a000-0000-7000-8000-000000000003","gateway_id":"0199a000-0000-7000-8000-000000000001","name":"app-key","type":"api_key","enabled":true,"config":{},"created_at":"2026-10-01T12:00:00Z","updated_at":"2026-10-01T12:00:00Z"}`
+	goldenApplicationVersion      = "7464076d2dbe1b1ea7a7a5fe86558d30e7801eae2a3ea640b61ec12412d647ee"
+)
+
+func applicationFixture() (consumerdomain.Consumer, authdomain.Auth) {
+	at := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	gatewayID := ids.From[ids.GatewayKind](uuid.MustParse("0199a000-0000-7000-8000-000000000001"))
+	authID := ids.From[ids.AuthKind](uuid.MustParse("0199a000-0000-7000-8000-000000000003"))
+	consumer := consumerdomain.Consumer{
+		ID: ids.From[ids.ConsumerKind](uuid.MustParse("0199a000-0000-7000-8000-000000000002")), GatewayID: gatewayID,
+		Name: "chat", Type: consumerdomain.TypeLLM, Slug: "chat0001", Active: true, AuthIDs: []ids.AuthID{authID},
+		RegistryIDs: []ids.RegistryID{ids.From[ids.RegistryKind](uuid.MustParse("0199a000-0000-7000-8000-000000000004"))},
+		CreatedAt:   at, UpdatedAt: at,
+	}
+	auth := authdomain.Auth{
+		ID: authID, GatewayID: gatewayID, Name: "app-key", Type: authdomain.TypeAPIKey, Enabled: true,
+		KeyHash: "golden-hash", CreatedAt: at, UpdatedAt: at,
+	}
+	return consumer, auth
+}
+
+func encodeConsumerAndAuth(t *testing.T, consumer consumerdomain.Consumer, auth authdomain.Auth) (raw []byte, consumerJSON, authJSON string) {
+	t.Helper()
+	raw, err := configsnapshot.NewCodec().Encode(readmodel.Build(readmodel.Data{
+		Version: "golden", Consumers: []consumerdomain.Consumer{consumer}, Auths: []authdomain.Auth{auth},
+	}))
+	require.NoError(t, err)
+	var msg snapshotpb.Snapshot
+	require.NoError(t, proto.Unmarshal(raw, &msg))
+	require.Len(t, msg.GetConsumers(), 1)
+	require.Len(t, msg.GetAuths(), 1)
+	return raw, string(msg.GetConsumers()[0].GetJson()), string(msg.GetAuths()[0].GetJson())
+}
+
+func TestCodecEncodesApplicationEntitiesAsBefore(t *testing.T) {
+	t.Parallel()
+	consumer, auth := applicationFixture()
+	raw, consumerJSON, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Equal(t, goldenApplicationConsumerJSON, consumerJSON)
+	assert.Equal(t, goldenApplicationAuthJSON, authJSON)
+	assert.Equal(t, goldenApplicationVersion, configsnapshot.NewCodec().Version(raw))
 }

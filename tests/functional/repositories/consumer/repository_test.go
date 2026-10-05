@@ -23,6 +23,7 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 )
 
 func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
@@ -837,5 +838,30 @@ func TestRepository_DeleteRegistry_NullsActiveConsumerFallbackLosingItsLastStep(
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("pruned consumer no longer validates: %v", err)
+	}
+}
+
+func TestRepository_AudienceRoundTripAndUpdateKeepsIt(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "audience-gw")
+
+	for audience, overwrite := range map[domain.Audience]domain.Audience{"": domain.AudiencePersonal, domain.AudiencePersonal: ""} {
+		c, err := domain.New(domain.CreateParams{GatewayID: gwID, Name: "chat-" + string(audience), Type: domain.TypeLLM, Audience: audience})
+		require.NoError(t, err)
+		require.NoError(t, f.repo.Save(ctx, c))
+		var stored string
+		require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT audience FROM consumers WHERE id = $1`, c.ID).Scan(&stored))
+		require.Equal(t, string(c.AudienceName()), stored)
+
+		got, err := f.repo.FindByID(ctx, c.ID)
+		require.NoError(t, err)
+		require.Equal(t, audience, got.Audience)
+		got.Name, got.Audience, got.UpdatedAt = "renamed-"+string(audience), overwrite, time.Now().UTC()
+		require.NoError(t, f.repo.Update(ctx, got, nil, nil))
+		after, err := f.repo.FindByID(ctx, c.ID)
+		require.NoError(t, err)
+		require.Equal(t, "renamed-"+string(audience), after.Name)
+		require.Equal(t, audience, after.Audience)
 	}
 }
