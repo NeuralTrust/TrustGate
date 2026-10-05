@@ -29,7 +29,10 @@ type PinnedToolsResponse struct {
 	// ToolPolicy is "auto" or "pinned". Decisions only take effect when pinned.
 	ToolPolicy string           `json:"tool_policy"`
 	Items      []PinnedToolItem `json:"items"`
-	Total      int              `json:"total"`
+	// Total counts every definition matching the filter, not just this page.
+	Total  int `json:"total"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
 }
 
 type PinnedToolItem struct {
@@ -52,7 +55,7 @@ type PinnedToolApproved struct {
 	DecidedBy   string          `json:"decided_by,omitempty"`
 }
 
-func FromPinnedToolList(l *appregistry.PinnedToolList) PinnedToolsResponse {
+func FromPinnedToolList(l *appregistry.PinnedToolList, page appregistry.PinnedToolPage) PinnedToolsResponse {
 	items := make([]PinnedToolItem, 0, len(l.Items))
 	for _, v := range l.Items {
 		item := PinnedToolItem{
@@ -74,7 +77,7 @@ func FromPinnedToolList(l *appregistry.PinnedToolList) PinnedToolsResponse {
 		}
 		items = append(items, item)
 	}
-	return PinnedToolsResponse{ToolPolicy: string(l.ToolPolicy), Items: items, Total: len(items)}
+	return PinnedToolsResponse{ToolPolicy: string(l.ToolPolicy), Items: items, Total: l.Total, Limit: page.Limit, Offset: page.Offset}
 }
 
 func definitionOrEmpty(def json.RawMessage) json.RawMessage {

@@ -44,8 +44,9 @@ func TestListPinnedToolsHandler_ShapesPendingWithApprovedVersion(t *testing.T) {
 	decided := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	svc := appmocks.NewPinnedToolService(t)
 	pending := domain.ToolStatusPending
-	svc.EXPECT().List(mock.Anything, gw, reg, &pending).Return(&appregistry.PinnedToolList{
+	svc.EXPECT().List(mock.Anything, gw, reg, &pending, appregistry.PinnedToolPage{Limit: 100}).Return(&appregistry.PinnedToolList{
 		ToolPolicy: domain.ToolPolicyPinned,
+		Total:      1,
 		Items: []appregistry.PinnedToolView{{
 			PinnedTool: domain.PinnedTool{Name: "search", Fingerprint: "v2", Status: domain.ToolStatusPending, Definition: []byte(`{"name":"search","description":"new"}`)},
 			Approved:   &domain.PinnedTool{Name: "search", Fingerprint: "v1", Status: domain.ToolStatusApproved, Definition: []byte(`{"name":"search","description":"old"}`), DecidedAt: decided, DecidedBy: "ana@acme.io"},
@@ -100,11 +101,38 @@ func TestListPinnedToolsHandler_RejectsAnUnknownStatus(t *testing.T) {
 func TestListPinnedToolsHandler_EmptyListIsAnArrayNotNull(t *testing.T) {
 	gw, reg := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
 	svc := appmocks.NewPinnedToolService(t)
-	svc.EXPECT().List(mock.Anything, gw, reg, (*domain.ToolStatus)(nil)).Return(&appregistry.PinnedToolList{ToolPolicy: domain.ToolPolicyAuto}, nil)
+	svc.EXPECT().List(mock.Anything, gw, reg, (*domain.ToolStatus)(nil), appregistry.PinnedToolPage{Limit: 100}).Return(&appregistry.PinnedToolList{ToolPolicy: domain.ToolPolicyAuto}, nil)
 	resp, err := listPinnedToolsApp(svc).Test(httptest.NewRequest(http.MethodGet,
 		"/v1/gateways/"+gw.String()+"/registries/"+reg.String()+"/pinned-tools", nil))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	assert.Contains(t, string(raw), `"items":[]`)
+}
+
+func TestListPinnedToolsHandler_PassesPaginationAndReportsTheTotal(t *testing.T) {
+	gw, reg := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+	svc := appmocks.NewPinnedToolService(t)
+	svc.EXPECT().List(mock.Anything, gw, reg, (*domain.ToolStatus)(nil), appregistry.PinnedToolPage{Limit: 25, Offset: 50}).
+		Return(&appregistry.PinnedToolList{ToolPolicy: domain.ToolPolicyPinned, Total: 312}, nil)
+	resp, err := listPinnedToolsApp(svc).Test(httptest.NewRequest(http.MethodGet,
+		"/v1/gateways/"+gw.String()+"/registries/"+reg.String()+"/pinned-tools?limit=25&offset=50", nil))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	assert.Contains(t, string(raw), `"total":312`)
+	assert.Contains(t, string(raw), `"limit":25`)
+	assert.Contains(t, string(raw), `"offset":50`)
+}
+
+func TestListPinnedToolsHandler_RejectsBadPagination(t *testing.T) {
+	for _, q := range []string{"limit=0", "limit=501", "limit=x", "offset=-1", "offset=x"} {
+		svc := appmocks.NewPinnedToolService(t) // must not be called
+		resp, err := listPinnedToolsApp(svc).Test(httptest.NewRequest(http.MethodGet,
+			"/v1/gateways/"+ids.New[ids.GatewayKind]().String()+"/registries/"+ids.New[ids.RegistryKind]().String()+"/pinned-tools?"+q, nil))
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, q)
+	}
 }

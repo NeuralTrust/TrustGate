@@ -52,19 +52,23 @@ func TestPinnedToolService_List_AttachesTheApprovedDefinitionToAPendingOne(t *te
 	regs := repomocks.NewRepository(t)
 	regs.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil)
 	tools := repomocks.NewPinnedToolRepository(t)
-	tools.EXPECT().ListByRegistry(mock.Anything, reg.GatewayID, reg.ID).Return([]domain.PinnedTool{
-		storedTool(reg, "search", "v1", domain.ToolStatusApproved, old),
-		storedTool(reg, "search", "v2", domain.ToolStatusApproved, newer),
+	tools.EXPECT().ListPage(mock.Anything, reg.GatewayID, reg.ID, (*domain.ToolStatus)(nil), 100, 0).Return([]domain.PinnedTool{
 		storedTool(reg, "search", "v3", domain.ToolStatusPending, time.Time{}),
 		storedTool(reg, "fresh", "f1", domain.ToolStatusPending, time.Time{}),
 		storedTool(reg, "bad", "b1", domain.ToolStatusRejected, old),
+	}, 3, nil)
+	// The approved rows live on another page: they are read by name.
+	tools.EXPECT().ListApproved(mock.Anything, reg.GatewayID, reg.ID, []string{"search", "fresh"}).Return([]domain.PinnedTool{
+		storedTool(reg, "search", "v1", domain.ToolStatusApproved, old),
+		storedTool(reg, "search", "v2", domain.ToolStatusApproved, newer),
 	}, nil)
 	svc := appregistry.NewPinnedToolService(regs, tools, newCacheManager(), nil, newTestLogger(), nil)
 
-	got, err := svc.List(context.Background(), reg.GatewayID, reg.ID, nil)
+	got, err := svc.List(context.Background(), reg.GatewayID, reg.ID, nil, appregistry.PinnedToolPage{})
 	require.NoError(t, err)
 	assert.Equal(t, domain.ToolPolicyPinned, got.ToolPolicy)
-	require.Len(t, got.Items, 5)
+	assert.Equal(t, 3, got.Total)
+	require.Len(t, got.Items, 3)
 
 	byFP := map[string]appregistry.PinnedToolView{}
 	for _, it := range got.Items {
@@ -73,27 +77,25 @@ func TestPinnedToolService_List_AttachesTheApprovedDefinitionToAPendingOne(t *te
 	require.NotNil(t, byFP["v3"].Approved, "a changed tool must carry the approved definition to diff against")
 	assert.Equal(t, "v2", byFP["v3"].Approved.Fingerprint, "the most recently decided approval is the exposed one")
 	assert.Nil(t, byFP["f1"].Approved, "a tool never approved has nothing to diff against")
-	assert.Nil(t, byFP["v1"].Approved, "only pending rows carry it")
 	assert.Nil(t, byFP["b1"].Approved)
 }
 
-func TestPinnedToolService_List_FiltersByStatus(t *testing.T) {
+func TestPinnedToolService_List_ClampsThePageAndFiltersByStatus(t *testing.T) {
 	t.Parallel()
 	reg := pinnedMCPRegistry(t)
 	regs := repomocks.NewRepository(t)
 	regs.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil)
+	pending := domain.ToolStatusPending
 	tools := repomocks.NewPinnedToolRepository(t)
-	tools.EXPECT().ListByRegistry(mock.Anything, reg.GatewayID, reg.ID).Return([]domain.PinnedTool{
-		storedTool(reg, "a", "1", domain.ToolStatusApproved, time.Now()),
-		storedTool(reg, "a", "2", domain.ToolStatusPending, time.Time{}),
-	}, nil)
+	tools.EXPECT().ListPage(mock.Anything, reg.GatewayID, reg.ID, &pending, appregistry.MaxPinnedToolsPage, 0).
+		Return([]domain.PinnedTool{storedTool(reg, "a", "2", domain.ToolStatusPending, time.Time{})}, 1, nil)
+	tools.EXPECT().ListApproved(mock.Anything, reg.GatewayID, reg.ID, []string{"a"}).
+		Return([]domain.PinnedTool{storedTool(reg, "a", "1", domain.ToolStatusApproved, time.Now())}, nil)
 	svc := appregistry.NewPinnedToolService(regs, tools, newCacheManager(), nil, newTestLogger(), nil)
 
-	pending := domain.ToolStatusPending
-	got, err := svc.List(context.Background(), reg.GatewayID, reg.ID, &pending)
+	got, err := svc.List(context.Background(), reg.GatewayID, reg.ID, &pending, appregistry.PinnedToolPage{Limit: 10_000, Offset: -5})
 	require.NoError(t, err)
 	require.Len(t, got.Items, 1)
-	assert.Equal(t, "2", got.Items[0].Fingerprint)
 	assert.NotNil(t, got.Items[0].Approved, "the diff base survives the status filter")
 }
 
@@ -105,7 +107,7 @@ func TestPinnedToolService_List_RegistryOfAnotherGatewayIsNotFound(t *testing.T)
 	tools := repomocks.NewPinnedToolRepository(t) // must not be read
 	svc := appregistry.NewPinnedToolService(regs, tools, newCacheManager(), nil, newTestLogger(), nil)
 
-	_, err := svc.List(context.Background(), ids.New[ids.GatewayKind](), reg.ID, nil)
+	_, err := svc.List(context.Background(), ids.New[ids.GatewayKind](), reg.ID, nil, appregistry.PinnedToolPage{})
 	assert.ErrorIs(t, err, domain.ErrNotFound)
 }
 

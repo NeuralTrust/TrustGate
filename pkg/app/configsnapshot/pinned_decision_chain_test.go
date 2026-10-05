@@ -60,6 +60,14 @@ func (m *memPinnedRepo) ListByRegistry(_ context.Context, _ ids.GatewayID, id id
 	return out, nil
 }
 
+func (m *memPinnedRepo) ListPage(context.Context, ids.GatewayID, ids.RegistryID, *registrydomain.ToolStatus, int, int) ([]registrydomain.PinnedTool, int, error) {
+	return nil, 0, nil
+}
+
+func (m *memPinnedRepo) ListApproved(context.Context, ids.GatewayID, ids.RegistryID, []string) ([]registrydomain.PinnedTool, error) {
+	return nil, nil
+}
+
 func (m *memPinnedRepo) UpsertPending(_ context.Context, _ ids.GatewayID, id ids.RegistryID, tools []registrydomain.ToolCandidate) (int, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

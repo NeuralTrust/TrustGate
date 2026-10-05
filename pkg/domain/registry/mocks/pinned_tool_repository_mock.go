@@ -125,6 +125,67 @@ func (_c *PinnedToolRepository_Decide_Call) RunAndReturn(run func(context.Contex
 	return _c
 }
 
+// ListApproved provides a mock function with given fields: ctx, gatewayID, registryID, names
+func (_m *PinnedToolRepository) ListApproved(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], names []string) ([]registry.PinnedTool, error) {
+	ret := _m.Called(ctx, gatewayID, registryID, names)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListApproved")
+	}
+
+	var r0 []registry.PinnedTool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []string) ([]registry.PinnedTool, error)); ok {
+		return rf(ctx, gatewayID, registryID, names)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []string) []registry.PinnedTool); ok {
+		r0 = rf(ctx, gatewayID, registryID, names)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]registry.PinnedTool)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []string) error); ok {
+		r1 = rf(ctx, gatewayID, registryID, names)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// PinnedToolRepository_ListApproved_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListApproved'
+type PinnedToolRepository_ListApproved_Call struct {
+	*mock.Call
+}
+
+// ListApproved is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - registryID ids.ID[ids.RegistryKind]
+//   - names []string
+func (_e *PinnedToolRepository_Expecter) ListApproved(ctx interface{}, gatewayID interface{}, registryID interface{}, names interface{}) *PinnedToolRepository_ListApproved_Call {
+	return &PinnedToolRepository_ListApproved_Call{Call: _e.mock.On("ListApproved", ctx, gatewayID, registryID, names)}
+}
+
+func (_c *PinnedToolRepository_ListApproved_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], names []string)) *PinnedToolRepository_ListApproved_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].([]string))
+	})
+	return _c
+}
+
+func (_c *PinnedToolRepository_ListApproved_Call) Return(_a0 []registry.PinnedTool, _a1 error) *PinnedToolRepository_ListApproved_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *PinnedToolRepository_ListApproved_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []string) ([]registry.PinnedTool, error)) *PinnedToolRepository_ListApproved_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListByRegistry provides a mock function with given fields: ctx, gatewayID, registryID
 func (_m *PinnedToolRepository) ListByRegistry(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind]) ([]registry.PinnedTool, error) {
 	ret := _m.Called(ctx, gatewayID, registryID)
@@ -181,6 +242,76 @@ func (_c *PinnedToolRepository_ListByRegistry_Call) Return(_a0 []registry.Pinned
 }
 
 func (_c *PinnedToolRepository_ListByRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind]) ([]registry.PinnedTool, error)) *PinnedToolRepository_ListByRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListPage provides a mock function with given fields: ctx, gatewayID, registryID, status, limit, offset
+func (_m *PinnedToolRepository) ListPage(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], status *registry.ToolStatus, limit int, offset int) ([]registry.PinnedTool, int, error) {
+	ret := _m.Called(ctx, gatewayID, registryID, status, limit, offset)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListPage")
+	}
+
+	var r0 []registry.PinnedTool
+	var r1 int
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *registry.ToolStatus, int, int) ([]registry.PinnedTool, int, error)); ok {
+		return rf(ctx, gatewayID, registryID, status, limit, offset)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *registry.ToolStatus, int, int) []registry.PinnedTool); ok {
+		r0 = rf(ctx, gatewayID, registryID, status, limit, offset)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]registry.PinnedTool)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *registry.ToolStatus, int, int) int); ok {
+		r1 = rf(ctx, gatewayID, registryID, status, limit, offset)
+	} else {
+		r1 = ret.Get(1).(int)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *registry.ToolStatus, int, int) error); ok {
+		r2 = rf(ctx, gatewayID, registryID, status, limit, offset)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// PinnedToolRepository_ListPage_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListPage'
+type PinnedToolRepository_ListPage_Call struct {
+	*mock.Call
+}
+
+// ListPage is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - registryID ids.ID[ids.RegistryKind]
+//   - status *registry.ToolStatus
+//   - limit int
+//   - offset int
+func (_e *PinnedToolRepository_Expecter) ListPage(ctx interface{}, gatewayID interface{}, registryID interface{}, status interface{}, limit interface{}, offset interface{}) *PinnedToolRepository_ListPage_Call {
+	return &PinnedToolRepository_ListPage_Call{Call: _e.mock.On("ListPage", ctx, gatewayID, registryID, status, limit, offset)}
+}
+
+func (_c *PinnedToolRepository_ListPage_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], status *registry.ToolStatus, limit int, offset int)) *PinnedToolRepository_ListPage_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].(*registry.ToolStatus), args[4].(int), args[5].(int))
+	})
+	return _c
+}
+
+func (_c *PinnedToolRepository_ListPage_Call) Return(items []registry.PinnedTool, total int, err error) *PinnedToolRepository_ListPage_Call {
+	_c.Call.Return(items, total, err)
+	return _c
+}
+
+func (_c *PinnedToolRepository_ListPage_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], *registry.ToolStatus, int, int) ([]registry.PinnedTool, int, error)) *PinnedToolRepository_ListPage_Call {
 	_c.Call.Return(run)
 	return _c
 }

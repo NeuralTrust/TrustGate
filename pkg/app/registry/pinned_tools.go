@@ -40,6 +40,21 @@ type PinnedToolView struct {
 type PinnedToolList struct {
 	ToolPolicy domain.ToolPolicy
 	Items      []PinnedToolView
+	// Total is how many definitions match the filter, across all pages.
+	Total int
+}
+
+const (
+	// DefaultPinnedToolsPage and MaxPinnedToolsPage bound one page of the list.
+	DefaultPinnedToolsPage = 100
+	MaxPinnedToolsPage     = 500
+)
+
+// PinnedToolPage selects a window of the list. Order is fixed: first_seen_at,
+// name, fingerprint.
+type PinnedToolPage struct {
+	Limit  int
+	Offset int
 }
 
 // DecideToolsInput is one admin decision over stored tool definitions.
@@ -67,7 +82,7 @@ type PinToolsInput struct {
 type PinnedToolService interface {
 	// List returns the registry's tool definitions, optionally only those in one
 	// status. ErrNotFound when the registry is not the gateway's.
-	List(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, status *domain.ToolStatus) (*PinnedToolList, error)
+	List(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, status *domain.ToolStatus, page PinnedToolPage) (*PinnedToolList, error)
 	// Decide approves and rejects stored definitions atomically, then propagates
 	// the change. A definition the registry has no row for is ErrUnknownToolRefs
 	// and nothing is applied; one in both lists is ErrInvalidToolDecision.
@@ -125,29 +140,47 @@ func (s *pinnedToolService) List(
 	gatewayID ids.GatewayID,
 	registryID ids.RegistryID,
 	status *domain.ToolStatus,
+	page PinnedToolPage,
 ) (*PinnedToolList, error) {
 	reg, err := s.owned(ctx, gatewayID, registryID)
 	if err != nil {
 		return nil, err
 	}
-	stored, err := s.tools.ListByRegistry(ctx, gatewayID, registryID)
+	if page.Limit <= 0 {
+		page.Limit = DefaultPinnedToolsPage
+	}
+	if page.Limit > MaxPinnedToolsPage {
+		page.Limit = MaxPinnedToolsPage
+	}
+	if page.Offset < 0 {
+		page.Offset = 0
+	}
+	stored, total, err := s.tools.ListPage(ctx, gatewayID, registryID, status, page.Limit, page.Offset)
+	if err != nil {
+		return nil, err
+	}
+	// The approved definition a pending row is diffed against may be on another
+	// page, so it is read by name rather than taken from this page.
+	var pendingNames []string
+	seen := map[string]struct{}{}
+	for _, t := range stored {
+		if _, dup := seen[t.Name]; t.Status == domain.ToolStatusPending && !dup {
+			seen[t.Name] = struct{}{}
+			pendingNames = append(pendingNames, t.Name)
+		}
+	}
+	approvedRows, err := s.tools.ListApproved(ctx, gatewayID, registryID, pendingNames)
 	if err != nil {
 		return nil, err
 	}
 	latestApproved := make(map[string]domain.PinnedTool)
-	for _, t := range stored {
-		if t.Status != domain.ToolStatusApproved {
-			continue
-		}
+	for _, t := range approvedRows {
 		if cur, ok := latestApproved[t.Name]; !ok || t.DecidedAt.After(cur.DecidedAt) {
 			latestApproved[t.Name] = t
 		}
 	}
-	out := &PinnedToolList{ToolPolicy: reg.ToolPolicy.Normalize(), Items: make([]PinnedToolView, 0, len(stored))}
+	out := &PinnedToolList{ToolPolicy: reg.ToolPolicy.Normalize(), Items: make([]PinnedToolView, 0, len(stored)), Total: total}
 	for _, t := range stored {
-		if status != nil && t.Status != *status {
-			continue
-		}
 		view := PinnedToolView{PinnedTool: t}
 		if t.Status == domain.ToolStatusPending {
 			if a, ok := latestApproved[t.Name]; ok {
