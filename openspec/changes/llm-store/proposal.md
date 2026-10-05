@@ -55,7 +55,7 @@ Hybrid gateways are out of v1: `/store/v1/*` → 404 and creating a personal con
 | `auths` | `owner_id text NULL`. Partial unique index `auths_gateway_owner_uniq (gateway_id, owner_id) WHERE owner_id IS NOT NULL`. | `owner_id,omitempty`. Application keys stay byte-identical. |
 | `consumer_auth` | `level text NULL`, `priority integer NULL`, `granted_at timestamptz NULL`. One CHECK: all three `NULL` (application link), or `level IN ('user','group','all') AND priority >= 0 AND granted_at IS NOT NULL` (personal link). | On the consumer: `"auth_links":{"<auth_id>":{"level":"group","priority":1,"granted_at":"…"}}`, only for personal links (`omitempty`). `auth_ids` unchanged. |
 
-Migrations are in-code (`20261002…`), idempotent, and one transaction each (template `20260922120000_add_auth_expires_at.go`). All are nullable or constant-default column adds, so there is no table rewrite. `consumer_auth` keeps its PK `(consumer_id, auth_id)`, `auth_id` RESTRICT (`20260617180000`) and same-gateway trigger (`20260622120000:40-42,67-70`).
+Migrations are in-code (`20261005…`), idempotent, and one transaction each (template `20260922120000_add_auth_expires_at.go`). All are nullable or constant-default column adds, so there is no table rewrite. `consumer_auth` keeps its PK `(consumer_id, auth_id)`, `auth_id` RESTRICT (`20260617180000`) and same-gateway trigger (`20260622120000:40-42,67-70`).
 
 ## Decisions
 

@@ -6,7 +6,7 @@ Change `llm-store` (RUN-1763), slice S3 (decisions B3, D7). New capability. An `
 
 ### Requirement: `owner_id` column and one key per user per gateway
 
-An in-code migration (`20261002…`) MUST add `auths.owner_id text NULL` and the partial unique index `auths_gateway_owner_uniq (gateway_id, owner_id) WHERE owner_id IS NOT NULL`. `NULL` MUST mean an application key. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table.
+An in-code migration (`20261005120100_add_auth_owner`) MUST add `auths.owner_id text NULL` and the partial unique index `auths_gateway_owner_uniq (gateway_id, owner_id) WHERE owner_id IS NOT NULL`. `NULL` MUST mean an application key. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table.
 
 #### Scenario: Existing rows untouched
 
@@ -22,7 +22,7 @@ An in-code migration (`20261002…`) MUST add `auths.owner_id text NULL` and the
 
 ### Requirement: Domain, repository and wire form
 
-`Auth` MUST gain `OwnerID` (`json:"owner_id,omitempty"`) and `IsOwned()` (true when `OwnerID != ""`). Every Postgres read, insert and update of `auths` MUST carry the column. The repository port MUST gain `FindByOwner(ctx, gatewayID, ownerID)`, and `ListFilter` MUST gain `ExcludeOwned bool` and `OwnerID string`. The snapshot codec MUST round-trip `owner_id`, and an application key MUST encode byte-identically to its encoding before the change.
+`Auth` MUST gain `OwnerID` (`json:"owner_id,omitempty"`) and `IsOwned()` (true when `OwnerID != ""`). Every Postgres read and insert of `auths` MUST carry the column, and an UPDATE MUST never write it: `owner_id` is set at create only. The repository port MUST gain `FindByOwner(ctx, gatewayID, ownerID)`, and `ListFilter` MUST gain `ExcludeOwned bool` and `OwnerID string` (these two land in P4 with the admin list handler, their only consumer). The snapshot codec MUST round-trip `owner_id`, and an application key MUST encode byte-identically to its encoding before the change.
 
 #### Scenario: Codec round trip
 

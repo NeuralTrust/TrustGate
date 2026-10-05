@@ -19,23 +19,24 @@ Each task names its files and the spec scenarios it satisfies (`capability › S
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | Hand-written ≈4,970 (range 4,400–5,500): code ≈1,690, tests ≈3,140, docs ≈140. Generated ≈850, outside the budget: mocks ≈300 in P2, P5, P6, P9, P12, P13 and P14, and swagger/openapi ≈550 in P3, P4, P6 and P10. openspec ≈2,100, also outside. |
-| Per-PR (hand-written) | P1 270 · P2 345 · P3 320 · P4 285 · P5 290 · P6 280 · P7 310 · P8 265 · P9 300 · P10 345 · P11 325 · P12 300 · P13 375 · P14 290 · P15a 350 · P15b 180 · P16 140 |
-| 400-line budget risk | High: the total is ≈12× the budget. Every PR is ≤ 400 hand-written lines. P13 (375) is within 25 lines of the limit, and P10, P2 and P15a sit at ≈345–350. Measure before opening. If P13 goes over, move the benchmark and the 64-goroutine test into P14. |
+| Estimated changed lines | Hand-written ≈4,970 (range 4,400–5,500): code ≈1,690, tests ≈3,140, docs ≈140. Generated ≈850, outside the budget: mocks ≈300 in P2b, P5, P6, P9, P12, P13 and P14, and swagger/openapi ≈550 in P3, P4, P6 and P10. openspec ≈2,100, also outside. |
+| Per-PR (hand-written) | P1 270 · P2a 377 · P2b 324 · P3 320 · P4 285 · P5 290 · P6 280 · P7 310 · P8 265 · P9 300 · P10 345 · P11 325 · P12 300 · P13 375 · P14 290 · P15a 350 · P15b 180 · P16 140 |
+| 400-line budget risk | High: the total is ≈12× the budget. Every PR is ≤ 400 hand-written lines. P13 (375) and P2a (377, measured) are within 25 lines of the limit, and P10 and P15a sit at ≈345–350. Measure before opening. If P13 goes over, move the benchmark and the 64-goroutine test into P14. |
 | Chained PRs recommended | Yes |
 | Chain strategy | Stacked PRs to `develop` in four lanes, no tracker branch. Every PR is behaviour-neutral or self-contained and inert until the app creates a personal consumer, so a Feature Branch Chain is not needed. |
-| Parallelizable starts | t0, cut from `develop`: P1, P2, P7. After P2: P3, P4, P5. After P5: P11 and P16 (and P6 once P3 is in). After P4: P9. After P11: P12 and P13. |
-| Critical path | P2 → P5 → P11 → P13 → P14 → P15a → P15b (7 PRs) |
-| Merge order | P1, P2, P7 → P3, P4, P5 → P6, P8, P9, P11, P16 → P10, P12, P13 → P14 → P15a → P15b |
+| Parallelizable starts | t0, cut from `develop`: P1, P2a, P7. After P2a: P2b, P3, P5. After P2b: P4. After P5: P11 and P16 (and P6 once P3 is in). After P4: P9. After P11: P12 and P13. |
+| Critical path | P2a → P5 → P11 → P13 → P14 → P15a → P15b (7 PRs) |
+| Merge order | P1, P2a, P7 → P2b, P3, P5 → P4, P6, P8, P11, P16 → P9, P12, P13 → P10, P14 → P15a → P15b |
 | Delivery strategy | chained-stacked |
 
-Decision needed before apply: Yes. Confirm adjustments A1–A4 below. They resize and re-sequence PRs and reverse no binding decision.
+Decision needed before apply: Yes. Confirm adjustments A1–A5 below. They resize and re-sequence PRs and reverse no binding decision.
 Chained PRs recommended: Yes
 Chain strategy: stacked (four lanes from `develop`, joins rebased on `develop`)
 400-line budget risk: High
 
 How to measure the budget (this excludes openspec/ and generated files, as ENG-1618 and RUN-1746 did):
 - `git diff --shortstat <parent> -- pkg tests docs ':!docs/swagger.*' ':!docs/docs.go' ':!docs/openapi.json' ':!**/mocks/**'`
+- New files are untracked until staged, and an untracked file is invisible to `git diff`. Run `git add -N <new files>` (intent-to-add) before measuring, or the count leaves them out.
 
 ### Adjustments to the design's chain
 
@@ -45,13 +46,14 @@ How to measure the budget (this excludes openspec/ and generated files, as ENG-1
 | A2 | `routingdomain.SourceFallback` and `Candidate.FallbackOnly()` move from P13 to P11 | P13 was over budget in this forecast (≈410). Both changes are pure domain code. | P13 → 375, P11 → 325 |
 | A3 | P12 also depends on P7, which adds `AuthContext.OwnerID`. P11 and P14 rebase on P1. | P7 and P12 would otherwise both add `AuthContext.OwnerID`. P1, P11 and P14 all edit `auth.go:196` or `proxy_handler.go`. | No new PR. P7 merges long before P12 (the store lane is 4 PRs deep). |
 | A4 | Design PR 15 becomes P15a (full-plane functional) and P15b (DB-less functional plus `docs/llm-store.md`). The P10 functional test takes the self-key and admin owned-key flows. | The listed functional scenarios came to ≈450 lines, over the budget. | 17 PRs instead of 16. P15a 350, P15b 180. |
+| A5 | Design PR 2 becomes P2a (`audience`) and P2b (`owner_id`), stacked: P2b's base is P2a | P2 measured 667 hand-written lines (forecast 345): the listed scenarios cost ≈420 test lines, and six new files carry license headers. P2b reuses P2a's codec fixture and migration shadow helpers. | 18 PRs. P2a 377, P2b 324 (measured). P3 and P5 depend on P2a; P4 and P9 on P2b. |
 
 ### Chain topology
 
 | Lane | PRs | Base while the parent is open | Base once the parent merged |
 |------|-----|------|------|
 | T (expiry, telemetry) | P1 | `develop` | — |
-| A (data model, admin, self keys) | P2 → {P3, P4, P5}; {P3, P5} → P6; P4 → P9 → P10 | parent branch (for P6, the later of P3 and P5) | `develop` |
+| A (data model, admin, self keys) | P2a → {P2b, P3, P5}; P2b → P4 → P9 → P10; {P3, P5} → P6 | parent branch (for P6, the later of P3 and P5) | `develop` |
 | B (budgets) | P7 → P8 | parent branch | `develop` |
 | C (store data plane) | P5 → P11 → {P12 (+P7), P13} → P14 → P15a (+P6, P8, P10) → P15b; P5 → P16 | last open parent | `develop` |
 
@@ -62,14 +64,15 @@ Retargeting a base does not re-run CI, so close and reopen the PR after a retarg
 | Unit | Slice | Goal | Depends | Hand-written (code / test) | Generated |
 |------|-------|------|---------|------|------|
 | P1 | S0 + S1 | Expired keys rejected, `auth_key` cross-process eviction, `trustgate.auth.id` | — | 70 / 200 | — |
-| P2 | S3a | `audience` and `owner_id` columns, domain, repos, `FindByOwner`, wire `omitempty`, golden bytes | — | 200 / 145 | mocks ≈40 |
-| P3 | S3b | Consumer rules: personal ⇒ LLM, default model, immutability, bulk `auths` 422, hybrid 422, audience DTOs | P2 | 120 / 200 | swagger ≈60 |
-| P4 | S3c | Admin auth rules: list filter and `?owner_id`, `owned_key` 422, rotator owner check, warnings | P2 | 120 / 165 | swagger ≈50 |
-| P5 | S3d | `consumer_auth` link columns, `AuthLink`, `auth_links` read, upsert port | P2 | 120 / 170 | mocks ≈30 |
+| P2a | S3a | `audience`: migration, domain, consumer repo, golden codec bytes, migration shadow helpers | — | 126 / 251 | — |
+| P2b | S3a | `owner_id`: migration, auth domain, auth repo, `FindByOwner`, snapshot adapter, compiler and adapter tests, personal/owned codec round trip | P2a | 130 / 194 | mocks 64 |
+| P3 | S3b | Consumer rules: personal ⇒ LLM, default model, immutability, bulk `auths` 422, hybrid 422, audience DTOs | P2a | 120 / 200 | swagger ≈60 |
+| P4 | S3c | Admin auth rules: list filter and `?owner_id`, `owned_key` 422, rotator owner check, warnings | P2b | 120 / 165 | swagger ≈50 |
+| P5 | S3d | `consumer_auth` link columns, `AuthLink`, `auth_links` read, upsert port | P2a | 120 / 170 | mocks ≈30 |
 | P6 | S3e | Attach with link attributes (DD7), audience mismatch on attach | P3, P5 | 100 / 180 | mocks ≈30, swagger ≈60 |
 | P7 | S2a | `partition: key`, `AuthID`/`OwnerID` plumbing, calendar windows | — | 120 / 190 | — |
 | P8 | S2b | Hard limits (503, 403 `model_unpriced`, 429 scope), catalog and docs | P7 | 100 / 165 | — |
-| P9 | S4a | Owned-key domain constructor and expiry cap, `PersonalKeys` use case | P2, P4 | 145 / 155 | mocks ≈50 |
+| P9 | S4a | Owned-key domain constructor and expiry cap, `PersonalKeys` use case | P2b, P4 | 145 / 155 | mocks ≈50 |
 | P10 | S4b | Self-only HTTP routes and DTOs, functional key flows | P9 | 130 / 215 | swagger ≈380 |
 | P11 | S5a | `Data.StoreLinks`, `HasPersonalConsumers`, `bySlug` skip, D11 rejections, `FallbackOnly` | P5 (rebase on P1) | 110 / 215 | — |
 | P12 | S5b | `StoreKeyResolver`, middleware store branch, interim handler 404 | P11, P7 | 110 / 190 | mocks ≈30 |
@@ -81,7 +84,7 @@ Retargeting a base does not re-run CI, so close and reopen the PR after a retarg
 
 Why each slice ships on its own:
 - Nothing personal exists until the app creates a personal consumer, and the app ships only after every plane runs the whole chain (Deploy order, step 3). Until then each PR is inert apart from S0.
-- P2, P5: nullable or constant-default columns and `omitempty` wire fields. Golden bytes prove that existing snapshots do not change.
+- P2a, P2b, P5: nullable or constant-default columns and `omitempty` wire fields. Golden bytes prove that existing snapshots do not change.
 - P3, P4, P6: new 422s fire only on personal consumers or owned keys, which nobody can create before P10. Application keys and consumers keep their contracts.
 - P7, P8: everything is gated on `partition: key`, which no existing policy carries.
 - P12 without P14: on a gateway with personal consumers, the store branch authenticates and the handler answers 404 (task 12.4). P14 replaces that.
@@ -104,10 +107,10 @@ PR rules:
   - `make docs` goes in its own `chore(docs)` commit. Develop's OpenAPI drift drags in unrelated lines, so regenerate in a temporary worktree and keep only this PR's paths.
   - gosec G101 may flag new constants that contain `key` (`owned_key`, `budget_unavailable` keys). An inline `#nosec G101` is the repo convention.
   - Wait for the CI `functional-tests` check (`llm-store-oss-invariance › CI`, `› Existing handler tests`).
-- **VR** (repository and migration tests; CI runs them with `PG_TEST_URL`). Locally, use a disposable container only:
+- **VR** (repository and migration tests). CI runs the repository tests with `PG_TEST_URL`, but not the migration tests. Locally, use a disposable container only:
   1. `docker run -d --rm --name run1763-pg -p 55447:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine`
   2. `PG_TEST_URL='postgres://postgres:postgres@localhost:55447/postgres?sslmode=disable' make test-repositories`
-  3. With the same URL: `go test ./pkg/infra/database/migrations/...`
+  3. With the same URL: `go test -tags functional -count=1 -run 'TestAdd(ConsumerAudience|AuthOwner)Migration' ./pkg/infra/database/migrations/`. Add each PR's migration test to the `-run` pattern (P5: `TestAddConsumerAuthGrantMigration`). The tag is required. Without `-run`, the package also runs `TestConsumerRegistryPositionMigration`, which already fails in its own setup on `develop`.
 - **VF** (functional, tag `functional`): `make test-functional` against local Postgres and Redis. Never copy the main checkout's `.env`, which points at Azure DB, and never point `E2E_*` at prod.
 
 ## Phase 1: S0 expiry + S1 telemetry (base `develop`)
@@ -127,26 +130,28 @@ Depends: —. Est.: ≈270 (code 70 / test 200). Commit boundary: (a) `docs(open
 - [ ] 1.11 PR body `## Release note`: application keys with a past `expires_at` stop working on `/<slug>/v1/*`, and rollback is a revert. Accept: `proxy-api-key-expiry › Release note present`.
 - [ ] 1.12 Run VG and VF.
 
-## Phase 2: S3a data model — `audience`, `owner_id` (base `develop`)
+## Phase 2: S3a data model — P2a `audience` (base `develop`), P2b `owner_id` (base P2a)
 
-Depends: —. Est.: ≈345 (code 200 / test 145). Commit boundary: (a) `test`: capture the golden codec bytes for an application consumer and an application key on the base, before any struct change; (b) `feat`: migrations, domain, repos, adapters; (c) `chore`: mocks.
+Depends: —. Measured 667 hand-written lines, so the phase ships as two stacked PRs (A5).
+- P2a 377: 2.1 (audience migration), 2.2, 2.4, 2.7 (audience test and `shadow_helpers_test.go`), 2.8 (`audience_test.go`), 2.9 (golden bytes), 2.11 (consumer half). Commit boundary: (a) `test`: capture the golden codec bytes for an application consumer and an application key on the base, before any struct change; (b) `feat`: migration, domain, consumer repo.
+- P2b 324: 2.1 (owner migration), 2.3, 2.5, 2.6, 2.7 (owner test), 2.8 (`IsOwned`), 2.9 (personal and owned round trip), 2.10, 2.11 (auth half). Commit boundary: (a) `feat`: migration, auth domain, auth repo, snapshot adapter; (b) `chore`: mocks.
 
-- [ ] 2.1 Create `pkg/infra/database/migrations/20261002120000_add_consumer_audience.go` and `20261002120100_add_auth_owner.go`. Use the SQL from the design and the template `20260922120000_add_auth_expires_at.go`: idempotent, one transaction per direction, no table.
-- [ ] 2.2 Create `pkg/domain/consumer/audience.go`: `Audience`, `AudienceApplication`, `AudiencePersonal`, `ParseAudience` (`"application"` → `""`), `IsPersonal()`, `AudienceName()`. `consumer.go`: `Audience json:"audience,omitempty"`, `CreateParams.Audience`, `RehydrateParams.Audience`. `errors.go`: `ErrInvalidAudience`.
-- [ ] 2.3 `pkg/domain/auth/auth.go`: `OwnerID json:"owner_id,omitempty"`, `IsOwned()`. `errors.go`: `ErrOwnedKeyExists` (wraps `ErrAlreadyExists`). `repository.go`: `FindByOwner(ctx, gatewayID, ownerID)`. Run `go generate ./pkg/domain/auth/...`.
-- [ ] 2.4 `pkg/infra/repository/consumer/repository.go`: `c.audience` in `consumerSelectColumns` (`:50-58`), `INSERT` (`:118`) and `scanConsumer` (`:732`, `ParseAudience`). `Update` never writes `audience`.
-- [ ] 2.5 `pkg/infra/repository/auth/repository.go`: one `authColumns` const replaces the six SELECT copies (`:140-288`) and adds `owner_id`. `INSERT` writes `NULLIF($n,'')`. A 23505 on `auths_gateway_owner_uniq` → `ErrOwnedKeyExists`. `UPDATE` stays unchanged, so it never writes `owner_id`. `scanAuth`. `FindByOwner`.
-- [ ] 2.6 `pkg/runtimeconfig/snapshot/adapters/auth_repository.go`: `FindByOwner` scans the gateway's auths in the snapshot.
-- [ ] 2.7 Test `pkg/infra/database/migrations/20261002120000_add_consumer_audience_test.go` and `…120100_add_auth_owner_test.go` (`PG_TEST_URL`): up twice, down twice. Existing rows get `application` and `NULL`. `audience='team'` hits 23514. A second owned key on G hits 23505, while the same owner on H succeeds. Accept: `personal-llm-consumers › Existing rows`, `› Invalid value refused by the database`; `owned-api-keys › Existing rows untouched`, `› Second owned key for the same user`; `llm-store-oss-invariance › Migrations create nothing personal`.
-- [ ] 2.8 Test `pkg/domain/consumer/audience_test.go` and `pkg/domain/auth/auth_test.go`: `ParseAudience` table, `IsOwned`.
-- [ ] 2.9 Test `pkg/infra/configsnapshot/codec_test.go`: golden bytes from 2(a) for the application consumer and the application key, with no `audience` and no `owner_id`. Round trips for a personal consumer and an owned auth. Accept: `personal-llm-consumers › Codec round trip`, `› Application consumer bytes`; `owned-api-keys › Codec round trip`, `› Application key bytes`; `llm-store-oss-invariance › Golden snapshot` (the version hash is unchanged).
-- [ ] 2.10 Test `pkg/app/configsnapshot/compiler_test.go`: a gateway with one application key and one owned key compiles both, on the bulk and the per-gateway paths, and `AuthByAPIKeyHash` finds the owned key. Accept: `owned-api-keys › Compiler includes owned keys`.
-- [ ] 2.11 Test `tests/functional/repositories/auth/repository_test.go`: `FindByOwner(G)` hits and `FindByOwner(H)` is not found. Two concurrent `Save`s for one owner → one row and one `ErrOwnedKeyExists`. `Update` leaves `owner_id` alone. `tests/functional/repositories/consumer/repository_test.go`: `audience` round trip; `Update` leaves `audience` alone. Accept: `owned-api-keys › Find by owner`; `personal-key-endpoints › Concurrent creates`, `› Another gateway` (repository half).
-- [ ] 2.12 Run VG and VR.
+- [x] 2.1 Create `pkg/infra/database/migrations/20261005120000_add_consumer_audience.go` and `20261005120100_add_auth_owner.go` (IDs moved after develop's latest migration, `20261003150000`). Use the SQL from the design and the template `20260922120000_add_auth_expires_at.go`: idempotent, one transaction per direction, no table.
+- [x] 2.2 Create `pkg/domain/consumer/audience.go`: `Audience`, `AudienceApplication`, `AudiencePersonal`, `ParseAudience` (`"application"` → `""`), `IsPersonal()`, `AudienceName()`. `consumer.go`: `Audience json:"audience,omitempty"`, `CreateParams.Audience`, `RehydrateParams.Audience`. `errors.go`: `ErrInvalidAudience`.
+- [x] 2.3 `pkg/domain/auth/auth.go`: `OwnerID json:"owner_id,omitempty"`, `IsOwned()`. `errors.go`: `ErrOwnedKeyExists` (wraps `ErrAlreadyExists`). `repository.go`: `FindByOwner(ctx, gatewayID, ownerID)`. Run `go generate ./pkg/domain/auth/...`.
+- [x] 2.4 `pkg/infra/repository/consumer/repository.go`: `c.audience` in `consumerSelectColumns` (`:50-58`), `INSERT` (`:118`) and `scanConsumer` (`:732`, `ParseAudience`). `Update` never writes `audience`.
+- [x] 2.5 `pkg/infra/repository/auth/repository.go`: one `authColumns` const replaces the six SELECT copies (`:140-288`) and adds `owner_id`. `INSERT` writes `NULLIF($n,'')`. A 23505 on `auths_gateway_owner_uniq` → `ErrOwnedKeyExists`. `UPDATE` stays unchanged, so it never writes `owner_id`. `scanAuth`. `FindByOwner`.
+- [x] 2.6 `pkg/runtimeconfig/snapshot/adapters/auth_repository.go`: `FindByOwner` scans the gateway's auths in the snapshot.
+- [x] 2.7 Test `pkg/infra/database/migrations/20261005120000_add_consumer_audience_test.go` and `…120100_add_auth_owner_test.go` (`PG_TEST_URL`): up twice, down twice. Existing rows get `application` and `NULL`. `audience='team'` hits 23514. A second owned key on G hits 23505, while the same owner on H succeeds. Accept: `personal-llm-consumers › Existing rows`, `› Invalid value refused by the database`; `owned-api-keys › Existing rows untouched`, `› Second owned key for the same user`; `llm-store-oss-invariance › Migrations create nothing personal`.
+- [x] 2.8 Test `pkg/domain/consumer/audience_test.go` and `pkg/domain/auth/auth_test.go`: `ParseAudience` table, `IsOwned`.
+- [x] 2.9 Test `pkg/infra/configsnapshot/codec_test.go`: golden bytes from 2(a) for the application consumer and the application key, with no `audience` and no `owner_id`. Round trips for a personal consumer and an owned auth. Accept: `personal-llm-consumers › Codec round trip`, `› Application consumer bytes`; `owned-api-keys › Codec round trip`, `› Application key bytes`; `llm-store-oss-invariance › Golden snapshot` (the version hash is unchanged).
+- [x] 2.10 Test `pkg/app/configsnapshot/compiler_test.go`: a gateway with one application key and one owned key compiles both, on the bulk and the per-gateway paths, and `AuthByAPIKeyHash` finds the owned key. Accept: `owned-api-keys › Compiler includes owned keys`.
+- [x] 2.11 Test `tests/functional/repositories/auth/repository_test.go`: `FindByOwner(G)` hits and `FindByOwner(H)` is not found. Two concurrent `Save`s for one owner → one row and one `ErrOwnedKeyExists`. `Update` leaves `owner_id` alone. `tests/functional/repositories/consumer/repository_test.go`: `audience` round trip; `Update` leaves `audience` alone. Accept: `owned-api-keys › Find by owner`; `personal-key-endpoints › Concurrent creates`, `› Another gateway` (repository half).
+- [x] 2.12 Run VG and VR.
 
-## Phase 3: S3b consumer rules (base P2)
+## Phase 3: S3b consumer rules (base P2a)
 
-Depends: P2. Est.: ≈320 (code 120 / test 200). Commit boundary: (a) `feat`: domain and use-case rules, DTOs, wiring; (b) `chore(docs)`: `make docs`.
+Depends: P2a. Est.: ≈320 (code 120 / test 200). Commit boundary: (a) `feat`: domain and use-case rules, DTOs, wiring; (b) `chore(docs)`: `make docs`.
 
 - [ ] 3.1 `pkg/domain/consumer/consumer.go` `Validate` (`:212`): `personal` ⇒ `TypeLLM`, and personal needs a concrete (non-glob) `ModelPolicies[r].Default` for some `r` in `RegistryIDs`; fallback backends do not count. `errors.go`: `ErrAudienceImmutable`, `ErrPersonalAuthsBulk`, `ErrHybridPersonal`, `ErrPersonalNoDefault`, `ErrAudienceMismatch`.
 - [ ] 3.2 `pkg/domain/consumer/auth_rules.go` `ValidateAuthConfig` (`:37`): a personal consumer takes only owned auths, and an application consumer takes only unowned ones → `ErrAudienceMismatch`.
@@ -161,9 +166,9 @@ Depends: P2. Est.: ≈320 (code 120 / test 200). Commit boundary: (a) `feat`: do
 - Accept (3.1–3.10): `personal-llm-consumers › Default audience`, `› Personal MCP consumer`, `› Personal LLM consumer`, `› Personal consumer without a default`, `› Glob default does not count`, `› Detaching the only registry with a default`, `› Switch refused`, `› Same value accepted`, `› Create with keys`, `› Update with an empty list`, `› Hybrid gateway`, `› Application consumer on a hybrid gateway`; `owned-key-attachment › Owned key onto an application consumer` (create and PUT half).
 - [ ] 3.11 Run VG and VR.
 
-## Phase 4: S3c admin auth rules (base P2)
+## Phase 4: S3c admin auth rules (base P2b)
 
-Depends: P2. Est.: ≈285 (code 120 / test 165). Commit boundary: (a) `feat`; (b) `chore(docs)`: `make docs`.
+Depends: P2b. Est.: ≈285 (code 120 / test 165). Commit boundary: (a) `feat`; (b) `chore(docs)`: `make docs`.
 
 - [ ] 4.1 `pkg/domain/auth/repository.go`: `ListFilter.ExcludeOwned bool`, `ListFilter.OwnerID string` (A1). `pkg/infra/repository/auth/repository.go`: list and count add `AND ($k::boolean IS NOT TRUE OR owner_id IS NULL) AND ($m = '' OR owner_id = $m)`. The compiler keeps the unfiltered `List` (`compiler.go:462,725`).
 - [ ] 4.2 `pkg/common/errors/errors.go`: `ErrManagedByOwner`. `pkg/domain/auth/errors.go`: `ErrOwnedKey`. `httpio/errors.go` `MapDomainError`: → 422 `owned_key` (DD10).
@@ -177,11 +182,11 @@ Depends: P2. Est.: ≈285 (code 120 / test 165). Commit boundary: (a) `feat`; (b
 - Accept (4.1–4.9): `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (unit half; the end-to-end check is in 10.8 and 15b.2), `› Owner in an admin create body`, `› Owned keys only`.
 - [ ] 4.10 Run VG and VR.
 
-## Phase 5: S3d `consumer_auth` link columns (base P2)
+## Phase 5: S3d `consumer_auth` link columns (base P2a)
 
-Depends: P2. Est.: ≈290 (code 120 / test 170). Commit boundary: (a) `test`: golden bytes for an application consumer with application links, captured on P2; (b) `feat`; (c) `chore`: mocks.
+Depends: P2a. Est.: ≈290 (code 120 / test 170). Commit boundary: (a) `test`: golden bytes for an application consumer with application links, captured on P2a; (b) `feat`; (c) `chore`: mocks.
 
-- [ ] 5.1 Create `pkg/infra/database/migrations/20261002120200_add_consumer_auth_grant.go`: three nullable columns and `consumer_auth_grant_check`, following the design.
+- [ ] 5.1 Create `pkg/infra/database/migrations/20261005120200_add_consumer_auth_grant.go`: three nullable columns and `consumer_auth_grant_check`, following the design.
 - [ ] 5.2 Create `pkg/domain/consumer/auth_link.go`: `GrantLevel` (`user`/`group`/`all`), `ParseGrantLevel`, `Rank()`, `DefaultGrantPriority = 1`, `AuthLink{Level, Priority, GrantedAt}`, `Validate()`, and `ErrInvalidAuthLink` in `errors.go`.
 - [ ] 5.3 `pkg/domain/consumer/consumer.go`: `AuthLinks map[ids.AuthID]AuthLink json:"auth_links,omitempty"`, `RehydrateParams.AuthLinks`. `repository.go`: `AttachAuth(ctx, consumerID, authID, link *AuthLink)`. Callers pass `nil` for now (behaviour-neutral). Run `go generate ./pkg/domain/consumer/...`.
 - [ ] 5.4 `pkg/infra/repository/consumer/repository.go`: the `auth_links` `json_object_agg` subselect, filtered on `level IS NOT NULL`. `AttachAuth` (`:413-431`): `nil` keeps `ON CONFLICT DO NOTHING`; non-nil upserts the three columns. `replaceAuthLinks` is unchanged.
@@ -230,9 +235,9 @@ Depends: P7. Est.: ≈265 (code 100 / test 165). Commit boundary: one `feat` com
 - Accept (8.1–8.6): `token-budget-key-partition › Redis down`, `› Observe mode never blocks`, `› Unpriced model on a dollar budget`, `› Registry rate counts as priced`, `› Over budget`, `› Catalog lists the field`.
 - [ ] 8.7 Run VG.
 
-## Phase 9: S4a `PersonalKeys` use case (base P4, after P2)
+## Phase 9: S4a `PersonalKeys` use case (base P4, after P2b)
 
-Depends: P2, P4. Est.: ≈300 (code 145 / test 155). Commit boundary: (a) `feat`; (b) `chore`: mocks.
+Depends: P2b, P4. Est.: ≈300 (code 145 / test 155). Commit boundary: (a) `feat`; (b) `chore`: mocks.
 
 - [ ] 9.1 `pkg/domain/auth/auth.go`: `MaxOwnedKeyLifetime = 90 * 24 * time.Hour`, `NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, now)`, `ValidateOwnedExpiry(at, now)` (`now < at ≤ now + 90 d`). `errors.go`: `ErrOwnedExpiry`.
 - [ ] 9.2 Create `pkg/app/auth/personal_keys.go`: the `PersonalKeys` interface plus implementation, with `//go:generate mockery`. The behaviour:
@@ -394,7 +399,7 @@ Depends: P5. Est.: ≈140 (code 75 / test 65). Commit boundary: one `feat` commi
 |------|--------|-------|
 | 1 | DataCore D1 is in prod **before** P1 deploys: events start carrying `auth_id`. | out of repo |
 | 2 | P1–P16 merge to `develop` in the merge order above and ship through the normal release train. There is no develop→main promotion. Each PR is inert on deploy, apart from S0 (release note). | TrustGate |
-| 3 | **Every TrustGate plane** (admin, proxy, MCP, DB-less DPs, in EU and US) runs a build containing at least P2–P6 and P11–P14 **before the app creates any personal consumer**. Check the healthz `version` on every plane and region. An older DP ignores `audience`, `owner_id` and `auth_links`, and would serve a personal consumer at `/<slug>/v1` with its owned keys (D11 not enforced). | TrustGate |
+| 3 | **Every TrustGate plane** (admin, proxy, MCP, DB-less DPs, in EU and US) runs a build containing at least P2a, P2b, P3–P6 and P11–P14 **before the app creates any personal consumer**. Check the healthz `version` on every plane and region. An older DP ignores `audience`, `owner_id` and `auth_links`, and would serve a personal consumer at `/<slug>/v1` with its owned keys (D11 not enforced). | TrustGate |
 | 4 | Create `token_rate_limiter` policies with `partition: key` or `calendar_*` only after P7–P8 are on every plane: an older binary rejects the config. | ops |
 | 5 | The app ships `LlmStoreGrant`, the reconcile (attach with `{level, priority, granted_at}`, `?owner_id` lookup, revoke on offboarding) and the Portal (ENG-1710, ENG-1704). | app |
 
