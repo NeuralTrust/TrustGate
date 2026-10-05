@@ -11,11 +11,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
+	golangjwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const functionalTenantID = "functional-tenant"
 
 func gatewayBaseDomain() string {
 	if GlobalConfig != nil && GlobalConfig.Server.GatewayBaseDomain != "" {
@@ -47,7 +52,7 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 		payload = map[string]any{}
 	}
 	if _, ok := payload["tenant_id"]; !ok {
-		payload["tenant_id"] = "functional-tenant"
+		payload["tenant_id"] = functionalTenantID
 	}
 	if _, ok := payload["entitlements"]; !ok {
 		// The API rejects stamped limits unless all three are set, and
@@ -296,6 +301,48 @@ func registerProxyKey(t *testing.T, gatewayID, consumerID, authID, key string) {
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
 	proxyHosts.Store(key, host.(string))
+}
+
+func userToken(t *testing.T, tenantID, userID string) string {
+	t.Helper()
+	now := time.Now()
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, &jwt.Claims{
+		TenantID: tenantID,
+		UserID:   userID,
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			IssuedAt:  golangjwt.NewNumericDate(now),
+			ExpiresAt: golangjwt.NewNumericDate(now.Add(time.Hour)),
+		},
+	}).SignedString([]byte(GlobalConfig.Server.SecretKey))
+	require.NoError(t, err)
+	return token
+}
+
+func llmKeyRequest(t *testing.T, method, gatewayID, token, suffix string, body any) (int, map[string]any) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/store/principal/llm-key%s", AdminURL, gatewayID, suffix)
+	return sendRequest(t, method, url, map[string]string{"Authorization": "Bearer " + token}, body)
+}
+
+func GetLLMKey(t *testing.T, gatewayID, userID string) (int, map[string]any) {
+	t.Helper()
+	return llmKeyRequest(t, http.MethodGet, gatewayID, userToken(t, functionalTenantID, userID), "", nil)
+}
+
+func CreateLLMKey(t *testing.T, gatewayID, userID string, body any) (int, map[string]any) {
+	t.Helper()
+	return llmKeyRequest(t, http.MethodPost, gatewayID, userToken(t, functionalTenantID, userID), "", body)
+}
+
+func RotateLLMKey(t *testing.T, gatewayID, userID string, body any) (int, map[string]any) {
+	t.Helper()
+	return llmKeyRequest(t, http.MethodPost, gatewayID, userToken(t, functionalTenantID, userID), "/rotate", body)
+}
+
+func RevokeLLMKey(t *testing.T, gatewayID, userID string) int {
+	t.Helper()
+	status, _ := llmKeyRequest(t, http.MethodDelete, gatewayID, userToken(t, functionalTenantID, userID), "", nil)
+	return status
 }
 
 // validRegistryPayload returns a minimal payload accepted by Validate(): a

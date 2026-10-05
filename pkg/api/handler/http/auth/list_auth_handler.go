@@ -16,6 +16,7 @@ package auth
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
@@ -49,6 +50,7 @@ func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) 
 // @Param        name        query     string  false  "Alias of search"
 // @Param        type        query     string  false  "Filter by auth type (api_key, oauth2, oidc, mtls)"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
+// @Param        owner_id    query     string  false  "List only the personal key of this owner. Without it, personal keys are excluded"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, type)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
@@ -86,17 +88,20 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 		Search:  httpio.ParseSearch(c),
 		Type:    authType,
 		Enabled: enabled,
+		OwnerID: strings.TrimSpace(c.Query("owner_id")),
 		Page:    page,
 		Sort:    sort,
 	}
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
-		GatewayID: gatewayID,
-		Search:    req.Search,
-		Type:      req.Type,
-		Enabled:   req.Enabled,
-		Page:      req.Page,
-		Sort:      req.Sort,
+		GatewayID:    gatewayID,
+		Search:       req.Search,
+		Type:         req.Type,
+		Enabled:      req.Enabled,
+		ExcludeOwned: req.OwnerID == "",
+		OwnerID:      req.OwnerID,
+		Page:         req.Page,
+		Sort:         req.Sort,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

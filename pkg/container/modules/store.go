@@ -122,6 +122,9 @@ func Store(c *container.Container) error {
 	if err := c.Provide(provideStoreRequestsHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(storehttp.NewLLMKeyHandler); err != nil {
+		return err
+	}
 	return c.Provide(provideStorePrincipalHandler)
 }
 

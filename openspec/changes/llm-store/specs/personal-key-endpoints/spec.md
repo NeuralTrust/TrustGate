@@ -6,25 +6,41 @@ Change `llm-store` (RUN-1763), slice S4 (decision D8). New capability. Self-only
 
 ### Requirement: The endpoints act on the caller only
 
-`GET`, `POST` and `DELETE /v1/gateways/{gw}/store/principal/llm-key` and `POST /v1/gateways/{gw}/store/principal/llm-key/rotate` MUST act on `callerSubject(c)` only, the same rule as `ConnectLink`. They MUST NOT read an owner from the path, query or body: a `principal_sub` or `owner_id` in the body MUST be ignored. They MUST run behind `RequireInteractiveIdentity()`, so a service credential MUST get 403 and cannot hold a personal key. An empty caller subject MUST answer 403. A caller without registries access on the gateway MUST get 403 from the group guard.
+`GET`, `POST` and `DELETE /v1/gateways/{gw}/store/principal/llm-key` and `POST /v1/gateways/{gw}/store/principal/llm-key/rotate` MUST act on `callerSubject(c)` only, the same rule as `ConnectLink`. They MUST NOT read an owner from the path, query or body: a `principal_sub`, `owner_id` or `consumer_id` in the body MUST be ignored. Only a console user of the gateway's tenant can hold a personal key:
+
+- The group guard MUST answer a console user of another tenant with 404, the same answer as an unknown gateway, and a service credential bound to another gateway or without the registries scope with 403.
+- Every service credential MUST get 403 from `RequireInteractiveIdentity()`.
+- The handler MUST answer 403, before calling `PersonalKeys`, to any caller that is not a tenant-scoped console user with a subject: a service credential, a platform token without a tenant, or an empty subject.
 
 #### Scenario: Service credential
 
-- GIVEN a service credential with registries access on gateway G
-- WHEN it calls `POST /v1/gateways/G/store/principal/llm-key`
+- GIVEN a service credential bound to gateway G with the registries scope
+- WHEN it calls `GET`, `POST`, `POST …/rotate` or `DELETE` on `/v1/gateways/G/store/principal/llm-key`
+- THEN 403 from `RequireInteractiveIdentity()`, and no auth is created
+
+#### Scenario: Service credential outside the group guard
+
+- GIVEN a service credential bound to another gateway, or bound to G without the registries scope
+- WHEN it calls `GET …/llm-key` on G
+- THEN 403 from the group guard
+
+#### Scenario: Another tenant
+
+- GIVEN gateway G of tenant T1 and console user `carol` of tenant T2
+- WHEN she calls `GET …/llm-key` or `POST …/llm-key` on G
+- THEN 404, the same answer as an unknown gateway, and no auth is created
+
+#### Scenario: Platform token
+
+- GIVEN a platform token without a tenant, with or without a user id
+- WHEN it calls `POST …/llm-key` on G
 - THEN 403, and no auth is created
 
 #### Scenario: Body owner ignored
 
 - GIVEN console user `alice` without a key on G
-- WHEN she calls `POST …/llm-key` with `{"expires_at": <now + 30 d>, "principal_sub": "bob"}`
-- THEN the key created has `owner_id = alice`, and `bob` has no key
-
-#### Scenario: No registries access
-
-- GIVEN a console user without registries access on G
-- WHEN they call `GET …/llm-key`
-- THEN 403
+- WHEN she calls `POST …/llm-key` with `{"expires_at": <now + 30 d>, "principal_sub": "bob", "owner_id": "bob", "consumer_id": <P>}`
+- THEN the key created has `owner_id = alice` and `consumer_ids: []`, and `bob` has no key
 
 ### Requirement: Create makes an unlinked key
 
@@ -72,7 +88,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 
 ### Requirement: Expiry is required and capped at 90 days
 
-`expires_at` MUST be required on create and MUST satisfy `now < expires_at ≤ now + 90 d`, with `now` read from an injected clock. On rotate it MAY be omitted (the current expiry stays); when present it MUST satisfy the same bounds. Anything else MUST answer **422** and write nothing.
+`expires_at` MUST be required on create and MUST satisfy `now < expires_at ≤ now + 90 d`, with `now` read from an injected clock. On rotate it MAY be omitted (the current expiry stays), except on a key whose expiry has passed (see Rotate); when present it MUST satisfy the same bounds. Anything else MUST answer **422** and write nothing.
 
 #### Scenario: Bounds on create
 
@@ -98,7 +114,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 
 ### Requirement: Rotate keeps the auth id and the links
 
-`POST …/llm-key/rotate` with `{expires_at?}` MUST issue a new secret through `Auth.RotateAPIKey` and the rotator's side effects, keep the **same auth id**, the same owner and **every** `consumer_auth` link with its attributes, and set `expires_at` to the new value when given. It MUST answer 200 with the new raw key. The old secret MUST stop authenticating on DB-less proxies at the next snapshot apply and on full-plane proxies at the next `InvalidateGatewayDataEvent` (`llm-store-gateway`). Rotating an expired key MUST be allowed. A caller without a key MUST get 404.
+`POST …/llm-key/rotate` with `{expires_at?}` MUST issue a new secret through `Auth.RotateAPIKey` and the rotator's side effects, keep the **same auth id**, the same owner and **every** `consumer_auth` link with its attributes, and set `expires_at` to the new value when given. It MUST answer 200 with the new raw key. The old secret MUST stop authenticating on DB-less proxies at the next snapshot apply and on full-plane proxies at the next `InvalidateGatewayDataEvent` (`llm-store-gateway`). Rotating an expired key MUST be allowed when the request carries a valid `expires_at`. Without one it MUST answer **422** and write nothing: keeping the passed expiry would hand out a secret that is dead on arrival. A caller without a key MUST get 404.
 
 #### Scenario: Rotate
 
@@ -111,6 +127,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 - GIVEN `alice`'s key with `expires_at` one day in the past
 - WHEN she rotates with `expires_at = now + 30 d`
 - THEN 200, and the new secret authenticates on `/store/v1/models`
+- AND the same rotation without `expires_at` answers 422, and the key, its secret and its expiry are unchanged
 
 #### Scenario: Nothing to rotate
 

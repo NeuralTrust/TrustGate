@@ -81,6 +81,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	if err := existing.ManagedBy(""); err != nil {
+		return nil, err
+	}
 	previousType := existing.Type
 	previousEnabled := existing.Enabled
 	if in.Name != nil {
@@ -98,12 +101,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 		in.Config.ResolveSecretsFrom(existing.Config)
 		existing.Config = *in.Config
 	}
+	now := time.Now().UTC()
 	if in.Expiry != nil {
-		if err := existing.SetExpiry(in.Expiry.At); err != nil {
+		if err := existing.SetExpiry(in.Expiry.At, now); err != nil {
 			return nil, err
 		}
 	}
-	existing.UpdatedAt = time.Now().UTC()
+	existing.UpdatedAt = now
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}

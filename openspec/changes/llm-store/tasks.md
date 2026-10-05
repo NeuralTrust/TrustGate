@@ -170,17 +170,17 @@ Depends: P2a. Est.: ≈320 (code 120 / test 200). Commit boundary: (a) `feat`: d
 
 Depends: P2b. Est.: ≈285 (code 120 / test 165). Commit boundary: (a) `feat`; (b) `chore(docs)`: `make docs`.
 
-- [ ] 4.1 `pkg/domain/auth/repository.go`: `ListFilter.ExcludeOwned bool`, `ListFilter.OwnerID string` (A1). `pkg/infra/repository/auth/repository.go`: list and count add `AND ($k::boolean IS NOT TRUE OR owner_id IS NULL) AND ($m = '' OR owner_id = $m)`. The compiler keeps the unfiltered `List` (`compiler.go:462,725`).
-- [ ] 4.2 `pkg/common/errors/errors.go`: `ErrManagedByOwner`. `pkg/domain/auth/errors.go`: `ErrOwnedKey`. `httpio/errors.go` `MapDomainError`: → 422 `owned_key` (DD10).
-- [ ] 4.3 `pkg/api/handler/http/auth/list_auth_handler.go` (`:61-93`): always sets `ExcludeOwned`; `?owner_id=<sub>` sets `OwnerID` and clears `ExcludeOwned`. Swag `@Param owner_id`. `response/auth_response.go`: `OwnerID json:"owner_id,omitempty"`. The secret and hash are never present.
-- [ ] 4.4 `pkg/app/auth/updater.go`: an owned key → `ErrOwnedKey`. `pkg/app/auth/rotator.go`: `RotateInput.OwnerID`; an owned key needs `OwnerID == existing.OwnerID`, else `ErrOwnedKey` (DD14). The admin rotate handler passes `""`. Swag `@Failure 422` on PUT and rotate.
-- [ ] 4.5 The admin auth create DTO has no `owner_id`. Assert that the decoder drops it and that the creator never sets it.
-- [ ] 4.6 `pkg/app/policy/warnings.go:285` `apiKeyAuths`: skip `IsOwned()`.
-- [ ] 4.7 Test `tests/functional/repositories/auth/repository_test.go`: with 3 application keys and 2 owned keys, `ExcludeOwned` → 3 items and total 3. `OwnerID=alice` → 1 item. The default filter → 5.
-- [ ] 4.8 Test `list_auth_handler_test.go`, `get_auth_handler_test.go` and the update/rotate handler tests: list hides owned keys, `?owner_id` lists the owner's key, get shows `owner_id` without the hash, and PUT and rotate → 422 `owned_key` with no repo write.
-- [ ] 4.9 Test `pkg/app/auth/{updater,rotator}_test.go`: owner match and mismatch. Admin `DELETE` on an owned key goes through the deleter unchanged (detach, TTL eviction, invalidation, `Signal`). Test `pkg/app/policy/warnings_test.go`: owned keys only → no api-key warning.
+- [x] 4.1 `pkg/domain/auth/repository.go`: `ListFilter.ExcludeOwned bool`, `ListFilter.OwnerID string` (A1). `pkg/infra/repository/auth/repository.go`: list and count add `AND ($k::boolean IS NOT TRUE OR owner_id IS NULL) AND ($m = '' OR owner_id = $m)`. The compiler keeps the unfiltered `List` (`compiler.go:462,725`).
+- [x] 4.2 `pkg/common/errors/errors.go`: `ErrManagedByOwner`. `pkg/domain/auth/errors.go`: `ErrOwnedKey`. `httpio/errors.go` `MapDomainError`: → 422 `owned_key` (DD10).
+- [x] 4.3 `pkg/api/handler/http/auth/list_auth_handler.go` (`:61-93`): always sets `ExcludeOwned`; `?owner_id=<sub>` sets `OwnerID` and clears `ExcludeOwned`. Swag `@Param owner_id`. `response/auth_response.go`: `OwnerID json:"owner_id,omitempty"`. The secret and hash are never present.
+- [x] 4.4 `pkg/app/auth/updater.go`: an owned key → `ErrOwnedKey`. `pkg/app/auth/rotator.go`: `RotateInput.OwnerID`; an owned key needs `OwnerID == existing.OwnerID`, else `ErrOwnedKey` (DD14). The admin rotate handler passes `""`. Swag `@Failure 422` on PUT and rotate.
+- [x] 4.5 The admin auth create DTO has no `owner_id`. Assert that the decoder drops it and that the creator never sets it.
+- [x] 4.6 `pkg/app/policy/warnings.go:285` `apiKeyAuths`: skip `IsOwned()`.
+- [x] 4.7 Test `tests/functional/repositories/auth/repository_test.go`: with 3 application keys and 2 owned keys, `ExcludeOwned` → 3 items and total 3. `OwnerID=alice` → 1 item. The default filter → 5.
+- [x] 4.8 Test `list_auth_handler_test.go`, `get_auth_handler_test.go` and the update/rotate handler tests: list hides owned keys, `?owner_id` lists the owner's key, get shows `owner_id` without the hash, and PUT and rotate → 422 `owned_key` with no repo write.
+- [x] 4.9 Test `pkg/app/auth/{updater,rotator}_test.go`: owner match and mismatch. Admin `DELETE` on an owned key goes through the deleter unchanged (detach, TTL eviction, invalidation, `Signal`). Test `pkg/app/policy/warnings_test.go`: owned keys only → no api-key warning.
 - Accept (4.1–4.9): `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (unit half; the end-to-end check is in 10.8 and 15b.2), `› Owner in an admin create body`, `› Owned keys only`.
-- [ ] 4.10 Run VG and VR.
+- [x] 4.10 Run VG and VR.
 
 ## Phase 5: S3d `consumer_auth` link columns (base P2a)
 
@@ -239,32 +239,51 @@ Depends: P7. Est.: ≈265 (code 100 / test 165). Commit boundary: one `feat` com
 
 Depends: P2b, P4. Est.: ≈300 (code 145 / test 155). Commit boundary: (a) `feat`; (b) `chore`: mocks.
 
-- [ ] 9.1 `pkg/domain/auth/auth.go`: `MaxOwnedKeyLifetime = 90 * 24 * time.Hour`, `NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, now)`, `ValidateOwnedExpiry(at, now)` (`now < at ≤ now + 90 d`). `errors.go`: `ErrOwnedExpiry`.
-- [ ] 9.2 Create `pkg/app/auth/personal_keys.go`: the `PersonalKeys` interface plus implementation, with `//go:generate mockery`. The behaviour:
-  - `Create`: run `ValidateOwnedExpiry`, refuse a hybrid gateway, pre-check with `FindByOwner` (409), build with `NewOwnedAPIKeyAuth`, then `Save`, where a race hits the unique index and gives `ErrOwnedKeyExists`. Then run the creator's side effects: `AuthTTLName` and `AuthKeyTTLName`, `invalidation.GatewayData`, `Signal`.
-  - `Rotate`: `FindByOwner`, then `Rotator.Rotate{Expiry, OwnerID}`. An absent expiry keeps the current one; a present one must pass the cap. The links are untouched.
+- [x] 9.1 `pkg/domain/auth/auth.go`: `MaxOwnedKeyLifetime = 90 * 24 * time.Hour`, `NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, now)`, `ValidateOwnedExpiry(at, now)` (`now < at ≤ now + 90 d`), `ValidateOwner(ownerID)` (one rule for the constructor and every `PersonalKeys` lookup). `errors.go`: `ErrOwnedExpiry`, `ErrInvalidOwner`. The key is named `personal`, with no user id, because auth names reach `principal.subject`, whoami and telemetry. The clock is injected end to end: `SetExpiry(at, now)`, `RotateAPIKey(now)`, `NewRotator(…, now)`; `NewAPIKeyAuth` judges its expiry against its own `CreatedAt`, and the admin updater passes one `time.Now().UTC()` for the expiry check and `UpdatedAt`.
+- [x] 9.2 Create `pkg/app/auth/personal_keys.go`: the `PersonalKeys` interface plus implementation, with `//go:generate mockery`. The behaviour:
+  - `Create`: run `ValidateOwnedExpiry` (inside `NewOwnedAPIKeyAuth`, built before any I/O), refuse a hybrid gateway (`ErrPersonalKeyHybrid`, wraps `ErrValidation`), pre-check with `FindByOwner` (409), then `Save`, where a race hits the unique index and gives `ErrOwnedKeyExists`. Then run the creator's side effects: `AuthTTLName` and `AuthKeyTTLName`, `invalidation.GatewayData`, `Signal`.
+  - `Rotate`: `FindByOwner`, then `Rotator.Rotate{Expiry, OwnerID}`. An absent expiry keeps the current one, unless it has passed: then `ErrOwnedExpiry` (422) before any write. A present one must pass the cap. The links are untouched, and their ids are read before the rotation so a listing failure never strands a rotated secret.
   - `Revoke`: `FindByOwner`, then `Deleter.Delete`, which detaches every link.
   - `Get`: `FindByOwner` plus the `consumers.ListByAuthID` ids, with `[]` when there are none.
-- [ ] 9.3 `pkg/container/modules/auth.go`: provide `NewPersonalKeys` with `now = time.Now().UTC`. Register a view provider for `consumerdomain.Reader` if dig does not resolve it.
-- [ ] 9.4 Test `pkg/domain/auth/auth_test.go`: `ValidateOwnedExpiry` edges (now, +90 d, +90 d +1 s, the past).
-- [ ] 9.5 Test `personal_keys_test.go` (mocks, fixed clock, `cache.NewTTLMapManager`): the first key comes back with no links and the raw key; the 409 pre-check; the race 409 from the repository; hybrid 422; expiry bounds; rotate keeps the id and links and evicts the old hash; rotating an expired key works; rotate, revoke and get each → `ErrNotFound` without a key; revoke then re-create works.
+  - Every lookup goes through `find`: `ValidateOwner`, `FindByOwner`, then `Auth.ManagedBy(owner)`, which turns anything not owned by the caller into `ErrNotFound`.
+  - `PersonalKey` is `{Auth, ConsumerIDs}`. The raw secret lives only in `Auth.RawKey`.
+- [x] 9.3 `pkg/container/modules/auth.go`: provide `NewPersonalKeys` with `now = func() time.Time { return time.Now().UTC() }` (the method value `time.Now().UTC` would freeze the clock at wiring time). The provider takes `consumerdomain.Repository` and passes it as the `Reader`, so no view provider is needed.
+- [x] 9.4 Test `pkg/domain/auth/auth_test.go`: `ValidateOwnedExpiry` edges (now, +90 d, +90 d +1 s, the past).
+- [x] 9.5 Test `personal_keys_test.go` (mocks, fixed clock, `cache.NewTTLMapManager`): the first key comes back with no links and the raw key; the 409 pre-check; the race 409 from the repository; hybrid 422; expiry bounds; rotate keeps the id and links and evicts the old hash; rotating an expired key works; rotate, revoke and get each → `ErrNotFound` without a key or on a key the caller does not own; an expired key rotated without a new expiry → 422 with no write; revoke then re-create works; error paths (gateway or owner lookup failing on create, consumer listing failing on get and rotate) write nothing and signal nothing.
 - Accept (9.1–9.5): `personal-key-endpoints › First key`, `› Hybrid gateway`, `› Second key`, `› Concurrent creates` (use-case half), `› Bounds on create`, `› Rotate`, `› Rotate an expired key`, `› Nothing to rotate`, `› Revoke and re-create`, `› Nothing to revoke`.
-- [ ] 9.6 Run VG.
+- [x] 9.6 Run VG.
+
+P10 hand-off (from the P9 review):
+- The DTO maps `key` from `PersonalKey.Auth.RawKey` on create and rotate only. GET never maps it (the stored row has none, but the mapping must not rely on that).
+- The handler answers 403 when `callerSubject(c)` is empty, before calling `PersonalKeys`. The use case's `ErrInvalidOwner` (422) is a backstop, not the contract.
+- Ordering is validation before lookup: a bad `expires_at` answers 422 even for a caller without a key (rotate validates the body before `FindByOwner`), and the handler must decode and validate the body before calling the use case, so a malformed body is never a 404.
+
+Follow-up, out of P9 scope: the auth repository `Update` should compare-and-set on the previous `key_hash` (`UPDATE … WHERE id = $1 AND key_hash = $prev`), so two concurrent rotations of one key end with one success and one 409 instead of the last writer silently winning while the first caller holds a secret that no longer works. Applies to the admin rotate and `PersonalKeys.Rotate` alike.
 
 ## Phase 10: S4b self-only HTTP (base P9)
 
 Depends: P9. Est.: ≈345 (code 130 / test 215). Commit boundary: (a) `feat`: handler, DTOs, routes, wiring; (b) `test`: functional; (c) `chore(docs)`: `make docs` (≈380 generated lines).
 
-- [ ] 10.1 Create `pkg/api/handler/http/store/llm_key_handler.go`: GET, POST, POST rotate and DELETE on `callerSubject(c)` (`requests_handler.go:212`) only. An empty subject → 403. Full swag annotations (`@Success 200/201/204`, `@Failure 403/404/409/422`).
-- [ ] 10.2 Create `store/request/create_llm_key_request.go` (`expires_at`, required) and `store/request/rotate_llm_key_request.go` (`expires_at?`). Body `owner_id`, `principal_sub` and `consumer_id` are not decoded. Create `store/response/personal_key_response.go`: `{id, consumer_ids, key (create and rotate only), key_prefix, key_suffix, expires_at, enabled, created_at, updated_at}`, with no hash and no link attributes.
-- [ ] 10.3 `pkg/server/router/admin_router.go:225-247`: routes under `/:gateway_id/store` with `RequireInteractiveIdentity()` (`admin_authz.go:108`). Wire in `pkg/container/modules/{store,server_admin}.go`; `admin_router_wiring_test.go` must pass.
-- [ ] 10.4 Test `llm_key_handler_test.go`: a service credential → 403; a body owner is ignored; the status codes; GET never returns `key`.
-- [ ] 10.5 Run `make docs`. Test `docs/openapi_test.go`: the four paths, their DTOs and their status codes. Accept: `personal-key-endpoints › Paths in the document`.
-- [ ] 10.6 `tests/functional/common_test.go`: add the `CreateLLMKey`, `RotateLLMKey` and `RevokeLLMKey` helpers (admin JWT with a `user_id`, `setup_test.go:128`).
-- [ ] 10.7 Test `tests/functional/llm_key_test.go` (C), self flows: create → 201 with `consumer_ids: []`; GET → 200 without a secret; second create → 409; rotate → same id, new secret; DELETE → 204; re-create → 201; no key → 404 on GET, rotate and DELETE; a caller without registries access → 403; the same user on two gateways → two keys.
-- [ ] 10.8 Same file, admin plane on an owned key: `GET /auths` hides it, `?owner_id` lists it, `GET /auths/:id` shows `owner_id`, PUT and rotate → 422 `owned_key`, and admin `DELETE` → 204.
-- Accept (10.1–10.8): `personal-key-endpoints › Service credential`, `› Body owner ignored`, `› No registries access`, `› First key`, `› Second key`, `› Another gateway`, `› Metadata without the secret`, `› No key`, `› Rotate`, `› Nothing to rotate`, `› Revoke and re-create`, `› Nothing to revoke`; `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (admin-plane half).
-- [ ] 10.9 Run VG and VF.
+- [x] 10.1 Create `pkg/api/handler/http/store/llm_key_handler.go`: GET, POST, POST rotate and DELETE on `callerSubject(c)` (`requests_handler.go:212`) only. An empty subject → 403. Full swag annotations (`@Success 200/201/204`, `@Failure 403/404/409/422`).
+- [x] 10.2 Create `store/request/create_llm_key_request.go` (`expires_at`, required) and `store/request/rotate_llm_key_request.go` (`expires_at?`). Body `owner_id`, `principal_sub` and `consumer_id` are not decoded. Create `store/response/personal_key_response.go`: `{id, consumer_ids, key (create and rotate only), key_prefix, key_suffix, expires_at, enabled, created_at, updated_at}`, with no hash and no link attributes.
+- [x] 10.3 `pkg/server/router/admin_router.go:225-247`: routes under `/:gateway_id/store` with `RequireInteractiveIdentity()` (`admin_authz.go:108`). Wire in `pkg/container/modules/{store,server_admin}.go`; `admin_router_wiring_test.go` must pass.
+- [x] 10.4 Test `llm_key_handler_test.go`: a service credential → 403; a body owner is ignored; the status codes; GET never returns `key`.
+- [x] 10.5 Run `make docs`. Test `docs/openapi_test.go`: the four paths, their DTOs and their status codes. Accept: `personal-key-endpoints › Paths in the document`.
+- [x] 10.6 `tests/functional/common_test.go`: add the `CreateLLMKey`, `RotateLLMKey` and `RevokeLLMKey` helpers (admin JWT with a `user_id`, `setup_test.go:128`).
+- [x] 10.7 Test `tests/functional/llm_key_test.go` (C), self flows: create → 201 with `consumer_ids: []`; GET → 200 without a secret; second create → 409; rotate → same id, new secret; DELETE → 204; re-create → 201; no key → 404 on GET, rotate and DELETE; a console user of another tenant → 404, like an unknown gateway; a token without a tenant user (platform `AdminToken`) → 403; the same user on two gateways → two keys. Service credentials are refused with 403 by the group guard (other gateway, no registries scope) and by `RequireInteractiveIdentity()` and the handler guard (all of them); the functional harness mints no service credential, so a router test covers them.
+- [x] 10.8 Same file, admin plane on an owned key: `GET /auths` hides it, `?owner_id` lists it, `GET /auths/:id` shows `owner_id`, PUT and rotate → 422 `owned_key`, and admin `DELETE` → 204.
+- Accept (10.1–10.8): `personal-key-endpoints › Service credential`, `› Service credential outside the group guard`, `› Another tenant`, `› Platform token`, `› Body owner ignored`, `› First key`, `› Second key`, `› Another gateway`, `› Metadata without the secret`, `› No key`, `› Rotate`, `› Nothing to rotate`, `› Revoke and re-create`, `› Nothing to revoke`; `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (admin-plane half).
+- [x] 10.9 Run VG and VF.
+
+P10 notes (from the P10 apply):
+- Defense in depth: besides `RequireInteractiveIdentity()` on the routes, the handler refuses with 403 anything but a console user with a tenant and a subject, so a platform token cannot hold a key. `pkg/server/router/admin_router_test.go` builds the admin router and proves a gateway-bound service credential with the registries scope gets 403 from the route guard on all four routes.
+- A second create answers 409 `already_exists` with the hint to rotate or revoke: `ErrOwnedKeyExists` wraps `commonerrors.ErrPersonalKeyExists`, mapped before `ErrAlreadyExists`.
+- `expires_at` is read with the admin API's rule, now `httpio.ParseExpiresAt`: a malformed value says "expires_at must be an RFC 3339 instant". On rotate, absent, null and empty all keep the current expiry.
+- Size is over the 400 budget: five new production files carry license headers and the four handlers carry swag annotations. Generated swagger/openapi is outside the budget.
+
+Follow-ups, out of P10 scope:
+- Rate-limit create, rotate and revoke per (gateway, caller). Every write recompiles the snapshot and invalidates the gateway's data, so a user looping on rotate costs every plane of the gateway.
+- Compare-and-set on `key_hash` in the auth repository `Update` (`UPDATE … WHERE id = $1 AND key_hash = $prev`), so two concurrent rotations end with one success and one 409 for the loser, instead of the last writer silently winning (same as the P9 follow-up; applies to the admin rotate too).
 
 ## Phase 11: S5a `Data` index + D11 rejections (base P5, rebased on P1)
 

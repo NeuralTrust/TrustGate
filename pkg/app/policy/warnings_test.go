@@ -873,3 +873,25 @@ func TestWarner_Overlaps_SameSlugMCPWideCollidesOnMCPConsumersOnly(t *testing.T)
 		assert.Equal(t, []string{overlapWarning(mcpID, "trustguard")}, warnings)
 	})
 }
+
+func TestWarner_Overlaps_OwnedAPIKeysDoNotWarn(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	ownedID := ids.New[ids.AuthKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas", consumerID)
+	auths := authmocks.NewRepository(t)
+	auths.EXPECT().ListEnabledByGatewayAndType(mock.Anything, gwID, authdomain.TypeAPIKey).Return([]*authdomain.Auth{
+		{ID: ownedID, GatewayID: gwID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice"},
+	}, nil).Once()
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{mcpConsumerWithAuths(gwID, consumerID, ownedID)},
+		[]*domain.Policy{p},
+		auths,
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}

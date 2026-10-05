@@ -25,12 +25,14 @@ import (
 var SortableFields = []string{"name", "created_at", "updated_at", "type"}
 
 type ListFilter struct {
-	GatewayID ids.GatewayID
-	Search    string
-	Type      Type
-	Enabled   *bool
-	Page      listing.Page
-	Sort      listing.Sort
+	GatewayID    ids.GatewayID
+	Search       string
+	Type         Type
+	Enabled      *bool
+	ExcludeOwned bool
+	OwnerID      string
+	Page         listing.Page
+	Sort         listing.Sort
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=auth_repository_mock.go --case=underscore --with-expecter

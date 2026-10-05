@@ -124,6 +124,7 @@ type adminRouterParams struct {
 	StorePrincipal *storehttp.PrincipalHandler
 	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
 	StoreMaterialize *storehttp.MaterializeHandler
+	StoreLLMKey      *storehttp.LLMKeyHandler
 }
 
 type adminServerParams struct {
@@ -201,6 +202,7 @@ func ServerAdmin(c *container.Container) error {
 				StorePolicies:             p.StorePolicies,
 				StorePrincipal:            p.StorePrincipal,
 				StoreMaterialize:          p.StoreMaterialize,
+				StoreLLMKey:               p.StoreLLMKey,
 			})
 		},
 		dig.Name("admin"),
