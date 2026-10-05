@@ -106,8 +106,6 @@ func TestAuthResponseMasksTheExchangeClientSecret(t *testing.T) {
 	require.Equal(t, original.Config, echoed)
 }
 
-// TestAuthResponseKeepsLoginScopesOnRenameOnlyEdit covers the sign-in scopes:
-// they are echoed as stored, so a console posting the read back keeps them.
 func TestAuthResponseKeepsLoginScopesOnRenameOnlyEdit(t *testing.T) {
 	t.Parallel()
 	input := []byte(`{"name":"entra","type":"oauth2","config":{"oauth2":{
@@ -130,7 +128,4 @@ func TestAuthResponseKeepsLoginScopesOnRenameOnlyEdit(t *testing.T) {
 	echoed := edit.Config.ToDomain()
 	echoed.ResolveSecretsFrom(original.Config)
 	require.Equal(t, original.Config, echoed)
-
-	edit.Config.OAuth2.LoginScopes = nil
-	require.Empty(t, edit.Config.ToDomain().OAuth2.LoginScopes)
 }

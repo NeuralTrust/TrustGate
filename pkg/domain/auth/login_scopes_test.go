@@ -34,6 +34,7 @@ func TestOAuth2Config_Validate_LoginScopes(t *testing.T) {
 		{name: "none", clientID: "app-1"},
 		{name: "entra pair", clientID: "app-1", scopes: []string{"api://gw/mcp.access", "offline_access"}, want: []string{"api://gw/mcp.access", "offline_access"}},
 		{name: "trims entries", clientID: "app-1", scopes: []string{" api://gw/mcp.access ", "\toffline_access\n"}, want: []string{"api://gw/mcp.access", "offline_access"}},
+		{name: "duplicates collapsed", clientID: "app-1", scopes: []string{"offline_access", " api://gw/mcp.access", "offline_access ", "api://gw/mcp.access"}, want: []string{"offline_access", "api://gw/mcp.access"}},
 		{name: "empty entry", clientID: "app-1", scopes: []string{"api://gw/mcp.access", "  "}, wantErr: "login_scopes"},
 		{name: "inner whitespace", clientID: "app-1", scopes: []string{"api://gw/mcp.access offline_access"}, wantErr: "login_scopes"},
 		{name: "no client_id", scopes: []string{"api://gw/mcp.access"}, wantErr: "client_id"},
