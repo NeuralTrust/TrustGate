@@ -277,15 +277,19 @@ func (b *Registry) IsToolApproved(ref ToolRef) bool {
 	return approved
 }
 
-// HasToolDecision reports whether the snapshot set holds an approved or rejected
-// verdict for exactly this definition. A ref without one is pending or new.
-func (b *Registry) HasToolDecision(ref ToolRef) bool {
+// DecisionIndex indexes the snapshot set by definition, so a caller that checks
+// many tools builds it once instead of scanning the set per tool. A ref that is
+// both approved and rejected reads as rejected.
+func (b *Registry) DecisionIndex() map[ToolRef]ToolStatus {
+	idx := make(map[ToolRef]ToolStatus, len(b.PinnedTools))
 	for _, d := range b.PinnedTools {
-		if d.Name == ref.Name && d.Fingerprint == ref.Fingerprint {
-			return true
+		ref := ToolRef{Name: d.Name, Fingerprint: d.Fingerprint}
+		if idx[ref] == ToolStatusRejected {
+			continue
 		}
+		idx[ref] = d.Status
 	}
-	return false
+	return idx
 }
 
 // PinnedToolLister is the read side StampPinnedTools needs.

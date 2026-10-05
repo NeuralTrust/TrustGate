@@ -31,6 +31,8 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 const pinnedURL = "https://pinned.example.com/mcp"
@@ -45,13 +47,33 @@ type fakeRecorder struct {
 	mu      sync.Mutex
 	batches []recordedBatch
 	err     error
+	// block, when set, holds every Record until it is closed or ctx ends.
+	block chan struct{}
+	// ctxErr keeps what the context looked like when a blocked Record returned.
+	ctxErr error
 }
 
-func (f *fakeRecorder) Record(_ context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate) error {
+func (f *fakeRecorder) setErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeRecorder) Record(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate) error {
+	f.mu.Lock()
 	f.batches = append(f.batches, recordedBatch{gatewayID, registryID, tools})
-	return f.err
+	err, block := f.err, f.block
+	f.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			f.mu.Lock()
+			f.ctxErr = ctx.Err()
+			f.mu.Unlock()
+		}
+	}
+	return err
 }
 
 func (f *fakeRecorder) calls() int {
@@ -108,6 +130,7 @@ func pinnedReg(t *testing.T, decided ...registrydomain.ToolDecision) *registrydo
 }
 
 type pinnedHarness struct {
+	async    *AsyncPendingRecorder
 	composer Composer
 	upstream *fakeUpstream
 	dialer   *countingDialer
@@ -119,10 +142,14 @@ func newPinnedHarness(t *testing.T, upstreamTools []Tool, recorder *fakeRecorder
 	up := &fakeUpstream{tools: upstreamTools, result: json.RawMessage(`{"content":[]}`)}
 	dialer := newCountingDialer(func(string) (Upstream, error) { return up, nil })
 	opts := []ComposerOption{}
+	var async *AsyncPendingRecorder
 	if recorder != nil {
-		opts = append(opts, WithPendingToolRecorder(recorder))
+		async = NewAsyncPendingRecorder(recorder, slog.New(slog.DiscardHandler))
+		t.Cleanup(async.Close)
+		opts = append(opts, WithPendingToolSink(async))
 	}
 	return &pinnedHarness{
+		async:    async,
 		composer: NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler), opts...),
 		upstream: up,
 		dialer:   dialer,
@@ -130,10 +157,21 @@ func newPinnedHarness(t *testing.T, upstreamTools []Tool, recorder *fakeRecorder
 	}
 }
 
+// settle waits until the async recorder has nothing queued or in flight, so a
+// test can assert on what it recorded, or did not.
+func (h *pinnedHarness) settle(t *testing.T) {
+	t.Helper()
+	if h.async == nil {
+		return
+	}
+	require.Eventually(t, h.async.idle, 2*time.Second, time.Millisecond)
+}
+
 func (h *pinnedHarness) list(t *testing.T, rc *appconsumer.RoutableConsumer) []string {
 	t.Helper()
 	got, err := h.composer.ListTools(context.Background(), rc)
 	require.NoError(t, err)
+	h.settle(t)
 	prefix := namedFor(rc.Registries[0], "")
 	names := make([]string, 0, len(got))
 	for _, n := range toolNames(got) {
@@ -232,7 +270,8 @@ func TestPinned_RecorderFailureStillReturnsTheFilteredList(t *testing.T) {
 	t.Parallel()
 	ok := defTool(t, "ok", "approved")
 	reg := pinnedReg(t, decision(t, ok, registrydomain.ToolStatusApproved))
-	rec := &fakeRecorder{err: errors.New("control plane unreachable")}
+	rec := &fakeRecorder{}
+	rec.setErr(errors.New("control plane unreachable"))
 	h := newPinnedHarness(t, []Tool{ok, defTool(t, "new", "n")}, rec)
 	rc := routable(mcpClient(), reg)
 
@@ -243,6 +282,18 @@ func TestPinned_RecorderFailureStillReturnsTheFilteredList(t *testing.T) {
 	assert.Equal(t, []string{"ok"}, h.list(t, rc))
 	assert.Equal(t, 1, h.dialer.count(pinnedURL))
 	assert.Equal(t, 1, rec.calls())
+
+	// The failure forgot the keys: the next discovery (cache busted) retries.
+	rec.setErr(nil)
+	reg.UpdatedAt = reg.UpdatedAt.Add(time.Second)
+	assert.Equal(t, []string{"ok"}, h.list(t, rc))
+	assert.Equal(t, 2, rec.calls())
+	assert.Equal(t, []string{"new", "new"}, rec.names())
+
+	// And once it succeeded the keys are remembered: no third Record.
+	reg.UpdatedAt = reg.UpdatedAt.Add(time.Second)
+	assert.Equal(t, []string{"ok"}, h.list(t, rc))
+	assert.Equal(t, 2, rec.calls())
 }
 
 func TestPinned_WithoutRecorderUnknownToolsAreHidden(t *testing.T) {
@@ -331,4 +382,134 @@ func TestPinned_DecisionOnlyChangeMovesTheSurfaceFingerprint(t *testing.T) {
 	auto := mcpRegistry(t, "auto", pinnedURL)
 	fp := SurfaceFingerprint(routable(mcpClient(), auto), nil)
 	assert.Equal(t, fp, SurfaceFingerprint(routable(mcpClient(), auto), nil), "auto stays stable")
+}
+
+func TestPinned_NonCacheablePathRecordsOnceForRepeatedCalls(t *testing.T) {
+	t.Parallel()
+	ok := defTool(t, "ok", "approved")
+	reg := pinnedReg(t, decision(t, ok, registrydomain.ToolStatusApproved))
+	// A per-principal registry with no principal in the context is not cacheable:
+	// discovery asks the upstream on every call.
+	reg.MCPTarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModePassthrough}
+	rec := &fakeRecorder{}
+	h := newPinnedHarness(t, []Tool{ok, defTool(t, "new", "n")}, rec)
+	rc := routable(mcpClient(), reg)
+
+	for range 3 {
+		assert.Equal(t, []string{"ok"}, h.list(t, rc))
+	}
+	assert.Equal(t, 3, h.dialer.count(pinnedURL), "the path really is uncached")
+	assert.Equal(t, 1, rec.calls(), "the same candidate is reported once")
+}
+
+func TestPinned_ABlockedRecorderDoesNotDelayDiscovery(t *testing.T) {
+	t.Parallel()
+	ok := defTool(t, "ok", "approved")
+	reg := pinnedReg(t, decision(t, ok, registrydomain.ToolStatusApproved))
+	rec := &fakeRecorder{block: make(chan struct{})}
+	h := newPinnedHarness(t, []Tool{ok, defTool(t, "new", "n")}, rec)
+	rc := routable(mcpClient(), reg)
+
+	done := make(chan []Tool, 1)
+	go func() {
+		got, _ := h.composer.ListTools(context.Background(), rc)
+		done <- got
+	}()
+	select {
+	case got := <-done:
+		assert.Len(t, got, 1)
+	case <-time.After(time.Second):
+		t.Fatal("ListTools waited on the recorder")
+	}
+	require.Eventually(t, func() bool { return rec.calls() == 1 }, time.Second, time.Millisecond)
+
+	// Shutdown cancels the in-flight Record instead of hanging on it.
+	h.async.Close()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.ErrorIs(t, rec.ctxErr, context.Canceled)
+}
+
+func TestAsyncPendingRecorder_DropsWhenTheQueueIsFull(t *testing.T) {
+	t.Parallel()
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	rec := &fakeRecorder{block: make(chan struct{})}
+	async := NewAsyncPendingRecorder(rec, slog.New(slog.DiscardHandler),
+		WithRecorderQueueSize(1), WithRecorderMeterProvider(provider))
+	t.Cleanup(async.Close)
+	gw, reg := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+	cand := func(name string) []registrydomain.ToolCandidate {
+		c, err := registrydomain.NewToolCandidate(name, "d", nil)
+		require.NoError(t, err)
+		return []registrydomain.ToolCandidate{c}
+	}
+
+	async.Submit(gw, reg, cand("one"))
+	require.Eventually(t, func() bool { return rec.calls() == 1 }, time.Second, time.Millisecond) // worker is blocked on it
+	async.Submit(gw, reg, cand("two"))                                                            // fills the queue
+	async.Submit(gw, reg, cand("three"))                                                          // dropped
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+	var dropped int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "trustgate.mcp.pinned_tools.dropped" {
+				for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+					dropped += dp.Value
+				}
+			}
+		}
+	}
+	assert.Equal(t, int64(1), dropped)
+
+	// The dropped key was forgotten, so it is offered again once there is room.
+	close(rec.block)
+	require.Eventually(t, async.idle, time.Second, time.Millisecond)
+	async.Submit(gw, reg, cand("three"))
+	require.Eventually(t, func() bool { return rec.calls() == 3 }, time.Second, time.Millisecond)
+}
+
+func TestAsyncPendingRecorder_DedupeExpires(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	rec := &fakeRecorder{}
+	async := NewAsyncPendingRecorder(rec, slog.New(slog.DiscardHandler), WithRecorderClock(func() time.Time { return now }))
+	t.Cleanup(async.Close)
+	gw, reg := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+	c, err := registrydomain.NewToolCandidate("a", "d", nil)
+	require.NoError(t, err)
+
+	async.Submit(gw, reg, []registrydomain.ToolCandidate{c})
+	require.Eventually(t, async.idle, time.Second, time.Millisecond)
+	async.Submit(gw, reg, []registrydomain.ToolCandidate{c})
+	require.Eventually(t, async.idle, time.Second, time.Millisecond)
+	assert.Equal(t, 1, rec.calls())
+
+	now = now.Add(pendingDedupeTTL + time.Second)
+	async.Submit(gw, reg, []registrydomain.ToolCandidate{c})
+	require.Eventually(t, func() bool { return rec.calls() == 2 }, time.Second, time.Millisecond)
+}
+
+func TestAsyncPendingRecorder_NilReceiverIsInert(t *testing.T) {
+	t.Parallel()
+	var r *AsyncPendingRecorder
+	r.Submit(ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), nil)
+	r.Close()
+}
+
+func TestPinned_RecordsTheShelfRegistryForAnInstanceClone(t *testing.T) {
+	t.Parallel()
+	ok := defTool(t, "ok", "approved")
+	shelf := pinnedReg(t, decision(t, ok, registrydomain.ToolStatusApproved))
+	clone := *shelf
+	clone.ID = ids.New[ids.RegistryKind]()
+	clone.InstanceOf = shelf.ID
+	rec := &fakeRecorder{}
+	h := newPinnedHarness(t, []Tool{ok, defTool(t, "new", "n")}, rec)
+
+	assert.Equal(t, []string{"ok"}, h.list(t, routable(mcpClient(), &clone)))
+	require.Equal(t, 1, rec.calls())
+	assert.Equal(t, shelf.ID, rec.batches[0].registryID, "the decision lives on the shelf registry")
 }
