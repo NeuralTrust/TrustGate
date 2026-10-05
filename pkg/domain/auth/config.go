@@ -264,6 +264,11 @@ func (c *OAuth2Config) validateLoginScopes() error {
 	if strings.TrimSpace(c.ClientID) == "" {
 		return fmt.Errorf("%w: oauth2.login_scopes requires oauth2.client_id (they are only sent when the gateway signs people in)", ErrInvalidConfig)
 	}
+	// In session mode the provider returns the granted scopes in URI form
+	// (api://app/scope), which RequiredScopes then fails to match.
+	if c.SessionMode {
+		return fmt.Errorf("%w: oauth2.login_scopes are for pass-through sign-in; turn oauth2.session_mode off to use them", ErrInvalidConfig)
+	}
 	scopes := make([]string, 0, len(c.LoginScopes))
 	for _, scope := range c.LoginScopes {
 		scope = strings.TrimSpace(scope)
