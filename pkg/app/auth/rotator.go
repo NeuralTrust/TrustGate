@@ -83,7 +83,7 @@ func NewRotator(
 		publisher:   publisher,
 		logger:      logger,
 		signaler:    signaler,
-		now:         now,
+		now:         utcClock(now),
 	}
 }
 

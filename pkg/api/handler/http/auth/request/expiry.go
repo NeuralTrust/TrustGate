@@ -21,7 +21,10 @@ import (
 
 // expiryChange maps an optional wire field onto the change the service takes:
 // absent leaves the stored expiry alone, an empty string clears it, and an
-// instant sets it.
+// instant sets it. The empty string is the only way to say "no expiry" on an
+// admin update that omits the field to mean "leave it alone": an absent field
+// and a null one are the same thing to encoding/json, so a third word was
+// needed for clearing.
 func expiryChange(raw *string) (*appauth.ExpiryChange, error) {
 	if raw == nil {
 		return nil, nil

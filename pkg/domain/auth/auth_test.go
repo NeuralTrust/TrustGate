@@ -458,6 +458,39 @@ func TestAcceptsAPIKey(t *testing.T) {
 	}
 }
 
+func TestAcceptsApplicationKey(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	past, future := now.Add(-time.Second), now.Add(time.Hour)
+	gatewayID, otherGateway := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
+	live := func() *Auth { return &Auth{GatewayID: gatewayID, Type: TypeAPIKey, Enabled: true} }
+	cases := map[string]struct {
+		auth    func() *Auth
+		gateway ids.GatewayID
+		want    bool
+	}{
+		"application key":       {live, gatewayID, true},
+		"expires later":         {func() *Auth { a := live(); a.ExpiresAt = &future; return a }, gatewayID, true},
+		"expired":               {func() *Auth { a := live(); a.ExpiresAt = &past; return a }, gatewayID, false},
+		"expires right now":     {func() *Auth { a := live(); a.ExpiresAt = &now; return a }, gatewayID, false},
+		"disabled":              {func() *Auth { a := live(); a.Enabled = false; return a }, gatewayID, false},
+		"owned by a user":       {func() *Auth { a := live(); a.OwnerID = "alice"; return a }, gatewayID, false},
+		"not an api key":        {func() *Auth { a := live(); a.Type = TypeOAuth2; return a }, gatewayID, false},
+		"another gateway":       {live, otherGateway, false},
+		"no gateway asked":      {func() *Auth { a := live(); a.GatewayID = ids.GatewayID{}; return a }, ids.GatewayID{}, false},
+		"nil auth":              {func() *Auth { return nil }, gatewayID, false},
+		"key without a gateway": {func() *Auth { a := live(); a.GatewayID = ids.GatewayID{}; return a }, gatewayID, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.auth().AcceptsApplicationKey(tc.gateway, now); got != tc.want {
+				t.Fatalf("AcceptsApplicationKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // Rotating replaces the secret. It says nothing about the expiry, so a key with
 // three weeks left keeps them unless the caller asks for something else.
 func TestRotateAPIKey_KeepsTheExpiry(t *testing.T) {

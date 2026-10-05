@@ -50,7 +50,7 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Updater {
-		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
+		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
 		return err
 	}
@@ -64,8 +64,8 @@ func provideAuthServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, gateways gatewaydomain.Repository, rotator appauth.Rotator, deleter appauth.Deleter, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.PersonalKeys {
-		return appauth.NewPersonalKeys(repo, consumerRepo, gateways, rotator, deleter, manager, publisher, logger, sig.Signaler, utcNow)
+	if err := c.Provide(func(repo domain.Repository, links consumerdomain.LinkReader, gateways gatewaydomain.Repository, rotator appauth.Rotator, deleter appauth.Deleter, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.PersonalKeys {
+		return appauth.NewPersonalKeys(repo, links, gateways, rotator, deleter, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
 		return err
 	}

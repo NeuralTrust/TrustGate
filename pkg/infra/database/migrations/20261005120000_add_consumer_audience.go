@@ -41,6 +41,12 @@ func upAddConsumerAudience(ctx context.Context, tx pgx.Tx) error {
 
 func downAddConsumerAudience(ctx context.Context, tx pgx.Tx) error {
 	const ddl = `
+		DO $$
+		BEGIN
+			IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'consumers'::regclass AND attname = 'audience' AND NOT attisdropped) THEN
+				UPDATE consumers SET active = false WHERE audience = 'personal';
+			END IF;
+		END $$;
 		ALTER TABLE consumers DROP CONSTRAINT IF EXISTS consumers_audience_check;
 		ALTER TABLE consumers DROP COLUMN IF EXISTS audience;`
 	_, err := tx.Exec(ctx, ddl)

@@ -24,7 +24,7 @@ import (
 
 func TestAddConsumerAudienceMigration(t *testing.T) {
 	ctx, tx := beginShadowTx(t, `
-		CREATE TEMP TABLE consumers (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), type TEXT NOT NULL) ON COMMIT DROP;
+		CREATE TEMP TABLE consumers (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), type TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE) ON COMMIT DROP;
 		INSERT INTO consumers (type) VALUES ('LLM'), ('MCP'), ('A2A')`)
 
 	runTwice(t, ctx, tx, upAddConsumerAudience)
@@ -32,7 +32,11 @@ func TestAddConsumerAudienceMigration(t *testing.T) {
 	const insert = `INSERT INTO consumers (type, audience) VALUES ('LLM', $1)`
 	require.Equal(t, "23514", sqlStateOf(t, ctx, tx, insert, "team"))
 	require.Empty(t, sqlStateOf(t, ctx, tx, insert, "personal"))
+	_, err := tx.Exec(ctx, `INSERT INTO consumers (type, audience) VALUES ('LLM', 'personal'), ('LLM', 'personal')`)
+	require.NoError(t, err)
 
 	runTwice(t, ctx, tx, downAddConsumerAudience)
 	require.Zero(t, countOf(t, ctx, tx, `SELECT COUNT(*) FROM pg_attribute WHERE attrelid = 'consumers'::regclass AND attname = 'audience' AND NOT attisdropped`))
+	require.Equal(t, 2, countOf(t, ctx, tx, `SELECT COUNT(*) FROM consumers WHERE NOT active`))
+	require.Equal(t, 3, countOf(t, ctx, tx, `SELECT COUNT(*) FROM consumers WHERE active`))
 }

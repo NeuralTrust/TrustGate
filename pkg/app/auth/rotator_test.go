@@ -150,3 +150,21 @@ func TestRotator_Rotate_OwnedKeyNeedsItsOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestRotator_Rotate_NilClockReadsUTCNow(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingAPIKey(t, gwID)
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+
+	before := time.Now().UTC()
+	rotated, err := appauth.NewRotator(repo, newCacheManager(), publisher, newTestLogger(), nil, nil).
+		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
+	require.NoError(t, err)
+	require.Equal(t, time.UTC, rotated.UpdatedAt.Location())
+	require.False(t, rotated.UpdatedAt.Before(before))
+}

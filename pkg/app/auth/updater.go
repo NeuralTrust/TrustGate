@@ -52,6 +52,7 @@ type updater struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	now          func() time.Time
 }
 
 func NewUpdater(
@@ -61,6 +62,7 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	now func() time.Time,
 ) Updater {
 	return &updater{
 		repo:         repo,
@@ -70,6 +72,7 @@ func NewUpdater(
 		publisher:    publisher,
 		logger:       logger,
 		signaler:     signaler,
+		now:          utcClock(now),
 	}
 }
 
@@ -101,7 +104,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 		in.Config.ResolveSecretsFrom(existing.Config)
 		existing.Config = *in.Config
 	}
-	now := time.Now().UTC()
+	now := u.now()
 	if in.Expiry != nil {
 		if err := existing.SetExpiry(in.Expiry.At, now); err != nil {
 			return nil, err

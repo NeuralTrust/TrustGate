@@ -40,6 +40,12 @@ func upAddAuthOwner(ctx context.Context, tx pgx.Tx) error {
 
 func downAddAuthOwner(ctx context.Context, tx pgx.Tx) error {
 	const ddl = `
+		DO $$
+		BEGIN
+			IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'auths'::regclass AND attname = 'owner_id' AND NOT attisdropped) THEN
+				UPDATE auths SET enabled = false WHERE owner_id IS NOT NULL;
+			END IF;
+		END $$;
 		DROP INDEX IF EXISTS auths_gateway_owner_uniq;
 		ALTER TABLE auths DROP COLUMN IF EXISTS owner_id;`
 	_, err := tx.Exec(ctx, ddl)

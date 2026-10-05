@@ -256,6 +256,18 @@ func TestChain_PersonalKeyIsUnknown(t *testing.T) {
 	}
 }
 
+func TestChain_ExpiredApplicationKeyIsUnknown(t *testing.T) {
+	expired, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "stale-key", true, nil)
+	require.NoError(t, err)
+	at := time.Now().UTC().Add(-time.Minute)
+	expired.ExpiresAt = &at
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{auth: expired}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+	_, err = resolveChain(t, resolver, map[string]string{apiresolver.HeaderAPIKey: expired.RawKey})
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
 func TestChain_NoCredential_Unauthenticated(t *testing.T) {
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,

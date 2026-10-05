@@ -650,7 +650,7 @@ func currentAppIdentity(
 	}
 	for _, auth := range rc.Auths {
 		if auth != nil && auth.ID.String() == ticket.AuthID {
-			return validAPIKeyAuth(auth, rc.Consumer, gatewayID)
+			return validAPIKeyAuth(auth, rc.Consumer, gatewayID, time.Now().UTC())
 		}
 	}
 	return false

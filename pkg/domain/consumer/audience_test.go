@@ -138,3 +138,54 @@ func TestValidateAuthConfig_Audience(t *testing.T) {
 		})
 	}
 }
+
+func TestConsumer_ValidateRegistryDetach(t *testing.T) {
+	t.Parallel()
+	r1, r2, r3 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	activeFallback := func(chain ...ids.RegistryID) *Fallback {
+		return &Fallback{Enabled: true, Chain: registry.Registries(chain)}
+	}
+	for _, tc := range []struct {
+		name     string
+		audience Audience
+		policies ModelPolicies
+		fallback *Fallback
+		detach   ids.RegistryID
+		refused  bool
+	}{
+		{name: "primary default whose only other default is on an active fallback", audience: AudiencePersonal,
+			policies: ModelPolicies{r1: {Default: "gpt-4o"}, r2: {Default: "gpt-4o-mini"}}, fallback: activeFallback(r2), detach: r1, refused: true},
+		{name: "detaching the fallback registry", audience: AudiencePersonal,
+			policies: ModelPolicies{r1: {Default: "gpt-4o"}, r2: {Default: "gpt-4o-mini"}}, fallback: activeFallback(r2), detach: r2},
+		{name: "a disabled fallback counts as primary", audience: AudiencePersonal,
+			policies: ModelPolicies{r1: {Default: "gpt-4o"}, r2: {Default: "gpt-4o-mini"}}, fallback: &Fallback{Chain: registry.Registries{r2}}, detach: r1},
+		{name: "another primary default remains", audience: AudiencePersonal,
+			policies: ModelPolicies{r1: {Default: "gpt-4o"}, r3: {Default: "gpt-4o"}}, fallback: activeFallback(r2), detach: r1},
+		{name: "already without a primary default, detaching a primary", audience: AudiencePersonal,
+			policies: ModelPolicies{r2: {Default: "gpt-4o-mini"}}, fallback: activeFallback(r2), detach: r1},
+		{name: "already without a primary default, detaching the fallback", audience: AudiencePersonal,
+			policies: ModelPolicies{r2: {Default: "gpt-4o-mini"}}, fallback: activeFallback(r2), detach: r2},
+		{name: "a registry the consumer does not hold", audience: AudiencePersonal,
+			policies: ModelPolicies{r1: {Default: "gpt-4o"}}, detach: ids.New[ids.RegistryKind]()},
+		{name: "an application consumer is never refused",
+			policies: ModelPolicies{r1: {Default: "gpt-4o"}}, fallback: activeFallback(r2), detach: r1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &Consumer{
+				ID: ids.New[ids.ConsumerKind](), Type: TypeLLM, Audience: tc.audience,
+				RegistryIDs: []ids.RegistryID{r1, r2, r3}, ModelPolicies: tc.policies, Fallback: tc.fallback,
+			}
+			err := c.ValidateRegistryDetach(tc.detach)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("ValidateRegistryDetach() = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrPersonalNoDefault) || !errors.Is(err, commonerrors.ErrValidation) || errors.Is(err, commonerrors.ErrHasDependents) {
+				t.Fatalf("ValidateRegistryDetach() = %v, want ErrPersonalNoDefault (422) only", err)
+			}
+		})
+	}
+}

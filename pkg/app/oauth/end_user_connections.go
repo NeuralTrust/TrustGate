@@ -330,7 +330,7 @@ func (s *endUserConnectionsService) authenticate(
 		}
 		return nil, nil, fmt.Errorf("oauth end-user connections: find API key: %w", err)
 	}
-	if !validAPIKeyAuth(auth, target.Consumer, gatewayID) {
+	if !validAPIKeyAuth(auth, target.Consumer, gatewayID, s.now().UTC()) {
 		return nil, nil, ErrAPIKeyConnectUnauthorized
 	}
 	return data, target, nil
@@ -361,7 +361,7 @@ func (s *endUserConnectionsService) authenticateApp(
 		}
 		return nil, fmt.Errorf("oauth connections: find API key: %w", err)
 	}
-	if !validAPIKeyAuth(auth, target.Consumer, gatewayID) {
+	if !validAPIKeyAuth(auth, target.Consumer, gatewayID, s.now().UTC()) {
 		return nil, ErrAPIKeyConnectUnauthorized
 	}
 	return target, nil

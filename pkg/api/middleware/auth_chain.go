@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -369,7 +370,7 @@ func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string,
 
 func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope) (Identity, error) {
 	a, err := r.apiKeys.FindByAPIKey(ctx, rawKey)
-	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey || a.IsOwned() {
+	if err != nil || a == nil || !a.AcceptsApplicationKey(a.GatewayID, time.Now().UTC()) {
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if !scope.allows(a.ID) {

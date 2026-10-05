@@ -56,12 +56,14 @@ func (c *Consumer) AudienceName() Audience {
 	return c.Audience
 }
 
-// ValidateRegistryDetach refuses to detach from a personal consumer the
-// registry that carries its last primary default model. A consumer that has no
+// ValidateRegistryDetach refuses, with ErrPersonalNoDefault, to take from a
+// personal consumer the registry that carries its last primary default model,
+// whether by a detach or by deleting the registry. A consumer that has no
 // primary default already is never refused, so it can still be cleaned up.
 func (c *Consumer) ValidateRegistryDetach(registryID ids.RegistryID) error {
 	if c.IsPersonal() && c.hasPrimaryDefault(ids.RegistryID{}) && !c.hasPrimaryDefault(registryID) {
-		return ErrPersonalNoDefault
+		return fmt.Errorf("%w: registry %s carries the last primary default model of personal consumer %s; set a default on another primary registry first",
+			ErrPersonalNoDefault, registryID, c.ID)
 	}
 	return nil
 }

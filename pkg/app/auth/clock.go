@@ -12,26 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package httpio
+package auth
 
-import (
-	"fmt"
-	"strings"
-	"time"
+import "time"
 
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-)
-
-// ParseExpiresAt parses an RFC 3339 instant and returns it in UTC; an empty
-// string returns nil.
-func ParseExpiresAt(raw string) (*time.Time, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
+func utcClock(now func() time.Time) func() time.Time {
+	if now == nil {
+		return func() time.Time { return time.Now().UTC() }
 	}
-	at, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return nil, fmt.Errorf("expires_at must be an RFC 3339 instant: %w", commonerrors.ErrValidation)
-	}
-	utc := at.UTC()
-	return &utc, nil
+	return now
 }

@@ -68,6 +68,13 @@ func TestAuthLinkValidate(t *testing.T) {
 		"priority at int32 max":       {link: AuthLink{Level: GrantLevelAll, Priority: math.MaxInt32, GrantedAt: grantedAt}},
 		"priority above int32 max":    {link: AuthLink{Level: GrantLevelAll, Priority: math.MaxInt32 + 1, GrantedAt: grantedAt}, wantErr: true},
 		"zero granted_at":             {link: AuthLink{Level: GrantLevelAll, Priority: 1}, wantErr: true},
+		"year 0000":                   {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC)}, wantErr: true},
+		"before the unix epoch":       {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Unix(-1, 0)}, wantErr: true},
+		"at the unix epoch":           {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Unix(0, 0)}},
+		"last microsecond of 9999":    {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999000, time.UTC)}},
+		"year 10000 in UTC":           {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)}, wantErr: true},
+		"near 9999 at -05:00":         {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Date(9999, time.December, 31, 23, 0, 0, 0, time.FixedZone("-05:00", -5*60*60))}, wantErr: true},
+		"valid instant at -05:00":     {link: AuthLink{Level: GrantLevelAll, GrantedAt: time.Date(2026, time.October, 1, 4, 0, 0, 0, time.FixedZone("-05:00", -5*60*60))}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

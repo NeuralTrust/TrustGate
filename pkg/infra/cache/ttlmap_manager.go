@@ -30,6 +30,7 @@ const (
 	PolicyTTLName       = "policy"
 	AuthTTLName         = "auth"
 	AuthKeyTTLName      = "auth_key"
+	AuthKeyMissTTLName  = "auth_key_miss"
 	LoadBalancerTTLName = "lb"
 	// CatalogModelTTLName indexes catalog models by "providerCode:slug" for the
 	// proxy plane's cost computation, so pricing avoids a DB round-trip on the
@@ -49,12 +50,18 @@ const (
 	PolicyCacheTTL         = 5 * time.Minute
 	AuthCacheTTL           = 5 * time.Minute
 	AuthKeyCacheTTL        = 5 * time.Minute
+	AuthKeyMissCacheTTL    = 30 * time.Second
 	LoadBalancerCacheTTL   = 5 * time.Minute
 	CatalogModelCacheTTL   = 24 * time.Hour
 	CatalogListingCacheTTL = 24 * time.Hour
 	OutputLimitCacheTTL    = 24 * time.Hour
 	MCPToolsCacheTTL       = 5 * time.Minute
 )
+
+// AuthKeyMissCacheMaxEntries caps the unknown api key digests remembered at
+// once, so a flood of random keys cannot grow the map without bound; past the
+// cap a miss is simply not remembered.
+const AuthKeyMissCacheMaxEntries = 100_000
 
 type TTLMapManager struct {
 	mu         sync.Mutex

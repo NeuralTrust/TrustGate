@@ -141,6 +141,7 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
+	expired := time.Now().UTC().Add(-time.Minute)
 
 	cases := map[string]*authdomain.Auth{
 		"another gateway's key": {
@@ -152,6 +153,9 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 		},
 		"a personal key": {
 			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice",
+		},
+		"an expired key": {
+			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, ExpiresAt: &expired,
 		},
 	}
 	for name, auth := range cases {
