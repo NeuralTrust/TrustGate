@@ -82,6 +82,7 @@ type Consumer struct {
 	// classified against. They are projected from the app and only ever
 	// written through SetLabelSets.
 	LabelSets []trafficlabel.LabelSet `json:"label_sets,omitempty"`
+	AuthLinks map[ids.AuthID]AuthLink `json:"auth_links,omitempty"`
 	CreatedAt time.Time               `json:"created_at"`
 	UpdatedAt time.Time               `json:"updated_at"`
 }
@@ -186,6 +187,7 @@ type RehydrateParams struct {
 	RegistryIDs     []ids.RegistryID
 	RegistryWeights map[ids.RegistryID]int
 	AuthIDs         []ids.AuthID
+	AuthLinks       map[ids.AuthID]AuthLink
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
 	MCP             *MCPPolicy
@@ -210,6 +212,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		RegistryIDs:     params.RegistryIDs,
 		RegistryWeights: params.RegistryWeights,
 		AuthIDs:         params.AuthIDs,
+		AuthLinks:       params.AuthLinks,
 		Fallback:        params.Fallback,
 		ModelPolicies:   params.ModelPolicies,
 		MCP:             params.MCP,

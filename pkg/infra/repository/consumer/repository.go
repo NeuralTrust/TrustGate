@@ -46,6 +46,7 @@ const (
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
 	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerSlugUniqueIndex      = "consumers_slug_unique_idx"
+	consumerAuthGrantCheck       = "consumer_auth_grant_check"
 )
 
 const consumerSelectColumns = `
@@ -56,7 +57,9 @@ const consumerSelectColumns = `
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
-		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids`
+		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids,
+		       COALESCE((SELECT json_object_agg(cl.auth_id, json_build_object('level', cl.level, 'priority', cl.priority, 'granted_at', cl.granted_at))
+		                   FROM consumer_auth cl WHERE cl.consumer_id = c.id AND cl.level IS NOT NULL), '{}')::jsonb AS auth_links`
 
 var _ domain.Repository = (*Repository)(nil)
 
@@ -437,7 +440,12 @@ func (r *Repository) detachRegistryIfUnreferenced(
 	return current, nil
 }
 
-func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
+func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error {
+	if link != nil {
+		if err := link.Validate(); err != nil {
+			return err
+		}
+	}
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, consumerID); err != nil {
 			return err
@@ -450,8 +458,18 @@ func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 		if !exists {
 			return domain.ErrNotFound
 		}
-		const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-		if _, err := tx.Exec(ctx, query, consumerID, authID); err != nil {
+		if link == nil {
+			const attach = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+			if _, err := tx.Exec(ctx, attach, consumerID, authID); err != nil {
+				return mapPgError(err)
+			}
+			return nil
+		}
+		const upsertLink = `
+			INSERT INTO consumer_auth (consumer_id, auth_id, level, priority, granted_at) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (consumer_id, auth_id) DO UPDATE
+			SET level = EXCLUDED.level, priority = EXCLUDED.priority, granted_at = EXCLUDED.granted_at`
+		if _, err := tx.Exec(ctx, upsertLink, consumerID, authID, string(link.Level), link.Priority, link.GrantedAt); err != nil {
 			return mapPgError(err)
 		}
 		return nil
@@ -773,11 +791,12 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		registryIDs      []uuid.UUID
 		registryWeights  []byte
 		authIDs          []uuid.UUID
+		authLinks        []byte
 	)
 	if err := s.Scan(
 		&c.ID, &c.GatewayID, &c.Name, &consumerType, &audience, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&identityRaw, &authBindingRaw, &labelSetsRaw, &c.CreatedAt, &c.UpdatedAt,
-		&registryIDs, &registryWeights, &authIDs,
+		&registryIDs, &registryWeights, &authIDs, &authLinks,
 	); err != nil {
 		return nil, err
 	}
@@ -853,6 +872,9 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		return nil, err
 	}
 	c.RegistryWeights = weights
+	if c.AuthLinks, err = parseAuthLinks(authLinks); err != nil {
+		return nil, err
+	}
 	if c.RegistryIDs == nil {
 		c.RegistryIDs = []ids.RegistryID{}
 	}
@@ -882,6 +904,24 @@ func parseRegistryWeights(raw []byte) (map[ids.RegistryID]int, error) {
 		out[id] = v
 	}
 	return out, nil
+}
+
+func parseAuthLinks(raw []byte) (map[ids.AuthID]domain.AuthLink, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var links map[ids.AuthID]domain.AuthLink
+	if err := json.Unmarshal(raw, &links); err != nil {
+		return nil, fmt.Errorf("scan auth_links: %w", err)
+	}
+	if len(links) == 0 {
+		return nil, nil
+	}
+	for id, link := range links {
+		link.GrantedAt = link.GrantedAt.UTC()
+		links[id] = link
+	}
+	return links, nil
 }
 
 func marshalHeaders(v map[string]string) ([]byte, error) {
@@ -967,6 +1007,10 @@ func mapPgError(err error) error {
 		switch pgErr.Code {
 		case pgCrossGatewayLink:
 			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
+		case pgCheckViolation:
+			if pgErr.ConstraintName == consumerAuthGrantCheck {
+				return fmt.Errorf("%w: %s", domain.ErrInvalidAuthLink, pgErr.Message)
+			}
 		case pgUniqueViolation:
 			if strings.Contains(pgErr.ConstraintName, consumerSlugUniqueIndex) {
 				return domain.ErrSlugAlreadyExists

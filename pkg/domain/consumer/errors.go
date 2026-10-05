@@ -30,6 +30,7 @@ var (
 	ErrInvalidType      = fmt.Errorf("consumer: invalid type: %w", commonerrors.ErrValidation)
 	ErrInvalidSlug      = fmt.Errorf("consumer: invalid slug: %w", commonerrors.ErrValidation)
 	ErrInvalidAudience  = fmt.Errorf("consumer: invalid audience: %w", commonerrors.ErrValidation)
+	ErrInvalidAuthLink  = fmt.Errorf("consumer: invalid auth link: %w", commonerrors.ErrValidation)
 
 	ErrInvalidLBConfig    = fmt.Errorf("consumer: invalid lb_config: %w", commonerrors.ErrValidation)
 	ErrSlugAlreadyExists  = fmt.Errorf("consumer: slug already exists: %w", commonerrors.ErrAlreadyExists)

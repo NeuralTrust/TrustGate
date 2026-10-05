@@ -186,16 +186,16 @@ Depends: P2b. Est.: ≈285 (code 120 / test 165). Commit boundary: (a) `feat`; (
 
 Depends: P2a. Est.: ≈290 (code 120 / test 170). Commit boundary: (a) `test`: golden bytes for an application consumer with application links, captured on P2a; (b) `feat`; (c) `chore`: mocks.
 
-- [ ] 5.1 Create `pkg/infra/database/migrations/20261005120200_add_consumer_auth_grant.go`: three nullable columns and `consumer_auth_grant_check`, following the design.
-- [ ] 5.2 Create `pkg/domain/consumer/auth_link.go`: `GrantLevel` (`user`/`group`/`all`), `ParseGrantLevel`, `Rank()`, `DefaultGrantPriority = 1`, `AuthLink{Level, Priority, GrantedAt}`, `Validate()`, and `ErrInvalidAuthLink` in `errors.go`.
-- [ ] 5.3 `pkg/domain/consumer/consumer.go`: `AuthLinks map[ids.AuthID]AuthLink json:"auth_links,omitempty"`, `RehydrateParams.AuthLinks`. `repository.go`: `AttachAuth(ctx, consumerID, authID, link *AuthLink)`. Callers pass `nil` for now (behaviour-neutral). Run `go generate ./pkg/domain/consumer/...`.
-- [ ] 5.4 `pkg/infra/repository/consumer/repository.go`: the `auth_links` `json_object_agg` subselect, filtered on `level IS NOT NULL`. `AttachAuth` (`:413-431`): `nil` keeps `ON CONFLICT DO NOTHING`; non-nil upserts the three columns. `replaceAuthLinks` is unchanged.
-- [ ] 5.5 `pkg/runtimeconfig/snapshot/adapters/consumer_repository.go`: the new `AttachAuth` signature keeps the read-only error.
-- [ ] 5.6 Test the migration (`PG_TEST_URL`): up and down twice; existing links stay `NULL`; a half-filled row → 23514. Accept: `owned-key-attachment › Existing links untouched`, `› Half-filled link refused`.
-- [ ] 5.7 Test `auth_link_test.go`: level table, `Rank`, priority below 0, zero `granted_at`.
-- [ ] 5.8 Test `codec_test.go`: golden bytes from 5(a) with no `auth_links`; a personal consumer round trips `{group, 2, 2026-10-01T09:00:00Z}` with the key in `auth_ids`. Accept: `owned-key-attachment › Codec round trip`, `› Application consumer bytes`.
-- [ ] 5.9 Test `tests/functional/repositories/consumer/repository_test.go`: the upsert changes P1's priority and leaves P2's link alone; re-sending the same values is a no-op; `auth_links` holds personal rows only; deleting personal P1 cascades its links while the owned auth survives with its P2 link. Accept: `owned-key-attachment › Priority change` (repository half); `personal-llm-consumers › Delete` (repository half).
-- [ ] 5.10 Run VG and VR.
+- [x] 5.1 Create `pkg/infra/database/migrations/20261005120200_add_consumer_auth_grant.go`: three nullable columns and `consumer_auth_grant_check`, following the design. The CHECK counts `num_nonnulls(level, priority, granted_at)` (0, or 3 with a known level, `priority >= 0` and a finite `granted_at`): the earlier `level IN (…) AND priority >= 0` form evaluated to NULL, and so passed, when `level` or `priority` alone was NULL.
+- [x] 5.2 Create `pkg/domain/consumer/auth_link.go`: `GrantLevel` (`user`/`group`/`all`), `ParseGrantLevel`, `Rank()`, `DefaultGrantPriority = 1`, `AuthLink{Level, Priority, GrantedAt}`, `Validate()`, and `ErrInvalidAuthLink` in `errors.go`.
+- [x] 5.3 `pkg/domain/consumer/consumer.go`: `AuthLinks map[ids.AuthID]AuthLink json:"auth_links,omitempty"`, `RehydrateParams.AuthLinks`. `repository.go`: `AttachAuth(ctx, consumerID, authID, link *AuthLink)`. Callers pass `nil` for now (behaviour-neutral). Run `go generate ./pkg/domain/consumer/...`.
+- [x] 5.4 `pkg/infra/repository/consumer/repository.go`: the `auth_links` `json_object_agg` subselect, filtered on `level IS NOT NULL`. `AttachAuth` (`:413-431`): `nil` keeps `ON CONFLICT DO NOTHING`; non-nil upserts the three columns. `replaceAuthLinks` is unchanged.
+- [x] 5.5 `pkg/runtimeconfig/snapshot/adapters/consumer_repository.go`: the new `AttachAuth` signature keeps the read-only error.
+- [x] 5.6 Test the migration (`PG_TEST_URL`): up and down twice; existing links stay `NULL`; a half-filled row → 23514. Accept: `owned-key-attachment › Existing links untouched`, `› Half-filled link refused`.
+- [x] 5.7 Test `auth_link_test.go`: level table, `Rank`, priority below 0, zero `granted_at`.
+- [x] 5.8 Test `codec_test.go`: golden bytes from 5(a) with no `auth_links`; a personal consumer round trips `{group, 2, 2026-10-01T09:00:00Z}` with the key in `auth_ids`. Accept: `owned-key-attachment › Codec round trip`, `› Application consumer bytes`.
+- [x] 5.9 Test `tests/functional/repositories/consumer/repository_test.go`: the upsert changes P1's priority and leaves P2's link alone; re-sending the same values is a no-op; `auth_links` holds personal rows only; deleting personal P1 cascades its links while the owned auth survives with its P2 link. Accept: `owned-key-attachment › Priority change` (repository half); `personal-llm-consumers › Delete` (repository half).
+- [x] 5.10 Run VG and VR.
 
 ## Phase 6: S3e attach with link attributes (base: the later of P3 and P5)
 

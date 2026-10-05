@@ -286,3 +286,37 @@ func TestCodecEncodesApplicationEntitiesAsBefore(t *testing.T) {
 	assert.Equal(t, goldenApplicationAuthJSON, authJSON)
 	assert.Equal(t, goldenApplicationVersion, configsnapshot.NewCodec().Version(raw))
 }
+
+func TestCodecEncodesApplicationConsumerWithoutAuthLinksAsBefore(t *testing.T) {
+	t.Parallel()
+	for _, links := range []map[ids.AuthID]consumerdomain.AuthLink{nil, {}} {
+		consumer, auth := applicationFixture()
+		consumer.AuthLinks = links
+		raw, consumerJSON, _ := encodeConsumerAndAuth(t, consumer, auth)
+		assert.Equal(t, goldenApplicationConsumerJSON, consumerJSON)
+		assert.Equal(t, goldenApplicationVersion, configsnapshot.NewCodec().Version(raw))
+	}
+}
+
+func TestCodecRoundTripsPersonalAuthLinks(t *testing.T) {
+	t.Parallel()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	consumer.AuthLinks = map[ids.AuthID]consumerdomain.AuthLink{auth.ID: {
+		Level: consumerdomain.GrantLevelGroup, Priority: 2, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC),
+	}}
+	raw, consumerJSON, _ := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, consumerJSON, `"auth_links":{"0199a000-0000-7000-8000-000000000003":{"level":"group","priority":2,"granted_at":"2026-10-01T09:00:00Z"}}`)
+
+	codec := configsnapshot.NewCodec()
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	decoded := snap.Data().Consumers
+	require.Len(t, decoded, 1)
+	assert.True(t, decoded[0].IsPersonal())
+	assert.Equal(t, consumer.AuthLinks, decoded[0].AuthLinks)
+	assert.Contains(t, decoded[0].AuthIDs, auth.ID)
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
