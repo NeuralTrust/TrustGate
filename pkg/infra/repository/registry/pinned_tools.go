@@ -457,18 +457,41 @@ func (r *PinnedToolRepository) Pin(
 		if _, err := approveAllTx(ctx, tx, registryID, tools, decidedBy); err != nil {
 			return false, err
 		}
-		// Unchecked live tools become pending rows in this same transaction, after
-		// the demotions so the caps see the final pending count.
-		if names, fps, defs := splitCandidates(unchecked); len(names) > 0 {
-			if _, _, err := insertPendingCapped(ctx, tx, registryID, names, fps, defs); err != nil {
-				return false, fmt.Errorf("pinned tool repository: record unchecked tools: %w", err)
-			}
+		// Live tools the admin left unchecked are explicit declines: rejected in
+		// this same transaction, after the demotions.
+		if err := rejectUncheckedTx(ctx, tx, registryID, unchecked, decidedBy); err != nil {
+			return false, err
 		}
 		if _, err := tx.Exec(ctx, setPolicy, registryID, gatewayID); err != nil {
 			return false, fmt.Errorf("pinned tool repository: set policy: %w", err)
 		}
 		return true, nil
 	})
+}
+
+// rejectUncheckedTx records each tool as rejected by decidedBy: the row is
+// inserted when absent and a pending (or approved) row is flipped; a row that is
+// already rejected is left alone, keeping its original decider and time. These
+// are explicit admin decisions, so the pending caps do not apply; the request
+// limit and the upstream's own list bound them.
+func rejectUncheckedTx(ctx context.Context, tx pgx.Tx, registryID ids.RegistryID, tools []domain.ToolCandidate, decidedBy string) error {
+	names, fingerprints, definitions := splitCandidates(tools)
+	if len(names) == 0 {
+		return nil
+	}
+	const query = `
+		INSERT INTO registry_tools (registry_id, tool_name, fingerprint, definition, status, decided_at, decided_by)
+		SELECT $1::uuid, x.name, x.fp, x.def::jsonb, 'rejected', now(), NULLIF($2::text, '')
+		  FROM unnest($3::text[], $4::text[], $5::text[]) AS x(name, fp, def)
+		ON CONFLICT (registry_id, tool_name, fingerprint) DO UPDATE
+		   SET status     = 'rejected',
+		       decided_at = now(),
+		       decided_by = NULLIF($2::text, '')
+		 WHERE registry_tools.status <> 'rejected'`
+	if _, err := tx.Exec(ctx, query, registryID, decidedBy, names, fingerprints, definitions); err != nil {
+		return fmt.Errorf("pinned tool repository: reject unchecked tools: %w", err)
+	}
+	return nil
 }
 
 // demoteUnlisted returns every approved row that is not in tools to pending,
