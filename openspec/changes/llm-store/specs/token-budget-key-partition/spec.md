@@ -113,7 +113,7 @@ Under `partition: key`, a request with neither an auth id nor an owner id (the p
 Under `partition: key`, and only when the policy mode blocks (`appplugins.Blocks(mode)`):
 
 1. A Redis error while reading the budget in `budgetGate` MUST reject the request with **503** and `error.type = budget_unavailable`, as an `*appplugins.PluginError`, through a branch local to `budgetGate`. `appplugins.HandleCounterFailure` MUST NOT change, and every other partition and every other counter plugin MUST keep failing open. A Redis error while accruing after the response MUST be logged and MUST NOT change the response already sent.
-2. With `unit: dollars`, a request for a model that `llmcost.Resolve` cannot price (catalog and registry rates) MUST be rejected in `preRequest` with **403** and `error.type = model_unpriced`, before the upstream is called. With `unit: tokens` no pricing check applies. Without `partition: key`, an unpriced model MUST keep accruing $0 with a warning, as `TestPlugin_DollarBudget_UnpricedModelAccruesZero` pins today.
+2. With `unit: dollars`, a request that a budget window applies to (a matching rule or the aggregate), for a model that `llmcost.Resolve` cannot price (catalog and registry rates), MUST be rejected in `budgetGate` with **403** and `error.type = model_unpriced`, before Redis is read and before the upstream is called. A request no window applies to (a rules-only budget without a matching rule, a `cost_cap`-only config) MUST NOT be checked, so `cost_cap.unknown_model` keeps deciding it. With `unit: tokens` no pricing check applies. Without `partition: key`, an unpriced model MUST keep accruing $0 with a warning, as `TestPlugin_DollarBudget_UnpricedModelAccruesZero` pins today.
 3. Exceeding the budget MUST return the existing 429 (`token_budget_exceeded` or `dollar_budget_exceeded`) with `error.scope = key`.
 
 In a non-blocking mode the plugin MUST NOT return 503 or 403: it records the decision on the event and lets the request through.
@@ -136,6 +136,12 @@ In a non-blocking mode the plugin MUST NOT return 503 or 403: it records the dec
 - GIVEN a blocking `partition: key`, `unit: dollars` policy and a model with no catalog or registry price
 - WHEN `alice` requests that model
 - THEN 403 `model_unpriced`, and the upstream is not called
+
+#### Scenario: No budget window applies
+
+- GIVEN a blocking `partition: key`, `unit: dollars` policy whose only rule is `claude-*`
+- WHEN `alice` requests an unpriced `gpt-4o-mini`
+- THEN the request reaches the upstream, unchecked and uncounted
 
 #### Scenario: Registry rate counts as priced
 

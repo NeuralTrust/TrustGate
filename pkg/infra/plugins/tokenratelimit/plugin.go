@@ -168,6 +168,11 @@ func (p *Plugin) preRequest(
 	return res, nil
 }
 
+func (p *Plugin) priced(ctx context.Context, cfg *config, req *infracontext.RequestContext, model string) bool {
+	_, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), req.Provider, model, req.RequestedModel)
+	return found
+}
+
 func mergeHeaderValues(dst, src map[string][]string) map[string][]string {
 	if len(src) == 0 {
 		return dst

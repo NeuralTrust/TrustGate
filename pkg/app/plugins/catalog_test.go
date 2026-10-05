@@ -286,6 +286,30 @@ func TestTokenRateLimiterSchema_RulesAndAggregate(t *testing.T) {
 	}
 }
 
+func TestTokenRateLimiterSchema_KeyPartition(t *testing.T) {
+	meta := pluginCatalogMeta["token_rate_limiter"]
+	assert.Contains(t, meta.description, "Without a partition, if the counter store is unavailable, requests are allowed through")
+
+	partition, ok := fieldByKey(meta.schema.Fields, "partition")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, partition.Type)
+	assert.Equal(t, []string{"key"}, enumValues(partition.Enum))
+	assert.False(t, partition.Required)
+	for _, want := range []string{"owner", "503 budget_unavailable", "403 model_unpriced", "custom_pricing", "group_by_header", "uncounted"} {
+		assert.Contains(t, partition.Description, want)
+	}
+
+	rules, _ := fieldByKey(meta.schema.Fields, "rules")
+	require.NotNil(t, rules.Item)
+	ruleWindow, _ := fieldByKey(rules.Item.Fields, "time_window")
+	aggregate, _ := fieldByKey(meta.schema.Fields, "aggregate")
+	aggregateWindow, _ := fieldByKey(aggregate.Fields, "time_window")
+	for _, window := range []Field{ruleWindow, aggregateWindow} {
+		assert.Contains(t, window.Description, "calendar_month")
+		assert.Contains(t, window.Description, "calendar_day")
+	}
+}
+
 func TestTokenRateLimiterSchema_CustomPricingMap(t *testing.T) {
 	fields := pluginCatalogMeta["token_rate_limiter"].schema.Fields
 
