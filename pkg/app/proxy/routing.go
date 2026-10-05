@@ -48,6 +48,14 @@ type routedBackend struct {
 
 type CandidateFilter func(routingdomain.Candidate) bool
 
+type ResolvedRouting struct {
+	Intent     routingdomain.Intent
+	Ref        string
+	Candidates *routingdomain.CandidateSet
+}
+
+var errNoKeptCandidate = fmt.Errorf("no candidate survives the store scope: %w", routingdomain.ErrModelDenied)
+
 type candidateQuery struct {
 	intent        routingdomain.Intent
 	needed        string
@@ -68,6 +76,11 @@ func (f *forwarder) resolveRouting(
 	ctx context.Context,
 	in ForwardInput,
 ) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
+	if in.Resolved != nil {
+		in.Request.RequestedModel = in.Resolved.Ref
+		candidates, err := keepCandidates(in.Resolved.Candidates, in.Keep)
+		return in.Resolved.Intent, candidates, err
+	}
 	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
@@ -75,7 +88,7 @@ func (f *forwarder) resolveRouting(
 	}
 	in.Request.RequestedModel = ref
 	needed := capabilityRequiresProviderSupport(in.Request)
-	if intent.IsZero() && needed == "" {
+	if intent.IsZero() && needed == "" && in.Keep == nil {
 		return intent, nil, nil
 	}
 	candidates, err := f.pipeline.run(ctx, candidateQuery{
@@ -84,6 +97,7 @@ func (f *forwarder) resolveRouting(
 		consumer: in.Consumer,
 		data:     in.Data,
 		request:  in.Request,
+		keep:     in.Keep,
 	})
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
@@ -101,8 +115,8 @@ func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingd
 	if err != nil {
 		return nil, err
 	}
-	if q.keep != nil {
-		candidates = candidates.Filter(q.keep)
+	if candidates, err = keepCandidates(candidates, q.keep); err != nil {
+		return nil, err
 	}
 	if q.needed != "" {
 		capable := filterCandidatesByCapability(candidates, q.needed)
@@ -121,6 +135,17 @@ func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingd
 		candidates = p.filterCandidatesByProviderListing(ctx, candidates, q.intent.Model, q.strictListing)
 	}
 	return candidates, nil
+}
+
+func keepCandidates(candidates *routingdomain.CandidateSet, keep CandidateFilter) (*routingdomain.CandidateSet, error) {
+	if keep == nil {
+		return candidates, nil
+	}
+	kept := candidates.Filter(keep)
+	if kept.Len() == 0 {
+		return nil, errNoKeptCandidate
+	}
+	return kept, nil
 }
 
 func (p candidatePipeline) filterCandidatesByProviderListing(

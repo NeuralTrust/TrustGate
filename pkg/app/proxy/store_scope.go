@@ -65,6 +65,10 @@ func (l *scopedLink) filter() CandidateFilter {
 	return func(c routingdomain.Candidate) bool { return l.keepsRegistry(c.Registry) }
 }
 
+func (l *scopedLink) primaryFilter() CandidateFilter {
+	return func(c routingdomain.Candidate) bool { return !c.FallbackOnly() && l.keepsRegistry(c.Registry) }
+}
+
 func registryProvider(reg *domain.Registry) string {
 	if reg == nil {
 		return ""

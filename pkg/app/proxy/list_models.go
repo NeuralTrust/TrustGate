@@ -35,6 +35,7 @@ var ErrModelNotFound = errors.New("model not found")
 type ListModelsInput struct {
 	Consumer *appconsumer.RoutableConsumer
 	Data     *appconsumer.Data
+	Keep     CandidateFilter
 }
 
 type ModelCard struct {
@@ -96,6 +97,9 @@ func (l *modelsLister) collect(ctx context.Context, in ListModelsInput) ([]Model
 	})
 	if err != nil {
 		return nil, err
+	}
+	if in.Keep != nil {
+		candidates = candidates.Filter(in.Keep)
 	}
 	seen := make(map[string]struct{})
 	cards := make([]ModelCard, 0)

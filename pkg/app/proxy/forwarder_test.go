@@ -36,6 +36,7 @@ import (
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -1060,4 +1061,118 @@ func TestForward_LetsOtherBodiesThrough(t *testing.T) {
 		require.NoError(t, err, name)
 		assert.Equal(t, 200, res.StatusCode, name)
 	}
+}
+
+func invokerByProvider(t *testing.T, status map[string]int) (*proxymocks.ProviderInvoker, *[]string) {
+	invoker := proxymocks.NewProviderInvoker(t)
+	var invoked []string
+	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, bk *registrydomain.Registry, _ *infracontext.RequestContext) (*appproxy.ProviderResponse, error) {
+			invoked = append(invoked, bk.Provider())
+			return &appproxy.ProviderResponse{StatusCode: status[bk.Provider()], Body: []byte(bk.Provider())}, nil
+		}).Maybe()
+	return invoker, &invoked
+}
+
+func TestForward_KeepExcludesSubstitutedRegistries(t *testing.T) {
+	notOpenAI := func(c routingdomain.Candidate) bool { return c.Registry.Provider() != "openai" }
+	cases := []struct {
+		name     string
+		fallback bool
+		model    string
+		keep     appproxy.CandidateFilter
+		want     []string
+		status   int
+		err      error
+	}{
+		{name: "substituted load balancer route", keep: notOpenAI, want: []string{"mistral"}, status: 503},
+		{name: "substituted fallback after the balancer", fallback: true, keep: notOpenAI, want: []string{"mistral"}, status: 503},
+		{name: "no filter keeps the fallback", fallback: true, want: []string{"mistral", "openai"}, status: 200},
+		{name: "nothing kept is denied", keep: func(routingdomain.Candidate) bool { return false }, err: routingdomain.ErrModelDenied},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			mistral, openai := backendFor(gatewayID, "mistral"), backendFor(gatewayID, "openai")
+			rc := routableConsumerWith(gatewayID, mistral, openai)
+			if tc.fallback {
+				rc = routableConsumerWith(gatewayID, mistral)
+				rc.Consumer.Fallback = enabledFallback(openai.ID)
+				rc.FallbackBackends = []*registrydomain.Registry{openai}
+			}
+			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 200})
+			res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID, Consumer: rc, Request: &infracontext.RequestContext{Body: chatBody(tc.model)}, Keep: tc.keep,
+			})
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+				assert.Empty(t, *invoked)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.status, res.StatusCode)
+			assert.Equal(t, tc.want, *invoked)
+		})
+	}
+}
+
+func TestForward_ServesTheStoreSelection(t *testing.T) {
+	mistralA := storeGrant{name: "A", level: levelGroup, priority: 1,
+		regs: []storeRegistry{{provider: "mistral"}, {provider: "openai", fallback: true}}}
+	cases := []struct {
+		name    string
+		grants  []storeGrant
+		catalog storeCatalog
+		model   string
+		want    []string
+		status  int
+	}{
+		{name: "substituted fallback is not used", grants: []storeGrant{mistralA, grantD}, catalog: workedCatalog,
+			model: "mistral-large", want: []string{"mistral"}, status: 503},
+		{name: "fallback serves the selected consumer", grants: []storeGrant{grantA, grantB, grantC},
+			catalog: storeCatalog{"openai": {"gpt-4.1"}}, model: "gpt-4.1", want: []string{"openai", "deepseek"}, status: 200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newStoreFixture(tc.grants...)
+			req := storeRequest(tc.model, "", "")
+			sel, err := fx.choose(newStoreSelector(tc.catalog), req)
+			require.NoError(t, err)
+			require.Equal(t, "A", sel.Link.Consumer.Consumer.Name)
+			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 503, "deepseek": 200})
+			res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+				Keep: sel.Keep, Resolved: &sel.ResolvedRouting,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.status, res.StatusCode)
+			assert.Equal(t, tc.want, *invoked)
+			assert.Equal(t, tc.model, req.RequestedModel)
+		})
+	}
+}
+
+func TestForward_StoreConsumerSharesOneBalancerAcrossOwners(t *testing.T) {
+	fx := newStoreFixture(grantB)
+	mgr := cache.NewTTLMapManager(time.Minute)
+	invoker, invoked := invokerByProvider(t, map[string]int{"anthropic": 200})
+	fwd := appproxy.NewForwarder(loadbalancer.NewBaseFactory(nil, nil, nil, nil), newPermissiveCache(t), mgr, invoker,
+		nil, nil, approuting.NewResolver(), nil, nil, nil, newTestLogger())
+	for _, owner := range []string{"alice", "bob"} {
+		req := storeRequest("", "", "")
+		req.AuthID, req.OwnerID = ids.New[ids.AuthKind]().String(), owner
+		sel, err := fx.choose(newStoreSelector(workedCatalog), req)
+		require.NoError(t, err)
+		_, err = fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+			Keep: sel.Keep, Resolved: &sel.ResolvedRouting,
+		})
+		require.NoError(t, err)
+	}
+	served := fx.data.StoreLinks(fx.authID)[0].Consumer.Consumer
+	balancers := mgr.GetTTLMap(cache.LoadBalancerTTLName)
+	_, ok := balancers.Get(served.GatewayID.String() + ":" + served.ID.String())
+	assert.True(t, ok)
+	assert.Equal(t, 1, balancers.Len())
+	assert.Equal(t, []string{"anthropic", "anthropic"}, *invoked)
 }

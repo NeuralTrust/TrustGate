@@ -57,6 +57,8 @@ type ForwardInput struct {
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
 	Request   *infracontext.RequestContext
+	Keep      CandidateFilter
+	Resolved  *ResolvedRouting
 }
 
 type ForwardResult struct {
