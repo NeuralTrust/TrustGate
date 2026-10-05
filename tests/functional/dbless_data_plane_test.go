@@ -189,6 +189,9 @@ func TestDBLessDataPlane_ReadinessGatedOnSnapshotAndLivenessIndependent(t *testi
 		deps, ok := b["dependencies"].(map[string]any)
 		require.True(t, ok, "readiness must expose dependencies: %v", b)
 		assert.Equal(t, "unavailable", deps["snapshot"], "snapshot dependency must be unavailable: %v", b)
+		snap, ok := b["snapshot"].(map[string]any)
+		require.True(t, ok, "readiness must expose the snapshot state: %v", b)
+		assert.Equal(t, "none", snap["state"], "snapshot state must be none without a snapshot: %v", b)
 		_, hasPostgres := deps["postgres"]
 		assert.False(t, hasPostgres, "db-less plane must not expose a postgres dependency: %v", b)
 		time.Sleep(300 * time.Millisecond)
@@ -230,6 +233,11 @@ func TestDBLessDataPlane_ConvergesServesAtParityAndKeepsSecretsOutOfLogs(t *test
 	deps, ok := ready["dependencies"].(map[string]any)
 	require.True(t, ok, "readiness body must expose dependencies: %v", ready)
 	assert.Equal(t, "ok", deps["snapshot"], "snapshot dependency must be ok once converged: %v", ready)
+	snap, ok := ready["snapshot"].(map[string]any)
+	require.True(t, ok, "readiness body must expose the snapshot state: %v", ready)
+	assert.Equal(t, "live", snap["state"], "snapshot state must be live after a converge: %v", ready)
+	assert.NotEmpty(t, snap["version"], "snapshot version must be reported: %v", ready)
+	assert.Contains(t, snap, "age_seconds", "snapshot age must be reported: %v", ready)
 	_, hasPostgres := deps["postgres"]
 	assert.False(t, hasPostgres, "db-less plane must not expose a postgres dependency: %v", ready)
 

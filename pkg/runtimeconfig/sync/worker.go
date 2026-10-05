@@ -53,6 +53,7 @@ type Worker[T any] struct {
 	minBackoff   time.Duration
 	maxBackoff   time.Duration
 	onApplied    func(context.Context)
+	status       *SnapshotStatus
 	convergeMu   sync.Mutex
 }
 
@@ -65,6 +66,17 @@ type WorkerOption[T any] func(*Worker[T])
 func WithOnApplied[T any](fn func(context.Context)) WorkerOption[T] {
 	return func(w *Worker[T]) {
 		w.onApplied = fn
+	}
+}
+
+// WithStatus makes the worker report the snapshot source into status, so the
+// readiness endpoint and gauges can read it. Without it the worker keeps its
+// own tracker, reachable through Status.
+func WithStatus[T any](status *SnapshotStatus) WorkerOption[T] {
+	return func(w *Worker[T]) {
+		if status != nil {
+			w.status = status
+		}
 	}
 }
 
@@ -108,12 +120,16 @@ func NewWorker[T any](
 		pollInterval: pollInterval,
 		minBackoff:   minBackoff,
 		maxBackoff:   maxBackoff,
+		status:       NewSnapshotStatus(nil),
 	}
 	for _, opt := range opts {
 		opt(w)
 	}
 	return w
 }
+
+// Status returns the tracker of where the served snapshot came from.
+func (w *Worker[T]) Status() *SnapshotStatus { return w.status }
 
 func (w *Worker[T]) Run(ctx context.Context) error {
 	w.restoreLKG()
@@ -145,6 +161,7 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 		return fmt.Errorf("configsync: fetch snapshot: %w", err)
 	}
 	if notModified {
+		w.status.ConfirmLive()
 		return nil
 	}
 	if version == "" {
@@ -159,6 +176,7 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 	}
 	versioned := &Versioned[T]{Version: version, Snapshot: snapshot, Raw: raw}
 	w.store.Swap(versioned)
+	w.status.MarkLive(version)
 	if w.onApplied != nil {
 		w.onApplied(ctx)
 	}
@@ -193,11 +211,13 @@ func (w *Worker[T]) restoreLKG() {
 	}
 	if v != nil {
 		w.store.Swap(v)
+		age, ageKnown := w.lkg.Age()
+		w.status.MarkLKG(v.Version, age)
 		attrs := []any{
 			slog.String("component", component),
 			slog.String("version", v.Version),
 		}
-		if age, ok := w.lkg.Age(); ok {
+		if ageKnown {
 			attrs = append(attrs, slog.Duration("age", age))
 			if age > lkgStaleWarnAge {
 				w.logger.Warn("restored last-known-good snapshot is stale; serving old config until the control plane is reachable", attrs...)

@@ -46,12 +46,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/dig"
 )
 
 type healthParams struct {
 	dig.In
-	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Store  configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Status *configsync.SnapshotStatus                  `optional:"true"`
+	// Provider is only a dependency: it guarantees the SDK has installed the
+	// global MeterProvider before the snapshot gauges are registered.
+	Provider *o11y.Provider
 }
 
 type playgroundVerifierParams struct {
@@ -80,6 +85,22 @@ func diagnosticsVerifier(p playgroundVerifierParams) (jwt.ProxyTokenVerifier, er
 	return jwt.NewDiagnosticsVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys)), nil
 }
 
+const snapshotMeterScope = "trustgate/configsync"
+
+func snapshotReport(status *configsync.SnapshotStatus) func() apihandler.SnapshotReport {
+	return func() apihandler.SnapshotReport {
+		info := status.Info()
+		report := apihandler.SnapshotReport{State: string(info.State), Version: info.Version}
+		if age, ok := status.Age(); ok {
+			appliedAt := info.AppliedAt.UTC()
+			seconds := int64(age.Seconds())
+			report.AppliedAt = &appliedAt
+			report.AgeSeconds = &seconds
+		}
+		return report
+	}
+}
+
 func API(c *container.Container) error {
 	if err := c.Provide(o11y.NewSDK); err != nil {
 		return err
@@ -87,12 +108,19 @@ func API(c *container.Container) error {
 	if err := c.Provide(o11y.NewProvider); err != nil {
 		return err
 	}
-	if err := c.Provide(func(p healthParams) *apihandler.HealthHandler {
+	if err := c.Provide(func(p healthParams) (*apihandler.HealthHandler, error) {
 		var checks []apihandler.ReadinessCheck
 		if p.Store != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "snapshot", Ping: configsync.ReadinessCheck(p.Store)})
 		}
-		return apihandler.NewHealthHandler(checks...)
+		h := apihandler.NewHealthHandler(checks...)
+		if p.Status != nil {
+			if err := configsync.RegisterSnapshotGauges(otel.Meter(snapshotMeterScope), p.Status); err != nil {
+				return nil, err
+			}
+			h.WithSnapshotReport(snapshotReport(p.Status))
+		}
+		return h, nil
 	}); err != nil {
 		return err
 	}
