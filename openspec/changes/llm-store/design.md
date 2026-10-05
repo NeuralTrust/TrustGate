@@ -332,7 +332,7 @@ Under `/:gateway_id/store` (`admin_router.go:227`, `RequireGatewayAccess(Resourc
 
 ### Snapshot metrics (S6)
 
-New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/configsnapshot")` (as `tenant_caps_metrics.go:29`): `trustgate.configsnapshot.encoded_bytes{flavour=catalog|global|scoped}` and `trustgate.configsnapshot.entities{kind=auths|owned_auths|personal_consumers|personal_links}`, recorded on publish only (`dispatcher.go:241-266`), never on a dedup.
+New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/configsnapshot")` (as `tenant_caps_metrics.go:29`): `trustgate.configsnapshot.encoded_bytes{flavour=catalog|global|scoped, stat=max|total on scoped}`, `trustgate.configsnapshot.scopes` and `trustgate.configsnapshot.entities{kind=auths|owned_auths|personal_consumers|personal_links}` (counted over every scope, hybrid included), recorded on publish only (`dispatcher.go:241-266`), never on a dedup. No attribute carries a gateway, tenant or scope id; the largest scope's id goes to the "published config snapshot" log line.
 
 ## Error codes
 
