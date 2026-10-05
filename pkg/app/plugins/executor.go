@@ -445,6 +445,8 @@ func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScop
 	if req != nil {
 		scope.GatewayID = req.GatewayID
 		scope.ConsumerID = req.ConsumerID
+		scope.AuthID = req.AuthID
+		scope.OwnerID = req.OwnerID
 	}
 	return scope
 }

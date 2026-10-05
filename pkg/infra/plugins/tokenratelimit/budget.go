@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -68,29 +69,39 @@ func ruleWindowSeconds(cfg *config, r budgetRule) int {
 	return cfg.windowSeconds()
 }
 
-func windowsFor(cfg *config, base, model string) []budgetWindow {
+func windowsFor(cfg *config, base, model string, now time.Time) []budgetWindow {
 	var windows []budgetWindow
 	if cfg.PerModel {
 		if r, ok := selectRule(cfg, model); ok {
+			key, secs := periodWindow(base, r.TimeWindow, now, ruleWindowSeconds(cfg, r))
 			windows = append(windows, budgetWindow{
-				key:       modelKey(base, r.Model),
+				key:       modelKey(key, r.Model),
 				max:       counterMax(cfg, r.Max),
-				windowSec: ruleWindowSeconds(cfg, r),
+				windowSec: secs,
 				model:     r.Model,
 				label:     windowLabel(cfg, r.TimeWindow),
 			})
 		}
 	}
 	if cfg.Aggregate != nil {
+		key, secs := periodWindow(base, cfg.Aggregate.TimeWindow, now, aggregateWindowSeconds(cfg))
 		windows = append(windows, budgetWindow{
-			key:       base,
+			key:       key,
 			max:       counterMax(cfg, cfg.Aggregate.Max),
-			windowSec: aggregateWindowSeconds(cfg),
+			windowSec: secs,
 			label:     windowLabel(cfg, cfg.Aggregate.TimeWindow),
 			aggregate: true,
 		})
 	}
 	return windows
+}
+
+func periodWindow(base, timeWindow string, now time.Time, rollingSeconds int) (string, int) {
+	period, ttl, ok := calendarPeriod(timeWindow, now)
+	if !ok {
+		return base, rollingSeconds
+	}
+	return periodKey(base, period), ttl
 }
 
 func windowLabel(cfg *config, timeWindow string) string {
@@ -181,7 +192,7 @@ func (p *Plugin) budgetGate(
 	if req != nil {
 		provider = req.Provider
 	}
-	windows := windowsFor(cfg, base, model)
+	windows := windowsFor(cfg, base, model, p.now())
 	if len(windows) == 0 {
 		if capTel != nil {
 			data := TokenRateLimiterData{
@@ -365,7 +376,7 @@ func (p *Plugin) accrue(
 		return &appplugins.Result{}, nil
 	}
 
-	windows := windowsFor(cfg, base, model)
+	windows := windowsFor(cfg, base, model, p.now())
 	if len(windows) == 0 {
 		return &appplugins.Result{}, nil
 	}
@@ -454,7 +465,7 @@ func (p *Plugin) accrueDollars(
 		return &appplugins.Result{}, nil
 	}
 
-	windows := windowsFor(cfg, base, model)
+	windows := windowsFor(cfg, base, model, p.now())
 	if len(windows) == 0 {
 		return &appplugins.Result{}, nil
 	}

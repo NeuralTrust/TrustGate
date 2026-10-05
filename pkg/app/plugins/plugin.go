@@ -239,15 +239,18 @@ type ExecInput struct {
 	Event *metrics.EventContext
 }
 
-// RuntimeScope is the execution scope derived from the policy and the resolved
-// consumer. It tells a plugin whether the policy applies gateway-wide (Global)
-// or to a single consumer, so stateful plugins can partition their state
-// accordingly. It is derived from the source of truth (Policy.GatewayWide, so a
-// global or an MCP-wide placement, plus the resolved consumer), never from
-// request headers, path or credentials.
+// RuntimeScope is the execution scope derived from the policy, the resolved
+// consumer and the authenticated AuthContext (auth id, key owner). It tells a
+// plugin whether the policy applies gateway-wide (Global) or to a single
+// consumer, and which key authenticated the request, so stateful plugins can
+// partition their state accordingly. It is derived from the source of truth
+// (Policy.GatewayWide, so a global or an MCP-wide placement, plus the resolved
+// consumer and AuthContext), never from raw request headers or path.
 type RuntimeScope struct {
 	GatewayID  string
 	ConsumerID string
+	AuthID     string
+	OwnerID    string
 	Global     bool
 }
 
@@ -265,6 +268,18 @@ func (s RuntimeScope) Subject() (dimension string, id string, err error) {
 		return "", "", errors.New("plugins: missing consumer id for consumer scope")
 	}
 	return "consumer", s.ConsumerID, nil
+}
+
+// Key resolves the per-key partition: the key's owner when it has one,
+// otherwise the auth itself. ok is false when the request carries neither.
+func (s RuntimeScope) Key() (dimension string, id string, ok bool) {
+	if s.OwnerID != "" {
+		return "owner", s.OwnerID, true
+	}
+	if s.AuthID != "" {
+		return "auth", s.AuthID, true
+	}
+	return "", "", false
 }
 
 // Result carries the changes a plugin wants the executor to apply. Headers are
