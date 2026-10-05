@@ -330,6 +330,20 @@ func (s *InstallationsService) EnsureRegistry(
 // gateway is NotFound and any other gateway PermissionDenied. Without a gateway
 // resolver only the exact-gateway match can be honoured.
 func (s *InstallationsService) authorizeGateway(ctx context.Context, op string, gatewayID ids.GatewayID) error {
+	return authorizeGatewayScope(ctx, s.gateways, s.logger, "store installations", op, gatewayID)
+}
+
+// authorizeGatewayScope is the one place a config-sync RPC that names a gateway
+// is checked against the caller's scope; every service on this listener goes
+// through it, so a data plane is never allowed to touch a gateway it may not
+// pull. who prefixes the status messages and the log line.
+func authorizeGatewayScope(
+	ctx context.Context,
+	gateways GatewayResolver,
+	logger *slog.Logger,
+	who, op string,
+	gatewayID ids.GatewayID,
+) error {
 	scope := ScopeFromContext(ctx)
 	if scope == "" {
 		return nil
@@ -337,24 +351,24 @@ func (s *InstallationsService) authorizeGateway(ctx context.Context, op string, 
 	if gatewayID.String() == scope {
 		return nil
 	}
-	if s.gateways != nil {
-		gw, err := s.gateways.FindByID(ctx, gatewayID)
+	if gateways != nil {
+		gw, err := gateways.FindByID(ctx, gatewayID)
 		switch {
 		case errors.Is(err, gatewaydomain.ErrNotFound), errors.Is(err, commonerrors.ErrNotFound):
-			return status.Errorf(codes.NotFound, "store installations: %s: gateway not found", op)
+			return status.Errorf(codes.NotFound, "%s: %s: gateway not found", who, op)
 		case err != nil:
-			return status.Errorf(codes.Internal, "store installations: %s: resolve gateway: %v", op, err)
+			return status.Errorf(codes.Internal, "%s: %s: resolve gateway: %v", who, op, err)
 		}
 		if tenant := gw.TenantID(); tenant != "" && tenant == scope {
 			return nil
 		}
 	}
-	s.logger.Warn("store installations: refusing request for a gateway outside the caller's scope",
+	logger.Warn(who+": refusing request for a gateway outside the caller's scope",
 		slog.String("component", component),
 		slog.String("op", op),
 		slog.String("scope", scope),
 		slog.String("gateway_id", gatewayID.String()))
-	return status.Errorf(codes.PermissionDenied, "store installations: %s: gateway is outside the caller's scope", op)
+	return status.Errorf(codes.PermissionDenied, "%s: %s: gateway is outside the caller's scope", who, op)
 }
 
 // validateDataPlaneInstallation applies the installation domain's invariants to

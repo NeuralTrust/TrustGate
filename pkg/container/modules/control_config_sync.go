@@ -61,6 +61,10 @@ type compilerReaders struct {
 	// TenantCaps puts each tenant's plan caps into the snapshots that carry its
 	// gateways.
 	TenantCaps ratelimitdomain.TenantCapsRepository
+	// PinnedTools puts the decided tool set of pinned MCP registries into the
+	// snapshots. Deliberately not optional: without it a pinned registry would
+	// publish with nothing approved and silently hide every tool.
+	PinnedTools registrydomain.PinnedToolRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -83,6 +87,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
+			appsnapshot.WithPinnedTools(r.PinnedTools),
 		), nil
 	}); err != nil {
 		return err
@@ -133,14 +138,21 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// The DB-less data plane reports pending pinned tools over the same channel.
+	// The service treats the caller as untrusted; see PinnedToolsService.
+	if err := c.Provide(func(registries registrydomain.Repository, tools registrydomain.PinnedToolRepository, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.PinnedToolsServer {
+		return configsyncgrpc.NewPinnedToolsService(registries, tools, gateways, logger)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(configsyncgrpc.NewAuthInterceptor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
+	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, pinned snapshotpb.PinnedToolsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
 		if cfg.IsDeployed() && (cfg.ConfigSync.GRPCTLSCertPath == "" || cfg.ConfigSync.GRPCTLSKeyPath == "") {
 			return nil, fmt.Errorf("%w: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY are required on the control plane in deployed environments", commonerrors.ErrInvalidConfig)
 		}
-		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger)
+		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger, configsyncgrpc.RegisterPinnedTools(pinned))
 	}); err != nil {
 		return err
 	}
