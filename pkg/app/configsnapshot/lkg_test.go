@@ -39,6 +39,7 @@ type fakeLKGStore struct {
 	mu        sync.Mutex
 	rows      map[string]appsnapshot.LKGRecord
 	saved     []string
+	attempts  []string
 	touched   []string
 	keptLast  []string
 	deletes   int
@@ -51,18 +52,31 @@ func newFakeLKGStore() *fakeLKGStore {
 	return &fakeLKGStore{rows: map[string]appsnapshot.LKGRecord{}}
 }
 
-func (s *fakeLKGStore) Save(_ context.Context, rec appsnapshot.LKGRecord) (bool, error) {
+func (s *fakeLKGStore) Save(_ context.Context, rec appsnapshot.LKGRecord) (bool, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.attempts = append(s.attempts, rec.Scope)
 	if s.saveErr != nil {
-		return false, s.saveErr
+		return false, "", s.saveErr
 	}
 	if cur, ok := s.rows[rec.Scope]; ok && !cur.CompiledAt.Before(rec.CompiledAt) {
-		return false, nil
+		return false, cur.Version, nil
 	}
 	s.rows[rec.Scope] = rec
 	s.saved = append(s.saved, rec.Scope)
-	return true, nil
+	return true, rec.Version, nil
+}
+
+func (s *fakeLKGStore) attemptCount(scope string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, a := range s.attempts {
+		if a == scope {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *fakeLKGStore) Touch(_ context.Context, held []appsnapshot.LKGVersion, at time.Time) error {
@@ -288,15 +302,50 @@ func TestLKG_SupersededWriteIsIgnored(t *testing.T) {
 	if got := h.store.row(""); got.Version != "from-other-replica" || string(got.Payload) != "keep" {
 		t.Fatalf("an older compile overwrote a newer row: %+v", got)
 	}
-	h.store.resetSaved()
+	// The stored row holds another replica's version (a clock running ahead), so
+	// this replica must not mark the scope stored: it retries on the next cycle.
+	before := h.store.attemptCount("")
 	h.clock.advance(time.Minute)
 	if err := d.Dispatch(context.Background()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	for _, s := range h.store.savedScopes() {
-		if s == "" {
-			t.Fatal("a superseded scope must not be re-sent every cycle")
-		}
+	if got := h.store.attemptCount(""); got != before+1 {
+		t.Fatalf("a scope held at another version must be retried next cycle, attempts %d -> %d", before, got)
+	}
+	// Once the stored stamp is behind this replica's clock, the retry lands.
+	h.clock.advance(2 * time.Hour)
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if got := h.store.row(""); got.Version == "from-other-replica" {
+		t.Fatal("the retry must overwrite once this compile is the newer one")
+	}
+}
+
+func TestLKG_SupersededByTheSameVersionIsNotResent(t *testing.T) {
+	t.Parallel()
+	h := newLKGHarness(t)
+	first, _, _ := h.dispatcher()
+	if err := first.Dispatch(context.Background()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	// Another replica compiled the same data a moment later.
+	row := h.store.row("")
+	row.CompiledAt = row.CompiledAt.Add(time.Hour)
+	h.store.put(row)
+
+	second, _, _ := h.dispatcher()
+	// No Restore: the persisted map starts empty, so the first cycle tries to save.
+	if err := second.Dispatch(context.Background()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	before := h.store.attemptCount("")
+	h.clock.advance(time.Minute)
+	if err := second.Dispatch(context.Background()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if got := h.store.attemptCount(""); got != before {
+		t.Fatalf("a scope already stored at the same version must not be re-sent, attempts %d -> %d", before, got)
 	}
 }
 

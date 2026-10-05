@@ -316,7 +316,7 @@ func (d *Dispatcher) persistScope(ctx context.Context, scope string, snap Scoped
 	if err != nil {
 		return fmt.Errorf("seal: %w", err)
 	}
-	written, err := l.store.Save(ctx, LKGRecord{
+	written, stored, err := l.store.Save(ctx, LKGRecord{
 		Scope: scope, Version: snap.Version, CompiledAt: compiledAt,
 		KeyID: l.sealer.KeyID(), Payload: payload,
 	})
@@ -325,11 +325,16 @@ func (d *Dispatcher) persistScope(ctx context.Context, scope string, snap Scoped
 	}
 	if written {
 		recordLKGPersist(ctx, "ok")
-	} else {
-		// A newer compile from another replica holds the row. Treat the scope as
-		// stored so this replica does not re-seal and resend it every cycle.
-		recordLKGPersist(ctx, "superseded")
+		l.persisted[scope] = snap.Version
+		return nil
 	}
-	l.persisted[scope] = snap.Version
+	recordLKGPersist(ctx, "superseded")
+	// A row stamped newer holds the scope. Only when it holds the same version is
+	// there nothing to resend. If it holds another replica's version (for
+	// example from a clock running ahead), leave the scope unmarked so the next
+	// cycle retries instead of trusting data this replica never compiled.
+	if stored == snap.Version {
+		l.persisted[scope] = snap.Version
+	}
 	return nil
 }
