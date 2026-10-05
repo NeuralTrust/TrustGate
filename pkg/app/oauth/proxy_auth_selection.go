@@ -42,9 +42,14 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 				"this MCP server's consumer has no identity provider people can sign in through; "+
 					"attach an identity that lets people sign in, or call it with the consumer's own credential")
 		}
-		// The resource pinned a consumer but it has no OAuth2 identity provider of
-		// its own: fall back to the single IdP configured on that consumer's
-		// gateway instead of scanning every tenant on the platform.
+		// The consumer has no identity provider of its own, and for it the auth
+		// chain admits only the built-in default (defaultIdPUsable): brokering
+		// one of the gateway's operator IdPs instead, such as an Entra identity
+		// with sign-in on, mints a session the chain refuses and the client
+		// loops on 401. The operator IdP is the fallback only without a default.
+		if def := p.credentials.DefaultOAuth2ForGateway(m.gatewayID); def != nil {
+			return def, nil
+		}
 		return p.gatewayScopedAuth(ctx, m.gatewayID)
 	}
 	// No usable resource indicator, but the request was still routed to a

@@ -605,10 +605,12 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	}
 }
 
-// When the resource pins a consumer that has no OAuth2 auth of its own, the
-// fallback is scoped to that consumer's gateway: a different tenant's IdP must
-// not turn the lookup ambiguous.
-func TestAuthorizeResourceFallsBackToGatewayScopedIdP(t *testing.T) {
+// When the resource pins a consumer that has no OAuth2 auth of its own and the
+// built-in default IdP is not configured, the fallback is the gateway's own
+// operator IdP, scoped to that consumer's gateway: a different tenant's IdP
+// must not turn the lookup ambiguous. With a default configured the default
+// wins instead (TestAuthForResource_UnpinnedSignInConsumerBrokersDefault).
+func TestAuthorizeResourceFallsBackToGatewayScopedIdPWithoutDefault(t *testing.T) {
 	t.Parallel()
 	idpGateway, _ := fakeIdP(t)
 	idpOtherTenant, capturedOther := fakeIdP(t)
