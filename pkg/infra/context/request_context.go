@@ -52,6 +52,8 @@ type RoutingDecision struct {
 type RequestContext struct {
 	GatewayID          string
 	ConsumerID         string
+	AuthID             string
+	OwnerID            string
 	ConsumerType       string
 	RegistryID         string
 	RegistryPricing    *domain.Pricing

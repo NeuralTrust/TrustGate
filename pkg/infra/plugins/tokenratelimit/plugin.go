@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -39,10 +40,11 @@ type Plugin struct {
 	redis    *redis.Client
 	registry *adapter.Registry
 	pricing  appcatalog.PricingResolver
+	now      func() time.Time
 }
 
 func New(redisClient *redis.Client, registry *adapter.Registry, pricing appcatalog.PricingResolver) *Plugin {
-	return &Plugin{redis: redisClient, registry: registry, pricing: pricing}
+	return &Plugin{redis: redisClient, registry: registry, pricing: pricing, now: time.Now}
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -89,9 +91,12 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
 	}
 
-	dimension, subject, err := in.Scope.Subject()
+	dimension, subject, counted, err := counterSubject(cfg, in.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
+	}
+	if !counted {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader))
 
@@ -103,6 +108,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
+}
+
+func counterSubject(cfg *config, scope appplugins.RuntimeScope) (dimension, subject string, counted bool, err error) {
+	if cfg.Partition != partitionKey {
+		dimension, subject, err = scope.Subject()
+		return dimension, subject, err == nil, err
+	}
+	kind, id, ok := scope.Key()
+	if !ok {
+		return "", "", false, nil
+	}
+	return partitionKey, kind + ":" + url.QueryEscape(id), true, nil
 }
 
 func (p *Plugin) preRequest(

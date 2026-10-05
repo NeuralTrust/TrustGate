@@ -38,6 +38,7 @@ type AuthContext struct {
 	GatewaySlug string
 	ConsumerID  ids.ConsumerID
 	AuthID      ids.AuthID
+	OwnerID     string
 	Subject     string
 	Claims      map[string]any
 	Scopes      []string

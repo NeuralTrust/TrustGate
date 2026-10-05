@@ -173,6 +173,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID, route)
 	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
+	stampAuth(reqCtx, authCtx)
 	// The user context is never cancelled when the client goes away, so the
 	// upstream request gets a context of its own that ends with the response.
 	ctx, cancel := context.WithCancel(c.UserContext())
@@ -487,6 +488,16 @@ func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
 		}
 	}
 	return false
+}
+
+func stampAuth(req *infracontext.RequestContext, authCtx *appauth.AuthContext) {
+	if authCtx == nil || authCtx.Method != appauth.MethodAPIKey {
+		return
+	}
+	if !authCtx.AuthID.IsNil() {
+		req.AuthID = authCtx.AuthID.String()
+	}
+	req.OwnerID = authCtx.OwnerID
 }
 
 func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolver.ProxyRoute) *infracontext.RequestContext {
