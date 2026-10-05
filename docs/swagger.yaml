@@ -1796,11 +1796,17 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolItem'
         type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
       tool_policy:
         description: ToolPolicy is "auto" or "pinned". Decisions only take effect
           when pinned.
         type: string
       total:
+        description: Total counts every definition matching the filter, not just this
+          page.
         type: integer
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse:
@@ -5491,7 +5497,9 @@ paths:
         its decision. A definition is identified by (name, fingerprint): when an upstream
         changes a tool, the new definition appears as a pending item beside the approved
         one, and carries approved_version (the exposed definition) so it can be diffed.
-        Filter with status=pending|approved|rejected.'
+        Filter with status=pending|approved|rejected. Paginated with limit (default
+        100, max 500) and offset over a stable first_seen_at, name, fingerprint order;
+        total is the number of matching definitions across all pages.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -5513,6 +5521,17 @@ paths:
         in: query
         name: status
         type: string
+      - description: Page size (default 100, max 500)
+        in: query
+        maximum: 500
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Rows to skip, in first_seen_at, name, fingerprint order
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
       produces:
       - application/json
       responses:
@@ -5717,11 +5736,13 @@ paths:
     put:
       consumes:
       - application/json
-      description: Approves exactly the listed tools (fingerprints are computed by
-        the server) and sets the registry's tool_policy to pinned, in one transaction,
-        then publishes a new config snapshot. An empty list is allowed. Only MCP registries
-        can be pinned; an LLM registry is 422. Disabling pinning is a plain registry
-        update with tool_policy=auto.
+      description: 'Makes the listed tools exactly the approved set (fingerprints
+        are computed by the server): listed tools become approved, any other approved
+        definition goes back to pending, and unlisted rejections stay rejected. Also
+        sets the registry''s tool_policy to pinned, in one transaction, then publishes
+        a new config snapshot. An empty list is allowed. Only MCP registries can be
+        pinned; an LLM registry is 422. Disabling pinning is a plain registry update
+        with tool_policy=auto.'
       parameters:
       - description: Gateway id
         format: uuid

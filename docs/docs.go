@@ -3005,7 +3005,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/registries/{id}/pinned-tools": {
             "get": {
-                "description": "Returns the tool definitions the registry has recorded, each with its decision. A definition is identified by (name, fingerprint): when an upstream changes a tool, the new definition appears as a pending item beside the approved one, and carries approved_version (the exposed definition) so it can be diffed. Filter with status=pending|approved|rejected.",
+                "description": "Returns the tool definitions the registry has recorded, each with its decision. A definition is identified by (name, fingerprint): when an upstream changes a tool, the new definition appears as a pending item beside the approved one, and carries approved_version (the exposed definition) so it can be diffed. Filter with status=pending|approved|rejected. Paginated with limit (default 100, max 500) and offset over a stable first_seen_at, name, fingerprint order; total is the number of matching definitions across all pages.",
                 "produces": [
                     "application/json"
                 ],
@@ -3039,6 +3039,21 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Only definitions in this status",
                         "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 500,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Page size (default 100, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "description": "Rows to skip, in first_seen_at, name, fingerprint order",
+                        "name": "offset",
                         "in": "query"
                     }
                 ],
@@ -3333,7 +3348,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/registries/{id}/tool-pinning": {
             "put": {
-                "description": "Approves exactly the listed tools (fingerprints are computed by the server) and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.",
+                "description": "Makes the listed tools exactly the approved set (fingerprints are computed by the server): listed tools become approved, any other approved definition goes back to pending, and unlisted rejections stay rejected. Also sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7440,11 +7455,18 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolItem"
                     }
                 },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
                 "tool_policy": {
                     "description": "ToolPolicy is \"auto\" or \"pinned\". Decisions only take effect when pinned.",
                     "type": "string"
                 },
                 "total": {
+                    "description": "Total counts every definition matching the filter, not just this page.",
                     "type": "integer"
                 }
             }
