@@ -42,6 +42,7 @@ const (
 
 	responsesTurnIDPrefix = "resp_"
 	fieldPreviousResponse = "previous_response_id"
+	fieldConversation     = "conversation"
 
 	capabilityChat               = "chat"
 	capabilityEmbeddings         = "embeddings"
@@ -912,6 +913,11 @@ func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previous
 		return body
 	}
 	if _, exists := obj[fieldPreviousResponse]; exists {
+		return body
+	}
+	// The Responses API rejects previous_response_id next to conversation:
+	// the conversation already carries the history.
+	if _, exists := obj[fieldConversation]; exists {
 		return body
 	}
 	raw, err := json.Marshal(previousResponseID)

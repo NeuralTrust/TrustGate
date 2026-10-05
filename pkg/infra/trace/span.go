@@ -103,6 +103,10 @@ type MCPAttrs struct {
 	// non-block error (including a request context it could not even build).
 	// See SetMCPDecision.
 	Decision string
+	// ToolRisk and ToolOpenWorld are the called tool's declared annotations
+	// (see mcp.Tool.Risk): "" and nil when the tool declares none.
+	ToolRisk      string
+	ToolOpenWorld *bool
 }
 
 // MCPPolicyScope records how the scoped policies of a consumer applied to one
@@ -390,6 +394,21 @@ func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transpo
 	s.MCP.CatalogCode = catalogCode
 	s.MCP.Transport = transport
 	s.MCP.UpstreamTool = upstreamTool
+}
+
+// SetMCPToolRisk records the called tool's declared risk class and open-world
+// hint. An unannotated tool records nothing.
+func (s *Span) SetMCPToolRisk(risk string, openWorld *bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.ToolRisk = risk
+	if openWorld != nil {
+		world := *openWorld
+		s.MCP.ToolOpenWorld = &world
+	} else {
+		s.MCP.ToolOpenWorld = nil
+	}
 }
 
 // SetMCPPolicyScope stamps the scope decision of a tools/call next to the

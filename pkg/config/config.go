@@ -88,20 +88,22 @@ const (
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
 
-	defaultTopicClassifierIntakeQueueSize    = 1000
-	defaultTopicClassifierIntakeWorkers      = 2
-	defaultTopicClassifierIntakeMaxBodyBytes = 512 << 10
-	defaultTopicClassifierIntakeMaxBuffer    = 64 << 20
-	defaultTopicClassifierEnqueueTimeout     = 500 * time.Millisecond
-	defaultTopicClassifierTimeout            = 5 * time.Second
-	defaultTopicClassifierCacheTTL           = time.Hour
-	defaultTopicClassifierStreamMaxLen       = 100_000
-	defaultTopicClassifierStreamRetention    = time.Hour
-	defaultTopicClassifierGatewayQuota       = 100
-	defaultTopicClassifierConcurrency        = 8
-	defaultTopicClassifierBatchMaxTexts      = 32
-	defaultTopicClassifierClaimMinIdle       = time.Minute
-	defaultTopicClassifierMaxAttempts        = 3
+	defaultTrafficLabelsIntakeQueueSize    = 1000
+	defaultTrafficLabelsIntakeWorkers      = 2
+	defaultTrafficLabelsIntakeMaxBodyBytes = 512 << 10
+	defaultTrafficLabelsIntakeMaxBuffer    = 64 << 20
+	defaultTrafficLabelsEnqueueTimeout     = 500 * time.Millisecond
+	defaultTrafficLabelsTimeout            = 15 * time.Second
+	defaultTrafficLabelsMaxTokens          = 4096
+	defaultTrafficLabelsCacheTTL           = time.Hour
+	defaultTrafficLabelsConversationTTL    = time.Hour
+	defaultTrafficLabelsStreamMaxLen       = 100_000
+	defaultTrafficLabelsStreamRetention    = time.Hour
+	defaultTrafficLabelsGatewayQuota       = 100
+	defaultTrafficLabelsConcurrency        = 8
+	defaultTrafficLabelsBatchMaxTexts      = 8
+	defaultTrafficLabelsClaimMinIdle       = time.Minute
+	defaultTrafficLabelsMaxAttempts        = 3
 
 	defaultPlaygroundTraceStoreEnabled = true
 	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
@@ -176,7 +178,7 @@ type Config struct {
 	SessionStore        SessionStoreConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
-	TopicClassifier     TopicClassifierConfig
+	TrafficLabels       TrafficLabelsConfig
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
@@ -408,14 +410,16 @@ type MetricsConfig struct {
 	FlushInterval time.Duration
 }
 
-type TopicClassifierConfig struct {
+type TrafficLabelsConfig struct {
 	IntakeQueueSize       int
 	IntakeWorkers         int
 	IntakeMaxBodyBytes    int
 	IntakeMaxBufferBytes  int64
 	EnqueueTimeout        time.Duration
 	ClassifierTimeout     time.Duration
+	MaxTokens             int
 	CacheTTL              time.Duration
+	ConversationTTL       time.Duration
 	StreamMaxLen          int64
 	StreamRetention       time.Duration
 	GatewayQuotaPerSecond int64
@@ -558,7 +562,7 @@ func LoadConfig() (*Config, error) {
 		SessionStore:        getSessionStoreConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
-		TopicClassifier:     getTopicClassifierConfig(),
+		TrafficLabels:       getTrafficLabelsConfig(),
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
@@ -780,23 +784,25 @@ func parseOTLPHeaders(raw string) map[string]string {
 	return out
 }
 
-func getTopicClassifierConfig() TopicClassifierConfig {
-	return TopicClassifierConfig{
-		IntakeQueueSize:      getEnvInt("TOPIC_CLASSIFIER_INTAKE_QUEUE_SIZE", defaultTopicClassifierIntakeQueueSize),
-		IntakeWorkers:        getEnvInt("TOPIC_CLASSIFIER_INTAKE_WORKERS", defaultTopicClassifierIntakeWorkers),
-		IntakeMaxBodyBytes:   getEnvInt("TOPIC_CLASSIFIER_INTAKE_MAX_BODY_BYTES", defaultTopicClassifierIntakeMaxBodyBytes),
-		IntakeMaxBufferBytes: getEnvInt64("TOPIC_CLASSIFIER_INTAKE_MAX_BUFFER_BYTES", defaultTopicClassifierIntakeMaxBuffer),
-		EnqueueTimeout:       getEnvDuration("TOPIC_CLASSIFIER_ENQUEUE_TIMEOUT", defaultTopicClassifierEnqueueTimeout),
-		ClassifierTimeout:    getEnvDuration("TOPIC_CLASSIFIER_TIMEOUT", defaultTopicClassifierTimeout),
-		CacheTTL:             getEnvDuration("TOPIC_CLASSIFIER_CACHE_TTL", defaultTopicClassifierCacheTTL),
+func getTrafficLabelsConfig() TrafficLabelsConfig {
+	return TrafficLabelsConfig{
+		IntakeQueueSize:      getEnvInt("TRAFFIC_LABELS_INTAKE_QUEUE_SIZE", defaultTrafficLabelsIntakeQueueSize),
+		IntakeWorkers:        getEnvInt("TRAFFIC_LABELS_INTAKE_WORKERS", defaultTrafficLabelsIntakeWorkers),
+		IntakeMaxBodyBytes:   getEnvInt("TRAFFIC_LABELS_INTAKE_MAX_BODY_BYTES", defaultTrafficLabelsIntakeMaxBodyBytes),
+		IntakeMaxBufferBytes: getEnvInt64("TRAFFIC_LABELS_INTAKE_MAX_BUFFER_BYTES", defaultTrafficLabelsIntakeMaxBuffer),
+		EnqueueTimeout:       getEnvDuration("TRAFFIC_LABELS_ENQUEUE_TIMEOUT", defaultTrafficLabelsEnqueueTimeout),
+		ClassifierTimeout:    getEnvDuration("TRAFFIC_LABELS_TIMEOUT", defaultTrafficLabelsTimeout),
+		MaxTokens:            getEnvInt("TRAFFIC_LABELS_MAX_TOKENS", defaultTrafficLabelsMaxTokens),
+		CacheTTL:             getEnvDuration("TRAFFIC_LABELS_CACHE_TTL", defaultTrafficLabelsCacheTTL),
+		ConversationTTL:      getEnvDuration("TRAFFIC_LABELS_CONVERSATION_TTL", defaultTrafficLabelsConversationTTL),
 
-		StreamMaxLen:          getEnvInt64("TOPIC_CLASSIFIER_STREAM_MAX_LEN", defaultTopicClassifierStreamMaxLen),
-		StreamRetention:       getEnvDuration("TOPIC_CLASSIFIER_STREAM_RETENTION", defaultTopicClassifierStreamRetention),
-		GatewayQuotaPerSecond: getEnvInt64("TOPIC_CLASSIFIER_GATEWAY_QUOTA_PER_SEC", defaultTopicClassifierGatewayQuota),
-		Concurrency:           getEnvInt("TOPIC_CLASSIFIER_CONCURRENCY", defaultTopicClassifierConcurrency),
-		BatchMaxTexts:         getEnvInt("TOPIC_CLASSIFIER_BATCH_MAX_TEXTS", defaultTopicClassifierBatchMaxTexts),
-		ClaimMinIdle:          getEnvDuration("TOPIC_CLASSIFIER_CLAIM_MIN_IDLE", defaultTopicClassifierClaimMinIdle),
-		MaxAttempts:           getEnvInt("TOPIC_CLASSIFIER_MAX_ATTEMPTS", defaultTopicClassifierMaxAttempts),
+		StreamMaxLen:          getEnvInt64("TRAFFIC_LABELS_STREAM_MAX_LEN", defaultTrafficLabelsStreamMaxLen),
+		StreamRetention:       getEnvDuration("TRAFFIC_LABELS_STREAM_RETENTION", defaultTrafficLabelsStreamRetention),
+		GatewayQuotaPerSecond: getEnvInt64("TRAFFIC_LABELS_GATEWAY_QUOTA_PER_SEC", defaultTrafficLabelsGatewayQuota),
+		Concurrency:           getEnvInt("TRAFFIC_LABELS_CONCURRENCY", defaultTrafficLabelsConcurrency),
+		BatchMaxTexts:         getEnvInt("TRAFFIC_LABELS_BATCH_MAX_TEXTS", defaultTrafficLabelsBatchMaxTexts),
+		ClaimMinIdle:          getEnvDuration("TRAFFIC_LABELS_CLAIM_MIN_IDLE", defaultTrafficLabelsClaimMinIdle),
+		MaxAttempts:           getEnvInt("TRAFFIC_LABELS_MAX_ATTEMPTS", defaultTrafficLabelsMaxAttempts),
 	}
 }
 

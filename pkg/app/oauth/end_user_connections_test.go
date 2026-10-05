@@ -80,7 +80,7 @@ func TestEndUserConnections_LinkMintsNamespacedTicket(t *testing.T) {
 		Return("ticket-1", nil).Once()
 
 	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, tickets, oauth.NewNoopConnectAttemptLimiter())
-	link, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", " user_123 ", "github")
+	link, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", " user_123 ", "github", "")
 	require.NoError(t, err)
 	require.Equal(t, "ticket-1", link.Ticket)
 	require.Equal(t, "github", link.Provider)
@@ -100,7 +100,7 @@ func TestEndUserConnections_LinkRejectsUnknownProvider(t *testing.T) {
 	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Once()
 
 	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
-	_, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "salesforce")
+	_, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "salesforce", "")
 	require.ErrorIs(t, err, oauth.ErrUnknownConnectProvider)
 	require.ErrorIs(t, err, commonerrors.ErrValidation)
 }
@@ -147,13 +147,21 @@ func TestEndUserConnections_ConnectionsReportStates(t *testing.T) {
 		Return([]oauth.ProviderStatus{
 			{Provider: "github", Registry: "GitHub", Code: "github", Linked: true, AccountRef: "octocat", ExpiresAt: expires},
 			{Provider: "linear", Registry: "Linear", Code: "linear", Linked: true, NeedsReconnect: true},
-			{Provider: "notion", Registry: "Notion", Code: "notion"},
+			{Provider: "notion", Registry: "Notion", Code: "notion", Instance: "reg-notion"},
+			{Provider: "linear", Registry: "Linear (team)", Code: "linear", Instance: "reg-linear-team", Shared: true},
 		}, nil).Once()
 
 	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, tickets, nil)
 	got, err := svc.Connections(ctx, gatewayID, "assistant", "ag_secret", "user_123")
 	require.NoError(t, err)
-	require.Len(t, got, 3)
+	require.Len(t, got, 4)
+	require.Equal(t, "reg-notion", got[2].Instance)
+	require.False(t, got[2].Shared)
+	// A shared account nobody connected reads not_connected like the user's own,
+	// and only this says a connect link would not fix it.
+	require.Equal(t, oauth.ConnectionNotConnected, got[3].Status)
+	require.True(t, got[3].Shared)
+	require.Equal(t, "reg-linear-team", got[3].Instance)
 	require.Equal(t, oauth.ConnectionConnected, got[0].Status)
 	require.Equal(t, "octocat", got[0].AccountRef)
 	require.Equal(t, expires, got[0].ExpiresAt)
@@ -173,7 +181,7 @@ func TestEndUserConnections_InvalidEndUser(t *testing.T) {
 	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Once()
 
 	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
-	_, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "  ", "")
+	_, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "  ", "", "")
 	require.True(t, errors.Is(err, consumerdomain.ErrInvalidEndUser))
 }
 
@@ -250,4 +258,90 @@ func validAPIKeyAuth(gatewayID ids.GatewayID, authID ids.AuthID) *authdomain.Aut
 		Type:      authdomain.TypeAPIKey,
 		Enabled:   true,
 	}
+}
+
+// twoGitHubInstances is appUsersConsumerData with a second GitHub instance that
+// holds one shared account for every caller.
+func twoGitHubInstances(gatewayID ids.GatewayID, slug string, authID ids.AuthID) (*appconsumer.Data, *registrydomain.Registry, *registrydomain.Registry) {
+	data := appUsersConsumerData(gatewayID, slug, authID)
+	target, _ := data.MatchSlug(slug)
+	perUser := target.Registries[0]
+	shared := &registrydomain.Registry{
+		ID:   ids.New[ids.RegistryKind](),
+		Name: "GitHub (team)",
+		Type: registrydomain.TypeMCP,
+		MCPTarget: &registrydomain.MCPTarget{
+			Code: "github",
+			Auth: &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeForwarded, Provider: "github", Account: registrydomain.MCPAccountShared},
+		},
+	}
+	target.Registries = append(target.Registries, shared)
+	return data, perUser, shared
+}
+
+// The page a link for a shared account opens offers nothing to connect: the
+// account is the instance's and an administrator connects it.
+func TestEndUserConnections_LinkRefusesAProviderServedOnlyByASharedAccount(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
+	target, _ := data.MatchSlug("assistant")
+	target.Registries[0].MCPTarget.Auth.Account = registrydomain.MCPAccountShared
+
+	consumers := appconsumermocks.NewDataFinder(t)
+	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
+	apiKeys := appauthmocks.NewAPIKeyFinder(t)
+	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Once()
+
+	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
+	_, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "github", "")
+	require.ErrorIs(t, err, oauth.ErrSharedAccountNotLinkable)
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+}
+
+// Two instances of one provider are two servers with two accounts, so the
+// application can name the one it means, and the ticket is pinned to both the
+// provider and that instance.
+func TestEndUserConnections_LinkNamesOneInstance(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data, perUser, shared := twoGitHubInstances(gatewayID, "assistant", authID)
+	target, _ := data.MatchSlug("assistant")
+
+	consumers := appconsumermocks.NewDataFinder(t)
+	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Times(4)
+	apiKeys := appauthmocks.NewAPIKeyFinder(t)
+	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Times(4)
+	tickets := oauthmocks.NewConnectService(t)
+	tickets.EXPECT().
+		CreateInstanceTicket(ctx, gatewayID, consumerdomain.EndUserSubject(target.Consumer.ID, "user_123"),
+			appconsumer.MCPPath("assistant"), "github", "github", perUser.ID.String()).
+		Return("ticket-2", nil).Once()
+	// The provider alone still works while one of its instances is the user's.
+	tickets.EXPECT().
+		CreateProviderTicket(ctx, gatewayID, consumerdomain.EndUserSubject(target.Consumer.ID, "user_123"),
+			appconsumer.MCPPath("assistant"), "github").
+		Return("ticket-3", nil).Once()
+	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, tickets, nil)
+
+	link, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "", perUser.ID.String())
+	require.NoError(t, err)
+	require.Equal(t, "ticket-2", link.Ticket)
+	require.Equal(t, "github", link.Provider)
+	require.Equal(t, perUser.ID.String(), link.Instance)
+
+	_, err = svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "", shared.ID.String())
+	require.ErrorIs(t, err, oauth.ErrSharedAccountNotLinkable)
+
+	_, err = svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "", ids.New[ids.RegistryKind]().String())
+	require.ErrorIs(t, err, oauth.ErrUnknownConnectInstance)
+
+	link, err = svc.Link(ctx, gatewayID, "assistant", "ag_secret", "user_123", "github", "")
+	require.NoError(t, err)
+	require.Equal(t, "ticket-3", link.Ticket)
+	require.Empty(t, link.Instance)
 }

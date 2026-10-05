@@ -54,7 +54,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.principal.subject` | `principal_subject` (inbound identity: OIDC `sub`, or the API key name) |
 | `trustgate.principal.method` | `principal_method` (`api_key`, `jwt`, `introspection`, `mtls`) |
 | `trustgate.principal.email` | `principal_email` (display identity: inbound JWT `email` / `upn` / email-shaped `preferred_username`, or the unique vault `account_ref` when that is an email) |
-| `trustgate.session_id` | `session_id` |
+| `trustgate.session_id` | `session_id`: the conversation id resolved by the session middleware (see [sessions](../sessions.md)). Omitted when the request belongs to no conversation, i.e. a non-Responses request whose id the gateway generated; count sessions on distinct non-empty values |
 | `trustgate.turn_id` | `turn_id` |
 | `trustgate.ip` | `ip` |
 | `trustgate.requested_model` | `request.requested_model` |
@@ -96,6 +96,8 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
 | `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
 | `trustgate.mcp.decision` | `mcp.decision` (call-level outcome; only `failed_open` today, when a plugin stage failed on a non-block error and the call proceeded uninspected. Omitted when nothing at that level failed — a per-plugin decision still lives in `policy_chain[]`) |
+| `trustgate.mcp.tool_risk` | `mcp.tool_risk` (tools/call only: the called tool's risk from the MCP annotations its server declares — `read_only` when `readOnlyHint` is true, else `destructive` unless `destructiveHint` is false (the protocol default), else `additive`. Omitted when the tool declares none of the four hints: unannotated tools are never guessed. Advisory, the server's own claim) |
+| `trustgate.mcp.tool_open_world` | `mcp.tool_open_world` (bool; the tool's `openWorldHint`, `true` by default once any hint is declared. Omitted with `tool_risk`) |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 
@@ -564,34 +566,48 @@ representative records, not a live capture:
 
 - OTLP → ClickHouse ingestion (collector / data-plane)
 
-## Topic classification event
+## Traffic labels event
 
-Gateways with `topic_classification.enabled` emit one extra record per
-classified request, after the request itself, through the gateway's `otlp`
-exporters (default and per gateway, metadata class only). It is correlated
-with the request's `trustgate.<version>.metadata` and `trustgate.<version>.raw`
-records by trace id.
+Gateways with `traffic_labeling.enabled` emit one extra record per labeled chat
+request of a consumer that holds label sets, after the request itself, through
+the gateway's `otlp` exporters (default and per gateway, metadata class only).
+It is correlated with the request's `trustgate.<version>.metadata` and
+`trustgate.<version>.raw` records by trace id. The record has one result per
+label set the request was evaluated against; a set none of whose labels
+applies still has its result, with `label` `""`, so unlabeled traffic can be
+counted per set.
 
 | Rule | Detail |
 |---|---|
-| Event name | `trustgate.<version>.topic_classification`. Downstream routing keys on it |
-| Prompt | **Never emitted**, nor anything derived from it: not the text, its hash, its length or the number of windows topic-guard split it into, nor the system prompt |
-| Namespace | Every attribute is under `trustgate.topic.*`, except the retention pair |
-| Tenant | Sent as `trustgate.topic.tenant_id`, **not** `trustgate.tenant_id`: the view that fills `trustgate_events` takes any record carrying that key and would count the classification as one more request |
+| Event name | `trustgate.<version>.traffic_labels`. Downstream routing keys on it |
+| Prompt | **Never emitted**, nor anything derived from it: not the text, its hash or its length, nor the system prompt or the classifier's answer |
+| Namespace | Every attribute is under `trustgate.label.*`, except the retention pair |
+| Tenant | Sent as `trustgate.label.tenant_id`, **not** `trustgate.tenant_id`: the view that fills `trustgate_events` takes any record carrying that key and would count the labeling as one more request |
 | Exporters | Only `otlp`. Postgres exporters never receive it: they key rows on the trace id |
-| Timestamp | When the request was classified. `trustgate.topic.requested_on` is when it arrived |
+| Timestamp | When the request was labeled. `trustgate.label.requested_on` is when it arrived |
 
 | Attribute | Content |
 |---|---|
-| `trustgate.topic.schema_version` | Event schema version |
-| `trustgate.topic.trace_id` | Trace id of the request, to join with its metadata and raw records |
-| `trustgate.topic.gateway_id` | Gateway id |
-| `trustgate.topic.tenant_id` | Tenant id |
-| `trustgate.topic.requested_on` | Unix ms when the request arrived |
-| `trustgate.topic.scores` | JSON `[{"topic","probability","matched"}]`, one entry per catalog topic |
-| `trustgate.topic.matched` | JSON array of the topics above the threshold (`[]` when none) |
-| `trustgate.topic.matched.count` | Number of matched topics |
-| `trustgate.topic.model_version` | `name@revision+calibration` of the topic-guard model that scored it |
-| `trustgate.topic.catalog_hash` | Hash of the gateway's topic catalog, order-independent |
-| `trustgate.topic.threshold` | Threshold override, when the gateway sets one |
+| `trustgate.label.schema_version` | Version of this payload (int). `2` since label sets: the version that carries `results`. It is not the `<version>` of the event name |
+| `trustgate.label.trace_id` | Trace id of the request, to join with its metadata and raw records |
+| `trustgate.label.gateway_id` | Gateway id |
+| `trustgate.label.consumer_id` | Consumer whose label sets were evaluated |
+| `trustgate.label.tenant_id` | Tenant id |
+| `trustgate.label.requested_on` | Unix ms when the request arrived (int) |
+| `trustgate.label.results` | JSON `[{"label_set_id","label_set_name","label"}]`, one entry per evaluated label set in the consumer's order. `label` is the label name as spelled in the catalog, `""` when none applies |
+| `trustgate.label.results.count` | Number of evaluated label sets (int) |
+| `trustgate.label.registry_id` | Registry that ran the classification |
+| `trustgate.label.model` | Model that ran the classification |
+| `trustgate.label.catalog_hash` | Order-independent hash of the evaluated label sets: ids, names, instructions, label names and descriptions |
+| `trustgate.label.usage.input_tokens` / `trustgate.label.usage.output_tokens` | Classifier token usage (int). `0` when the provider reports none or the result came from the cache |
+| `trustgate.label.latency_ms` | Classifier call latency in ms (int). `0` for a cached result |
 | `trustgate.retention.expires_at` / `trustgate.retention.plan` | Same expiry as the request event, counted from when the request arrived |
+
+Version 1 of this payload, which never reached a release, carried
+`trustgate.label.matched`, `trustgate.label.matched.count` and
+`trustgate.label.evaluated` (single labels, several per request). Version 2
+replaces them with `trustgate.label.results` and
+`trustgate.label.results.count`; they are no longer emitted. Version 1 records
+were stamped with the event name's version (`3`) in
+`trustgate.label.schema_version`, so a reader tells them apart by the presence
+of `trustgate.label.results`, not by the version alone.

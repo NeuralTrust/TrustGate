@@ -17,27 +17,28 @@ Planes are `admin`, `proxy`, and `mcp`. Routes are `health`, `version`,
 `denied_auth`, `denied_forbidden`, `denied_throttled`, `denied_policy`,
 `client_error`, `server_error`, and `probe`.
 
-The async topic classifier (see [topic classification](topic-classification.md))
-adds its own instruments. `outcome` is their only label, so they stay bounded
-whatever the number of gateways; per-gateway detail lives in the
-`topic_classification` events.
+Traffic labeling (see [traffic labels](traffic-labels.md)) adds its own
+instruments. `outcome` is their only label, so they stay bounded whatever the
+number of gateways, consumers or label sets; per-request detail lives in the
+`traffic_labels` events.
 
-- `agentgateway.topic_classifier.intake_total` (`{request}`): what the request
+- `agentgateway.traffic_labels.intake_total` (`{request}`): what the request
   path offered. `accepted`, `sampled_out`, `body_too_large`, `buffer_full`
   (out of slots or bytes), `shutting_down`.
-- `agentgateway.topic_classifier.enqueue_total` (`{request}`): what reached the
+- `agentgateway.traffic_labels.enqueue_total` (`{request}`): what reached the
   queue. `queued`, `no_text`, `quota_exceeded`, `queue_error`.
-- `agentgateway.topic_classifier.result_total` (`{request}`): how each queued
-  request ended. `classified`, `cache_hit`, `failed`, `poison`, `unconfigured`,
+- `agentgateway.traffic_labels.result_total` (`{request}`): how each queued
+  request ended. `classified`, `cache_hit`, `failed`, `poison`, `unconfigured`
+  (the selected registry or model cannot serve it: deleted, wrong gateway, no
+  stored credentials, or the provider refused the request with a 4xx),
   `invalid`, `unpublishable` (its gateway is gone), `publish_retry` (left
   pending to be published again).
-- `agentgateway.topic_classifier.call.duration` (seconds) and
-  `agentgateway.topic_classifier.call.texts` (`{text}`): each topic-guard call.
-  `ok`, `backpressure`, `error`.
-- `agentgateway.topic_classifier.stream.length` and
-  `agentgateway.topic_classifier.stream.pending` (`{entry}`): gauges read on
+- `agentgateway.traffic_labels.call.duration` (seconds): each classifier LLM
+  call. `ok`, `backpressure` (the provider answered 429 or 503), `error`.
+- `agentgateway.traffic_labels.stream.length` and
+  `agentgateway.traffic_labels.stream.pending` (`{entry}`): gauges read on
   every collection, so a backlog is visible without traffic. A growing length
-  means requests arrive faster than they are classified.
+  means requests arrive faster than they are labeled.
 
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.

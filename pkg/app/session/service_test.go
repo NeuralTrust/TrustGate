@@ -33,6 +33,12 @@ type fakeRepo struct {
 	getResp  *domain.Session
 	getErr   error
 	getCalls int
+	turnResp string
+	turnErr  error
+}
+
+func (f *fakeRepo) FindSessionIDByTurn(_ context.Context, _, _ string) (string, error) {
+	return f.turnResp, f.turnErr
 }
 
 func (f *fakeRepo) Save(_ context.Context, s *domain.Session) error {
@@ -112,4 +118,18 @@ func TestService_LastTurnIDMissOrError(t *testing.T) {
 
 	errored := appsession.NewService(&fakeRepo{getErr: errors.New("boom")}, enabledCfg(time.Hour), nil)
 	assert.Empty(t, errored.LastTurnID(context.Background(), "gw-1", "sess-1"))
+}
+
+func TestService_SessionForTurn(t *testing.T) {
+	hit := appsession.NewService(&fakeRepo{turnResp: "sess-1"}, enabledCfg(time.Hour), nil)
+	assert.Equal(t, "sess-1", hit.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+
+	miss := appsession.NewService(&fakeRepo{}, enabledCfg(time.Hour), nil)
+	assert.Empty(t, miss.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+
+	errored := appsession.NewService(&fakeRepo{turnResp: "sess-1", turnErr: errors.New("boom")}, enabledCfg(time.Hour), nil)
+	assert.Empty(t, errored.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+
+	disabled := appsession.NewService(&fakeRepo{turnResp: "sess-1"}, &config.Config{SessionStore: config.SessionStoreConfig{Enabled: false}}, nil)
+	assert.Empty(t, disabled.SessionForTurn(context.Background(), "gw-1", "resp_1"))
 }

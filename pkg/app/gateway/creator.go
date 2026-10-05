@@ -27,7 +27,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -37,14 +37,14 @@ const (
 )
 
 type CreateInput struct {
-	Slug                string
-	Domain              string
-	TenantID            string
-	Metadata            map[string]string
-	Telemetry           *telemetry.Telemetry
-	ClientTLSConfig     domain.ClientTLSConfig
-	SessionConfig       *domain.SessionConfig
-	TopicClassification *topic.Config
+	Slug            string
+	Domain          string
+	TenantID        string
+	Metadata        map[string]string
+	Telemetry       *telemetry.Telemetry
+	ClientTLSConfig domain.ClientTLSConfig
+	SessionConfig   *domain.SessionConfig
+	TrafficLabeling *trafficlabel.Config
 	// Entitlements is required when PlatformAdmin is true (full stamped caps).
 	Entitlements *domain.Entitlements
 	// PlatformAdmin is true when the JWT has no tenant claim (must stamp entitlements; TenantID comes from the body).
@@ -60,6 +60,7 @@ var _ Creator = (*creator)(nil)
 
 type creator struct {
 	repo             domain.Repository
+	registries       RegistryFinder
 	memoryCache      *cache.TTLMap
 	exporterFactory  appmetrics.ExporterFactory
 	logger           *slog.Logger
@@ -69,6 +70,7 @@ type creator struct {
 
 func NewCreator(
 	repo domain.Repository,
+	registries RegistryFinder,
 	manager *cache.TTLMapManager,
 	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
@@ -77,6 +79,7 @@ func NewCreator(
 ) Creator {
 	return &creator{
 		repo:             repo,
+		registries:       registries,
 		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
 		exporterFactory:  exporterFactory,
 		logger:           logger,
@@ -104,7 +107,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
-	g.TopicClassification = in.TopicClassification.Normalized()
+	g.TrafficLabeling = in.TrafficLabeling.Normalized()
 	// Platform create must stamp full entitlements; tenant callers cannot set them.
 	if in.PlatformAdmin {
 		if in.Entitlements == nil || !in.Entitlements.HasStampedLimits() {
@@ -125,6 +128,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		}
 	}
 	if err := g.Validate(); err != nil {
+		return nil, err
+	}
+	if err := validateTrafficLabelingRegistry(ctx, c.registries, g.ID, g.TrafficLabeling); err != nil {
 		return nil, err
 	}
 	maxInstances := 0

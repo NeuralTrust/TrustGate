@@ -21,7 +21,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/version"
 )
 
@@ -38,14 +38,14 @@ type GatewayResponse struct {
 	// for readers to dig out of metadata: a reader that missed it there read a
 	// gateway as open — the domain default — and showed a curated Store as
 	// wide open.
-	StoreMode           string                 `json:"store_mode"`
-	Telemetry           *telemetry.Telemetry   `json:"telemetry,omitempty"`
-	ClientTLSConfig     domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig       *domain.SessionConfig  `json:"session_config,omitempty"`
-	Entitlements        domain.Entitlements    `json:"entitlements"`
-	TopicClassification *topic.Config          `json:"topic_classification,omitempty"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
+	StoreMode       string                 `json:"store_mode"`
+	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
+	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
+	Entitlements    domain.Entitlements    `json:"entitlements"`
+	TrafficLabeling *trafficlabel.Config   `json:"traffic_labeling,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each
@@ -69,15 +69,15 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 			Proxy: proxyHost(g, proxyBaseDomain),
 			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
 		},
-		Metadata:            g.Metadata,
-		StoreMode:           g.StoreMode(),
-		Telemetry:           g.Telemetry,
-		ClientTLSConfig:     g.ClientTLSConfig,
-		SessionConfig:       g.SessionConfig,
-		Entitlements:        g.Entitlements,
-		TopicClassification: g.TopicClassification,
-		CreatedAt:           g.CreatedAt,
-		UpdatedAt:           g.UpdatedAt,
+		Metadata:        g.Metadata,
+		StoreMode:       g.StoreMode(),
+		Telemetry:       g.Telemetry,
+		ClientTLSConfig: g.ClientTLSConfig,
+		SessionConfig:   g.SessionConfig,
+		Entitlements:    g.Entitlements,
+		TrafficLabeling: g.TrafficLabeling,
+		CreatedAt:       g.CreatedAt,
+		UpdatedAt:       g.UpdatedAt,
 	}
 }
 

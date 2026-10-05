@@ -965,3 +965,56 @@ func TestComposer_GetPrompt_UnknownPromptSurfacesPendingConsent(t *testing.T) {
 		t.Fatalf("prompt on the linked upstream must still resolve: %v", err)
 	}
 }
+
+// A server with no account for this caller is waiting on someone, not broken.
+// Taken for an unreachable upstream, it failed the whole surface of a consumer
+// that fails closed, and a call to one of its tools answered "tool not found"
+// instead of saying whose account is missing.
+func TestComposer_ApplicationNotConnectedIsSkippedLikeAPendingConsent(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPerUser := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {tools: tools("search")},
+		"https://notion.example.com/mcp": {tools: tools("query")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ApplicationNotConnectedError{Provider: "com.notion/mcp", Registry: "notion"},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}}
+	rc := routable(consumer, regLinked, regPerUser)
+
+	got, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if names := toolNames(got); len(names) != 1 || names[0] != namedFor(regLinked, "search") {
+		t.Fatalf("tools = %v, want [%s] from the connected upstream only", names, namedFor(regLinked, "search"))
+	}
+
+	_, err = c.Resolve(context.Background(), rc, namedFor(regPerUser, "query"))
+	var notConnected *ApplicationNotConnectedError
+	if !errors.As(err, &notConnected) || notConnected.Provider != "com.notion/mcp" {
+		t.Fatalf("error = %v, want ApplicationNotConnectedError for notion", err)
+	}
+}
+
+func TestComposer_ApplicationNotConnectedWhenNoUpstreamHasAnAccount(t *testing.T) {
+	t.Parallel()
+	regShared := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {tools: tools("search")},
+	}}
+	creds := &fakeCreds{err: &ApplicationNotConnectedError{Provider: "linear", Registry: "linear", Shared: true}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	_, err := c.ListTools(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regShared))
+	var notConnected *ApplicationNotConnectedError
+	if !errors.As(err, &notConnected) || !notConnected.Shared {
+		t.Fatalf("error = %v, want the shared ApplicationNotConnectedError", err)
+	}
+	if errors.Is(err, ErrUpstreamUnavailable) {
+		t.Fatalf("error = %v reads as an unreachable upstream", err)
+	}
+}

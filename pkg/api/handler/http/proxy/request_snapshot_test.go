@@ -39,7 +39,9 @@ func TestRequestContextOwnsBuffersBeforeStreaming(t *testing.T) {
 	app := fiber.New()
 	c := app.AcquireCtx(raw)
 	defer app.ReleaseCtx(c)
-	c.Locals(string(infracontext.SessionContextKey), c.Get("X-Session"))
+	c.SetUserContext(infracontext.WithSession(c.UserContext(), infracontext.Session{
+		ID: c.Get("X-Session"), Source: infracontext.SessionSourceConfiguredHeader, Exposed: true,
+	}))
 	req := buildRequestContext(c, ids.New[ids.GatewayKind](), apiresolver.ProxyRoute{})
 	c.Path("/healthz")
 	for i := range c.Body() {
@@ -54,6 +56,33 @@ func TestRequestContextOwnsBuffersBeforeStreaming(t *testing.T) {
 	require.Equal(t, "original-session", req.SessionID)
 	require.Equal(t, "original-session", req.Headers["X-Session"][0])
 	require.Equal(t, "original", req.Query.Get("model"))
+}
+
+// Smart routing's complexity scorer and TrustGuard both read
+// RequestContext.SessionID, so a hidden generated id must never land there.
+func TestRequestContextCarriesOnlyTheEffectiveSessionID(t *testing.T) {
+	cases := []struct {
+		name    string
+		session infracontext.Session
+		want    string
+	}{
+		{"generated on a stateless request", infracontext.Session{ID: "gen-1", Source: infracontext.SessionSourceGenerated}, ""},
+		{"generated on a responses chain", infracontext.Session{ID: "gen-2", Source: infracontext.SessionSourceGenerated, Exposed: true}, "gen-2"},
+		{"client header", infracontext.Session{ID: "sess-1", Source: infracontext.SessionSourceKnownHeader, Exposed: true}, "sess-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := &fasthttp.RequestCtx{}
+			raw.Request.SetRequestURI("/team/v1/chat/completions")
+			raw.Request.Header.SetMethod("POST")
+			app := fiber.New()
+			c := app.AcquireCtx(raw)
+			defer app.ReleaseCtx(c)
+			c.SetUserContext(infracontext.WithSession(c.UserContext(), tc.session))
+			req := buildRequestContext(c, ids.New[ids.GatewayKind](), apiresolver.ProxyRoute{})
+			require.Equal(t, tc.want, req.SessionID)
+		})
+	}
 }
 
 func TestConsumerTraceSeparatesVerifiedIdentityFromEndUser(t *testing.T) {
