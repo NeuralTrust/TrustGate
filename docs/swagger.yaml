@@ -436,6 +436,15 @@ definitions:
     properties:
       active:
         type: boolean
+      audience:
+        default: application
+        description: |-
+          Audience is application (the default) or personal. It is set at create
+          and cannot change afterwards.
+        enum:
+        - application
+        - personal
+        type: string
       auth_binding:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
       fail_mode:
@@ -623,6 +632,14 @@ definitions:
     properties:
       active:
         type: boolean
+      audience:
+        description: |-
+          Audience is set at create and cannot change: a value other than the stored
+          one answers 422.
+        enum:
+        - application
+        - personal
+        type: string
       auth_binding:
         allOf:
         - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
@@ -715,6 +732,11 @@ definitions:
     properties:
       active:
         type: boolean
+      audience:
+        enum:
+        - application
+        - personal
+        type: string
       auth_binding:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse'
       auth_ids:
@@ -4120,6 +4142,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a consumer
@@ -4252,6 +4278,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4551,6 +4581,14 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:

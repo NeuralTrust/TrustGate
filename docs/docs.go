@@ -1017,6 +1017,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -1152,6 +1158,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1712,6 +1724,18 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -5255,6 +5279,15 @@ const docTemplate = `{
                 "active": {
                     "type": "boolean"
                 },
+                "audience": {
+                    "description": "Audience is application (the default) or personal. It is set at create\nand cannot change afterwards.",
+                    "type": "string",
+                    "default": "application",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
+                },
                 "auth_binding": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
                 },
@@ -5527,6 +5560,14 @@ const docTemplate = `{
                 "active": {
                     "type": "boolean"
                 },
+                "audience": {
+                    "description": "Audience is set at create and cannot change: a value other than the stored\none answers 422.",
+                    "type": "string",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
+                },
                 "auth_binding": {
                     "description": "AuthBinding replaces the whole binding. Omit to keep it; send empty lists\nto clear it.",
                     "allOf": [
@@ -5656,6 +5697,13 @@ const docTemplate = `{
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "audience": {
+                    "type": "string",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
                 },
                 "auth_binding": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse"
