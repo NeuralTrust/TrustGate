@@ -3348,7 +3348,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/registries/{id}/tool-pinning": {
             "put": {
-                "description": "Makes the listed tools exactly the approved set (fingerprints are computed by the server): listed tools become approved, any other approved definition goes back to pending, and unlisted rejections stay rejected. Also sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.",
+                "description": "Makes the listed tools exactly the approved set and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. Tools are identified by the (name, fingerprint) returned by GET .../tools; the server re-reads the live tool list and approves the definitions it finds there. If a listed tool is no longer in the live list with that fingerprint (the upstream changed since it was reviewed) the call is 422 naming the stale tools and nothing is applied; an unreachable upstream is 502. A registry whose tools depend on the caller (per-principal auth or URL variables) cannot be introspected, so only an empty list is accepted for it. Any other approved definition goes back to pending and unlisted rejections stay rejected. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3377,7 +3377,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "The confirmed tool list",
+                        "description": "The confirmed tools, by name and fingerprint",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -3416,6 +3416,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -3427,7 +3433,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/registries/{id}/tools": {
             "get": {
-                "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
+                "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema), with two additive fields: fingerprint, the identity a pinned registry screens tools by (the value to send to PUT tool-pinning), and pinnable, false (with no fingerprint) for a tool whose definition cannot be stored. Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
                 "produces": [
                     "application/json"
                 ],
@@ -6788,7 +6794,7 @@ const docTemplate = `{
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PinnedToolRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest"
                     }
                 }
             }
@@ -6936,23 +6942,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest"
                     }
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PinnedToolRequest": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "inputSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "name": {
-                    "type": "string"
                 }
             }
         },
@@ -9559,8 +9548,22 @@ const docTemplate = `{
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool"
+                        "$ref": "#/definitions/pkg_api_handler_http_registry.RegistryTool"
                     }
+                }
+            }
+        },
+        "pkg_api_handler_http_registry.RegistryTool": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string"
+                },
+                "pinnable": {
+                    "type": "boolean"
+                },
+                "tool": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool"
                 }
             }
         },
