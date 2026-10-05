@@ -1277,20 +1277,24 @@ func TestLoadConfig_RateLimitDisabledIgnoresTheSyncTuning(t *testing.T) {
 	}
 }
 
-func TestProviderAllowPrivateNetworks(t *testing.T) {
+func TestOutboundAllowPrivateNetworks(t *testing.T) {
 	tests := []struct {
-		name string
-		env  string
-		want bool
+		name   string
+		env    string
+		legacy string
+		want   bool
 	}{
-		{"unset defaults to on", "", true},
-		{"explicit true", "true", true},
-		{"explicit false", "false", false},
+		{"unset defaults to on", "", "", true},
+		{"explicit true", "true", "", true},
+		{"explicit false", "false", "", false},
+		{"legacy false keeps the guard", "", "false", false},
+		{"new name wins over legacy", "true", "false", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", tc.env)
-			if got := getProviderConfig().AllowPrivateNetworks; got != tc.want {
+			t.Setenv("OUTBOUND_ALLOW_PRIVATE_NETWORKS", tc.env)
+			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", tc.legacy)
+			if got := getOutboundConfig().AllowPrivateNetworks; got != tc.want {
 				t.Fatalf("AllowPrivateNetworks = %v, want %v", got, tc.want)
 			}
 		})

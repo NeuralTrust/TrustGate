@@ -19,15 +19,22 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 const (
@@ -74,6 +81,26 @@ func newGRPCExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 	} else {
 		opts = append(opts, otlploggrpc.WithEndpoint(s.Endpoint))
 	}
+	if s.guarded {
+		// The SDK fills every field the caller leaves unset from OTEL_EXPORTER_OTLP_*
+		// (headers, compression, TLS material, insecure). A tenant's collector must
+		// get none of the operator's, so each of them is set explicitly here.
+		opts = append(opts,
+			otlploggrpc.WithHeaders(nonNilHeaders(s.Headers)),
+			otlploggrpc.WithCompressor(s.Compression),
+			otlploggrpc.WithDialOption(grpc.WithContextDialer(guardedGRPCDialer)))
+		if s.Insecure {
+			// Credentials take precedence over every other transport setting, so the
+			// operator's OTEL_EXPORTER_OTLP_CERTIFICATE/CLIENT_KEY (which would
+			// otherwise build a TLS config that beats WithInsecure) cannot apply.
+			return otlploggrpc.New(ctx, append(opts, otlploggrpc.WithTLSCredentials(insecure.NewCredentials()))...)
+		}
+		tlsCfg, err := guardedTLSConfig(s.TLS)
+		if err != nil {
+			return nil, err
+		}
+		return otlploggrpc.New(ctx, append(opts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(tlsCfg)))...)
+	}
 	if len(s.Headers) > 0 {
 		opts = append(opts, otlploggrpc.WithHeaders(s.Headers))
 	}
@@ -103,7 +130,9 @@ func newHTTPExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 			opts = append(opts, otlploghttp.WithURLPath(path))
 		}
 	}
-	if len(s.Headers) > 0 {
+	if s.guarded {
+		opts = append(opts, otlploghttp.WithHeaders(nonNilHeaders(s.Headers)))
+	} else if len(s.Headers) > 0 {
 		opts = append(opts, otlploghttp.WithHeaders(s.Headers))
 	}
 	if s.Compression == compressionGzip {
@@ -111,16 +140,64 @@ func newHTTPExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 	} else {
 		opts = append(opts, otlploghttp.WithCompression(otlploghttp.NoCompression))
 	}
-	if s.Insecure {
-		opts = append(opts, otlploghttp.WithInsecure())
-	} else if s.TLS != nil {
-		tlsCfg, err := buildTLSConfig(s.TLS)
-		if err != nil {
+	var tlsCfg *tls.Config
+	if s.guarded && !s.Insecure {
+		// Explicit even when the tenant gave no TLS settings: the system roots,
+		// never OTEL_EXPORTER_OTLP_CERTIFICATE or the client key from the env.
+		var err error
+		if tlsCfg, err = guardedTLSConfig(s.TLS); err != nil {
 			return nil, err
 		}
+	} else if !s.Insecure && s.TLS != nil {
+		var err error
+		if tlsCfg, err = buildTLSConfig(s.TLS); err != nil {
+			return nil, err
+		}
+	}
+	if s.guarded {
+		// WithHTTPClient takes precedence over WithTLSClientConfig, so the TLS
+		// settings are carried by the guarded transport itself.
+		opts = append(opts,
+			otlploghttp.WithHTTPClient(guardedHTTPClient(s.Timeout, tlsCfg)),
+			// Set the SDK's own TLS config explicitly (to none) so the env
+			// certificate and client key never populate it.
+			otlploghttp.WithTLSClientConfig(nil))
+	} else if tlsCfg != nil {
 		opts = append(opts, otlploghttp.WithTLSClientConfig(tlsCfg))
 	}
+	if s.Insecure {
+		opts = append(opts, otlploghttp.WithInsecure())
+	}
 	return otlploghttp.New(ctx, opts...)
+}
+
+// guardedHTTPClient dials only public destinations and carries no proxy, so a
+// redirect or an HTTP_PROXY in the environment cannot route around the guard.
+func guardedHTTPClient(timeout time.Duration, tlsCfg *tls.Config) *http.Client {
+	transport := netguard.NewTransport()
+	transport.Proxy = nil
+	transport.TLSClientConfig = tlsCfg
+	return &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: netguard.CheckRedirect}
+}
+
+func guardedGRPCDialer(ctx context.Context, addr string) (net.Conn, error) {
+	return netguard.Shared().DialContext(ctx, "tcp", addr)
+}
+
+func nonNilHeaders(h map[string]string) map[string]string {
+	if h == nil {
+		return map[string]string{}
+	}
+	return h
+}
+
+// guardedTLSConfig is the tenant's TLS settings, or system roots when it gave
+// none.
+func guardedTLSConfig(t *TLSSettings) (*tls.Config, error) {
+	if t == nil {
+		return &tls.Config{MinVersion: tls.VersionTLS12}, nil
+	}
+	return buildTLSConfig(t)
 }
 
 func hasScheme(endpoint string) bool {

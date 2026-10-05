@@ -19,7 +19,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -47,27 +46,14 @@ func SetDefaultHTTPTimeout(d time.Duration) {
 	}
 }
 
-// allowPrivateNetworks mirrors PROVIDER_ALLOW_PRIVATE_NETWORKS (config default
-// true; shared gateways set false). The zero value refuses, so a binary that
-// never calls SetAllowPrivateNetworks fails closed.
-// It is read on every dial, so a change applies to pooled connections too.
-var allowPrivateNetworks atomic.Bool
-
-// providerGuard dials every provider connection. base_url comes from the tenant,
-// so the resolved address is checked at dial time: a private, loopback or
-// link-local destination (cloud metadata included) is refused unless the
-// operator opted in.
-var providerGuard = netguard.New(
-	&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
-	allowPrivateNetworks.Load,
-)
-
 // SetAllowPrivateNetworks lets provider clients reach private, loopback and
-// link-local addresses. Single-operator (hybrid, self-hosted) gateways leave it
-// on; multi-tenant gateways must turn it off, since base_url is tenant input.
-// Call it during initialization.
+// link-local addresses. It drives the shared netguard escape hatch
+// (OUTBOUND_ALLOW_PRIVATE_NETWORKS, config default true), which every
+// tenant-steerable outbound client reads. Single-operator (hybrid, self-hosted)
+// gateways leave it on; multi-tenant gateways must turn it off. Call it during
+// initialization.
 func SetAllowPrivateNetworks(allow bool) {
-	allowPrivateNetworks.Store(allow)
+	netguard.SetAllowPrivate(allow)
 }
 
 func SetDefaultResponseHeaderTimeout(d time.Duration) {
@@ -166,7 +152,7 @@ func DrainBody(r io.ReadCloser) {
 // high-concurrency provider calls. Each provider key gets its own Transport
 // so connection pools are isolated between providers.
 func newTransport(trusted bool) *http.Transport {
-	dial := providerGuard.DialContext
+	dial := netguard.Shared().DialContext
 	if trusted {
 		dial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	}

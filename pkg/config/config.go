@@ -182,6 +182,7 @@ type Config struct {
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
+	Outbound            OutboundConfig
 	Catalog             CatalogConfig
 	CORS                CORSConfig
 	Logger              LoggerConfig
@@ -449,11 +450,18 @@ type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
 	MaxRetries            int
-	// AllowPrivateNetworks lets provider clients dial loopback, RFC1918,
+}
+
+// OutboundConfig governs every outbound client whose destination a tenant can
+// steer: provider base_url, OAuth/OIDC/STS/introspection endpoints, telemetry
+// exporters.
+type OutboundConfig struct {
+	// AllowPrivateNetworks lets those clients dial loopback, RFC1918,
 	// link-local and other non-public addresses. On by default: hybrid and
 	// self-hosted gateways serve one operator and reach its private model
-	// hosts. Registry base_url is tenant input, so shared gateways turn it off
-	// (PROVIDER_ALLOW_PRIVATE_NETWORKS=false in k8s/overlays/*/config.env).
+	// hosts, IdPs and collectors. The destinations are tenant input, so shared
+	// gateways turn it off (OUTBOUND_ALLOW_PRIVATE_NETWORKS=false in
+	// k8s/overlays/*/config.env).
 	AllowPrivateNetworks bool
 }
 
@@ -563,6 +571,7 @@ func LoadConfig() (*Config, error) {
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
+		Outbound:            getOutboundConfig(),
 		Catalog:             getCatalogConfig(),
 		CORS:                getCORSConfig(),
 		Logger:              getLoggerConfig(),
@@ -836,7 +845,15 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
-		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", true),
+	}
+}
+
+func getOutboundConfig() OutboundConfig {
+	return OutboundConfig{
+		// PROVIDER_ALLOW_PRIVATE_NETWORKS is the pre-rename name: an operator who
+		// set it false keeps the guard until they move to the new name.
+		AllowPrivateNetworks: getEnvBool("OUTBOUND_ALLOW_PRIVATE_NETWORKS",
+			getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", true)),
 	}
 }
 

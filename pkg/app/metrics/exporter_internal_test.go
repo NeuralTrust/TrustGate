@@ -73,6 +73,7 @@ func (f *fakeExporter) publishedCount() int {
 type fakeFactory struct {
 	mu               sync.Mutex
 	builds           int
+	tenantBuilds     int
 	buildErr         error
 	built            []telemetrydomain.ExporterConfig
 	publishErrByName map[string]error
@@ -99,6 +100,15 @@ func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error
 }
 
 func (f *fakeFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *fakeFactory) ValidateTenant(_ telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *fakeFactory) BuildTenant(cfg telemetrydomain.ExporterConfig) (Exporter, error) {
+	f.mu.Lock()
+	f.tenantBuilds++
+	f.mu.Unlock()
+	return f.Build(cfg)
+}
 
 func (f *fakeFactory) builtConfigs() []telemetrydomain.ExporterConfig {
 	f.mu.Lock()
@@ -424,4 +434,42 @@ func TestPipeline_PlaygroundPublishesExportersAndStore(t *testing.T) {
 	assert.Equal(t, 1, exporter.publishedCount(), "playground must publish to Activity exporters")
 	saved := store.saved()
 	require.Len(t, saved, 1, "playground store must still receive the event for the panel")
+}
+
+// An identical config written by an operator and by a tenant must not share a
+// cache entry: the tenant one is built with the tenant policy, and a refusal of
+// it must not take the operator's exporter down with it.
+func TestExporterCache_TenantAndOperatorConfigsAreBuiltSeparately(t *testing.T) {
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	cfg := telemetrydomain.ExporterConfig{Name: "otlp", Settings: map[string]interface{}{"endpoint": "x"}}
+
+	got := cache.ResolveSourced([]SourcedExporter{{Config: cfg}, {Config: cfg, Tenant: true}})
+
+	if len(got) != 2 {
+		t.Fatalf("resolved %d exporters, want 2 (one per origin)", len(got))
+	}
+	if factory.buildCount() != 2 || factory.tenantBuilds != 1 {
+		t.Fatalf("builds = %d, tenant builds = %d, want 2 and 1", factory.buildCount(), factory.tenantBuilds)
+	}
+}
+
+// Gateway-written exporters, overrides of an operator default included, are
+// tenant input; only the defaults file is the operator's.
+func TestPipeline_GatewayExportersAreBuiltWithTheTenantPolicy(t *testing.T) {
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(nil, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "metadata-otlp", Type: "otlp"},
+		telemetrydomain.ExporterConfig{Name: "raw-postgres", Type: "postgres"})
+
+	p.resolveTargets([]telemetrydomain.ExporterConfig{
+		{Name: "raw-postgres", Type: "postgres", Settings: map[string]interface{}{"dsn_env": "DATABASE_URL"}},
+		{Name: "extra", Type: "otlp"},
+	})
+
+	if factory.buildCount() != 3 || factory.tenantBuilds != 2 {
+		t.Fatalf("builds = %d, tenant builds = %d, want 3 and 2 (the default is operator-built, the override and the addition are tenant-built)",
+			factory.buildCount(), factory.tenantBuilds)
+	}
 }

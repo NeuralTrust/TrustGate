@@ -23,6 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 // OAuth2TokenValidator adapts the shared JWT verifier to the MCP-plane
@@ -44,6 +45,7 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 	if cfg == nil {
 		return nil, fmt.Errorf("%w: no oauth2 config", ErrInvalidToken)
 	}
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	jwksURL := strings.TrimSpace(cfg.JWKSURL)
 	if jwksURL == "" && !cfg.HasInlineKeys() {
 		discovered, err := v.discovery.jwksURI(ctx, cfg.Issuer)

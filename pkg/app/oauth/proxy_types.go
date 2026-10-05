@@ -35,6 +35,15 @@ func (e *OAuthError) Error() string {
 	return e.Code + ": " + e.Description
 }
 
+// The error code stays because identity providers need it to be told apart
+// (invalid_grant, invalid_client); the free-text description is attacker
+// controlled when the provider is tenant-chosen, so it is cut short and stripped
+// of control characters before it is reflected.
+const (
+	maxUpstreamErrorCodeLen = 64
+	maxUpstreamErrorDescLen = 200
+)
+
 func oauthErr(code, desc string) *OAuthError { return &OAuthError{Code: code, Description: desc} }
 
 type PendingAuthorization struct {

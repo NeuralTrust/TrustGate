@@ -208,7 +208,7 @@ func TestCreator_Create_RejectsUnknownExporter(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	factory := metricsmocks.NewExporterFactory(t)
 	factory.EXPECT().
-		Validate(mock.MatchedBy(func(cfg telemetry.ExporterConfig) bool { return cfg.Name == "datadog" })).
+		ValidateTenant(mock.MatchedBy(func(cfg telemetry.ExporterConfig) bool { return cfg.Name == "datadog" })).
 		Return(errors.New("unknown exporter")).
 		Once()
 
@@ -232,7 +232,7 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	factory := metricsmocks.NewExporterFactory(t)
-	factory.EXPECT().Validate(mock.Anything).Return(nil).Maybe()
+	factory.EXPECT().ValidateTenant(mock.Anything).Return(nil).Maybe()
 
 	creator := appgateway.NewCreator(repo, nil, newCacheManager(), factory, newTestLogger(), nil, true)
 

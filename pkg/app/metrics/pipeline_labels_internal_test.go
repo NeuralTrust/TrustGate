@@ -61,6 +61,12 @@ func (f *labelFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, erro
 
 func (f *labelFactory) Validate(telemetrydomain.ExporterConfig) error { return nil }
 
+func (f *labelFactory) ValidateTenant(telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *labelFactory) BuildTenant(cfg telemetrydomain.ExporterConfig) (Exporter, error) {
+	return f.Build(cfg)
+}
+
 func newLabelPipeline(factory *labelFactory, defaults ...telemetrydomain.ExporterConfig) *Pipeline {
 	cache := NewExporterCache(factory, internalTestLogger())
 	return NewPipeline(NewBuilder(adapter.NewRegistry(), stubPricing{}), cache, nil, internalTestLogger(), defaults...)
