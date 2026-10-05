@@ -36,4 +36,5 @@ var (
 	ErrExpiryInThePast = fmt.Errorf("auth: expires_at is in the past: %w", commonerrors.ErrValidation)
 	ErrDuplicateOAuth2 = fmt.Errorf("auth: another enabled oauth2 auth already covers this issuer and audience: %w", commonerrors.ErrAlreadyExists)
 	ErrOwnedKeyExists  = fmt.Errorf("auth: a personal key already exists for this owner: %w", commonerrors.ErrAlreadyExists)
+	ErrOwnedKey        = fmt.Errorf("auth: owned_key: %w", commonerrors.ErrManagedByOwner)
 )

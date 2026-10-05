@@ -442,3 +442,28 @@ func TestAuth_IsOwned(t *testing.T) {
 		t.Fatal("ErrOwnedKeyExists must answer as an already-exists conflict")
 	}
 }
+
+func TestAuth_ManagedBy(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		owner, caller string
+		want          error
+	}{
+		"admin on an application key":  {},
+		"admin on an owned key":        {owner: "alice", want: ErrOwnedKey},
+		"owner on their key":           {owner: "alice", caller: "alice"},
+		"another user on an owned key": {owner: "alice", caller: "bob", want: ErrNotFound},
+		"a user on an application key": {caller: "alice", want: ErrNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := (&Auth{OwnerID: tc.owner}).ManagedBy(tc.caller)
+			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("ManagedBy(%q) on owner %q = %v, want %v", tc.caller, tc.owner, err, tc.want)
+			}
+		})
+	}
+	if !errors.Is(ErrOwnedKey, commonerrors.ErrManagedByOwner) {
+		t.Fatal("ErrOwnedKey must answer as managed by its owner")
+	}
+}

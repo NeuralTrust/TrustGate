@@ -81,6 +81,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	if err := existing.ManagedBy(""); err != nil {
+		return nil, err
+	}
 	previousType := existing.Type
 	previousEnabled := existing.Enabled
 	if in.Name != nil {

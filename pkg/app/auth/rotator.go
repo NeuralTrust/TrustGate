@@ -40,6 +40,7 @@ type RotateInput struct {
 	ID        ids.AuthID
 	GatewayID ids.GatewayID
 	Expiry    *ExpiryChange
+	OwnerID   string
 }
 
 //go:generate mockery --name=Rotator --dir=. --output=./mocks --filename=auth_rotator_mock.go --case=underscore --with-expecter
@@ -90,6 +91,9 @@ func (r *rotator) Rotate(ctx context.Context, in RotateInput) (*domain.Auth, err
 	}
 	if existing.GatewayID != in.GatewayID {
 		return nil, domain.ErrNotFound
+	}
+	if err := existing.ManagedBy(in.OwnerID); err != nil {
+		return nil, err
 	}
 
 	previousHash, err := existing.RotateAPIKey()

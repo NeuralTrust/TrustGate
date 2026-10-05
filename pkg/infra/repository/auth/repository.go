@@ -295,13 +295,16 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
 		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
-		   AND ($4::boolean IS NULL OR enabled = $4)`
+		   AND ($4::boolean IS NULL OR enabled = $4)
+		   AND ($5::boolean IS NOT TRUE OR owner_id IS NULL)
+		   AND ($6 = '' OR owner_id = $6)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 	typeParam := storedTypeNames(filter.Type)
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
+		filter.ExcludeOwned, filter.OwnerID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("auth repository: count: %w", err)
 	}
 
@@ -312,9 +315,12 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
 		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)
+		   AND ($5::boolean IS NOT TRUE OR owner_id IS NULL)
+		   AND ($6 = '' OR owner_id = $6)
 		 ORDER BY ` + authOrderBy(filter.Sort) + `
-		 LIMIT $5 OFFSET $6`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled, page.Size, offset)
+		 LIMIT $7 OFFSET $8`
+	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
+		filter.ExcludeOwned, filter.OwnerID, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("auth repository: list: %w", err)
 	}

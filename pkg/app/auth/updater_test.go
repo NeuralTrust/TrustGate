@@ -354,3 +354,30 @@ func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
 		t.Fatalf("expected disabling one of two usable MCP auths to be allowed, got %v", err)
 	}
 }
+
+func TestUpdater_Update_RefusesAnOwnedKey(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing, err := domain.NewAPIKeyAuth(gwID, "personal-alice", true, nil)
+	if err != nil {
+		t.Fatalf("NewAPIKeyAuth: %v", err)
+	}
+	existing.OwnerID = "alice"
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	_, err = updater.Update(context.Background(), appauth.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		Name:      ptr("renamed"),
+		Enabled:   ptr(false),
+	})
+	if !errors.Is(err, domain.ErrOwnedKey) || !errors.Is(err, commonerrors.ErrManagedByOwner) {
+		t.Fatalf("err = %v, want ErrOwnedKey", err)
+	}
+	if existing.Name != "personal-alice" || !existing.Enabled {
+		t.Fatalf("owned key was modified: %+v", existing)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
@@ -104,4 +105,47 @@ func TestRotator_Rotate_RefusesAnAuthOfAnotherGateway(t *testing.T) {
 	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
 		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: ids.New[ids.GatewayKind]()})
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
+}
+
+func TestRotator_Rotate_OwnedKeyNeedsItsOwner(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		keyOwner, caller string
+		wantErr          error
+	}{
+		"owner rotates their key":           {keyOwner: "alice", caller: "alice"},
+		"admin rotates an owned key":        {keyOwner: "alice", caller: "", wantErr: domain.ErrOwnedKey},
+		"another user rotates an owned key": {keyOwner: "alice", caller: "bob", wantErr: domain.ErrNotFound},
+		"a user rotates an application key": {keyOwner: "", caller: "alice", wantErr: domain.ErrNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			existing := existingAPIKey(t, gwID)
+			existing.OwnerID = tc.keyOwner
+			firstHash := existing.KeyHash
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			signaler := &configsynctest.FakeSignaler{}
+			if tc.wantErr == nil {
+				repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+
+			_, err := appauth.NewRotator(repo, newCacheManager(), publisher, newTestLogger(), signaler).
+				Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID, OwnerID: tc.caller})
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				require.Equal(t, firstHash, existing.KeyHash)
+				require.Zero(t, signaler.Count())
+				return
+			}
+			require.NoError(t, err)
+			require.NotEqual(t, firstHash, existing.KeyHash)
+			require.Equal(t, tc.keyOwner, existing.OwnerID)
+			require.Equal(t, 1, signaler.Count())
+		})
+	}
 }

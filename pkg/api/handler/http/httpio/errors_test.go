@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
@@ -57,6 +58,8 @@ func TestMapDomainError(t *testing.T) {
 		{name: "attaching an mcp-wide policy → 422", err: consumerdomain.ErrPolicyMCPWide, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "consumer: policy is MCP-wide: it already runs on every MCP consumer; demote it before attaching a consumer"},
 		{name: "validation → 422", err: commonerrors.ErrValidation, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "schema"},
 		{name: "validation with detail → 422 keeps detail", err: fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "tenant_id is required"},
+		{name: "managed by owner → 422", err: commonerrors.ErrManagedByOwner, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "owned_key", wantMsgPart: "only its owner", wantMsgAbsent: "managed by its owner"},
+		{name: "owned auth key → 422 owned_key", err: authdomain.ErrOwnedKey, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "owned_key", wantMsgPart: "Delete it to revoke it"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},
 		{name: "result too large → 422", err: commonerrors.ErrResultTooLarge, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "result_too_large", wantMsgPart: "pagination"},
 		{name: "unknown → 500 without leaking", err: errors.New("boom secret=hunter2"), wantStatus: fiber.StatusInternalServerError, wantCode: "internal_error", wantMsgPart: "X-Request-ID"},
