@@ -254,9 +254,10 @@ func API(c *container.Container) error {
 		identityResolver resolver.IdentityResolver,
 		dataFinder appconsumer.DataFinder,
 		gatewayResolver resolver.GatewayResolver,
+		storeKeys appconsumer.StoreKeyResolver,
 		logger *slog.Logger,
 	) *middleware.AuthMiddleware {
-		return middleware.NewAuthMiddleware(identityResolver, dataFinder, gatewayResolver, logger, utcNow)
+		return middleware.NewAuthMiddleware(identityResolver, dataFinder, gatewayResolver, storeKeys, logger, utcNow)
 	}); err != nil {
 		return err
 	}

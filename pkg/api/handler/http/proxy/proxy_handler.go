@@ -146,6 +146,9 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return writeProxyError(c, err)
 	}
+	if domainconsumer.IsStoreSlug(route.ConsumerSlug) {
+		return writeProxyError(c, errPathNotFound)
+	}
 	gatewayID, consumer, authCtx, err := resolveConsumer(c, route)
 	if err != nil {
 		return writeProxyError(c, err)

@@ -293,19 +293,20 @@ Depends: P5 (rebase on P1, A3). Est.: ≈325 (code 110 / test 215). Commit bound
 
 Depends: P11, P7. Est.: ≈300 (code 110 / test 190). Commit boundary: (a) `feat`; (b) `chore`: mocks.
 
-- [ ] 12.1 `pkg/domain/consumer`: `StoreSlug = "store"`. Create `pkg/app/consumer/store_key_resolver.go`: `StoreKeyResolver` and `ErrStoreKeyRejected` with mockery. `FindByAPIKey`, then `Enabled ∧ api_key ∧ IsOwned() ∧ GatewayID == gw`. `ErrNotFound` (which includes `ErrExpired`) and every failed check → `ErrStoreKeyRejected`. Infra errors are wrapped with `%w`.
-- [ ] 12.2 `pkg/api/middleware/auth.go:56-101,161-182`: `serveStore` runs hybrid → 404, then `Data` error → 500, then `!HasPersonalConsumers()` → 404 (byte-identical to the `MatchSlug` miss), then no key → 401, then resolve → 401 or 500. `attach` takes `Principal{Subject: owner_id, Method: api_key}` and `AuthContext{AuthID, OwnerID}`, and `rc == nil` skips the consumer locals. `NewAuthMiddleware` takes `storeKeys`.
-- [ ] 12.3 `pkg/container/modules/consumer.go` `provideConsumerServices` (both planes, `core_data.go:106`): provide `NewStoreKeyResolver`.
-- [ ] 12.4 `proxy_handler.go`: a guard (interim) makes the store slug with no store wiring answer 404 `not_found`. P14 replaces it.
-- [ ] 12.5 Test `store_key_resolver_test.go`: the 401 matrix (unknown, disabled, expired, unowned, another gateway, non-`api_key`) and the 500 wrap.
-- [ ] 12.6 Test `auth_test.go`:
+- [x] 12.1 `pkg/domain/consumer`: `StoreSlug = "store"` (it already existed for the MCP Store, so it is reused and its doc says the proxy plane serves `/{StoreSlug}/v1`). Create `pkg/app/consumer/store_key_resolver.go`: `StoreKeyResolver` and `ErrStoreKeyRejected` with mockery. `FindByAPIKey`, then `Enabled ∧ api_key ∧ IsOwned() ∧ GatewayID == gw`. `ErrNotFound` (which includes `ErrExpired`) and every failed check → `ErrStoreKeyRejected`. Infra errors are wrapped with `%w`. As built: `NewStoreKeyResolver(apiKeys, now)` takes a clock and checks `Auth.AcceptsAPIKey(hash, now) ∧ IsOwned() ∧ GatewayID == gw`; the not-found test is `commonerrors.ErrNotFound`, because `authdomain.ErrExpired` wraps that and not `authdomain.ErrNotFound`.
+- [x] 12.2 `pkg/api/middleware/auth.go:56-101,161-182`: `serveStore` runs hybrid → 404, then `Data` error → 500, then `!HasPersonalConsumers()` → 404 (byte-identical to the `MatchSlug` miss), then no key → 401, then resolve → 401 or 500. `attach` takes `Principal{Subject: owner_id, Method: api_key}` and `AuthContext{AuthID, OwnerID}`, and `rc == nil` skips the consumer locals. `NewAuthMiddleware` takes `storeKeys`. As built: `serveStore(c, gw, route)` loads `Data` itself after the hybrid check; a nil `storeKeys` answers 404 first, with no `Data` load, and `NewAuthMiddleware` warns once when it is nil; a resolver infra error logs at Warn, a rejection at Debug; `AuthContext.Subject` is the owner, like the principal; the slug test is `consumerdomain.IsStoreSlug`.
+- [x] 12.3 `pkg/container/modules/consumer.go` `provideConsumerServices` (both planes, `core_data.go:106`): provide `NewStoreKeyResolver` (with `utcNow`), and `modules/api.go` passes it to `NewAuthMiddleware`.
+- [x] 12.4 `proxy_handler.go`: a guard (interim) makes the store slug with no store wiring answer 404 `not_found`. P14 replaces it. Test `TestHandle_StoreSlugIsNotFoundWithoutStoreWiring`.
+- [x] 12.5 Test `store_key_resolver_test.go`: the 401 matrix (unknown, disabled, expired, unowned, another gateway, non-`api_key`) and the 500 wrap.
+- [x] 12.6 Test `auth_test.go` (there is no such file: the tests went into `auth_resolver_test.go`, the `AuthMiddleware` suite, as in 11.7):
   - The 404 cases (no personal consumers, only inactive ones, hybrid) with a counting `APIKeyFinder` fake that records zero calls, and a body equal to today's unknown-slug body.
   - Rejected keys → 401, including an application key.
   - The key in `X-AG-API-Key` and in `Authorization: Bearer`.
   - Principal and `AuthContext.OwnerID` in ctx.
   - Other slugs unchanged.
 - Accept (12.1–12.6): `llm-store-gateway › Other slugs unchanged`, `› Gateway without personal consumers`, `› Only inactive personal consumers`, `› Hybrid gateway`, `› Valid personal key` (unit), `› Rejected keys`, `› Context of a personal request` (middleware half); `personal-key-isolation › Application key on the store`; `llm-store-oss-invariance › Fresh OSS gateway` (unit).
-- [ ] 12.7 Run VG.
+- [x] 12.7 Run VG: `go build ./...`, `go vet ./...`, `go vet -tags functional ./...`, `go test -race ./pkg/...`, `golangci-lint run` on the touched packages, `make license-check`; the slug-routing functional tests (`TestProxyE2E|TestProxyAPIKeyExpiry|TestModelsDiscovery|TestRoutingIntent|TestHybridGatewayGuardE2E|TestDBLessDataPlane`) pass on disposable Postgres and Redis. Hand-written diff vs P11+P7: 414 lines after the review fixes (395 before).
+- Follow-up (out of scope, from the P12 review): hash the key once instead of twice (`APIKeyFinder.FindByAPIKey` hashes it, then `StoreKeyResolver` hashes it again for `AcceptsAPIKey`); and a short negative cache for unknown keys on the full plane, so repeated unknown-key probes on a gateway with personal consumers stop reaching Postgres, cleared with `auth_key` on `InvalidateGatewayDataEvent`.
 
 ## Phase 13: S5c `StoreSelector` (base P11)
 

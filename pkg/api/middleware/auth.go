@@ -15,6 +15,7 @@
 package middleware
 
 import (
+	"cmp"
 	"errors"
 	"log/slog"
 	"time"
@@ -37,6 +38,7 @@ type AuthMiddleware struct {
 	resolver        resolver.IdentityResolver
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
+	storeKeys       appconsumer.StoreKeyResolver
 	logger          *slog.Logger
 	now             func() time.Time
 }
@@ -45,16 +47,21 @@ func NewAuthMiddleware(
 	identityResolver resolver.IdentityResolver,
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
+	storeKeys appconsumer.StoreKeyResolver,
 	logger *slog.Logger,
 	now func() time.Time,
 ) *AuthMiddleware {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	if storeKeys == nil {
+		cmp.Or(logger, slog.Default()).Warn("no store key resolver is wired, so /store/v1 answers 404")
+	}
 	return &AuthMiddleware{
 		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
+		storeKeys:       storeKeys,
 		logger:          logger,
 		now:             now,
 	}
@@ -72,6 +79,9 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		route, err := resolver.ResolveProxyPath(c.Path())
 		if err != nil {
 			return notFound(c)
+		}
+		if consumerdomain.IsStoreSlug(route.ConsumerSlug) {
+			return m.serveStore(c, gw, route)
 		}
 		data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)
 		if err != nil {
@@ -105,6 +115,45 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
 	}
+}
+
+func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, route resolver.ProxyRoute) error {
+	if m.storeKeys == nil || gw.ServedByHybridDataPlane() {
+		return notFound(c)
+	}
+	data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)
+	if err != nil {
+		return internalError(c, "failed to load gateway data")
+	}
+	if !data.HasPersonalConsumers() {
+		return notFound(c)
+	}
+	rawKey := resolver.APIKeyFromRequest(c)
+	if rawKey == "" {
+		return unauthenticated(c)
+	}
+	key, err := m.storeKeys.Resolve(c.UserContext(), gw.ID, rawKey)
+	if errors.Is(err, appconsumer.ErrStoreKeyRejected) {
+		m.debug(c).Debug("store key rejected", slog.String("gateway_slug", gw.Slug))
+		return unauthenticated(c)
+	}
+	if err != nil {
+		m.debug(c).Warn("store key resolution failed",
+			slog.String("gateway_slug", gw.Slug),
+			slog.String("error", err.Error()))
+		return internalError(c, "failed to resolve api key")
+	}
+	c.Locals(resolver.ProxyRouteLocalsKey, route)
+	m.attach(c, &appauth.AuthContext{
+		Principal:   &identity.Principal{Subject: key.OwnerID, Method: identity.MethodAPIKey},
+		Method:      appauth.MethodAPIKey,
+		GatewayID:   gw.ID,
+		GatewaySlug: gw.Slug,
+		AuthID:      key.ID,
+		OwnerID:     key.OwnerID,
+		Subject:     key.OwnerID,
+	}, gw, data, nil)
+	return c.Next()
 }
 
 func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
@@ -185,7 +234,6 @@ func (m *AuthMiddleware) attach(
 		c.Locals(string(appconsumer.AuthIDKey), authCtx.AuthID)
 	}
 	c.Locals(string(appconsumer.ConsumerDataKey), data)
-	c.Locals(string(appconsumer.ConsumerKey), rc)
 	ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 	if authCtx.Principal != nil {
 		ctx = identity.WithPrincipal(ctx, authCtx.Principal)
@@ -195,7 +243,10 @@ func (m *AuthMiddleware) attach(
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
 	}
 	ctx = appconsumer.WithData(ctx, data)
-	ctx = appconsumer.WithConsumer(ctx, rc)
+	if rc != nil {
+		c.Locals(string(appconsumer.ConsumerKey), rc)
+		ctx = appconsumer.WithConsumer(ctx, rc)
+	}
 	ctx = appgateway.WithGateway(ctx, gw)
 	c.SetUserContext(ctx)
 }
