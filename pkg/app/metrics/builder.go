@@ -77,6 +77,7 @@ func (b *Builder) Build(
 		Consumer:         events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:        meta.SessionID,
 		IP:               meta.IP,
+		AuthID:           meta.AuthID,
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,

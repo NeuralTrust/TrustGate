@@ -236,6 +236,84 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+var authTestNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
+func otherConsumerWithKey(gw *gatewaydomain.Gateway, rawKey string, expiresAt *time.Time) appconsumer.RoutableConsumer {
+	authID := ids.New[ids.AuthKind]()
+	return appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gw.ID, Slug: "other123", Active: true, AuthIDs: []ids.AuthID{authID}},
+		Auths: []*authdomain.Auth{{
+			ID: authID, GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true,
+			KeyHash: authdomain.HashAPIKey(rawKey), ExpiresAt: expiresAt,
+		}},
+	}
+}
+
+func authTestClock() time.Time { return authTestNow }
+
+func TestAuthMiddleware_APIKeyExpiryDecidesBetween401And403(t *testing.T) {
+	t.Parallel()
+	past := authTestNow.Add(-time.Second)
+	future := authTestNow.Add(time.Hour)
+	cases := map[string]struct {
+		ownExpiry   *time.Time
+		otherExpiry *time.Time
+		presentOwn  bool
+		want        int
+	}{
+		"expired key on its own consumer":        {ownExpiry: &past, presentOwn: true, want: fiber.StatusUnauthorized},
+		"key expiring now on its own consumer":   {ownExpiry: &authTestNow, presentOwn: true, want: fiber.StatusUnauthorized},
+		"future expiry on its own consumer":      {ownExpiry: &future, presentOwn: true, want: fiber.StatusOK},
+		"expired key of another consumer":        {otherExpiry: &past, want: fiber.StatusUnauthorized},
+		"key of another consumer expiring now":   {otherExpiry: &authTestNow, want: fiber.StatusUnauthorized},
+		"valid key of another consumer":          {otherExpiry: &future, want: fiber.StatusForbidden},
+		"never-expiring key of another consumer": {want: fiber.StatusForbidden},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gw, rc, ownKey := inlineConsumerWithAPIKey(t)
+			rc.Auths[0].ExpiresAt = tc.ownExpiry
+			otherKey := "ag_other"
+			data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherConsumerWithKey(gw, otherKey, tc.otherExpiry)})
+			app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+			key := otherKey
+			if tc.presentOwn {
+				key = ownKey
+			}
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(resolver.HeaderAPIKey, key)
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, resp.StatusCode)
+		})
+	}
+}
+
+func TestAuthMiddleware_NilClockFallsBackToTheWallClock(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	otherKey := "ag_other"
+	expired := time.Now().UTC().Add(-time.Hour)
+	authMiddleware := middleware.NewAuthMiddleware(
+		resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(nil), nil, nil),
+		fakeDataFinder{data: appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherConsumerWithKey(gw, otherKey, &expired)})},
+		fakeGatewayResolver{gateway: gw},
+		slog.Default(),
+		nil,
+	)
+	app := fiber.New()
+	app.Post("/*", authMiddleware.Middleware(), func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Header.Set(resolver.HeaderAPIKey, otherKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
 func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
@@ -425,7 +503,7 @@ func newAuthTestAppWithResolver(
 	playground := resolver.NewPlaygroundIdentityResolver(
 		jwt.NewPlaygroundVerifier(&config.ServerConfig{SecretKey: playgroundMiddlewareSecret}, nil),
 	)
-	apiKey := resolver.NewAPIKeyIdentityResolver()
+	apiKey := resolver.NewAPIKeyIdentityResolver(authTestClock)
 	oauth2 := resolver.NewOAuth2IdentityResolver(
 		appauth.NewIdentityProviderFinder(oidcVerifier),
 		oauthVerifier,
@@ -436,6 +514,7 @@ func newAuthTestAppWithResolver(
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		slog.Default(),
+		authTestClock,
 	)
 	app := fiber.New()
 	app.Post("/*", authMiddleware.Middleware(), func(c *fiber.Ctx) error {

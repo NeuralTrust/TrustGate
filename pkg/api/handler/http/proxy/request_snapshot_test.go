@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -98,7 +99,7 @@ func TestConsumerTraceSeparatesVerifiedIdentityFromEndUser(t *testing.T) {
 				ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: "verified-user", Method: method, Claims: map[string]any{"email": "user@example.com"}, RawToken: "never-export-token"})
 			}
 			c.SetUserContext(ctx)
-			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}})
+			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}}, nil)
 			meta := rt.Metadata()
 			require.NotNil(t, meta.EndUser)
 			require.Equal(t, "app-asserted-user", meta.EndUser.ID)
@@ -114,6 +115,46 @@ func TestConsumerTraceSeparatesVerifiedIdentityFromEndUser(t *testing.T) {
 			serialized, err := json.Marshal(meta)
 			require.NoError(t, err)
 			require.NotContains(t, string(serialized), "never-export-token")
+		})
+	}
+}
+
+func TestConsumerTraceStampsTheAuthIDOnlyWhenOneAuthenticated(t *testing.T) {
+	authID := ids.New[ids.AuthKind]()
+	keyPrincipal := &identity.Principal{Subject: "billing-service", Method: identity.MethodAPIKey}
+	cases := map[string]struct {
+		authCtx     *appauth.AuthContext
+		principal   *identity.Principal
+		wantAuthID  string
+		wantSubject string
+		wantMethod  string
+	}{
+		"application key": {
+			authCtx:     &appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, Principal: keyPrincipal},
+			principal:   keyPrincipal,
+			wantAuthID:  authID.String(),
+			wantSubject: "billing-service",
+			wantMethod:  string(identity.MethodAPIKey),
+		},
+		"no auth id":      {authCtx: &appauth.AuthContext{Method: appauth.MethodPlayground}},
+		"no auth context": {},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			app := fiber.New()
+			c := app.AcquireCtx(&fasthttp.RequestCtx{})
+			defer app.ReleaseCtx(c)
+			rt := trace.New("trace", trace.Metadata{})
+			ctx := trace.NewContext(c.UserContext(), rt)
+			if tc.principal != nil {
+				ctx = identity.WithPrincipal(ctx, tc.principal)
+			}
+			c.SetUserContext(ctx)
+			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}}, tc.authCtx)
+			meta := rt.Metadata()
+			require.Equal(t, tc.wantAuthID, meta.AuthID)
+			require.Equal(t, tc.wantSubject, meta.PrincipalSubject)
+			require.Equal(t, tc.wantMethod, meta.PrincipalMethod)
 		})
 	}
 }

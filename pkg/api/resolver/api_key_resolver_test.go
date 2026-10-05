@@ -17,6 +17,7 @@ package resolver
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -43,8 +44,22 @@ func apiKeyConsumer(gw *gatewaydomain.Gateway, rawKey, name string) *appconsumer
 	}
 }
 
+var resolverTestNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
 func resolveWithAPIKey(
 	t *testing.T,
+	gw *gatewaydomain.Gateway,
+	rc *appconsumer.RoutableConsumer,
+	header, value string,
+) (*appauth.AuthContext, error) {
+	t.Helper()
+	r := NewAPIKeyIdentityResolver(func() time.Time { return resolverTestNow })
+	return resolveWith(t, r, gw, rc, header, value)
+}
+
+func resolveWith(
+	t *testing.T,
+	r *APIKeyIdentityResolver,
 	gw *gatewaydomain.Gateway,
 	rc *appconsumer.RoutableConsumer,
 	header, value string,
@@ -54,7 +69,7 @@ func resolveWithAPIKey(
 	var gotErr error
 	app := fiber.New()
 	app.Post("/*", func(c *fiber.Ctx) error {
-		got, gotErr = NewAPIKeyIdentityResolver().Resolve(c, gw, rc)
+		got, gotErr = r.Resolve(c, gw, rc)
 		return c.SendStatus(fiber.StatusOK)
 	})
 	req := httptest.NewRequest(fiber.MethodPost, "/llm1234/v1/chat/completions", nil)
@@ -110,4 +125,65 @@ func TestAPIKeyResolveRejectsAWrongOrMissingKeyWithoutAPrincipal(t *testing.T) {
 	got, err = resolveWithAPIKey(t, gw, rc, "", "")
 	require.ErrorIs(t, err, ErrUnauthenticated)
 	require.Nil(t, got)
+}
+
+func TestAPIKeyResolveTreatsAnExpiredKeyAsUnknown(t *testing.T) {
+	past := resolverTestNow.Add(-time.Second)
+	future := resolverTestNow.Add(time.Hour)
+	cases := map[string]struct {
+		expiresAt *time.Time
+		wantErr   error
+	}{
+		"expired one second ago": {&past, ErrUnauthenticated},
+		"expires exactly now":    {&resolverTestNow, ErrUnauthenticated},
+		"expires in an hour":     {&future, nil},
+		"never expires":          {nil, nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+			rc := apiKeyConsumer(gw, "ag_live_key", "batch-runner")
+			rc.Auths[0].ExpiresAt = tc.expiresAt
+
+			got, err := resolveWithAPIKey(t, gw, rc, HeaderAPIKey, "ag_live_key")
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				require.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, rc.Auths[0].ID, got.AuthID)
+		})
+	}
+}
+
+func TestAPIKeyResolveReadsTheInjectedClockOnEveryRequest(t *testing.T) {
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	rc := apiKeyConsumer(gw, "ag_live_key", "batch-runner")
+	expiresAt := time.Date(2026, 10, 2, 12, 0, 1, 0, time.UTC)
+	rc.Auths[0].ExpiresAt = &expiresAt
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	r := NewAPIKeyIdentityResolver(func() time.Time { return now })
+
+	_, err := resolveWith(t, r, gw, rc, HeaderAPIKey, "ag_live_key")
+	require.NoError(t, err)
+
+	now = expiresAt
+	got, err := resolveWith(t, r, gw, rc, HeaderAPIKey, "ag_live_key")
+	require.ErrorIs(t, err, ErrUnauthenticated)
+	require.Nil(t, got)
+}
+
+func TestAPIKeyResolveFallsBackToTheWallClockWithoutOne(t *testing.T) {
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	rc := apiKeyConsumer(gw, "ag_live_key", "batch-runner")
+	r := NewAPIKeyIdentityResolver(nil)
+
+	_, err := resolveWith(t, r, gw, rc, HeaderAPIKey, "ag_live_key")
+	require.NoError(t, err)
+
+	past := time.Now().UTC().Add(-time.Minute)
+	rc.Auths[0].ExpiresAt = &past
+	_, err = resolveWith(t, r, gw, rc, HeaderAPIKey, "ag_live_key")
+	require.ErrorIs(t, err, ErrUnauthenticated)
 }
