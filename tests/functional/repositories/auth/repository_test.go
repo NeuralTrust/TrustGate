@@ -20,6 +20,7 @@ import (
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 )
 
 func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
@@ -389,4 +390,70 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	if total != 1 || len(items) != 1 || items[0].Name != "other-key" {
 		t.Fatalf("List(name) returned %+v", items)
 	}
+}
+
+func ownedAuth(t *testing.T, gwID ids.GatewayID, owner string) *domain.Auth {
+	t.Helper()
+	a := validAuth(t, gwID, "personal-"+owner)
+	a.OwnerID = owner
+	return a
+}
+
+func TestRepository_FindByOwnerAndUpdateKeepsOwner(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwG, gwH := seedGateway(t, gw, "owner-g"), seedGateway(t, gw, "owner-h")
+	application, owned := validAuth(t, gwG, "application"), ownedAuth(t, gwG, "alice")
+	require.NoError(t, r.Save(ctx, application))
+	require.NoError(t, r.Save(ctx, owned))
+
+	got, err := r.FindByOwner(ctx, gwG, "alice")
+	require.NoError(t, err)
+	require.Equal(t, owned.ID, got.ID)
+	require.Equal(t, owned.KeyHash, got.KeyHash)
+	_, err = r.FindByOwner(ctx, gwH, "alice")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	_, err = r.FindByOwner(ctx, gwG, "bob")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	_, err = r.FindByOwner(ctx, gwG, "")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+
+	for id, want := range map[ids.AuthID]string{owned.ID: "alice", application.ID: ""} {
+		got, err := r.FindByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, want, got.OwnerID)
+		got.Name, got.OwnerID, got.UpdatedAt = "renamed", "mallory", time.Now().UTC()
+		require.NoError(t, r.Update(ctx, got))
+		after, err := r.FindByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, "renamed", after.Name)
+		require.Equal(t, want, after.OwnerID)
+	}
+}
+
+func TestRepository_ConcurrentOwnedKeysForOneOwner(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "owner-race")
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		a := ownedAuth(t, gwID, "alice")
+		go func() {
+			<-start
+			errs <- r.Save(ctx, a)
+		}()
+	}
+	close(start)
+	first, second := <-errs, <-errs
+	if first != nil {
+		first, second = second, first
+	}
+	require.NoError(t, first)
+	require.ErrorIs(t, second, domain.ErrOwnedKeyExists)
+	require.ErrorIs(t, second, commonerrors.ErrAlreadyExists)
+	_, total, err := r.List(ctx, domain.ListFilter{GatewayID: gwID})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
 }
