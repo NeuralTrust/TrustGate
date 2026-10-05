@@ -286,3 +286,27 @@ func TestCodecEncodesApplicationEntitiesAsBefore(t *testing.T) {
 	assert.Equal(t, goldenApplicationAuthJSON, authJSON)
 	assert.Equal(t, goldenApplicationVersion, configsnapshot.NewCodec().Version(raw))
 }
+
+func TestCodecRoundTripsPersonalConsumerAndOwnedAuth(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	auth.OwnerID = "alice"
+
+	raw, consumerJSON, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, consumerJSON, `"audience":"personal"`)
+	assert.Contains(t, authJSON, `"owner_id":"alice"`)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	gotConsumer, ok := snap.ConsumerByID(consumer.ID)
+	require.True(t, ok)
+	assert.True(t, gotConsumer.IsPersonal())
+	gotAuth, ok := snap.AuthByAPIKeyHash(auth.KeyHash)
+	require.True(t, ok)
+	assert.Equal(t, "alice", gotAuth.OwnerID)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}

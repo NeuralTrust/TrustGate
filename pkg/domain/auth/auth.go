@@ -113,8 +113,13 @@ type Auth struct {
 	// the key never expires, which is what every key written before the column
 	// existed is: an expiry nobody asked for would have retired them all.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	OwnerID   string     `json:"owner_id,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+func (a *Auth) IsOwned() bool {
+	return a.OwnerID != ""
 }
 
 // IsExpired reports whether the credential has passed its expiry. An auth

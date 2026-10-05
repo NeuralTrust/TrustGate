@@ -33,6 +33,10 @@ import (
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+
+	ownerUniqueIndex = "auths_gateway_owner_uniq"
+
+	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, created_at, updated_at`
 )
 
 var _ domain.Repository = (*Repository)(nil)
@@ -69,15 +73,13 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 		return fmt.Errorf("auth repository: marshal config: %w", err)
 	}
 	const query = `
-		INSERT INTO auths (
-			id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+		INSERT INTO auths (` + authColumns + `)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
 			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
-			a.CreatedAt, a.UpdatedAt,
+			nullableString(a.OwnerID), a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -137,7 +139,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 
 func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -153,7 +155,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 
 func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE key_hash = $1
 		   AND type = 'api_key'
@@ -169,12 +171,31 @@ func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*dom
 	return a, nil
 }
 
+func (r *Repository) FindByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
+	if ownerID == "" {
+		return nil, domain.ErrNotFound
+	}
+	const query = `
+		SELECT ` + authColumns + `
+		  FROM auths
+		 WHERE gateway_id = $1
+		   AND owner_id = $2`
+	a, err := scanAuth(r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("auth repository: find by owner: %w", err)
+	}
+	return a, nil
+}
+
 func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*domain.Auth, error) {
 	if len(authIDs) == 0 {
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -207,7 +228,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 		typeNames = append(typeNames, string(t))
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE enabled = TRUE
 		   AND type = ANY($1::text[])
@@ -238,7 +259,7 @@ func (r *Repository) ListEnabledByGatewayAndType(
 	authType domain.Type,
 ) ([]*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND type = ANY($2::text[])
@@ -285,7 +306,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	listQuery := `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -325,13 +346,17 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 		keyHash   *string
 		keyPrefix *string
 		keySuffix *string
+		ownerID   *string
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
 		&configRaw, &keyHash, &keyPrefix, &keySuffix, &a.ExpiresAt,
-		&a.CreatedAt, &a.UpdatedAt,
+		&ownerID, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if ownerID != nil {
+		a.OwnerID = *ownerID
 	}
 	a.Type = domain.NormalizeType(domain.Type(authType))
 	if keyHash != nil {
@@ -391,6 +416,9 @@ func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
 		case pgUniqueViolation:
+			if pgErr.ConstraintName == ownerUniqueIndex {
+				return domain.ErrOwnedKeyExists
+			}
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:
 			return domain.ErrInvalidGatewayID

@@ -578,3 +578,32 @@ func TestCompilerMassUnreadablePoliciesFailEvenWhenRegistriesAreCorrupt(t *testi
 		t.Fatalf("expected ErrUnreadablePolicies, got %v", err)
 	}
 }
+
+func TestCompilerShipsOwnedKeys(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	corrupt := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	application := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "application-hash"}
+	owned := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice"}
+	perGateway := fakeRegistries{errByGateway: map[string]error{corrupt.String(): fmt.Errorf("decrypt auth: %w", commonerrors.ErrCorruptData)}}
+
+	for name, registries := range map[string]fakeRegistries{"bulk": {}, "per gateway": perGateway} {
+		t.Run(name, func(t *testing.T) {
+			snapshot, err := appsnapshot.NewCompiler(
+				fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}, {ID: corrupt}}},
+				fakeConsumers{},
+				registries,
+				fakePolicies{},
+				fakeAuths{byGateway: map[string][]*authdomain.Auth{gw.String(): {application, owned}}},
+				fakeCatalog{},
+				nil,
+			).Compile(context.Background())
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			found, ok := snapshot.AuthByAPIKeyHash("owned-hash")
+			if len(snapshot.Data().Auths) != 2 || !ok || found.ID != owned.ID || found.OwnerID != "alice" {
+				t.Fatalf("auths = %+v, owned lookup = %+v, %v", snapshot.Data().Auths, found, ok)
+			}
+		})
+	}
+}
