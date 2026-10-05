@@ -1104,6 +1104,33 @@ func TestLoadConfig_ConfigSyncGRPCDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_AdminLKGDefaultsAndOverrides(t *testing.T) {
+	minimumEnv(t)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ConfigSync.AdminLKGEnabled {
+		t.Errorf("AdminLKGEnabled default = false, want true")
+	}
+	if cfg.ConfigSync.AdminLKGMaxAge != 7*24*time.Hour {
+		t.Errorf("AdminLKGMaxAge default = %v, want 168h", cfg.ConfigSync.AdminLKGMaxAge)
+	}
+
+	t.Setenv("CONFIG_SYNC_ADMIN_LKG_ENABLED", "false")
+	t.Setenv("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", "36h")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ConfigSync.AdminLKGEnabled {
+		t.Errorf("AdminLKGEnabled = true, want false")
+	}
+	if cfg.ConfigSync.AdminLKGMaxAge != 36*time.Hour {
+		t.Errorf("AdminLKGMaxAge = %v, want 36h", cfg.ConfigSync.AdminLKGMaxAge)
+	}
+}
+
 func TestValidate_DeployedRejectsConfigSyncTLSInsecure(t *testing.T) {
 	cfg := dbLessValid()
 	cfg.AppEnv = "production"

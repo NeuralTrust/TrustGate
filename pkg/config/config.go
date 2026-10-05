@@ -159,6 +159,7 @@ const (
 	defaultConfigSyncGRPCMaxBackoff             = 30 * time.Second
 	defaultConfigSyncOutboxRetention            = 24 * time.Hour
 	defaultConfigSyncOutboxMaxRows        int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge             = 7 * 24 * time.Hour
 
 	configSyncKeyBytes = 32
 
@@ -264,6 +265,11 @@ type ConfigSyncConfig struct {
 	GRPCMaxBackoff       time.Duration
 	OutboxRetention      time.Duration
 	OutboxMaxRows        int64
+	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
+	// serve them after a restart while compiling fails.
+	AdminLKGEnabled bool
+	// AdminLKGMaxAge refuses a persisted snapshot older than this.
+	AdminLKGMaxAge time.Duration
 }
 
 type ServerConfig struct {
@@ -960,6 +966,8 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
+		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
 	}
 }
 

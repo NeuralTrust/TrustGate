@@ -350,6 +350,9 @@ func startDispatcher(dispatcher *appsnapshot.Dispatcher, logger *slog.Logger) fu
 	if dispatcher == nil {
 		return func() {}
 	}
+	// Serve the persisted snapshot, if any, before the first compile. Restore is
+	// bounded and never fails, so a store problem cannot hold the boot.
+	dispatcher.Restore(context.Background())
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
