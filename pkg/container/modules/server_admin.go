@@ -82,6 +82,9 @@ type adminRouterParams struct {
 	TestRegistryConnection *registryhttp.TestConnectionHandler
 	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
+	ListPinnedTools        *registryhttp.ListPinnedToolsHandler
+	DecidePinnedTools      *registryhttp.DecidePinnedToolsHandler
+	EnableToolPinning      *registryhttp.EnableToolPinningHandler
 	// RegistrySharedAccount is absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler `optional:"true"`
 
@@ -165,6 +168,9 @@ func ServerAdmin(c *container.Container) error {
 				TestRegistryConnection:    p.TestRegistryConnection,
 				ValidateOpenAPI:           p.ValidateOpenAPI,
 				ListRegistryTools:         p.ListRegistryTools,
+				ListPinnedTools:           p.ListPinnedTools,
+				DecidePinnedTools:         p.DecidePinnedTools,
+				EnableToolPinning:         p.EnableToolPinning,
 				RegistrySharedAccount:     p.RegistrySharedAccount,
 				CreatePolicy:              p.CreatePolicy,
 				GetPolicy:                 p.GetPolicy,

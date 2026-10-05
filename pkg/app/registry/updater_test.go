@@ -622,3 +622,27 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
+
+func TestUpdater_Update_OnlyWritesTheToolPolicyWhenTheRequestSetsIt(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		policy   *domain.ToolPolicy
+		wantKeep bool
+	}{
+		"absent":  {nil, true},
+		"present": {ptr(domain.ToolPolicyAuto), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := repomocks.NewRepository(t)
+			existing, _ := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "m", "", &domain.MCPTarget{URL: "https://mcp.example.com/mcp"})
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+				return b.KeepStoredToolPolicy == tc.wantKeep
+			})).Return(nil).Once()
+			updater := appregistry.NewUpdater(repo, newCacheManager(), nil, newTestLogger(), nil, nil)
+			if _, err := updater.Update(context.Background(), appregistry.UpdateInput{ID: existing.ID, Name: ptr("renamed"), ToolPolicy: tc.policy}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+		})
+	}
+}

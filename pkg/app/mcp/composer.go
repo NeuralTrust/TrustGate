@@ -69,6 +69,7 @@ type composer struct {
 	creds     CredentialResolver
 	discovery DiscoveryCache
 	urlvars   URLValueResolver
+	pending   PendingToolSink
 	flight    singleflight.Group
 	logger    *slog.Logger
 }

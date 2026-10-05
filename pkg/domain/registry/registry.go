@@ -30,10 +30,22 @@ type Registry struct {
 	Description string         `json:"description,omitempty"`
 	// ToolPolicy only applies to MCP registries; the zero value reads as auto.
 	ToolPolicy ToolPolicy `json:"tool_policy,omitempty"`
-	LLMTarget  *LLMTarget `json:"llm_target,omitempty"`
-	MCPTarget  *MCPTarget `json:"mcp_target,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	// KeepStoredToolPolicy tells Update not to write ToolPolicy: the caller did
+	// not change it, and the stored value may have moved since the registry was
+	// read (a concurrent "enable pinning"). Writing the stale copy back would
+	// silently turn pinning off. Update leaves the stored policy in ToolPolicy.
+	KeepStoredToolPolicy bool `json:"-"`
+	// PinnedTools is the decided tool set of a pinned registry as the config
+	// snapshot carries it to DB-less data planes, which have no registry_tools
+	// table to read. It is filled by the snapshot compiler only: the registry
+	// repository never loads or stores it. An empty set on a pinned registry
+	// means nothing is approved, so nothing is exposed. The slice is omitted
+	// when empty, which keeps the snapshot bytes of auto registries unchanged.
+	PinnedTools []ToolDecision `json:"pinned_tools,omitempty"`
+	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
+	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 
 	// InstanceOf names the shelf registry a per-principal Store clone derives
 	// from. It is a request-scoped view built by the Store scoper: never
