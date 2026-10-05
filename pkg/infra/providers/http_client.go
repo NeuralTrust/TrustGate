@@ -47,7 +47,9 @@ func SetDefaultHTTPTimeout(d time.Duration) {
 	}
 }
 
-// allowPrivateNetworks is the operator escape hatch (PROVIDER_ALLOW_PRIVATE_NETWORKS).
+// allowPrivateNetworks mirrors PROVIDER_ALLOW_PRIVATE_NETWORKS (config default
+// true; shared gateways set false). The zero value refuses, so a binary that
+// never calls SetAllowPrivateNetworks fails closed.
 // It is read on every dial, so a change applies to pooled connections too.
 var allowPrivateNetworks atomic.Bool
 
@@ -61,9 +63,9 @@ var providerGuard = netguard.New(
 )
 
 // SetAllowPrivateNetworks lets provider clients reach private, loopback and
-// link-local addresses. Leave it off on multi-tenant gateways; enable it for a
-// single-tenant or self-hosted deployment whose providers live on a private
-// network. Call it during initialization.
+// link-local addresses. Single-operator (hybrid, self-hosted) gateways leave it
+// on; multi-tenant gateways must turn it off, since base_url is tenant input.
+// Call it during initialization.
 func SetAllowPrivateNetworks(allow bool) {
 	allowPrivateNetworks.Store(allow)
 }

@@ -450,8 +450,10 @@ type ProviderConfig struct {
 	ResponseHeaderTimeout time.Duration
 	MaxRetries            int
 	// AllowPrivateNetworks lets provider clients dial loopback, RFC1918,
-	// link-local and other non-public addresses. Registry base_url is tenant
-	// input, so this is off by default; see PROVIDER_ALLOW_PRIVATE_NETWORKS.
+	// link-local and other non-public addresses. On by default: hybrid and
+	// self-hosted gateways serve one operator and reach its private model
+	// hosts. Registry base_url is tenant input, so shared gateways turn it off
+	// (PROVIDER_ALLOW_PRIVATE_NETWORKS=false in k8s/overlays/*/config.env).
 	AllowPrivateNetworks bool
 }
 
@@ -501,8 +503,10 @@ type OpenAIModerationConfig struct {
 // AllowAmbientIdentity lets a policy authenticate as the gateway pod's own
 // identity (no credentials, or impersonate_service_account, which the pod
 // identity performs). That identity is shared by every tenant on the gateway,
-// so on a multi-tenant deploy it is a cross-tenant confused deputy and stays
-// off; enable it only on a single-tenant or self-hosted gateway.
+// so on a multi-tenant deploy it is a cross-tenant confused deputy. On by
+// default for single-operator (hybrid, self-hosted) gateways; shared gateways
+// turn it off (MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=false in
+// k8s/overlays/*/config.env).
 type ModelArmorConfig struct {
 	BaseURL              string
 	Timeout              time.Duration
@@ -832,7 +836,7 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
-		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", false),
+		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", true),
 	}
 }
 
@@ -897,7 +901,7 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 }
 
 // getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT and
-// MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY (default false). Unlike
+// MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY (default true). Unlike
 // OpenAIModeration, BaseURL has no default host: Model Armor is regional, so
 // an empty value tells the client to derive the host per call from the
 // request's own location instead of pinning one region.
@@ -905,8 +909,8 @@ func getModelArmorConfig() ModelArmorConfig {
 	return ModelArmorConfig{
 		BaseURL: getEnv("MODEL_ARMOR_BASE_URL", ""),
 		Timeout: getEnvDuration("MODEL_ARMOR_TIMEOUT", defaultModelArmorTimeout),
-		// Default false: the pod identity is shared across tenants.
-		AllowAmbientIdentity: getEnvBool("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", false),
+		// Default true for single-operator gateways; shared ones set false.
+		AllowAmbientIdentity: getEnvBool("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", true),
 	}
 }
 
