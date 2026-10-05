@@ -61,9 +61,9 @@ var providerGuard = netguard.New(
 )
 
 // SetAllowPrivateNetworks lets provider clients reach private, loopback and
-// link-local addresses. Leave it off on multi-tenant gateways; enable it for a
-// single-tenant or self-hosted deployment whose providers live on a private
-// network. Call it during initialization.
+// link-local addresses. Configuration enables it by default; shared multi-tenant
+// gateways must turn it off (PROVIDER_ALLOW_PRIVATE_NETWORKS=false). Call it
+// during initialization.
 func SetAllowPrivateNetworks(allow bool) {
 	allowPrivateNetworks.Store(allow)
 }

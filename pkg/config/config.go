@@ -113,6 +113,9 @@ const (
 
 	defaultProviderRequestTimeout = 60 * time.Second
 	defaultProviderMaxRetries     = 2
+	// defaultProviderAllowPrivateNetworks leaves the outbound guard off; shared
+	// multi-tenant gateways opt in with PROVIDER_ALLOW_PRIVATE_NETWORKS=false.
+	defaultProviderAllowPrivateNetworks = true
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -451,7 +454,9 @@ type ProviderConfig struct {
 	MaxRetries            int
 	// AllowPrivateNetworks lets provider clients dial loopback, RFC1918,
 	// link-local and other non-public addresses. Registry base_url is tenant
-	// input, so this is off by default; see PROVIDER_ALLOW_PRIVATE_NETWORKS.
+	// input, so a shared multi-tenant gateway must set
+	// PROVIDER_ALLOW_PRIVATE_NETWORKS=false to keep the outbound guard on. It
+	// defaults to true (guard off) for single-tenant and self-hosted gateways.
 	AllowPrivateNetworks bool
 }
 
@@ -832,7 +837,7 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
-		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", false),
+		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", defaultProviderAllowPrivateNetworks),
 	}
 }
 

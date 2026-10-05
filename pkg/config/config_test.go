@@ -1283,7 +1283,7 @@ func TestProviderAllowPrivateNetworks(t *testing.T) {
 		env  string
 		want bool
 	}{
-		{"unset defaults to off", "", false},
+		{"unset defaults to allowed", "", true},
 		{"explicit true", "true", true},
 		{"explicit false", "false", false},
 	}
