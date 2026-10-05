@@ -6,25 +6,41 @@ Change `llm-store` (RUN-1763), slice S4 (decision D8). New capability. Self-only
 
 ### Requirement: The endpoints act on the caller only
 
-`GET`, `POST` and `DELETE /v1/gateways/{gw}/store/principal/llm-key` and `POST /v1/gateways/{gw}/store/principal/llm-key/rotate` MUST act on `callerSubject(c)` only, the same rule as `ConnectLink`. They MUST NOT read an owner from the path, query or body: a `principal_sub` or `owner_id` in the body MUST be ignored. They MUST run behind `RequireInteractiveIdentity()`, so a service credential MUST get 403 and cannot hold a personal key. An empty caller subject MUST answer 403. A caller without registries access on the gateway MUST get 403 from the group guard.
+`GET`, `POST` and `DELETE /v1/gateways/{gw}/store/principal/llm-key` and `POST /v1/gateways/{gw}/store/principal/llm-key/rotate` MUST act on `callerSubject(c)` only, the same rule as `ConnectLink`. They MUST NOT read an owner from the path, query or body: a `principal_sub`, `owner_id` or `consumer_id` in the body MUST be ignored. Only a console user of the gateway's tenant can hold a personal key:
+
+- The group guard MUST answer a console user of another tenant with 404, the same answer as an unknown gateway, and a service credential bound to another gateway or without the registries scope with 403.
+- Every service credential MUST get 403 from `RequireInteractiveIdentity()`.
+- The handler MUST answer 403, before calling `PersonalKeys`, to any caller that is not a tenant-scoped console user with a subject: a service credential, a platform token without a tenant, or an empty subject.
 
 #### Scenario: Service credential
 
-- GIVEN a service credential with registries access on gateway G
-- WHEN it calls `POST /v1/gateways/G/store/principal/llm-key`
+- GIVEN a service credential bound to gateway G with the registries scope
+- WHEN it calls `GET`, `POST`, `POST …/rotate` or `DELETE` on `/v1/gateways/G/store/principal/llm-key`
+- THEN 403 from `RequireInteractiveIdentity()`, and no auth is created
+
+#### Scenario: Service credential outside the group guard
+
+- GIVEN a service credential bound to another gateway, or bound to G without the registries scope
+- WHEN it calls `GET …/llm-key` on G
+- THEN 403 from the group guard
+
+#### Scenario: Another tenant
+
+- GIVEN gateway G of tenant T1 and console user `carol` of tenant T2
+- WHEN she calls `GET …/llm-key` or `POST …/llm-key` on G
+- THEN 404, the same answer as an unknown gateway, and no auth is created
+
+#### Scenario: Platform token
+
+- GIVEN a platform token without a tenant, with or without a user id
+- WHEN it calls `POST …/llm-key` on G
 - THEN 403, and no auth is created
 
 #### Scenario: Body owner ignored
 
 - GIVEN console user `alice` without a key on G
-- WHEN she calls `POST …/llm-key` with `{"expires_at": <now + 30 d>, "principal_sub": "bob"}`
-- THEN the key created has `owner_id = alice`, and `bob` has no key
-
-#### Scenario: No registries access
-
-- GIVEN a console user without registries access on G
-- WHEN they call `GET …/llm-key`
-- THEN 403
+- WHEN she calls `POST …/llm-key` with `{"expires_at": <now + 30 d>, "principal_sub": "bob", "owner_id": "bob", "consumer_id": <P>}`
+- THEN the key created has `owner_id = alice` and `consumer_ids: []`, and `bob` has no key
 
 ### Requirement: Create makes an unlinked key
 

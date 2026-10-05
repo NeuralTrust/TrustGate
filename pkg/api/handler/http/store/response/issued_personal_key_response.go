@@ -12,23 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package request
+package response
 
-import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
-)
+import appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 
-// expiryChange maps an optional wire field onto the change the service takes:
-// absent leaves the stored expiry alone, an empty string clears it, and an
-// instant sets it.
-func expiryChange(raw *string) (*appauth.ExpiryChange, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	at, err := httpio.ParseExpiresAt(*raw)
-	if err != nil {
-		return nil, err
-	}
-	return &appauth.ExpiryChange{At: at}, nil
+type IssuedPersonalKeyResponse struct {
+	PersonalKeyResponse
+	Key string `json:"key"`
+}
+
+func FromIssuedPersonalKey(key *appauth.PersonalKey) IssuedPersonalKeyResponse {
+	return IssuedPersonalKeyResponse{PersonalKeyResponse: FromPersonalKey(key), Key: key.Auth.RawKey}
 }

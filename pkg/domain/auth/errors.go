@@ -35,7 +35,7 @@ var (
 	ErrExpired         = fmt.Errorf("auth: api key expired: %w", commonerrors.ErrNotFound)
 	ErrExpiryInThePast = fmt.Errorf("auth: expires_at is in the past: %w", commonerrors.ErrValidation)
 	ErrDuplicateOAuth2 = fmt.Errorf("auth: another enabled oauth2 auth already covers this issuer and audience: %w", commonerrors.ErrAlreadyExists)
-	ErrOwnedKeyExists  = fmt.Errorf("auth: a personal key already exists for this owner: %w", commonerrors.ErrAlreadyExists)
+	ErrOwnedKeyExists  = fmt.Errorf("auth: %w: %w", commonerrors.ErrPersonalKeyExists, commonerrors.ErrAlreadyExists)
 	ErrOwnedKey        = fmt.Errorf("auth: owned_key: %w", commonerrors.ErrManagedByOwner)
 	ErrOwnedExpiry     = fmt.Errorf("auth: expires_at must be in the future and within 90 days: %w", commonerrors.ErrValidation)
 	ErrInvalidOwner    = fmt.Errorf("auth: invalid owner_id: %w", commonerrors.ErrValidation)

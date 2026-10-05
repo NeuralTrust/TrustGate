@@ -264,16 +264,26 @@ Follow-up, out of P9 scope: the auth repository `Update` should compare-and-set 
 
 Depends: P9. Est.: ≈345 (code 130 / test 215). Commit boundary: (a) `feat`: handler, DTOs, routes, wiring; (b) `test`: functional; (c) `chore(docs)`: `make docs` (≈380 generated lines).
 
-- [ ] 10.1 Create `pkg/api/handler/http/store/llm_key_handler.go`: GET, POST, POST rotate and DELETE on `callerSubject(c)` (`requests_handler.go:212`) only. An empty subject → 403. Full swag annotations (`@Success 200/201/204`, `@Failure 403/404/409/422`).
-- [ ] 10.2 Create `store/request/create_llm_key_request.go` (`expires_at`, required) and `store/request/rotate_llm_key_request.go` (`expires_at?`). Body `owner_id`, `principal_sub` and `consumer_id` are not decoded. Create `store/response/personal_key_response.go`: `{id, consumer_ids, key (create and rotate only), key_prefix, key_suffix, expires_at, enabled, created_at, updated_at}`, with no hash and no link attributes.
-- [ ] 10.3 `pkg/server/router/admin_router.go:225-247`: routes under `/:gateway_id/store` with `RequireInteractiveIdentity()` (`admin_authz.go:108`). Wire in `pkg/container/modules/{store,server_admin}.go`; `admin_router_wiring_test.go` must pass.
-- [ ] 10.4 Test `llm_key_handler_test.go`: a service credential → 403; a body owner is ignored; the status codes; GET never returns `key`.
-- [ ] 10.5 Run `make docs`. Test `docs/openapi_test.go`: the four paths, their DTOs and their status codes. Accept: `personal-key-endpoints › Paths in the document`.
-- [ ] 10.6 `tests/functional/common_test.go`: add the `CreateLLMKey`, `RotateLLMKey` and `RevokeLLMKey` helpers (admin JWT with a `user_id`, `setup_test.go:128`).
-- [ ] 10.7 Test `tests/functional/llm_key_test.go` (C), self flows: create → 201 with `consumer_ids: []`; GET → 200 without a secret; second create → 409; rotate → same id, new secret; DELETE → 204; re-create → 201; no key → 404 on GET, rotate and DELETE; a caller without registries access → 403; the same user on two gateways → two keys.
-- [ ] 10.8 Same file, admin plane on an owned key: `GET /auths` hides it, `?owner_id` lists it, `GET /auths/:id` shows `owner_id`, PUT and rotate → 422 `owned_key`, and admin `DELETE` → 204.
-- Accept (10.1–10.8): `personal-key-endpoints › Service credential`, `› Body owner ignored`, `› No registries access`, `› First key`, `› Second key`, `› Another gateway`, `› Metadata without the secret`, `› No key`, `› Rotate`, `› Nothing to rotate`, `› Revoke and re-create`, `› Nothing to revoke`; `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (admin-plane half).
-- [ ] 10.9 Run VG and VF.
+- [x] 10.1 Create `pkg/api/handler/http/store/llm_key_handler.go`: GET, POST, POST rotate and DELETE on `callerSubject(c)` (`requests_handler.go:212`) only. An empty subject → 403. Full swag annotations (`@Success 200/201/204`, `@Failure 403/404/409/422`).
+- [x] 10.2 Create `store/request/create_llm_key_request.go` (`expires_at`, required) and `store/request/rotate_llm_key_request.go` (`expires_at?`). Body `owner_id`, `principal_sub` and `consumer_id` are not decoded. Create `store/response/personal_key_response.go`: `{id, consumer_ids, key (create and rotate only), key_prefix, key_suffix, expires_at, enabled, created_at, updated_at}`, with no hash and no link attributes.
+- [x] 10.3 `pkg/server/router/admin_router.go:225-247`: routes under `/:gateway_id/store` with `RequireInteractiveIdentity()` (`admin_authz.go:108`). Wire in `pkg/container/modules/{store,server_admin}.go`; `admin_router_wiring_test.go` must pass.
+- [x] 10.4 Test `llm_key_handler_test.go`: a service credential → 403; a body owner is ignored; the status codes; GET never returns `key`.
+- [x] 10.5 Run `make docs`. Test `docs/openapi_test.go`: the four paths, their DTOs and their status codes. Accept: `personal-key-endpoints › Paths in the document`.
+- [x] 10.6 `tests/functional/common_test.go`: add the `CreateLLMKey`, `RotateLLMKey` and `RevokeLLMKey` helpers (admin JWT with a `user_id`, `setup_test.go:128`).
+- [x] 10.7 Test `tests/functional/llm_key_test.go` (C), self flows: create → 201 with `consumer_ids: []`; GET → 200 without a secret; second create → 409; rotate → same id, new secret; DELETE → 204; re-create → 201; no key → 404 on GET, rotate and DELETE; a console user of another tenant → 404, like an unknown gateway; a token without a tenant user (platform `AdminToken`) → 403; the same user on two gateways → two keys. Service credentials are refused with 403 by the group guard (other gateway, no registries scope) and by `RequireInteractiveIdentity()` and the handler guard (all of them); the functional harness mints no service credential, so a router test covers them.
+- [x] 10.8 Same file, admin plane on an owned key: `GET /auths` hides it, `?owner_id` lists it, `GET /auths/:id` shows `owner_id`, PUT and rotate → 422 `owned_key`, and admin `DELETE` → 204.
+- Accept (10.1–10.8): `personal-key-endpoints › Service credential`, `› Service credential outside the group guard`, `› Another tenant`, `› Platform token`, `› Body owner ignored`, `› First key`, `› Second key`, `› Another gateway`, `› Metadata without the secret`, `› No key`, `› Rotate`, `› Nothing to rotate`, `› Revoke and re-create`, `› Nothing to revoke`; `owned-api-keys › List hides owned keys`, `› List by owner`, `› Get shows the owner`, `› Update and rotate refused`, `› Admin revocation` (admin-plane half).
+- [x] 10.9 Run VG and VF.
+
+P10 notes (from the P10 apply):
+- Defense in depth: besides `RequireInteractiveIdentity()` on the routes, the handler refuses with 403 anything but a console user with a tenant and a subject, so a platform token cannot hold a key. `pkg/server/router/admin_router_test.go` builds the admin router and proves a gateway-bound service credential with the registries scope gets 403 from the route guard on all four routes.
+- A second create answers 409 `already_exists` with the hint to rotate or revoke: `ErrOwnedKeyExists` wraps `commonerrors.ErrPersonalKeyExists`, mapped before `ErrAlreadyExists`.
+- `expires_at` is read with the admin API's rule, now `httpio.ParseExpiresAt`: a malformed value says "expires_at must be an RFC 3339 instant". On rotate, absent, null and empty all keep the current expiry.
+- Size is over the 400 budget: five new production files carry license headers and the four handlers carry swag annotations. Generated swagger/openapi is outside the budget.
+
+Follow-ups, out of P10 scope:
+- Rate-limit create, rotate and revoke per (gateway, caller). Every write recompiles the snapshot and invalidates the gateway's data, so a user looping on rotate costs every plane of the gateway.
+- Compare-and-set on `key_hash` in the auth repository `Update` (`UPDATE … WHERE id = $1 AND key_hash = $prev`), so two concurrent rotations end with one success and one 409 for the loser, instead of the last writer silently winning (same as the P9 follow-up; applies to the admin rotate too).
 
 ## Phase 11: S5a `Data` index + D11 rejections (base P5, rebased on P1)
 

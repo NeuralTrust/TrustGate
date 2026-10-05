@@ -50,6 +50,7 @@ func TestMapDomainError(t *testing.T) {
 		{name: "wrapped not found → 404 does not leak", err: fmt.Errorf("repo secret=hunter2: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "Check the id", wantMsgAbsent: "hunter2"},
 		{name: "entity not found → 404 names entity", err: fmt.Errorf("gateway: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "gateway"},
 		{name: "already exists → 409", err: commonerrors.ErrAlreadyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists", wantMsgPart: "unique"},
+		{name: "personal key exists → 409 with its own hint", err: authdomain.ErrOwnedKeyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists", wantMsgPart: "Rotate or revoke it instead", wantMsgAbsent: "unique name"},
 		{name: "has dependents → 409", err: commonerrors.ErrHasDependents, wantStatus: fiber.StatusConflict, wantCode: "has_dependents", wantMsgPart: "dependent"},
 		{name: "conflict → 409", err: commonerrors.ErrConflict, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "conflict"},
 		{name: "policy placement changed → 409", err: policydomain.ErrPlacementChanged, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "placement changed"},

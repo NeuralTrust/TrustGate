@@ -47,6 +47,7 @@ const (
 	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
 	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
 	msgOwnedKeyHint       = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
+	msgPersonalKeyHint    = "You already hold a key on this gateway. Rotate or revoke it instead."
 )
 
 // MapDomainError translates an application/domain error into the matching
@@ -75,6 +76,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		body := NotFoundBody()
 		body.Message = notFoundMessage(err)
 		return fiber.StatusNotFound, body
+	case errors.Is(err, commonerrors.ErrPersonalKeyExists):
+		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgPersonalKeyHint)}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
 	case errors.Is(err, commonerrors.ErrHasDependents):
