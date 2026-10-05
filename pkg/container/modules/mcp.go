@@ -204,10 +204,16 @@ type composerParams struct {
 	Logger   *slog.Logger
 	Installs installationdomain.Repository `optional:"true"`
 	Vault    vaultdomain.Repository        `optional:"true"`
+	// Pending records the tools a pinned registry lists that are not decided yet.
+	// Nothing provides it yet: without one they are hidden but not recorded.
+	Pending appmcp.PendingToolRecorder `optional:"true"`
 }
 
 func provideComposer(p composerParams) appmcp.Composer {
 	var opts []appmcp.ComposerOption
+	if p.Pending != nil {
+		opts = append(opts, appmcp.WithPendingToolRecorder(p.Pending))
+	}
 	if p.Installs != nil {
 		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
 	}

@@ -276,3 +276,14 @@ func (b *Registry) IsToolApproved(ref ToolRef) bool {
 	}
 	return approved
 }
+
+// HasToolDecision reports whether the snapshot set holds an approved or rejected
+// verdict for exactly this definition. A ref without one is pending or new.
+func (b *Registry) HasToolDecision(ref ToolRef) bool {
+	for _, d := range b.PinnedTools {
+		if d.Name == ref.Name && d.Fingerprint == ref.Fingerprint {
+			return true
+		}
+	}
+	return false
+}
