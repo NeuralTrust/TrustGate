@@ -30,6 +30,11 @@ type Registry struct {
 	Description string         `json:"description,omitempty"`
 	// ToolPolicy only applies to MCP registries; the zero value reads as auto.
 	ToolPolicy ToolPolicy `json:"tool_policy,omitempty"`
+	// KeepStoredToolPolicy tells Update not to write ToolPolicy: the caller did
+	// not change it, and the stored value may have moved since the registry was
+	// read (a concurrent "enable pinning"). Writing the stale copy back would
+	// silently turn pinning off. Update leaves the stored policy in ToolPolicy.
+	KeepStoredToolPolicy bool `json:"-"`
 	// PinnedTools is the decided tool set of a pinned registry as the config
 	// snapshot carries it to DB-less data planes, which have no registry_tools
 	// table to read. It is filled by the snapshot compiler only: the registry
