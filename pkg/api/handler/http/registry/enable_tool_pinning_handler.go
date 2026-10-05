@@ -54,6 +54,10 @@ func (h *EnableToolPinningHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
+	actor, ok := requireActor(c)
+	if !ok {
+		return unauthenticated(c)
+	}
 	var req request.EnableToolPinningRequest
 	if err := c.BodyParser(&req); err != nil {
 		return badRequest(c, "invalid request body")
@@ -69,7 +73,7 @@ func (h *EnableToolPinningHandler) Handle(c *fiber.Ctx) error {
 		GatewayID:  gatewayID,
 		RegistryID: id,
 		Tools:      tools,
-		DecidedBy:  callerActor(c),
+		DecidedBy:  actor,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

@@ -60,6 +60,10 @@ func (h *DecidePinnedToolsHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
+	actor, ok := requireActor(c)
+	if !ok {
+		return unauthenticated(c)
+	}
 	var req request.PinnedToolDecisionsRequest
 	if err := c.BodyParser(&req); err != nil {
 		return badRequest(c, "invalid request body")
@@ -75,11 +79,25 @@ func (h *DecidePinnedToolsHandler) Handle(c *fiber.Ctx) error {
 		RegistryID: id,
 		Approve:    req.Approvals(),
 		Reject:     req.Rejections(),
-		DecidedBy:  callerActor(c),
+		DecidedBy:  actor,
 	}); err != nil {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteOK(c, DecidePinnedToolsResponse{Approved: len(req.Approve), Rejected: len(req.Reject)})
+}
+
+// requireActor resolves who is deciding. A decision with no identity would be
+// stored with a NULL decided_by and could not be attributed, so the mutating
+// routes refuse it.
+func requireActor(c *fiber.Ctx) (string, bool) {
+	actor := callerActor(c)
+	return actor, actor != ""
+}
+
+func unauthenticated(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusUnauthorized).JSON(httpio.ErrorBody{
+		Error: "unauthorized", Message: "an authenticated admin identity is required to decide on tools",
+	})
 }
 
 func badRequest(c *fiber.Ctx, msg string) error {
