@@ -73,6 +73,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      login_scopes:
+        items:
+          type: string
+        type: array
       public_keys:
         items:
           type: string
@@ -253,6 +257,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      login_scopes:
+        items:
+          type: string
+        type: array
       public_keys:
         items:
           type: string
