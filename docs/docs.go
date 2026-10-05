@@ -4738,6 +4738,12 @@ const docTemplate = `{
                 "jwks_url": {
                     "type": "string"
                 },
+                "login_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "public_keys": {
                     "type": "array",
                     "items": {
@@ -4995,6 +5001,12 @@ const docTemplate = `{
                 },
                 "jwks_url": {
                     "type": "string"
+                },
+                "login_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "public_keys": {
                     "type": "array",
