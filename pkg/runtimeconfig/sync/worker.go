@@ -175,8 +175,8 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 		return fmt.Errorf("configsync: decode snapshot: %w", err)
 	}
 	versioned := &Versioned[T]{Version: version, Snapshot: snapshot, Raw: raw}
-	w.store.Swap(versioned)
 	w.status.MarkLive(version)
+	w.store.Swap(versioned)
 	if w.onApplied != nil {
 		w.onApplied(ctx)
 	}
@@ -210,9 +210,10 @@ func (w *Worker[T]) restoreLKG() {
 		return
 	}
 	if v != nil {
-		w.store.Swap(v)
 		age, ageKnown := w.lkg.Age()
+		// Mark before the swap so the status never reads none while the store is loaded.
 		w.status.MarkLKG(v.Version, age)
+		w.store.Swap(v)
 		attrs := []any{
 			slog.String("component", component),
 			slog.String("version", v.Version),

@@ -90,7 +90,7 @@ const snapshotMeterScope = "trustgate/configsync"
 func snapshotReport(status *configsync.SnapshotStatus) func() apihandler.SnapshotReport {
 	return func() apihandler.SnapshotReport {
 		info := status.Info()
-		report := apihandler.SnapshotReport{State: string(info.State), Version: info.Version}
+		report := apihandler.SnapshotReport{State: string(info.State)}
 		if age, ok := status.Age(); ok {
 			appliedAt := info.AppliedAt.UTC()
 			seconds := int64(age.Seconds())
