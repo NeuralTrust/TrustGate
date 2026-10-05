@@ -19,6 +19,7 @@ import (
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -65,6 +66,12 @@ type registryRepositoryDeps struct {
 func provideRegistryRepository(c *container.Container) error {
 	if err := c.Provide(func(conn *database.Connection) domain.PinnedToolRepository {
 		return registryrepo.NewPinnedToolRepository(conn)
+	}); err != nil {
+		return err
+	}
+	// The full plane records pending pinned tools straight into the database.
+	if err := c.Provide(func(repo domain.PinnedToolRepository) appmcp.PendingToolRecorder {
+		return appmcp.NewRepositoryPendingRecorder(repo)
 	}); err != nil {
 		return err
 	}
