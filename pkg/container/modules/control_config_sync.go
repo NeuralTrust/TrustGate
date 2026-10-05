@@ -61,6 +61,10 @@ type compilerReaders struct {
 	// TenantCaps puts each tenant's plan caps into the snapshots that carry its
 	// gateways.
 	TenantCaps ratelimitdomain.TenantCapsRepository
+	// PinnedTools puts the decided tool set of pinned MCP registries into the
+	// snapshots. Deliberately not optional: without it a pinned registry would
+	// publish with nothing approved and silently hide every tool.
+	PinnedTools registrydomain.PinnedToolRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -83,6 +87,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
+			appsnapshot.WithPinnedTools(r.PinnedTools),
 		), nil
 	}); err != nil {
 		return err

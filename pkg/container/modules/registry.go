@@ -63,6 +63,11 @@ type registryRepositoryDeps struct {
 }
 
 func provideRegistryRepository(c *container.Container) error {
+	if err := c.Provide(func(conn *database.Connection) domain.PinnedToolRepository {
+		return registryrepo.NewPinnedToolRepository(conn)
+	}); err != nil {
+		return err
+	}
 	return c.Provide(func(deps registryRepositoryDeps) domain.Repository {
 		return registryrepo.NewRepository(
 			deps.Conn,
