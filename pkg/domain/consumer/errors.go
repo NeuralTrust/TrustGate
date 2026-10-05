@@ -36,6 +36,7 @@ var (
 	ErrPersonalAuthsBulk = fmt.Errorf("consumer: a personal consumer's auths change only by attach and detach: %w", commonerrors.ErrValidation)
 	ErrHybridPersonal    = fmt.Errorf("consumer: personal consumers are unavailable on hybrid gateways: %w", commonerrors.ErrValidation)
 	ErrPersonalNoDefault = fmt.Errorf("consumer: a personal consumer needs a concrete default model on at least one primary (non-fallback) registry: %w", commonerrors.ErrValidation)
+	ErrAudienceMismatch  = fmt.Errorf("consumer: auth does not match the consumer audience: %w", commonerrors.ErrValidation)
 
 	ErrInvalidLBConfig    = fmt.Errorf("consumer: invalid lb_config: %w", commonerrors.ErrValidation)
 	ErrSlugAlreadyExists  = fmt.Errorf("consumer: slug already exists: %w", commonerrors.ErrAlreadyExists)

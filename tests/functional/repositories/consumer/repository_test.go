@@ -5,6 +5,7 @@ package consumer_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -883,19 +884,14 @@ func TestRepository_AttachAuthUpsertsOnlyThatPersonalLink(t *testing.T) {
 		require.NoError(t, auths.Save(ctx, a))
 		return a.ID
 	}
-	seedConsumer := func(name string, audience domain.Audience) ids.ConsumerID {
-		c, err := domain.New(domain.CreateParams{GatewayID: gwID, Name: name, Type: domain.TypeLLM, Audience: audience})
-		require.NoError(t, err)
-		require.NoError(t, f.repo.Save(ctx, c))
-		return c.ID
-	}
 	linksOf := func(id ids.ConsumerID) (map[ids.AuthID]domain.AuthLink, []ids.AuthID) {
 		c, err := f.repo.FindByID(ctx, id)
 		require.NoError(t, err)
 		return c.AuthLinks, c.AuthIDs
 	}
 	owned, app := seedKey("alice-key"), seedKey("app-key")
-	p1, p2, x := seedConsumer("p1", domain.AudiencePersonal), seedConsumer("p2", domain.AudiencePersonal), seedConsumer("x", "")
+	p1, p2 := seedLLMConsumer(t, f, gwID, "p1", domain.AudiencePersonal), seedLLMConsumer(t, f, gwID, "p2", domain.AudiencePersonal)
+	x := seedLLMConsumer(t, f, gwID, "x", "")
 	grantedAt := time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)
 	p2Link := domain.AuthLink{Level: domain.GrantLevelUser, Priority: 1, GrantedAt: grantedAt.Add(time.Hour)}
 
@@ -926,4 +922,42 @@ func TestRepository_AttachAuthUpsertsOnlyThatPersonalLink(t *testing.T) {
 	var remaining int
 	require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, owned).Scan(&remaining))
 	require.Equal(t, 1, remaining)
+}
+
+func seedLLMConsumer(t *testing.T, f fixture, gwID ids.GatewayID, name string, audience domain.Audience) ids.ConsumerID {
+	t.Helper()
+	regID := seedRegistry(t, f.be, gwID, name+"-reg")
+	c, err := domain.New(domain.CreateParams{
+		GatewayID: gwID, Name: name, Type: domain.TypeLLM, Audience: audience,
+		RegistryIDs: []ids.RegistryID{regID}, ModelPolicies: domain.ModelPolicies{regID: {Default: "gpt-4o"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.repo.Save(context.Background(), c))
+	return c.ID
+}
+
+func TestRepository_LargePersonalConsumerReadsEveryLink(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "large-personal-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	personal := seedLLMConsumer(t, f, gwID, "large-personal", domain.AudiencePersonal)
+	grantedAt := time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)
+	wantIDs := make([]ids.AuthID, 0, 500)
+	wantLinks := make(map[ids.AuthID]domain.AuthLink, 500)
+	for i := range 500 {
+		key, err := authdomain.NewAPIKeyAuth(gwID, fmt.Sprintf("owned-%d", i), true, nil)
+		require.NoError(t, err)
+		key.OwnerID = fmt.Sprintf("user-%d", i)
+		require.NoError(t, auths.Save(ctx, key))
+		link := domain.AuthLink{Level: domain.GrantLevelAll, Priority: i % 3, GrantedAt: grantedAt.Add(time.Duration(i) * time.Minute)}
+		require.NoError(t, f.repo.AttachAuth(ctx, personal, key.ID, &link))
+		wantIDs = append(wantIDs, key.ID)
+		wantLinks[key.ID] = link
+	}
+
+	got, err := f.repo.FindByID(ctx, personal)
+	require.NoError(t, err)
+	require.ElementsMatch(t, wantIDs, got.AuthIDs)
+	require.Equal(t, wantLinks, got.AuthLinks)
 }
