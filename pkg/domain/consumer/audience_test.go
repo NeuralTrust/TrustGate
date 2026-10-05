@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -108,6 +109,31 @@ func TestConsumer_Validate_Personal(t *testing.T) {
 			}
 			if !errors.Is(err, tc.wantErr) || !errors.Is(err, commonerrors.ErrValidation) {
 				t.Fatalf("New() error = %v, want %v wrapping ErrValidation", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateAuthConfig_Audience(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		audience Audience
+		auth     authdomain.Auth
+		wantErr  bool
+	}{
+		{name: "application key on an application consumer", auth: authdomain.Auth{Type: authdomain.TypeAPIKey}},
+		{name: "oauth2 auth on an application consumer", auth: authdomain.Auth{Type: authdomain.TypeOAuth2}},
+		{name: "owned key on an application consumer", auth: authdomain.Auth{Type: authdomain.TypeAPIKey, OwnerID: "alice"}, wantErr: true},
+		{name: "owned key on a personal consumer", audience: AudiencePersonal, auth: authdomain.Auth{Type: authdomain.TypeAPIKey, OwnerID: "alice"}},
+		{name: "application key on a personal consumer", audience: AudiencePersonal, auth: authdomain.Auth{Type: authdomain.TypeAPIKey}, wantErr: true},
+		{name: "oauth2 auth on a personal consumer", audience: AudiencePersonal, auth: authdomain.Auth{Type: authdomain.TypeOAuth2}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateAuthConfig(&Consumer{Type: TypeLLM, Audience: tc.audience}, &tc.auth)
+			if (!tc.wantErr && err != nil) || (tc.wantErr && (!errors.Is(err, ErrAudienceMismatch) || !errors.Is(err, commonerrors.ErrValidation))) {
+				t.Fatalf("ValidateAuthConfig() = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}

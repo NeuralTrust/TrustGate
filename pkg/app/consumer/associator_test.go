@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
@@ -477,7 +478,7 @@ func TestAssociator_AttachAuth_Success(t *testing.T) {
 		Once()
 
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID, nil); err != nil {
 		t.Fatalf("AttachAuth error: %v", err)
 	}
 }
@@ -503,7 +504,7 @@ func TestAssociator_AttachAuth_MCPAcceptsAliasedIdP(t *testing.T) {
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -530,8 +531,55 @@ func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {
 		Once()
 
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID, nil); err != nil {
 		t.Fatalf("AttachAuth error: %v", err)
+	}
+}
+
+func TestAssociator_AttachAuth_AudienceAndLink(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	link := &domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 3, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)}
+	for _, tc := range []struct {
+		name     string
+		audience domain.Audience
+		ownerID  string
+		authGW   ids.GatewayID
+		link     *domain.AuthLink
+		wantErr  error
+	}{
+		{name: "first attach of an owned key", audience: domain.AudiencePersonal, ownerID: "alice", link: link},
+		{name: "application key with no body"},
+		{name: "owned key onto an application consumer", ownerID: "alice", wantErr: domain.ErrAudienceMismatch},
+		{name: "application key onto a personal consumer", audience: domain.AudiencePersonal, link: link, wantErr: domain.ErrAudienceMismatch},
+		{name: "owned key without link attributes", audience: domain.AudiencePersonal, ownerID: "alice", wantErr: domain.ErrInvalidAuthLink},
+		{name: "owned key with an invalid link", audience: domain.AudiencePersonal, ownerID: "alice", link: &domain.AuthLink{Level: domain.GrantLevelUser}, wantErr: domain.ErrInvalidAuthLink},
+		{name: "link attributes on an application consumer", link: link, wantErr: domain.ErrInvalidAuthLink},
+		{name: "owned key of another gateway", audience: domain.AudiencePersonal, ownerID: "alice", authGW: ids.New[ids.GatewayKind](), link: link, wantErr: authdomain.ErrNotFound},
+		{name: "another gateway wins over an invalid link", audience: domain.AudiencePersonal, ownerID: "alice", authGW: ids.New[ids.GatewayKind](), link: &domain.AuthLink{Level: domain.GrantLevelUser}, wantErr: authdomain.ErrNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cons := &domain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gwID, Type: domain.TypeLLM, Audience: tc.audience}
+			au := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gwID, Type: authdomain.TypeAPIKey, OwnerID: tc.ownerID}
+			if !tc.authGW.IsNil() {
+				au.GatewayID = tc.authGW
+			}
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, cons.ID).Return(cons, nil).Once()
+			authRepo := authmocks.NewRepository(t)
+			authRepo.EXPECT().FindByID(mock.Anything, au.ID).Return(au, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tc.wantErr == nil {
+				repo.EXPECT().AttachAuth(mock.Anything, cons.ID, au.ID, tc.link).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+			a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
+
+			if err := a.AttachAuth(context.Background(), gwID, cons.ID, au.ID, tc.link); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("AttachAuth() = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 

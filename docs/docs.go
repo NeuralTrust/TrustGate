@@ -1240,7 +1240,10 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}": {
             "post": {
-                "description": "Associates an auth credential with a consumer (idempotent).",
+                "description": "Associates an auth credential with a consumer (idempotent). An application consumer takes only unowned auths and no link attributes (an empty body or {}). A personal consumer takes only owned keys, and the body is required: level and granted_at must be present, and priority defaults to 1. Re-attaching a key to a personal consumer replaces that one link's attributes.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1272,6 +1275,14 @@ const docTemplate = `{
                         "name": "auth_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Link attributes, for an owned key on a personal consumer",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -1292,6 +1303,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The auth does not match the consumer audience, or the link attributes are missing, invalid or not allowed",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -5202,6 +5219,31 @@ const docTemplate = `{
                 },
                 "param_value": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest": {
+            "type": "object",
+            "properties": {
+                "granted_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T09:00:00Z"
+                },
+                "level": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "group",
+                        "all"
+                    ],
+                    "example": "group"
+                },
+                "priority": {
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "example": 1
                 }
             }
         },

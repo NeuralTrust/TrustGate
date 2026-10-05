@@ -545,6 +545,23 @@ func TestUpdater_Update_ReplacingAuthsChecksTheyExist(t *testing.T) {
 	})
 }
 
+func TestUpdater_Update_RefusesAnOwnedKeyOnAnApplicationConsumer(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
+	owned := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gwID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice"}
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{owned.ID}).Return([]*authdomain.Auth{owned}, nil).Once()
+	u := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+
+	_, err := u.Update(context.Background(), appconsumer.UpdateInput{ID: existing.ID, GatewayID: gwID, Auths: &[]ids.AuthID{owned.ID}})
+	if !errors.Is(err, domain.ErrAudienceMismatch) {
+		t.Fatalf("Update() = %v, want ErrAudienceMismatch", err)
+	}
+}
+
 func TestUpdater_Update_PersonalRules(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
