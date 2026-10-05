@@ -31,4 +31,6 @@ var (
 	// theirs to ask for. It is not ErrNotFound: the resource exists and the
 	// caller is known, they are simply not the one allowed to act on it.
 	ErrForbidden = errors.New("forbidden")
+
+	ErrPersonalKeyExists = errors.New("a personal key already exists for this owner")
 )
