@@ -17,6 +17,7 @@ package middleware
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"log/slog"
 	"net"
 	"strings"
@@ -115,14 +116,16 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if cert := r.clientCertificate(c); cert != nil {
-		return ownSubjectsOnly(r.resolveMTLS(c.UserContext(), cert, scope))
+		id, err := r.resolveMTLS(c.UserContext(), cert, scope)
+		return ownSubjectsOnly(c.UserContext(), id, err)
 	}
 	// An api key presented as a bearer token is an api key, not a token to hand
 	// to the IdP validators: most MCP clients can only send Authorization, and
 	// the proxy plane has always accepted that form. A bearer without the api-key
 	// marker keeps its precedence over the key headers.
 	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
-		return ownSubjectsOnly(r.resolveBearer(c.UserContext(), token, scope))
+		id, err := r.resolveBearer(c.UserContext(), token, scope)
+		return ownSubjectsOnly(c.UserContext(), id, err)
 	}
 	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
 		// Not guarded: an api key's subject is the name an admin gave the key,
@@ -131,7 +134,9 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 		// out a key somebody happened to call "app:something".
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	// Info, not Warn: an MCP client's first call carries no credential by
+	// design, to be challenged into OAuth discovery.
+	return credentialRejected(c.UserContext(), slog.LevelInfo, "no credential presented", slog.String("path", c.Path()))
 }
 
 // ownSubjectsOnly refuses a credential whose subject claims a namespace only
@@ -153,12 +158,13 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 // It guards the credentials whose subject comes from outside — a token an
 // identity provider signed, a certificate a CA issued. An api key's subject is
 // this gateway's own label for it and is left alone (see Resolve).
-func ownSubjectsOnly(id Identity, err error) (Identity, error) {
+func ownSubjectsOnly(ctx context.Context, id Identity, err error) (Identity, error) {
 	if err != nil {
 		return id, err
 	}
 	if id.Principal != nil && identity.ReservedSubject(id.Principal.Subject) {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "subject is in a namespace only the gateway mints",
+			slog.String("auth_id", id.AuthID.String()))
 	}
 	return id, nil
 }
@@ -219,7 +225,7 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Certificate, scope authScope) (Identity, error) {
 	candidates, err := r.credentials.MTLSAuths(ctx)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "mtls auth lookup failed", slog.String("error", err.Error()))
 	}
 	for _, a := range candidates {
 		if !scope.allows(a.ID) {
@@ -231,13 +237,13 @@ func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Cert
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	return credentialRejected(ctx, slog.LevelWarn, "client certificate matches no mtls auth")
 }
 
 func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string, scope authScope) (Identity, error) {
 	candidates, err := r.credentials.OAuth2Auths(ctx)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "oauth2 auth lookup failed", slog.String("error", err.Error()))
 	}
 	if isJWT(token) {
 		if r.session != nil && unverifiedIssuer(token) == r.session.Issuer() {
@@ -258,6 +264,15 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 // reason is a fixed string and the attrs are claims, never the token.
 func sessionRejected(ctx context.Context, reason string, attrs ...slog.Attr) (Identity, error) {
 	slog.LogAttrs(ctx, slog.LevelWarn, "mcp auth: session token rejected",
+		append([]slog.Attr{slog.String("reason", reason)}, attrs...)...)
+	return Identity{}, resolver.ErrUnauthenticated
+}
+
+// credentialRejected is sessionRejected for every other credential the chain
+// refuses: an IdP token, an opaque token, an api key, a client certificate, or
+// none at all.
+func credentialRejected(ctx context.Context, level slog.Level, reason string, attrs ...slog.Attr) (Identity, error) {
+	slog.LogAttrs(ctx, level, "mcp auth: credential rejected",
 		append([]slog.Attr{slog.String("reason", reason)}, attrs...)...)
 	return Identity{}, resolver.ErrUnauthenticated
 }
@@ -326,9 +341,10 @@ func gatewayFromClaim(v any) (ids.GatewayID, error) {
 
 func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "path matches no consumer")
 	}
 	issuer := unverifiedIssuer(token)
+	var lastErr error
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2
 		if cfg == nil || cfg.Issuer != issuer || !scope.allows(a.ID) {
@@ -342,17 +358,23 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 			principal, err = r.intro.Validate(ctx, token, cfg)
 		}
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	if lastErr != nil {
+		return credentialRejected(ctx, slog.LevelWarn, "token does not validate",
+			slog.String("issuer", issuer), slog.String("error", lastErr.Error()))
+	}
+	return credentialRejected(ctx, slog.LevelWarn, "token issuer matches no oauth2 auth on the path", slog.String("issuer", issuer))
 }
 
 func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "path matches no consumer")
 	}
+	var lastErr error
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2
 		if cfg == nil || cfg.IntrospectionURL == "" || !scope.allows(a.ID) {
@@ -360,20 +382,32 @@ func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string,
 		}
 		principal, err := r.intro.Validate(ctx, token, cfg)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	if lastErr != nil {
+		return credentialRejected(ctx, slog.LevelWarn, "opaque token does not introspect", slog.String("error", lastErr.Error()))
+	}
+	return credentialRejected(ctx, slog.LevelWarn, "no oauth2 auth on the path introspects opaque tokens")
 }
 
 func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope) (Identity, error) {
 	a, err := r.apiKeys.FindByAPIKey(ctx, rawKey)
-	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
-		return Identity{}, resolver.ErrUnauthenticated
+	switch {
+	case errors.Is(err, authdomain.ErrNotFound):
+		return credentialRejected(ctx, slog.LevelWarn, "api key is unknown")
+	case errors.Is(err, authdomain.ErrExpired):
+		return credentialRejected(ctx, slog.LevelWarn, "api key has expired")
+	case err != nil:
+		return credentialRejected(ctx, slog.LevelWarn, "api key lookup failed", slog.String("error", err.Error()))
+	}
+	if a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
+		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled or not an api key")
 	}
 	if !scope.allows(a.ID) {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "api key is not attached to the path", slog.String("auth_id", a.ID.String()))
 	}
 	principal := &identity.Principal{
 		Subject: a.Name,
