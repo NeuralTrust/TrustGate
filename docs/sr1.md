@@ -48,16 +48,25 @@ identical prompt. Send conversation history for that distinction.
 
 The scorer consumes latest user text only, including OpenAI/Responses text
 blocks and Anthropic text blocks. Tool-only Anthropic envelopes and Responses
-function-call outputs are continuations. A continuation lacking user history
+function-call outputs are continuations. A trailing assistant text prefill keeps
+the latest user turn eligible for an escape; retries retain the same turn identity.
+A continuation lacking user history
 uses its existing warm commitment, or the strongest rung if cold.
 
 SR-1 requires Firewall responses carrying raw scores from
 `9619f81d9db28141fc1cc0a3833c8446260ce603`. Missing provenance, invalid input,
 scorer failures and Redis failures use the strongest configured available rung.
+When Redis remains readable, scorer failures preserve the warm commitment floor
+and cannot spend an escape.
 The client omits Firewall's conversation ID to bypass legacy EWMA smoothing.
 Backend health and request exclusions are applied before selecting a route;
 a missing committed rung can lead upward, never downward. With no available
-route at or above it, routing returns an error.
+route at or above it, routing returns a policy exhaustion error. Legacy fallback
+chains cannot bypass that bound, including during upstream failover.
+
+Registry deletion retains SR-1 only if the surviving ladder still validates.
+Otherwise smart routing is removed and the surviving pool uses round robin,
+consistent with existing pruning behavior. Reconfigure the ladder explicitly.
 
 This is demand-based routing, not answer verification or a guarantee of quality.
 Legacy `smart-routing` configurations without `sr1` keep their existing policy.

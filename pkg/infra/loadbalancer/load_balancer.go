@@ -225,7 +225,7 @@ func (lb *LoadBalancer) NextRoute(
 		}
 		route := lb.strategy.Next(ctx, req, filtered)
 		if route == nil {
-			return nil, fmt.Errorf("no available SR-1 route at or above the committed rung")
+			return nil, routingdomain.ErrSR1PolicyExhausted
 		}
 		return route, nil
 	}

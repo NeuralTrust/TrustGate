@@ -16,6 +16,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -297,6 +298,9 @@ func (f *forwarder) routeBackend(
 	route, err := lb.NextRoute(ctx, req, excluded)
 	baseline := smartRoutingBaseline(lb, excluded)
 	if err != nil {
+		if errors.Is(err, routingdomain.ErrSR1PolicyExhausted) {
+			return routedBackend{}, fmt.Errorf("%w: %w", ErrNoBackendAvailable, err)
+		}
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{
 				lb:           lb,
