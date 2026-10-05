@@ -42,6 +42,7 @@ type SmartRouting struct {
 	fallback *RoundRobin
 	logger   *slog.Logger
 	warnOnce sync.Once
+	sr1State SR1Store
 }
 
 func NewSmartRouting(
@@ -69,6 +70,9 @@ func (s *SmartRouting) Next(
 	candidates := filterExcluded(s.routes, exclude)
 	if len(candidates) == 0 {
 		return nil
+	}
+	if s.config != nil && s.config.SR1 != nil {
+		return s.nextSR1(ctx, req, candidates)
 	}
 	if len(candidates) == 1 {
 		s.record(req, false)

@@ -87,6 +87,15 @@ func (c *Client) Configured() bool {
 // Score returns the session-smoothed complexity score in [0,1] for input.
 // conversationID and tenantID are optional and omitted from the request when empty.
 func (c *Client) Score(ctx context.Context, input, conversationID, tenantID string) (float64, error) {
+	return c.score(ctx, input, conversationID, tenantID, "")
+}
+
+// ScoreSR1 returns an unsmoothed score only from the immutable SR-1 model.
+func (c *Client) ScoreSR1(ctx context.Context, input, tenantID string) (float64, error) {
+	return c.score(ctx, input, "", tenantID, "9619f81d9db28141fc1cc0a3833c8446260ce603")
+}
+
+func (c *Client) score(ctx context.Context, input, conversationID, tenantID, revision string) (float64, error) {
 	if !c.Configured() {
 		return 0, ErrNotConfigured
 	}
@@ -132,6 +141,18 @@ func (c *Client) Score(ctx context.Context, input, conversationID, tenantID stri
 	var out scoreResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return 0, fmt.Errorf("complexity: decode response: %w", err)
+	}
+	if revision != "" {
+		var rawScore struct {
+			Value *float64 `json:"raw_score"`
+		}
+		if err := json.Unmarshal(raw, &rawScore); err != nil {
+			return 0, fmt.Errorf("complexity: decode raw score: %w", err)
+		}
+		if out.Revision != revision || rawScore.Value == nil {
+			return 0, errors.New("complexity: frozen SR-1 score provenance unavailable")
+		}
+		return *rawScore.Value, nil
 	}
 	return out.Score, nil
 }

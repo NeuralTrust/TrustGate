@@ -31,6 +31,7 @@ type BaseFactory struct {
 	serviceLocator factory.EmbeddingServiceLocator
 	complexity     strategies.ComplexityScorer
 	logger         *slog.Logger
+	sr1State       strategies.SR1Store
 }
 
 func NewBaseFactory(
@@ -39,11 +40,17 @@ func NewBaseFactory(
 	complexity strategies.ComplexityScorer,
 	logger *slog.Logger,
 ) Factory {
+	return NewBaseFactoryWithSR1(embeddingRepo, serviceLocator, complexity, nil, logger)
+}
+
+// NewBaseFactoryWithSR1 wires shared state for the opt-in frozen SR-1 policy.
+func NewBaseFactoryWithSR1(embeddingRepo embedding.Repository, serviceLocator factory.EmbeddingServiceLocator, complexity strategies.ComplexityScorer, state strategies.SR1Store, logger *slog.Logger) Factory {
 	return &BaseFactory{
 		embeddingRepo:  embeddingRepo,
 		serviceLocator: serviceLocator,
 		complexity:     complexity,
 		logger:         logger,
+		sr1State:       state,
 	}
 }
 
@@ -60,7 +67,7 @@ func (f *BaseFactory) CreateStrategy(input StrategyInput) (Strategy, error) {
 	case algorithm.Semantic:
 		return strategies.NewSemantic(input.EmbeddingConfig, input.Routes, f.embeddingRepo, f.serviceLocator), nil
 	case algorithm.SmartRouting:
-		return strategies.NewSmartRouting(input.Routes, input.SmartRoutingConfig, f.complexity, f.logger), nil
+		return strategies.NewSmartRoutingWithSR1(input.Routes, input.SmartRoutingConfig, f.complexity, f.sr1State, f.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported load balancing algorithm: %s", input.Algorithm)
 	}

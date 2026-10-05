@@ -213,6 +213,22 @@ func (lb *LoadBalancer) NextRoute(
 		attempts = 1
 	}
 	health := lb.healthMap(ctx)
+	if lb.smart != nil && lb.smart.SR1 != nil {
+		filtered := make(map[routingdomain.RouteKey]struct{}, len(exclude)+len(lb.routes))
+		for key := range exclude {
+			filtered[key] = struct{}{}
+		}
+		for _, route := range lb.routes {
+			if route.Registry == nil || !isHealthy(health, route.Registry.ID.String()) {
+				filtered[route.Key()] = struct{}{}
+			}
+		}
+		route := lb.strategy.Next(ctx, req, filtered)
+		if route == nil {
+			return nil, fmt.Errorf("no available SR-1 route at or above the committed rung")
+		}
+		return route, nil
+	}
 	var last *routingdomain.Route
 	for i := 0; i < attempts; i++ {
 		route := lb.strategy.Next(ctx, req, exclude)
