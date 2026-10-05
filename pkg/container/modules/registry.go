@@ -70,8 +70,8 @@ func provideRegistryRepository(c *container.Container) error {
 		return err
 	}
 	// The full plane records pending pinned tools straight into the database.
-	if err := c.Provide(func(repo domain.PinnedToolRepository) appmcp.PendingToolRecorder {
-		return appmcp.NewRepositoryPendingRecorder(repo)
+	if err := c.Provide(func(repo domain.PinnedToolRepository, logger *slog.Logger) appmcp.PendingToolRecorder {
+		return appmcp.NewRepositoryPendingRecorder(repo, logger)
 	}); err != nil {
 		return err
 	}

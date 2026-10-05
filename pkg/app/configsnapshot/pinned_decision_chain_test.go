@@ -60,7 +60,7 @@ func (m *memPinnedRepo) ListByRegistry(_ context.Context, _ ids.GatewayID, id id
 	return out, nil
 }
 
-func (m *memPinnedRepo) UpsertPending(_ context.Context, _ ids.GatewayID, id ids.RegistryID, tools []registrydomain.ToolCandidate) (int, error) {
+func (m *memPinnedRepo) UpsertPending(_ context.Context, _ ids.GatewayID, id ids.RegistryID, tools []registrydomain.ToolCandidate) (int, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, t := range tools {
@@ -68,7 +68,7 @@ func (m *memPinnedRepo) UpsertPending(_ context.Context, _ ids.GatewayID, id ids
 			RegistryID: id, Name: t.Name, Fingerprint: t.Fingerprint, Definition: t.Definition, Status: registrydomain.ToolStatusPending,
 		})
 	}
-	return len(tools), nil
+	return len(tools), 0, nil
 }
 
 func (m *memPinnedRepo) setStatus(id ids.RegistryID, refs []registrydomain.ToolRef, status registrydomain.ToolStatus) {
@@ -181,7 +181,7 @@ func TestDecisionMovesTheSnapshotVersionAndTheSurfaceFingerprint(t *testing.T) {
 	assert.Empty(t, empty.decisions)
 
 	// The data plane records a new tool as pending: invisible to the snapshot.
-	_, err = repo.UpsertPending(context.Background(), gw, reg.ID, []registrydomain.ToolCandidate{v1})
+	_, _, err = repo.UpsertPending(context.Background(), gw, reg.ID, []registrydomain.ToolCandidate{v1})
 	require.NoError(t, err)
 	assert.Equal(t, empty, observe(t, gw, reg, repo), "a pending tool must not churn the snapshot")
 
@@ -195,7 +195,7 @@ func TestDecisionMovesTheSnapshotVersionAndTheSurfaceFingerprint(t *testing.T) {
 	assert.Equal(t, []registrydomain.ToolDecision{{Name: "search", Fingerprint: v1.Fingerprint, Status: registrydomain.ToolStatusApproved}}, approved.decisions)
 
 	// The upstream changes the tool: the new definition is pending, still nothing moves.
-	_, err = repo.UpsertPending(context.Background(), gw, reg.ID, []registrydomain.ToolCandidate{v2})
+	_, _, err = repo.UpsertPending(context.Background(), gw, reg.ID, []registrydomain.ToolCandidate{v2})
 	require.NoError(t, err)
 	assert.Equal(t, approved, observe(t, gw, reg, repo))
 

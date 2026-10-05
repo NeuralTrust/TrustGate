@@ -297,7 +297,7 @@ func (_c *PinnedToolRepository_SetStatus_Call) RunAndReturn(run func(context.Con
 }
 
 // UpsertPending provides a mock function with given fields: ctx, gatewayID, registryID, tools
-func (_m *PinnedToolRepository) UpsertPending(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate) (int, error) {
+func (_m *PinnedToolRepository) UpsertPending(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], registryID ids.ID[ids.RegistryKind], tools []registry.ToolCandidate) (int, int, error) {
 	ret := _m.Called(ctx, gatewayID, registryID, tools)
 
 	if len(ret) == 0 {
@@ -305,8 +305,9 @@ func (_m *PinnedToolRepository) UpsertPending(ctx context.Context, gatewayID ids
 	}
 
 	var r0 int
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) (int, error)); ok {
+	var r1 int
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) (int, int, error)); ok {
 		return rf(ctx, gatewayID, registryID, tools)
 	}
 	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) int); ok {
@@ -315,13 +316,19 @@ func (_m *PinnedToolRepository) UpsertPending(ctx context.Context, gatewayID ids
 		r0 = ret.Get(0).(int)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) int); ok {
 		r1 = rf(ctx, gatewayID, registryID, tools)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(int)
 	}
 
-	return r0, r1
+	if rf, ok := ret.Get(2).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) error); ok {
+		r2 = rf(ctx, gatewayID, registryID, tools)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // PinnedToolRepository_UpsertPending_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpsertPending'
@@ -345,12 +352,12 @@ func (_c *PinnedToolRepository_UpsertPending_Call) Run(run func(ctx context.Cont
 	return _c
 }
 
-func (_c *PinnedToolRepository_UpsertPending_Call) Return(_a0 int, _a1 error) *PinnedToolRepository_UpsertPending_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *PinnedToolRepository_UpsertPending_Call) Return(inserted int, dropped int, err error) *PinnedToolRepository_UpsertPending_Call {
+	_c.Call.Return(inserted, dropped, err)
 	return _c
 }
 
-func (_c *PinnedToolRepository_UpsertPending_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) (int, error)) *PinnedToolRepository_UpsertPending_Call {
+func (_c *PinnedToolRepository_UpsertPending_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.RegistryKind], []registry.ToolCandidate) (int, int, error)) *PinnedToolRepository_UpsertPending_Call {
 	_c.Call.Return(run)
 	return _c
 }

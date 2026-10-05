@@ -24,6 +24,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -49,7 +52,7 @@ type PendingRegistryFinder interface {
 // use: it can only insert pending rows, so this channel has no way to approve or
 // reject a tool even by mistake.
 type PendingToolStore interface {
-	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate) (int, error)
+	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate) (inserted, dropped int, err error)
 }
 
 // PinnedToolsService is the control-plane end of the PinnedTools channel. It
@@ -63,6 +66,7 @@ type PinnedToolsService struct {
 	tools      PendingToolStore
 	gateways   GatewayResolver
 	logger     *slog.Logger
+	capped     metric.Int64Counter
 }
 
 func NewPinnedToolsService(
@@ -74,7 +78,13 @@ func NewPinnedToolsService(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &PinnedToolsService{registries: registries, tools: tools, gateways: gateways, logger: logger}
+	capped, err := otel.GetMeterProvider().Meter("trustgate/configsync").Int64Counter(
+		"trustgate.pinned_tools.capped",
+		metric.WithDescription("new pending tool definitions dropped because a registry or tool name hit its pending cap"))
+	if err != nil {
+		capped = noop.Int64Counter{}
+	}
+	return &PinnedToolsService{registries: registries, tools: tools, gateways: gateways, logger: logger, capped: capped}
 }
 
 func (s *PinnedToolsService) RecordPending(
@@ -112,11 +122,19 @@ func (s *PinnedToolsService) RecordPending(
 	if reg == nil || reg.GatewayID != gatewayID || !reg.ToolPolicy.IsPinned() {
 		return &snapshotpb.RecordPendingToolsResponse{}, nil
 	}
-	n, err := s.tools.UpsertPending(ctx, gatewayID, registryID, candidates)
+	n, dropped, err := s.tools.UpsertPending(ctx, gatewayID, registryID, candidates)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: record pending: %v", pendingToolsWho, err)
 	}
-	return &snapshotpb.RecordPendingToolsResponse{Recorded: int32(n)}, nil
+	if dropped > 0 {
+		s.capped.Add(ctx, int64(dropped))
+		s.logger.Warn("pinned tools: pending cap reached; new definitions were not stored",
+			slog.String("component", component),
+			slog.String("gateway_id", gatewayID.String()),
+			slog.String("registry_id", registryID.String()),
+			slog.Int("dropped", dropped))
+	}
+	return &snapshotpb.RecordPendingToolsResponse{Recorded: int32(n), Dropped: int32(dropped)}, nil
 }
 
 // candidatesFromRequest validates the limits and builds each candidate through

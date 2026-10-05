@@ -27,6 +27,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+const (
+	// MaxPendingPerRegistry caps the pending rows one registry may hold. Pending
+	// rows are written on behalf of an upstream the admin does not control (and
+	// by data planes that may run in a customer VPC), so without a cap a hostile
+	// or buggy server could grow registry_tools without bound.
+	MaxPendingPerRegistry = 500
+	// MaxPendingPerToolName caps the pending fingerprints of one tool name, so a
+	// server that rewrites a description on every call cannot fill the registry
+	// budget with variants of a single tool.
+	MaxPendingPerToolName = 20
+)
+
 // ToolStatus is the admin decision on one tool definition of a pinned registry.
 type ToolStatus string
 
@@ -181,8 +193,11 @@ type PinnedToolRepository interface {
 	ListByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]PinnedTool, error)
 	// UpsertPending records the tools as pending when they are not stored yet.
 	// It is idempotent and never changes the status of a stored row. It returns
-	// how many rows it inserted.
-	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []ToolCandidate) (int, error)
+	// how many rows it inserted and how many new definitions it dropped because
+	// the registry is at MaxPendingPerRegistry or the tool name at
+	// MaxPendingPerToolName pending rows. A registry that is not the gateway's
+	// yields (0, 0, nil).
+	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []ToolCandidate) (inserted, dropped int, err error)
 	// SetStatus records a decision for stored refs and returns how many rows it
 	// changed. Refs that are not stored are ignored; use Decide to refuse them.
 	SetStatus(

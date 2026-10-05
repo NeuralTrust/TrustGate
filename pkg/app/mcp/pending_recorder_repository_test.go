@@ -35,9 +35,9 @@ func TestRepositoryPendingRecorder_WritesPendingRowsOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	repo := mocks.NewPinnedToolRepository(t)
-	repo.EXPECT().UpsertPending(mock.Anything, gw, reg, []registrydomain.ToolCandidate{cand}).Return(1, nil).Once()
+	repo.EXPECT().UpsertPending(mock.Anything, gw, reg, []registrydomain.ToolCandidate{cand}).Return(1, 0, nil).Once()
 
-	require.NoError(t, appmcp.NewRepositoryPendingRecorder(repo).Record(context.Background(), gw, reg, []registrydomain.ToolCandidate{cand}))
+	require.NoError(t, appmcp.NewRepositoryPendingRecorder(repo, nil).Record(context.Background(), gw, reg, []registrydomain.ToolCandidate{cand}))
 }
 
 func TestRepositoryPendingRecorder_WrapsRepositoryError(t *testing.T) {
@@ -45,8 +45,17 @@ func TestRepositoryPendingRecorder_WrapsRepositoryError(t *testing.T) {
 	reg, _ := ids.NewV7[ids.RegistryKind]()
 	boom := errors.New("boom")
 	repo := mocks.NewPinnedToolRepository(t)
-	repo.EXPECT().UpsertPending(mock.Anything, gw, reg, mock.Anything).Return(0, boom)
+	repo.EXPECT().UpsertPending(mock.Anything, gw, reg, mock.Anything).Return(0, 0, boom)
 
-	err := appmcp.NewRepositoryPendingRecorder(repo).Record(context.Background(), gw, reg, nil)
+	err := appmcp.NewRepositoryPendingRecorder(repo, nil).Record(context.Background(), gw, reg, nil)
 	assert.ErrorIs(t, err, boom)
+}
+
+func TestRepositoryPendingRecorder_CapDropIsNotAnError(t *testing.T) {
+	gw, _ := ids.NewV7[ids.GatewayKind]()
+	reg, _ := ids.NewV7[ids.RegistryKind]()
+	repo := mocks.NewPinnedToolRepository(t)
+	repo.EXPECT().UpsertPending(mock.Anything, gw, reg, mock.Anything).Return(0, 3, nil)
+
+	assert.NoError(t, appmcp.NewRepositoryPendingRecorder(repo, nil).Record(context.Background(), gw, reg, nil))
 }

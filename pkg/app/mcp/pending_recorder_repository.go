@@ -17,9 +17,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 // RepositoryPendingRecorder is the full plane's persistence port for pending
@@ -27,11 +31,22 @@ import (
 // inserts missing rows and never touches a decided one. The DB-less plane uses
 // the config-sync client instead.
 type RepositoryPendingRecorder struct {
-	repo registrydomain.PinnedToolRepository
+	repo   registrydomain.PinnedToolRepository
+	logger *slog.Logger
+	capped metric.Int64Counter
 }
 
-func NewRepositoryPendingRecorder(repo registrydomain.PinnedToolRepository) *RepositoryPendingRecorder {
-	return &RepositoryPendingRecorder{repo: repo}
+func NewRepositoryPendingRecorder(repo registrydomain.PinnedToolRepository, logger *slog.Logger) *RepositoryPendingRecorder {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	capped, err := otel.GetMeterProvider().Meter("trustgate/mcp").Int64Counter(
+		"trustgate.pinned_tools.capped",
+		metric.WithDescription("new pending tool definitions dropped because a registry or tool name hit its pending cap"))
+	if err != nil {
+		capped = noop.Int64Counter{}
+	}
+	return &RepositoryPendingRecorder{repo: repo, logger: logger, capped: capped}
 }
 
 var _ PendingToolRecorder = (*RepositoryPendingRecorder)(nil)
@@ -42,8 +57,14 @@ func (r *RepositoryPendingRecorder) Record(
 	registryID ids.RegistryID,
 	tools []registrydomain.ToolCandidate,
 ) error {
-	if _, err := r.repo.UpsertPending(ctx, gatewayID, registryID, tools); err != nil {
+	_, dropped, err := r.repo.UpsertPending(ctx, gatewayID, registryID, tools)
+	if err != nil {
 		return fmt.Errorf("pending tools: %w", err)
+	}
+	if dropped > 0 {
+		r.capped.Add(ctx, int64(dropped))
+		r.logger.Warn("pending tools: pending cap reached; new definitions were not stored",
+			"registry_id", registryID.String(), "dropped", dropped)
 	}
 	return nil
 }

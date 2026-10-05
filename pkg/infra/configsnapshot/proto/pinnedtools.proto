@@ -49,4 +49,8 @@ message RecordPendingToolsRequest {
 message RecordPendingToolsResponse {
   // recorded is how many new pending rows were inserted.
   int32 recorded = 1;
+  // dropped is how many new definitions were not stored because the registry or
+  // the tool name is at its pending cap. The data plane keeps offering them; they
+  // are accepted again once an admin decides some of the pending rows.
+  int32 dropped = 2;
 }

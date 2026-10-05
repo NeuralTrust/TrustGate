@@ -5,6 +5,8 @@ package registry_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,7 +39,7 @@ func TestPinnedTools_Decide_AppliesBothListsAndBumpsTheRegistry(t *testing.T) {
 	r, tools, gwID, reg, conn := setupPinnedConn(t)
 	ctx := context.Background()
 	a, b := cand(t, "a", "A"), cand(t, "b", "B")
-	if _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}); err != nil {
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{a, b}); err != nil {
 		t.Fatalf("UpsertPending: %v", err)
 	}
 	_, before := registryState(t, r, reg.ID)
@@ -66,7 +68,7 @@ func TestPinnedTools_Decide_UnknownRefAppliesNothing(t *testing.T) {
 	r, tools, gwID, reg, conn := setupPinnedConn(t)
 	ctx := context.Background()
 	a, ghost := cand(t, "a", "A"), cand(t, "ghost", "Ghost")
-	if _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{a}); err != nil {
+	if _, _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{a}); err != nil {
 		t.Fatalf("UpsertPending: %v", err)
 	}
 	_, before := registryState(t, r, reg.ID)
@@ -167,5 +169,103 @@ func TestPinnedTools_Pin_RollsBackOnFailure(t *testing.T) {
 	}
 	if n := outboxCount(t, conn); n != markers {
 		t.Fatal("marker survived a failed pin")
+	}
+}
+
+func pendingCount(t *testing.T, tools interface {
+	ListByRegistry(context.Context, ids.GatewayID, ids.RegistryID) ([]domain.PinnedTool, error)
+}, gw ids.GatewayID, reg ids.RegistryID) int {
+	t.Helper()
+	got, err := tools.ListByRegistry(context.Background(), gw, reg)
+	if err != nil {
+		t.Fatalf("ListByRegistry: %v", err)
+	}
+	n := 0
+	for _, r := range got {
+		if r.Status == domain.ToolStatusPending {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPinnedTools_UpsertPending_CapsVariantsPerToolName(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	var variants []domain.ToolCandidate
+	for i := 0; i < domain.MaxPendingPerToolName+5; i++ {
+		variants = append(variants, cand(t, "shape-shifter", "variant "+string(rune('a'+i))))
+	}
+	in, dropped, err := tools.UpsertPending(ctx, gwID, reg.ID, variants)
+	if err != nil || in != domain.MaxPendingPerToolName || dropped != 5 {
+		t.Fatalf("UpsertPending = %d inserted, %d dropped, %v; want %d, 5", in, dropped, err, domain.MaxPendingPerToolName)
+	}
+	// Offering them again drops the same five and stores nothing new.
+	in, dropped, _ = tools.UpsertPending(ctx, gwID, reg.ID, variants)
+	if in != 0 || dropped != 5 {
+		t.Fatalf("second call = %d, %d; want 0, 5", in, dropped)
+	}
+	// Another name is unaffected.
+	if in, _, _ := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{cand(t, "other", "o")}); in != 1 {
+		t.Fatalf("a different name must still be accepted, inserted %d", in)
+	}
+}
+
+func TestPinnedTools_UpsertPending_CapsRegistryAndDecisionsFreeRoom(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	ctx := context.Background()
+	name := func(i int) string {
+		return "tool-" + string(rune('A'+i/26/26%26)) + string(rune('A'+i/26%26)) + string(rune('A'+i%26))
+	}
+	var all []domain.ToolCandidate
+	for i := 0; i < domain.MaxPendingPerRegistry+10; i++ {
+		all = append(all, cand(t, name(i), "d"))
+	}
+	in, dropped, err := tools.UpsertPending(ctx, gwID, reg.ID, all)
+	if err != nil || in != domain.MaxPendingPerRegistry || dropped != 10 {
+		t.Fatalf("UpsertPending = %d, %d, %v; want %d, 10", in, dropped, err, domain.MaxPendingPerRegistry)
+	}
+	stored, _ := tools.ListByRegistry(ctx, gwID, reg.ID)
+	// Deciding some rows frees room: only pending rows count.
+	if err := tools.Decide(ctx, gwID, reg.ID, refs(all[0], all[1], all[2]), nil, "admin"); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	var notStored []domain.ToolCandidate
+	have := map[domain.ToolRef]bool{}
+	for _, s := range stored {
+		have[s.Ref()] = true
+	}
+	for _, c := range all {
+		if !have[c.ToolRef] {
+			notStored = append(notStored, c)
+		}
+	}
+	in, dropped, _ = tools.UpsertPending(ctx, gwID, reg.ID, notStored)
+	if in != 3 || dropped != 7 {
+		t.Fatalf("after deciding 3 rows: %d inserted, %d dropped; want 3, 7", in, dropped)
+	}
+}
+
+// Concurrent recorders of one registry must never overshoot the cap: the check
+// and the insert are serialised by the registry row lock.
+func TestPinnedTools_UpsertPending_CapHoldsUnderConcurrency(t *testing.T) {
+	_, tools, gwID, reg, _ := setupPinnedConn(t)
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			var batch []domain.ToolCandidate
+			for i := 0; i < 100; i++ {
+				batch = append(batch, cand(t, fmt.Sprintf("w%d-t%03d", w, i), "d"))
+			}
+			if _, _, err := tools.UpsertPending(context.Background(), gwID, reg.ID, batch); err != nil {
+				t.Errorf("UpsertPending: %v", err)
+			}
+		}(w)
+	}
+	wg.Wait()
+	if n := pendingCount(t, tools, gwID, reg.ID); n != domain.MaxPendingPerRegistry {
+		t.Fatalf("pending rows = %d, want exactly %d", n, domain.MaxPendingPerRegistry)
 	}
 }

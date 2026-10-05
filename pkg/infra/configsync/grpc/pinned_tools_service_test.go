@@ -45,13 +45,19 @@ type pendingCall struct {
 }
 
 // memPending records what the store was asked to insert.
-type memPending struct{ calls []pendingCall }
+type memPending struct {
+	calls   []pendingCall
+	dropAll bool
+}
 
 func (m *memPending) UpsertPending(
 	_ context.Context, g ids.GatewayID, r ids.RegistryID, tools []registrydomain.ToolCandidate,
-) (int, error) {
+) (int, int, error) {
 	m.calls = append(m.calls, pendingCall{g, r, tools})
-	return len(tools), nil
+	if m.dropAll {
+		return 0, len(tools), nil
+	}
+	return len(tools), 0, nil
 }
 
 type pinnedFixture struct {
@@ -231,5 +237,18 @@ func TestPinnedToolsService_RejectsBadIDs(t *testing.T) {
 	_, err = f.svc.RecordPending(context.Background(), &snapshotpb.RecordPendingToolsRequest{GatewayId: f.acme.ID.String(), RegistryId: "nope"})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad registry id: code = %v", status.Code(err))
+	}
+}
+
+func TestPinnedToolsService_ReportsWhatTheCapDropped(t *testing.T) {
+	f := newPinnedFixture(t)
+	f.store.dropAll = true
+	ctx := WithScope(context.Background(), f.acme.ID.String())
+	resp, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned, tool("a"), tool("b")))
+	if err != nil {
+		t.Fatalf("RecordPending: %v", err)
+	}
+	if resp.GetRecorded() != 0 || resp.GetDropped() != 2 {
+		t.Fatalf("recorded=%d dropped=%d, want 0/2", resp.GetRecorded(), resp.GetDropped())
 	}
 }
