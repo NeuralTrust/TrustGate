@@ -27,6 +27,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+const (
+	// MaxPendingPerRegistry caps the pending rows one registry may hold. Pending
+	// rows are written on behalf of an upstream the admin does not control (and
+	// by data planes that may run in a customer VPC), so without a cap a hostile
+	// or buggy server could grow registry_tools without bound.
+	MaxPendingPerRegistry = 500
+	// MaxPendingPerToolName caps the pending fingerprints of one tool name, so a
+	// server that rewrites a description on every call cannot fill the registry
+	// budget with variants of a single tool.
+	MaxPendingPerToolName = 20
+)
+
 // ToolStatus is the admin decision on one tool definition of a pinned registry.
 type ToolStatus string
 
@@ -168,17 +180,34 @@ func (t PinnedTool) Ref() ToolRef {
 // reads as empty and is never written, which keeps tenants isolated the same
 // way the registry repository does.
 //
+// Every method that changes a decision (SetStatus, ApproveAll, Decide, Pin) also
+// bumps the registry in the same transaction: its updated_at moves and a
+// config-snapshot change marker is appended, exactly as a registry update does,
+// so the snapshot recompiles and every pod converges on the new decisions.
+// UpsertPending does not: a pending row is not part of the snapshot.
+//
 //go:generate mockery --name=PinnedToolRepository --dir=. --output=./mocks --filename=pinned_tool_repository_mock.go --case=underscore --with-expecter
 type PinnedToolRepository interface {
 	// ListByRegistry returns every stored definition of the registry. Each
 	// PinnedTool.Definition is display data, not the hashed bytes.
 	ListByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]PinnedTool, error)
+	// ListPage returns one page of the registry's definitions in a stable order
+	// (first_seen_at, name, fingerprint), optionally only those in one status, and
+	// how many match in total. The admin list uses it; the snapshot compiler reads
+	// the whole set with ListByRegistry.
+	ListPage(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, status *ToolStatus, limit, offset int) (items []PinnedTool, total int, err error)
+	// ListApproved returns the approved definitions of the given tool names, so a
+	// page of pending rows can show what is currently exposed.
+	ListApproved(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, names []string) ([]PinnedTool, error)
 	// UpsertPending records the tools as pending when they are not stored yet.
 	// It is idempotent and never changes the status of a stored row. It returns
-	// how many rows it inserted.
-	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []ToolCandidate) (int, error)
+	// how many rows it inserted and how many new definitions it dropped because
+	// the registry is at MaxPendingPerRegistry or the tool name at
+	// MaxPendingPerToolName pending rows. A registry that is not the gateway's
+	// yields (0, 0, nil).
+	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []ToolCandidate) (inserted, dropped int, err error)
 	// SetStatus records a decision for stored refs and returns how many rows it
-	// changed. Refs that are not stored are ignored.
+	// changed. Refs that are not stored are ignored; use Decide to refuse them.
 	SetStatus(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
@@ -187,11 +216,35 @@ type PinnedToolRepository interface {
 		status ToolStatus,
 		decidedBy string,
 	) (int, error)
+	// Decide approves and rejects stored refs in one transaction. It returns
+	// ErrUnknownToolRefs, applying nothing, when any ref is not stored for the
+	// registry, and ErrNotFound when the registry is not the gateway's.
+	Decide(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		registryID ids.RegistryID,
+		approve, reject []ToolRef,
+		decidedBy string,
+	) error
 	// ApproveAll approves the tools, inserting those not stored yet, in one
 	// transaction. It overrides a stored pending or rejected decision for a
 	// listed tool: approving is an explicit admin act. It returns ErrNotFound when
 	// the registry is not the gateway's.
 	ApproveAll(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		registryID ids.RegistryID,
+		tools []ToolCandidate,
+		decidedBy string,
+	) error
+	// Pin makes the confirmed list exact and sets the registry's tool policy to
+	// pinned in one transaction, so the list and the policy switch commit
+	// together or not at all. Listed tools become approved (overriding a stored
+	// rejection); any other approved row goes back to pending with its decision
+	// cleared; rejected rows that are not listed stay rejected. The registry must be an MCP registry (ErrInvalidToolPolicy
+	// otherwise) and the gateway's (ErrNotFound otherwise). An empty list is
+	// allowed.
+	Pin(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
 		registryID ids.RegistryID,

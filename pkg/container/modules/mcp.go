@@ -215,8 +215,9 @@ type composerParams struct {
 	Pending appmcp.PendingToolSink `optional:"true"`
 }
 
-// pendingRecorderParams carries the persistence port for pending tools. Nothing
-// provides it until the control-plane channel does; without it there is no
+// pendingRecorderParams carries the persistence port for pending tools: the
+// repository on the full plane (see provideRegistryRepository), the config-sync
+// client on the DB-less plane (see ConfigSyncData). A plane with neither gets no
 // recorder and no worker.
 type pendingRecorderParams struct {
 	dig.In

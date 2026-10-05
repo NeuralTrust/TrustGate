@@ -138,14 +138,21 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// The DB-less data plane reports pending pinned tools over the same channel.
+	// The service treats the caller as untrusted; see PinnedToolsService.
+	if err := c.Provide(func(registries registrydomain.Repository, tools registrydomain.PinnedToolRepository, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.PinnedToolsServer {
+		return configsyncgrpc.NewPinnedToolsService(registries, tools, gateways, logger)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(configsyncgrpc.NewAuthInterceptor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
+	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, pinned snapshotpb.PinnedToolsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
 		if cfg.IsDeployed() && (cfg.ConfigSync.GRPCTLSCertPath == "" || cfg.ConfigSync.GRPCTLSKeyPath == "") {
 			return nil, fmt.Errorf("%w: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY are required on the control plane in deployed environments", commonerrors.ErrInvalidConfig)
 		}
-		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger)
+		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger, configsyncgrpc.RegisterPinnedTools(pinned))
 	}); err != nil {
 		return err
 	}

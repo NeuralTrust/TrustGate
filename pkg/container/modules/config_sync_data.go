@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -86,6 +87,13 @@ func ConfigSyncData(c *container.Container) error {
 	// module serves directly on the full plane.
 	if err := c.Provide(func(client *configsyncgrpc.Client) appstore.RegistryEnsurer {
 		return configsyncgrpc.NewInstallationsClient(client.ClientConn())
+	}); err != nil {
+		return err
+	}
+	// Pending pinned tools reach the control plane over the same connection; the
+	// recorder in MCP wraps this port with the queue, dedupe and retries.
+	if err := c.Provide(func(client *configsyncgrpc.Client, logger *slog.Logger) appmcp.PendingToolRecorder {
+		return configsyncgrpc.NewPinnedToolsClient(client.ClientConn(), logger)
 	}); err != nil {
 		return err
 	}
