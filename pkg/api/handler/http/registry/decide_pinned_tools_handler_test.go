@@ -111,3 +111,23 @@ func TestDecidePinnedToolsHandler_ForeignRegistryIs404(t *testing.T) {
 	resp := postDecisions(t, decidePinnedToolsApp(svc, "ana"), gw, reg, `{"reject":[{"name":"a","fingerprint":"f"}]}`)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+// Without a resolvable admin identity the decision would be stored with a NULL
+// decided_by: both mutating routes must refuse it before touching anything.
+func TestPinnedToolRoutes_WithoutAnActorAre401(t *testing.T) {
+	gw, reg := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+	svc := appmocks.NewPinnedToolService(t) // must not be called
+
+	resp := postDecisions(t, decidePinnedToolsApp(svc, ""), gw, reg, `{"approve":[{"name":"a","fingerprint":"f"}]}`)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "decisions")
+
+	app := fiber.New()
+	app.Put("/v1/gateways/:gateway_id/registries/:id/tool-pinning", registryhttp.NewEnableToolPinningHandler(svc).Handle)
+	req := httptest.NewRequest(http.MethodPut,
+		"/v1/gateways/"+gw.String()+"/registries/"+reg.String()+"/tool-pinning", strings.NewReader(`{"tools":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r, err := app.Test(req)
+	require.NoError(t, err)
+	defer r.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, r.StatusCode, "tool-pinning")
+}
