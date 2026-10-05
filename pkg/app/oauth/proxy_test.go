@@ -465,6 +465,62 @@ func TestRefreshProxiesToIdP(t *testing.T) {
 	}
 }
 
+func newLoginScopesProxy(t *testing.T, idpURL string, store FlowStore) AuthProxy {
+	t.Helper()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:         idpURL,
+			ClientID:       "gw-client-id",
+			ClientSecret:   "gw-secret",
+			RequiredScopes: []string{"mcp.access"},
+			LoginScopes:    []string{"api://gw/mcp.access", "offline_access"},
+		}),
+	}}
+	return NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil)
+}
+
+func TestBrokeredFlowSendsLoginScopes(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	proxy := newLoginScopesProxy(t, idp.URL, newMemFlowStore())
+
+	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "gw-client-id",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		State:               "client-state",
+		Scope:               "mcp.access openid offline_access",
+		CodeChallenge:       s256("client-verifier"),
+		CodeChallengeMethod: "S256",
+	})
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse IdP redirect: %v", err)
+	}
+	if got, want := loc.Query().Get("scope"), "api://gw/mcp.access offline_access openid"; got != want {
+		t.Fatalf("upstream scope = %q, want %q", got, want)
+	}
+}
+
+func TestRefreshSendsLoginScopes(t *testing.T) {
+	t.Parallel()
+	idp, captured := fakeIdP(t)
+	proxy := newLoginScopesProxy(t, idp.URL, newMemFlowStore())
+
+	if _, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "old-refresh",
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if got, want := captured.Get("scope"), "api://gw/mcp.access offline_access"; got != want {
+		t.Fatalf("refresh scope = %q, want %q", got, want)
+	}
+}
+
 type fakePathResolver struct {
 	byPath map[string][]appconsumer.PathMatch
 }
