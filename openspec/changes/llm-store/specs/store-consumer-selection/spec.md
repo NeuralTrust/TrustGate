@@ -92,13 +92,15 @@ The selector MUST handle each intent kind as follows, with the admission and ord
 
 | Intent | Admits when |
 |---|---|
-| empty | a primary candidate has a default model; ordering by level, priority, age |
+| empty | a primary candidate has a default model (not needed on a capability route without a model); ordering by level, priority, age |
 | `auto` | `Resolve` succeeds with a primary candidate (it already requires a default) |
 | `pool:<alias>` | the consumer's LB pool alias equals the alias and a member survives substitution |
 | `@provider/model` | `Resolve` succeeds with a primary candidate of that provider allowing the model |
 | short model | `Resolve` succeeds and a primary candidate survives the listing check |
 
-An invalid model reference MUST answer 400 `invalid_model` as today. A pool alias that no effective consumer defines MUST answer 400 `invalid_model`; a defined alias with no surviving member MUST answer 403.
+An invalid model reference MUST answer 400 `invalid_model` as today. A pool alias that no effective consumer defines MUST answer 400 `invalid_model`: every effective link refused it as an unknown alias. As soon as one effective link defines the alias with no surviving primary member, the answer MUST be 403, whatever the other links answered. A key with no effective link (N = 0) MUST answer 403 for every intent, pool aliases included: N = 0 takes precedence over the 400 for an unknown alias.
+
+A request without a model on a capability route that takes none (for example `GET` or `DELETE /store/v1/files/{id}`) MUST NOT need a default model. There the capability and files-id filters decide admission, and the empty-model row applies only to routes without a capability.
 
 #### Scenario: Pool alias
 
@@ -111,6 +113,18 @@ An invalid model reference MUST answer 400 `invalid_model` as today. A pool alia
 - GIVEN P1 (`group`, default `gpt-4o`) and P2 (`user`, default `gpt6`)
 - WHEN `model: auto` is requested
 - THEN P2 serves it
+
+#### Scenario: Pool alias with no surviving member
+
+- GIVEN D (`user`, OpenAI, no pools) and P (`group`, Mistral and OpenAI, LB pool alias `fast` whose only member is the OpenAI registry)
+- WHEN `model: pool:fast` is requested
+- THEN 403 `model_not_allowed`, not 400, because P defines the alias and D substitutes its only member
+
+#### Scenario: Files route without a model
+
+- GIVEN D (`user`, OpenAI `["gpt6"]`) and B (`group`, Anthropic, no default)
+- WHEN `GET /store/v1/files/file_011abc` is sent
+- THEN B serves it, because only Anthropic owns the `file_` id family
 
 #### Scenario: Qualified reference
 

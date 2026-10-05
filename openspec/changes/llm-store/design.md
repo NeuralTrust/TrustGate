@@ -87,7 +87,7 @@ A warm request costs 0 DB, 0 gRPC and 0 Redis beyond the budget counter. Stalene
 
 | Intent kind (`intent.go`) | Admission | Specificity |
 |---|---|---|
-| empty | a primary candidate with a `Default` | — (level, priority, age) |
+| empty | a primary candidate with a `Default`; on a capability route without a model (e.g. `GET /store/v1/files/{id}`) any primary candidate left by the capability and files-id filters | — (level, priority, age) |
 | `auto` | `resolveAuto` succeeds with a primary candidate | — |
 | `pool:<alias>` | the consumer's LB pool alias matches and a member survives `Keep` | — |
 | `@provider/model` | `resolveQualified` succeeds with a primary candidate | 0 / 1 / 2 |
@@ -341,6 +341,7 @@ New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/con
 | `/store/v1/*` | hybrid gateway; no active personal consumer | 404 `not_found` |
 | `/store/v1/*` | no key; unknown, expired, disabled, non-`api_key`, unowned, other gateway | 401 `unauthenticated` |
 | `/store/v1/*` | nothing effective admits the request (N = 0 included) | 403 `model_not_allowed` |
+| `/store/v1/*` | no links (N = 0), whatever the intent: takes precedence over the unknown pool alias row | 403 `model_not_allowed` |
 | `/store/v1/*` | invalid model reference, unknown pool alias everywhere | 400 `invalid_model` |
 | `/store/v1/*` | `Data` load or key lookup infra error | 500 `internal_error` |
 | `/store/v1/models` | nothing effective | 200 `{"object":"list","data":[]}` |
@@ -352,7 +353,7 @@ New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/con
 | `…/principal/llm-key` | service credential / exists / bad expiry or hybrid / no key | 403 / 409 `already_exists` / 422 / 404 |
 | Policy write | `calendar_*` without `key`; `key` with `custom_pricing` or `group_by_header`; unknown `partition` | existing invalid-config mapping |
 
-Note on the unknown pool alias: the selector maps "every effective link refused the alias" to the first resolver error seen, so a pool alias no consumer defines keeps today's 400 and a known alias with no surviving member is 403.
+Note on the unknown pool alias: the answer is 400 only when every effective link returns `ErrUnknownPoolAlias`. It is 403 as soon as any effective link defines the alias with no surviving primary member, whether the members were substituted or reachable only through the fallback chain, and whatever the other links answered. N = 0 is always 403.
 
 ## File changes (chained PRs into `develop`, ≤ ~400 changed lines each; generated mocks and swagger in their own commit)
 

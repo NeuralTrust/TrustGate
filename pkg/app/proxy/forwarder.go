@@ -98,8 +98,7 @@ type forwarder struct {
 	invoker    ProviderInvoker
 	executor   appplugins.Executor
 	sessions   appsession.Store
-	resolver   approuting.Resolver
-	listing    appcatalog.ModelListing
+	pipeline   candidatePipeline
 	limiter    ratelimitapp.Checker
 	codec      guardCodec
 	maxRetries int
@@ -141,8 +140,7 @@ func NewForwarder(
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
-		resolver:   resolver,
-		listing:    listing,
+		pipeline:   candidatePipeline{resolver: resolver, listing: listing, logger: logger},
 		limiter:    limiter,
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
