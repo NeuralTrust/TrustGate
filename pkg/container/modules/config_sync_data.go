@@ -47,6 +47,11 @@ func ConfigSyncData(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func() *configsync.SnapshotStatus {
+		return configsync.NewSnapshotStatus(nil)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(cfg *config.Config) (configsync.Crypto, error) {
 		key, err := base64.StdEncoding.DecodeString(cfg.ConfigSync.LKGKey)
 		if err != nil {
@@ -111,12 +116,13 @@ func ConfigSyncData(c *container.Container) error {
 		cacheManager *cache.TTLMapManager,
 		logger *slog.Logger,
 		cfg *config.Config,
+		status *configsync.SnapshotStatus,
 	) *configsync.Worker[*readmodel.Snapshot] {
 		return configsync.NewWorker(fetcher, store, transport, lkg, codec, logger, configsync.WorkerConfig{
 			PollInterval: cfg.ConfigSync.PollInterval,
 			MinBackoff:   cfg.ConfigSync.GRPCMinBackoff,
 			MaxBackoff:   cfg.ConfigSync.GRPCMaxBackoff,
-		}, configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
+		}, configsync.WithStatus[*readmodel.Snapshot](status), configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
 			cacheManager.ClearAllTTLMaps()
 			logger.Debug("config-sync applied new snapshot; cleared derived caches",
 				slog.String("component", "configsync"))
