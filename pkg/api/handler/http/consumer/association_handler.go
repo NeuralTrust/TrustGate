@@ -102,6 +102,8 @@ func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
 // @Failure      400          {object}  httpio.ErrorBody
 // @Failure      401          {object}  httpio.ErrorBody
 // @Failure      404          {object}  httpio.ErrorBody
+// @Failure      409          {object}  httpio.ErrorBody
+// @Failure      422          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id} [delete]
 func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	gatewayID, consumerID, registryID, err := httpio.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")

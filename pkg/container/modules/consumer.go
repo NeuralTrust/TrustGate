@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -68,8 +69,8 @@ func provideConsumerServices(c *container.Container) error {
 	if err := provideConsumerRepositoryViews(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
-		return appconsumer.NewCreator(repo, registryRepo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, gateways gatewaydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, gateways, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}

@@ -268,6 +268,7 @@ func TestAssociator_DetachRegistry_RejectsDependentReferences(t *testing.T) {
 		DetachRegistryIfUnreferenced(mock.Anything, gwID, consumerID, registryID).
 		Return(nil, commonerrors.ErrConflict).
 		Once()
+	repo.EXPECT().FindByID(mock.Anything, consumerID).Return(&domain.Consumer{ID: consumerID, GatewayID: gwID}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
@@ -808,5 +809,47 @@ func TestAssociator_DetachPolicy_IsNotGuarded(t *testing.T) {
 	}
 	if levels.checked != nil {
 		t.Fatal("detach must not consult the level guard")
+	}
+}
+
+func TestAssociator_DetachRegistry_KeepsAPersonalDefault(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	r1, r2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	for _, tc := range []struct {
+		name     string
+		policies domain.ModelPolicies
+		detach   ids.RegistryID
+		wantErr  error
+	}{
+		{name: "only registry with a default", policies: domain.ModelPolicies{r1: {Default: "gpt-4o"}}, detach: r1, wantErr: domain.ErrPersonalNoDefault},
+		{name: "consumer already without a default", policies: domain.ModelPolicies{r1: {Allowed: []string{"gpt-4o"}}}, detach: r1, wantErr: commonerrors.ErrConflict},
+		{name: "registry without a default", policies: domain.ModelPolicies{r1: {Default: "gpt-4o"}}, detach: r2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			personal := &domain.Consumer{
+				ID:            ids.New[ids.ConsumerKind](),
+				GatewayID:     gwID,
+				Type:          domain.TypeLLM,
+				Audience:      domain.AudiencePersonal,
+				RegistryIDs:   []ids.RegistryID{r1, r2},
+				ModelPolicies: tc.policies,
+			}
+			repo := repomocks.NewRepository(t)
+			publisher := cachemocks.NewEventPublisher(t)
+			if tc.wantErr == nil {
+				repo.EXPECT().DetachRegistryIfUnreferenced(mock.Anything, gwID, personal.ID, tc.detach).Return(personal, nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			} else {
+				repo.EXPECT().DetachRegistryIfUnreferenced(mock.Anything, gwID, personal.ID, tc.detach).Return(nil, commonerrors.ErrConflict).Once()
+				repo.EXPECT().FindByID(mock.Anything, personal.ID).Return(personal, nil).Once()
+			}
+			a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
+
+			if err := a.DetachRegistry(context.Background(), gwID, personal.ID, tc.detach); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }

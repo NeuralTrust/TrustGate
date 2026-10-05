@@ -98,13 +98,13 @@ An in-code migration (`20261005120000_add_consumer_audience`, template `20260922
 
 ### Requirement: Personal consumers do not take bulk `auths`
 
-Create with `audience = personal` and a non-empty `auths` MUST answer 422. A `PUT /consumers/:id` on a personal consumer that carries the `auths` field (an empty list included) MUST answer 422 and leave every `consumer_auth` row of the consumer untouched, because `replaceAuthLinks` would otherwise drop every user's link and its attributes. Personal links change only through the attach and detach of `owned-key-attachment` and the revoke of `personal-key-endpoints`. Application consumers MUST keep accepting `auths` as today.
+Create MUST NOT take `auths` for any audience: the create request has no such field, so a personal consumer starts with no links and its keys arrive only through attach. A `PUT /consumers/:id` on a personal consumer that carries the `auths` field (an empty list included) MUST answer 422 and leave every `consumer_auth` row of the consumer untouched, because `replaceAuthLinks` would otherwise drop every user's link and its attributes. Personal links change only through the attach and detach of `owned-key-attachment` and the revoke of `personal-key-endpoints`. Application consumers MUST keep accepting `auths` as today.
 
 #### Scenario: Create with keys
 
-- GIVEN a create request with `audience: personal` and `auths: [K]`
+- GIVEN an otherwise valid create request with `audience: personal` and `auths: [K]`
 - WHEN it is sent
-- THEN 422, and no consumer is created
+- THEN the consumer is created with `auth_ids = []`, as any create ignores `auths`, and K is linked only by a later attach
 
 #### Scenario: Update with an empty list
 

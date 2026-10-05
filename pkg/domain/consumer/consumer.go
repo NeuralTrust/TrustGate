@@ -110,6 +110,15 @@ func (c *Consumer) FailMode() FailMode {
 	return c.MCP.FailMode
 }
 
+// ActiveFallbackChain returns the fallback chain when fallback is enabled, and
+// nil otherwise.
+func (c *Consumer) ActiveFallbackChain() []ids.RegistryID {
+	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
+		return nil
+	}
+	return c.Fallback.Chain
+}
+
 type CreateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
@@ -269,6 +278,9 @@ func (c *Consumer) Validate() error {
 		return err
 	}
 	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+		return err
+	}
+	if err := c.validatePersonal(); err != nil {
 		return err
 	}
 	if c.Type == TypeMCP {
