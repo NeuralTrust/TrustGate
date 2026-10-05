@@ -6,7 +6,7 @@ Change `llm-store` (RUN-1763), slice S3 (decisions B1, D3, D5, D6). New capabili
 
 ### Requirement: `audience` column
 
-An in-code migration (`20261002…`, template `20260922120000_add_auth_expires_at.go`) MUST add `consumers.audience text NOT NULL DEFAULT 'application'` with `CHECK (audience IN ('application','personal'))`. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table. Every Postgres read, insert and update of `consumers` MUST carry the column.
+An in-code migration (`20261005120000_add_consumer_audience`, template `20260922120000_add_auth_expires_at.go`) MUST add `consumers.audience text NOT NULL DEFAULT 'application'` with `CHECK (audience IN ('application','personal'))`. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table. Every Postgres read and insert of `consumers` MUST carry the column, and an UPDATE MUST never write it: `audience` is set at create only.
 
 #### Scenario: Existing rows
 

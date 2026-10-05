@@ -251,7 +251,7 @@ func (h *ForwardedHandler) WithStore(selector appproxy.StoreSelector, models app
 ### Migrations (in-code, one transaction each, idempotent; template `20260922120000_add_auth_expires_at.go`)
 
 ```sql
--- 20261002120000_add_consumer_audience  (up)
+-- 20261005120000_add_consumer_audience  (up)
 ALTER TABLE consumers ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'application';
 ALTER TABLE consumers DROP CONSTRAINT IF EXISTS consumers_audience_check;
 ALTER TABLE consumers ADD CONSTRAINT consumers_audience_check CHECK (audience IN ('application', 'personal'));
@@ -259,14 +259,14 @@ ALTER TABLE consumers ADD CONSTRAINT consumers_audience_check CHECK (audience IN
 ALTER TABLE consumers DROP CONSTRAINT IF EXISTS consumers_audience_check;
 ALTER TABLE consumers DROP COLUMN IF EXISTS audience;
 
--- 20261002120100_add_auth_owner  (up)
+-- 20261005120100_add_auth_owner  (up)
 ALTER TABLE auths ADD COLUMN IF NOT EXISTS owner_id TEXT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS auths_gateway_owner_uniq ON auths (gateway_id, owner_id) WHERE owner_id IS NOT NULL;
 -- down
 DROP INDEX IF EXISTS auths_gateway_owner_uniq;
 ALTER TABLE auths DROP COLUMN IF EXISTS owner_id;
 
--- 20261002120200_add_consumer_auth_grant  (up)
+-- 20261005120200_add_consumer_auth_grant  (up)
 ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS level TEXT NULL;
 ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS priority INTEGER NULL;
 ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ NULL;
@@ -359,10 +359,10 @@ Note on the unknown pool alias: the selector maps "every effective link refused 
 | PR | Slice | Files (Action) | Est. lines (code / test) | Depends |
 |---|---|---|---|---|
 | 1 | S0 + S1 | `pkg/api/resolver/api_key_resolver.go` (M: `now`, skip `IsExpired` at `:45`). `pkg/api/middleware/auth.go` (M: `apiKeyAttachedElsewhere(…, now)` `:196`). `pkg/infra/cache/subscriber/invalidate_gateway_data_event_subscriber.go` (M: DD15). `pkg/infra/trace/trace.go`, `pkg/infra/metrics/events/event.go`, `pkg/app/metrics/builder.go`, `pkg/infra/telemetry/otlp/mapping.go`, `proxy_handler.go` (M: auth id). Tests incl. `invalidate_gateway_data_event_subscriber_test.go`. `docs/telemetry/otlp-metadata-contract.md`, release note | 55 / 175 | — |
-| 2 | S3a data model | `migrations/20261002120000_add_consumer_audience.go`, `migrations/20261002120100_add_auth_owner.go` (C). `pkg/domain/consumer/{consumer,audience,errors}.go` (M/C). `pkg/domain/auth/{auth,errors,repository}.go` (M). `pkg/infra/repository/{consumer,auth}/repository.go` (M). `adapters/auth_repository.go` (M). Tests: domain, `codec_test.go` golden bytes, `compiler_test.go` (owned key ships), `tests/functional/repositories/{auth,consumer}` | 230 / 160 | — |
+| 2 | S3a data model (ships as P2a `audience` and P2b `owner_id`, see `tasks.md`) | `migrations/20261005120000_add_consumer_audience.go`, `migrations/20261005120100_add_auth_owner.go` (C). `pkg/domain/consumer/{consumer,audience,errors}.go` (M/C). `pkg/domain/auth/{auth,errors,repository}.go` (M). `pkg/infra/repository/{consumer,auth}/repository.go` (M). `adapters/auth_repository.go` (M). Tests: domain, `codec_test.go` golden bytes, `compiler_test.go` (owned key ships), `tests/functional/repositories/{auth,consumer}` | 230 / 160 | — |
 | 3 | S3b consumer rules | `consumer.go` `Validate` (personal ⇒ LLM, default model), `auth_rules.go` (D3). `pkg/app/consumer/{creator,updater,associator}.go` (M: audience, immutability, D5, hybrid with a gateway dep, default kept on registry detach). Consumer `request/{create,update}_consumer_request.go`, `response/consumer_response.go` (M). `modules/consumer.go` (M). Tests | 120 / 200 | 2 |
 | 4 | S3c auth rules | `list_auth_handler.go` (M: `ExcludeOwned`, `?owner_id`), `response/auth_response.go` (M). `pkg/app/auth/{updater,rotator}.go` (M: DD14). `pkg/app/policy/warnings.go:285` (M). `pkg/common/errors/errors.go`, `httpio/errors.go` (M: `owned_key`). Tests | 90 / 150 | 2 |
-| 5 | S3d link columns | `migrations/20261002120200_add_consumer_auth_grant.go` (C). `pkg/domain/consumer/auth_link.go` (C), `consumer.go` (M: `AuthLinks`, rehydrate). `pkg/domain/consumer/repository.go` (M: `AttachAuth` port). `pkg/infra/repository/consumer/repository.go` (M: `auth_links` select, upsert). `adapters/consumer_repository.go` (M). Tests: `auth_link_test.go`, codec golden (application consumer unchanged, personal round trip), PG: CHECK, upsert, `auth_links` read | 120 / 170 | 2 |
+| 5 | S3d link columns | `migrations/20261005120200_add_consumer_auth_grant.go` (C). `pkg/domain/consumer/auth_link.go` (C), `consumer.go` (M: `AuthLinks`, rehydrate). `pkg/domain/consumer/repository.go` (M: `AttachAuth` port). `pkg/infra/repository/consumer/repository.go` (M: `auth_links` select, upsert). `adapters/consumer_repository.go` (M). Tests: `auth_link_test.go`, codec golden (application consumer unchanged, personal round trip), PG: CHECK, upsert, `auth_links` read | 120 / 170 | 2 |
 | 6 | S3e attach API | `consumer/request/attach_auth_request.go` (C). `association_handler.go` (M: optional body). `pkg/app/consumer/associator.go` (M: DD7). Mocks regen. Tests: handler matrix (empty body, link on application → 422, missing level → 422, priority default), associator, PG re-attach updates priority, links to other consumers untouched | 100 / 160 | 3, 5 |
 | 7 | S2a partition | `pkg/app/auth/context.go`, `pkg/infra/context/request_context.go`, `pkg/app/plugins/{plugin,executor}.go`, `proxy_handler.go:174-175` (M). `tokenratelimit/{config,keys,budget,plugin}.go` (M). Tests: config matrix, key layout, owner vs auth subject, playground pass-through, rollovers with a fake clock | 120 / 190 | — |
 | 8 | S2b hard limits | `tokenratelimit/{budget,plugin,responses,config}.go` (M). `catalog_metadata.go:142-273`, `docs/policies.json:112` (M). Tests: closed miniredis → 503 enforce / pass observe / default partition fail-open; unpriced → 403; schema | 100 / 165 | 7 |
