@@ -248,6 +248,27 @@ func TestAppConnections_RejectAForeignKeyAndAnUnknownSlug(t *testing.T) {
 	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
 }
 
+func TestConnections_RefuseAPersonalKeyEvenWhenTheConsumerHoldsIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
+	owned := validAPIKeyAuth(gatewayID, authID)
+	owned.OwnerID = "alice"
+
+	consumers := appconsumermocks.NewDataFinder(t)
+	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Twice()
+	apiKeys := appauthmocks.NewAPIKeyFinder(t)
+	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_alice").Return(owned, nil).Twice()
+	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
+
+	_, err := svc.Connections(ctx, gatewayID, "assistant", "ag_alice", "user_123")
+	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+	_, err = svc.AppConnections(ctx, gatewayID, "assistant", "ag_alice")
+	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+}
+
 // validAPIKeyAuth is an enabled api key of this gateway, as the finder returns
 // it. It lived beside the api-key connect page until that page was deleted.
 func validAPIKeyAuth(gatewayID ids.GatewayID, authID ids.AuthID) *authdomain.Auth {

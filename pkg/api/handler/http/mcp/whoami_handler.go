@@ -344,7 +344,7 @@ func (h *WhoAmIHandler) gatewayForKey(c *fiber.Ctx) *gatewaydomain.Gateway {
 		return nil
 	}
 	auth, err := h.byKey.keys.FindByAPIKey(c.UserContext(), key)
-	if err != nil || auth == nil || auth.GatewayID.IsNil() {
+	if err != nil || auth == nil || auth.GatewayID.IsNil() || auth.IsOwned() || !auth.Enabled {
 		return nil
 	}
 	gateway, err := h.byKey.gateways.FindByID(c.UserContext(), auth.GatewayID)

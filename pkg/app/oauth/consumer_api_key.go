@@ -43,6 +43,7 @@ func validMCPConsumer(target *appconsumer.RoutableConsumer, gatewayID ids.Gatewa
 // this gateway that the consumer actually holds.
 func validAPIKeyAuth(auth *authdomain.Auth, consumer *consumerdomain.Consumer, gatewayID ids.GatewayID) bool {
 	if auth == nil ||
+		auth.IsOwned() ||
 		!auth.Enabled ||
 		auth.Type != authdomain.TypeAPIKey ||
 		auth.GatewayID != gatewayID {
