@@ -197,34 +197,56 @@ func TestPinnedToolsService_NonPinnedOrUnknownRegistryIsIgnored(t *testing.T) {
 	}
 }
 
-func TestPinnedToolsService_Limits(t *testing.T) {
+func TestPinnedToolsService_RefusesACallAboveTheLimit(t *testing.T) {
 	f := newPinnedFixture(t)
 	ctx := WithScope(context.Background(), f.acme.ID.String())
 
-	tooMany := make([]*snapshotpb.PendingTool, MaxPendingToolsPerCall+1)
-	for i := range tooMany {
-		tooMany[i] = tool("t" + strings.Repeat("x", i%5) + string(rune('a'+i%26)))
+	tools := make([]*snapshotpb.PendingTool, MaxPendingToolsPerCall+1)
+	for i := range tools {
+		tools[i] = tool("t" + strings.Repeat("x", i%5) + string(rune('a'+i%26)))
 	}
-	atLimit := tooMany[:MaxPendingToolsPerCall]
-
-	cases := map[string][]*snapshotpb.PendingTool{
-		"too many tools": tooMany,
-		"empty name":     {tool("")},
-		"long name":      {tool(strings.Repeat("n", MaxPendingToolNameBytes+1))},
-		"big definition": {{Name: "a", Description: strings.Repeat("d", MaxPendingToolBytes)}},
-		"nul":            {{Name: "a", Description: "x\x00y"}},
-	}
-	for name, tools := range cases {
-		_, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned, tools...))
-		if status.Code(err) != codes.InvalidArgument {
-			t.Errorf("%s: code = %v, want InvalidArgument", name, status.Code(err))
-		}
+	_, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned, tools...))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", status.Code(err))
 	}
 	if len(f.store.calls) != 0 {
-		t.Fatalf("a rejected batch must write nothing, got %d calls", len(f.store.calls))
+		t.Fatal("a refused call must write nothing")
 	}
-	if _, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned, atLimit...)); err != nil {
+	if _, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned, tools[:MaxPendingToolsPerCall]...)); err != nil {
 		t.Fatalf("exactly the limit must pass: %v", err)
+	}
+}
+
+// One bad tool must not keep the good ones from being recorded.
+func TestPinnedToolsService_SkipsInvalidToolsAndRecordsTheRest(t *testing.T) {
+	f := newPinnedFixture(t)
+	ctx := WithScope(context.Background(), f.acme.ID.String())
+
+	resp, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned,
+		tool("good-1"),
+		tool(""),
+		tool(strings.Repeat("n", MaxPendingToolNameBytes+1)),
+		&snapshotpb.PendingTool{Name: "big", Description: strings.Repeat("d", MaxPendingToolBytes)},
+		&snapshotpb.PendingTool{Name: "nul", Description: "x\x00y"},
+		tool("good-2"),
+	))
+	if err != nil {
+		t.Fatalf("RecordPending: %v", err)
+	}
+	if resp.GetAccepted() != 2 || resp.GetSkipped() != 4 || resp.GetRecorded() != 2 {
+		t.Fatalf("accepted=%d skipped=%d recorded=%d, want 2/4/2", resp.GetAccepted(), resp.GetSkipped(), resp.GetRecorded())
+	}
+	if len(f.store.calls) != 1 || len(f.store.calls[0].tools) != 2 {
+		t.Fatalf("store calls = %+v", f.store.calls)
+	}
+}
+
+func TestPinnedToolsService_OnlyInvalidToolsWritesNothing(t *testing.T) {
+	f := newPinnedFixture(t)
+	ctx := WithScope(context.Background(), f.acme.ID.String())
+	resp, err := f.svc.RecordPending(ctx, pendingReq(f.acme.ID, f.pinned, tool("")))
+	if err != nil || resp.GetSkipped() != 1 || len(f.store.calls) != 0 {
+		t.Fatalf("resp=%v err=%v calls=%d", resp, err, len(f.store.calls))
 	}
 }
 

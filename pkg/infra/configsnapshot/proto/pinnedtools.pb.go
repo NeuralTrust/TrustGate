@@ -165,7 +165,12 @@ type RecordPendingToolsResponse struct {
 	// dropped is how many new definitions were not stored because the registry or
 	// the tool name is at its pending cap. The data plane keeps offering them; they
 	// are accepted again once an admin decides some of the pending rows.
-	Dropped       int32 `protobuf:"varint,2,opt,name=dropped,proto3" json:"dropped,omitempty"`
+	Dropped int32 `protobuf:"varint,2,opt,name=dropped,proto3" json:"dropped,omitempty"`
+	// accepted is how many of the sent tools were valid and considered for
+	// storage; skipped is how many were not (empty or oversized name, oversized
+	// definition, NUL characters). One bad tool never rejects the others.
+	Accepted      int32 `protobuf:"varint,3,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Skipped       int32 `protobuf:"varint,4,opt,name=skipped,proto3" json:"skipped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -214,6 +219,20 @@ func (x *RecordPendingToolsResponse) GetDropped() int32 {
 	return 0
 }
 
+func (x *RecordPendingToolsResponse) GetAccepted() int32 {
+	if x != nil {
+		return x.Accepted
+	}
+	return 0
+}
+
+func (x *RecordPendingToolsResponse) GetSkipped() int32 {
+	if x != nil {
+		return x.Skipped
+	}
+	return 0
+}
+
 var File_pinnedtools_proto protoreflect.FileDescriptor
 
 const file_pinnedtools_proto_rawDesc = "" +
@@ -229,10 +248,12 @@ const file_pinnedtools_proto_rawDesc = "" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x1f\n" +
 	"\vregistry_id\x18\x02 \x01(\tR\n" +
 	"registryId\x12-\n" +
-	"\x05tools\x18\x03 \x03(\v2\x17.snapshotpb.PendingToolR\x05tools\"R\n" +
+	"\x05tools\x18\x03 \x03(\v2\x17.snapshotpb.PendingToolR\x05tools\"\x88\x01\n" +
 	"\x1aRecordPendingToolsResponse\x12\x1a\n" +
 	"\brecorded\x18\x01 \x01(\x05R\brecorded\x12\x18\n" +
-	"\adropped\x18\x02 \x01(\x05R\adropped2m\n" +
+	"\adropped\x18\x02 \x01(\x05R\adropped\x12\x1a\n" +
+	"\baccepted\x18\x03 \x01(\x05R\baccepted\x12\x18\n" +
+	"\askipped\x18\x04 \x01(\x05R\askipped2m\n" +
 	"\vPinnedTools\x12^\n" +
 	"\rRecordPending\x12%.snapshotpb.RecordPendingToolsRequest\x1a&.snapshotpb.RecordPendingToolsResponseBLZJgithub.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpbb\x06proto3"
 

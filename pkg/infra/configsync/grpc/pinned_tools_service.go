@@ -102,25 +102,37 @@ func (s *PinnedToolsService) RecordPending(
 	if err != nil || registryID.IsNil() {
 		return nil, status.Errorf(codes.InvalidArgument, "%s: record pending: a valid registry id is required", pendingToolsWho)
 	}
-	candidates, err := candidatesFromRequest(req.GetTools())
+	candidates, skipped, err := candidatesFromRequest(req.GetTools())
 	if err != nil {
 		return nil, err
 	}
+	if skipped > 0 {
+		s.logger.Warn("pinned tools: skipped invalid tool definitions",
+			slog.String("component", component),
+			slog.String("registry_id", registryID.String()),
+			slog.Int("skipped", skipped))
+	}
+	// Every response below says what was skipped; accepted is what survived.
+	result := func(recorded, dropped int) *snapshotpb.RecordPendingToolsResponse {
+		return &snapshotpb.RecordPendingToolsResponse{
+			Recorded: int32(recorded), Dropped: int32(dropped), Accepted: int32(len(candidates)), Skipped: int32(skipped),
+		}
+	}
 	if len(candidates) == 0 {
-		return &snapshotpb.RecordPendingToolsResponse{}, nil
+		return result(0, 0), nil
 	}
 
 	reg, err := s.registries.FindByID(ctx, registryID)
 	switch {
 	case err != nil && isNotFound(err):
-		return &snapshotpb.RecordPendingToolsResponse{}, nil
+		return result(0, 0), nil
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "%s: record pending: load registry: %v", pendingToolsWho, err)
 	}
 	// Another gateway's registry, or one that is not pinned, is ignored without
 	// saying which: the caller learns nothing about registries it does not own.
 	if reg == nil || reg.GatewayID != gatewayID || !reg.ToolPolicy.IsPinned() {
-		return &snapshotpb.RecordPendingToolsResponse{}, nil
+		return result(0, 0), nil
 	}
 	n, dropped, err := s.tools.UpsertPending(ctx, gatewayID, registryID, candidates)
 	if err != nil {
@@ -134,36 +146,35 @@ func (s *PinnedToolsService) RecordPending(
 			slog.String("registry_id", registryID.String()),
 			slog.Int("dropped", dropped))
 	}
-	return &snapshotpb.RecordPendingToolsResponse{Recorded: int32(n), Dropped: int32(dropped)}, nil
+	return result(n, dropped), nil
 }
 
-// candidatesFromRequest validates the limits and builds each candidate through
-// NewToolCandidate, so the fingerprint is always the server's own computation.
-func candidatesFromRequest(tools []*snapshotpb.PendingTool) ([]registrydomain.ToolCandidate, error) {
+// candidatesFromRequest builds each candidate through NewToolCandidate, so the
+// fingerprint is always the server's own computation. A call above the per-call
+// limit is refused as a whole; a single invalid tool (empty or oversized name,
+// oversized definition, NUL) is skipped and counted so one hostile or odd tool
+// cannot keep the others from being recorded.
+func candidatesFromRequest(tools []*snapshotpb.PendingTool) (valid []registrydomain.ToolCandidate, skipped int, err error) {
 	if len(tools) > MaxPendingToolsPerCall {
-		return nil, status.Errorf(codes.InvalidArgument,
+		return nil, 0, status.Errorf(codes.InvalidArgument,
 			"%s: record pending: %d tools exceed the limit of %d per call", pendingToolsWho, len(tools), MaxPendingToolsPerCall)
 	}
-	out := make([]registrydomain.ToolCandidate, 0, len(tools))
+	valid = make([]registrydomain.ToolCandidate, 0, len(tools))
 	for _, t := range tools {
 		name := t.GetName()
-		switch {
-		case name == "":
-			return nil, status.Errorf(codes.InvalidArgument, "%s: record pending: a tool name is required", pendingToolsWho)
-		case len(name) > MaxPendingToolNameBytes:
-			return nil, status.Errorf(codes.InvalidArgument,
-				"%s: record pending: tool name exceeds %d bytes", pendingToolsWho, MaxPendingToolNameBytes)
-		case len(name)+len(t.GetDescription())+len(t.GetInputSchema()) > MaxPendingToolBytes:
-			return nil, status.Errorf(codes.InvalidArgument,
-				"%s: record pending: a tool definition exceeds %d bytes", pendingToolsWho, MaxPendingToolBytes)
+		if name == "" || len(name) > MaxPendingToolNameBytes ||
+			len(name)+len(t.GetDescription())+len(t.GetInputSchema()) > MaxPendingToolBytes {
+			skipped++
+			continue
 		}
 		cand, err := registrydomain.NewToolCandidate(name, t.GetDescription(), json.RawMessage(t.GetInputSchema()))
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "%s: record pending: %v", pendingToolsWho, err)
+			skipped++
+			continue
 		}
-		out = append(out, cand)
+		valid = append(valid, cand)
 	}
-	return out, nil
+	return valid, skipped, nil
 }
 
 func isNotFound(err error) bool {
