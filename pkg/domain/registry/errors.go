@@ -32,4 +32,6 @@ var (
 	ErrInvalidHealthChecks    = fmt.Errorf("registry: invalid health checks: %w", commonerrors.ErrValidation)
 	ErrInvalidMCPTarget       = fmt.Errorf("registry: invalid mcp target: %w", commonerrors.ErrValidation)
 	ErrInvalidPricing         = fmt.Errorf("registry: invalid pricing: %w", commonerrors.ErrValidation)
+	ErrInvalidToolDefinition  = fmt.Errorf("registry: invalid tool definition: %w", commonerrors.ErrValidation)
+	ErrInvalidToolPolicy      = fmt.Errorf("registry: invalid tool policy: %w", commonerrors.ErrValidation)
 )
