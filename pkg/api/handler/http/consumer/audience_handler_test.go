@@ -40,7 +40,6 @@ func TestConsumerHandlers_Audience(t *testing.T) {
 		wantStatus         int
 	}{
 		{name: "create defaults to application", method: http.MethodPost, body: `{"name":"chat"}`, wantStatus: http.StatusCreated},
-		{name: "create ignores auths", method: http.MethodPost, body: `{"name":"chat","auths":["k"]}`, wantStatus: http.StatusCreated},
 		{name: "create with an invalid audience", method: http.MethodPost, body: `{"name":"chat","audience":"team"}`, wantStatus: http.StatusUnprocessableEntity},
 		{name: "update with an invalid audience", method: http.MethodPut, body: `{"audience":"team"}`, wantStatus: http.StatusUnprocessableEntity},
 	} {

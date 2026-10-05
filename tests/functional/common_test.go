@@ -469,6 +469,11 @@ func setupStoreFixture(t *testing.T, gateway map[string]any) *storeFixture {
 
 func gatewayCall(t *testing.T, base, gatewayID, key, method, path string, body any) (int, []byte) {
 	t.Helper()
+	return gatewayCallWithHeaders(t, base, gatewayID, key, method, path, body, nil)
+}
+
+func gatewayCallWithHeaders(t *testing.T, base, gatewayID, key, method, path string, body any, headers map[string]string) (int, []byte) {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(mustJSON(t, body))
@@ -481,6 +486,9 @@ func gatewayCall(t *testing.T, base, gatewayID, key, method, path string, body a
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
 		req.Header.Set(proxyAPIKeyHeader, key)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

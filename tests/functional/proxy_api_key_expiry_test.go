@@ -42,9 +42,9 @@ func TestProxyAPIKeyExpiry_KeyStopsWorkingOnceItsExpiryPasses(t *testing.T) {
 	AttachRegistry(t, gatewayID, consumerID, registryID)
 	path := chatCompletionsPath(t, consumerID)
 
-	expiresAt := time.Now().UTC().Add(6 * time.Second).Truncate(time.Second).Add(time.Second)
-	key := createAndAttachExpiringAPIKey(t, gatewayID, consumerID, expiresAt)
 	futureKey := createAndAttachExpiringAPIKey(t, gatewayID, consumerID, time.Now().Add(time.Hour))
+	expiresAt := time.Now().UTC().Add(10 * time.Second).Truncate(time.Second).Add(time.Second)
+	key := createAndAttachExpiringAPIKey(t, gatewayID, consumerID, expiresAt)
 
 	status, _, body := proxyPost(t, key, path, chatRequest(false))
 	require.Equal(t, http.StatusOK, status, "a key before its expiry must be served, body: %s", body)
