@@ -1349,6 +1349,85 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/consumers/{id}/label-sets": {
+            "put": {
+                "description": "Replaces all the traffic label sets a consumer's chat requests are classified against; each set yields at most one of its labels per request. Label sets are projected from the app's catalog: ids are opaque and must be unique, set names are unique ignoring case. At most 10 label sets; set name 1-64 characters, instructions 0-2000; 2 to 20 labels per set, label name 1-64 characters and unique in its set ignoring case, description 0-500. Send `{\"label_sets\": []}` to clear; the field is required. Only LLM consumers can hold label sets. Returns the full consumer.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Replace a consumer's traffic label sets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The consumer's label sets",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelSetsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
             "post": {
                 "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. An MCP-wide policy already runs on every MCP consumer and holds no links, so attaching one answers 422: demote it first. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
@@ -4492,7 +4571,7 @@
         },
         "/{slug}/connections/links": {
             "post": {
-                "description": "Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted). Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.",
+                "description": "Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted; instance narrows it to one instance of that server). A server whose instance holds one shared account for every caller is refused with 400: no end user can connect it, and an administrator does in the console. Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5126,6 +5205,43 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "The user is satisfied or happy"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "positive"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelSetRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "ID is the label set's id in the app's catalog, opaque to TrustGate.",
+                    "type": "string",
+                    "example": "0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b"
+                },
+                "instructions": {
+                    "type": "string",
+                    "example": "Classify the overall sentiment of the user's message"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Sentiment analysis"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
             "type": "object",
             "properties": {
@@ -5387,6 +5503,17 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelSetsRequest": {
+            "type": "object",
+            "properties": {
+                "label_sets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelSetRequest"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
             "type": "object",
             "properties": {
@@ -5486,6 +5613,37 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelSetResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse": {
             "type": "object",
             "properties": {
@@ -5524,6 +5682,13 @@
                 },
                 "identity": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse"
+                },
+                "label_sets": {
+                    "description": "LabelSets are the traffic label sets the consumer's chat requests are\nclassified against; empty when it has none.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelSetResponse"
+                    }
                 },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse"
@@ -5822,8 +5987,8 @@
                     "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
                     "type": "string"
                 },
-                "topic_classification": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
+                "traffic_labeling": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
                 }
             }
         },
@@ -5866,8 +6031,13 @@
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                 },
-                "topic_classification": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
+                "traffic_labeling": {
+                    "description": "TrafficLabeling replaces the traffic labeling config. Omitted leaves it\nunchanged and an explicit null clears it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
+                        }
+                    ]
                 }
             }
         },
@@ -5925,8 +6095,8 @@
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                 },
-                "topic_classification": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
+                "traffic_labeling": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
                 },
                 "updated_at": {
                     "type": "string"
@@ -8260,7 +8430,7 @@
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config": {
             "type": "object",
             "properties": {
                 "enabled": {
@@ -8269,28 +8439,14 @@
                 "message_window": {
                     "type": "integer"
                 },
+                "model": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
                 "sampling_rate": {
                     "type": "number"
-                },
-                "threshold": {
-                    "type": "number"
-                },
-                "topics": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic"
-                    }
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic": {
-            "type": "object",
-            "properties": {
-                "definition": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
                 }
             }
         },
@@ -8904,11 +9060,19 @@
                 "expires_at": {
                     "type": "string"
                 },
+                "instance": {
+                    "description": "Instance is the registry id of the server's instance, which tells two\ninstances of one provider apart.",
+                    "type": "string"
+                },
                 "provider": {
                     "type": "string"
                 },
                 "registry": {
                     "type": "string"
+                },
+                "shared": {
+                    "description": "Shared is true for an instance that holds one account for every caller:\nits status is that account's, and only an administrator can connect it,\nso a connect link is never the remedy for this row.",
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string"
@@ -8940,6 +9104,10 @@
                 "end_user": {
                     "type": "string"
                 },
+                "instance": {
+                    "description": "Instance narrows the link to one instance of the server, by registry id,\nas /connections reports it. Two instances of one provider are two\nservers with two accounts, and the provider alone cannot say which.",
+                    "type": "string"
+                },
                 "provider": {
                     "type": "string"
                 }
@@ -8952,6 +9120,9 @@
                     "type": "string"
                 },
                 "expires_at": {
+                    "type": "string"
+                },
+                "instance": {
                     "type": "string"
                 },
                 "provider": {

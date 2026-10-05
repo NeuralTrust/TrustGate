@@ -79,6 +79,10 @@ func (r *consumerRepository) Update(_ context.Context, _ *domain.Consumer, _ *do
 	return configsync.ErrReadOnly
 }
 
+func (r *consumerRepository) UpdateLabelSets(_ context.Context, _ *domain.Consumer) error {
+	return configsync.ErrReadOnly
+}
+
 func (r *consumerRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.ConsumerID) error {
 	return configsync.ErrReadOnly
 }

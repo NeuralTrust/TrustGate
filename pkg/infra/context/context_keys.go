@@ -20,10 +20,9 @@ package context
 type ContextKey string
 
 const (
-	// SessionContextKey holds the session identifier resolved by the session
-	// middleware from the per-gateway session configuration.
-	SessionContextKey          ContextKey = "session_id"
-	SessionGeneratedContextKey ContextKey = "session_id_generated"
+	// SessionContextKey holds the Session resolved by the session middleware.
+	// Read it through SessionFromContext / EffectiveSessionID.
+	SessionContextKey ContextKey = "session_id"
 	// TenantIDContextKey holds the tenant identifier decoded from an admin JWT.
 	TenantIDContextKey ContextKey = "tenant_id"
 	// UserIDContextKey holds the user identifier decoded from an admin JWT.

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
 type Type string
@@ -76,8 +77,12 @@ type Consumer struct {
 	MCP             *MCPPolicy             `json:"mcp,omitempty"`
 	Identity        Identity               `json:"identity"`
 	AuthBinding     AuthBinding            `json:"auth_binding"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	// LabelSets are the traffic label sets the consumer's chat requests are
+	// classified against. They are projected from the app and only ever
+	// written through SetLabelSets.
+	LabelSets []trafficlabel.LabelSet `json:"label_sets,omitempty"`
+	CreatedAt time.Time               `json:"created_at"`
+	UpdatedAt time.Time               `json:"updated_at"`
 }
 
 func (c *Consumer) WeightFor(registryID ids.RegistryID) int {
@@ -182,6 +187,7 @@ type RehydrateParams struct {
 	MCP             *MCPPolicy
 	Identity        Identity
 	AuthBinding     AuthBinding
+	LabelSets       []trafficlabel.LabelSet
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -204,6 +210,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		MCP:             params.MCP,
 		Identity:        params.Identity,
 		AuthBinding:     params.AuthBinding,
+		LabelSets:       params.LabelSets,
 		CreatedAt:       params.CreatedAt,
 		UpdatedAt:       params.UpdatedAt,
 	}
@@ -260,6 +267,24 @@ func (c *Consumer) Validate() error {
 		}
 		return c.MCP.Validate(c.knownRegistryIDs())
 	}
+	return nil
+}
+
+// SetLabelSets replaces the consumer's traffic label sets with a trimmed,
+// validated copy. Only LLM consumers serve chat routes, so only they can hold
+// label sets.
+func (c *Consumer) SetLabelSets(sets []trafficlabel.LabelSet) error {
+	if len(sets) > 0 && c.Type != TypeLLM {
+		return fmt.Errorf("%w: only LLM consumers can hold traffic label sets", ErrInvalidLabelSets)
+	}
+	normalized := trafficlabel.NormalizeLabelSets(sets)
+	if err := trafficlabel.ValidateLabelSets(normalized); err != nil {
+		return err
+	}
+	if len(normalized) == 0 {
+		normalized = nil
+	}
+	c.LabelSets = normalized
 	return nil
 }
 

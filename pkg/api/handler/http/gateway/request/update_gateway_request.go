@@ -15,24 +15,28 @@
 package request
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
 type UpdateGatewayRequest struct {
-	Slug                *string                 `json:"slug,omitempty"`
-	Status              *string                 `json:"status,omitempty"`
-	Domain              *string                 `json:"domain,omitempty"`
-	Metadata            map[string]string       `json:"metadata,omitempty"`
-	Telemetry           *telemetry.Telemetry    `json:"telemetry,omitempty"`
-	ClientTLSConfig     *domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig       *domain.SessionConfig   `json:"session_config,omitempty"`
-	TopicClassification *topic.Config           `json:"topic_classification,omitempty"`
+	Slug            *string                 `json:"slug,omitempty"`
+	Status          *string                 `json:"status,omitempty"`
+	Domain          *string                 `json:"domain,omitempty"`
+	Metadata        map[string]string       `json:"metadata,omitempty"`
+	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
+	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
+	// TrafficLabeling replaces the traffic labeling config. Omitted leaves it
+	// unchanged and an explicit null clears it.
+	TrafficLabeling *trafficlabel.Config `json:"traffic_labeling,omitempty"`
 	// Entitlements is optional; only platform admins may set it (tenant callers get 422).
 	// When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
 	// has more gateways than the new MaxInstances returns 409 — delete excess first.
@@ -41,10 +45,26 @@ type UpdateGatewayRequest struct {
 	// "curated" (only shelf servers) or "none" (self-install disabled). Omitted
 	// leaves the current mode unchanged.
 	StoreMode *string `json:"store_mode,omitempty"`
+
+	// ClearTrafficLabeling is set by DetectClears when the body sends
+	// "traffic_labeling": null.
+	ClearTrafficLabeling bool `json:"-" swaggerignore:"true"`
+}
+
+// DetectClears records the fields the raw body explicitly sets to null, which
+// the decoded struct cannot tell apart from omitted ones.
+func (r *UpdateGatewayRequest) DetectClears(body []byte) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil {
+		return
+	}
+	if raw, ok := fields["traffic_labeling"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		r.ClearTrafficLabeling = true
+	}
 }
 
 func (r *UpdateGatewayRequest) Validate() error {
-	if err := r.TopicClassification.Validate(); err != nil {
+	if err := r.TrafficLabeling.Validate(); err != nil {
 		return err
 	}
 	if r.Slug != nil {

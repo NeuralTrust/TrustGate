@@ -427,6 +427,8 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			AccountRef:     attrs.AccountRef,
 			PolicyScope:    mcpPolicyScope(attrs.PolicyScope),
 			Decision:       attrs.Decision,
+			ToolRisk:       attrs.ToolRisk,
+			ToolOpenWorld:  attrs.ToolOpenWorld,
 		}
 	}
 	return mcp, upstreamMs

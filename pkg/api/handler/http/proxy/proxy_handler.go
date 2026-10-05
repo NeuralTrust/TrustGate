@@ -506,20 +506,10 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 		Query:           query,
 		Body:            append([]byte(nil), c.Body()...),
 		IP:              strings.Clone(c.IP()),
-		SessionID:       strings.Clone(sessionIDFromContext(c)),
+		SessionID:       strings.Clone(middleware.EffectiveSessionID(c)),
 		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
-}
-
-func sessionIDFromContext(c *fiber.Ctx) string {
-	if v, ok := c.UserContext().Value(infracontext.SessionContextKey).(string); ok && v != "" {
-		return v
-	}
-	if v, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
-		return v
-	}
-	return ""
 }
 
 func writeProxyError(c *fiber.Ctx, err error) error {
