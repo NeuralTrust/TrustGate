@@ -25,22 +25,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func (storeCatalog) ListProviders(context.Context) ([]catalogdomain.Provider, error) { return nil, nil }
-
-func (c storeCatalog) ListModels(_ context.Context, provider string) ([]catalogdomain.Model, error) {
-	models := make([]catalogdomain.Model, 0, len(c[provider]))
-	for _, slug := range c[provider] {
-		models = append(models, catalogdomain.Model{Slug: slug})
-	}
-	return models, nil
-}
-
 func (fx storeFixture) storeModelsInput() appproxy.StoreModelsInput {
 	return appproxy.StoreModelsInput{Links: fx.data.StoreLinks(fx.authID), Data: fx.data}
 }
 
 func newStoreModels() appproxy.StoreModels {
-	return appproxy.NewStoreModels(appproxy.NewModelsLister(approuting.NewResolver(), workedCatalog))
+	return appproxy.NewStoreModels(approuting.NewResolver(), workedCatalog)
+}
+
+type countingCatalog struct {
+	storeCatalog
+	calls map[string]int
+}
+
+func (c *countingCatalog) ListModels(ctx context.Context, provider string) ([]catalogdomain.Model, error) {
+	c.calls[provider]++
+	return c.storeCatalog.ListModels(ctx, provider)
 }
 
 func TestStoreModels_ListIsTheUnionAfterSubstitution(t *testing.T) {
@@ -79,4 +79,23 @@ func TestStoreModels_GetFindsOnlyListedModels(t *testing.T) {
 		_, err := newStoreModels().Get(context.Background(), in, id)
 		require.ErrorIs(t, err, appproxy.ErrModelNotFound, id)
 	}
+}
+
+func TestStoreModels_QueriesEachProviderListingOncePerRequest(t *testing.T) {
+	openAnthropic := storeGrant{name: "E", level: levelGroup, priority: 1, regs: []storeRegistry{{provider: "anthropic"}}}
+	globAnthropic := storeGrant{name: "G", level: levelAll, priority: 1, regs: []storeRegistry{{provider: "anthropic", allowed: []string{"opus-*"}}}}
+	in := newStoreFixture(grantA, grantB, openAnthropic, globAnthropic).storeModelsInput()
+	catalog := &countingCatalog{storeCatalog: workedCatalog, calls: map[string]int{}}
+	models := appproxy.NewStoreModels(approuting.NewResolver(), catalog)
+
+	list, err := models.List(context.Background(), in)
+	require.NoError(t, err)
+	assert.Len(t, list.Data, 4)
+	assert.Equal(t, map[string]int{"openai": 1, "anthropic": 1}, catalog.calls)
+
+	catalog.calls = map[string]int{}
+	card, err := models.Get(context.Background(), in, "gpt6")
+	require.NoError(t, err)
+	assert.Equal(t, "openai", card.OwnedBy)
+	assert.Equal(t, map[string]int{"openai": 1}, catalog.calls)
 }

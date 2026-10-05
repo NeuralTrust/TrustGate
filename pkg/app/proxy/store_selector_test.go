@@ -24,6 +24,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -47,6 +48,16 @@ func (c storeCatalog) Lists(_ context.Context, provider, model string) appcatalo
 }
 
 func (storeCatalog) InvalidateCache() {}
+
+func (storeCatalog) ListProviders(context.Context) ([]catalogdomain.Provider, error) { return nil, nil }
+
+func (c storeCatalog) ListModels(_ context.Context, provider string) ([]catalogdomain.Model, error) {
+	models := make([]catalogdomain.Model, 0, len(c[provider]))
+	for _, slug := range c[provider] {
+		models = append(models, catalogdomain.Model{Slug: slug})
+	}
+	return models, nil
+}
 
 var workedCatalog = storeCatalog{
 	"openai":    {"gpt-4.1", "gpt6"},
