@@ -464,7 +464,7 @@ func TestAssociator_AttachAuth_Success(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).
 		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID, (*domain.AuthLink)(nil)).Return(nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
@@ -499,7 +499,7 @@ func TestAssociator_AttachAuth_MCPAcceptsAliasedIdP(t *testing.T) {
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
 		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
-	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID, (*domain.AuthLink)(nil)).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
@@ -517,7 +517,7 @@ func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).
 		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
-	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID, (*domain.AuthLink)(nil)).Return(nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByID(mock.Anything, authID).

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -18,6 +19,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -868,4 +870,60 @@ func TestRepository_AudienceRoundTripAndUpdateKeepsIt(t *testing.T) {
 		require.Equal(t, "renamed-"+string(audience), after.Name)
 		require.Equal(t, audience, after.Audience)
 	}
+}
+
+func TestRepository_AttachAuthUpsertsOnlyThatPersonalLink(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "links-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	seedKey := func(name string) ids.AuthID {
+		a, err := authdomain.NewAPIKeyAuth(gwID, name, true, nil)
+		require.NoError(t, err)
+		require.NoError(t, auths.Save(ctx, a))
+		return a.ID
+	}
+	seedConsumer := func(name string, audience domain.Audience) ids.ConsumerID {
+		c, err := domain.New(domain.CreateParams{GatewayID: gwID, Name: name, Type: domain.TypeLLM, Audience: audience})
+		require.NoError(t, err)
+		require.NoError(t, f.repo.Save(ctx, c))
+		return c.ID
+	}
+	linksOf := func(id ids.ConsumerID) (map[ids.AuthID]domain.AuthLink, []ids.AuthID) {
+		c, err := f.repo.FindByID(ctx, id)
+		require.NoError(t, err)
+		return c.AuthLinks, c.AuthIDs
+	}
+	owned, app := seedKey("alice-key"), seedKey("app-key")
+	p1, p2, x := seedConsumer("p1", domain.AudiencePersonal), seedConsumer("p2", domain.AudiencePersonal), seedConsumer("x", "")
+	grantedAt := time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)
+	p2Link := domain.AuthLink{Level: domain.GrantLevelUser, Priority: 1, GrantedAt: grantedAt.Add(time.Hour)}
+
+	require.NoError(t, f.repo.AttachAuth(ctx, p1, owned, &domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 3, GrantedAt: grantedAt}))
+	require.NoError(t, f.repo.AttachAuth(ctx, p2, owned, &p2Link))
+	updated := domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 0, GrantedAt: grantedAt}
+	for range 2 {
+		require.NoError(t, f.repo.AttachAuth(ctx, p1, owned, &updated))
+		require.NoError(t, f.repo.AttachAuth(ctx, x, app, nil))
+	}
+	require.NoError(t, f.repo.AttachAuth(ctx, p2, owned, nil))
+	require.ErrorIs(t, f.repo.AttachAuth(ctx, p2, owned, &domain.AuthLink{Level: "team", GrantedAt: grantedAt}), domain.ErrInvalidAuthLink)
+
+	p1Links, p1Auths := linksOf(p1)
+	require.Equal(t, map[ids.AuthID]domain.AuthLink{owned: updated}, p1Links)
+	require.Equal(t, []ids.AuthID{owned}, p1Auths)
+	p2Links, _ := linksOf(p2)
+	require.Equal(t, map[ids.AuthID]domain.AuthLink{owned: p2Link}, p2Links)
+	xLinks, xAuths := linksOf(x)
+	require.Nil(t, xLinks)
+	require.Equal(t, []ids.AuthID{app}, xAuths)
+
+	require.NoError(t, f.repo.Delete(ctx, gwID, p1))
+	_, err := auths.FindByID(ctx, owned)
+	require.NoError(t, err)
+	p2Links, _ = linksOf(p2)
+	require.Equal(t, map[ids.AuthID]domain.AuthLink{owned: p2Link}, p2Links)
+	var remaining int
+	require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, owned).Scan(&remaining))
+	require.Equal(t, 1, remaining)
 }
