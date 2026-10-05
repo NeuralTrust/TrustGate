@@ -35,6 +35,8 @@ import (
 // Writes stay on the primary, so a credential the control plane stores itself
 // is durable. A delete removes the credential from both stores: revoking from
 // the control plane must never leave a live copy behind on the data plane.
+var _ domain.ReconnectRequirer = (*fallbackRepository)(nil)
+
 type fallbackRepository struct {
 	primary  domain.Repository
 	fallback domain.Repository
@@ -76,6 +78,25 @@ func (r *fallbackRepository) UpsertRefreshed(ctx context.Context, c *domain.Cred
 		return err
 	}
 	return r.primary.Upsert(ctx, c)
+}
+
+// RequireReconnect marks the credential in the store that supplied it, as
+// UpsertRefreshed does with a rotation: marking a copy the reads never reach
+// would leave the account reported as connected.
+func (r *fallbackRepository) RequireReconnect(ctx context.Context, c *domain.Credential) error {
+	store := r.primary
+	_, err := r.primary.Find(ctx, c.GatewayID, c.PrincipalSub, c.Provider)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		store = r.fallback
+	case err != nil:
+		return err
+	}
+	requirer, ok := store.(domain.ReconnectRequirer)
+	if !ok {
+		return errors.New("vault repository: credential store cannot require a reconnect")
+	}
+	return requirer.RequireReconnect(ctx, c)
 }
 
 func (r *fallbackRepository) Upsert(ctx context.Context, c *domain.Credential) error {
