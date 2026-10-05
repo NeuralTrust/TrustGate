@@ -6,7 +6,7 @@
 - Proposal (binding): [`proposal.md`](./proposal.md), B1–B9, D1–D14, option C. This design replaces the "exactly one consumer per key" revision: the move transaction, the `FOR NO KEY UPDATE` locking, the create-and-attach transaction and the single-consumer index are gone.
 - Exploration: [`exploration.md`](./exploration.md) (S0, S1, S2, S6 apply as written).
 - Base: `develop` @ `1ea70e06`. Line numbers are HEAD. Conventions: `.agents/AGENTS.md` (hexagonal layers, DI in `pkg/container/modules`, one DTO per file, one use case per file, no narrative comments, mockery mocks) and golang-pro (`%w` wrapping, `ctx` first and propagated, immutable shared state, `-race`).
-- `tasks.md` predates option C; regenerate it with `sdd-tasks` from this file.
+- Tasks: [`tasks.md`](./tasks.md) follows this file; its as-built notes record where the code moved on, and the feature review's fixes are DD20–DD25 below.
 
 Resolutions encoded here:
 
@@ -21,7 +21,7 @@ Resolutions encoded here:
 
 ## Technical approach
 
-A personal consumer is an ordinary LLM consumer with `audience = personal`. A personal key is an ordinary `api_key` auth with `owner_id`, linked through `consumer_auth` to every personal consumer the app granted to its owner, and each link carries `level`, `priority` and `granted_at`. On `/store/v1/*` the auth middleware authenticates the key by hash and attaches the principal without a consumer. The proxy handler reads the key's pre-sorted links from `Data`, and a new `StoreSelector` use case runs the existing routing resolver per linked consumer, applies the per-provider substitution of `user`-level links and picks the first consumer that admits the request. The forwarder then serves the request through that consumer, with a candidate filter that keeps substituted providers out, so LB, fallback and policies run unchanged. New: two consumer/auth columns, three `consumer_auth` columns, one partial unique index, one in-memory index and two use cases. No new tables, proto messages, gRPC methods or TTL maps.
+A personal consumer is an ordinary LLM consumer with `audience = personal`. A personal key is an ordinary `api_key` auth with `owner_id`, linked through `consumer_auth` to every personal consumer the app granted to its owner, and each link carries `level`, `priority` and `granted_at`. On `/store/v1/*` the auth middleware authenticates the key by hash and attaches the principal without a consumer. The proxy handler reads the key's pre-sorted links from `Data`, and a new `StoreSelector` use case runs the existing routing resolver per linked consumer, applies the per-provider substitution of `user`-level links and picks the first consumer that admits the request. The forwarder then serves the request through that consumer over the selection's candidates, from which substituted providers are already filtered, so LB, fallback and policies run unchanged. New: two consumer/auth columns, three `consumer_auth` columns, one partial unique index, one in-memory index and two use cases. No new tables, proto messages, gRPC methods or TTL maps.
 
 ## Decisions
 
@@ -47,7 +47,13 @@ Proposal decisions are D#. Design-level decisions are DD#.
 | DD16 (D13) | The selector lives in `pkg/app/proxy` (it needs `approuting.Resolver`, `appcatalog.ModelListing` and the request intent; `pkg/app/routing` imports `pkg/app/consumer`, so it cannot live there). It reuses one candidate pipeline extracted from `forwarder.resolveRouting` (`routing.go:47-91`) into `candidatePipeline`, so the selector and the forwarder never drift. | A copy of the pipeline in the selector | One place for Resolve → capability → files → listing. |
 | DD17 (D13) | In the store, the listing check drops a deferring candidate whose provider catalog answers `VerdictAbsent`, with **no** "keep all when empty" fallback. The slug path keeps its fallback (`routing.go:115-117`). | The fallback in the store | The fallback exists because the slug consumer is fixed. In the store it would let an Anthropic registry without an allow-list capture `gpt-*` (worked example, `gpt-4.1` must be 403). |
 | DD18 (D13) | Admission uses **primary** candidates only: `routingdomain.Candidate.FallbackOnly()` (true when every source is `fallback`; `sourceFallback` moves to `routingdomain.SourceFallback`). The selected consumer still forwards with its fallback candidates. | Admitting through fallback | A's DeepSeek fallback must not make A serve `deepseek-chat`. |
-| DD19 (D13) | Substitution is a candidate filter, `Keep func(routingdomain.Candidate) bool`, set only for a `group`/`all` link when the substituted provider set is non-empty. `ForwardInput.Keep` and `ListModelsInput.Keep` apply it after `Resolve`; when `Keep` is set the forwarder resolves even for a zero intent, and `nonCandidateRoutes` (`routing.go:455-475`) then excludes substituted LB routes and fallback backends. Empty after `Keep` → `ErrModelDenied`. Slug path: `Keep == nil`, byte-identical. | A filtered copy of the consumer | No synthetic consumer; LB key and policies stay the real consumer's. |
+| DD19 (D13) | Substitution is a candidate filter, `Keep func(routingdomain.Candidate) bool`, set only for a `group`/`all` link when the substituted provider set is non-empty. The selector applies it in `candidatePipeline.run` after `Resolve` (empty → `ErrModelDenied`) and hands the surviving candidates to the forwarder in `ForwardInput.Resolved`, so `nonCandidateRoutes` (`routing.go:455-475`) and the fallback walk never see a substituted LB route or fallback backend. `ListModelsInput.Keep` takes the same primary rule for the listing. Slug path: `Resolved == nil`, byte-identical. | A filtered copy of the consumer; a separate `ForwardInput.Keep` (shipped first, dropped in the review: the selection already carries the filtered set) | No synthetic consumer; LB key and policies stay the real consumer's. |
+| DD20 (review) | The Files API is refused on `/store/v1`: `handleStore` answers the unknown-route 404 (`errPathNotFound`) for `CapabilityFiles` before it reads the caller. | Scoping file ids per owner | File operations would run on the registry's shared upstream credential for every user the consumer serves; v1 has no per-owner file ownership. |
+| DD21 (review) | Session continuation is scoped by owner: `appsession.Scope{GatewayID, OwnerID}` partitions the session key as `<gateway>/owner/<url-escaped owner>` when the request carries an owner; `SessionForTurn` reads the owner of the ctx key. A request without an owner (the slug path) keys sessions exactly as before. | One gateway-wide namespace | Two store users sending the same session id must never continue each other's conversation. |
+| DD22 (review) | The end user of a store request is the key's owner: `stampKeyOwner` sets it on the trace before the method check, the store path no longer validates `X-NeuralTrust-End-User`, and the metrics builder no longer falls back to the body `user` field for an owned key. | Honouring the end-user headers | The key is the person; a header or body field must not name someone else in usage events. |
+| DD23 (review) | A dollar key budget prices the model that will be served: `Forward` stamps `RequestContext.DefaultModel` from the selected route (`routePolicy`) before the pre-request plugins, and `modelFor` uses it when the request names no model (none, `auto`, `pool:<alias>`). | Pricing the requested reference | A model-less request was refused 403 `model_unpriced` and a model-less stream was never charged. |
+| DD24 (review) | `Forwarder.Precheck(ctx, gatewayID, req)` refuses an ambiguous chat body (400) and then charges the plan limit; the store path runs it before `Select` and forwards with `ForwardInput.Prechecked = true`; `Forward` runs it whenever `Prechecked` is false. | `CheckRateLimit` before the ambiguity check | A malformed body must not consume a plan token, and the precondition is explicit instead of inferred from `Resolved != nil`. |
+| DD25 (review) | `APIKeyFinder` remembers an unknown key digest for 30 s (`AuthKeyMissTTLName`, at most 100 000 entries); `InvalidateGatewayDataEvent` clears it with `auth_key`. | No negative cache | Random keys against `/store/v1` would each reach Postgres. A key created after a miss is visible at once because every credential write publishes the event. |
 
 ## `/store/v1/*` request flow
 
@@ -64,10 +70,10 @@ Proposal decisions are D#. Design-level decisions are DD#.
 | 7 | SHA-256 → auth. `ErrNotFound`/`ErrExpired` → **401**, other → **500** | `APIKeyFinder.FindByAPIKey` (`key_finder.go:47-62`) | 1 hash + TTL get | snapshot `authsByAPIKeyHash` (DB-less), 1 PG (full) |
 | 8 | `Enabled ∧ Type == api_key ∧ IsOwned() ∧ GatewayID == gw.ID` → else **401** | `storeKeyResolver.Resolve` | O(1) | — |
 | 9 | `attach` with `Principal{Subject: owner_id, Method: api_key}`, `AuthContext{AuthID, OwnerID}`, no consumer | `auth.go:169` (`rc == nil` skips the consumer locals) | ctx values | — |
-| 10 | Handler: `route.ConsumerSlug == StoreSlug` → `handleStore`; `links := data.StoreLinks(authCtx.AuthID)` | `proxy_handler.go:139` | 1 map get | — |
+| 10 | Handler: `route.ConsumerSlug == StoreSlug` → `handleStore`; a Files API route → **404** (DD20); `links := data.StoreLinks(authCtx.AuthID)`; the end user is the owner (DD22) | `proxy_handler.go:139` | 1 map get | — |
 | 11 | `/models` → `StoreModels.List/Get` → 200 | new `store_models.go` | in-memory + catalog cache | catalog load |
-| 12 | Stamp `auth_id` and the principal (owner), method check (**405**), gateway rate limit (**429**, charged once, as on the slug path), build `reqCtx`, `StoreSelector.Select` → consumer + `Keep`, or **403** `model_not_allowed` / **400** `invalid_model` / `invalid_request_body` | `proxy_handler.go` `handleStore`, new `store_selector.go` | one `Resolve` per effective link | catalog listing load |
-| 13 | `authCtx.ConsumerID`, consumer stamp, end user, then `Forward` with `Keep`, the selection (`Resolved`) and `RouteSlug = store` (no second rate-limit charge or ambiguity scan; a model miss points at `/store/v1/models`) | `proxy_handler.go` (shared tail) | as today | — |
+| 12 | Stamp `auth_id` and the principal (owner), method check (**405**), build `reqCtx`, `Precheck`: ambiguous body (**400** `invalid_request_body`), then the gateway rate limit (**429**, charged once, as on the slug path) (DD24), `StoreSelector.Select` → consumer + candidates, or **403** `model_not_allowed` / **400** `invalid_model` | `proxy_handler.go` `handleStore`, new `store_selector.go` | one `Resolve` per effective link | catalog listing load |
+| 13 | `authCtx.ConsumerID`, consumer stamp, then `Forward` with the selection (`Resolved`), `RouteSlug = store` and `Prechecked = true` (no second rate-limit charge or ambiguity scan; a model miss points at `/store/v1/models`); sessions in the owner's scope (DD21) | `proxy_handler.go` (shared tail) | as today | — |
 | 14 | Registries, ModelPolicies, LB `gw:consumerID`, fallback, policies | unchanged (`load_balancer_cache.go:58-59`, `plansFor` `data_finder.go:179-188`) | unchanged | — |
 | 15 | `token_rate_limiter` `partition: key` | `Plugin.Execute` | 1 Redis GET per window pre, 1 EVAL post | — |
 
@@ -83,11 +89,11 @@ A warm request costs 0 DB, 0 gRPC and 0 Redis beyond the budget counter. Stalene
 4. **Admission per effective link.** `candidatePipeline(ctx, intent, needed, rc, data)` = `Resolve` → `Keep` → capability filter → files filter → for a short model, the listing check of DD17. A resolver error means "does not admit". The link admits when at least one candidate with `!FallbackOnly()` remains, and, for a zero intent, at least one such candidate has a `Default`.
 5. **Specificity** (qualified and short-model intents; 0 for every other kind), best over the admitting primary candidates: `0` the model is a literal entry of `Allowed`; `1` it matches a glob of `Allowed` (`modelmatch.MatchAny`); `2` `Allowed == nil` (passed the listing check, or no check for a qualified intent, as today).
 6. **Order.** Links are already sorted by `(level, priority, granted_at, consumer id)` (DD4). Among admitting links, pick the minimum of `(level rank, priority, specificity, granted_at, consumer id)`. None → `ErrNoStoreConsumer` (wraps `routingdomain.ErrModelDenied` → 403 `model_not_allowed`).
-7. Return `StoreSelection{Link, Keep}`.
+7. Return `StoreSelection{Link, Keep, ResolvedRouting{Intent, Ref, Candidates}}`: the forwarder routes over `Candidates` without re-parsing or re-resolving.
 
 | Intent kind (`intent.go`) | Admission | Specificity |
 |---|---|---|
-| empty | a primary candidate with a `Default`; on a capability route without a model (e.g. `GET /store/v1/files/{id}`) any primary candidate left by the capability and files-id filters | — (level, priority, age) |
+| empty | a primary candidate with a `Default`; on a capability route without a model (embeddings, images, audio) any primary candidate left by the capability filter | — (level, priority, age) |
 | `auto` | `resolveAuto` succeeds with a primary candidate | — |
 | `pool:<alias>` | the consumer's LB pool alias matches and a member survives `Keep` | — |
 | `@provider/model` | `resolveQualified` succeeds with a primary candidate | 0 / 1 / 2 |
@@ -157,6 +163,10 @@ var (
 	ErrInvalidAuthLink       = fmt.Errorf("consumer: invalid auth link: %w", commonerrors.ErrValidation)
 )
 Associator (repo port): AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID, link *AuthLink) error
+type LinkReader interface {
+	FindSummaryByID(ctx context.Context, id ids.ConsumerID) (*Consumer, error)
+	ListIDsByAuthID(ctx context.Context, authID ids.AuthID) ([]ids.ConsumerID, error)
+}
 
 // pkg/domain/routing
 const SourceFallback = "fallback"
@@ -165,6 +175,8 @@ func (c Candidate) FallbackOnly() bool
 // pkg/domain/auth
 Auth.OwnerID string `json:"owner_id,omitempty"`
 func (a *Auth) IsOwned() bool
+Auth.RawKey string `json:"-"` // the secret, set on create and rotate only
+func (a *Auth) AcceptsApplicationKey(gatewayID ids.GatewayID, now time.Time) bool
 const MaxOwnedKeyLifetime = 90 * 24 * time.Hour
 func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, expiresAt, now time.Time) (*Auth, error)
 func ValidateOwnedExpiry(expiresAt, now time.Time) error
@@ -185,8 +197,8 @@ type PersonalKeys interface {
 	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error)
 	Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error
 }
-type PersonalKey struct{ Auth *domain.Auth; ConsumerIDs []ids.ConsumerID; RawKey string }
-func NewPersonalKeys(repo domain.Repository, consumers consumerdomain.Reader, gateways gatewaydomain.Repository,
+type PersonalKey struct{ Auth *domain.Auth; ConsumerIDs []ids.ConsumerID } // the secret rides Auth.RawKey
+func NewPersonalKeys(repo domain.Repository, links consumerdomain.LinkReader, gateways gatewaydomain.Repository,
 	rotator Rotator, deleter Deleter, manager *cache.TTLMapManager, publisher cache.EventPublisher,
 	logger *slog.Logger, signaler configsyncport.SnapshotSignaler, now func() time.Time) PersonalKeys
 
@@ -202,11 +214,28 @@ var ErrStoreKeyRejected = errors.New("store: key rejected")
 type StoreKeyResolver interface {
 	Resolve(ctx context.Context, gatewayID ids.GatewayID, rawKey string) (*authdomain.Auth, error)
 }
-func NewStoreKeyResolver(apiKeys appauth.APIKeyFinder) StoreKeyResolver
+func NewStoreKeyResolver(apiKeys appauth.APIKeyFinder, now func() time.Time) StoreKeyResolver
 
 // pkg/app/proxy
 type CandidateFilter func(routingdomain.Candidate) bool
-ForwardInput.Keep    CandidateFilter
+type ResolvedRouting struct {
+	Intent     routingdomain.Intent
+	Ref        string
+	Candidates *routingdomain.CandidateSet
+}
+type ForwardInput struct {
+	GatewayID  ids.GatewayID
+	Consumer   *appconsumer.RoutableConsumer
+	Data       *appconsumer.Data
+	Request    *infracontext.RequestContext
+	Resolved   *ResolvedRouting
+	RouteSlug  string
+	Prechecked bool
+}
+type Forwarder interface {
+	Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error)
+	Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error)
+}
 ListModelsInput.Keep CandidateFilter
 var ErrNoStoreConsumer = fmt.Errorf("store: no consumer admits the request: %w", routingdomain.ErrModelDenied)
 type StoreSelectInput struct {
@@ -217,6 +246,7 @@ type StoreSelectInput struct {
 type StoreSelection struct {
 	Link appconsumer.StoreLink
 	Keep CandidateFilter
+	ResolvedRouting
 }
 type StoreSelector interface {
 	Select(ctx context.Context, in StoreSelectInput) (*StoreSelection, error)
@@ -230,7 +260,19 @@ type StoreModels interface {
 	List(ctx context.Context, in StoreModelsInput) (*ModelsList, error)
 	Get(ctx context.Context, in StoreModelsInput, id string) (*ModelCard, error)
 }
-func NewStoreModels(lister ModelsLister) StoreModels
+func NewStoreModels(resolver approuting.Resolver, catalog appcatalog.Service) StoreModels
+
+// pkg/app/session
+type Scope struct {
+	GatewayID string
+	OwnerID   string
+}
+type RecordInput struct {
+	Scope
+	SessionID, TurnID, Provider, Model string
+}
+Store.LastTurnID(ctx context.Context, scope Scope, sessionID string) string
+Store.SessionForTurn(ctx context.Context, gatewayID, turnID string) string // in the scope of the ctx key's owner
 
 // pkg/app/plugins, pkg/infra/context
 RuntimeScope.AuthID string; RuntimeScope.OwnerID string
@@ -239,14 +281,15 @@ RequestContext.AuthID string; RequestContext.OwnerID string
 
 // pkg/api/middleware/auth.go
 func NewAuthMiddleware(identityResolver resolver.IdentityResolver, dataFinder appconsumer.DataFinder,
-	gatewayResolver resolver.GatewayResolver, storeKeys appconsumer.StoreKeyResolver, logger *slog.Logger) *AuthMiddleware
-func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, data *appconsumer.Data, route resolver.ProxyRoute) error
+	gatewayResolver resolver.GatewayResolver, storeKeys appconsumer.StoreKeyResolver, logger *slog.Logger,
+	now func() time.Time) *AuthMiddleware
+func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, route resolver.ProxyRoute) error
 
 // pkg/api/handler/http/proxy
 func (h *ForwardedHandler) WithStore(selector appproxy.StoreSelector, models appproxy.StoreModels) *ForwardedHandler
 ```
 
-`StoreKeyResolver.Resolve` wraps infra errors with `fmt.Errorf("store: find api key: %w", err)`; `ErrNotFound` (which includes `ErrExpired`) and every failed check become `ErrStoreKeyRejected`. `StoreSelector` and `StoreModels` take `ctx` first and hold no mutable state. `StoreModels.List` calls `ModelsLister.List` once per effective link with `Keep` = the link's substitution filter combined with `!FallbackOnly()`, then deduplicates by id and sorts, as `collect` does (`list_models.go:89-121`). The substitution helper `storeScope(links) []scopedLink` is shared by the selector and `StoreModels` (one file, `store_scope.go`).
+`StoreKeyResolver.Resolve` wraps infra errors with `fmt.Errorf("store: find api key: %w", err)`; `ErrNotFound` (which includes `ErrExpired`) and every failed check become `ErrStoreKeyRejected`. `StoreSelector` and `StoreModels` take `ctx` first and hold no mutable state. `NewStoreModels(resolver, catalog)` owns a `modelsLister`: `List` calls its `collect` once per `storeScope` link with `Keep = scopedLink.primary` (the selector's primary-candidate rule: survives substitution, not `FallbackOnly()`, a registry of the linked consumer) and one per-request memo of catalog listings shared by every link, so each provider's listing is read at most once per request; it deduplicates by id (the first link in DD4 order wins `owned_by`) and sorts. `Get` stops at the first link that lists the id. The substitution helper `storeScope(links) []scopedLink` is shared by the selector and `StoreModels` (one file, `store_scope.go`).
 
 ### Migrations (in-code, one transaction each, idempotent; template `20260922120000_add_auth_expires_at.go`)
 
@@ -323,12 +366,12 @@ Under `/:gateway_id/store` (`admin_router.go:227`, `RequireGatewayAccess(Resourc
 | TTL | Period end minus now, floor of `quotaTTL` (`pkg/infra/ratelimit/store.go:258-264`; layout `meter.go:46,357`). `Plugin.now func() time.Time`. |
 | Plumbing | `AuthContext.OwnerID` → `reqCtx.AuthID/OwnerID` at `proxy_handler.go:174-175` → `scopeFromRequest` (`executor.go:443`). Never from a header. |
 | Redis read error | `key` and `Blocks(mode)` → `*appplugins.PluginError{503, "budget_unavailable"}` from `budgetGate` (`budget.go:201-213`). Otherwise fail-open as today. |
-| Unpriced | `key`, `unit: dollars`, `Blocks(mode)` → `llmcost.Resolve` with registry rates (`pricing.go:151`) not found → 403 `model_unpriced` in `budgetGate`, only when a window applies and before the Redis read. |
+| Unpriced | `key`, `unit: dollars`, `Blocks(mode)` → `llmcost.Resolve` with registry rates (`pricing.go:151`) not found → 403 `model_unpriced` in `budgetGate`, only when a window applies and before the Redis read. The model priced is the one that will be served (DD23). |
 | Over budget | Existing 429 (`responses.go:72-85`), `error.scope = key`. |
 
 ### Telemetry (S1)
 
-`Metadata.AuthID` + `SetAuthID` (`trace.go:27`) → `Event.AuthID json:"auth_id,omitempty"` (`event.go:23`) → `builder.go:68-84` → OTLP `trustgate.auth.id` (`mapping.go:70-74,202-206`). `stampConsumerTrace(c, rc, authCtx)` (`proxy_handler.go:154,419`); on the store path it runs after selection, so `consumer.id` is the selected consumer. `/store/v1/models` stamps no consumer. Contract: `docs/telemetry/otlp-metadata-contract.md:52-56`.
+`Metadata.AuthID` + `SetAuthID` (`trace.go:27`) → `Event.AuthID json:"auth_id,omitempty"` (`event.go:23`) → `builder.go:68-84` → OTLP `trustgate.auth.id` (`mapping.go:70-74,202-206`). `stampConsumerTrace(c, rc, authCtx)` (`proxy_handler.go:154,419`); on the store path it runs after selection, so `consumer.id` is the selected consumer. `/store/v1/models` stamps no consumer. A 401 on `/store/v1` stamps neither the key nor the owner (nothing authenticated it); every refusal after authentication carries both. The end user is the owner (DD22). Contract: `docs/telemetry/otlp-metadata-contract.md:52-56`.
 
 ### Snapshot metrics (S6)
 
@@ -338,7 +381,7 @@ New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/con
 
 | Surface | Condition | Status / `error` |
 |---|---|---|
-| `/store/v1/*` | hybrid gateway; no active personal consumer | 404 `not_found` |
+| `/store/v1/*` | hybrid gateway; no active personal consumer; the Files API with a valid key (DD20) | 404 `not_found` |
 | `/store/v1/*` | no key; unknown, expired, disabled, non-`api_key`, unowned, other gateway | 401 `unauthenticated` |
 | `/store/v1/*` | nothing effective admits the request (N = 0 included) | 403 `model_not_allowed` |
 | `/store/v1/*` | no links (N = 0), whatever the intent: takes precedence over the unknown pool alias row | 403 `model_not_allowed` |
@@ -350,6 +393,7 @@ New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/con
 | MCP plane | owned key | 401 |
 | Admin consumers | invalid or changed `audience`; `personal` on non-LLM; personal without a default; `PUT auths` on personal; audience mismatch; link fields missing, invalid, or sent for an application link; personal on hybrid | 422 `validation_failed` |
 | Admin `/auths/:id` | `PUT` or `rotate` on an owned key | 422 `owned_key` |
+| Admin registries | delete, or detach from a personal consumer, of the registry holding its last primary default | 422 `validation_failed` |
 | `…/principal/llm-key` | service credential / exists / bad expiry or hybrid / no key | 403 / 409 `already_exists` / 422 / 404 |
 | Policy write | `calendar_*` without `key`; `key` with `custom_pricing` or `group_by_header`; unknown `partition` | existing invalid-config mapping |
 

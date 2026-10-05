@@ -134,13 +134,35 @@ The selected consumer MUST use today's load balancer key `gw:consumerID`, shared
 
 ### Requirement: Telemetry of a store request
 
-A `/store/v1/*` usage event MUST carry `consumer.id` = the selected personal consumer's id, `auth_id` = the personal key's id and `principal_subject` = `owner_id` (`usage-auth-id-telemetry`).
+A `/store/v1/*` usage event MUST carry `consumer.id` = the selected personal consumer's id, `auth_id` = the personal key's id and `principal_subject` = `owner_id` (`usage-auth-id-telemetry`). A refusal after authentication (403, 400, 405, 429) MUST carry the key and the owner and no consumer; a 401 MUST carry neither.
 
 #### Scenario: Event fields
 
 - GIVEN `alice`'s key K linked to P1 and P2, and P2 selected for her chat call
 - WHEN the call completes
 - THEN the event has `consumer.id = P2`, `auth_id = K` and `principal_subject = alice`
+
+### Requirement: A store request belongs to the key owner
+
+On `/store/v1/*` the usage event's end user MUST be the key's owner: `X-NeuralTrust-End-User`, the `X-TG-User-*` and Open WebUI end-user headers and the body's `user` field MUST be ignored, and a request carrying them MUST NOT be refused for them. A session id MUST name a conversation in the scope of the key's owner: two owners sending the same session id MUST NOT continue each other's conversation, and a `previous_response_id` recorded for another owner MUST read as unknown. On `/<slug>/v1/*` end users and sessions MUST behave as today. The Files API MUST NOT be a store route: with a valid key, `/store/v1/files` and `/store/v1/files/{id}` MUST answer the 404 of an unknown store route, because file operations would run on the registry's shared credential for every user.
+
+#### Scenario: End-user headers ignored
+
+- GIVEN `alice`'s key and a chat call carrying `X-NeuralTrust-End-User: mallory`, `X-TG-User-Id: mallory` and `"user": "mallory"`
+- WHEN the call completes
+- THEN 200, and the usage event has `end_user.id = alice` and no `mallory`
+
+#### Scenario: Same session id, two owners
+
+- GIVEN `alice` and `bob` on the same gateway, both sending `X-Session-Id: S` to `/store/v1/responses`, `alice` first
+- WHEN `bob` sends his first turn and then `alice` her second
+- THEN `bob`'s upstream request carries no `previous_response_id`, and `alice`'s carries her own first turn's id
+
+#### Scenario: Files API refused
+
+- GIVEN `alice`'s valid key
+- WHEN she calls `GET /store/v1/files`, `POST /store/v1/files` or `GET /store/v1/files/{id}`
+- THEN each answers 404, byte-identical to an unknown store route, with no upstream call
 
 ### Requirement: Warm requests and freshness
 
@@ -160,7 +182,7 @@ A warm `/store/v1/*` request on a DB-less proxy MUST make zero DB and zero gRPC 
 
 ### Requirement: The key cache is evicted across processes
 
-`InvalidateGatewayDataEventSubscriber` MUST clear the `auth_key` TTL map, as it clears the `auth` TTL map, so a rotated or revoked secret MUST stop resolving on every full-plane replica at the next `InvalidateGatewayDataEvent`, not after the TTL.
+`InvalidateGatewayDataEventSubscriber` MUST clear the `auth_key` TTL map and the unknown-key TTL map (an unknown digest is remembered for 30 s), as it clears the `auth` TTL map, so a rotated or revoked secret MUST stop resolving on every full-plane replica at the next `InvalidateGatewayDataEvent`, not after the TTL.
 
 #### Scenario: Rotation seen by another replica
 

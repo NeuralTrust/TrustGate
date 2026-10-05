@@ -1,5 +1,7 @@
 # Exploration: llm-store (RUN-1763)
 
+> Only S0, S1, S2 and S6 below still apply. S3, S4 and S5 (the synthetic store consumer, `owner_groups`, grants in `store_grants`, the per-key view cache) are superseded by option C in [`proposal.md`](./proposal.md): real personal consumers, one personal key linked to each of them, and per-request selection on the data plane.
+
 SDD phase: **explore**. Branch `feat/llm-store` cut from `origin/develop` @ `1ea70e06` (HEAD == origin/develop at exploration time). Date: 2026-10-02. TrustGate slices S0–S6 only; DataCore D1/D2 are a separate PR.
 
 The Decision section of the issue is binding and is not re-opened here: Store flow for models, a synthetic LLM Store consumer at `/store/v1/*`, one personal `api_key` auth per user per gateway with `owner_id`/`owner_groups` riding the snapshot, grants in `store_grants`/`store_access_policies` with a `plane` column, the effective view computed and cached on the DP per key until the next snapshot, the snapshot as the only CP↔DP channel, no new tables, OSS unchanged, no Roles. Evidence from the older dossier (`cce30c93`) was re-verified at `1ea70e06`; line numbers below are HEAD.
