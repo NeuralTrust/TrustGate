@@ -290,11 +290,10 @@ func isContextError(err error) bool {
 
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	if kind == "tools" && reg.ToolPolicy.IsPinned() {
+	if kind == "tools" {
 		// The cached list is already filtered by the decided set, so the set is
-		// part of the key: a decision changes the surface even if nothing else on
-		// the registry moved.
-		key += ":pin:" + pinnedSetHash(reg.PinnedTools)
+		// part of the key.
+		key += pinSuffix(reg)
 	}
 	perPrincipal := perPrincipalAuth(reg) ||
 		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())

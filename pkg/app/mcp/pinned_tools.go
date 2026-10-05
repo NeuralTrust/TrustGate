@@ -131,3 +131,15 @@ func recordPendingToolError(ctx context.Context) {
 	}
 	counter.Add(ctx, 1)
 }
+
+// pinSuffix is what a registry's tool policy and decided set add to a key or a
+// fingerprint of its surface: nothing for an auto registry, so existing keys do
+// not move, and the policy plus a hash of the decided set for a pinned one, so a
+// decision, or a flip between auto and pinned, changes the surface even when
+// the registry's updated_at does not move.
+func pinSuffix(reg *registrydomain.Registry) string {
+	if reg == nil || !reg.ToolPolicy.IsPinned() {
+		return ""
+	}
+	return ":pin:" + pinnedSetHash(reg.PinnedTools)
+}

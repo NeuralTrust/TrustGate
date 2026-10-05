@@ -291,3 +291,44 @@ func TestPinned_ADecisionChangesTheCachedSurface(t *testing.T) {
 	approved.PinnedTools = append(approved.PinnedTools, decision(t, b, registrydomain.ToolStatusApproved))
 	assert.Equal(t, []string{"a", "b"}, h.list(t, routable(mcpClient(), &approved)))
 }
+
+func TestPinned_WarmCacheFlipBetweenAutoAndPinned(t *testing.T) {
+	t.Parallel()
+	a, b := defTool(t, "a", "x"), defTool(t, "b", "y")
+	h := newPinnedHarness(t, []Tool{a, b}, &fakeRecorder{})
+	reg := mcpRegistry(t, "flip", pinnedURL)
+	rc := routable(mcpClient(), reg)
+
+	assert.Equal(t, []string{"a", "b"}, h.list(t, rc), "auto: everything")
+
+	// Same registry id and updated_at, only the policy moves.
+	reg.ToolPolicy = registrydomain.ToolPolicyPinned
+	reg.PinnedTools = []registrydomain.ToolDecision{decision(t, a, registrydomain.ToolStatusApproved)}
+	assert.Equal(t, []string{"a"}, h.list(t, rc), "pinned must not be served the warm auto list")
+
+	reg.ToolPolicy = registrydomain.ToolPolicyAuto
+	reg.PinnedTools = nil
+	assert.Equal(t, []string{"a", "b"}, h.list(t, rc), "back to auto must not be served the filtered list")
+}
+
+func TestPinned_DecisionOnlyChangeMovesTheSurfaceFingerprint(t *testing.T) {
+	t.Parallel()
+	a := defTool(t, "a", "x")
+	reg := pinnedReg(t)
+	rc := routable(mcpClient(), reg)
+
+	empty := SurfaceFingerprint(rc, nil)
+	bindings := consumerBindings(rc)
+
+	reg.PinnedTools = []registrydomain.ToolDecision{decision(t, a, registrydomain.ToolStatusApproved)}
+	assert.NotEqual(t, empty, SurfaceFingerprint(rc, nil), "UpdatedAt did not move, the decision did")
+	assert.NotEqual(t, bindings, consumerBindings(rc), "the watch snapshot must see it too")
+
+	approved := SurfaceFingerprint(rc, nil)
+	reg.ToolPolicy = registrydomain.ToolPolicyAuto
+	assert.NotEqual(t, approved, SurfaceFingerprint(rc, nil), "leaving pinned moves it as well")
+
+	auto := mcpRegistry(t, "auto", pinnedURL)
+	fp := SurfaceFingerprint(routable(mcpClient(), auto), nil)
+	assert.Equal(t, fp, SurfaceFingerprint(routable(mcpClient(), auto), nil), "auto stays stable")
+}
