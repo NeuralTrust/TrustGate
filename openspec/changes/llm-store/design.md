@@ -272,8 +272,8 @@ ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS priority INTEGER NULL;
 ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ NULL;
 ALTER TABLE consumer_auth DROP CONSTRAINT IF EXISTS consumer_auth_grant_check;
 ALTER TABLE consumer_auth ADD CONSTRAINT consumer_auth_grant_check CHECK (
-	(level IS NULL AND priority IS NULL AND granted_at IS NULL)
-	OR (level IN ('user', 'group', 'all') AND priority >= 0 AND granted_at IS NOT NULL));
+	num_nonnulls(level, priority, granted_at) = 0
+	OR (num_nonnulls(level, priority, granted_at) = 3 AND level IN ('user', 'group', 'all') AND priority >= 0 AND isfinite(granted_at)));
 -- down
 ALTER TABLE consumer_auth DROP CONSTRAINT IF EXISTS consumer_auth_grant_check;
 ALTER TABLE consumer_auth DROP COLUMN IF EXISTS granted_at;
