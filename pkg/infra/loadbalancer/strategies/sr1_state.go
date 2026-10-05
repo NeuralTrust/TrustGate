@@ -41,11 +41,16 @@ local desired, rungs, ttl = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[
 local new_user, turn_id = ARGV[4] == '1', ARGV[5]
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+local stored = redis.call('EXISTS', KEYS[1]) == 1
 local rung = tonumber(redis.call('HGET', KEYS[1], 'rung'))
 local escapes = tonumber(redis.call('HGET', KEYS[1], 'escapes'))
 local last = tonumber(redis.call('HGET', KEYS[1], 'last'))
 local turn = redis.call('HGET', KEYS[1], 'turn')
-if not rung or not escapes or not last or rung ~= math.floor(rung) or escapes ~= math.floor(escapes) or rung < 0 or rung >= rungs or escapes < 0 or escapes > 1 or last > now or now - last > ttl then
+if not stored then
+    rung, escapes = desired, 0
+elseif not rung or not escapes or not last or not turn or rung ~= math.floor(rung) or escapes ~= math.floor(escapes) or rung < 0 or rung >= rungs or escapes < 0 or escapes > 1 or last < 0 or last > now then
+    return redis.error_reply('invalid SR-1 state')
+elseif now - last > ttl then
     rung, escapes = desired, 0
 elseif new_user and turn ~= turn_id and desired > rung and escapes < 1 then
     rung, escapes = math.min(rung + 1, rungs - 1), 1
