@@ -140,7 +140,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 			PolicyPlan:       plan,
 			ScopedPolicies:   scoped,
 			MCPPlans:         mcpPlans,
-			Auths:            collectAuths(c.AuthIDs, authByID),
+			Auths:            collectAuths(slugAuthIDs(c), authByID),
 		})
 	}
 
@@ -351,7 +351,7 @@ func (f *dataFinder) loadAuths(
 	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
 ) (map[ids.AuthID]*authdomain.Auth, error) {
-	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.AuthID { return c.AuthIDs })
+	idList := uniqueIDs(consumers, slugAuthIDs)
 	if len(idList) == 0 {
 		return map[ids.AuthID]*authdomain.Auth{}, nil
 	}
@@ -364,6 +364,13 @@ func (f *dataFinder) loadAuths(
 		byID[a.ID] = a
 	}
 	return byID, nil
+}
+
+func slugAuthIDs(c *domain.Consumer) []ids.AuthID {
+	if c.IsPersonal() {
+		return nil
+	}
+	return c.AuthIDs
 }
 
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {
@@ -507,7 +514,7 @@ func composePolicies(gatewayWide, attached []*policydomain.Policy) []*policydoma
 func collectAuths(idList []ids.AuthID, byID map[ids.AuthID]*authdomain.Auth) []*authdomain.Auth {
 	out := make([]*authdomain.Auth, 0, len(idList))
 	for _, id := range idList {
-		if a, ok := byID[id]; ok {
+		if a, ok := byID[id]; ok && !a.IsOwned() {
 			out = append(out, a)
 		}
 	}

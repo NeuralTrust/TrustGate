@@ -292,6 +292,60 @@ func TestAuthMiddleware_APIKeyExpiryDecidesBetween401And403(t *testing.T) {
 	}
 }
 
+func personalConsumerWithKey(gw *gatewaydomain.Gateway, rawKey string) appconsumer.RoutableConsumer {
+	ownedID := ids.New[ids.AuthKind]()
+	return appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw.ID, Slug: "pslug001", Active: true,
+			Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal, AuthIDs: []ids.AuthID{ownedID},
+			AuthLinks: map[ids.AuthID]consumerdomain.AuthLink{ownedID: {Level: consumerdomain.GrantLevelUser, Priority: 1, GrantedAt: authTestNow}},
+		},
+		Auths: []*authdomain.Auth{{
+			ID: ownedID, GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true,
+			KeyHash: authdomain.HashAPIKey(rawKey), OwnerID: "alice",
+		}},
+	}
+}
+
+func callAuthApp(t *testing.T, app *fiber.App, path, key string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(fiber.MethodPost, path, nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderAPIKey, key)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, body
+}
+
+func TestAuthMiddleware_PersonalKeysStayOffSlugRoutes(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	ownedKey, otherKey := "ag_alice", "ag_other"
+	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, personalConsumerWithKey(gw, ownedKey), otherConsumerWithKey(gw, otherKey, nil)})
+	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	status, ownedBody := callAuthApp(t, app, "/cons1234/v1/chat/completions", ownedKey)
+	require.Equal(t, fiber.StatusUnauthorized, status, "a personal key on an application slug")
+	_, unknownKeyBody := callAuthApp(t, app, "/cons1234/v1/chat/completions", "ag_random")
+	require.Equal(t, unknownKeyBody, ownedBody)
+	status, _ = callAuthApp(t, app, "/cons1234/v1/chat/completions", otherKey)
+	require.Equal(t, fiber.StatusForbidden, status, "an application key of another application consumer")
+	status, personalBody := callAuthApp(t, app, "/pslug001/v1/chat/completions", ownedKey)
+	require.Equal(t, fiber.StatusNotFound, status, "a personal consumer by slug")
+	_, unknownSlugBody := callAuthApp(t, app, "/zzzzzzzz/v1/chat/completions", ownedKey)
+	require.Equal(t, unknownSlugBody, personalBody)
+
+	oauthGW, oauthRC := inlineConsumerWithOAuth(t)
+	oauthData := appconsumer.NewData(oauthGW.ID, []appconsumer.RoutableConsumer{oauthRC, personalConsumerWithKey(oauthGW, ownedKey)})
+	oauthApp := newAuthTestApp(t, oauthGW, oauthData, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+	ownedStatus, ownedOnOAuth := callAuthApp(t, oauthApp, "/cons1234/v1/chat/completions", ownedKey)
+	unknownStatus, unknownOnOAuth := callAuthApp(t, oauthApp, "/cons1234/v1/chat/completions", "ag_random")
+	require.Equal(t, unknownStatus, ownedStatus, "a personal key on an OAuth-only application consumer")
+	require.Equal(t, unknownOnOAuth, ownedOnOAuth)
+}
+
 func TestAuthMiddleware_NilClockFallsBackToTheWallClock(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)

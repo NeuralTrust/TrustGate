@@ -207,7 +207,7 @@ func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsu
 	hash := authdomain.HashAPIKey(rawKey)
 	for i := range data.Consumers {
 		other := &data.Consumers[i]
-		if other.Consumer == nil || other.Consumer.ID == rc.Consumer.ID {
+		if other.Consumer == nil || other.Consumer.ID == rc.Consumer.ID || other.Consumer.IsPersonal() {
 			continue
 		}
 		for _, a := range other.Auths {

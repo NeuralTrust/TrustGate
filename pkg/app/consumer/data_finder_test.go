@@ -802,3 +802,61 @@ func TestDataFinder_FindByGateway_MCPWideGroupPolicyRunsForMembersOnly(t *testin
 		})
 	}
 }
+
+func TestDataFinder_FindByGateway_PersonalConsumersLoadNoAuthsAndIndexTheirLinks(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	appKey, ownedKey := ids.New[ids.AuthKind](), ids.New[ids.AuthKind]()
+	application := routableConsumer(gwID, []ids.AuthID{appKey})
+	personal := routableConsumer(gwID, []ids.AuthID{ownedKey})
+	personal.Audience = domain.AudiencePersonal
+	personal.Slug = "pslug001"
+	link := domain.AuthLink{Level: domain.GrantLevelUser, Priority: 1, GrantedAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)}
+	personal.AuthLinks = map[ids.AuthID]domain.AuthLink{ownedKey: link}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{application, personal}, nil).Once()
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{appKey}).
+		Return([]*authdomain.Auth{{ID: appKey, GatewayID: gwID}, {ID: ownedKey, GatewayID: gwID, OwnerID: "alice"}}, nil).Once()
+
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	require.NoError(t, err)
+
+	require.Len(t, data.Consumers[0].Auths, 1)
+	require.Empty(t, data.Consumers[1].Auths, "a personal consumer's keys are never slug credentials")
+	require.True(t, data.HasPersonalConsumers())
+	links := data.StoreLinks(ownedKey)
+	require.Len(t, links, 1)
+	require.Same(t, &data.Consumers[1], links[0].Consumer)
+	require.Equal(t, link, links[0].Link)
+}
+
+func TestDataFinder_FindByGateway_ApplicationConsumersNeverCarryOwnedKeys(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	appKey, ownedKey := ids.New[ids.AuthKind](), ids.New[ids.AuthKind]()
+	application := routableConsumer(gwID, []ids.AuthID{appKey, ownedKey})
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{application}, nil).Once()
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{appKey, ownedKey}).
+		Return([]*authdomain.Auth{{ID: appKey, GatewayID: gwID}, {ID: ownedKey, GatewayID: gwID, OwnerID: "alice"}}, nil).Once()
+
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	require.NoError(t, err)
+
+	require.Len(t, data.Consumers[0].Auths, 1)
+	require.Equal(t, appKey, data.Consumers[0].Auths[0].ID, "an owned key never authenticates on an application slug")
+}
