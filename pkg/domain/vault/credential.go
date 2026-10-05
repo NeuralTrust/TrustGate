@@ -33,6 +33,10 @@ var (
 	// never connected this" apart from "the vault key rotated and every stored
 	// credential is now unreadable", which need very different responses.
 	ErrUndecryptable = fmt.Errorf("vault: credential could not be decrypted: %w", commonerrors.ErrValidation)
+	// ErrCredentialChanged is a conditional write that found the credential
+	// rewritten (or removed) after it was read: a reconnect or a rotation got
+	// there first, and that newer state must win.
+	ErrCredentialChanged = fmt.Errorf("vault: credential changed since it was read: %w", commonerrors.ErrConflict)
 )
 
 type Credential struct {
@@ -100,4 +104,10 @@ type Repository interface {
 	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) (*Credential, error)
 	ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*Credential, error)
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) error
+}
+
+// ReconnectRequirer is a store that can mark a credential the provider refused
+// for good, so every reader reports it as needing a reconnect.
+type ReconnectRequirer interface {
+	RequireReconnect(ctx context.Context, c *Credential) error
 }

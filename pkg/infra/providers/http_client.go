@@ -48,8 +48,10 @@ func SetDefaultHTTPTimeout(d time.Duration) {
 
 // SetAllowPrivateNetworks lets provider clients reach private, loopback and
 // link-local addresses. It drives the shared netguard escape hatch
-// (OUTBOUND_ALLOW_PRIVATE_NETWORKS), which every tenant-steerable outbound
-// client reads. Call it during initialization.
+// (OUTBOUND_ALLOW_PRIVATE_NETWORKS, config default true), which every
+// tenant-steerable outbound client reads. Single-operator (hybrid, self-hosted)
+// gateways leave it on; multi-tenant gateways must turn it off. Call it during
+// initialization.
 func SetAllowPrivateNetworks(allow bool) {
 	netguard.SetAllowPrivate(allow)
 }
