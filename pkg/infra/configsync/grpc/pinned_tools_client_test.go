@@ -17,9 +17,12 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -44,7 +47,7 @@ func dialPinnedTools(t *testing.T, f pinnedFixture) *PinnedToolsClient {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return NewPinnedToolsClient(conn)
+	return NewPinnedToolsClient(conn, discardLogger())
 }
 
 func mustCandidate(t *testing.T, name, desc, schema string) registrydomain.ToolCandidate {
@@ -111,5 +114,59 @@ func TestPinnedToolsClient_RegistryOfAnotherGatewayIsIgnored(t *testing.T) {
 	}
 	if len(f.store.calls) != 0 {
 		t.Fatal("nothing must be written for a registry that is not the gateway's")
+	}
+}
+
+type unimplementedPinned struct {
+	snapshotpb.UnimplementedPinnedToolsServer
+	calls int
+}
+
+func (u *unimplementedPinned) RecordPending(context.Context, *snapshotpb.RecordPendingToolsRequest) (*snapshotpb.RecordPendingToolsResponse, error) {
+	u.calls++
+	return nil, status.Error(codes.Unimplemented, "old control plane")
+}
+
+// An older control plane answers Unimplemented. The client must not fail every
+// discovery: it reports success (so the recorder keeps its keys), stops calling
+// for the back-off window and probes again afterwards.
+func TestPinnedToolsClient_BacksOffWhenTheControlPlaneIsOld(t *testing.T) {
+	srv := &unimplementedPinned{}
+	lis := bufconn.Listen(1 << 20)
+	gsrv := grpc.NewServer()
+	snapshotpb.RegisterPinnedToolsServer(gsrv, srv)
+	go func() { _ = gsrv.Serve(lis) }()
+	t.Cleanup(gsrv.Stop)
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	client := NewPinnedToolsClient(conn, discardLogger())
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	client.now = func() time.Time { return now }
+	gw, _ := ids.NewV7[ids.GatewayKind]()
+	reg, _ := ids.NewV7[ids.RegistryKind]()
+	cands := []registrydomain.ToolCandidate{mustCandidate(t, "a", "d", `{}`)}
+
+	if err := client.Record(context.Background(), gw, reg, cands); err != nil {
+		t.Fatalf("Unimplemented must not surface as an error: %v", err)
+	}
+	for range 5 {
+		if err := client.Record(context.Background(), gw, reg, cands); err != nil {
+			t.Fatalf("Record during back-off: %v", err)
+		}
+	}
+	if srv.calls != 1 {
+		t.Fatalf("calls = %d during the back-off window, want 1", srv.calls)
+	}
+
+	now = now.Add(unimplementedBackoff + time.Second)
+	_ = client.Record(context.Background(), gw, reg, cands)
+	if srv.calls != 2 {
+		t.Fatalf("calls = %d after the window, want one probe (2)", srv.calls)
 	}
 }
