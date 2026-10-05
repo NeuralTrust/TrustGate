@@ -74,6 +74,9 @@ type PinToolsInput struct {
 	// Tools is the list the admin confirmed; it may be empty (a server whose
 	// tools are per principal starts with none).
 	Tools []domain.ToolCandidate
+	// Unchecked are live tools the admin did not approve; they are recorded as
+	// pending so they appear in Review right away.
+	Unchecked []domain.ToolCandidate
 	// DecidedBy is the authenticated admin, never taken from the request body.
 	DecidedBy string
 }
@@ -219,7 +222,7 @@ func (s *pinnedToolService) Pin(ctx context.Context, in PinToolsInput) (*domain.
 	}
 	// One transaction: the approvals, the policy switch, the registry bump and
 	// the snapshot change marker commit together or not at all.
-	if err := s.tools.Pin(ctx, in.GatewayID, in.RegistryID, in.Tools, in.DecidedBy); err != nil {
+	if err := s.tools.Pin(ctx, in.GatewayID, in.RegistryID, in.Tools, in.Unchecked, in.DecidedBy); err != nil {
 		return nil, err
 	}
 	if fresh := s.propagate(ctx, in.GatewayID, in.RegistryID); fresh != nil {

@@ -115,15 +115,43 @@ func TestEnableToolPinningHandler_StaleRefIs422AndAppliesNothing(t *testing.T) {
 	assert.Contains(t, string(raw), "search")
 }
 
-func TestEnableToolPinningHandler_EmptyListNeedsNoUpstream(t *testing.T) {
+// The admin unchecked every tool: they all become pending, none approved.
+func TestEnableToolPinningHandler_EmptyListRecordsEveryLiveToolAsPending(t *testing.T) {
+	reg := pinnedMCPRegistry(t)
+	a, b := upstreamTool(t, `{"name":"a","description":"A"}`), upstreamTool(t, `{"name":"b","description":"B"}`)
+	svc := appmocks.NewPinnedToolService(t)
+	svc.EXPECT().Pin(mock.Anything, mock.MatchedBy(func(in appregistry.PinToolsInput) bool {
+		return len(in.Tools) == 0 && len(in.Unchecked) == 2
+	})).Return(reg, nil)
+	resp := putPinning(t, enablePinningApp(svc, &stubIntrospector{tools: []appmcp.Tool{a, b}}), reg.GatewayID, reg.ID, `{"tools":[]}`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// 3 live tools, 2 confirmed: the third is handed over to be recorded as pending.
+func TestEnableToolPinningHandler_UncheckedLiveToolsGoToPending(t *testing.T) {
+	reg := pinnedMCPRegistry(t)
+	a, b, c3 := upstreamTool(t, `{"name":"a","description":"A"}`), upstreamTool(t, `{"name":"b","description":"B"}`), upstreamTool(t, `{"name":"create_branch","description":"C"}`)
+	candA, _ := appmcp.ToolCandidate(a)
+	candB, _ := appmcp.ToolCandidate(b)
+	candC, _ := appmcp.ToolCandidate(c3)
+	svc := appmocks.NewPinnedToolService(t)
+	svc.EXPECT().Pin(mock.Anything, appregistry.PinToolsInput{
+		GatewayID: reg.GatewayID, RegistryID: reg.ID,
+		Tools: []domain.ToolCandidate{candA, candB}, Unchecked: []domain.ToolCandidate{candC}, DecidedBy: "ana@acme.io",
+	}).Return(reg, nil)
+	resp := putPinning(t, enablePinningApp(svc, &stubIntrospector{tools: []appmcp.Tool{a, b, c3}}), reg.GatewayID, reg.ID, refBody(t, a, b))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestEnableToolPinningHandler_NotIntrospectableWithAnEmptyListRecordsNothing(t *testing.T) {
 	reg := pinnedMCPRegistry(t)
 	svc := appmocks.NewPinnedToolService(t)
-	svc.EXPECT().Pin(mock.Anything, mock.MatchedBy(func(in appregistry.PinToolsInput) bool { return len(in.Tools) == 0 })).Return(reg, nil)
-	// An introspector that would fail proves it is not consulted.
-	intro := &stubIntrospector{err: appmcp.ErrUpstreamUnavailable}
+	svc.EXPECT().Pin(mock.Anything, mock.MatchedBy(func(in appregistry.PinToolsInput) bool {
+		return len(in.Tools) == 0 && len(in.Unchecked) == 0
+	})).Return(reg, nil)
+	intro := &stubIntrospector{err: fmt.Errorf("%w: per-principal", appmcp.ErrRegistryNotIntrospectable)}
 	resp := putPinning(t, enablePinningApp(svc, intro), reg.GatewayID, reg.ID, `{"tools":[]}`)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Zero(t, intro.calls)
 }
 
 func TestEnableToolPinningHandler_NotIntrospectableAcceptsOnlyAnEmptyList(t *testing.T) {

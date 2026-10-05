@@ -41,7 +41,7 @@ func NewEnableToolPinningHandler(tools appregistry.PinnedToolService, introspect
 
 // Handle godoc
 // @Summary      Enable tool pinning with a confirmed list
-// @Description  Makes the listed tools exactly the approved set and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. Tools are identified by the (name, fingerprint) returned by GET .../tools; the server re-reads the live tool list and approves the definitions it finds there. If a listed tool is no longer in the live list with that fingerprint (the upstream changed since it was reviewed) the call is 422 naming the stale tools and nothing is applied; an unreachable upstream is 502. A registry whose tools depend on the caller (per-principal auth or URL variables) cannot be introspected, so only an empty list is accepted for it. Any other approved definition goes back to pending and unlisted rejections stay rejected. An empty list is allowed. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.
+// @Description  Makes the listed tools exactly the approved set and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. Tools are identified by the (name, fingerprint) returned by GET .../tools; the server re-reads the live tool list and approves the definitions it finds there. If a listed tool is no longer in the live list with that fingerprint (the upstream changed since it was reviewed) the call is 422 naming the stale tools and nothing is applied; an unreachable upstream is 502. A registry whose tools depend on the caller (per-principal auth or URL variables) cannot be introspected, so only an empty list is accepted for it. Any other approved definition goes back to pending and unlisted rejections stay rejected. An empty list is allowed. Every live tool that is not on the list is recorded as pending in the same transaction (a stored row, rejected included, is never overwritten, and the pending caps apply), so it appears for review immediately. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.
 // @Tags         registries
 // @Accept       json
 // @Produce      json
@@ -76,7 +76,7 @@ func (h *EnableToolPinningHandler) Handle(c *fiber.Ctx) error {
 		}
 		return httpio.WriteError(c, err)
 	}
-	candidates, err := h.liveCandidates(c, gatewayID, id, refs)
+	candidates, unchecked, err := h.liveCandidates(c, gatewayID, id, refs)
 	if err != nil {
 		if errors.Is(err, appmcp.ErrUpstreamUnavailable) {
 			return c.Status(fiber.StatusBadGateway).JSON(httpio.ErrorBody{Error: "upstream_unavailable", Message: "the MCP server could not be reached; nothing was changed"})
@@ -87,6 +87,7 @@ func (h *EnableToolPinningHandler) Handle(c *fiber.Ctx) error {
 		GatewayID:  gatewayID,
 		RegistryID: id,
 		Tools:      candidates,
+		Unchecked:  unchecked,
 		DecidedBy:  actor,
 	})
 	if err != nil {
@@ -95,20 +96,22 @@ func (h *EnableToolPinningHandler) Handle(c *fiber.Ctx) error {
 	return httpio.WriteOK(c, response.FromRegistry(reg))
 }
 
-// liveCandidates turns the confirmed refs into definitions read from the live
-// upstream list, through the same appmcp.ToolCandidate the discovery filter
-// uses. An empty list needs no upstream. Refs the live list does not contain are
-// stale: none of the list is applied.
-func (h *EnableToolPinningHandler) liveCandidates(c *fiber.Ctx, gatewayID ids.GatewayID, id ids.RegistryID, refs []domain.ToolRef) ([]domain.ToolCandidate, error) {
-	if len(refs) == 0 {
-		return nil, nil
-	}
+// liveCandidates splits the live upstream list by the confirmed refs, through
+// the same appmcp.ToolCandidate the discovery filter uses: the approved
+// definitions, and the unchecked ones (live but not confirmed), which are
+// recorded as pending. Refs the live list does not contain are stale: none of
+// the list is applied. A server that cannot be introspected has no live list, so
+// only an empty list is accepted and nothing is recorded.
+func (h *EnableToolPinningHandler) liveCandidates(c *fiber.Ctx, gatewayID ids.GatewayID, id ids.RegistryID, refs []domain.ToolRef) (approved, unchecked []domain.ToolCandidate, err error) {
 	live, err := h.introspector.ListRegistryTools(c.UserContext(), gatewayID, id)
 	if errors.Is(err, appmcp.ErrRegistryNotIntrospectable) {
-		return nil, fmt.Errorf("%w: this server's tools depend on the caller (per-principal auth or URL variables), so they cannot be listed for review; pin it with an empty list", domain.ErrInvalidToolPolicy)
+		if len(refs) == 0 {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("%w: this server's tools depend on the caller (per-principal auth or URL variables), so they cannot be listed for review; pin it with an empty list", domain.ErrInvalidToolPolicy)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	byRef := make(map[domain.ToolRef]domain.ToolCandidate, len(live))
 	for _, t := range live {
@@ -117,19 +120,18 @@ func (h *EnableToolPinningHandler) liveCandidates(c *fiber.Ctx, gatewayID ids.Ga
 		}
 	}
 	var stale []string
-	out := make([]domain.ToolCandidate, 0, len(refs))
-	seen := make(map[domain.ToolRef]struct{}, len(refs))
+	chosen := make(map[domain.ToolRef]struct{}, len(refs))
 	for _, ref := range refs {
-		if _, dup := seen[ref]; dup {
+		if _, dup := chosen[ref]; dup {
 			continue
 		}
-		seen[ref] = struct{}{}
+		chosen[ref] = struct{}{}
 		cand, ok := byRef[ref]
 		if !ok {
 			stale = append(stale, ref.Name)
 			continue
 		}
-		out = append(out, cand)
+		approved = append(approved, cand)
 	}
 	if len(stale) > 0 {
 		slices.Sort(stale)
@@ -138,7 +140,12 @@ func (h *EnableToolPinningHandler) liveCandidates(c *fiber.Ctx, gatewayID ids.Ga
 		if len(listed) > maxNamed {
 			listed = listed[:maxNamed]
 		}
-		return nil, fmt.Errorf("%w: %d tool(s) changed or disappeared upstream since they were reviewed (%s); reload the list and confirm again", domain.ErrUnknownToolRefs, len(stale), strings.Join(listed, ", "))
+		return nil, nil, fmt.Errorf("%w: %d tool(s) changed or disappeared upstream since they were reviewed (%s); reload the list and confirm again", domain.ErrUnknownToolRefs, len(stale), strings.Join(listed, ", "))
 	}
-	return out, nil
+	for ref, cand := range byRef {
+		if _, ok := chosen[ref]; !ok {
+			unchecked = append(unchecked, cand)
+		}
+	}
+	return approved, unchecked, nil
 }
