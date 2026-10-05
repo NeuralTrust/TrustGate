@@ -106,6 +106,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	if in.ToolPolicy != nil {
 		existing.ToolPolicy = *in.ToolPolicy
 	}
+	// An update that does not mention the policy must not write the copy it read
+	// earlier: "enable pinning" may have changed it since.
+	existing.KeepStoredToolPolicy = in.ToolPolicy == nil
 	applyLLMTargetUpdate(existing, in)
 	prevAuth := storedMCPAuth(existing)
 	if err := applyMCPTargetUpdate(ctx, existing, in, u.catalog, u.openapi); err != nil {
