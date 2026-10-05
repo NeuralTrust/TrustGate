@@ -16,35 +16,26 @@ package mcp
 
 import (
 	"context"
-	"log/slog"
-	"time"
+	"fmt"
 	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/metric"
 )
 
-const (
-	// pendingRecordTimeout bounds one Record call. It is derived from the
-	// discovery context, so a cancelled discovery cancels it too.
-	pendingRecordTimeout = 5 * time.Second
-	maxLoggedToolName    = 100
-)
+const maxLoggedToolName = 100
 
-// PendingToolRecorder records tool definitions a pinned registry listed that have
-// no decision yet, so an admin can review them. Implementations must be
-// idempotent: the same candidate may be reported again by another pod or after
-// the discovery cache expires.
-type PendingToolRecorder interface {
-	Record(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate) error
+// PendingToolSink takes the tools a pinned registry listed that have no decision
+// yet, so an admin can review them. Submit must not block and must not fail the
+// caller: discovery never waits on it. AsyncPendingRecorder is the implementation.
+type PendingToolSink interface {
+	Submit(gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate)
 }
 
-// WithPendingToolRecorder wires the sink for tools a pinned registry lists that
-// are not decided yet. Omitted, those tools are hidden but not recorded.
-func WithPendingToolRecorder(r PendingToolRecorder) ComposerOption {
-	return func(c *composer) { c.pending = r }
+// WithPendingToolSink wires where tools a pinned registry lists that are not
+// decided yet go. Omitted, those tools are hidden but not recorded.
+func WithPendingToolSink(s PendingToolSink) ComposerOption {
+	return func(c *composer) { c.pending = s }
 }
 
 // screenAsk wraps one registry's upstream listing so that, for tools of a pinned
@@ -70,7 +61,10 @@ func screenAsk[T any](
 		if !ok {
 			return items, nil
 		}
-		screened, _ := any(c.screenPinnedTools(ctx, reg, tools)).([]T)
+		screened, ok := any(c.screenPinnedTools(reg, tools)).([]T)
+		if !ok {
+			return nil, fmt.Errorf("mcp discovery: unexpected tool list type %T", items)
+		}
 		return screened, nil
 	}
 }
@@ -79,7 +73,8 @@ func screenAsk[T any](
 // registry's snapshot set approves. Rejected, pending, unknown and changed
 // definitions are hidden. Unknown ones are handed to the recorder in one call.
 // A recorder failure never exposes anything: the filtered list is returned.
-func (c *composer) screenPinnedTools(ctx context.Context, reg *registrydomain.Registry, tools []Tool) []Tool {
+func (c *composer) screenPinnedTools(reg *registrydomain.Registry, tools []Tool) []Tool {
+	decisions := reg.DecisionIndex()
 	exposed := make([]Tool, 0, len(tools))
 	var unknown []registrydomain.ToolCandidate
 	for _, t := range tools {
@@ -89,22 +84,17 @@ func (c *composer) screenPinnedTools(ctx context.Context, reg *registrydomain.Re
 				"registry_id", reg.ID.String(), "tool", truncateForLog(t.Name), "error", err)
 			continue
 		}
-		if reg.IsToolApproved(cand.ToolRef) {
-			exposed = append(exposed, t)
-			continue
-		}
-		if !reg.HasToolDecision(cand.ToolRef) {
+		status, decided := decisions[cand.ToolRef]
+		switch {
+		case !decided:
 			unknown = append(unknown, cand)
+		case status == registrydomain.ToolStatusApproved:
+			exposed = append(exposed, t)
 		}
 	}
 	if len(unknown) > 0 && c.pending != nil {
-		rctx, cancel := context.WithTimeout(ctx, pendingRecordTimeout)
-		defer cancel()
-		if err := c.pending.Record(rctx, reg.GatewayID, reg.ID, unknown); err != nil {
-			c.logger.Warn("mcp composer: failed to record pending tools; they stay hidden",
-				"registry_id", reg.ID.String(), "tools", len(unknown), "error", err)
-			recordPendingToolError(ctx)
-		}
+		// The decision belongs to the shelf registry, not to a per-install clone.
+		c.pending.Submit(reg.GatewayID, reg.ScopeKey(), unknown)
 	}
 	return exposed
 }
@@ -114,22 +104,6 @@ func truncateForLog(s string) string {
 		return s
 	}
 	return string([]rune(s)[:maxLoggedToolName]) + "..."
-}
-
-// recordPendingToolError counts a failed attempt to record pending tools of a
-// pinned registry. The instrument is resolved per call: the SDK returns the same
-// one for the same name and a failure is rare. No attributes: tenant and registry
-// ids would be unbounded labels.
-func recordPendingToolError(ctx context.Context) {
-	counter, err := otel.Meter("trustgate/mcp").Int64Counter(
-		"trustgate.mcp.pinned_tools.record_errors",
-		metric.WithDescription("discoveries of a pinned registry that could not record their pending tools"),
-	)
-	if err != nil {
-		slog.Warn("failed to create pinned tools record error counter", slog.String("error", err.Error()))
-		return
-	}
-	counter.Add(ctx, 1)
 }
 
 // pinSuffix is what a registry's tool policy and decided set add to a key or a

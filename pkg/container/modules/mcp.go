@@ -54,6 +54,12 @@ import (
 )
 
 func MCP(c *container.Container) error {
+	if err := c.Provide(providePendingRecorder); err != nil {
+		return err
+	}
+	if err := c.Provide(providePendingSink); err != nil {
+		return err
+	}
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
 	}
@@ -204,15 +210,42 @@ type composerParams struct {
 	Logger   *slog.Logger
 	Installs installationdomain.Repository `optional:"true"`
 	Vault    vaultdomain.Repository        `optional:"true"`
-	// Pending records the tools a pinned registry lists that are not decided yet.
-	// Nothing provides it yet: without one they are hidden but not recorded.
-	Pending appmcp.PendingToolRecorder `optional:"true"`
+	// Pending takes the tools a pinned registry lists that are not decided yet.
+	// Nil when no recorder is wired: they are then hidden but not recorded.
+	Pending appmcp.PendingToolSink `optional:"true"`
+}
+
+// pendingRecorderParams carries the persistence port for pending tools. Nothing
+// provides it until the control-plane channel does; without it there is no
+// recorder and no worker.
+type pendingRecorderParams struct {
+	dig.In
+
+	Inner  appmcp.PendingToolRecorder `optional:"true"`
+	Logger *slog.Logger
+}
+
+// providePendingRecorder builds the per-pod async recorder in front of the
+// persistence port. It is nil without a port. Its Close is part of the plane's
+// shutdown (see runMCP and runAll).
+func providePendingRecorder(p pendingRecorderParams) *appmcp.AsyncPendingRecorder {
+	if p.Inner == nil {
+		return nil
+	}
+	return appmcp.NewAsyncPendingRecorder(p.Inner, p.Logger)
+}
+
+func providePendingSink(r *appmcp.AsyncPendingRecorder) appmcp.PendingToolSink {
+	if r == nil {
+		return nil // an explicit nil interface, not a typed nil pointer
+	}
+	return r
 }
 
 func provideComposer(p composerParams) appmcp.Composer {
 	var opts []appmcp.ComposerOption
 	if p.Pending != nil {
-		opts = append(opts, appmcp.WithPendingToolRecorder(p.Pending))
+		opts = append(opts, appmcp.WithPendingToolSink(p.Pending))
 	}
 	if p.Installs != nil {
 		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
