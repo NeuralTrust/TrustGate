@@ -221,13 +221,13 @@ Depends: —. Est.: ≈310 (code 120 / test 190). Commit boundary: one `feat` co
 
 Depends: P7. Est.: ≈265 (code 100 / test 165). Commit boundary: one `feat` commit, plus `docs/policies.json` in the same commit.
 
-- [ ] 8.1 `tokenratelimit/budget.go` `budgetGate` (`:171,201-213`): under `key` with `appplugins.Blocks(mode)`, a Redis read error → `*appplugins.PluginError{503, "budget_unavailable"}`. A ctx the caller cancelled keeps today's path, as does a post-response accrual error (log and pass). `HandleCounterFailure` does not change (OQ4).
-- [ ] 8.2 `plugin.go` `preRequest`: under `key`, `unit: dollars` and a blocking mode, `llmcost.Resolve` with registry rates (`pricing.go:151`) failing → 403 `model_unpriced` before the upstream call.
-- [ ] 8.3 `responses.go:72-85`: over budget answers the existing 429 with `error.scope = key`.
-- [ ] 8.4 `pkg/app/plugins/catalog_metadata.go:142-273` and `docs/policies.json:112`: `partition` (`key`), the calendar windows, per-owner counting, the 503, the 403, the refused combinations and the uncounted no-auth pass. The fail-open sentence stays true for the default partition.
-- [ ] 8.5 Test `plugin_budget_test.go`: a closed miniredis gives 503 in enforce and passes in observe, and the default partition stays fail-open; unpriced on dollars → 403 while tokens pass; a registry rate counts as priced; over budget → 429 with `scope=key`; `TestPlugin_DollarBudget_UnpricedModelAccruesZero` still passes.
-- [ ] 8.6 Test `pkg/app/plugins` catalog schema: `partition` and the calendar windows are listed.
-- Accept (8.1–8.6): `token-budget-key-partition › Redis down`, `› Observe mode never blocks`, `› Unpriced model on a dollar budget`, `› Registry rate counts as priced`, `› Over budget`, `› Catalog lists the field`.
+- [x] 8.1 `tokenratelimit/budget.go` `budgetGate` (`:171,201-213`): under `key` with `appplugins.Blocks(mode)`, a Redis read error → `*appplugins.PluginError{503, "budget_unavailable"}`. A ctx the caller cancelled keeps today's path, as does a post-response accrual error (log and pass). `HandleCounterFailure` does not change (OQ4).
+- [x] 8.2 `budget.go` `budgetGate`, after the no-window return and before the Redis read: under `key`, `unit: dollars` and a blocking mode, `llmcost.Resolve` with registry rates (`pricing.go:151`) failing → 403 `model_unpriced` before the upstream call. A request no window applies to is not checked.
+- [x] 8.3 `responses.go:72-85`: over budget answers the existing 429 with `error.scope = key`.
+- [x] 8.4 `pkg/app/plugins/catalog_metadata.go:142-273` and `docs/policies.json:112`: `partition` (`key`), the calendar windows, per-owner counting, the 503, the 403, the refused combinations and the uncounted no-auth pass. The fail-open sentence stays true for the default partition.
+- [x] 8.5 Test `plugin_budget_test.go`: a closed miniredis gives 503 in enforce and passes in observe, and the default partition stays fail-open; unpriced on dollars → 403 while tokens pass; a registry rate counts as priced; over budget → 429 with `scope=key`; `TestPlugin_DollarBudget_UnpricedModelAccruesZero` still passes.
+- [x] 8.6 Test `pkg/app/plugins` catalog schema: `partition` and the calendar windows are listed.
+- Accept (8.1–8.6): `token-budget-key-partition › Redis down`, `› Observe mode never blocks`, `› Unpriced model on a dollar budget`, `› No budget window applies`, `› Registry rate counts as priced`, `› Over budget`, `› Catalog lists the field`.
 - [ ] 8.7 Run VG.
 
 ## Phase 9: S4a `PersonalKeys` use case (base P4, after P2)

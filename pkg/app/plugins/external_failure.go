@@ -61,8 +61,10 @@ const (
 	// token_rate_limiter all share this one reason. Unlike the reasons above,
 	// it is never subject to Blocks(mode): our own infrastructure fails OPEN
 	// in every mode, including enforce, because a third-party guardrail is
-	// what earns a fail-closed refusal, not an outage on our side. See
-	// HandleCounterFailure in counter_failure.go.
+	// what earns a fail-closed refusal, not an outage on our side. The
+	// exception is token_rate_limiter with partition key, which fails closed
+	// on a read in a blocking mode. See HandleCounterFailure in
+	// counter_failure.go.
 	FailureCounterUnavailable FailureReason = "counter_unavailable"
 )
 

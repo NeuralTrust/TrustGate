@@ -332,7 +332,8 @@ counter in Redis on every call. Unlike the external guardrails above, an outage 
 **TrustGate's own infrastructure**, not a third party the operator asked to gate traffic:
 the product rule is that our own infrastructure fails open, in every mode, enforce
 included — only a third-party guardrail earns a fail-closed refusal. So, unlike the
-external guardrails' enforce/observe split, there is no mode-dependent branch here at all:
+external guardrails' enforce/observe split, there is no mode-dependent branch here at all,
+apart from the `partition: key` exception below:
 
 | Mode | `decision` | Request |
 |------|------------|---------|
@@ -342,6 +343,11 @@ This applies to both legs of the counter: a failed read (the limit/budget could 
 checked) and a failed record/accrue (the check passed but the write-back failed) both
 fail open the same way — a successful read that only fails to persist must not turn into
 a refusal.
+
+**Exception: `token_rate_limiter` with `partition: key`.** A failed read in enforce records
+`failed_closed` and refuses the request with HTTP 503, error type `budget_unavailable`.
+Observe keeps `failed_open`, a failed accrual after the response still fails open, and every
+other partition and plugin keeps the table above.
 
 **Exception: a canceled or timed-out request is not an outage.** When the request itself
 was already canceled or past its deadline (a client disconnect, an upstream timeout

@@ -323,7 +323,7 @@ Under `/:gateway_id/store` (`admin_router.go:227`, `RequireGatewayAccess(Resourc
 | TTL | Period end minus now, floor of `quotaTTL` (`pkg/infra/ratelimit/store.go:258-264`; layout `meter.go:46,357`). `Plugin.now func() time.Time`. |
 | Plumbing | `AuthContext.OwnerID` → `reqCtx.AuthID/OwnerID` at `proxy_handler.go:174-175` → `scopeFromRequest` (`executor.go:443`). Never from a header. |
 | Redis read error | `key` and `Blocks(mode)` → `*appplugins.PluginError{503, "budget_unavailable"}` from `budgetGate` (`budget.go:201-213`). Otherwise fail-open as today. |
-| Unpriced | `key`, `unit: dollars`, `Blocks(mode)` → `llmcost.Resolve` with registry rates (`pricing.go:151`) not found → 403 `model_unpriced` in `preRequest`. |
+| Unpriced | `key`, `unit: dollars`, `Blocks(mode)` → `llmcost.Resolve` with registry rates (`pricing.go:151`) not found → 403 `model_unpriced` in `budgetGate`, only when a window applies and before the Redis read. |
 | Over budget | Existing 429 (`responses.go:72-85`), `error.scope = key`. |
 
 ### Telemetry (S1)

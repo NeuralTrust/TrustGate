@@ -206,6 +206,23 @@ func (p *Plugin) budgetGate(
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 
+	unpriced := cfg.Partition == partitionKey && cfg.Unit == unitDollars && !p.priced(ctx, cfg, req, model)
+	if unpriced {
+		appplugins.SetDecision(event, mode)
+		if appplugins.Blocks(mode) {
+			data := TokenRateLimiterData{
+				Stage:    string(policy.StagePreRequest),
+				Provider: provider,
+				Model:    model,
+				Unit:     unitDollars,
+				Unpriced: true,
+			}
+			applyCostCapTelemetry(&data, capTel)
+			setTokenExtras(event, data)
+			return nil, modelUnpricedError(model)
+		}
+	}
+
 	consumedByWindow := make([]int64, len(windows))
 	breachedIdx := -1
 	for i := range windows {
@@ -216,11 +233,14 @@ func (p *Plugin) budgetGate(
 			// succeeds), so there is no reportWindow/reportConsumed to carry
 			// here — but provider, model and cost-cap telemetry are already
 			// known and must not be lost to a bare failure record.
-			failData := TokenRateLimiterData{Provider: provider, Model: model}
+			failData := TokenRateLimiterData{Provider: provider, Model: model, Unpriced: unpriced}
 			if windows[i].model != "" {
 				failData.Model = windows[i].model
 			}
 			applyCostCapTelemetry(&failData, capTel)
+			if cfg.Partition == partitionKey && appplugins.Blocks(mode) && ctx.Err() == nil {
+				return nil, failClosed(ctx, mode, event, failData, "read_counter", err)
+			}
 			return p.counterUnavailable(ctx, policy.StagePreRequest, mode, event, failData, "read_counter", err)
 		}
 		consumedByWindow[i] = consumed
@@ -249,6 +269,7 @@ func (p *Plugin) budgetGate(
 		TokensRemaining: tokensRemaining(reportWindow.max, reportConsumed),
 		Model:           model,
 		Unit:            cfg.Unit,
+		Unpriced:        unpriced,
 	}
 	if reportWindow.model != "" {
 		data.Model = reportWindow.model
@@ -329,6 +350,30 @@ func (p *Plugin) counterUnavailable(
 	data.FailureDetail = detail
 	setTokenExtras(event, data)
 	return result, nil
+}
+
+func failClosed(
+	ctx context.Context,
+	mode policy.Mode,
+	event *metrics.EventContext,
+	data TokenRateLimiterData,
+	detail string,
+	err error,
+) *appplugins.PluginError {
+	slog.WarnContext(ctx, "counter store call failed",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(policy.StagePreRequest)),
+		slog.String("mode", string(mode)),
+		slog.String("reason", string(appplugins.FailureCounterUnavailable)),
+		slog.String("decision", decisionFailedClosed),
+		slog.String("detail", detail),
+		slog.Any("error", err))
+	data.Stage = string(policy.StagePreRequest)
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	setTokenExtras(event, data)
+	appplugins.SetDecisionFromOutcome(event, decisionFailedClosed)
+	return budgetUnavailableError()
 }
 
 func (p *Plugin) budgetHeaders(ctx context.Context, cfg *config, w budgetWindow, consumed int64, scope string) map[string][]string {
