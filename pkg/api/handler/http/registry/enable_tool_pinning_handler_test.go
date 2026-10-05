@@ -115,8 +115,8 @@ func TestEnableToolPinningHandler_StaleRefIs422AndAppliesNothing(t *testing.T) {
 	assert.Contains(t, string(raw), "search")
 }
 
-// The admin unchecked every tool: they all become pending, none approved.
-func TestEnableToolPinningHandler_EmptyListRecordsEveryLiveToolAsPending(t *testing.T) {
+// The admin unchecked every tool: they are all handed over to be rejected, none approved.
+func TestEnableToolPinningHandler_EmptyListRejectsEveryLiveTool(t *testing.T) {
 	reg := pinnedMCPRegistry(t)
 	a, b := upstreamTool(t, `{"name":"a","description":"A"}`), upstreamTool(t, `{"name":"b","description":"B"}`)
 	svc := appmocks.NewPinnedToolService(t)
@@ -127,8 +127,8 @@ func TestEnableToolPinningHandler_EmptyListRecordsEveryLiveToolAsPending(t *test
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-// 3 live tools, 2 confirmed: the third is handed over to be recorded as pending.
-func TestEnableToolPinningHandler_UncheckedLiveToolsGoToPending(t *testing.T) {
+// 3 live tools, 2 confirmed: the third is handed over to be rejected.
+func TestEnableToolPinningHandler_UncheckedLiveToolsAreHandedOverToBeRejected(t *testing.T) {
 	reg := pinnedMCPRegistry(t)
 	a, b, c3 := upstreamTool(t, `{"name":"a","description":"A"}`), upstreamTool(t, `{"name":"b","description":"B"}`), upstreamTool(t, `{"name":"create_branch","description":"C"}`)
 	candA, _ := appmcp.ToolCandidate(a)
@@ -143,7 +143,7 @@ func TestEnableToolPinningHandler_UncheckedLiveToolsGoToPending(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestEnableToolPinningHandler_NotIntrospectableWithAnEmptyListRecordsNothing(t *testing.T) {
+func TestEnableToolPinningHandler_NotIntrospectableWithAnEmptyListDeclinesNothing(t *testing.T) {
 	reg := pinnedMCPRegistry(t)
 	svc := appmocks.NewPinnedToolService(t)
 	svc.EXPECT().Pin(mock.Anything, mock.MatchedBy(func(in appregistry.PinToolsInput) bool {

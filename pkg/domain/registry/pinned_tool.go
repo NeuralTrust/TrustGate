@@ -242,10 +242,11 @@ type PinnedToolRepository interface {
 	// together or not at all. Listed tools become approved (overriding a stored
 	// rejection); any other approved row goes back to pending with its decision
 	// cleared; rejected rows that are not listed stay rejected. unchecked are the
-	// definitions the admin saw but did not approve: those not stored yet are
-	// recorded as pending in the same transaction (UpsertPending semantics: a
-	// stored row, rejected included, is never touched, and the pending caps
-	// apply), so they show up for review at once. The registry must be an MCP registry (ErrInvalidToolPolicy
+	// live definitions the admin saw and left unchecked: an explicit decline,
+	// recorded as rejected by decidedBy in the same transaction (inserted when
+	// absent, a pending or approved row flipped, an already rejected row left
+	// alone; the pending caps do not apply). Approved rows that are neither
+	// listed nor live still go back to pending. The registry must be an MCP registry (ErrInvalidToolPolicy
 	// otherwise) and the gateway's (ErrNotFound otherwise). An empty list is
 	// allowed.
 	Pin(
