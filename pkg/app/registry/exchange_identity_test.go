@@ -50,6 +50,31 @@ func entraIdentity(gatewayID ids.GatewayID, enabled bool, secret string) *authdo
 	}
 }
 
+func sessionModeIdentity(gatewayID ids.GatewayID) *authdomain.Auth {
+	a := entraIdentity(gatewayID, true, "s3cret")
+	a.Config.OAuth2.SessionMode = true
+	return a
+}
+
+func sessionModeExchangeOnlyIdentity(gatewayID ids.GatewayID) *authdomain.Auth {
+	a := entraIdentity(gatewayID, true, "")
+	a.Config.OAuth2.SessionMode = true
+	a.Config.OAuth2.ClientID = ""
+	a.Config.OAuth2.ExchangeClientID = "exchange-app"
+	a.Config.OAuth2.ExchangeClientSecret = "exchange-s3cret"
+	return a
+}
+
+func tokenExchangeTarget(identityID string) *domain.MCPTarget {
+	return &domain.MCPTarget{
+		URL: "https://agentcore.example.com/mcp",
+		Auth: &domain.MCPAuth{
+			Mode: domain.MCPAuthModeExchange, Pattern: domain.ExchangeTokenExchange,
+			Audience: "https://up.example.com", IdentityID: identityID,
+		},
+	}
+}
+
 func oboTarget(identityID string) *domain.MCPTarget {
 	return &domain.MCPTarget{
 		URL: "https://agentcore.example.com/mcp",
@@ -67,14 +92,22 @@ func TestCreator_Create_ExchangeIdentity(t *testing.T) {
 	disabled := entraIdentity(gwID, false, "s3cret")
 	noSecret := entraIdentity(gwID, true, "")
 	otherGateway := entraIdentity(ids.New[ids.GatewayKind](), true, "s3cret")
+	sessionMode := sessionModeIdentity(gwID)
+	passThrough := entraIdentity(gwID, true, "s3cret")
+	sessionModeNoLogin := sessionModeExchangeOnlyIdentity(gwID)
 	mtls := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gwID, Type: authdomain.TypeMTLS, Enabled: true}
-	lookup := authLookupStub{ready.ID: ready, disabled.ID: disabled, noSecret.ID: noSecret, otherGateway.ID: otherGateway, mtls.ID: mtls}
+	lookup := authLookupStub{
+		ready.ID: ready, disabled.ID: disabled, noSecret.ID: noSecret, otherGateway.ID: otherGateway, mtls.ID: mtls,
+		sessionMode.ID: sessionMode, passThrough.ID: passThrough, sessionModeNoLogin.ID: sessionModeNoLogin,
+	}
 
 	tests := []struct {
 		name     string
 		identity string
+		target   func(string) *domain.MCPTarget
 		lookup   appregistry.AuthLookup
 		wantErr  bool
+		wantMsg  []string
 	}{
 		{name: "enabled oauth2 identity with credentials", identity: ready.ID.String(), lookup: lookup},
 		{name: "unknown identity", identity: ids.New[ids.AuthKind]().String(), lookup: lookup, wantErr: true},
@@ -84,6 +117,17 @@ func TestCreator_Create_ExchangeIdentity(t *testing.T) {
 		{name: "non oauth2 identity", identity: mtls.ID.String(), lookup: lookup, wantErr: true},
 		{name: "no lookup wired", identity: ready.ID.String(), wantErr: true},
 		{name: "upper-case spelling of a usable identity", identity: strings.ToUpper(ready.ID.String()), lookup: lookup},
+		{
+			name: "session-mode login identity", identity: sessionMode.ID.String(), lookup: lookup, wantErr: true,
+			wantMsg: []string{sessionMode.ID.String(), "turn session mode off"},
+		},
+		{
+			name: "session-mode login identity for token exchange", identity: sessionMode.ID.String(),
+			target: tokenExchangeTarget, lookup: lookup, wantErr: true,
+			wantMsg: []string{"turn session mode off"},
+		},
+		{name: "pass-through login identity", identity: passThrough.ID.String(), lookup: lookup},
+		{name: "session-mode identity without a login client", identity: sessionModeNoLogin.ID.String(), lookup: lookup},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,19 +139,28 @@ func TestCreator_Create_ExchangeIdentity(t *testing.T) {
 			}
 			if !tc.wantErr {
 				repo.EXPECT().Save(mock.Anything, mock.MatchedBy(func(r *domain.Registry) bool {
-					return r.MCPTarget.Auth.IdentityID == ready.ID.String()
+					return r.MCPTarget.Auth.IdentityID == strings.ToLower(tc.identity)
 				})).Return(nil).Once()
 			}
 			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil, opts...)
+			target := oboTarget
+			if tc.target != nil {
+				target = tc.target
+			}
 
 			_, err := creator.Create(context.Background(), appregistry.CreateInput{
-				GatewayID: gwID, Name: "agentcore", Type: domain.TypeMCP, MCPTarget: oboTarget(tc.identity),
+				GatewayID: gwID, Name: "agentcore", Type: domain.TypeMCP, MCPTarget: target(tc.identity),
 			})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Create() = %v, wantErr %v", err, tc.wantErr)
 			}
 			if err != nil && !errors.Is(err, domain.ErrInvalidMCPTarget) {
 				t.Fatalf("Create() = %v, want ErrInvalidMCPTarget", err)
+			}
+			for _, part := range tc.wantMsg {
+				if !strings.Contains(err.Error(), part) {
+					t.Fatalf("Create() = %v, want the message to contain %q", err, part)
+				}
 			}
 		})
 	}
@@ -155,6 +208,50 @@ func TestUpdater_Update_ExchangeIdentity(t *testing.T) {
 
 		_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 			ID: existing.ID, MCPTarget: oboTarget(ids.New[ids.AuthKind]().String()),
+		})
+		if !errors.Is(err, domain.ErrInvalidMCPTarget) {
+			t.Fatalf("Update() = %v, want ErrInvalidMCPTarget", err)
+		}
+	})
+
+	t.Run("accepts an echoed pin whose identity turned session mode on", func(t *testing.T) {
+		t.Parallel()
+		sessionMode := sessionModeIdentity(gwID)
+		existing, err := domain.NewMCPRegistry(gwID, "agentcore", "", oboTarget(sessionMode.ID.String()))
+		if err != nil {
+			t.Fatalf("NewMCPRegistry: %v", err)
+		}
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+		repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+		publisher := cachemocks.NewEventPublisher(t)
+		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+		updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil,
+			appregistry.WithAuthLookup(authLookupStub{sessionMode.ID: sessionMode}))
+
+		name := "renamed"
+		_, err = updater.Update(context.Background(), appregistry.UpdateInput{
+			ID: existing.ID, Name: &name, MCPTarget: oboTarget(strings.ToUpper(sessionMode.ID.String())),
+		})
+		if err != nil {
+			t.Fatalf("Update() = %v, want nil", err)
+		}
+	})
+
+	t.Run("refuses re-pinning to a session-mode identity", func(t *testing.T) {
+		t.Parallel()
+		existing, err := domain.NewMCPRegistry(gwID, "agentcore", "", oboTarget(ready.ID.String()))
+		if err != nil {
+			t.Fatalf("NewMCPRegistry: %v", err)
+		}
+		sessionMode := sessionModeIdentity(gwID)
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+		updater := appregistry.NewUpdater(repo, newCacheManager(), nil, newTestLogger(), nil, nil,
+			appregistry.WithAuthLookup(authLookupStub{ready.ID: ready, sessionMode.ID: sessionMode}))
+
+		_, err = updater.Update(context.Background(), appregistry.UpdateInput{
+			ID: existing.ID, MCPTarget: oboTarget(sessionMode.ID.String()),
 		})
 		if !errors.Is(err, domain.ErrInvalidMCPTarget) {
 			t.Fatalf("Update() = %v, want ErrInvalidMCPTarget", err)
