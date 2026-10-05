@@ -47,6 +47,7 @@ func NewSmartRoutingWithSR1(routes []routingdomain.Route, config *registry.Smart
 func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestContext, candidates []routingdomain.Route) *routingdomain.Route {
 	tiers := append([]registry.SmartRoutingTier(nil), s.config.Tiers...)
 	sort.Slice(tiers, func(i, j int) bool { return tiers[i].MinScore < tiers[j].MinScore })
+	validConfig := s.config.Validate() == nil
 	fallback := func(reason string) *routingdomain.Route {
 		s.record(req, false)
 		if s.logger != nil {
@@ -54,6 +55,15 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 		}
 		for i := len(tiers) - 1; i >= 0; i-- {
 			if route := sr1Route(tiers[i], candidates); route != nil {
+				if validConfig && req != nil && req.SessionID != "" && s.sr1State != nil {
+					key, err := s.sr1Key(req)
+					if err == nil {
+						floor, stateErr := s.sr1State.Choose(ctx, key, "failure", i, len(tiers), time.Duration(s.config.SR1.CacheTTLSeconds)*time.Second, false)
+						if stateErr == nil && i < floor {
+							return nil
+						}
+					}
+				}
 				return route
 			}
 		}
@@ -94,13 +104,12 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 		if s.sr1State == nil {
 			return fallback("state store unavailable")
 		}
-		scope, err := json.Marshal([]any{req.GatewayID, req.ConsumerID, req.SessionID, s.config})
+		key, err := s.sr1Key(req)
 		if err != nil {
 			return fallback("invalid conversation scope")
 		}
-		keyHash := sha256.Sum256(scope)
 		turnHash := sha256.Sum256([]byte(turn + ":" + req.PreviousResponseID))
-		rung, err = s.sr1State.Choose(ctx, "tg:sr1:"+hex.EncodeToString(keyHash[:]), hex.EncodeToString(turnHash[:]), desired, len(tiers), time.Duration(s.config.SR1.CacheTTLSeconds)*time.Second, newUser)
+		rung, err = s.sr1State.Choose(ctx, key, hex.EncodeToString(turnHash[:]), desired, len(tiers), time.Duration(s.config.SR1.CacheTTLSeconds)*time.Second, newUser)
 		if err != nil {
 			return fallback("state selection unavailable")
 		}
@@ -113,6 +122,15 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 	}
 	s.record(req, false)
 	return nil
+}
+
+func (s *SmartRouting) sr1Key(req *infracontext.RequestContext) (string, error) {
+	scope, err := json.Marshal([]any{req.GatewayID, req.ConsumerID, req.SessionID, s.config})
+	if err != nil {
+		return "", err
+	}
+	keyHash := sha256.Sum256(scope)
+	return "tg:sr1:" + hex.EncodeToString(keyHash[:]), nil
 }
 
 func sr1Route(tier registry.SmartRoutingTier, candidates []routingdomain.Route) *routingdomain.Route {
@@ -140,9 +158,10 @@ func sr1Input(body []byte) (string, string, bool, error) {
 		messages = request["input"]
 	}
 	var items []struct {
-		Role    string          `json:"role"`
-		Type    string          `json:"type"`
-		Content json.RawMessage `json:"content"`
+		Role      string          `json:"role"`
+		Type      string          `json:"type"`
+		Content   json.RawMessage `json:"content"`
+		ToolCalls json.RawMessage `json:"tool_calls"`
 	}
 	if err := json.Unmarshal(messages, &items); err != nil {
 		return "", "", false, err
@@ -158,7 +177,24 @@ func sr1Input(body []byte) (string, string, bool, error) {
 		if strings.TrimSpace(text) == "" {
 			return "", "", false, errors.New("latest user turn has no text")
 		}
-		return text, fmt.Sprintf("%d:%s", i, text), i == len(items)-1, nil
+		newUser := true
+		for _, suffix := range items[i+1:] {
+			if suffix.Role != "assistant" || suffix.Type == "function_call" || len(suffix.ToolCalls) > 0 && string(suffix.ToolCalls) != "null" && string(suffix.ToolCalls) != "[]" {
+				newUser = false
+				break
+			}
+			var blocks []struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(suffix.Content, &blocks) == nil {
+				for _, block := range blocks {
+					if block.Type == "tool_use" {
+						newUser = false
+					}
+				}
+			}
+		}
+		return text, fmt.Sprintf("%d:%s", i, text), newUser, nil
 	}
 	if len(items) > 0 {
 		last := items[len(items)-1]

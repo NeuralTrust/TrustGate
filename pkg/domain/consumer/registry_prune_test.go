@@ -376,3 +376,33 @@ func TestConsumer_PruneRegistryIgnoresNilRegistry(t *testing.T) {
 		t.Fatal("PruneRegistry(nil) changed = true, want false")
 	}
 }
+
+func TestConsumer_PruneSR1Registry(t *testing.T) {
+	for _, n := range []int{2, 3} {
+		for victim := 0; victim < n; victim++ {
+			c := &Consumer{ModelPolicies: ModelPolicies{}, LBConfig: &LBConfig{Enabled: true, Algorithm: algorithm.SmartRouting, SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 60}}}}
+			cuts := []float64{0, .45}
+			if n == 3 {
+				cuts = []float64{0, .187, .45}
+			}
+			idsList := make([]ids.RegistryID, n)
+			for i := range idsList {
+				idsList[i] = ids.New[ids.RegistryKind]()
+				c.ModelPolicies[idsList[i]] = ModelPolicy{Allowed: []string{"model"}, Default: "model"}
+				c.LBConfig.Members = append(c.LBConfig.Members, LBPoolMember{RegistryID: idsList[i], Model: "model"})
+				c.LBConfig.SmartRouting.Tiers = append(c.LBConfig.SmartRouting.Tiers, registry.SmartRoutingTier{RegistryID: idsList[i], Model: "model", MinScore: cuts[i]})
+			}
+			_, changed := c.PruneRegistry(idsList[victim])
+			if !changed {
+				t.Fatal("not pruned")
+			}
+			survives := n == 3 && victim == 1
+			if (c.LBConfig.SmartRouting != nil) != survives {
+				t.Fatalf("n=%d victim=%d config=%+v", n, victim, c.LBConfig)
+			}
+			if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+				t.Fatalf("invalid surviving consumer: %v", err)
+			}
+		}
+	}
+}

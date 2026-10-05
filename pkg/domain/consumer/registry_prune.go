@@ -110,6 +110,11 @@ func (c *Consumer) prunedTiers(
 	if len(tiers) == len(original) {
 		return original, false, true
 	}
+	if c.LBConfig.SmartRouting.SR1 != nil {
+		remaining := *c.LBConfig.SmartRouting
+		remaining.Tiers = tiers
+		return tiers, true, remaining.Validate() == nil
+	}
 	oldFloor, hadFloor := (&registry.SmartRoutingConfig{Tiers: original}).LowestTier()
 	newFloor, hasFloor := (&registry.SmartRoutingConfig{Tiers: tiers}).LowestTier()
 	return tiers, true, hasFloor && (!hadFloor || newFloor.MinScore == oldFloor.MinScore)

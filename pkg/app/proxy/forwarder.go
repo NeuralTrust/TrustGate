@@ -389,6 +389,9 @@ func (f *forwarder) nextCandidate(
 				return next, false
 			}
 		}
+		if cfg := lb.SmartRouting(); cfg != nil && cfg.SR1 != nil {
+			return nil, false
+		}
 	}
 	if !allowChain {
 		return nil, false
