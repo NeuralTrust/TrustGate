@@ -155,6 +155,7 @@ func setupTestEnvironment() {
 	// starting the proxy so the two boots do not race on the (idempotent) schema.
 	adminCmd = startServer("ADMIN", "admin", cmdEnv)
 	waitForServerReady(fmt.Sprintf("%s/healthz", AdminURL), "admin server", cfg.Server.AdminPort)
+	seedStoreCatalog()
 
 	// The proxy plane serves the E2E forwarding tests; it shares the same DB and
 	// Redis as the admin plane.
@@ -309,9 +310,37 @@ func waitForServerReady(url, name string, port int) {
 // database; required because you cannot CREATE/DROP the database you
 // are currently connected to.
 func pgxAdminConn(ctx context.Context) (*pgx.Conn, error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable",
-		GlobalConfig.Database.User, GlobalConfig.Database.Password, GlobalConfig.Database.Host, strconv.Itoa(GlobalConfig.Database.Port))
+	return pgxConnect(ctx, "postgres")
+}
+
+func pgxConnect(ctx context.Context, database string) (*pgx.Conn, error) {
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		GlobalConfig.Database.User, GlobalConfig.Database.Password, GlobalConfig.Database.Host, strconv.Itoa(GlobalConfig.Database.Port), database)
 	return pgx.Connect(ctx, dsn)
+}
+
+func seedStoreCatalog() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgxConnect(ctx, dbName)
+	if err != nil {
+		log.Fatalf("cannot connect to the functional database: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	const seed = `
+		WITH provider AS (
+			INSERT INTO providers_catalog (id, code, display_name, wire_format, created_at, updated_at)
+			VALUES (gen_random_uuid(), 'anthropic', 'Anthropic', 'anthropic', now(), now())
+			ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+			RETURNING id
+		)
+		INSERT INTO models_catalog (id, provider_id, slug, external_id, display_name, source, created_at, updated_at)
+		SELECT gen_random_uuid(), provider.id, slug, slug, slug, 'functional', now(), now()
+		  FROM provider, unnest($1::text[]) AS slug
+		ON CONFLICT (provider_id, slug) DO NOTHING`
+	if _, err := conn.Exec(ctx, seed, storeAnthropicModels); err != nil {
+		log.Fatalf("failed to seed the store catalog: %v", err)
+	}
 }
 
 func createTestDB(name string) {
