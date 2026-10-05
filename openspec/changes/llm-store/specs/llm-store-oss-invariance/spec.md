@@ -1,8 +1,30 @@
 # Delta for llm-store-oss-invariance
 
-Change `llm-store` (RUN-1763), all slices (decision B8). New capability. OSS runs the same binary without the app: nobody creates personal consumers and nobody mints personal keys, so nothing personal exists. This capability gathers what MUST stay exactly as today in that setting, so each slice can be checked against one list. There is no feature flag. The only intended OSS-visible change is the expiry check of `proxy-api-key-expiry`.
+Change `llm-store` (RUN-1763), all slices (decision B8). New capability. OSS runs the same binary without the app: nobody creates personal consumers and nobody mints personal keys, so nothing personal exists. This capability gathers what MUST stay exactly as today in that setting, so each slice can be checked against one list. There is no feature flag. The intended OSS-visible changes are exactly the ones listed under "Intended OSS-visible changes" below, which match the release notes in `docs/llm-store.md`; everything else MUST stay as today.
 
 ## ADDED Requirements
+
+### Requirement: Intended OSS-visible changes
+
+A deployment that never creates a personal consumer or a personal key MUST see only these changes, and the release notes MUST list each of them:
+
+| # | Change | Capability |
+|---|---|---|
+| a | An application key past its `expires_at` gets 401 on `/<slug>/v1/*`; an expired key attached to another consumer gets 401 instead of 403 | `proxy-api-key-expiry` |
+| b | `InvalidateGatewayDataEvent` clears the whole `auth_key` cache and the unknown-key cache (30 s) on every full-plane replica, so a rotation or a revocation propagates at once | `llm-store-gateway` |
+| c | Usage events carry `auth_id` and OTLP records `trustgate.auth.id` on LLM proxy requests authenticated by an API key | `usage-auth-id-telemetry` |
+| d | The admin consumer response always carries `audience` | `personal-llm-consumers` |
+| e | `whoami` on the fixed host resolves a gateway only from an enabled, unexpired application key; a disabled, expired or personal key answers like an unknown key | `personal-key-isolation` |
+| f | `POST /consumers/:id/auths/:auth_id` parses a non-empty body as link attributes (malformed JSON → 422); no body behaves as today | `owned-key-attachment` |
+| g | Deleting a registry that holds a personal consumer's last primary default answers 422 | `personal-llm-consumers` |
+| h | The MCP connect ticket re-check refuses an expired or personal key | `personal-key-isolation` |
+| i | `token_rate_limiter` gains `partition: key`, calendar windows and hard limits, all opt-in | `token-budget-key-partition` |
+
+#### Scenario: Release notes match
+
+- GIVEN `docs/llm-store.md`
+- WHEN its release notes are compared with the table above
+- THEN they list the same changes, and no other OSS-visible change ships
 
 ### Requirement: `/store/v1` is inert without personal consumers
 

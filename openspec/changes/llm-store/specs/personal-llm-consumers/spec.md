@@ -60,7 +60,7 @@ An in-code migration (`20261005120000_add_consumer_audience`, template `20260922
 
 ### Requirement: A personal consumer has a default model
 
-`Consumer.Validate` MUST require, for `audience = personal`, a concrete (non-glob) `ModelPolicies[r].Default` for at least one registry `r` in `RegistryIDs`; fallback backends MUST NOT count. Create and update that break the rule MUST answer **422** and store nothing. Detaching from a personal consumer the last registry that carries a default MUST answer 422 and detach nothing. Application consumers MUST keep today's rules.
+`Consumer.Validate` MUST require, for `audience = personal`, a concrete (non-glob) `ModelPolicies[r].Default` for at least one registry `r` in `RegistryIDs`; fallback backends MUST NOT count. Create and update that break the rule MUST answer **422** and store nothing. Detaching from a personal consumer the last registry that carries a default MUST answer 422 and detach nothing, and deleting that registry MUST answer 422 and delete nothing. Application consumers MUST keep today's rules.
 
 #### Scenario: Personal consumer without a default
 
@@ -79,6 +79,12 @@ An in-code migration (`20261005120000_add_consumer_audience`, template `20260922
 - GIVEN a personal consumer P with registries R1 (default `gpt-4o`) and R2 (no default)
 - WHEN R1 is detached from P, and then R2 is
 - THEN the first answers 422 and R1 stays attached, and the second succeeds
+
+#### Scenario: Deleting the only registry with a default
+
+- GIVEN a personal consumer P whose only registry with a default is R1
+- WHEN `DELETE /registries/R1` is sent
+- THEN 422 `validation_failed`, and R1 and P's binding to it remain
 
 ### Requirement: `audience` is immutable
 
