@@ -122,11 +122,11 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 		return fmt.Errorf("registry repository: marshal pricing: %w", err)
 	}
 	const query = `
-		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, tool_policy, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, toolPolicy(b), b.CreatedAt, b.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -170,11 +170,12 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       health_checks    = $9,
 		       mcp_target       = $10,
 		       pricing          = $11,
-		       updated_at       = $12
-		 WHERE id = $1 AND gateway_id = $13`
+		       tool_policy      = $12,
+		       updated_at       = $13
+		 WHERE id = $1 AND gateway_id = $14`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.UpdatedAt, b.GatewayID,
+			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, toolPolicy(b), b.UpdatedAt, b.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -226,7 +227,7 @@ func (r *Repository) Delete(
 
 func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.Registry, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, tool_policy, created_at, updated_at
 		  FROM registries
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -245,7 +246,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, tool_policy, created_at, updated_at
 		  FROM registries
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -292,7 +293,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, tool_policy, created_at, updated_at
 		  FROM registries
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -326,14 +327,15 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 	b := &domain.Registry{}
 	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw, pricingRaw []byte
 	var providerRaw *string
-	var typeRaw string
+	var typeRaw, toolPolicyRaw string
 	if err := s.Scan(
 		&b.ID, &b.GatewayID, &b.Name, &typeRaw, &b.Enabled, &providerRaw,
-		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw, &pricingRaw,
+		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw, &pricingRaw, &toolPolicyRaw,
 		&b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	b.ToolPolicy = domain.ToolPolicy(toolPolicyRaw).Normalize()
 	b.Type = domain.Type(typeRaw)
 	if b.Type == "" {
 		b.Type = domain.TypeLLM
@@ -388,6 +390,10 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 	}
 
 	return b, nil
+}
+
+func toolPolicy(b *domain.Registry) string {
+	return string(b.ToolPolicy.Normalize())
 }
 
 func registryType(b *domain.Registry) string {

@@ -28,10 +28,12 @@ type Registry struct {
 	Type        Type           `json:"type"`
 	Enabled     bool           `json:"enabled"`
 	Description string         `json:"description,omitempty"`
-	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
-	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	// ToolPolicy only applies to MCP registries; the zero value reads as auto.
+	ToolPolicy ToolPolicy `json:"tool_policy,omitempty"`
+	LLMTarget  *LLMTarget `json:"llm_target,omitempty"`
+	MCPTarget  *MCPTarget `json:"mcp_target,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 
 	// InstanceOf names the shelf registry a per-principal Store clone derives
 	// from. It is a request-scoped view built by the Store scoper: never
@@ -65,6 +67,7 @@ func NewLLMRegistry(
 		Type:        TypeLLM,
 		Enabled:     true,
 		Description: description,
+		ToolPolicy:  ToolPolicyAuto,
 		LLMTarget:   target,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -92,6 +95,7 @@ func NewMCPRegistry(
 		Type:        TypeMCP,
 		Enabled:     true,
 		Description: description,
+		ToolPolicy:  ToolPolicyAuto,
 		MCPTarget:   target,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -148,6 +152,7 @@ type RehydrateParams struct {
 	Type        Type
 	Enabled     bool
 	Description string
+	ToolPolicy  ToolPolicy
 	LLMTarget   *LLMTarget
 	MCPTarget   *MCPTarget
 	CreatedAt   time.Time
@@ -166,6 +171,7 @@ func Rehydrate(params RehydrateParams) *Registry {
 		Type:        regType,
 		Enabled:     params.Enabled,
 		Description: params.Description,
+		ToolPolicy:  params.ToolPolicy.Normalize(),
 		LLMTarget:   params.LLMTarget,
 		MCPTarget:   params.MCPTarget,
 		CreatedAt:   params.CreatedAt,
@@ -182,6 +188,13 @@ func (b *Registry) Validate() error {
 	}
 	if b.Type == "" {
 		b.Type = TypeLLM
+	}
+	b.ToolPolicy = b.ToolPolicy.Normalize()
+	if err := b.ToolPolicy.Validate(); err != nil {
+		return err
+	}
+	if b.ToolPolicy.IsPinned() && b.Type != TypeMCP {
+		return fmt.Errorf("%w: pinned is only valid for MCP registries", ErrInvalidToolPolicy)
 	}
 	switch b.Type {
 	case TypeLLM:
