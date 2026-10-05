@@ -122,7 +122,7 @@ func TestPinnedToolRoutes_WithoutAnActorAre401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "decisions")
 
 	app := fiber.New()
-	app.Put("/v1/gateways/:gateway_id/registries/:id/tool-pinning", registryhttp.NewEnableToolPinningHandler(svc).Handle)
+	app.Put("/v1/gateways/:gateway_id/registries/:id/tool-pinning", registryhttp.NewEnableToolPinningHandler(svc, &stubIntrospector{}).Handle)
 	req := httptest.NewRequest(http.MethodPut,
 		"/v1/gateways/"+gw.String()+"/registries/"+reg.String()+"/tool-pinning", strings.NewReader(`{"tools":[]}`))
 	req.Header.Set("Content-Type", "application/json")
