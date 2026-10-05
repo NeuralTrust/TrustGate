@@ -37,6 +37,7 @@ func (t SmartRoutingTier) RouteModel() string {
 // with the greatest MinScore that does not exceed the score wins.
 type SmartRoutingConfig struct {
 	Tiers []SmartRoutingTier `json:"tiers"`
+	SR1   *SR1Config         `json:"sr1,omitempty"`
 }
 
 func (c *SmartRoutingConfig) Validate() error {
@@ -56,7 +57,7 @@ func (c *SmartRoutingConfig) Validate() error {
 			return fmt.Errorf("%w: tiers[%d].registry_id is required", ErrInvalidSmartRouting, i)
 		}
 	}
-	return nil
+	return c.validateSR1()
 }
 
 func (c *SmartRoutingConfig) HighestTier() (SmartRoutingTier, bool) {
