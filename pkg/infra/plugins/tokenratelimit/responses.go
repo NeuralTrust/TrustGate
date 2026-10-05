@@ -16,6 +16,7 @@ package tokenratelimit
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strconv"
 
@@ -25,6 +26,10 @@ import (
 const (
 	tokenBudgetExceeded  = "token_budget_exceeded" // #nosec G101
 	dollarBudgetExceeded = "dollar_budget_exceeded"
+	budgetUnavailable    = "budget_unavailable"
+	modelUnpriced        = "model_unpriced"
+
+	decisionFailedClosed = "failed_closed"
 
 	headerBudgetUnit         = "X-Budget-Unit"
 	headerBudgetScope        = "X-Budget-Scope"
@@ -74,15 +79,23 @@ func budgetExceededError(unit, scope, window string, headers map[string][]string
 	if unit == unitDollars {
 		errType = dollarBudgetExceeded
 	}
-	body, _ := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"type":   errType,
-			"scope":  scope,
-			"window": window,
-		},
-	})
+	return budgetError(http.StatusTooManyRequests, errType, headers, map[string]any{"scope": scope, "window": window})
+}
+
+func budgetUnavailableError() *appplugins.PluginError {
+	return budgetError(http.StatusServiceUnavailable, budgetUnavailable, nil, map[string]any{"scope": partitionKey})
+}
+
+func modelUnpricedError(model string) *appplugins.PluginError {
+	return budgetError(http.StatusForbidden, modelUnpriced, nil, map[string]any{"scope": partitionKey, "model": model})
+}
+
+func budgetError(status int, errType string, headers map[string][]string, detail map[string]any) *appplugins.PluginError {
+	inner := map[string]any{"type": errType}
+	maps.Copy(inner, detail)
+	body, _ := json.Marshal(map[string]any{"error": inner})
 	return &appplugins.PluginError{
-		StatusCode: http.StatusTooManyRequests,
+		StatusCode: status,
 		Message:    errType,
 		Headers:    headers,
 		Body:       body,
