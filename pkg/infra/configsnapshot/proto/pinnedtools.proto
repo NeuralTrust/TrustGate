@@ -53,4 +53,9 @@ message RecordPendingToolsResponse {
   // the tool name is at its pending cap. The data plane keeps offering them; they
   // are accepted again once an admin decides some of the pending rows.
   int32 dropped = 2;
+  // accepted is how many of the sent tools were valid and considered for
+  // storage; skipped is how many were not (empty or oversized name, oversized
+  // definition, NUL characters). One bad tool never rejects the others.
+  int32 accepted = 3;
+  int32 skipped = 4;
 }
