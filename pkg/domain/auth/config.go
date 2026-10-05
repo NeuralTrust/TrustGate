@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -240,7 +241,8 @@ func (c *OAuth2Config) validateLoginScopes() error {
 	if strings.TrimSpace(c.ClientID) == "" {
 		return fmt.Errorf("%w: oauth2.login_scopes requires oauth2.client_id (they are only sent when the gateway signs people in)", ErrInvalidConfig)
 	}
-	for i, scope := range c.LoginScopes {
+	scopes := make([]string, 0, len(c.LoginScopes))
+	for _, scope := range c.LoginScopes {
 		scope = strings.TrimSpace(scope)
 		if scope == "" {
 			return fmt.Errorf("%w: oauth2.login_scopes cannot contain empty entries", ErrInvalidConfig)
@@ -248,8 +250,11 @@ func (c *OAuth2Config) validateLoginScopes() error {
 		if strings.ContainsFunc(scope, unicode.IsSpace) {
 			return fmt.Errorf("%w: oauth2.login_scopes entry %q cannot contain whitespace; send one scope per entry", ErrInvalidConfig, scope)
 		}
-		c.LoginScopes[i] = scope
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
 	}
+	c.LoginScopes = scopes
 	return nil
 }
 
