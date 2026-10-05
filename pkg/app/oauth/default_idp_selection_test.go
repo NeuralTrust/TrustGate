@@ -182,6 +182,43 @@ func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
 	}
 }
 
+func entraSignInIdentity(t *testing.T, gw ids.GatewayID) *authdomain.Auth {
+	t.Helper()
+	a := enabledOAuth2Auth(t, authdomain.OAuth2Config{
+		Issuer:         "https://login.microsoftonline.com/tid/v2.0",
+		Audiences:      []string{"api://gw"},
+		ClientID:       "entra-app",
+		RequiredScopes: []string{"mcp.access"},
+	})
+	a.GatewayID = gw
+	return a
+}
+
+// A sign-in consumer with no identity provider of its own is admitted by the
+// auth chain only through the built-in default, so turning sign-in on for an
+// unattached Entra identity on the same gateway must not divert its login
+// there: the Entra session would be refused and the client would loop on 401.
+func TestAuthForResource_UnpinnedSignInConsumerBrokersDefault(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	entra := entraSignInIdentity(t, gw)
+	require.True(t, entra.Config.OAuth2.Interactive())
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/v1/mcp/store": {{GatewayID: gw, Consumer: consumerdomain.BuildStoreConsumer(gw)}},
+	}}
+	p := &authProxy{
+		credentials: &fakeCredentialFinder{oauth2: []*authdomain.Auth{entra}, defaultIdP: def},
+		paths:       paths,
+	}
+
+	auth, err := p.authForResource(t.Context(), "https://gw.example.com/v1/mcp/store")
+	require.NoError(t, err)
+	require.True(t, appauth.IsDefaultIdP(auth))
+	require.Equal(t, gw, auth.GatewayID)
+}
+
 func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {
 	p := &authProxy{credentials: &fakeCredentialFinder{}}
 	_, err := p.gatewayScopedAuth(t.Context(), ids.New[ids.GatewayKind]())
