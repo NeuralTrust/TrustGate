@@ -152,7 +152,12 @@ type LBConfigRequest struct {
 	SmartRouting    *SmartRoutingConfigRequest `json:"smart_routing,omitempty"`
 }
 
+type SR1ConfigRequest struct {
+	CacheTTLSeconds int `json:"cache_ttl_seconds" minimum:"1" maximum:"86400"`
+}
+
 type SmartRoutingConfigRequest struct {
+	SR1   *SR1ConfigRequest         `json:"sr1,omitempty"`
 	Tiers []SmartRoutingTierRequest `json:"tiers"`
 }
 
@@ -231,7 +236,11 @@ func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConf
 			Model:      tier.Model,
 		})
 	}
-	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil
+	var sr1 *registrydomain.SR1Config
+	if s.SR1 != nil {
+		sr1 = &registrydomain.SR1Config{CacheTTLSeconds: s.SR1.CacheTTLSeconds}
+	}
+	return &registrydomain.SmartRoutingConfig{Tiers: tiers, SR1: sr1}, nil
 }
 
 func (e *EmbeddingConfigRequest) ToDomain() *registrydomain.EmbeddingConfig {
