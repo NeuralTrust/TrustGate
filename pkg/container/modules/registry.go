@@ -130,6 +130,14 @@ func provideRegistryServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(repo domain.Repository, tools domain.PinnedToolRepository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.PinnedToolService {
+		return appregistry.NewPinnedToolService(repo, tools, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewListPinnedToolsHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(appregistry.NewFinder); err != nil {
 		return err
 	}
