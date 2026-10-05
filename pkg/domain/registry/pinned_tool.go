@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -51,6 +52,35 @@ func (s ToolStatus) IsValid() bool {
 type ToolRef struct {
 	Name        string
 	Fingerprint string
+}
+
+// ToolDecision is a decided ToolRef as the config snapshot carries it: the
+// identity and the verdict, without the definition. Pending rows are not carried;
+// a ref with no decision reads as pending.
+type ToolDecision struct {
+	Name        string     `json:"name"`
+	Fingerprint string     `json:"fingerprint"`
+	Status      ToolStatus `json:"status"`
+}
+
+// DecisionsOf keeps the approved and rejected rows as snapshot decisions, sorted
+// by name then fingerprint so the snapshot version does not depend on row order.
+// It returns nil when none is decided.
+func DecisionsOf(tools []PinnedTool) []ToolDecision {
+	var out []ToolDecision
+	for _, t := range tools {
+		if t.Status != ToolStatusApproved && t.Status != ToolStatusRejected {
+			continue
+		}
+		out = append(out, ToolDecision{Name: t.Name, Fingerprint: t.Fingerprint, Status: t.Status})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Fingerprint < out[j].Fingerprint
+	})
+	return out
 }
 
 // ToolCandidate is a tool definition to record: its identity plus the
@@ -226,4 +256,23 @@ func marshalCanonical(v any) []byte {
 	// which can fail to encode.
 	_ = enc.Encode(v)
 	return bytes.TrimRight(buf.Bytes(), "\n")
+}
+
+// IsToolApproved reports whether the registry's snapshot set approves exactly
+// this definition. Rejected, pending, unknown and changed definitions are not
+// approved. A rejected ref wins over an approved duplicate of itself.
+func (b *Registry) IsToolApproved(ref ToolRef) bool {
+	approved := false
+	for _, d := range b.PinnedTools {
+		if d.Name != ref.Name || d.Fingerprint != ref.Fingerprint {
+			continue
+		}
+		switch d.Status {
+		case ToolStatusRejected:
+			return false
+		case ToolStatusApproved:
+			approved = true
+		}
+	}
+	return approved
 }
