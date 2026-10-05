@@ -19,6 +19,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -37,6 +38,10 @@ const (
 	behaviorDowngrade      = "downgrade"
 
 	minWindowSeconds = 60
+
+	partitionKey        = "key"
+	windowCalendarMonth = "calendar_month"
+	windowCalendarDay   = "calendar_day"
 )
 
 type windowConfig struct {
@@ -68,6 +73,7 @@ type config struct {
 	CustomPricing      map[string]llmcost.CustomPrice `mapstructure:"custom_pricing"`
 	Window             windowConfig                   `mapstructure:"window"`
 	GroupByHeader      string                         `mapstructure:"group_by_header"`
+	Partition          string                         `mapstructure:"partition"`
 }
 
 var validUnits = map[string]int{
@@ -105,9 +111,26 @@ func (c *config) normalize() {
 	if c.Aggregate == nil && c.Window.Max > 0 {
 		c.Aggregate = &aggregateConfig{Max: float64(c.Window.Max)}
 	}
+	for i := range c.Rules {
+		c.Rules[i].TimeWindow = canonicalCalendarWindow(c.Rules[i].TimeWindow)
+	}
+	if c.Aggregate != nil {
+		c.Aggregate.TimeWindow = canonicalCalendarWindow(c.Aggregate.TimeWindow)
+	}
+}
+
+func canonicalCalendarWindow(window string) string {
+	if canonical := strings.ToLower(strings.TrimSpace(window)); isCalendarWindow(canonical) {
+		return canonical
+	}
+	return window
 }
 
 func (c *config) validate() error {
+	if err := c.validatePartition(); err != nil {
+		return err
+	}
+
 	switch c.Unit {
 	case unitTokens, unitDollars:
 	default:
@@ -154,7 +177,7 @@ func (c *config) validate() error {
 			if !hasLegacyWindow {
 				return fmt.Errorf("token_rate_limiter: rules[%d].time_window is required when no legacy window is set", i)
 			}
-		} else if _, err := parseWindow(c.Rules[i].TimeWindow); err != nil {
+		} else if err := c.validateWindow(c.Rules[i].TimeWindow); err != nil {
 			return fmt.Errorf("token_rate_limiter: rules[%d].time_window: %w", i, err)
 		}
 	}
@@ -170,7 +193,7 @@ func (c *config) validate() error {
 			if !hasLegacyWindow {
 				return fmt.Errorf("token_rate_limiter: aggregate.time_window is required when no legacy window is set")
 			}
-		} else if _, err := parseWindow(c.Aggregate.TimeWindow); err != nil {
+		} else if err := c.validateWindow(c.Aggregate.TimeWindow); err != nil {
 			return fmt.Errorf("token_rate_limiter: aggregate.time_window: %w", err)
 		}
 	}
@@ -186,6 +209,35 @@ func (c *config) validate() error {
 	}
 
 	return nil
+}
+
+func (c *config) validatePartition() error {
+	switch {
+	case c.Partition == "":
+		return nil
+	case c.Partition != partitionKey:
+		return fmt.Errorf("token_rate_limiter: partition must be %s when set", partitionKey)
+	case len(c.CustomPricing) > 0:
+		return fmt.Errorf("token_rate_limiter: partition %s does not support custom_pricing", partitionKey)
+	case c.GroupByHeader != "":
+		return fmt.Errorf("token_rate_limiter: partition %s does not support group_by_header", partitionKey)
+	}
+	return nil
+}
+
+func (c *config) validateWindow(window string) error {
+	if !isCalendarWindow(window) {
+		_, err := parseWindow(window)
+		return err
+	}
+	if c.Partition != partitionKey {
+		return fmt.Errorf("%s requires partition %s", window, partitionKey)
+	}
+	return nil
+}
+
+func isCalendarWindow(window string) bool {
+	return window == windowCalendarMonth || window == windowCalendarDay
 }
 
 func parseWindow(s string) (int, error) {
@@ -221,6 +273,24 @@ func parseWindow(s string) (int, error) {
 		secs = minWindowSeconds
 	}
 	return secs, nil
+}
+
+func calendarPeriod(window string, now time.Time) (period string, ttlSeconds int, ok bool) {
+	now = now.UTC()
+	var start, end time.Time
+	var layout string
+	switch window {
+	case windowCalendarMonth:
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end, layout = start.AddDate(0, 1, 0), "2006-01"
+	case windowCalendarDay:
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		end, layout = start.AddDate(0, 0, 1), "2006-01-02"
+	default:
+		return "", 0, false
+	}
+	ttl := int(math.Ceil(end.Sub(now).Seconds()))
+	return start.Format(layout), max(ttl, minWindowSeconds), true
 }
 
 func (c *config) windowSeconds() int {
