@@ -141,6 +141,9 @@ func provideRegistryServices(c *container.Container) error {
 	if err := c.Provide(registryhttp.NewDecidePinnedToolsHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(registryhttp.NewEnableToolPinningHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(appregistry.NewFinder); err != nil {
 		return err
 	}
