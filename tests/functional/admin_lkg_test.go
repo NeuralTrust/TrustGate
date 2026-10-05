@@ -53,6 +53,9 @@ func startThrowawayAdmin(t *testing.T, lkgEnabled bool) *adminPlane {
 		"SERVER_ADMIN_PORT="+strconv.Itoa(httpPort),
 		fmt.Sprintf("CONFIG_SYNC_GRPC_LISTEN_ADDR=:%d", grpcPort),
 		"CONFIG_SYNC_ADMIN_LKG_ENABLED="+strconv.FormatBool(lkgEnabled),
+		// The suite runs at LOG_LEVEL=WARN (.env.functional.example), which hides
+		// the INFO line these tests wait on. Later entries win, so this one does.
+		"LOG_LEVEL=INFO",
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	prefix := fmt.Sprintf("[ADMIN-LKG:%d] ", httpPort)
