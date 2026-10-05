@@ -1,0 +1,153 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package grpc
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+const (
+	// MaxPendingToolsPerCall bounds one RecordPending call; the data plane's
+	// recorder splits larger batches.
+	MaxPendingToolsPerCall = 100
+	// MaxPendingToolBytes bounds one tool's name + description + input schema.
+	MaxPendingToolBytes = 64 << 10
+	// MaxPendingToolNameBytes bounds a tool name.
+	MaxPendingToolNameBytes = 256
+
+	pendingToolsWho = "pinned tools"
+)
+
+// PendingRegistryFinder is the slice of the registry repository the check needs.
+type PendingRegistryFinder interface {
+	FindByID(ctx context.Context, id ids.RegistryID) (*registrydomain.Registry, error)
+}
+
+// PendingToolStore is the slice of the pinned tool repository the handler may
+// use: it can only insert pending rows, so this channel has no way to approve or
+// reject a tool even by mistake.
+type PendingToolStore interface {
+	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []registrydomain.ToolCandidate) (int, error)
+}
+
+// PinnedToolsService is the control-plane end of the PinnedTools channel. It
+// treats the caller as untrusted: the gateway is authorised against the caller's
+// config-sync scope exactly like every other RPC here, the registry must be the
+// gateway's and pinned, fingerprints are recomputed from the definitions, sizes
+// are bounded, and only pending rows are ever written.
+type PinnedToolsService struct {
+	snapshotpb.UnimplementedPinnedToolsServer
+	registries PendingRegistryFinder
+	tools      PendingToolStore
+	gateways   GatewayResolver
+	logger     *slog.Logger
+}
+
+func NewPinnedToolsService(
+	registries PendingRegistryFinder,
+	tools PendingToolStore,
+	gateways GatewayResolver,
+	logger *slog.Logger,
+) *PinnedToolsService {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &PinnedToolsService{registries: registries, tools: tools, gateways: gateways, logger: logger}
+}
+
+func (s *PinnedToolsService) RecordPending(
+	ctx context.Context,
+	req *snapshotpb.RecordPendingToolsRequest,
+) (*snapshotpb.RecordPendingToolsResponse, error) {
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "record pending")
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGatewayScope(ctx, s.gateways, s.logger, pendingToolsWho, "record pending", gatewayID); err != nil {
+		return nil, err
+	}
+	registryID, err := ids.Parse[ids.RegistryKind](req.GetRegistryId())
+	if err != nil || registryID.IsNil() {
+		return nil, status.Errorf(codes.InvalidArgument, "%s: record pending: a valid registry id is required", pendingToolsWho)
+	}
+	candidates, err := candidatesFromRequest(req.GetTools())
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return &snapshotpb.RecordPendingToolsResponse{}, nil
+	}
+
+	reg, err := s.registries.FindByID(ctx, registryID)
+	switch {
+	case err != nil && isNotFound(err):
+		return &snapshotpb.RecordPendingToolsResponse{}, nil
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "%s: record pending: load registry: %v", pendingToolsWho, err)
+	}
+	// Another gateway's registry, or one that is not pinned, is ignored without
+	// saying which: the caller learns nothing about registries it does not own.
+	if reg == nil || reg.GatewayID != gatewayID || !reg.ToolPolicy.IsPinned() {
+		return &snapshotpb.RecordPendingToolsResponse{}, nil
+	}
+	n, err := s.tools.UpsertPending(ctx, gatewayID, registryID, candidates)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%s: record pending: %v", pendingToolsWho, err)
+	}
+	return &snapshotpb.RecordPendingToolsResponse{Recorded: int32(n)}, nil
+}
+
+// candidatesFromRequest validates the limits and builds each candidate through
+// NewToolCandidate, so the fingerprint is always the server's own computation.
+func candidatesFromRequest(tools []*snapshotpb.PendingTool) ([]registrydomain.ToolCandidate, error) {
+	if len(tools) > MaxPendingToolsPerCall {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"%s: record pending: %d tools exceed the limit of %d per call", pendingToolsWho, len(tools), MaxPendingToolsPerCall)
+	}
+	out := make([]registrydomain.ToolCandidate, 0, len(tools))
+	for _, t := range tools {
+		name := t.GetName()
+		switch {
+		case name == "":
+			return nil, status.Errorf(codes.InvalidArgument, "%s: record pending: a tool name is required", pendingToolsWho)
+		case len(name) > MaxPendingToolNameBytes:
+			return nil, status.Errorf(codes.InvalidArgument,
+				"%s: record pending: tool name exceeds %d bytes", pendingToolsWho, MaxPendingToolNameBytes)
+		case len(name)+len(t.GetDescription())+len(t.GetInputSchema()) > MaxPendingToolBytes:
+			return nil, status.Errorf(codes.InvalidArgument,
+				"%s: record pending: a tool definition exceeds %d bytes", pendingToolsWho, MaxPendingToolBytes)
+		}
+		cand, err := registrydomain.NewToolCandidate(name, t.GetDescription(), json.RawMessage(t.GetInputSchema()))
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%s: record pending: %v", pendingToolsWho, err)
+		}
+		out = append(out, cand)
+	}
+	return out, nil
+}
+
+func isNotFound(err error) bool {
+	return errors.Is(err, commonerrors.ErrNotFound)
+}

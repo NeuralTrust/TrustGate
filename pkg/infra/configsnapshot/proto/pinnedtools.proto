@@ -1,0 +1,52 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package snapshotpb;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpb";
+
+// PinnedTools is the DP-initiated channel through which a DB-less data plane
+// reports the tool definitions a pinned MCP registry listed that nobody has
+// decided on yet. The data plane cannot write the database, so it forwards them
+// to the control plane. The caller is untrusted (a hybrid plane runs in a
+// customer VPC): the server authorises the gateway against the caller's
+// config-sync scope, checks the registry is the gateway's and pinned, recomputes
+// every fingerprint from the definition itself, and only ever inserts pending
+// rows. This channel can never approve or reject a tool.
+service PinnedTools {
+  // RecordPending stores the candidates as pending when they are not stored yet.
+  rpc RecordPending(RecordPendingToolsRequest) returns (RecordPendingToolsResponse);
+}
+
+// PendingTool is one tool definition as the upstream listed it. There is
+// deliberately no fingerprint: the server derives it from these three fields.
+message PendingTool {
+  string name = 1;
+  string description = 2;
+  // input_schema is the raw JSON schema; empty means "accepts any input".
+  bytes input_schema = 3;
+}
+
+message RecordPendingToolsRequest {
+  string gateway_id = 1;
+  string registry_id = 2;
+  repeated PendingTool tools = 3;
+}
+
+message RecordPendingToolsResponse {
+  // recorded is how many new pending rows were inserted.
+  int32 recorded = 1;
+}
