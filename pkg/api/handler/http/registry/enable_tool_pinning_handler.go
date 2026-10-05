@@ -41,7 +41,7 @@ func NewEnableToolPinningHandler(tools appregistry.PinnedToolService, introspect
 
 // Handle godoc
 // @Summary      Enable tool pinning with a confirmed list
-// @Description  Makes the listed tools exactly the approved set and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. Tools are identified by the (name, fingerprint) returned by GET .../tools; the server re-reads the live tool list and approves the definitions it finds there. If a listed tool is no longer in the live list with that fingerprint (the upstream changed since it was reviewed) the call is 422 naming the stale tools and nothing is applied; an unreachable upstream is 502. A registry whose tools depend on the caller (per-principal auth or URL variables) cannot be introspected, so only an empty list is accepted for it. Any other approved definition goes back to pending and unlisted rejections stay rejected. An empty list is allowed. Every live tool that is not on the list is recorded as pending in the same transaction (a stored row, rejected included, is never overwritten, and the pending caps apply), so it appears for review immediately. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.
+// @Description  Makes the listed tools exactly the approved set and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. Tools are identified by the (name, fingerprint) returned by GET .../tools; the server re-reads the live tool list and approves the definitions it finds there. If a listed tool is no longer in the live list with that fingerprint (the upstream changed since it was reviewed) the call is 422 naming the stale tools and nothing is applied; an unreachable upstream is 502. A registry whose tools depend on the caller (per-principal auth or URL variables) cannot be introspected, so only an empty list is accepted for it. An empty list is allowed. Every live tool that is not on the list was seen and declined by the admin: it is recorded as rejected, decided by the caller, in the same transaction (inserted if absent, a pending row flipped, an already rejected row untouched). Approved rows that are neither listed nor live go back to pending. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.
 // @Tags         registries
 // @Accept       json
 // @Produce      json
@@ -99,7 +99,7 @@ func (h *EnableToolPinningHandler) Handle(c *fiber.Ctx) error {
 // liveCandidates splits the live upstream list by the confirmed refs, through
 // the same appmcp.ToolCandidate the discovery filter uses: the approved
 // definitions, and the unchecked ones (live but not confirmed), which are
-// recorded as pending. Refs the live list does not contain are stale: none of
+// recorded as rejected. Refs the live list does not contain are stale: none of
 // the list is applied. A server that cannot be introspected has no live list, so
 // only an empty list is accepted and nothing is recorded.
 func (h *EnableToolPinningHandler) liveCandidates(c *fiber.Ctx, gatewayID ids.GatewayID, id ids.RegistryID, refs []domain.ToolRef) (approved, unchecked []domain.ToolCandidate, err error) {
