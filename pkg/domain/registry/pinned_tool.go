@@ -168,6 +168,12 @@ func (t PinnedTool) Ref() ToolRef {
 // reads as empty and is never written, which keeps tenants isolated the same
 // way the registry repository does.
 //
+// Every method that changes a decision (SetStatus, ApproveAll, Decide, Pin) also
+// bumps the registry in the same transaction: its updated_at moves and a
+// config-snapshot change marker is appended, exactly as a registry update does,
+// so the snapshot recompiles and every pod converges on the new decisions.
+// UpsertPending does not: a pending row is not part of the snapshot.
+//
 //go:generate mockery --name=PinnedToolRepository --dir=. --output=./mocks --filename=pinned_tool_repository_mock.go --case=underscore --with-expecter
 type PinnedToolRepository interface {
 	// ListByRegistry returns every stored definition of the registry. Each
@@ -178,7 +184,7 @@ type PinnedToolRepository interface {
 	// how many rows it inserted.
 	UpsertPending(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, tools []ToolCandidate) (int, error)
 	// SetStatus records a decision for stored refs and returns how many rows it
-	// changed. Refs that are not stored are ignored.
+	// changed. Refs that are not stored are ignored; use Decide to refuse them.
 	SetStatus(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
@@ -187,11 +193,33 @@ type PinnedToolRepository interface {
 		status ToolStatus,
 		decidedBy string,
 	) (int, error)
+	// Decide approves and rejects stored refs in one transaction. It returns
+	// ErrUnknownToolRefs, applying nothing, when any ref is not stored for the
+	// registry, and ErrNotFound when the registry is not the gateway's.
+	Decide(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		registryID ids.RegistryID,
+		approve, reject []ToolRef,
+		decidedBy string,
+	) error
 	// ApproveAll approves the tools, inserting those not stored yet, in one
 	// transaction. It overrides a stored pending or rejected decision for a
 	// listed tool: approving is an explicit admin act. It returns ErrNotFound when
 	// the registry is not the gateway's.
 	ApproveAll(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		registryID ids.RegistryID,
+		tools []ToolCandidate,
+		decidedBy string,
+	) error
+	// Pin does ApproveAll and sets the registry's tool policy to pinned in one
+	// transaction: the confirmed list and the policy switch commit together or
+	// not at all. The registry must be an MCP registry (ErrInvalidToolPolicy
+	// otherwise) and the gateway's (ErrNotFound otherwise). An empty list is
+	// allowed.
+	Pin(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
 		registryID ids.RegistryID,

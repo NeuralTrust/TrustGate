@@ -11,6 +11,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 )
 
@@ -26,7 +28,19 @@ func validMCPRegistry(t *testing.T, gwID ids.GatewayID, name string) *domain.Reg
 	return b
 }
 
+func newPinnedRepo(conn *database.Connection) *repo.PinnedToolRepository {
+	return repo.NewPinnedToolRepository(conn, outboxrepo.NewRepository(conn))
+}
+
 func setupPinned(t *testing.T) (*repo.Repository, *repo.PinnedToolRepository, ids.GatewayID, *domain.Registry) {
+	t.Helper()
+	r, tools, gwID, reg, _ := setupPinnedConn(t)
+	return r, tools, gwID, reg
+}
+
+// setupPinnedConn is setupPinned plus the connection, for tests that inspect the
+// outbox.
+func setupPinnedConn(t *testing.T) (*repo.Repository, *repo.PinnedToolRepository, ids.GatewayID, *domain.Registry, *database.Connection) {
 	t.Helper()
 	r, gw, conn := setupRepo(t)
 	gwID := seedGateway(t, gw, "pinned-gw")
@@ -34,7 +48,7 @@ func setupPinned(t *testing.T) (*repo.Repository, *repo.PinnedToolRepository, id
 	if err := r.Save(context.Background(), reg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	return r, repo.NewPinnedToolRepository(conn), gwID, reg
+	return r, newPinnedRepo(conn), gwID, reg, conn
 }
 
 // cand builds a candidate through the domain so its fingerprint and stored
@@ -270,7 +284,7 @@ func TestPinnedTools_GatewayIsolation(t *testing.T) {
 	if err := r.Save(ctx, reg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tools := repo.NewPinnedToolRepository(conn)
+	tools := newPinnedRepo(conn)
 	c := cand(t, "search", "Search")
 	if _, err := tools.UpsertPending(ctx, gwA, reg.ID, []domain.ToolCandidate{c}); err != nil {
 		t.Fatalf("UpsertPending: %v", err)
@@ -283,8 +297,14 @@ func TestPinnedTools_GatewayIsolation(t *testing.T) {
 	if n, err := tools.UpsertPending(ctx, gwB, reg.ID, []domain.ToolCandidate{cand(t, "evil", "Evil")}); err != nil || n != 0 {
 		t.Fatalf("foreign UpsertPending = %d, %v; want 0, nil", n, err)
 	}
-	if n, err := tools.SetStatus(ctx, gwB, reg.ID, refs(c), domain.ToolStatusApproved, "attacker"); err != nil || n != 0 {
-		t.Fatalf("foreign SetStatus = %d, %v; want 0, nil", n, err)
+	if n, err := tools.SetStatus(ctx, gwB, reg.ID, refs(c), domain.ToolStatusApproved, "attacker"); !errors.Is(err, domain.ErrNotFound) || n != 0 {
+		t.Fatalf("foreign SetStatus = %d, %v; want 0, ErrNotFound", n, err)
+	}
+	if err := tools.Decide(ctx, gwB, reg.ID, refs(c), nil, "attacker"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("foreign Decide err = %v, want ErrNotFound", err)
+	}
+	if err := tools.Pin(ctx, gwB, reg.ID, nil, "attacker"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("foreign Pin err = %v, want ErrNotFound", err)
 	}
 	if err := tools.ApproveAll(ctx, gwB, reg.ID, []domain.ToolCandidate{c}, "attacker"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("foreign ApproveAll err = %v, want ErrNotFound", err)
@@ -303,7 +323,7 @@ func TestPinnedTools_CascadeOnRegistryDelete(t *testing.T) {
 	if err := r.Save(ctx, reg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tools := repo.NewPinnedToolRepository(conn)
+	tools := newPinnedRepo(conn)
 	if _, err := tools.UpsertPending(ctx, gwID, reg.ID, []domain.ToolCandidate{cand(t, "a", "A")}); err != nil {
 		t.Fatalf("UpsertPending: %v", err)
 	}
