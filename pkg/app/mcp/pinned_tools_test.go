@@ -513,3 +513,18 @@ func TestPinned_RecordsTheShelfRegistryForAnInstanceClone(t *testing.T) {
 	require.Equal(t, 1, rec.calls())
 	assert.Equal(t, shelf.ID, rec.batches[0].registryID, "the decision lives on the shelf registry")
 }
+
+// The admin API approves ToolCandidate(tool).ToolRef. The discovery filter must
+// expose a tool decided that way even when its schema carries numbers a JSON
+// round trip would rewrite, so what an admin approves is what the plane serves.
+func TestPinned_ToolCandidateIsTheIdentityTheFilterScreensBy(t *testing.T) {
+	t.Parallel()
+	var tool Tool
+	require.NoError(t, json.Unmarshal([]byte(`{"name":"calc","description":"d","inputSchema":{"properties":{"a":{"default":1.0},"b":{"maximum":1e3},"c":{"const":9007199254740993}}}}`), &tool))
+	cand, err := ToolCandidate(tool)
+	require.NoError(t, err)
+	reg := pinnedReg(t, registrydomain.ToolDecision{Name: cand.Name, Fingerprint: cand.Fingerprint, Status: registrydomain.ToolStatusApproved})
+	h := newPinnedHarness(t, []Tool{tool}, &fakeRecorder{})
+
+	assert.Equal(t, []string{"calc"}, h.list(t, routable(mcpClient(), reg)))
+}
