@@ -162,7 +162,8 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		return writeProxyError(c, err)
 	}
 
-	stampConsumerTrace(c, consumer, authCtx)
+	stampConsumerTrace(c, consumer)
+	stampCallerTrace(c, authCtx)
 	if !route.AllowsMethod(c.Method()) {
 		return methodNotAllowed(c, route)
 	}
@@ -171,7 +172,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if route.Capability == apiresolver.CapabilityModels {
-		return h.handleModels(c, route, consumer, authCtx)
+		return h.handleModels(c, route, consumer)
 	}
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
@@ -194,12 +195,21 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	if authCtx.Method != appauth.MethodAPIKey || authCtx.OwnerID == "" {
 		return writeProxyError(c, errNotAuthenticated)
 	}
+	stampCallerTrace(c, authCtx)
 	if !route.AllowsMethod(c.Method()) {
 		return methodNotAllowed(c, route)
 	}
 	links := data.StoreLinks(authCtx.AuthID)
 	if route.Capability == apiresolver.CapabilityModels {
 		return serveModels(c, route, h.storeModels, appproxy.StoreModelsInput{Links: links, Data: data})
+	}
+	limited, err := h.forwarder.CheckRateLimit(c.UserContext(), gatewayID)
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	if limited != nil {
+		relayHeaders(c, limited.Headers)
+		return c.Status(limited.StatusCode).Send(limited.Body)
 	}
 	reqCtx := newForwardRequest(c, gatewayID, route, authCtx)
 	sel, err := h.storeSelector.Select(c.UserContext(), appproxy.StoreSelectInput{Links: links, Data: data, Request: reqCtx})
@@ -208,7 +218,7 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	}
 	consumer := sel.Link.Consumer
 	authCtx.ConsumerID = consumer.Consumer.ID
-	stampConsumerTrace(c, consumer, authCtx)
+	stampConsumerTrace(c, consumer)
 	if err := stampEndUser(c, consumer); err != nil {
 		return writeProxyError(c, err)
 	}
@@ -219,6 +229,7 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 		Request:   reqCtx,
 		Keep:      sel.Keep,
 		Resolved:  &sel.ResolvedRouting,
+		RouteSlug: route.ConsumerSlug,
 	})
 }
 
@@ -472,7 +483,6 @@ func (h *ForwardedHandler) handleModels(
 	c *fiber.Ctx,
 	route apiresolver.ProxyRoute,
 	consumer *appconsumer.RoutableConsumer,
-	authCtx *appauth.AuthContext,
 ) error {
 	if h.models == nil {
 		return writeProxyError(c, appproxy.ErrNoBackendAvailable)
@@ -502,15 +512,20 @@ func serveModels[In any](c *fiber.Ctx, route apiresolver.ProxyRoute, models mode
 	return c.Status(fiber.StatusOK).JSON(card)
 }
 
-func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) {
+func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	if rc == nil || rc.Consumer == nil {
 		return
 	}
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+	}
+}
+
+func stampCallerTrace(c *fiber.Ctx, authCtx *appauth.AuthContext) {
 	rt := trace.FromContext(c.UserContext())
 	if rt == nil {
 		return
 	}
-	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 	if authCtx != nil && !authCtx.AuthID.IsNil() {
 		rt.SetAuthID(authCtx.AuthID.String())
 	}

@@ -1064,14 +1064,10 @@ func TestForward_LetsOtherBodiesThrough(t *testing.T) {
 }
 
 func invokerByProvider(t *testing.T, status map[string]int) (*proxymocks.ProviderInvoker, *[]string) {
-	invoker := proxymocks.NewProviderInvoker(t)
-	var invoked []string
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
-		RunAndReturn(func(_ context.Context, bk *registrydomain.Registry, _ *infracontext.RequestContext) (*appproxy.ProviderResponse, error) {
-			invoked = append(invoked, bk.Provider())
-			return &appproxy.ProviderResponse{StatusCode: status[bk.Provider()], Body: []byte(bk.Provider())}, nil
-		}).Maybe()
-	return invoker, &invoked
+	t.Helper()
+	return invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+		return &appproxy.ProviderResponse{StatusCode: status[provider], Body: []byte(provider)}, nil
+	})
 }
 
 func TestForward_KeepExcludesSubstitutedRegistries(t *testing.T) {
@@ -1140,7 +1136,8 @@ func TestForward_ServesTheStoreSelection(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "A", sel.Link.Consumer.Consumer.Name)
 			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 503, "deepseek": 200})
-			res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+			fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 				GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
 				Keep: sel.Keep, Resolved: &sel.ResolvedRouting,
 			})
@@ -1175,4 +1172,22 @@ func TestForward_StoreConsumerSharesOneBalancerAcrossOwners(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 1, balancers.Len())
 	assert.Equal(t, []string{"anthropic", "anthropic"}, *invoked)
+}
+
+func TestForward_StoreModelMissPointsAtTheStoreListing(t *testing.T) {
+	fx := newStoreFixture(grantD)
+	req := storeRequest("gpt6", "", "")
+	sel, err := fx.choose(newStoreSelector(workedCatalog), req)
+	require.NoError(t, err)
+	sel.Link.Consumer.Consumer.Slug = "pers0001"
+	invoker, _ := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+		return &appproxy.ProviderResponse{StatusCode: http.StatusNotFound, Body: modelNotFoundBody(provider)}, nil
+	})
+	_, err = newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+		Keep: sel.Keep, Resolved: &sel.ResolvedRouting, RouteSlug: domainconsumer.StoreSlug,
+	})
+	require.ErrorIs(t, err, routingdomain.ErrNoRegistryServesModel)
+	assert.Contains(t, err.Error(), "GET /store/v1/models")
+	assert.NotContains(t, err.Error(), "pers0001")
 }

@@ -70,12 +70,12 @@ func (f *forwarder) runPreRequest(
 	return nil, nil
 }
 
-// checkRateLimit enforces the gateway plan burst/quota before the request
+// CheckRateLimit enforces the gateway plan burst/quota before the request
 // reaches the upstream. An exceeded limit renders a 429 ForwardResult with the
 // standard rate-limit headers; an unavailable plan (unknown/missing tier)
 // propagates as an error so mapProxyError maps it to HTTP 503, matching how an
 // unusable guard is treated.
-func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
+func (f *forwarder) CheckRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
 	err := f.limiter.Check(ctx, gatewayID)
 	if err == nil {
 		return nil, nil

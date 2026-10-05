@@ -99,7 +99,8 @@ func TestConsumerTraceSeparatesVerifiedIdentityFromEndUser(t *testing.T) {
 				ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: "verified-user", Method: method, Claims: map[string]any{"email": "user@example.com"}, RawToken: "never-export-token"})
 			}
 			c.SetUserContext(ctx)
-			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}}, nil)
+			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}})
+			stampCallerTrace(c, nil)
 			meta := rt.Metadata()
 			require.NotNil(t, meta.EndUser)
 			require.Equal(t, "app-asserted-user", meta.EndUser.ID)
@@ -150,7 +151,7 @@ func TestConsumerTraceStampsTheAuthIDOnlyWhenOneAuthenticated(t *testing.T) {
 				ctx = identity.WithPrincipal(ctx, tc.principal)
 			}
 			c.SetUserContext(ctx)
-			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}}, tc.authCtx)
+			stampCallerTrace(c, tc.authCtx)
 			meta := rt.Metadata()
 			require.Equal(t, tc.wantAuthID, meta.AuthID)
 			require.Equal(t, tc.wantSubject, meta.PrincipalSubject)

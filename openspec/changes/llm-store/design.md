@@ -66,8 +66,8 @@ Proposal decisions are D#. Design-level decisions are DD#.
 | 9 | `attach` with `Principal{Subject: owner_id, Method: api_key}`, `AuthContext{AuthID, OwnerID}`, no consumer | `auth.go:169` (`rc == nil` skips the consumer locals) | ctx values | — |
 | 10 | Handler: `route.ConsumerSlug == StoreSlug` → `handleStore`; `links := data.StoreLinks(authCtx.AuthID)` | `proxy_handler.go:139` | 1 map get | — |
 | 11 | `/models` → `StoreModels.List/Get` → 200 | new `store_models.go` | in-memory + catalog cache | catalog load |
-| 12 | Build `reqCtx`, `StoreSelector.Select` → consumer + `Keep`, or **403** `model_not_allowed` / **400** `invalid_model` | new `store_selector.go` | one `Resolve` per effective link | catalog listing load |
-| 13 | `authCtx.ConsumerID`, `stampConsumerTrace`, method check, end user, then `Forward` with `Keep` | `proxy_handler.go:150-195` (shared tail) | as today | — |
+| 12 | Stamp `auth_id` and the principal (owner), method check (**405**), gateway rate limit (**429**, charged once, as on the slug path), build `reqCtx`, `StoreSelector.Select` → consumer + `Keep`, or **403** `model_not_allowed` / **400** `invalid_model` / `invalid_request_body` | `proxy_handler.go` `handleStore`, new `store_selector.go` | one `Resolve` per effective link | catalog listing load |
+| 13 | `authCtx.ConsumerID`, consumer stamp, end user, then `Forward` with `Keep`, the selection (`Resolved`) and `RouteSlug = store` (no second rate-limit charge or ambiguity scan; a model miss points at `/store/v1/models`) | `proxy_handler.go` (shared tail) | as today | — |
 | 14 | Registries, ModelPolicies, LB `gw:consumerID`, fallback, policies | unchanged (`load_balancer_cache.go:58-59`, `plansFor` `data_finder.go:179-188`) | unchanged | — |
 | 15 | `token_rate_limiter` `partition: key` | `Plugin.Execute` | 1 Redis GET per window pre, 1 EVAL post | — |
 
@@ -409,3 +409,4 @@ Rollback: as in the proposal (disable `partition: key` policies; `UPDATE consume
 | Q3 | `VerdictUnknown` lets a registry without an allow-list admit any short model (OQ3). | Accept; document in `docs/llm-store.md`. |
 | Q4 | If a gateway becomes hybrid after personal consumers exist, they stay and `/store/v1` answers 404. Should the entitlement re-stamp deactivate them? | No; the app cleans up. |
 | Q5 | PO sign-off on the 503 (R2). | Assumed. |
+| Q6 | Traffic labeling skips `/store/v1/*`: `TrafficLabelsMiddleware` offers a request before the handler, and a store request has no consumer until the handler selects one, so a labeled personal consumer is never offered. | Gap accepted in P14 and pinned by `TestHandleStore_TrafficLabelingDoesNotSeeStoreRequests`. Follow-up, one of: set the selected consumer on the ctx after selection and move the store offer after `c.Next()`; or an offer hook the forwarded handler calls after selection. |
