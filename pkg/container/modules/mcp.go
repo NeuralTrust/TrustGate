@@ -252,6 +252,11 @@ type rpcGatewayParams struct {
 	// has no installation store yet).
 	Registries registrydomain.Repository     `optional:"true"`
 	Installs   installationdomain.Repository `optional:"true"`
+	// PinnedTools exists on the full plane only. The scoper's registries feed the
+	// composer, so they carry the decided tool set there; a DB-less plane gets it
+	// from the snapshot instead.
+	PinnedTools registrydomain.PinnedToolRepository `optional:"true"`
+	Logger      *slog.Logger                        `optional:"true"`
 	// Grants is the Store access model (who may use which catalog server or
 	// instance). The full plane reads Postgres, the data plane the snapshot.
 	// Absent, nothing is granted under Selected access (fail closed).
@@ -328,7 +333,11 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	gateway = gateway.WithInventoryTool(inventory)
 
 	if p.Installs != nil && p.Registries != nil {
-		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
+		scoped := p.Registries
+		if p.PinnedTools != nil {
+			scoped = appregistry.WithPinnedTools(p.Registries, p.PinnedTools, p.Logger)
+		}
+		scoper, err := appstore.NewScoper(p.Installs, scoped, grants, appstore.WithScoperModes(modes))
 		if err != nil {
 			return nil, err
 		}

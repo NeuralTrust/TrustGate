@@ -287,3 +287,28 @@ func (b *Registry) HasToolDecision(ref ToolRef) bool {
 	}
 	return false
 }
+
+// PinnedToolLister is the read side StampPinnedTools needs.
+type PinnedToolLister interface {
+	ListByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]PinnedTool, error)
+}
+
+// StampPinnedTools fills PinnedTools on every pinned registry from the stored
+// decisions. Auto registries are never read and keep their bytes. It is the one
+// place that turns registry_tools into the snapshot form, shared by the snapshot
+// compiler and by the full-mode registry reader, so the two cannot drift. On the
+// first read error it stops and returns it: what to do about it is the caller's
+// call (the compiler keeps the last snapshot, the reader hides the tools).
+func StampPinnedTools(ctx context.Context, lister PinnedToolLister, registries []*Registry) error {
+	for _, r := range registries {
+		if r == nil || !r.ToolPolicy.IsPinned() {
+			continue
+		}
+		tools, err := lister.ListByRegistry(ctx, r.GatewayID, r.ID)
+		if err != nil {
+			return fmt.Errorf("list pinned tools for registry %s: %w", r.ID, err)
+		}
+		r.PinnedTools = DecisionsOf(tools)
+	}
+	return nil
+}
