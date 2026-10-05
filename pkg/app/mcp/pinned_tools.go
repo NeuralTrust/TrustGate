@@ -78,7 +78,7 @@ func (c *composer) screenPinnedTools(reg *registrydomain.Registry, tools []Tool)
 	exposed := make([]Tool, 0, len(tools))
 	var unknown []registrydomain.ToolCandidate
 	for _, t := range tools {
-		cand, err := registrydomain.NewToolCandidate(t.Name, t.Description(), t.InputSchema())
+		cand, err := ToolCandidate(t)
 		if err != nil {
 			c.logger.Warn("mcp composer: hiding tool with an invalid definition on a pinned registry",
 				"registry_id", reg.ID.String(), "tool", truncateForLog(t.Name), "error", err)
@@ -97,6 +97,14 @@ func (c *composer) screenPinnedTools(reg *registrydomain.Registry, tools []Tool)
 		c.pending.Submit(reg.GatewayID, reg.ScopeKey(), unknown)
 	}
 	return exposed
+}
+
+// ToolCandidate is the one place a listed tool becomes a (name, fingerprint)
+// identity. The discovery filter and the admin API both call it on the Tool the
+// same upstream client produced, so the fingerprint an admin approves is the one
+// the data plane computes, whatever the client did to number literals on the way.
+func ToolCandidate(t Tool) (registrydomain.ToolCandidate, error) {
+	return registrydomain.NewToolCandidate(t.Name, t.Description(), t.InputSchema())
 }
 
 func truncateForLog(s string) string {
