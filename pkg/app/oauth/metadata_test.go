@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -323,6 +324,34 @@ func TestAuthorizationServerMetadataIsGatewayFacade(t *testing.T) {
 	}
 	if doc["registration_endpoint"] != "https://gw.example.com/oauth/register" {
 		t.Fatalf("unexpected registration_endpoint: %v", doc["registration_endpoint"])
+	}
+}
+
+func TestProtectedResourceMetadataDoesNotAdvertiseLoginScopes(t *testing.T) {
+	t.Parallel()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:         "https://login.microsoftonline.com/tid/v2.0",
+			RequiredScopes: []string{"mcp.access"},
+			LoginScopes:    []string{"api://gw/mcp.access", "offline_access"},
+		}),
+	}}
+	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/dev")
+	if err != nil {
+		t.Fatalf("protected resource: %v", err)
+	}
+	if !slices.Equal(meta.ScopesSupported, []string{"mcp.access"}) {
+		t.Fatalf("PRM scopes_supported = %v, want only the required scopes", meta.ScopesSupported)
+	}
+
+	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
+	if err != nil {
+		t.Fatalf("authorization server: %v", err)
+	}
+	if scopes, _ := doc["scopes_supported"].([]string); !slices.Equal(scopes, []string{"mcp.access"}) {
+		t.Fatalf("AS scopes_supported = %v, want only the required scopes", doc["scopes_supported"])
 	}
 }
 
