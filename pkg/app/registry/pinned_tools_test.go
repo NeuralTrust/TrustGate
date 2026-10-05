@@ -23,6 +23,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -105,4 +107,60 @@ func TestPinnedToolService_List_RegistryOfAnotherGatewayIsNotFound(t *testing.T)
 
 	_, err := svc.List(context.Background(), ids.New[ids.GatewayKind](), reg.ID, nil)
 	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+type countingSignaler struct{ n int }
+
+func (c *countingSignaler) Signal(context.Context) { c.n++ }
+
+func TestPinnedToolService_Decide_PersistsThenPropagates(t *testing.T) {
+	t.Parallel()
+	reg := pinnedMCPRegistry(t)
+	approve := []domain.ToolRef{{Name: "a", Fingerprint: "1"}}
+	reject := []domain.ToolRef{{Name: "b", Fingerprint: "2"}}
+
+	regs := repomocks.NewRepository(t)
+	regs.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil)
+	tools := repomocks.NewPinnedToolRepository(t)
+	tools.EXPECT().Decide(mock.Anything, reg.GatewayID, reg.ID, approve, reject, "ana@acme.io").Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: reg.GatewayID.String(), RegistryID: reg.ID.String()}).
+		Return(nil).Once()
+	signaler := &countingSignaler{}
+	manager := newCacheManager()
+	svc := appregistry.NewPinnedToolService(regs, tools, manager, publisher, newTestLogger(), signaler)
+
+	err := svc.Decide(context.Background(), appregistry.DecideToolsInput{
+		GatewayID: reg.GatewayID, RegistryID: reg.ID, Approve: approve, Reject: reject, DecidedBy: "ana@acme.io",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, signaler.n, "a decision must wake the snapshot dispatcher")
+}
+
+// A refused decision changed nothing, so it must not invalidate or signal.
+func TestPinnedToolService_Decide_RefusalDoesNotPropagate(t *testing.T) {
+	t.Parallel()
+	reg := pinnedMCPRegistry(t)
+	ref := []domain.ToolRef{{Name: "ghost", Fingerprint: "x"}}
+	regs := repomocks.NewRepository(t)
+	tools := repomocks.NewPinnedToolRepository(t)
+	tools.EXPECT().Decide(mock.Anything, reg.GatewayID, reg.ID, ref, []domain.ToolRef(nil), "ana").Return(domain.ErrUnknownToolRefs).Once()
+	publisher := cachemocks.NewEventPublisher(t) // no Publish expected
+	signaler := &countingSignaler{}
+	svc := appregistry.NewPinnedToolService(regs, tools, newCacheManager(), publisher, newTestLogger(), signaler)
+
+	err := svc.Decide(context.Background(), appregistry.DecideToolsInput{GatewayID: reg.GatewayID, RegistryID: reg.ID, Approve: ref, DecidedBy: "ana"})
+	assert.ErrorIs(t, err, domain.ErrUnknownToolRefs)
+	assert.Zero(t, signaler.n)
+}
+
+func TestPinnedToolService_Decide_SameRefInBothListsIsRefusedBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	reg := pinnedMCPRegistry(t)
+	ref := []domain.ToolRef{{Name: "a", Fingerprint: "1"}}
+	svc := appregistry.NewPinnedToolService(repomocks.NewRepository(t), repomocks.NewPinnedToolRepository(t), newCacheManager(), nil, newTestLogger(), nil)
+
+	err := svc.Decide(context.Background(), appregistry.DecideToolsInput{GatewayID: reg.GatewayID, RegistryID: reg.ID, Approve: ref, Reject: ref})
+	assert.ErrorIs(t, err, domain.ErrInvalidToolDecision)
 }

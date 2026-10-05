@@ -82,6 +82,7 @@ type AdminRouterDeps struct {
 	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	ListPinnedTools        *registryhttp.ListPinnedToolsHandler
+	DecidePinnedTools      *registryhttp.DecidePinnedToolsHandler
 	// RegistrySharedAccount serves the upstream account an MCP instance holds
 	// for every caller. Absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler
@@ -190,6 +191,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)
 	registries.Get("/:id/pinned-tools", r.deps.ListPinnedTools.Handle)
+	registries.Post("/:id/pinned-tools/decisions", r.deps.DecidePinnedTools.Handle)
 	if r.deps.RegistrySharedAccount != nil {
 		registries.Get("/:id/shared-account", r.deps.RegistrySharedAccount.Get)
 		registries.Post("/:id/shared-account/connect-link", r.deps.RegistrySharedAccount.ConnectLink)
