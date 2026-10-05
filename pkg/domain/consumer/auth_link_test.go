@@ -72,8 +72,32 @@ func TestAuthLinkValidate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.link.Validate()
-			if tc.wantErr != errors.Is(err, ErrInvalidAuthLink) || tc.wantErr != errors.Is(err, commonerrors.ErrValidation) {
+			if (!tc.wantErr && err != nil) || (tc.wantErr && (!errors.Is(err, ErrInvalidAuthLink) || !errors.Is(err, commonerrors.ErrValidation))) {
 				t.Fatalf("Validate() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestConsumerValidateAuthLink(t *testing.T) {
+	t.Parallel()
+	valid := &AuthLink{Level: GrantLevelGroup, Priority: DefaultGrantPriority, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)}
+	for name, tc := range map[string]struct {
+		audience Audience
+		link     *AuthLink
+		wantErr  bool
+	}{
+		"application without link":      {},
+		"application with a link":       {link: valid, wantErr: true},
+		"personal with a valid link":    {audience: AudiencePersonal, link: valid},
+		"personal without link":         {audience: AudiencePersonal, wantErr: true},
+		"personal with an invalid link": {audience: AudiencePersonal, link: &AuthLink{Level: GrantLevelUser}, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := (&Consumer{Type: TypeLLM, Audience: tc.audience}).ValidateAuthLink(tc.link)
+			if (!tc.wantErr && err != nil) || (tc.wantErr && (!errors.Is(err, ErrInvalidAuthLink) || !errors.Is(err, commonerrors.ErrValidation))) {
+				t.Fatalf("ValidateAuthLink() = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}

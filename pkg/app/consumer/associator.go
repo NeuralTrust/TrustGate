@@ -36,7 +36,7 @@ import (
 type Associator interface {
 	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
-	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
+	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error
 	DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 	DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
@@ -137,7 +137,7 @@ func (a *associator) explainDetachConflict(
 	return conflict
 }
 
-func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {
+func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error {
 	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
@@ -149,7 +149,10 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	if err := domain.ValidateAuthConfig(cons, au); err != nil {
 		return err
 	}
-	if err := a.repo.AttachAuth(ctx, consumerID, authID, nil); err != nil {
+	if err := cons.ValidateAuthLink(link); err != nil {
+		return err
+	}
+	if err := a.repo.AttachAuth(ctx, consumerID, authID, link); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
