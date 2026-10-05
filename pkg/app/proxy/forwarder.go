@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -59,6 +60,7 @@ type ForwardInput struct {
 	Request   *infracontext.RequestContext
 	Keep      CandidateFilter
 	Resolved  *ResolvedRouting
+	RouteSlug string
 }
 
 type ForwardResult struct {
@@ -86,11 +88,13 @@ type forwardRequestDTO struct {
 	baseHeaders map[string][]string
 	baseline    *trace.RouteBaseline
 	tierRouted  bool
+	routeSlug   string
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
 type Forwarder interface {
 	Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error)
+	CheckRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error)
 }
 
 var _ Forwarder = (*forwarder)(nil)
@@ -164,12 +168,13 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
-	if ambiguousChatBody(in.Request) {
-		return nil, ErrAmbiguousRequestBody
-	}
-
-	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
-		return result, err
+	if in.Resolved == nil {
+		if ambiguousChatBody(in.Request) {
+			return nil, ErrAmbiguousRequestBody
+		}
+		if result, err := f.CheckRateLimit(ctx, in.GatewayID); result != nil || err != nil {
+			return result, err
+		}
 	}
 
 	intent, candidates, err := f.resolveRouting(ctx, in)
@@ -210,6 +215,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		plan:        plan,
 		baseHeaders: cloneHeaders(resp.Headers),
 		baseline:    route.baseline,
+		routeSlug:   cmp.Or(in.RouteSlug, in.Consumer.Consumer.Slug),
 	}
 	stream := DetectStream(dto.request)
 
@@ -336,7 +342,7 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, noRegistryServesModelError(dto.request.RequestedModel, rc.Consumer.Slug, route.chain, misses)
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, dto.routeSlug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
 }
