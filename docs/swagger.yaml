@@ -182,6 +182,8 @@ definitions:
         type: string
       name:
         type: string
+      owner_id:
+        type: string
       type:
         type: string
       updated_at:
@@ -3736,6 +3738,11 @@ paths:
         in: query
         name: enabled
         type: boolean
+      - description: List only the personal key of this owner. Without it, personal
+          keys are excluded
+        in: query
+        name: owner_id
+        type: string
       - description: Sort field (name, created_at, updated_at, type)
         in: query
         name: sort
@@ -3905,7 +3912,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing auth.
+      description: Updates an existing auth. A personal (owned) key answers 422 owned_key;
+        only its owner can change it, the admin can only delete it.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3948,6 +3956,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update an auth
@@ -3958,7 +3970,8 @@ paths:
       description: Replaces the secret of an api_key auth and returns the new one.
         The auth keeps its id, its name and every consumer it is attached to; the
         previous secret stops authenticating immediately. The new secret is returned
-        once and is not retrievable afterwards.
+        once and is not retrievable afterwards. A personal (owned) key answers 422
+        owned_key; only its owner can change it, the admin can only delete it.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3994,6 +4007,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:

@@ -449,6 +449,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "List only the personal key of this owner. Without it, personal keys are excluded",
+                        "name": "owner_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Sort field (name, created_at, updated_at, type)",
                         "name": "sort",
                         "in": "query"
@@ -635,7 +641,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing auth.",
+                "description": "Updates an existing auth. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -700,6 +706,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -776,7 +788,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/auths/{id}/rotate": {
             "post": {
-                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards.",
+                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
                 "produces": [
                     "application/json"
                 ],
@@ -831,6 +843,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -4889,6 +4907,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "owner_id": {
                     "type": "string"
                 },
                 "type": {
