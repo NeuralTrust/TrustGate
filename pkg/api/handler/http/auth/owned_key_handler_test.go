@@ -132,7 +132,7 @@ func TestUpdateAndRotateAuth_RefuseAnOwnedKey(t *testing.T) {
 			app.Put("/gateways/:gateway_id/auths/:id", authhttp.NewUpdateAuthHandler(
 				appauth.NewUpdater(repo, consumermocks.NewRepository(t), manager, publisher, logger, signaler)).Handle)
 			app.Post("/gateways/:gateway_id/auths/:id/rotate", authhttp.NewRotateAuthHandler(
-				appauth.NewRotator(repo, manager, publisher, logger, signaler), nil).Handle)
+				appauth.NewRotator(repo, manager, publisher, logger, signaler, time.Now), nil).Handle)
 
 			status, raw := doJSON(t, app, route.method, "/gateways/"+gwID.String()+"/auths/"+owned.ID.String()+route.suffix, route.body)
 			require.Equal(t, http.StatusUnprocessableEntity, status)

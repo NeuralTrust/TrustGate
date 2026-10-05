@@ -72,7 +72,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 
 ### Requirement: Expiry is required and capped at 90 days
 
-`expires_at` MUST be required on create and MUST satisfy `now < expires_at ≤ now + 90 d`, with `now` read from an injected clock. On rotate it MAY be omitted (the current expiry stays); when present it MUST satisfy the same bounds. Anything else MUST answer **422** and write nothing.
+`expires_at` MUST be required on create and MUST satisfy `now < expires_at ≤ now + 90 d`, with `now` read from an injected clock. On rotate it MAY be omitted (the current expiry stays), except on a key whose expiry has passed (see Rotate); when present it MUST satisfy the same bounds. Anything else MUST answer **422** and write nothing.
 
 #### Scenario: Bounds on create
 
@@ -98,7 +98,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 
 ### Requirement: Rotate keeps the auth id and the links
 
-`POST …/llm-key/rotate` with `{expires_at?}` MUST issue a new secret through `Auth.RotateAPIKey` and the rotator's side effects, keep the **same auth id**, the same owner and **every** `consumer_auth` link with its attributes, and set `expires_at` to the new value when given. It MUST answer 200 with the new raw key. The old secret MUST stop authenticating on DB-less proxies at the next snapshot apply and on full-plane proxies at the next `InvalidateGatewayDataEvent` (`llm-store-gateway`). Rotating an expired key MUST be allowed. A caller without a key MUST get 404.
+`POST …/llm-key/rotate` with `{expires_at?}` MUST issue a new secret through `Auth.RotateAPIKey` and the rotator's side effects, keep the **same auth id**, the same owner and **every** `consumer_auth` link with its attributes, and set `expires_at` to the new value when given. It MUST answer 200 with the new raw key. The old secret MUST stop authenticating on DB-less proxies at the next snapshot apply and on full-plane proxies at the next `InvalidateGatewayDataEvent` (`llm-store-gateway`). Rotating an expired key MUST be allowed when the request carries a valid `expires_at`. Without one it MUST answer **422** and write nothing: keeping the passed expiry would hand out a secret that is dead on arrival. A caller without a key MUST get 404.
 
 #### Scenario: Rotate
 
@@ -111,6 +111,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 - GIVEN `alice`'s key with `expires_at` one day in the past
 - WHEN she rotates with `expires_at = now + 30 d`
 - THEN 200, and the new secret authenticates on `/store/v1/models`
+- AND the same rotation without `expires_at` answers 422, and the key, its secret and its expiry are unchanged
 
 #### Scenario: Nothing to rotate
 
