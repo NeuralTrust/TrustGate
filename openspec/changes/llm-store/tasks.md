@@ -239,17 +239,26 @@ Depends: P7. Est.: ≈265 (code 100 / test 165). Commit boundary: one `feat` com
 
 Depends: P2b, P4. Est.: ≈300 (code 145 / test 155). Commit boundary: (a) `feat`; (b) `chore`: mocks.
 
-- [ ] 9.1 `pkg/domain/auth/auth.go`: `MaxOwnedKeyLifetime = 90 * 24 * time.Hour`, `NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, now)`, `ValidateOwnedExpiry(at, now)` (`now < at ≤ now + 90 d`). `errors.go`: `ErrOwnedExpiry`.
-- [ ] 9.2 Create `pkg/app/auth/personal_keys.go`: the `PersonalKeys` interface plus implementation, with `//go:generate mockery`. The behaviour:
-  - `Create`: run `ValidateOwnedExpiry`, refuse a hybrid gateway, pre-check with `FindByOwner` (409), build with `NewOwnedAPIKeyAuth`, then `Save`, where a race hits the unique index and gives `ErrOwnedKeyExists`. Then run the creator's side effects: `AuthTTLName` and `AuthKeyTTLName`, `invalidation.GatewayData`, `Signal`.
-  - `Rotate`: `FindByOwner`, then `Rotator.Rotate{Expiry, OwnerID}`. An absent expiry keeps the current one; a present one must pass the cap. The links are untouched.
+- [x] 9.1 `pkg/domain/auth/auth.go`: `MaxOwnedKeyLifetime = 90 * 24 * time.Hour`, `NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, now)`, `ValidateOwnedExpiry(at, now)` (`now < at ≤ now + 90 d`), `ValidateOwner(ownerID)` (one rule for the constructor and every `PersonalKeys` lookup). `errors.go`: `ErrOwnedExpiry`, `ErrInvalidOwner`. The key is named `personal`, with no user id, because auth names reach `principal.subject`, whoami and telemetry. The clock is injected end to end: `SetExpiry(at, now)`, `RotateAPIKey(now)`, `NewRotator(…, now)`; `NewAPIKeyAuth` judges its expiry against its own `CreatedAt`, and the admin updater passes one `time.Now().UTC()` for the expiry check and `UpdatedAt`.
+- [x] 9.2 Create `pkg/app/auth/personal_keys.go`: the `PersonalKeys` interface plus implementation, with `//go:generate mockery`. The behaviour:
+  - `Create`: run `ValidateOwnedExpiry` (inside `NewOwnedAPIKeyAuth`, built before any I/O), refuse a hybrid gateway (`ErrPersonalKeyHybrid`, wraps `ErrValidation`), pre-check with `FindByOwner` (409), then `Save`, where a race hits the unique index and gives `ErrOwnedKeyExists`. Then run the creator's side effects: `AuthTTLName` and `AuthKeyTTLName`, `invalidation.GatewayData`, `Signal`.
+  - `Rotate`: `FindByOwner`, then `Rotator.Rotate{Expiry, OwnerID}`. An absent expiry keeps the current one, unless it has passed: then `ErrOwnedExpiry` (422) before any write. A present one must pass the cap. The links are untouched, and their ids are read before the rotation so a listing failure never strands a rotated secret.
   - `Revoke`: `FindByOwner`, then `Deleter.Delete`, which detaches every link.
   - `Get`: `FindByOwner` plus the `consumers.ListByAuthID` ids, with `[]` when there are none.
-- [ ] 9.3 `pkg/container/modules/auth.go`: provide `NewPersonalKeys` with `now = time.Now().UTC`. Register a view provider for `consumerdomain.Reader` if dig does not resolve it.
-- [ ] 9.4 Test `pkg/domain/auth/auth_test.go`: `ValidateOwnedExpiry` edges (now, +90 d, +90 d +1 s, the past).
-- [ ] 9.5 Test `personal_keys_test.go` (mocks, fixed clock, `cache.NewTTLMapManager`): the first key comes back with no links and the raw key; the 409 pre-check; the race 409 from the repository; hybrid 422; expiry bounds; rotate keeps the id and links and evicts the old hash; rotating an expired key works; rotate, revoke and get each → `ErrNotFound` without a key; revoke then re-create works.
+  - Every lookup goes through `find`: `ValidateOwner`, `FindByOwner`, then `Auth.ManagedBy(owner)`, which turns anything not owned by the caller into `ErrNotFound`.
+  - `PersonalKey` is `{Auth, ConsumerIDs}`. The raw secret lives only in `Auth.RawKey`.
+- [x] 9.3 `pkg/container/modules/auth.go`: provide `NewPersonalKeys` with `now = func() time.Time { return time.Now().UTC() }` (the method value `time.Now().UTC` would freeze the clock at wiring time). The provider takes `consumerdomain.Repository` and passes it as the `Reader`, so no view provider is needed.
+- [x] 9.4 Test `pkg/domain/auth/auth_test.go`: `ValidateOwnedExpiry` edges (now, +90 d, +90 d +1 s, the past).
+- [x] 9.5 Test `personal_keys_test.go` (mocks, fixed clock, `cache.NewTTLMapManager`): the first key comes back with no links and the raw key; the 409 pre-check; the race 409 from the repository; hybrid 422; expiry bounds; rotate keeps the id and links and evicts the old hash; rotating an expired key works; rotate, revoke and get each → `ErrNotFound` without a key or on a key the caller does not own; an expired key rotated without a new expiry → 422 with no write; revoke then re-create works; error paths (gateway or owner lookup failing on create, consumer listing failing on get and rotate) write nothing and signal nothing.
 - Accept (9.1–9.5): `personal-key-endpoints › First key`, `› Hybrid gateway`, `› Second key`, `› Concurrent creates` (use-case half), `› Bounds on create`, `› Rotate`, `› Rotate an expired key`, `› Nothing to rotate`, `› Revoke and re-create`, `› Nothing to revoke`.
-- [ ] 9.6 Run VG.
+- [x] 9.6 Run VG.
+
+P10 hand-off (from the P9 review):
+- The DTO maps `key` from `PersonalKey.Auth.RawKey` on create and rotate only. GET never maps it (the stored row has none, but the mapping must not rely on that).
+- The handler answers 403 when `callerSubject(c)` is empty, before calling `PersonalKeys`. The use case's `ErrInvalidOwner` (422) is a backstop, not the contract.
+- Ordering is validation before lookup: a bad `expires_at` answers 422 even for a caller without a key (rotate validates the body before `FindByOwner`), and the handler must decode and validate the body before calling the use case, so a malformed body is never a 404.
+
+Follow-up, out of P9 scope: the auth repository `Update` should compare-and-set on the previous `key_hash` (`UPDATE … WHERE id = $1 AND key_hash = $prev`), so two concurrent rotations of one key end with one success and one 409 instead of the last writer silently winning while the first caller holds a secret that no longer works. Applies to the admin rotate and `PersonalKeys.Rotate` alike.
 
 ## Phase 10: S4b self-only HTTP (base P9)
 

@@ -65,6 +65,7 @@ type rotator struct {
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
+	now         func() time.Time
 }
 
 func NewRotator(
@@ -73,6 +74,7 @@ func NewRotator(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	now func() time.Time,
 ) Rotator {
 	return &rotator{
 		repo:        repo,
@@ -81,6 +83,7 @@ func NewRotator(
 		publisher:   publisher,
 		logger:      logger,
 		signaler:    signaler,
+		now:         now,
 	}
 }
 
@@ -96,12 +99,13 @@ func (r *rotator) Rotate(ctx context.Context, in RotateInput) (*domain.Auth, err
 		return nil, err
 	}
 
-	previousHash, err := existing.RotateAPIKey()
+	now := r.now()
+	previousHash, err := existing.RotateAPIKey(now)
 	if err != nil {
 		return nil, err
 	}
 	if in.Expiry != nil {
-		if err := existing.SetExpiry(in.Expiry.At); err != nil {
+		if err := existing.SetExpiry(in.Expiry.At, now); err != nil {
 			return nil, err
 		}
 	}

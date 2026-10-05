@@ -272,11 +272,11 @@ func TestRepository_Update_PersistsRotatedPreviewAndExpiry(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	if _, err := a.RotateAPIKey(); err != nil {
+	if _, err := a.RotateAPIKey(time.Now().UTC()); err != nil {
 		t.Fatalf("RotateAPIKey: %v", err)
 	}
 	expiry := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second)
-	if err := a.SetExpiry(&expiry); err != nil {
+	if err := a.SetExpiry(&expiry, time.Now().UTC()); err != nil {
 		t.Fatalf("SetExpiry: %v", err)
 	}
 	if err := r.Update(ctx, a); err != nil {
@@ -298,7 +298,7 @@ func TestRepository_Update_PersistsRotatedPreviewAndExpiry(t *testing.T) {
 		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, expiry)
 	}
 
-	if err := a.SetExpiry(nil); err != nil {
+	if err := a.SetExpiry(nil, time.Now().UTC()); err != nil {
 		t.Fatalf("SetExpiry(nil): %v", err)
 	}
 	if err := r.Update(ctx, a); err != nil {

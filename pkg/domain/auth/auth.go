@@ -30,6 +30,11 @@ const apiKeyPrefix = "ag_"
 
 const apiKeyEntropyBytes = 32
 
+const (
+	MaxOwnedKeyLifetime = 90 * 24 * time.Hour
+	ownedKeyName        = "personal"
+)
+
 // Non-secret preview of a generated api_key. Kept short so list/get can show
 // enough for operators to recognize a key without storing the plaintext.
 const (
@@ -174,7 +179,7 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 	if err != nil {
 		return nil, err
 	}
-	if err := a.SetExpiry(expiresAt); err != nil {
+	if err := a.SetExpiry(expiresAt, a.CreatedAt); err != nil {
 		return nil, err
 	}
 	a.RawKey = rawKey
@@ -183,11 +188,44 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 	return a, nil
 }
 
+func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, expiresAt, now time.Time) (*Auth, error) {
+	if err := ValidateOwner(ownerID); err != nil {
+		return nil, err
+	}
+	if err := ValidateOwnedExpiry(expiresAt, now); err != nil {
+		return nil, err
+	}
+	a, err := NewAPIKeyAuth(gatewayID, ownedKeyName, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	at := expiresAt.UTC()
+	a.ExpiresAt = &at
+	a.OwnerID = ownerID
+	a.CreatedAt = now.UTC()
+	a.UpdatedAt = a.CreatedAt
+	return a, nil
+}
+
+func ValidateOwner(ownerID string) error {
+	if strings.TrimSpace(ownerID) == "" {
+		return ErrInvalidOwner
+	}
+	return nil
+}
+
+func ValidateOwnedExpiry(expiresAt, now time.Time) error {
+	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxOwnedKeyLifetime)) {
+		return ErrOwnedExpiry
+	}
+	return nil
+}
+
 // SetExpiry attaches or clears the expiry. An expiry already in the past is
 // refused rather than stored: a key that is dead the moment it is handed over
 // is never what was meant, and the error says so at the point the mistake was
 // made instead of at the first request that fails.
-func (a *Auth) SetExpiry(expiresAt *time.Time) error {
+func (a *Auth) SetExpiry(expiresAt *time.Time, now time.Time) error {
 	if expiresAt == nil {
 		a.ExpiresAt = nil
 		return nil
@@ -195,7 +233,7 @@ func (a *Auth) SetExpiry(expiresAt *time.Time) error {
 	if a.Type != TypeAPIKey {
 		return fmt.Errorf("%w: only api_key auths expire; an identity provider's tokens carry their own lifetime", ErrInvalidType)
 	}
-	if !expiresAt.After(time.Now().UTC()) {
+	if !expiresAt.After(now) {
 		return ErrExpiryInThePast
 	}
 	utc := expiresAt.UTC()
@@ -211,7 +249,7 @@ func (a *Auth) SetExpiry(expiresAt *time.Time) error {
 // Everything else about the auth is untouched — its id, its name and every
 // consumer it is attached to — which is what separates rotating from revoking
 // and issuing again: the application keeps its key, the key gets a new secret.
-func (a *Auth) RotateAPIKey() (previousHash string, err error) {
+func (a *Auth) RotateAPIKey(now time.Time) (previousHash string, err error) {
 	if a.Type != TypeAPIKey {
 		return "", fmt.Errorf("%w: only api_key auths carry a secret to rotate", ErrInvalidType)
 	}
@@ -223,7 +261,7 @@ func (a *Auth) RotateAPIKey() (previousHash string, err error) {
 	a.RawKey = rawKey
 	a.KeyHash = HashAPIKey(rawKey)
 	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
-	a.UpdatedAt = time.Now().UTC()
+	a.UpdatedAt = now.UTC()
 	return previousHash, nil
 }
 

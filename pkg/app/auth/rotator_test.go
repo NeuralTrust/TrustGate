@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
@@ -63,7 +64,7 @@ func TestRotator_Rotate_ReplacesTheSecretAndKeepsTheAuth(t *testing.T) {
 	// presented it.
 	keyCache.Set(firstHash, existing)
 
-	rotated, err := appauth.NewRotator(repo, manager, publisher, newTestLogger(), nil).
+	rotated, err := appauth.NewRotator(repo, manager, publisher, newTestLogger(), nil, time.Now).
 		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
 	require.NoError(t, err)
 
@@ -89,7 +90,7 @@ func TestRotator_Rotate_RefusesAnAuthThatIsNotAnAPIKey(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, oauth.ID).Return(oauth, nil).Once()
 
-	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
+	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, time.Now).
 		Rotate(context.Background(), appauth.RotateInput{ID: oauth.ID, GatewayID: gwID})
 	require.ErrorIs(t, err, commonerrors.ErrValidation)
 }
@@ -102,7 +103,7 @@ func TestRotator_Rotate_RefusesAnAuthOfAnotherGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
+	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, time.Now).
 		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: ids.New[ids.GatewayKind]()})
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
 }
@@ -134,7 +135,7 @@ func TestRotator_Rotate_OwnedKeyNeedsItsOwner(t *testing.T) {
 				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
 			}
 
-			_, err := appauth.NewRotator(repo, newCacheManager(), publisher, newTestLogger(), signaler).
+			_, err := appauth.NewRotator(repo, newCacheManager(), publisher, newTestLogger(), signaler, time.Now).
 				Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID, OwnerID: tc.caller})
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
