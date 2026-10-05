@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -115,7 +116,7 @@ func (s *PinnedToolsService) RecordPending(
 	// Every response below says what was skipped; accepted is what survived.
 	result := func(recorded, dropped int) *snapshotpb.RecordPendingToolsResponse {
 		return &snapshotpb.RecordPendingToolsResponse{
-			Recorded: int32(recorded), Dropped: int32(dropped), Accepted: int32(len(candidates)), Skipped: int32(skipped),
+			Recorded: count32(recorded), Dropped: count32(dropped), Accepted: count32(len(candidates)), Skipped: count32(skipped),
 		}
 	}
 	if len(candidates) == 0 {
@@ -179,4 +180,14 @@ func candidatesFromRequest(tools []*snapshotpb.PendingTool) (valid []registrydom
 
 func isNotFound(err error) bool {
 	return errors.Is(err, commonerrors.ErrNotFound)
+}
+
+// count32 narrows a response count to the proto's int32. Counts are bounded by
+// the per-call tool limit, so the clamp never fires; it only keeps the
+// conversion provably safe.
+func count32(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n) // #nosec G115 -- clamped to math.MaxInt32 just above
 }
