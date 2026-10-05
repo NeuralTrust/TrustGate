@@ -24,6 +24,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
@@ -176,7 +177,15 @@ func modelFor(req *infracontext.RequestContext) string {
 			return m
 		}
 	}
+	if req.DefaultModel != "" && !namesModel(req.RequestedModel) {
+		return req.DefaultModel
+	}
 	return req.RequestedModel
+}
+
+func namesModel(ref string) bool {
+	intent, err := routingdomain.ParseModelRef(ref)
+	return err == nil && intent.Model != ""
 }
 
 func (p *Plugin) budgetGate(

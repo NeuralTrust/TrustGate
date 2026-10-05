@@ -15,6 +15,7 @@
 package tokenratelimit
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -347,6 +348,56 @@ func TestPlugin_KeyPartition_OverBudgetAnswers429WithKeyScope(t *testing.T) {
 
 			got := execKey(context.Background(), t, p, policy.StagePreRequest, policy.ModeEnforce, tt.settings, tt.req, &infracontext.ResponseContext{})
 			assert.Equal(t, keyOutcome{status: http.StatusTooManyRequests, errType: tt.wantType, scope: partitionKey, decision: "block"}, got)
+		})
+	}
+}
+
+func servedDefault(body, requested, defaultModel string) *infracontext.RequestContext {
+	req := llmRequest(body, nil)
+	req.RequestedModel, req.DefaultModel = requested, defaultModel
+	req.RegistryPricing = &domain.Pricing{Overrides: map[string]domain.PriceOverride{"gpt-4o-mini": {Input: 0.001}}}
+	return req
+}
+
+func TestPlugin_KeyDollars_PricesTheModelThatWillBeServed(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *infracontext.RequestContext
+		want keyOutcome
+	}{
+		{name: "no model takes the route default", req: servedDefault(`{"messages":[]}`, "", "gpt-4o-mini"), want: keyOutcome{status: http.StatusOK}},
+		{name: "auto takes the route default", req: servedDefault(`{"messages":[]}`, "auto", "gpt-4o-mini"), want: keyOutcome{status: http.StatusOK}},
+		{name: "a pool alias takes the member default", req: servedDefault(`{"messages":[]}`, "pool:fast", "gpt-4o-mini"), want: keyOutcome{status: http.StatusOK}},
+		{name: "the body model outranks the default", req: servedDefault(`{"model":"gpt-4o"}`, "gpt-4o", "gpt-4o-mini"),
+			want: keyOutcome{status: http.StatusForbidden, errType: modelUnpriced, scope: partitionKey, decision: "block"}},
+		{name: "a model named outside the body outranks the default", req: servedDefault(``, "gpt-4o", "gpt-4o-mini"),
+			want: keyOutcome{status: http.StatusForbidden, errType: modelUnpriced, scope: partitionKey, decision: "block"}},
+		{name: "no default leaves auto unpriced", req: servedDefault(`{"messages":[]}`, "auto", ""),
+			want: keyOutcome{status: http.StatusForbidden, errType: modelUnpriced, scope: partitionKey, decision: "block"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := execKey(context.Background(), t, newTestPlugin(t), policy.StagePreRequest, policy.ModeEnforce, keyDollarBudget(1), tt.req, &infracontext.ResponseContext{})
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPlugin_KeyDollars_ModelLessStreamAccruesAgainstTheDefault(t *testing.T) {
+	for _, requested := range []string{"", "auto", "pool:fast"} {
+		t.Run(cmp.Or(requested, "no model"), func(t *testing.T) {
+			now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+			p, mr := newClockedPlugin(t, &now)
+			settings := keyDollarBudget(0.005)
+			req := servedDefault(`{"messages":[],"stream":true}`, requested, "gpt-4o-mini")
+			req.Metadata = map[string]any{adapter.MetadataUsageKey: &adapter.CanonicalUsage{InputTokens: 10, TotalTokens: 10}}
+			streamed := &infracontext.ResponseContext{StatusCode: http.StatusOK, Streaming: true}
+
+			assert.Equal(t, keyOutcome{status: http.StatusOK}, execKey(context.Background(), t, p, policy.StagePostResponse, policy.ModeEnforce, settings, req, streamed))
+			mr.CheckGet(t, "trl:tk-1:key:owner:alice", "10000")
+
+			got := execKey(context.Background(), t, p, policy.StagePreRequest, policy.ModeEnforce, settings, req, &infracontext.ResponseContext{})
+			assert.Equal(t, keyOutcome{status: http.StatusTooManyRequests, errType: dollarBudgetExceeded, scope: partitionKey, decision: "block"}, got)
 		})
 	}
 }

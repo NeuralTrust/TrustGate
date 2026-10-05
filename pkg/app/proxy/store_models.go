@@ -79,7 +79,7 @@ func (s *storeModels) cards(ctx context.Context, in StoreModelsInput) iter.Seq2[
 	return func(yield func(ModelCard, error) bool) {
 		listed := make(map[string][]catalogdomain.Model)
 		for _, link := range storeScope(in.Links) {
-			cards, err := s.lister.collect(ctx, ListModelsInput{Consumer: link.Consumer, Data: in.Data, Keep: link.primaryFilter()}, listed)
+			cards, err := s.lister.collect(ctx, ListModelsInput{Consumer: link.Consumer, Data: in.Data, Keep: link.primary}, listed)
 			if err != nil {
 				yield(ModelCard{}, err)
 				return

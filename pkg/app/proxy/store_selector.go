@@ -25,7 +25,6 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
@@ -134,7 +133,7 @@ func (s *storeSelector) admit(ctx context.Context, query candidateQuery, link *s
 	needsDefault := query.intent.IsZero() && query.needed == ""
 	admitted := false
 	for _, c := range candidates.Candidates() {
-		if !primaryCandidate(link.Consumer, c) || (needsDefault && c.Default == "") {
+		if !link.primary(c) || (needsDefault && c.Default == "") {
 			continue
 		}
 		if spec := matchSpecificity(query.intent, c); !admitted || spec < choice.specificity {
@@ -158,12 +157,6 @@ func (s *storeSelector) logRefusedLink(ctx context.Context, link *scopedLink, er
 		slog.Int("priority", link.Link.Priority),
 		slog.String("reason", err.Error()),
 	)
-}
-
-func primaryCandidate(rc *appconsumer.RoutableConsumer, c routingdomain.Candidate) bool {
-	return !c.FallbackOnly() && slices.ContainsFunc(rc.Registries, func(reg *domain.Registry) bool {
-		return reg.ID == c.Registry.ID
-	})
 }
 
 type specificity int

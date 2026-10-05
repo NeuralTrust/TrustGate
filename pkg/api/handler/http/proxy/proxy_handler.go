@@ -185,7 +185,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 }
 
 func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRoute) error {
-	if h.storeSelector == nil || h.storeModels == nil {
+	if h.storeSelector == nil || h.storeModels == nil || route.Capability == apiresolver.CapabilityFiles {
 		return writeProxyError(c, errPathNotFound)
 	}
 	gatewayID, authCtx, data, err := requestCaller(c)
@@ -199,11 +199,13 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	if !route.AllowsMethod(c.Method()) {
 		return methodNotAllowed(c, route)
 	}
+	stampKeyOwner(c, authCtx.OwnerID)
 	links := data.StoreLinks(authCtx.AuthID)
 	if route.Capability == apiresolver.CapabilityModels {
 		return serveModels(c, route, h.storeModels, appproxy.StoreModelsInput{Links: links, Data: data})
 	}
-	limited, err := h.forwarder.CheckRateLimit(c.UserContext(), gatewayID)
+	reqCtx := newForwardRequest(c, gatewayID, route, authCtx)
+	limited, err := h.forwarder.Precheck(c.UserContext(), gatewayID, reqCtx)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
@@ -211,7 +213,6 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 		relayHeaders(c, limited.Headers)
 		return c.Status(limited.StatusCode).Send(limited.Body)
 	}
-	reqCtx := newForwardRequest(c, gatewayID, route, authCtx)
 	sel, err := h.storeSelector.Select(c.UserContext(), appproxy.StoreSelectInput{Links: links, Data: data, Request: reqCtx})
 	if err != nil {
 		return writeProxyError(c, err)
@@ -219,17 +220,14 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	consumer := sel.Link.Consumer
 	authCtx.ConsumerID = consumer.Consumer.ID
 	stampConsumerTrace(c, consumer)
-	if err := stampEndUser(c, consumer); err != nil {
-		return writeProxyError(c, err)
-	}
 	return h.forward(c, appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  consumer,
-		Data:      data,
-		Request:   reqCtx,
-		Keep:      sel.Keep,
-		Resolved:  &sel.ResolvedRouting,
-		RouteSlug: route.ConsumerSlug,
+		GatewayID:  gatewayID,
+		Consumer:   consumer,
+		Data:       data,
+		Request:    reqCtx,
+		Resolved:   &sel.ResolvedRouting,
+		RouteSlug:  route.ConsumerSlug,
+		Prechecked: true,
 	})
 }
 
@@ -271,6 +269,15 @@ func stampEndUser(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) error {
 		rt.SetEndUser(endUser)
 	}
 	return nil
+}
+
+// stampKeyOwner attributes a store request to the owner of the personal key
+// it was authenticated with. The key is the person, so neither the end-user
+// header nor a front-end's identity headers may name someone else.
+func stampKeyOwner(c *fiber.Ctx, ownerID string) {
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.SetEndUser(ownerID)
+	}
 }
 
 func newForwardRequest(

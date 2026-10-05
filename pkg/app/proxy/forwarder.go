@@ -58,9 +58,12 @@ type ForwardInput struct {
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
 	Request   *infracontext.RequestContext
-	Keep      CandidateFilter
 	Resolved  *ResolvedRouting
 	RouteSlug string
+	// Prechecked reports that the caller already ran Precheck on Request, so
+	// Forward neither refuses an ambiguous body nor charges the plan limit a
+	// second time.
+	Prechecked bool
 }
 
 type ForwardResult struct {
@@ -94,7 +97,7 @@ type forwardRequestDTO struct {
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
 type Forwarder interface {
 	Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error)
-	CheckRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error)
+	Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error)
 }
 
 var _ Forwarder = (*forwarder)(nil)
@@ -168,11 +171,8 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
-	if in.Resolved == nil {
-		if ambiguousChatBody(in.Request) {
-			return nil, ErrAmbiguousRequestBody
-		}
-		if result, err := f.CheckRateLimit(ctx, in.GatewayID); result != nil || err != nil {
+	if !in.Prechecked {
+		if result, err := f.Precheck(ctx, in.GatewayID, in.Request); result != nil || err != nil {
 			return result, err
 		}
 	}
@@ -192,6 +192,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	}
 
 	stampTarget(in.Request, route.route.Registry)
+	_, in.Request.DefaultModel = routePolicy(candidates, in.Consumer, route.route)
 	resp := &infracontext.ResponseContext{
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
@@ -483,7 +484,11 @@ func (f *forwarder) stampContinuation(ctx context.Context, req *infracontext.Req
 	if f.sessions == nil || req == nil || req.SessionID == "" {
 		return
 	}
-	req.PreviousResponseID = f.sessions.LastTurnID(ctx, req.GatewayID, req.SessionID)
+	req.PreviousResponseID = f.sessions.LastTurnID(ctx, sessionScope(req), req.SessionID)
+}
+
+func sessionScope(req *infracontext.RequestContext) appsession.Scope {
+	return appsession.Scope{GatewayID: req.GatewayID, OwnerID: req.OwnerID}
 }
 
 func (f *forwarder) recordSession(
@@ -499,7 +504,7 @@ func (f *forwarder) recordSession(
 		return
 	}
 	f.sessions.Record(ctx, appsession.RecordInput{
-		GatewayID: req.GatewayID,
+		Scope:     sessionScope(req),
 		SessionID: req.SessionID,
 		TurnID:    turnID,
 		Provider:  provider,
