@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -327,4 +329,103 @@ func TestDBLessDataPlane_ConvergesOnInPlaceEditOfServedGateway(t *testing.T) {
 
 	require.True(t, pollProxyStatusAt(t, base, apiKey, path, chatRequestModel("gpt-4o-mini"), http.StatusForbidden, 30*time.Second),
 		"db-less plane never converged to the in-place model-policy edit; a cache keyed by the existing gateway stayed warm")
+}
+
+type countingProxy struct {
+	listener net.Listener
+	bytes    atomic.Int64
+}
+
+type countingWriter struct {
+	w io.Writer
+	n *atomic.Int64
+}
+
+func (c countingWriter) Write(b []byte) (int, error) {
+	c.n.Add(int64(len(b)))
+	return c.w.Write(b)
+}
+
+func startCountingProxy(t *testing.T, target string) *countingProxy {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	p := &countingProxy{listener: listener}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go p.pipe(conn, target)
+		}
+	}()
+	return p
+}
+
+func (p *countingProxy) pipe(client net.Conn, target string) {
+	defer func() { _ = client.Close() }()
+	server, err := net.Dial("tcp", target)
+	if err != nil {
+		return
+	}
+	defer func() { _ = server.Close() }()
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(countingWriter{w: server, n: &p.bytes}, client); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(countingWriter{w: client, n: &p.bytes}, server); done <- struct{}{} }()
+	<-done
+}
+
+func (p *countingProxy) quiet(t *testing.T) int64 {
+	t.Helper()
+	last := p.bytes.Load()
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+		time.Sleep(time.Second)
+		now := p.bytes.Load()
+		if now == last {
+			return now
+		}
+		last = now
+	}
+	t.Fatal("the config-sync connection never went quiet")
+	return 0
+}
+
+func TestDBLessDataPlane_LLMStore(t *testing.T) {
+	defer Track(t, "DBLessDataPlane")()
+	f := setupStoreFixture(t, map[string]any{"slug": uniqueName("dbless-store")})
+	configSync := startCountingProxy(t, fmt.Sprintf("localhost:%d", serverConfigSyncGRPCPort))
+	port := GlobalConfig.Server.ProxyPort + 103
+	overrides := append(dblessOverrides(filepath.Join(t.TempDir(), "snapshot.lkg"), dblessConfigSyncToken, uniqueName("dbless-store"), port),
+		"CONFIG_SYNC_GRPC_ENDPOINT="+configSync.listener.Addr().String(), "CONFIG_SYNC_POLL_INTERVAL=1h", "CONFIG_SYNC_GRPC_KEEPALIVE_TIME=1h")
+	base, _ := startDBLessProxyPlane(t, port, overrides)
+	require.True(t, pollDBLessReady(base, 30*time.Second), "db-less plane never became ready after the first snapshot pull")
+	eventuallyStore(t, storeServes(t, base, f, "gpt6", http.StatusOK, "store-d-openai"), "the db-less plane never served the store")
+
+	assertWorkedExample(t, base, f)
+
+	settled := configSync.quiet(t)
+	require.Positive(t, settled, "the db-less plane syncs through the counting proxy")
+	status, body := storeChat(t, base, f.gatewayID, f.key, "gpt6")
+	require.Equal(t, http.StatusOK, status, body)
+	require.Contains(t, body, "store-d-openai")
+	assert.Equal(t, settled, configSync.bytes.Load(), "a warm store request makes no config-sync call")
+
+	AttachAuthLink(t, f.gatewayID, f.consumers["B"], f.keyID, "group", 0, time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC))
+	eventuallyStore(t, storeServes(t, base, f, "opus-5.5", http.StatusForbidden, storeGuard("B")),
+		"the priority change never reached the db-less plane")
+
+	for _, name := range []string{"A", "B", "D"} {
+		DetachAuth(t, f.gatewayID, f.consumers[name], f.keyID)
+	}
+	eventuallyStore(t, func() bool {
+		cards := storeModels(t, base, f.gatewayID, f.key)
+		return len(cards) == 1 && cards["opus-5.5"] == "anthropic"
+	}, "after the detaches the db-less listing holds only C's model")
+
+	status, _ = sendRequest(t, http.MethodDelete, fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, f.gatewayID, f.keyID), nil, nil)
+	require.Equal(t, http.StatusNoContent, status)
+	eventuallyStore(t, func() bool { return storeModelsStatus(t, base, f.gatewayID, f.key) == http.StatusUnauthorized },
+		"the admin revocation never reached the db-less plane")
 }
