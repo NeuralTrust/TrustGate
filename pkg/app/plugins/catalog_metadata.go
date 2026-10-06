@@ -899,7 +899,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"openai_moderation": {
 		name:        "OpenAI Moderation",
 		group:       groupGuardrails,
-		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. Fails closed in enforce mode. Text-only. Streamed responses are moderated block by block only when streaming is enabled for the policy (settings.streaming.enabled, set through the API; it is off by default). Otherwise they pass through unmoderated, and the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. Fails closed in enforce mode. Text-only. Streamed responses are moderated block by block by default, and a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed; set settings.streaming.enabled to false to leave them unmoderated, in which case the trace marks the policy as skipped with reason streaming_disabled.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1045,7 +1045,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"bedrock_guardrail": {
 		name:        "AWS Bedrock Guardrail",
 		group:       groupGuardrails,
-		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. Streamed responses are inspected block by block only when streaming is enabled for the policy (settings.streaming.enabled, set through the API; it is off by default). Otherwise they pass through uninspected, and the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. Streamed responses are inspected block by block only when streaming is enabled for the policy (settings.streaming.enabled: true, set through the API; it is off by default because every block calls ApplyGuardrail again and AWS rate-limits it per account and region). Once enabled, a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed. Otherwise streamed responses pass through uninspected, and the trace marks the policy as skipped with reason streaming_disabled.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1135,7 +1135,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"google_model_armor": {
 		name:        "Google Model Armor",
 		group:       groupGuardrails,
-		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streamed responses are inspected block by block only when streaming is enabled for the policy (settings.streaming.enabled, set through the API; it is off by default). Otherwise they pass through uninspected, and the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streamed responses are inspected block by block by default, and a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed; set settings.streaming.enabled to false to leave them uninspected, in which case the trace marks the policy as skipped with reason streaming_disabled.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{

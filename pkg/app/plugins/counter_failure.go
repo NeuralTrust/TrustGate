@@ -74,7 +74,7 @@ func HandleCounterFailure(f CounterFailure) (*Result, error) {
 	if f.Ctx != nil && f.Ctx.Err() != nil {
 		return nil, f.Err
 	}
-	SetDecisionFromOutcome(f.Event, decisionFailedOpen)
+	SetDecisionFromOutcome(f.Event, DecisionFailedOpen)
 	logCounterFailure(f)
 	return &Result{StatusCode: http.StatusOK}, nil
 }
@@ -85,7 +85,7 @@ func logCounterFailure(f CounterFailure) {
 		slog.String("stage", string(f.Stage)),
 		slog.String("mode", string(f.Mode)),
 		slog.String("reason", string(FailureCounterUnavailable)),
-		slog.String("decision", decisionFailedOpen),
+		slog.String("decision", DecisionFailedOpen),
 	}
 	if f.Detail != "" {
 		attrs = append(attrs, slog.String("detail", f.Detail))

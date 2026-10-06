@@ -94,5 +94,10 @@ func validateExchangeIdentity(ctx context.Context, auths AuthLookup, gatewayID i
 		return fmt.Errorf("%w: identity_id %s needs an issuer and exchange client credentials to sign the exchange",
 			domain.ErrInvalidMCPTarget, id)
 	}
+	if cfg.SessionMode && cfg.Interactive() {
+		return fmt.Errorf("%w: identity_id %s signs people in with gateway session tokens (session_mode), "+
+			"which the identity provider cannot exchange; turn session mode off on that identity",
+			domain.ErrInvalidMCPTarget, id)
+	}
 	return nil
 }

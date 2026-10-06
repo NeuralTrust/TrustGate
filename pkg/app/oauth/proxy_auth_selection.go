@@ -34,18 +34,17 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 		return m.auth, nil
 	}
 	if m.matched {
-		// The consumer authenticates with a credential of its own, so a session
-		// brokered here would be refused by the auth chain. Advertising a login
-		// would only walk the user through a flow that cannot reach it.
-		if m.protected {
-			return nil, oauthErr("invalid_target",
-				"this MCP server authenticates with a credential of its own: send it on every request "+
-					"(an api key travels in the X-AG-API-Key header) instead of signing in here")
+		// The auth chain admits only the consumer's own auths and, when it
+		// allows, the built-in default: any other IdP would mint a session the
+		// chain refuses, and the client would loop on 401.
+		if m.defaultIdPAdmitted {
+			if def := p.credentials.DefaultOAuth2ForGateway(m.gatewayID); def != nil {
+				return def, nil
+			}
 		}
-		// The resource pinned a consumer but it has no OAuth2 identity provider of
-		// its own: fall back to the single IdP configured on that consumer's
-		// gateway instead of scanning every tenant on the platform.
-		return p.gatewayScopedAuth(ctx, m.gatewayID)
+		return nil, oauthErr("invalid_target",
+			"this MCP server's consumer has no identity provider people can sign in through; "+
+				"attach an identity that lets people sign in, or call it with the consumer's own credential")
 	}
 	// No usable resource indicator, but the request was still routed to a
 	// specific gateway (by subdomain or by the gateway-slug header). Scope the
@@ -105,22 +104,20 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 type resourceMatch struct {
 	// auth is the OAuth2 provider attached to the consumer, if any.
 	auth *authdomain.Auth
-	// gatewayID owns the addressed consumer, so a fallback can be scoped to
-	// that tenant rather than the whole platform.
+	// gatewayID owns the addressed consumer; the built-in default is bound to
+	// it.
 	gatewayID ids.GatewayID
 	// matched reports whether the resource addressed a known consumer.
 	matched bool
-	// protected reports whether the consumer authenticates with a credential of
-	// its own, so no identity-provider fallback applies. Keyed on
-	// Consumer.WantsSignIn rather than on any enabled auth: for a consumer whose
-	// users sign in, only an identity provider of its own counts.
-	protected bool
+	// defaultIdPAdmitted reports whether the auth chain lets the consumer in
+	// through the built-in identity provider.
+	defaultIdPAdmitted bool
 }
 
 // resourceAuth resolves the RFC 8707 resource indicator to the OAuth2 auth
 // attached to the addressed consumer. When the consumer is found but exposes no
-// usable OAuth2 auth, it still reports the consumer's gateway so the caller can
-// scope the identity-provider fallback to that tenant.
+// usable OAuth2 auth, it still reports the consumer's gateway, which the
+// built-in default is bound to, and whether the auth chain admits that default.
 func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceMatch {
 	if p.paths == nil || resource == "" {
 		return resourceMatch{}
@@ -138,42 +135,30 @@ func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceM
 	if len(matches) == 0 {
 		return resourceMatch{}
 	}
-	providers, protected := pathOAuth2Auths(matches)
-	out := resourceMatch{gatewayID: matches[0].GatewayID, matched: true, protected: protected}
+	providers := pathOAuth2Auths(matches)
+	out := resourceMatch{
+		gatewayID:          matches[0].GatewayID,
+		matched:            true,
+		defaultIdPAdmitted: appconsumer.DefaultIdPAdmitted(matches),
+	}
 	if len(providers) > 0 {
 		out.auth = providers[0]
 	}
 	return out
 }
 
-// pathOAuth2Auths returns the usable OAuth2 providers attached to the matched
-// paths, and whether those paths rule out brokering a login here.
-//
-// The predicate is Consumer.WantsSignIn, the same one the request-time auth
-// chain asks: a consumer whose users sign in only presents its own identity
-// provider as a reason not to broker, because for it an api key or a client
-// certificate is a residual row the chain ignores rather than the credential.
-// Reading ActsForUsers here instead let an app-source consumer advertise a
-// login the chain then refused (RUN-1501). An unmatched consumer is nil, so
-// this stays protected and fails closed.
-func pathOAuth2Auths(matches []appconsumer.PathMatch) ([]*authdomain.Auth, bool) {
+// pathOAuth2Auths returns the enabled interactive OAuth2 providers attached to
+// the matched paths.
+func pathOAuth2Auths(matches []appconsumer.PathMatch) []*authdomain.Auth {
 	var providers []*authdomain.Auth
-	protected := false
 	for _, m := range matches {
-		wantsSignIn := m.Consumer.WantsSignIn()
 		for _, a := range m.Auths {
-			if !a.Enabled {
-				continue
-			}
-			if !wantsSignIn || a.Type.IsIdentityProvider() {
-				protected = true
-			}
-			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2.Interactive() {
+			if a.Enabled && a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2.Interactive() {
 				providers = append(providers, a)
 			}
 		}
 	}
-	return providers, protected
+	return providers
 }
 
 func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorization) (*authdomain.Auth, error) {

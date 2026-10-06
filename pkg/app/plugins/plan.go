@@ -180,6 +180,11 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
+const (
+	streamOnErrorFailOpen   = "fail_open"
+	streamOnErrorFailClosed = "fail_closed"
+)
+
 // StreamPlan reports whether any entry of the stage opted into per-segment
 // inspection *and* has it enabled, and yields the options that entry runs
 // under. The stream guard is built only when it reports true, so a gateway
@@ -190,24 +195,44 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 // hand the caller no head_chars and no on_error, and the caller would run on
 // defaults an operator never asked for.
 //
-// The first participating entry that owns stream options wins. One stream
-// carries one head gate, and the entries are already ordered by priority. A
-// passive participant (StreamOptionsOwner returning false, such as a local
+// The first participating entry that owns stream options supplies the head
+// gate and the cadence (head_chars, min_chars_between_evals, max_hold_ms): one
+// stream carries one of each, and the entries are already ordered by priority.
+// Merging those would invent a cadence no operator asked for.
+//
+// Two options are merged instead, because "first wins" let a policy with no
+// streaming block, which is now a participant, override another participant's
+// explicit choice or run its provider over a payload it cannot take:
+//
+//   - on_error is fail_closed when any ENFORCING owner resolved fail_closed,
+//     and fail_open otherwise. An observe entry never blocks, so its value
+//     decides nothing, and a passive rewriter never fails a call. The guard
+//     applies this one value only to an error the executor hands it, and
+//     RunStreamSegment hands back only the error of an entry that resolved
+//     fail_closed (or states nothing): an enforcing entry that resolved
+//     fail_open is absorbed per entry, like an observe one. So the merge is
+//     what makes the guard CUT on a fail_closed entry's error, and it can no
+//     longer cut on behalf of a fail_open entry that failed beside it.
+//   - max_accumulated_bytes is the largest any participant asks for, passive
+//     ones included, and the executor narrows each entry to its own
+//     (segmentWithin). No provider receives a larger prefix than its policy
+//     allows, and a provider with a small per-request limit does not shrink
+//     the context every other policy inspects (RUN-1745 F10).
+//
+// A passive participant (StreamOptionsOwner returning false, such as a local
 // rewriter) yields to any owner, whatever the order, and its own options are
 // used only when it is the sole participant.
-//
-// MaxAccumulatedBytes is the exception: the stream keeps the largest window
-// any participant asked for, and the executor narrows each entry to its own
-// (segmentWithin). A provider with a small per-request limit then bounds only
-// its own calls, not the context every other policy inspects.
 func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 	if p == nil {
 		return false, StreamOptions{}
 	}
 	var (
-		chosen, passive      StreamOptions
-		hasOwner, hasPassive bool
-		maxAccumulatedBytes  int
+		passive    StreamOptions
+		hasPassive bool
+		owner      StreamOptions
+		hasOwner   bool
+		failClosed bool
+		maxBytes   int
 	)
 	for _, entry := range p.byStage[stage] {
 		inspector, ok := streamInspector(entry.plugin)
@@ -218,25 +243,37 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		if !enabled {
 			continue
 		}
-		maxAccumulatedBytes = max(maxAccumulatedBytes, opts.MaxAccumulatedBytes)
-		switch {
-		case ownsStreamOptions(entry.plugin):
-			if !hasOwner {
-				chosen, hasOwner = opts, true
+		maxBytes = max(maxBytes, opts.MaxAccumulatedBytes)
+		if !ownsStreamOptions(entry.plugin) {
+			if !hasPassive {
+				passive, hasPassive = opts, true
 			}
-		case !hasPassive:
-			passive, hasPassive = opts, true
+			continue
+		}
+		if !hasOwner {
+			owner, hasOwner = opts, true
+		}
+		if Blocks(entry.mode) && opts.OnError == streamOnErrorFailClosed {
+			failClosed = true
 		}
 	}
-	switch {
-	case hasOwner:
-	case hasPassive:
-		chosen = passive
-	default:
-		return false, StreamOptions{}
+	if hasOwner {
+		owner.OnError = streamOnErrorFailOpen
+		if failClosed {
+			owner.OnError = streamOnErrorFailClosed
+		}
+		if maxBytes > 0 {
+			owner.MaxAccumulatedBytes = maxBytes
+		}
+		return true, owner
 	}
-	chosen.MaxAccumulatedBytes = maxAccumulatedBytes
-	return true, chosen
+	if hasPassive {
+		if maxBytes > 0 {
+			passive.MaxAccumulatedBytes = maxBytes
+		}
+		return true, passive
+	}
+	return false, StreamOptions{}
 }
 
 func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
