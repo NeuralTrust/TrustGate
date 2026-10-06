@@ -858,3 +858,17 @@ func TestExecuteExplicitNoBlockNoThresholdsStillExecutes(t *testing.T) {
 	require.True(t, ok, "expected ModerationData extras")
 	assert.Equal(t, decisionAllowed, data.Decision)
 }
+
+func TestValidateSettingsWriteRejectsFinalPassOptOut(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
+	settings := noThresholdSettings()
+	settings["streaming"] = map[string]any{"final_pass": false}
+
+	err := p.ValidateSettingsWrite(settings, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "streaming.final_pass")
+	require.NoError(t, p.ValidateSettingsWrite(settings, settings),
+		"a policy already stored with final_pass: false must stay editable")
+	require.NoError(t, p.ValidateConfig(settings), "the rule applies on write only, never when a policy loads")
+}
