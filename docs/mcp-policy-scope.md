@@ -459,9 +459,9 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 - If the composed mask cannot be applied to the held text, the stream is cut, as
   for a single rewriter.
 
-**Each streaming entry is sent its own window.** One stream has one set of
-block-loop options (head gate, cadence, `on_error`), taken from the first entry
-that owns them, usually `trustguard`. The stream keeps the largest
+**Each streaming entry is sent its own window.** One stream has one head gate
+and one cadence, taken from the first entry that owns them, usually
+`trustguard`; `on_error` is merged across policies. The stream keeps the largest
 `max_accumulated_bytes` of its participants, and each entry is handed only the
 tail of the text that its own `streaming.max_accumulated_bytes` allows. So a
 policy's setting bounds what its provider receives whatever policy owns the
@@ -474,12 +474,13 @@ providers' per-request limits:
 
 - `google_model_armor`: 64 KiB, and never more. Model Armor skips its filters
   above 65,536 tokens, which the plugin counts as a filter that did not run, so
-  a larger payload would cut a `fail_closed` stream. Google does not raise this
-  limit, so a higher setting is treated as 64 KiB.
-- `bedrock_guardrail`: 24 KiB. AWS bounds each `ApplyGuardrail` input per
-  guardrail policy in text units of up to 1,000 characters. The defaults go as
-  low as 25 units (for example in eu-west-3, eu-south-1 and sa-east-1) and AWS
-  does not document what a larger input gets. The quotas are adjustable, so a
+  a larger payload would cut a `fail_closed` stream or release the block
+  uninspected on `fail_open`. Google does not raise this limit, so a higher
+  setting is treated as 64 KiB.
+- `bedrock_guardrail` (streaming is opt-in): 24 KiB. AWS bounds each
+  `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
+  characters. The defaults go as low as 25 units (for example in eu-west-3,
+  eu-south-1 and sa-east-1) and AWS does not document what a larger input gets. The quotas are adjustable, so a
   larger setting is honoured; raise it only after raising the quota. The window
   bounds the size of each call, not their rate: in regions where the
   content-filter quota is 25 text units per second, a long stream also needs

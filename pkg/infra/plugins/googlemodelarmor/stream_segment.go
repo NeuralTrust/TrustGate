@@ -41,13 +41,9 @@ var _ appplugins.StreamInspector = (*Plugin)(nil)
 // StreamSettings reports whether these policy settings ask for per-block
 // sanitization of the response leg, and the options the block loop must run
 // under. Implementing InspectSegment is not the opt-in on its own: this plugin
-// is on every pre_response chain that names it, and streaming.enabled defaults
-// to false, so without this the head gate would be built for policies that
-// never asked for it.
+// is on every pre_response chain that names it, so this is what keeps the head
+// gate off for a policy that opted out with streaming.enabled: false.
 func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
-	if _, ok := settings["streaming"]; !ok {
-		return false, appplugins.StreamOptions{}
-	}
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
@@ -211,6 +207,10 @@ func (p *Plugin) recordStreamOutcome(
 		data.Decision = decisionAnonymized
 	case len(stream.Findings) > 0:
 		data.Decision = decisionReported
+	// A positive finding outranks a missing inspection, so a failure only labels
+	// a stream that reported nothing.
+	case pluginutil.StreamFailedOpen(seg.Report):
+		data.Decision = appplugins.DecisionFailedOpen
 	default:
 		data.Decision = decisionAllowed
 	}

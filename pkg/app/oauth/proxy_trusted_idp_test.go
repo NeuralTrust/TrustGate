@@ -24,6 +24,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	oidcauth "github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
@@ -50,7 +51,7 @@ func guardedDefaultIdP(t *testing.T, idp *httptest.Server, issuer string, truste
 	})
 	def.Config.OAuth2.Trusted = trusted
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/store/mcp": {{GatewayID: ids.GatewayID{}}},
+		"/store/mcp": {{GatewayID: ids.GatewayID{}, Consumer: consumerdomain.BuildStoreConsumer(ids.GatewayID{})}},
 	}}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
 	proxy := NewAuthProxy(finder, paths, nil, newMemFlowStore(), nil, newTestSigner(t), nil,

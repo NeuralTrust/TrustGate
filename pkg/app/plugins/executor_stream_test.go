@@ -612,7 +612,7 @@ func TestExecutor_RunStreamSegment_ObserveEntryErrorFailsOpen(t *testing.T) {
 			continue
 		}
 		found = true
-		assert.Equal(t, decisionFailedOpen, span.Plugin.Decision)
+		assert.Equal(t, DecisionFailedOpen, span.Plugin.Decision)
 		assert.NotEmpty(t, span.Error(), "the failure is still recorded on the span")
 	}
 	assert.True(t, found, "no span for the observe entry")
@@ -743,4 +743,265 @@ func TestExecutor_RunStreamSegment_OneReporterPerPlugin(t *testing.T) {
 	assert.True(t, reports[pols[2].ID.String()], "the policy that cut records for its plugin")
 	require.True(t, lastSeen(t, other).Closing)
 	assert.True(t, lastSeen(t, other).ReportsStream, "another plugin still records its own")
+}
+
+// FailedEvals is per entry: the guard's degraded_reason is one value for the
+// chain and is copied to every entry, which labelled a policy with a good key
+// as failed too.
+func TestExecutor_RunStreamSegment_FailedEvalsAreCountedPerEntry(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		t.Run(string(mode), func(t *testing.T) {
+			exec, pols, inspectors := streamChain(t,
+				entrySpec{slug: "a_good", mode: mode},
+				entrySpec{slug: "b_bad", mode: mode},
+			)
+			runner, ok := exec.(*executor)
+			require.True(t, ok)
+			inspectors["b_bad"].err = errors.New("guard unreachable")
+			in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+			rt := trace.New("t", trace.Metadata{})
+			ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+			defer publish()
+			for seq := 1; seq <= 2; seq++ {
+				_, _ = runner.RunStreamSegment(ctx, in, segment(seq, false))
+			}
+			_, err := runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 2, Closing: true})
+			require.NoError(t, err)
+
+			assert.Equal(t, 0, lastSeen(t, inspectors["a_good"]).Report.FailedEvals)
+			assert.Equal(t, 2, lastSeen(t, inspectors["b_bad"]).Report.FailedEvals)
+		})
+	}
+}
+
+func TestExecutor_RunStreamSegment_CancellationIsNotAFailedEval(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		t.Run(string(mode), func(t *testing.T) {
+			exec, pols, inspectors := streamChain(t, entrySpec{slug: "guard", mode: mode})
+			runner, ok := exec.(*executor)
+			require.True(t, ok)
+			inspectors["guard"].err = context.Canceled
+			in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+			rt := trace.New("t", trace.Metadata{})
+			ctx, cancel := context.WithCancel(trace.NewContext(context.Background(), rt))
+			ctx, publish := NewStreamSpanContext(ctx)
+			defer publish()
+			cancel()
+			_, _ = runner.RunStreamSegment(ctx, in, segment(1, false))
+			_, _ = runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 1, Closing: true})
+
+			assert.Equal(t, 0, lastSeen(t, inspectors["guard"]).Report.FailedEvals)
+			for _, span := range rt.Spans() {
+				assert.NotEqual(t, DecisionFailedOpen, span.Plugin.Decision)
+			}
+		})
+	}
+}
+
+func withOnError(pols []*policy.Policy, slug, onError string) {
+	for _, pol := range pols {
+		if pol.Slug == slug {
+			pol.Settings["on_error"] = onError
+		}
+	}
+}
+
+// streaming.on_error is resolved per entry: an enforcing entry that asked for
+// fail_open is handled like an observe one, so it does not cost the entries
+// behind it the block, and the stream's one on_error is never applied to it.
+func TestExecutor_RunStreamSegment_FailOpenEntryErrorContinuesTheChain(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_flaky", mode: policy.ModeEnforce},
+		entrySpec{slug: "b_after", mode: policy.ModeEnforce},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	withOnError(pols, "a_flaky", "fail_open")
+	inspectors["a_flaky"].err = errors.New("provider down")
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	out, err := runner.RunStreamSegment(ctx, in, segment(1, true))
+	require.NoError(t, err, "a fail_open entry must not hand its error to the guard")
+	require.NotNil(t, out)
+	assert.Len(t, inspectors["b_after"].seen, 1, "the entry behind it still inspects the final block")
+	_, err = runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 1, Closing: true})
+	require.NoError(t, err)
+	publish()
+
+	assert.Equal(t, 1, lastSeen(t, inspectors["a_flaky"]).Report.FailedEvals)
+	assert.Equal(t, 0, lastSeen(t, inspectors["b_after"]).Report.FailedEvals)
+	for _, span := range rt.Spans() {
+		if span.Name == "a_flaky" {
+			assert.Equal(t, DecisionFailedOpen, span.Plugin.Decision)
+		}
+	}
+}
+
+func TestExecutor_RunStreamSegment_FailClosedEntryErrorStillGoesToTheGuard(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_strict", mode: policy.ModeEnforce},
+		entrySpec{slug: "b_after", mode: policy.ModeEnforce},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	withOnError(pols, "a_strict", "fail_closed")
+	inspectors["a_strict"].err = errors.New("provider down")
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	_, err := runner.RunStreamSegment(context.Background(), in, segment(1, false))
+
+	require.Error(t, err)
+	assert.Empty(t, inspectors["b_after"].seen, "the guard resolves it; the chain stops")
+}
+
+func TestExecutor_RunStreamSegment_FailOpenCancellationIsNotCounted(t *testing.T) {
+	exec, pols, inspectors := streamChain(t, entrySpec{slug: "guard", mode: policy.ModeEnforce})
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	withOnError(pols, "guard", "fail_open")
+	inspectors["guard"].err = context.Canceled
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, cancel := context.WithCancel(trace.NewContext(context.Background(), rt))
+	ctx, publish := NewStreamSpanContext(ctx)
+	defer publish()
+	cancel()
+	_, _ = runner.RunStreamSegment(ctx, in, segment(1, false))
+	_, _ = runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 1, Closing: true})
+
+	assert.Equal(t, 0, lastSeen(t, inspectors["guard"]).Report.FailedEvals)
+	for _, span := range rt.Spans() {
+		assert.NotEqual(t, DecisionFailedOpen, span.Plugin.Decision)
+	}
+}
+
+// The cut a fail_closed failure causes is the failing entry's, not the masker's
+// that sorted before it.
+func TestExecutor_RunStreamSegment_FailClosedCutIsAttributedToTheStrictEntry(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_masker", mode: policy.ModeEnforce, verdict: &SegmentVerdict{HasTransform: true, Transformed: "masked"}},
+		entrySpec{slug: "b_strict", mode: policy.ModeEnforce},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	withOnError(pols, "b_strict", "fail_closed")
+	inspectors["b_strict"].err = errors.New("provider down")
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	defer publish()
+	_, err := runner.RunStreamSegment(ctx, in, segment(1, false))
+	require.Error(t, err)
+	_, err = runner.RunStreamSegment(ctx, in, StreamSegment{
+		StreamID: "stream-1", Seq: 1, Closing: true,
+		Report: StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, lastSeen(t, inspectors["b_strict"]).Report.CutAtEval, "the failing entry authored the cut")
+	assert.Zero(t, lastSeen(t, inspectors["a_masker"]).Report.CutAtEval, "the masker did not")
+}
+
+// A masker, then a fail_open entry that fails, then a reader: the reader judges
+// what is released, so it sees the masked text.
+func TestExecutor_RunStreamSegment_MaskSurvivesAFailOpenEntryBehindIt(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_masker", mode: policy.ModeEnforce, verdict: &SegmentVerdict{HasTransform: true, Transformed: "masked"}},
+		entrySpec{slug: "b_flaky", mode: policy.ModeEnforce},
+		entrySpec{slug: "c_reader", mode: policy.ModeEnforce},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	withOnError(pols, "b_flaky", "fail_open")
+	inspectors["b_flaky"].err = errors.New("provider down")
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	out, err := runner.RunStreamSegment(context.Background(), in, segment(1, false))
+
+	require.NoError(t, err)
+	require.Len(t, inspectors["c_reader"].seen, 1)
+	assert.Equal(t, "masked", inspectors["c_reader"].seen[0].Accumulated)
+	assert.True(t, out.HasTransform, "the mask still reaches the guard")
+	assert.Equal(t, "masked", out.Transformed)
+	assert.Equal(t, 1, out.FailedEntries)
+}
+
+// An entry that failed three blocks in a row is not called again, and one that
+// returns in between starts over.
+func TestExecutor_RunStreamSegment_EntryIsRetiredAfterThreeFailuresInARow(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_flaky", mode: policy.ModeEnforce},
+		entrySpec{slug: "b_ok", mode: policy.ModeEnforce},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	withOnError(pols, "a_flaky", "fail_open")
+	inspectors["a_flaky"].err = errors.New("provider down")
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	defer publish()
+
+	for seq := 1; seq <= 6; seq++ {
+		_, err := runner.RunStreamSegment(ctx, in, segment(seq, false))
+		require.NoError(t, err)
+	}
+	_, err := runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 6, Closing: true})
+	require.NoError(t, err)
+
+	assert.Len(t, inspectors["a_flaky"].seen, 3+1, "three blocks, then only the closing segment")
+	assert.Len(t, inspectors["b_ok"].seen, 6+1, "the healthy entry sees every block")
+	assert.Equal(t, StreamFallbackEntryRetired, lastSeen(t, inspectors["a_flaky"]).Report.FallbackReason)
+	assert.Empty(t, lastSeen(t, inspectors["b_ok"]).Report.FallbackReason)
+}
+
+func TestExecutor_RunStreamSegment_ASuccessEndsTheFailureStreak(t *testing.T) {
+	exec, pols, inspectors := streamChain(t, entrySpec{slug: "a_flaky", mode: policy.ModeObserve})
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), trace.New("t", trace.Metadata{})))
+	defer publish()
+
+	for seq, failing := range []bool{true, true, false, true, true, false, true, true} {
+		inspectors["a_flaky"].err = nil
+		if failing {
+			inspectors["a_flaky"].err = errors.New("provider down")
+		}
+		_, err := runner.RunStreamSegment(ctx, in, segment(seq+1, false))
+		require.NoError(t, err)
+	}
+
+	assert.Len(t, inspectors["a_flaky"].seen, 8, "never three in a row, so never retired")
+}
+
+// Retirement is for absorbed failures only. An entry whose errors go back to the
+// guard (here: no on_error stated, with the guard resolving fail_open) is the
+// guard's to resolve, so the executor never marks it retired or stops calling it.
+func TestExecutor_RunStreamSegment_HandedBackFailuresAreNeverRetiredByTheExecutor(t *testing.T) {
+	exec, pols, inspectors := streamChain(t, entrySpec{slug: "a_silent", mode: policy.ModeEnforce})
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	inspectors["a_silent"].err = errors.New("provider down")
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), trace.New("t", trace.Metadata{})))
+	defer publish()
+
+	for seq := 1; seq <= 5; seq++ {
+		_, err := runner.RunStreamSegment(ctx, in, segment(seq, false))
+		require.Error(t, err, "the error goes back to the guard")
+	}
+	_, err := runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 5, Closing: true})
+	require.NoError(t, err)
+
+	assert.Len(t, inspectors["a_silent"].seen, 5+1, "called on every block, then the closing segment")
+	report := lastSeen(t, inspectors["a_silent"]).Report
+	assert.Equal(t, 5, report.FailedEvals, "still counted as failed evals")
+	assert.NotEqual(t, StreamFallbackEntryRetired, report.FallbackReason)
 }

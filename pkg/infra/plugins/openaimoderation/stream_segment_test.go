@@ -61,7 +61,7 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block", map[string]any{"api_key": "k"}, false},
+		{"absent block: on by default", map[string]any{"api_key": "k"}, true},
 		{"explicitly disabled", map[string]any{"api_key": "k", "streaming": map[string]any{"enabled": false}}, false},
 		{"enabled", streamSettings(nil), true},
 		{
@@ -104,14 +104,28 @@ func TestStreamSettingsCarriesTheKnobs(t *testing.T) {
 	assert.Equal(t, "fail_open", opts.OnError)
 }
 
-func TestStreamSettingsDefaultsToFailClosed(t *testing.T) {
+func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
-	on, opts := p.StreamSettings(streamSettings(nil))
+
+	for name, set := range map[string]map[string]any{
+		"enabled, nothing else": streamSettings(nil),
+		"no streaming block":    blockSettings(),
+	} {
+		on, opts := p.StreamSettings(set)
+		require.True(t, on, name)
+		assert.Equal(t, "fail_open", opts.OnError,
+			"%s: an endpoint outage must not cut a stream the client is already reading", name)
+	}
+}
+
+func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
 
 	require.True(t, on)
-	assert.Equal(t, "fail_closed", opts.OnError,
-		"the buffered leg fails closed in enforce; the stream leg must not be laxer by default")
+	assert.Equal(t, "fail_closed", opts.OnError)
 }
 
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
@@ -250,18 +264,18 @@ func TestInspectSegmentHonoursTheGuardTimeout(t *testing.T) {
 		"the client is holding bytes; the block deadline must win over the plugin's own")
 }
 
-func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
+func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
 	t.Parallel()
 	f := &fakeModerator{response: flaggedHateResponse()}
 	p := streamPlugin(t, f)
 
 	got, err := p.InspectSegment(context.Background(),
-		execInput(policy.StagePreResponse, policy.ModeEnforce, blockSettings(), requestContext(), nil, nil),
+		execInput(policy.StagePreResponse, policy.ModeEnforce, streamSettings(map[string]any{"enabled": false}), requestContext(), nil, nil),
 		block(1, "hateful answer"))
 
 	require.NoError(t, err)
 	assert.False(t, got.Block)
-	assert.Zero(t, f.count(), "a policy that did not opt in must cost no call")
+	assert.Zero(t, f.count(), "a policy that opted out must cost no call")
 }
 
 func TestClosingSegmentPublishesTheStreamAccount(t *testing.T) {
@@ -309,6 +323,14 @@ func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
 			decisionReported,
 		},
 		{"cut", appplugins.StreamReport{Evals: 3, GuardCalls: 3, CutAtEval: 2}, nil, decisionBlock},
+		{"a failed block on an otherwise clean stream", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1}, nil, "failed_open"},
+		{
+			"a finding outranks a missing inspection",
+			appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1},
+			[]appplugins.StreamFinding{{Entry: "p", Fingerprint: "abcd"}},
+			decisionReported,
+		},
+		{"a cut outranks a failure", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1, CutAtEval: 2}, nil, decisionBlock},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
