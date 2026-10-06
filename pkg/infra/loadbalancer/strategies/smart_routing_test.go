@@ -281,11 +281,12 @@ func TestSmartRouting_EmptyReturnsNil(t *testing.T) {
 func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name        string
-		routes      []routingdomain.Route
-		scorer      *fakeScorer
-		req         *infracontext.RequestContext
-		wantApplied bool
+		name          string
+		routes        []routingdomain.Route
+		scorer        *fakeScorer
+		req           *infracontext.RequestContext
+		onlyStrongest bool
+		wantApplied   bool
 	}{
 		{
 			name:        "tier decision",
@@ -316,9 +317,10 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 			wantApplied: true,
 		},
 		{
-			name:   "single candidate is forced, not chosen",
-			routes: makeRoutes("only"),
-			scorer: &fakeScorer{score: 0.9, configured: true},
+			name:          "single candidate is forced, not chosen",
+			routes:        makeRoutes("low", "high"),
+			scorer:        &fakeScorer{score: 0.9, configured: true},
+			onlyStrongest: true,
 		},
 	}
 	for _, tc := range cases {
@@ -334,8 +336,12 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 				req = promptReq()
 			}
 			s := NewSmartRouting(tc.routes, cfg, tc.scorer, nil)
+			var excluded map[routingdomain.RouteKey]struct{}
+			if tc.onlyStrongest {
+				excluded = excludeRoutes(tc.routes[0])
+			}
 
-			if got := s.Next(context.Background(), req, nil); got == nil {
+			if got := s.Next(context.Background(), req, excluded); got == nil {
 				t.Fatal("expected a route")
 			}
 

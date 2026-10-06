@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -56,7 +57,9 @@ func TestSR1HTTPConfigPreservedOnCreateAndUpdate(t *testing.T) {
 }
 
 func TestSR1HTTPNewWritePreferenceDefaults(t *testing.T) {
-	id := ids.New[ids.RegistryKind]().String()
+	registryID := ids.New[ids.RegistryKind]()
+	id := registryID.String()
+	policies := consumerdomain.ModelPolicies{registryID: {Allowed: []string{"low", "high"}}}
 	for _, tc := range []struct {
 		name, envelope string
 		want           bool
@@ -81,7 +84,7 @@ func TestSR1HTTPNewWritePreferenceDefaults(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := cfg.Validate(nil); err != nil {
+				if err := cfg.Validate(policies); err != nil {
 					t.Fatal(err)
 				}
 				flag := cfg.SmartRouting.SR1.EscapeHatchEnabled

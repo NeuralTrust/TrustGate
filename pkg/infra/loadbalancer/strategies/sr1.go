@@ -52,10 +52,18 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 	tiers := config.Tiers
 	ttl := time.Duration(config.SR1.CacheTTLSeconds) * time.Second
 	escapeEnabled := config.SR1.EscapeEnabled()
+	availableRungs := 0
+	for _, tier := range tiers {
+		if sr1Route(tier, candidates) != nil {
+			availableRungs++
+		}
+	}
 	selectRung := func(rung int) *routingdomain.Route {
 		for i := rung; i < len(tiers); i++ {
 			if route := sr1Route(tiers[i], candidates); route != nil {
-				s.record(req, true)
+				// A single available rung is forced, even when state and scoring
+				// correctly constrain that route to the committed policy floor.
+				s.record(req, availableRungs > 1)
 				return route
 			}
 		}
