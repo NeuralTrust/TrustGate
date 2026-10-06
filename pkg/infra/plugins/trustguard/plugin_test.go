@@ -853,6 +853,38 @@ func TestExecutePostResponseStreamingInspects(t *testing.T) {
 	assertLLMRequestMessages(t, got.Payload, []string{"assistant"}, []string{"the answer"})
 }
 
+// RUN-1759: a stream the stream guard cut ends on the cut terminator, and the
+// body the post_response leg sees is the truncated one. Inspecting it would
+// record "allowed" right after the guard's "blocked", so the leg skips with
+// stream_cut and never calls the guard. A stream that was not cut keeps the
+// post-drain audit (TestExecutePostResponseStreamingInspects).
+func TestExecutePostResponseAfterStreamCutIsSkipped(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-cut"}}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"the \"}}]}\n"
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, StreamCut: true, Body: []byte(sse)}
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePostResponse, policy.ModeEnforce, settings(""), requestContext(), resp, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("a cut stream must not be inspected again, got %d guard calls", f.count())
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	if !ok || !extras.Skipped || extras.SkipReason != skipReasonStreamCut || extras.Decision != "" {
+		t.Fatalf("extras = %+v, want skipped with %q and no decision", span.PluginAttrsCopy().Extras, skipReasonStreamCut)
+	}
+}
+
 func TestExecutePostResponseStreamingInspectsReasoningAndToolCalls(t *testing.T) {
 	t.Parallel()
 
@@ -2079,6 +2111,7 @@ func TestOutputInspectSkipReason(t *testing.T) {
 		},
 		{"post-response handles the stream", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true}, true, ""},
 		{"post-response streamed with nothing drained is an empty body", policy.StagePostResponse, &infracontext.ResponseContext{Streaming: true}, true, skipReasonEmptyResponseBody},
+		{"post-response after a stream cut is stream_cut", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true, StreamCut: true}, true, skipReasonStreamCut},
 		{"post-response does not handle the non-streaming leg", policy.StagePostResponse, &infracontext.ResponseContext{Body: body}, true, skipReasonStreamingMismatch},
 		{"a request stage never inspects output", policy.StagePreRequest, &infracontext.ResponseContext{Body: body}, false, skipReasonStreamingMismatch},
 	}
