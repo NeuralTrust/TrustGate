@@ -23,6 +23,7 @@ import (
 	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -155,7 +156,7 @@ func (s *apiKeyConsumers) ForAPIKey(
 	}
 	auth, err := s.apiKeys.FindByAPIKey(ctx, key)
 	if err != nil {
-		if errors.Is(err, authdomain.ErrNotFound) {
+		if errors.Is(err, commonerrors.ErrNotFound) {
 			return nil, ErrAPIKeyUnknown
 		}
 		return nil, fmt.Errorf("consumer api key consumers: find api key: %w", err)
