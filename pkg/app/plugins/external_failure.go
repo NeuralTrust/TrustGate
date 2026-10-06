@@ -16,7 +16,6 @@ package plugins
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -35,15 +34,15 @@ type FailureReason string
 
 const (
 	// FailureTransport is a network or API failure calling the guardrail: a
-	// timeout, a connection error, or a non-2xx response.
+	// connection error, a non-2xx response, or a timeout or throttle, which
+	// are reported as transport rather than under reasons of their own.
 	FailureTransport FailureReason = "transport"
 	// FailureVerdictIncomplete is a response the guardrail returned that does
 	// not cover everything the policy asked it to evaluate: a thresholded
 	// category missing from the response, an intervention the plugin has no
 	// finding to explain, a filter selected in block_on that never ran.
-	// Treating this as a clean "no match" would be a guardrail that quietly
-	// stopped guarding, so it follows the same fail-closed/fail-open rule as
-	// a transport failure.
+	// It is a failure like a transport one, not a clean "no match", so it is
+	// recorded as failed_open with this reason rather than as a pass.
 	FailureVerdictIncomplete FailureReason = "verdict_incomplete"
 	// FailureConfigInvalid is a stored policy configuration the plugin
 	// cannot act on at run time: parseConfig rejected the settings, or a
@@ -53,28 +52,19 @@ const (
 	FailureConfigInvalid FailureReason = "config_invalid"
 	// FailureDecodeFailed is our own side failing to decode the request or
 	// response body before the guardrail ever saw it. The guardrail was
-	// never consulted, so this always fails open, in every mode: there is
-	// nothing to fail closed about.
+	// never consulted, so there was nothing for it to say.
 	FailureDecodeFailed FailureReason = "decode_failed"
 	// FailureCounterUnavailable is TrustGate's own counter store (Redis)
 	// failing a read or a write: rate_limiter, per_tool_rate_limiter and
-	// token_rate_limiter all share this one reason. Unlike the reasons above,
-	// it is never subject to Blocks(mode): our own infrastructure fails OPEN
-	// in every mode, including enforce, because a third-party guardrail is
-	// what earns a fail-closed refusal, not an outage on our side. See
-	// HandleCounterFailure in counter_failure.go.
+	// token_rate_limiter all share this one reason. It is handled by
+	// HandleCounterFailure in counter_failure.go, not by HandleExternalFailure.
 	FailureCounterUnavailable FailureReason = "counter_unavailable"
 )
 
-const (
-	// DecisionFailedOpen is the decision recorded when a guardrail could not give
-	// a verdict and the traffic was let through. The buffered legs and the stream
-	// leg share it.
-	DecisionFailedOpen   = "failed_open"
-	decisionFailedClosed = "failed_closed"
-
-	typeGuardrailUnavailable = "guardrail_unavailable"
-)
+// DecisionFailedOpen is the decision recorded when a guardrail could not give
+// a verdict and the traffic was let through. The buffered legs and the stream
+// leg share it.
+const DecisionFailedOpen = "failed_open"
 
 // ExternalFailure is one third-party guardrail call's failure, ready to be
 // turned into a plugin outcome by HandleExternalFailure.
@@ -97,7 +87,8 @@ type ExternalFailure struct {
 // ExternalFailureOutcome is HandleExternalFailure's answer. Decision is what
 // the caller's own Data.Decision (and any failure_reason/failure_detail
 // fields) should record; Result and Err are exactly what the plugin's
-// Execute should return.
+// Execute should return. Err is always nil today: an external guardrail
+// failure never refuses the request.
 type ExternalFailureOutcome struct {
 	Decision string
 	Result   *Result
@@ -105,11 +96,17 @@ type ExternalFailureOutcome struct {
 }
 
 // HandleExternalFailure applies the one rule every external guardrail
-// follows on a failure: it fails CLOSED in a mode that blocks (enforce,
-// since Blocks reports observe as the only mode that never blocks) and
-// fails OPEN in observe. FailureDecodeFailed is the exception: it is our own
-// decode path failing before the guardrail ever ran, so it fails open in
-// every mode.
+// follows on a failure of its buffered (non-streamed) leg: it fails OPEN, in
+// every mode (enforce, throttle and observe) and for every FailureReason
+// (transport, which also covers timeouts and throttling, verdict_incomplete,
+// config_invalid and decode_failed). The request continues and the event
+// records decision failed_open with the failure_reason (and failure_detail)
+// the caller sets on its own Data. A guardrail we cannot reach never refuses a
+// buffered request (RUN-1792, replacing the RUN-1672 rule). The stream leg is
+// covered separately by RUN-1786.
+//
+// TrustGuard does not go through this helper: its failures, credential errors
+// included, follow its own on_error setting inside the trustguard plugin.
 //
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
@@ -118,13 +115,9 @@ type ExternalFailureOutcome struct {
 // failure_reason/failure_detail fields, and calling setExtras, before or
 // after invoking this.
 func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
-	var outcome ExternalFailureOutcome
-	if f.Reason != FailureDecodeFailed && Blocks(f.Mode) {
-		outcome.Decision = decisionFailedClosed
-		outcome.Err = unavailableError()
-	} else {
-		outcome.Decision = DecisionFailedOpen
-		outcome.Result = &Result{StatusCode: http.StatusOK}
+	outcome := ExternalFailureOutcome{
+		Decision: DecisionFailedOpen,
+		Result:   &Result{StatusCode: http.StatusOK},
 	}
 	SetDecisionFromOutcome(f.Event, outcome.Decision)
 	logExternalFailure(f, outcome.Decision)
@@ -153,40 +146,6 @@ func logExternalFailure(f ExternalFailure, decision string) {
 		return
 	}
 	f.Logger.Warn("external guardrail call failed", attrs...)
-}
-
-// unavailableError is the client-facing rejection for a failed-closed
-// external guardrail. Its message is deliberately generic and never carries
-// the underlying error: that error can hold upstream details (endpoint
-// hostnames, vendor error text) that do not belong in a response body.
-func unavailableError() *PluginError {
-	return &PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeGuardrailUnavailable,
-		Message:    DefaultUnavailableMessage,
-		Headers:    map[string][]string{"Content-Type": {"application/json"}},
-		Body:       unavailableBody(),
-	}
-}
-
-// unavailableBody is a static, always-valid fallback for a body that should
-// never fail to marshal, in the same spirit as every guardrail's own
-// blockBody: a marshal failure here must not leave the client with no body at
-// all, and it must never fall back to raw text that could echo details.
-func unavailableBody() []byte {
-	body := struct {
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}{}
-	body.Error.Type = typeGuardrailUnavailable
-	body.Error.Message = DefaultUnavailableMessage
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return []byte(fmt.Sprintf(`{"error":{"type":%q,"message":%q}}`, typeGuardrailUnavailable, DefaultUnavailableMessage))
-	}
-	return raw
 }
 
 // WrapExternalStreamFailure formats a stream-segment failure so its reason
