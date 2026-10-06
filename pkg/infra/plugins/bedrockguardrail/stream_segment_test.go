@@ -154,7 +154,7 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block", bufferedSettings(), false},
+		{"absent block: opt-in, so off", bufferedSettings(), false},
 		{"enabled", streamSettings(nil), true},
 		{
 			"explicitly disabled",
@@ -176,14 +176,49 @@ func TestStreamSettingsOptIn(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsDefaultsToFailClosed(t *testing.T) {
+func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
-	on, opts := p.StreamSettings(streamSettings(nil))
+
+	for name, set := range map[string]map[string]any{
+		"enabled, nothing else": streamSettings(nil),
+	} {
+		on, opts := p.StreamSettings(set)
+		require.True(t, on, name)
+		assert.Equal(t, "fail_open", opts.OnError,
+			"%s: a guardrail outage must not cut a stream the client is already reading", name)
+	}
+}
+
+func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
 
 	require.True(t, on)
-	assert.Equal(t, "fail_closed", opts.OnError,
-		"the buffered leg fails closed when ApplyGuardrail is unreachable")
+	assert.Equal(t, "fail_closed", opts.OnError)
+}
+
+func TestStreamSettingsDefaultsFitTheProviderLimit(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	_, opts := p.StreamSettings(streamSettings(nil))
+
+	// 25 text units of 1000 characters is the smallest ApplyGuardrail input
+	// quota in any region; bytes are never fewer than characters.
+	assert.LessOrEqual(t, opts.MaxAccumulatedBytes, 25*1000)
+}
+
+func TestStreamSettingsDefaultWindowFitsTheSmallestQuota(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+
+	_, opts := p.StreamSettings(streamSettings(nil))
+	assert.LessOrEqual(t, opts.MaxAccumulatedBytes, 25*1000,
+		"25 text units of 1,000 characters is the default per-request quota in eu-west-3")
+
+	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 524288}))
+	assert.Equal(t, 524288, opts.MaxAccumulatedBytes, "the quota is adjustable, so an explicit window is honoured")
 }
 
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
@@ -335,17 +370,17 @@ func TestInspectSegmentVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
 	assert.Contains(t, err.Error(), "verdict_incomplete (automated_reasoning_policy)")
 }
 
-func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
+func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
 	t.Parallel()
 	g := intervening(blockingOutput())
 	p := streamPlugin(t, g)
 
 	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, bufferedSettings(), nil), segment(1, "hateful output"))
+		streamInput(policy.ModeEnforce, streamSettings(map[string]any{"enabled": false}), nil), segment(1, "hateful output"))
 
 	require.NoError(t, err)
 	assert.False(t, got.Block)
-	assert.Zero(t, g.calls, "a policy that did not opt in must cost no call")
+	assert.Zero(t, g.calls, "a policy that opted out must cost no call")
 }
 
 func TestInspectSegmentSkipsEmptyText(t *testing.T) {
@@ -408,6 +443,14 @@ func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
 			decisionReported,
 		},
 		{"cut", appplugins.StreamReport{Evals: 2, CutAtEval: 1}, nil, decisionBlocked},
+		{"a failed block on an otherwise clean stream", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1}, nil, "failed_open"},
+		{
+			"a finding outranks a missing inspection",
+			appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1},
+			[]appplugins.StreamFinding{{Entry: "p", Fingerprint: "abcd"}},
+			decisionReported,
+		},
+		{"a cut outranks a failure", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1, CutAtEval: 2}, nil, decisionBlocked},
 		// RUN-1745 F7: a masked stream used to read allowed.
 		{"masked", appplugins.StreamReport{Evals: 3, GuardCalls: 3, MaskedEvals: 2}, nil, decisionAnonymized},
 		{"masked, then cut", appplugins.StreamReport{Evals: 3, CutAtEval: 3, MaskedEvals: 2}, nil, decisionBlocked},
@@ -459,4 +502,27 @@ func TestFindingFingerprintsSkipBlockingModesAndNilFindings(t *testing.T) {
 	assert.Nil(t, findingFingerprints(policy.ModeEnforce, f),
 		"a blocking mode stops the stream, so nothing comes back to deduplicate")
 	assert.Nil(t, findingFingerprints(policy.ModeObserve, nil))
+}
+
+// bedrock_guardrail is opt-in because of ApplyGuardrail's per-second quota. With
+// no streaming block the plugin must not join the stream chain, and parseConfig
+// must resolve the absent key to off rather than to anything the other two
+// guardrails default to. The skip marker for a streamed response is asserted in
+// TestStreamedResponseRecordsSkipWhenStreamingIsNotEnabled.
+func TestStreamSettingsAbsentKeyIsOffAndUnparsedOptInStaysOff(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+
+	on, opts := p.StreamSettings(bufferedSettings())
+	assert.False(t, on)
+	assert.Equal(t, appplugins.StreamOptions{}, opts)
+
+	cfg, err := parseConfig(bufferedSettings())
+	require.NoError(t, err)
+	assert.False(t, cfg.Streaming.IsEnabled())
+	assert.Nil(t, cfg.Streaming.Enabled, "an absent key is not an explicit false")
+
+	// Tuning keys alone are not an opt-in.
+	on, _ = p.StreamSettings(streamSettings(map[string]any{"enabled": nil, "head_chars": 100}))
+	assert.False(t, on)
 }

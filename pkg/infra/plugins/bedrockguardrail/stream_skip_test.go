@@ -94,7 +94,7 @@ func TestStreamedResponseRecordsSkipWhenStreamingIsNotEnabled(t *testing.T) {
 		streamed  bool
 		wantSkip  bool
 	}{
-		{"streaming key absent", nil, false, openAIResponse(), true, true},
+		{"streaming key absent: opt-in, so skipped", nil, false, openAIResponse(), true, true},
 		{"streaming key absent and no buffered body", nil, false, nil, true, true},
 		{"explicitly disabled", off, true, openAIResponse(), true, true},
 		{"tuning keys only", map[string]any{"head_chars": 100}, true, openAIResponse(), true, true},

@@ -327,12 +327,15 @@ export interface OAuth2Config {
   client_id?: string;
   client_secret?: string;
   required_scopes?: string[];
+  login_scopes?: string[];
   allowed_algorithms?: string[];
   session_mode?: boolean;
   userinfo_url?: string;
   subject_claim?: string;
   authorize_url?: string;
   token_url?: string;
+  exchange_client_id?: string;
+  exchange_client_secret?: string;
 }
 
 export interface MtlsConfig {

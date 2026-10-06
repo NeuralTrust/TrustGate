@@ -32,9 +32,10 @@ import (
 // building it from released text would hide a finding split across the block in
 // flight and the one being inspected. Text is the delta of this block alone;
 // Reasoning and ToolCalls are cumulative like Accumulated, not per-block
-// deltas. Truncated says the guard hit its accumulation cap and swapped
-// Accumulated from a full prefix to a tail window, so the plugin can carry the
-// distinction onto the wire envelope the engine reads.
+// deltas. Truncated says Accumulated is a tail window rather than a full
+// prefix, because the guard hit its accumulation cap or the entry's own
+// max_accumulated_bytes is smaller, so the plugin can carry the distinction
+// onto the wire envelope the engine reads.
 type StreamSegment struct {
 	StreamID    string
 	Seq         int
@@ -111,7 +112,13 @@ type StreamReport struct {
 	// into the one handed to the guard. Only the executor knows it, so it is
 	// zero on the guard's chain-wide report and set per entry. With no cut,
 	// the guard applied every one of them: it applies a mask or cuts.
-	MaskedEvals    int
+	MaskedEvals int
+	// FailedEvals counts the blocks on which this entry's own call failed and
+	// the held text was released (or the stream was cut) without its verdict.
+	// Like MaskedEvals only the executor knows it, so it is zero on the guard's
+	// chain-wide report and set per entry. DegradedReason cannot say this: it is
+	// one value for the whole chain, and a later size degrade overwrites it.
+	FailedEvals    int
 	FinalPass      bool
 	DegradedReason string
 	FallbackReason string
@@ -131,6 +138,11 @@ const (
 	StreamDegradeGuardError           = "guard_error"
 	StreamFallbackSegmentationUnavail = "segmentation_unavailable"
 	StreamFallbackClientDisconnected  = "client_disconnected"
+	// StreamFallbackEntryRetired is published on ONE entry's span: its provider
+	// failed on streamEntryRetireAfter blocks in a row and the executor stopped
+	// calling it for the rest of the stream. The other entries keep inspecting,
+	// which is why this is the entry's own reason and not the guard's.
+	StreamFallbackEntryRetired = "entry_retired"
 )
 
 // SegmentVerdict is a plugin's answer for one StreamSegment. Transformed, when
@@ -210,12 +222,17 @@ func ownsStreamOptions(d PluginDescriptor) bool {
 // StreamSegment. Fingerprints carries what every entry reported on the segment,
 // each tagged with the entry that reported it.
 type SegmentOutcome struct {
-	Block        bool
-	Type         string
-	Message      string
-	HasTransform bool
-	Transformed  string
-	Fingerprints []StreamFinding
+	// FailedEntries counts the entries that gave no verdict on this block
+	// because their own call failed (and was absorbed per entry) or because
+	// they were retired. The guard cannot see an absorbed failure, so this is
+	// how GuardCalls stays the number of blocks that got every verdict.
+	FailedEntries int
+	Block         bool
+	Type          string
+	Message       string
+	HasTransform  bool
+	Transformed   string
+	Fingerprints  []StreamFinding
 }
 
 // StreamFinding is one finding fingerprint and the chain entry that reported
@@ -246,6 +263,16 @@ type streamSpans struct {
 	cutBy    map[string][]string
 	failedBy map[string]string
 	masked   map[string]int
+	// failed counts, per entry, the blocks on which its own call failed and
+	// the failure was not the caller's cancellation. It is per entry because
+	// the guard's DegradedReason is one value for the whole chain: it is copied
+	// to every entry and the last degrade overwrites it.
+	failed map[string]int
+	// streak counts the consecutive absorbed failures of an entry and retired
+	// records the ones that reached streamEntryRetireAfter. A streak ends on a
+	// call that returns.
+	streak  map[string]int
+	retired map[string]bool
 }
 
 // NewStreamSpanContext derives a context carrying the plugin spans of a single
@@ -264,6 +291,9 @@ func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 		cutBy:    make(map[string][]string),
 		failedBy: make(map[string]string),
 		masked:   make(map[string]int),
+		failed:   make(map[string]int),
+		streak:   make(map[string]int),
+		retired:  make(map[string]bool),
 	}
 	rt := trace.FromContext(ctx)
 	if rt != nil {
@@ -287,6 +317,64 @@ func streamSpansFrom(ctx context.Context) *streamSpans {
 	}
 	spans, _ := ctx.Value(streamSpansKey{}).(*streamSpans)
 	return spans
+}
+
+// streamEntryRetireAfter is how many blocks in a row an entry may fail, absorbed
+// per entry, before it is no longer called for the rest of the stream. Absorbing
+// hides the failure from the guard, which retires the whole block loop after
+// maxConsecutiveFailures; without this a hung provider would stall every block
+// of every stream for its own timeout. Only the failing entry is retired:
+// retiring the loop would blind the healthy policies beside it.
+const streamEntryRetireAfter = 3
+
+// handedBack records a failure the executor handed to the guard: it counts for
+// FailedEvals and nothing else. Retirement is only ever for absorbed failures,
+// whose error the guard never sees; a handed-back one is the guard's to resolve
+// (and to retire the loop on, after maxConsecutiveFailures).
+func (s *streamSpans) handedBack(key string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failed[key]++
+}
+
+// fail records that this entry's own call failed on a block and was absorbed,
+// and reports whether it was the first failure of the stream and whether it has
+// now reached the retirement streak.
+func (s *streamSpans) fail(key string) (first, retiredNow bool) {
+	if s == nil {
+		return false, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failed[key]++
+	s.streak[key]++
+	if s.streak[key] >= streamEntryRetireAfter && !s.retired[key] {
+		s.retired[key] = true
+		retiredNow = true
+	}
+	return s.failed[key] == 1, retiredNow
+}
+
+// recovered ends an entry's streak: a call that returned.
+func (s *streamSpans) recovered(key string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.streak, key)
+}
+
+func (s *streamSpans) isRetired(key string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retired[key]
 }
 
 func (s *streamSpans) eventFor(ctx context.Context, seg StreamSegment, entry chainEntry) *metrics.EventContext {
@@ -429,6 +517,10 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	key := spanKey(seg, entry)
 	report.GuardLatency = s.spent[key]
 	report.MaskedEvals = s.masked[key]
+	report.FailedEvals = s.failed[key]
+	if s.retired[key] && report.FallbackReason == "" {
+		report.FallbackReason = StreamFallbackEntryRetired
+	}
 	cutters := s.cutAuthorsLocked(seg)
 	claimed := len(cutters) > 0
 	claimedByEntry := false

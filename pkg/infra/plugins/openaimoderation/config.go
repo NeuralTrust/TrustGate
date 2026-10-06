@@ -38,7 +38,15 @@ const (
 // tighter cadence is affordable: blocks close about twice as often as
 // trustguard's, which buys a smaller window between the text being produced and
 // being cleared.
+//
+// It is on by default: a guardrail that silently stops guarding the moment a
+// client sets stream: true is not a guardrail. A policy opts out with
+// streaming.enabled: false.
+//
+// MaxAccumulatedBytes stays at 256 KiB: OpenAI documents no input size limit
+// for the moderations endpoint, so there is nothing authoritative to fit to.
 var streamingDefaults = pluginutil.StreamingDefaults{
+	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 1024,
 	MaxHoldMS:            500,
@@ -54,9 +62,8 @@ type Settings struct {
 	Thresholds     map[string]float64 `mapstructure:"thresholds"`
 	BlockOnFlagged bool               `mapstructure:"block_on_flagged"`
 	Action         ActionSettings     `mapstructure:"action"`
-	// Streaming opts the pre_response leg into per-block inspection. Absent, a
-	// streamed response is not moderated at all, which is what this plugin did
-	// before the block loop existed.
+	// Streaming tunes the per-block inspection of the pre_response leg. It is on
+	// when the block is absent; streaming.enabled: false opts out.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
@@ -90,11 +97,11 @@ func (s *Settings) applyDefaults() {
 	if len(s.Stages) == 0 {
 		s.Stages = []string{stagePreRequest, stagePreResponse}
 	}
-	// The buffered leg already fails closed in enforce mode when the endpoint
-	// is unreachable, so the stream leg inherits that rather than a laxer
-	// default. In the modes that do not block, the executor discards a cut
-	// before it reaches the client, so this is not a way to make observe cut.
-	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
+	// The stream leg fails open by default whatever the buffered leg does: an
+	// endpoint outage must not cut a response the client is already reading.
+	// An explicit streaming.on_error: fail_closed is still honoured, and in the
+	// modes that do not block the executor never turns an error into a cut.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailOpen)
 }
 
 func (s *Settings) validate() error {

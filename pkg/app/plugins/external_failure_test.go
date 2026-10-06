@@ -31,92 +31,49 @@ func newTestEvent() (*metrics.EventContext, *trace.Span) {
 	return metrics.NewEventContext(span), span
 }
 
-func TestHandleExternalFailure(t *testing.T) {
+// TestHandleExternalFailureAlwaysFailsOpen pins RUN-1792: a third-party
+// guardrail failure never refuses the request, whatever the mode or reason.
+func TestHandleExternalFailureAlwaysFailsOpen(t *testing.T) {
 	t.Parallel()
 
-	secretErr := errors.New("dial tcp 10.0.0.1:443: connection refused")
-
-	tests := []struct {
-		name       string
-		mode       policy.Mode
-		reason     FailureReason
-		wantResult bool
-		wantErr    bool
-		wantStatus int
-	}{
-		{name: "enforce transport fails closed", mode: policy.ModeEnforce, reason: FailureTransport, wantErr: true, wantStatus: http.StatusBadGateway},
-		{name: "observe transport fails open", mode: policy.ModeObserve, reason: FailureTransport, wantResult: true},
-		{name: "enforce verdict_incomplete fails closed", mode: policy.ModeEnforce, reason: FailureVerdictIncomplete, wantErr: true, wantStatus: http.StatusBadGateway},
-		{name: "observe verdict_incomplete fails open", mode: policy.ModeObserve, reason: FailureVerdictIncomplete, wantResult: true},
-		{name: "enforce config_invalid fails closed", mode: policy.ModeEnforce, reason: FailureConfigInvalid, wantErr: true, wantStatus: http.StatusBadGateway},
-		{name: "observe config_invalid fails open", mode: policy.ModeObserve, reason: FailureConfigInvalid, wantResult: true},
-		{name: "enforce decode_failed always fails open", mode: policy.ModeEnforce, reason: FailureDecodeFailed, wantResult: true},
-		{name: "observe decode_failed always fails open", mode: policy.ModeObserve, reason: FailureDecodeFailed, wantResult: true},
+	reasons := []FailureReason{
+		FailureTransport,
+		FailureVerdictIncomplete,
+		FailureConfigInvalid,
+		FailureDecodeFailed,
 	}
+	modes := []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}
 
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			event, span := newTestEvent()
-			outcome := HandleExternalFailure(ExternalFailure{
-				Ctx:    context.Background(),
-				Plugin: "some_guardrail",
-				Stage:  policy.StagePreRequest,
-				Mode:   tc.mode,
-				Reason: tc.reason,
-				Detail: "some_category",
-				Err:    secretErr,
-				Logger: nil,
-				Event:  event,
-			})
-
-			if tc.wantResult {
-				if outcome.Result == nil || outcome.Result.StatusCode != http.StatusOK {
-					t.Fatalf("expected pass-through result, got %+v (err=%v)", outcome.Result, outcome.Err)
-				}
+	for _, mode := range modes {
+		for _, reason := range reasons {
+			mode, reason := mode, reason
+			t.Run(string(mode)+" "+string(reason), func(t *testing.T) {
+				t.Parallel()
+				event, span := newTestEvent()
+				outcome := HandleExternalFailure(ExternalFailure{
+					Ctx:    context.Background(),
+					Plugin: "some_guardrail",
+					Stage:  policy.StagePreRequest,
+					Mode:   mode,
+					Reason: reason,
+					Detail: "some_category",
+					Err:    errors.New("dial tcp 10.0.0.1:443: connection refused"),
+					Event:  event,
+				})
 				if outcome.Err != nil {
 					t.Fatalf("expected nil error, got %v", outcome.Err)
+				}
+				if outcome.Result == nil || outcome.Result.StatusCode != http.StatusOK {
+					t.Fatalf("expected pass-through result, got %+v", outcome.Result)
 				}
 				if outcome.Decision != "failed_open" {
 					t.Fatalf("decision = %q, want failed_open", outcome.Decision)
 				}
-			}
-			if tc.wantErr {
-				if outcome.Result != nil {
-					t.Fatalf("expected nil result, got %+v", outcome.Result)
+				if span.Plugin == nil || span.Plugin.Decision != "failed_open" {
+					t.Fatalf("span decision = %+v, want failed_open", span.Plugin)
 				}
-				pe, ok := AsPluginError(outcome.Err)
-				if !ok {
-					t.Fatalf("expected *PluginError, got %v", outcome.Err)
-				}
-				if pe.StatusCode != tc.wantStatus {
-					t.Fatalf("status = %d, want %d", pe.StatusCode, tc.wantStatus)
-				}
-				if pe.Type != typeGuardrailUnavailable {
-					t.Fatalf("type = %q, want %q", pe.Type, typeGuardrailUnavailable)
-				}
-				if strings.Contains(pe.Message, secretErr.Error()) {
-					t.Fatalf("message leaked the underlying error: %q", pe.Message)
-				}
-				if strings.Contains(string(pe.Body), secretErr.Error()) {
-					t.Fatalf("body leaked the underlying error: %s", pe.Body)
-				}
-				if !strings.Contains(string(pe.Body), typeGuardrailUnavailable) {
-					t.Fatalf("body missing type: %s", pe.Body)
-				}
-				if outcome.Decision != "failed_closed" {
-					t.Fatalf("decision = %q, want failed_closed", outcome.Decision)
-				}
-			}
-			if span.Plugin == nil || span.Plugin.Decision != outcome.Decision {
-				got := ""
-				if span.Plugin != nil {
-					got = span.Plugin.Decision
-				}
-				t.Fatalf("span decision = %q, want %q", got, outcome.Decision)
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -129,8 +86,8 @@ func TestHandleExternalFailureNilEventAndLoggerAreSafe(t *testing.T) {
 		Reason: FailureTransport,
 		Err:    errors.New("boom"),
 	})
-	if outcome.Decision != "failed_closed" {
-		t.Fatalf("decision = %q, want failed_closed", outcome.Decision)
+	if outcome.Decision != "failed_open" || outcome.Err != nil {
+		t.Fatalf("outcome = %+v, want failed_open with nil error", outcome)
 	}
 }
 

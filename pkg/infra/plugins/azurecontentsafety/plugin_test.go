@@ -203,7 +203,7 @@ func TestExecuteEmptyTextPassThrough(t *testing.T) {
 	}
 }
 
-func TestExecuteAzureErrorEnforceReturnsError(t *testing.T) {
+func TestExecuteAzureErrorEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -211,20 +211,19 @@ func TestExecuteAzureErrorEnforceReturnsError(t *testing.T) {
 	srv.Close()
 
 	p := New(adapter.NewRegistry(), nil)
+	event, span := eventFor(t)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(addr, map[string]int{CategoryHate: 2}), requestContext(openAIRequestBody()))
+	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on fail-closed, got %+v", res)
+	if err != nil {
+		t.Fatalf("expected no error on transport failure in enforce mode, got %v", err)
 	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("expected *PluginError on transport failure in enforce mode, got %v", err)
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
 	}
-	if pe.StatusCode != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusBadGateway)
-	}
-	if pe.Type != "guardrail_unavailable" {
-		t.Fatalf("type = %q, want guardrail_unavailable", pe.Type)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_open", extras, ok)
 	}
 }
 
@@ -275,7 +274,7 @@ func eventFor(t *testing.T) (*metrics.EventContext, *trace.Span) {
 	return metrics.NewEventContext(span), span
 }
 
-func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
+func TestExecuteVerdictIncompleteEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	// category_severity names Violence, but categories only asks Azure for
@@ -300,22 +299,18 @@ func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
 	in.Event = event
 
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on verdict_incomplete, got %+v", res)
+	if err != nil {
+		t.Fatalf("expected no error on verdict_incomplete in enforce mode, got %v", err)
 	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("expected *PluginError, got %v", err)
-	}
-	if pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, want 502 guardrail_unavailable", pe)
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
 	}
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 	if !ok {
 		t.Fatalf("expected *Data extras")
 	}
-	if extras.Decision != "failed_closed" {
-		t.Fatalf("decision = %q, want failed_closed", extras.Decision)
+	if extras.Decision != "failed_open" {
+		t.Fatalf("decision = %q, want failed_open", extras.Decision)
 	}
 	if extras.FailureReason != "verdict_incomplete" {
 		t.Fatalf("failure_reason = %q, want verdict_incomplete", extras.FailureReason)
@@ -366,7 +361,7 @@ func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteConfigInvalidEnforceFailsClosed(t *testing.T) {
+func TestExecuteConfigInvalidEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	p := New(adapter.NewRegistry(), nil)
@@ -375,16 +370,15 @@ func TestExecuteConfigInvalidEnforceFailsClosed(t *testing.T) {
 	in.Event = event
 
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result, got %+v", res)
+	if err != nil {
+		t.Fatalf("expected no error on config_invalid in enforce mode, got %v", err)
 	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
 	}
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.FailureReason != "config_invalid" || extras.Decision != "failed_closed" {
-		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", extras, ok)
+	if !ok || extras.FailureReason != "config_invalid" || extras.Decision != "failed_open" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", extras, ok)
 	}
 }
 

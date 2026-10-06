@@ -236,3 +236,17 @@ func TestStoredHostileServiceAccountStillParsesAndIsPinned(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestValidateSettingsWriteRejectsFinalPassOptOut(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{allowAmbientIdentity: true}
+	settings := validSettings()
+	settings["streaming"] = map[string]any{"final_pass": false}
+
+	err := p.ValidateSettingsWrite(settings, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "streaming.final_pass")
+	require.NoError(t, p.ValidateSettingsWrite(settings, settings),
+		"a policy already stored with final_pass: false must stay editable")
+	require.NoError(t, p.ValidateConfig(settings), "the rule applies on write only, never when a policy loads")
+}
