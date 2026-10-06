@@ -195,13 +195,19 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 // passive participant (StreamOptionsOwner returning false, such as a local
 // rewriter) yields to any owner, whatever the order, and its own options are
 // used only when it is the sole participant.
+//
+// MaxAccumulatedBytes is the exception: the stream keeps the largest window
+// any participant asked for, and the executor narrows each entry to its own
+// (segmentWithin). A provider with a small per-request limit then bounds only
+// its own calls, not the context every other policy inspects.
 func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 	if p == nil {
 		return false, StreamOptions{}
 	}
 	var (
-		passive    StreamOptions
-		hasPassive bool
+		chosen, passive      StreamOptions
+		hasOwner, hasPassive bool
+		maxAccumulatedBytes  int
 	)
 	for _, entry := range p.byStage[stage] {
 		inspector, ok := streamInspector(entry.plugin)
@@ -212,18 +218,25 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		if !enabled {
 			continue
 		}
-		if !ownsStreamOptions(entry.plugin) {
-			if !hasPassive {
-				passive, hasPassive = opts, true
+		maxAccumulatedBytes = max(maxAccumulatedBytes, opts.MaxAccumulatedBytes)
+		switch {
+		case ownsStreamOptions(entry.plugin):
+			if !hasOwner {
+				chosen, hasOwner = opts, true
 			}
-			continue
+		case !hasPassive:
+			passive, hasPassive = opts, true
 		}
-		return true, opts
 	}
-	if hasPassive {
-		return true, passive
+	switch {
+	case hasOwner:
+	case hasPassive:
+		chosen = passive
+	default:
+		return false, StreamOptions{}
 	}
-	return false, StreamOptions{}
+	chosen.MaxAccumulatedBytes = maxAccumulatedBytes
+	return true, chosen
 }
 
 func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
@@ -325,7 +338,8 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 // stream's per-response instruments to an entry that records none, and let a
 // policy whose settings no longer parse fail every block of a stream another
 // policy opted into (F8). The opt-in reads only the policy's settings, so it
-// is answered once when the plan is built. The result is never nil.
+// is answered once when the plan is built, together with the entry's own
+// window. The result is never nil.
 func streamParticipants(entries []chainEntry) []chainEntry {
 	out := make([]chainEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -333,7 +347,8 @@ func streamParticipants(entries []chainEntry) []chainEntry {
 		if !ok {
 			continue
 		}
-		if enabled, _ := inspector.StreamSettings(entry.config.Settings); enabled {
+		if enabled, opts := inspector.StreamSettings(entry.config.Settings); enabled {
+			entry.streamWindow = opts.MaxAccumulatedBytes
 			out = append(out, entry)
 		}
 	}

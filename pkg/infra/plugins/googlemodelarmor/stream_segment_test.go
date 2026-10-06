@@ -102,6 +102,33 @@ func TestStreamSettingsDefaultsToFailClosed(t *testing.T) {
 	}
 }
 
+func TestStreamSettingsStaysWithinTheSanitizeLimit(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
+	cases := []struct {
+		name     string
+		settings map[string]any
+		want     int
+	}{
+		{"default", streamSettings(nil), 65536},
+		{"configured below the limit", streamSettings(map[string]any{"max_accumulated_bytes": 8192}), 8192},
+		{"configured above the limit", streamSettings(map[string]any{"max_accumulated_bytes": 1048576}), 65536},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			on, opts := p.StreamSettings(tc.settings)
+			if !on {
+				t.Fatal("expected the opt-in")
+			}
+			if opts.MaxAccumulatedBytes != tc.want {
+				t.Errorf("MaxAccumulatedBytes = %d, want %d: Model Armor skips its filters above 65,536 tokens",
+					opts.MaxAccumulatedBytes, tc.want)
+			}
+		})
+	}
+}
+
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, allowResponse)

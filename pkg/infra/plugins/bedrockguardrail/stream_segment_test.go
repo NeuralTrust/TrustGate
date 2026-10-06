@@ -186,6 +186,18 @@ func TestStreamSettingsDefaultsToFailClosed(t *testing.T) {
 		"the buffered leg fails closed when ApplyGuardrail is unreachable")
 }
 
+func TestStreamSettingsDefaultWindowFitsTheSmallestQuota(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+
+	_, opts := p.StreamSettings(streamSettings(nil))
+	assert.LessOrEqual(t, opts.MaxAccumulatedBytes, 25*1000,
+		"25 text units of 1,000 characters is the default per-request quota in eu-west-3")
+
+	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 524288}))
+	assert.Equal(t, 524288, opts.MaxAccumulatedBytes, "the quota is adjustable, so an explicit window is honoured")
+}
+
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
 	t.Parallel()
 	g := allowing()
