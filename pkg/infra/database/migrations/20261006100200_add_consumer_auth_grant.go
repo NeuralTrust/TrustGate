@@ -23,7 +23,7 @@ import (
 
 func init() {
 	database.RegisterMigration(database.Migration{
-		ID:   "20261005120200_add_consumer_auth_grant",
+		ID:   "20261006100200_add_consumer_auth_grant",
 		Name: "give personal consumer_auth links a grant level, priority and grant time",
 		Up:   upAddConsumerAuthGrant,
 		Down: downAddConsumerAuthGrant,

@@ -23,7 +23,7 @@ import (
 
 func init() {
 	database.RegisterMigration(database.Migration{
-		ID:   "20261005120300_bound_consumer_auth_granted_at",
+		ID:   "20261006100300_bound_consumer_auth_granted_at",
 		Name: "bound a personal consumer_auth link's grant time to the unix epoch through year 9999 UTC",
 		Up:   upBoundConsumerAuthGrantedAt,
 		Down: downBoundConsumerAuthGrantedAt,
