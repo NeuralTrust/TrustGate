@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -71,6 +73,10 @@ type OAuth2Config struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
+	// LoginScopes are requested from the identity provider when the gateway signs
+	// someone in and when it refreshes that login. They are never checked on
+	// inbound tokens (RequiredScopes is) nor advertised to MCP clients.
+	LoginScopes []string `json:"login_scopes,omitempty"`
 	// ExchangeClientID and ExchangeClientSecret are the client the gateway
 	// presents when it exchanges a caller's token (on-behalf-of, token
 	// exchange). Unlike ClientID they never make the provider interactive,
@@ -164,6 +170,9 @@ func (c *OAuth2Config) validate() error {
 	if err := c.validateExchangeClient(); err != nil {
 		return err
 	}
+	if err := c.validateLoginScopes(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
 	}
@@ -222,6 +231,30 @@ func (c *OAuth2Config) validateExchangeClient() error {
 	if (strings.TrimSpace(c.ExchangeClientID) == "") != (strings.TrimSpace(c.ExchangeClientSecret) == "") {
 		return fmt.Errorf("%w: oauth2.exchange_client_id and oauth2.exchange_client_secret must be set together", ErrInvalidConfig)
 	}
+	return nil
+}
+
+func (c *OAuth2Config) validateLoginScopes() error {
+	if len(c.LoginScopes) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("%w: oauth2.login_scopes requires oauth2.client_id (they are only sent when the gateway signs people in)", ErrInvalidConfig)
+	}
+	scopes := make([]string, 0, len(c.LoginScopes))
+	for _, scope := range c.LoginScopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return fmt.Errorf("%w: oauth2.login_scopes cannot contain empty entries", ErrInvalidConfig)
+		}
+		if strings.ContainsFunc(scope, unicode.IsSpace) {
+			return fmt.Errorf("%w: oauth2.login_scopes entry %q cannot contain whitespace; send one scope per entry", ErrInvalidConfig, scope)
+		}
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	c.LoginScopes = scopes
 	return nil
 }
 
