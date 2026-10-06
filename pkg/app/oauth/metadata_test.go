@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -287,6 +288,36 @@ func TestProtectedResourceMetadataFallbackDoesNotLeakOtherGatewayScopes(t *testi
 	}
 	if len(meta.ScopesSupported) != 1 || meta.ScopesSupported[0] != "ours:use" {
 		t.Fatalf("expected only this gateway's scopes, got %v", meta.ScopesSupported)
+	}
+}
+
+// The document advertises what the authorize path brokers: for a sign-in
+// consumer with no identity provider of its own that is the built-in default,
+// never the scopes of an unattached Entra identity that signs people in on the
+// same gateway.
+func TestProtectedResourceMetadataUnpinnedSignInConsumerAdvertisesDefault(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg", Scopes: []string{"mcp:platform"},
+	})
+	entra := entraSignInIdentity(t, gatewayID)
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/v1/mcp/store": {{GatewayID: gatewayID, Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}},
+	}}
+	svc := NewMetadataService(
+		&fakeCredentialFinder{oauth2: []*authdomain.Auth{entra}, defaultIdP: def}, paths, nil, newMemFlowStore(),
+	)
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/store")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 1 {
+		t.Fatalf("expected the gateway as authorization server, got %v", meta.AuthorizationServers)
+	}
+	if !slices.Equal(meta.ScopesSupported, []string{"mcp:platform"}) {
+		t.Fatalf("expected only the default IdP's scopes, got %v", meta.ScopesSupported)
 	}
 }
 

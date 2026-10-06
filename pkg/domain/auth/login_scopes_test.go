@@ -39,7 +39,8 @@ func TestOAuth2Config_Validate_LoginScopes(t *testing.T) {
 		{name: "inner whitespace", clientID: "app-1", scopes: []string{"api://gw/mcp.access offline_access"}, wantErr: "login_scopes"},
 		{name: "no client_id", scopes: []string{"api://gw/mcp.access"}, wantErr: "client_id"},
 		{name: "protocol scopes allowed", clientID: "app-1", scopes: []string{"openid", "profile", "offline_access"}, want: []string{"openid", "profile", "offline_access"}},
-		{name: "session mode allowed", clientID: "app-1", sessionMode: true, scopes: []string{"offline_access"}, want: []string{"offline_access"}},
+		{name: "session mode refused", clientID: "app-1", sessionMode: true, scopes: []string{"offline_access"}, wantErr: "session_mode"},
+		{name: "session mode without scopes", clientID: "app-1", sessionMode: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -236,6 +237,50 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 	}
 	if got.Config.OAuth2 == nil || got.Config.OAuth2.ClientSecret != "real-secret" {
 		t.Fatalf("masked secret not resolved to stored value: %+v", got.Config.OAuth2)
+	}
+}
+
+func TestUpdater_Update_StatusToggleWithMaskedEchoKeepsBothSecrets(t *testing.T) {
+	t.Parallel()
+	const (
+		loginSecret    = "real-login-secret"
+		exchangeSecret = "real-exchange-secret"
+	)
+	withSecrets := func(login, exchange string) domain.Config {
+		cfg := oauth2Config(login)
+		cfg.OAuth2.ExchangeClientID = "exchange-456"
+		cfg.OAuth2.ExchangeClientSecret = exchange
+		return cfg
+	}
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	existing, err := domain.NewAuth(gwID, "oauth-cred", domain.TypeOAuth2, false, withSecrets(loginSecret, exchangeSecret))
+	if err != nil {
+		t.Fatalf("NewAuth: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+			o := a.Config.OAuth2
+			return a.Enabled && o != nil && o.ClientSecret == loginSecret && o.ExchangeClientSecret == exchangeSecret
+		})).
+		Return(nil).
+		Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
+		ID:      existing.ID,
+		Enabled: ptr(true),
+		Config:  ptr(withSecrets(secret.Mask(loginSecret), secret.Mask(exchangeSecret))),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
 	}
 }
 

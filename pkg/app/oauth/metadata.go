@@ -146,19 +146,19 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 	return auths, nil
 }
 
+// gatewayScopedAuths advertises the IdP the authorize path brokers for a
+// consumer with no identity provider of its own: the built-in default alone
+// when it is configured, since the auth chain admits nothing else for that
+// consumer, and the gateway's operator IdPs only without one.
 func (s *metadataService) gatewayScopedAuths(ctx context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	if def := s.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+		return []*authdomain.Auth{def}, nil
+	}
 	auths, err := s.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load oauth2 auths for gateway: %w", err)
 	}
-	def := s.credentials.DefaultOAuth2ForGateway(gatewayID)
-	if def == nil {
-		return auths, nil
-	}
-	out := make([]*authdomain.Auth, 0, len(auths)+1)
-	out = append(out, auths...)
-	out = append(out, def)
-	return out, nil
+	return auths, nil
 }
 
 func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error) {
