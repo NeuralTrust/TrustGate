@@ -142,7 +142,10 @@ func TestEventSink_NeverCarriesThePrompt(t *testing.T) {
 	require.Len(t, publisher.got, 1)
 	raw, err := json.Marshal(publisher.got[0].evt)
 	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "4111", "the prompt must not reach the collector")
+	// Match the whole prompt and the whole card number, not a 4-digit prefix:
+	// the event carries random UUIDs, and "4111" turns up in one now and then.
+	assert.NotContains(t, string(raw), prompt, "the prompt must not reach the collector")
+	assert.NotContains(t, string(raw), "4111 1111 1111 1111", "nor the card number in it")
 	assert.NotContains(t, string(raw), req.TextHash, "nor anything derived from it")
 	assert.Equal(t, req.TraceID, publisher.got[0].evt.TraceID, "the trace id is what correlates it")
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/sync/singleflight"
 )
@@ -186,7 +187,7 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	form.Set("scope", cfg.Scope)
 	form.Set("client_id", idp.id)
 	form.Set("client_secret", idp.secret)
-	return e.idp.Call(ctx, principal.Issuer, form)
+	return e.idp.Call(idp.context(ctx), principal.Issuer, form)
 }
 
 func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) (*Token, error) {
@@ -208,12 +209,21 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	}
 	form.Set("client_id", idp.id)
 	form.Set("client_secret", idp.secret)
-	return e.idp.Call(ctx, principal.Issuer, form)
+	return e.idp.Call(idp.context(ctx), principal.Issuer, form)
+}
+
+// The built-in default IdP is not an exchange source today (OAuth2AuthsForGateway
+// is repository-only); trusted is carried so it stays correct if that changes.
+func (c *exchangeClient) context(ctx context.Context) context.Context {
+	return netguard.TrustedIf(ctx, c.trusted)
 }
 
 type exchangeClient struct {
-	id     string
-	secret string
+	// trusted is the Trusted flag of the auth record the credentials came from
+	// (the operator's default IdP), never a comparison of issuer URLs.
+	trusted bool
+	id      string
+	secret  string
 }
 
 func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer, identityID string) (*exchangeClient, error) {
@@ -233,7 +243,7 @@ func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer,
 		}
 		matched = true
 		if id, clientSecret, ok := a.Config.OAuth2.ExchangeCredentials(); ok {
-			return &exchangeClient{id: id, secret: clientSecret}, nil
+			return &exchangeClient{id: id, secret: clientSecret, trusted: a.Config.OAuth2.Trusted}, nil
 		}
 	}
 	if matched {
@@ -264,7 +274,7 @@ func pinnedIdP(auths []*authdomain.Auth, issuer, identityID string) (*exchangeCl
 		if !ok {
 			return nil, fmt.Errorf("%w: identity %s lacks exchange client credentials", ErrExchangeIdentityUnavailable, pinned)
 		}
-		return &exchangeClient{id: id, secret: clientSecret}, nil
+		return &exchangeClient{id: id, secret: clientSecret, trusted: cfg.Trusted}, nil
 	}
 	return nil, fmt.Errorf("%w: identity %s is not an enabled oauth2 auth of this gateway", ErrExchangeIdentityUnavailable, pinned)
 }

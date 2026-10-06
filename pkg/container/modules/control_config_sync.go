@@ -33,16 +33,20 @@ import (
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	lkgrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsnapshotlkg"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/dig"
 )
 
@@ -61,6 +65,10 @@ type compilerReaders struct {
 	// TenantCaps puts each tenant's plan caps into the snapshots that carry its
 	// gateways.
 	TenantCaps ratelimitdomain.TenantCapsRepository
+	// PinnedTools puts the decided tool set of pinned MCP registries into the
+	// snapshots. Deliberately not optional: without it a pinned registry would
+	// publish with nothing approved and silently hide every tool.
+	PinnedTools registrydomain.PinnedToolRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -83,6 +91,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
+			appsnapshot.WithPinnedTools(r.PinnedTools),
 		), nil
 	}); err != nil {
 		return err
@@ -133,15 +142,25 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// The DB-less data plane reports pending pinned tools over the same channel.
+	// The service treats the caller as untrusted; see PinnedToolsService.
+	if err := c.Provide(func(registries registrydomain.Repository, tools registrydomain.PinnedToolRepository, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.PinnedToolsServer {
+		return configsyncgrpc.NewPinnedToolsService(registries, tools, gateways, logger)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(configsyncgrpc.NewAuthInterceptor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
+	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, pinned snapshotpb.PinnedToolsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
 		if cfg.IsDeployed() && (cfg.ConfigSync.GRPCTLSCertPath == "" || cfg.ConfigSync.GRPCTLSKeyPath == "") {
 			return nil, fmt.Errorf("%w: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY are required on the control plane in deployed environments", commonerrors.ErrInvalidConfig)
 		}
-		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger)
+		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger, configsyncgrpc.RegisterPinnedTools(pinned))
 	}); err != nil {
+		return err
+	}
+	if err := c.Provide(lkgrepo.NewRepository); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
@@ -152,13 +171,35 @@ func ControlConfigSync(c *container.Container) error {
 		outbox configsyncport.OutboxRepository,
 		logger *slog.Logger,
 		cfg *config.Config,
-	) *appsnapshot.Dispatcher {
-		return appsnapshot.NewDispatcher(compiler, codec, holder, broadcaster, outbox, logger, appsnapshot.DispatcherConfig{
+		store *lkgrepo.Repository,
+		// The encrypter is resolved first: in prod it provisions the shared
+		// SERVER_SECRET_KEY into cfg, which the LKG key is derived from.
+		_ vaultdomain.Encrypter,
+		// The SDK installs the global MeterProvider the gauges register on.
+		_ *o11y.SDK,
+	) (*appsnapshot.Dispatcher, error) {
+		var opts []appsnapshot.DispatcherOption
+		if cfg.ConfigSync.AdminLKGEnabled {
+			sealer, err := infrasnapshot.NewLKGSealer(cfg.Server.SecretKey)
+			if err != nil {
+				// Without a usable secret the feature cannot encrypt; the admin
+				// keeps today's behaviour rather than failing to boot.
+				logger.Warn("admin last-good snapshot disabled: no usable SERVER_SECRET_KEY",
+					slog.String("component", "configsnapshot"), slog.String("error", err.Error()))
+			} else {
+				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge}))
+			}
+		}
+		d := appsnapshot.NewDispatcher(compiler, codec, holder, broadcaster, outbox, logger, appsnapshot.DispatcherConfig{
 			Debounce:  cfg.ConfigSync.RecompileDebounce,
 			Backstop:  cfg.ConfigSync.RecompileBackstop,
 			Retention: cfg.ConfigSync.OutboxRetention,
 			MaxRows:   int(cfg.ConfigSync.OutboxMaxRows),
-		})
+		}, opts...)
+		if err := appsnapshot.RegisterAdminSnapshotGauges(otel.Meter("trustgate/configsync"), d); err != nil {
+			return nil, err
+		}
+		return d, nil
 	}); err != nil {
 		return err
 	}

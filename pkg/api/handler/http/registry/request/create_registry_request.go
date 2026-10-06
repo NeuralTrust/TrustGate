@@ -33,6 +33,8 @@ type CreateRegistryRequest struct {
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+	// ToolPolicy is auto (default) or pinned; pinned is only valid for MCP.
+	ToolPolicy string `json:"tool_policy,omitempty"`
 }
 
 type PricingRequest struct {
@@ -167,6 +169,9 @@ func (r CreateRegistryRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
+	if err := domain.ToolPolicy(r.ToolPolicy).Normalize().Validate(); err != nil {
+		return err
+	}
 	if r.ToType() == domain.TypeMCP {
 		if r.MCPTarget == nil {
 			return fmt.Errorf("mcp_target is required for MCP registries: %w", commonerrors.ErrValidation)
@@ -186,6 +191,10 @@ func (r CreateRegistryRequest) Validate() error {
 		return err
 	}
 	return nil
+}
+
+func (r CreateRegistryRequest) ToToolPolicy() domain.ToolPolicy {
+	return domain.ToolPolicy(r.ToolPolicy).Normalize()
 }
 
 func (r CreateRegistryRequest) ToType() domain.Type {

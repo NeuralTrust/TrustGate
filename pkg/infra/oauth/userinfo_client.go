@@ -24,6 +24,7 @@ import (
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var _ appoauth.UserInfoClient = (*UserInfoClient)(nil)
@@ -34,7 +35,7 @@ type UserInfoClient struct {
 
 func NewUserInfoClient(client *http.Client) *UserInfoClient {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	return &UserInfoClient{client: client}
 }

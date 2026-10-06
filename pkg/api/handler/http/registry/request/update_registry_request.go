@@ -32,6 +32,8 @@ type UpdateRegistryRequest struct {
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+	// ToolPolicy absent leaves the stored policy unchanged.
+	ToolPolicy *string `json:"tool_policy,omitempty"`
 }
 
 func (r *UpdateRegistryRequest) Normalize() {
@@ -58,10 +60,24 @@ func (r UpdateRegistryRequest) Validate() error {
 	if r.Provider != nil && strings.TrimSpace(*r.Provider) == "" {
 		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
+	if policy := r.ToToolPolicy(); policy != nil {
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := r.Pricing.ToDomain().Validate(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// ToToolPolicy returns nil when the request does not carry a policy.
+func (r UpdateRegistryRequest) ToToolPolicy() *domain.ToolPolicy {
+	if r.ToolPolicy == nil {
+		return nil
+	}
+	p := domain.ToolPolicy(*r.ToolPolicy).Normalize()
+	return &p
 }
 
 func (r UpdateRegistryRequest) ToAuth() *domain.TargetAuth {

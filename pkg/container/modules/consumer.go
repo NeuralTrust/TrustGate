@@ -22,6 +22,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -95,7 +96,11 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(appconsumer.NewDataFinder); err != nil {
+	// The data finder feeds the MCP composer. On a full-mode pod it has no
+	// snapshot to carry the decided tool set of pinned registries, so it reads
+	// registries through the stamping decorator. A DB-less plane has no
+	// PinnedToolRepository and gets the set from the snapshot.
+	if err := c.Provide(provideDataFinder); err != nil {
 		return err
 	}
 	if err := c.Provide(appconsumer.NewPathResolver); err != nil {
@@ -159,4 +164,25 @@ type apiKeyConsumersParams struct {
 
 func provideAPIKeyConsumers(p apiKeyConsumersParams) (appconsumer.APIKeyConsumers, error) {
 	return appconsumer.NewAPIKeyConsumers(p.Consumers, p.APIKeys, p.Vault)
+}
+
+type dataFinderParams struct {
+	dig.In
+
+	Repo           domain.Reader
+	Registries     registrydomain.Repository
+	Policies       policydomain.Repository
+	Auths          authdomain.Repository
+	PluginRegistry appplugins.Registry
+	Manager        *cache.TTLMapManager
+	Logger         *slog.Logger
+	Pinned         registrydomain.PinnedToolRepository `optional:"true"`
+}
+
+func provideDataFinder(p dataFinderParams) appconsumer.DataFinder {
+	registries := p.Registries
+	if p.Pinned != nil {
+		registries = appregistry.WithPinnedTools(registries, p.Pinned, p.Logger)
+	}
+	return appconsumer.NewDataFinder(p.Repo, registries, p.Policies, p.Auths, p.PluginRegistry, p.Manager, p.Logger)
 }

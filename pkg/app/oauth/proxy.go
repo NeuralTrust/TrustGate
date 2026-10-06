@@ -32,9 +32,11 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -102,7 +104,7 @@ func NewAuthProxy(
 	opts ...ProxyOption,
 ) AuthProxy {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	meta := &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}}
 	p := &authProxy{
@@ -171,6 +173,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		}
 	}
 	cfg := auth.Config.OAuth2
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -276,6 +279,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 			effectiveGatewayID = gw
 		}
 	}
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -440,6 +444,7 @@ func (p *authProxy) verifiedPlatformClaims(ctx context.Context, auth *authdomain
 		Audiences:  cfg.Audiences,
 		JWKSURL:    cfg.JWKSURL,
 		Algorithms: algorithms,
+		Trusted:    cfg.Trusted,
 	})
 	if err != nil {
 		slog.Warn("oauth: platform token failed verification", "issuer", cfg.Issuer, "error", err)
@@ -541,6 +546,20 @@ func firstClaimOf[T any](token map[string]any, pick func(claims map[string]any) 
 }
 
 func subjectFromToken(token map[string]any) string {
+	return boundedSubject(rawSubjectFromToken(token))
+}
+
+// boundedSubject returns s only when it is a plain identifier. A subject that
+// came out of an IdP-controlled token or claim set is empty (no subject) rather
+// than oversized or carrying control characters.
+func boundedSubject(s string) string {
+	if !strutil.IsBoundedPrintable(s, maxSubjectLen) {
+		return ""
+	}
+	return s
+}
+
+func rawSubjectFromToken(token map[string]any) string {
 	raw, _ := token["access_token"].(string)
 	if raw == "" {
 		return ""
@@ -565,6 +584,7 @@ func (p *authProxy) captureSubject(ctx context.Context, cfg *authdomain.OAuth2Co
 		return subjectFromClaims(claims, cfg.SubjectClaim), nil
 	}
 	if cfg.UserInfoURL != "" {
+		ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 		accessToken, _ := token["access_token"].(string)
 		info, err := p.userinfo.Fetch(ctx, cfg.UserInfoURL, accessToken)
 		if err != nil {
@@ -574,12 +594,46 @@ func (p *authProxy) captureSubject(ctx context.Context, cfg *authdomain.OAuth2Co
 		if claim == "" {
 			claim = "sub"
 		}
-		return coerceClaim(info[claim]), nil
+		return userInfoSubject(info[claim])
 	}
 	return subjectFromToken(token), nil
 }
 
+// maxSubjectLen bounds a subject taken from a userinfo response.
+const maxSubjectLen = 256
+
+// userInfoSubject extracts the subject from a userinfo claim. The endpoint is
+// tenant-chosen and its answer becomes the session subject, so anything that is
+// not a plain identifier is refused instead of being stringified: an object or
+// array rendered with %v would copy an arbitrary part of the response into the
+// session. Numbers are accepted because several providers (GitHub's id) use
+// them as identifiers; absence stays an empty subject, as before.
+func userInfoSubject(v any) (string, error) {
+	var subject string
+	switch t := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		subject = t
+	case json.Number, float64, float32, int, int64:
+		subject = coerceClaim(t)
+	default:
+		return "", errors.New("oauth: userinfo subject claim is not a string or number")
+	}
+	if subject == "" {
+		return "", nil
+	}
+	if !strutil.IsBoundedPrintable(subject, maxSubjectLen) {
+		return "", errors.New("oauth: userinfo subject claim is empty, too long or not printable")
+	}
+	return subject, nil
+}
+
 func subjectFromClaims(claims jwt.MapClaims, claim string) string {
+	return boundedSubject(rawSubjectFromClaims(claims, claim))
+}
+
+func rawSubjectFromClaims(claims jwt.MapClaims, claim string) string {
 	if claim != "" {
 		return coerceClaim(claims[claim])
 	}
@@ -608,7 +662,9 @@ func coerceClaim(v any) string {
 	case bool:
 		return strconv.FormatBool(t)
 	default:
-		return fmt.Sprintf("%v", v)
+		// Objects and arrays have no scalar form; stringifying them would
+		// copy arbitrary upstream JSON into a subject or account label.
+		return ""
 	}
 }
 
@@ -792,6 +848,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		return nil, err
 	}
 	cfg := auth.Config.OAuth2
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return nil, err

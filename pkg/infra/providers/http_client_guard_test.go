@@ -29,8 +29,8 @@ import (
 // denyPrivateNetworks restores the production default (guard on) for one test.
 func denyPrivateNetworks(t *testing.T) {
 	t.Helper()
-	allowPrivateNetworks.Store(false)
-	t.Cleanup(func() { allowPrivateNetworks.Store(true) })
+	netguard.SetAllowPrivate(false)
+	t.Cleanup(func() { netguard.SetAllowPrivate(true) })
 }
 
 func TestPoolRefusesPrivateDestinations(t *testing.T) {

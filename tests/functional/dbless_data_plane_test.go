@@ -61,7 +61,7 @@ func dblessOverrides(lkgPath, token, instanceID string, port int) []string {
 		"CONFIG_SYNC_INSTANCE_ID=" + instanceID,
 		"SERVER_PROXY_PORT=" + strconv.Itoa(port),
 		// Upstream stubs listen on loopback.
-		"PROVIDER_ALLOW_PRIVATE_NETWORKS=true",
+		"OUTBOUND_ALLOW_PRIVATE_NETWORKS=true",
 	}
 }
 
@@ -191,6 +191,9 @@ func TestDBLessDataPlane_ReadinessGatedOnSnapshotAndLivenessIndependent(t *testi
 		deps, ok := b["dependencies"].(map[string]any)
 		require.True(t, ok, "readiness must expose dependencies: %v", b)
 		assert.Equal(t, "unavailable", deps["snapshot"], "snapshot dependency must be unavailable: %v", b)
+		snap, ok := b["snapshot"].(map[string]any)
+		require.True(t, ok, "readiness must expose the snapshot state: %v", b)
+		assert.Equal(t, "none", snap["state"], "snapshot state must be none without a snapshot: %v", b)
 		_, hasPostgres := deps["postgres"]
 		assert.False(t, hasPostgres, "db-less plane must not expose a postgres dependency: %v", b)
 		time.Sleep(300 * time.Millisecond)
@@ -232,6 +235,11 @@ func TestDBLessDataPlane_ConvergesServesAtParityAndKeepsSecretsOutOfLogs(t *test
 	deps, ok := ready["dependencies"].(map[string]any)
 	require.True(t, ok, "readiness body must expose dependencies: %v", ready)
 	assert.Equal(t, "ok", deps["snapshot"], "snapshot dependency must be ok once converged: %v", ready)
+	snap, ok := ready["snapshot"].(map[string]any)
+	require.True(t, ok, "readiness body must expose the snapshot state: %v", ready)
+	assert.Equal(t, "live", snap["state"], "snapshot state must be live after a converge: %v", ready)
+	assert.NotContains(t, snap, "version", "snapshot version must not be exposed on an unauthenticated probe: %v", ready)
+	assert.Contains(t, snap, "age_seconds", "snapshot age must be reported: %v", ready)
 	_, hasPostgres := deps["postgres"]
 	assert.False(t, hasPostgres, "db-less plane must not expose a postgres dependency: %v", ready)
 

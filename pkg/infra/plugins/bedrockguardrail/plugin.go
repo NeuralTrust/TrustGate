@@ -24,6 +24,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -158,13 +159,19 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 }
 
 func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
-	if in.Request == nil || in.Response == nil || p.registry == nil {
+	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	if in.Request.Provider == "" || len(in.Response.Body) == 0 {
-		return passThrough(), nil
-	}
+	// A streamed response is inspected block by block by the stream guard when
+	// streaming is enabled for this policy. When it is not, the response goes
+	// out uninspected and the trace says so, rather than omitting the policy.
 	if in.Response.Streaming {
+		if !cfg.Streaming.IsEnabled() {
+			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
+		}
+		return passThrough(), nil
+	}
+	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
 		return passThrough(), nil
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)

@@ -1201,6 +1201,14 @@ func (g *streamGuard) drainForUsage() {
 	g.drain(g.cutRemainder(g.drained))
 }
 
+// wasCut reports whether the guard stopped the stream and ended it on a cut
+// terminator, after the head, so what the client holds is a truncated response.
+// stopped is set only by stopStream, the one place a cut is decided; a degrade,
+// a retired block loop, a client that went away and a stream that ended on its
+// own never set it. It must be read after the returned sequence is exhausted,
+// like cutBarrier.
+func (g *streamGuard) wasCut() bool { return g.stopped }
+
 // cutBarrier is closed once the drain a cut handed the upstream to has finished
 // reading it. It is nil when no cut handed anything off, which is every stream
 // that ended on its own.
