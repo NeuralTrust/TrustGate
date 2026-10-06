@@ -314,22 +314,13 @@ func TestExecuteBlockOnExcludesFilterFromBlocking(t *testing.T) {
 	assertPassThrough(t, res, err)
 }
 
-func TestExecuteClientErrorEnforceFailsClosed(t *testing.T) {
+func TestExecuteClientErrorEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	p := pluginWithClientError(errors.New("boom"))
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on fail-closed, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("expected *PluginError on transport failure in enforce mode, got %v", err)
-	}
-	if pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, want 502 guardrail_unavailable", pe)
-	}
+	assertPassThrough(t, res, err)
 }
 
 func TestExecuteClientErrorObservePassesThrough(t *testing.T) {
@@ -341,19 +332,14 @@ func TestExecuteClientErrorObservePassesThrough(t *testing.T) {
 	assertPassThrough(t, res, err)
 }
 
-func TestExecuteInvocationFailureEnforceFailsClosed(t *testing.T) {
+func TestExecuteInvocationFailureEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, invocationFailureResponse)
 	p := pluginWithStub(stub)
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on fail-closed, got %+v", res)
-	}
-	if err == nil {
-		t.Fatal("expected error on invocationResult FAILURE in enforce mode")
-	}
+	assertPassThrough(t, res, err)
 }
 
 func TestExecuteInvocationFailureObservePassesThrough(t *testing.T) {
@@ -370,7 +356,7 @@ func TestExecuteInvocationFailureObservePassesThrough(t *testing.T) {
 // that only enables SDP the other four produced no verdict and used to pass as
 // clean. Enforce must reject, and the event must say which filter was missing
 // and why, or the operator has nothing to act on.
-func TestExecuteFilterAbsentFromTemplateEnforceFailsClosed(t *testing.T) {
+func TestExecuteFilterAbsentFromTemplateEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, sdpOnlyAllow)
 	p := pluginWithStub(stub)
@@ -379,19 +365,14 @@ func TestExecuteFilterAbsentFromTemplateEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on fail-closed, got %+v", res)
-	}
-	if err == nil {
-		t.Fatal("expected an error when a block_on filter is absent from the response")
-	}
+	assertPassThrough(t, res, err)
 	data, ok := span.PluginAttrsCopy().Extras.(*Data)
 	if !ok {
 		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
 	}
-	if data.Decision != "failed_closed" || data.Filter != filterRAI ||
+	if data.Decision != "failed_open" || data.Filter != filterRAI ||
 		data.FailureReason != "verdict_incomplete" || data.FailureDetail != reasonFilterNotInTemplate {
-		t.Fatalf("event = decision %q filter %q reason %q detail %q, want failed_closed %q verdict_incomplete %q",
+		t.Fatalf("event = decision %q filter %q reason %q detail %q, want failed_open %q verdict_incomplete %q",
 			data.Decision, data.Filter, data.FailureReason, data.FailureDetail, filterRAI, reasonFilterNotInTemplate)
 	}
 }
@@ -448,26 +429,40 @@ func TestExecuteMatchWinsOverAbsentFilter(t *testing.T) {
 	}
 }
 
-// An SDP anonymize must not let a call through that a selected filter never
-// looked at: absence still fails closed.
-func TestExecuteAnonymizeDoesNotMaskAbsentFilter(t *testing.T) {
+// An SDP anonymize with a selected filter that never ran must still apply the
+// mask the provider returned: failing open would forward the original prompt
+// with the raw PII. The incomplete verdict rides on the same event.
+func TestExecuteAnonymizeMasksEvenWhenAFilterIsAbsent(t *testing.T) {
 	t.Parallel()
+	const masked = "hello {EMAIL}"
 	body := sanitizeOpen +
-		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"hello {EMAIL}"}}}}` +
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"` + masked + `"}}}}` +
 		sanitizeClose
 	stub := newModelArmorStub(t, http.StatusOK, body)
 	p := pluginWithStub(stub)
+	event, span := newStreamEvent()
 
 	settings := modelArmorSettings()
 	settings["sdp_action"] = sdpActionAnonymize
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil)
+	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil || err == nil {
-		t.Fatalf("expected fail-closed, got res %+v err %v", res, err)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok || pe.Type == typeModelArmorBlocked {
-		t.Fatalf("expected a guardrail_unavailable fail-closed error, not a block: %v", err)
+	if res == nil || len(res.RequestBody) == 0 {
+		t.Fatalf("expected the masked RequestBody, got %+v", res)
+	}
+	creq, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("decode rewritten body: %v", err)
+	}
+	if last, _ := lastUserText(creq); last != masked {
+		t.Fatalf("last user content = %q, want %q", last, masked)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || data.Decision != decisionAnonymized || data.FailureReason != "verdict_incomplete" || data.FailureDetail == "" {
+		t.Fatalf("extras = %+v, ok=%v, want anonymized + verdict_incomplete with a detail", data, ok)
 	}
 }
 
@@ -696,7 +691,7 @@ func pluginWithClientBuildError(err error) *Plugin {
 	}
 }
 
-func TestExecuteClientBuildErrorEnforceFailsClosed(t *testing.T) {
+func TestExecuteClientBuildErrorEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	p := pluginWithClientBuildError(errors.New("bad credentials"))
 	event, span := newStreamEvent()
@@ -704,16 +699,10 @@ func TestExecuteClientBuildErrorEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
-	}
+	assertPassThrough(t, res, err)
 	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != "failed_closed" || data.FailureReason != "config_invalid" {
-		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", data, ok)
+	if !ok || data.Decision != "failed_open" || data.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", data, ok)
 	}
 }
 
@@ -732,7 +721,7 @@ func TestExecuteClientBuildErrorObserveFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteParseConfigErrorEnforceFailsClosed(t *testing.T) {
+func TestExecuteParseConfigErrorEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", time.Second, true, nil)
 	event, span := newStreamEvent()
@@ -740,16 +729,10 @@ func TestExecuteParseConfigErrorEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
-	}
+	assertPassThrough(t, res, err)
 	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != "failed_closed" || data.FailureReason != "config_invalid" {
-		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", data, ok)
+	if !ok || data.Decision != "failed_open" || data.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", data, ok)
 	}
 }
 

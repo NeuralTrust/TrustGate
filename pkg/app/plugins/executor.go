@@ -173,6 +173,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			continue
 		}
 		event := spans.eventFor(ctx, current, entry)
+		// A retired entry is not called again on this stream: its provider
+		// failed streamEntryRetireAfter blocks in a row. It still gets the
+		// closing segment, which makes no call, so its span is published.
+		if !seg.Closing && spans.isRetired(spanKey(seg, entry)) {
+			outcome.FailedEntries++
+			continue
+		}
 		call := current
 		if seg.Closing {
 			call.Report = spans.entryReport(seg, entry)
@@ -197,15 +204,35 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			if seg.Closing {
 				continue
 			}
+			// The caller's own cancellation (a client that left, a deadline
+			// unwinding the stream) is not this entry failing, as on the
+			// buffered path: it is neither counted nor labelled failed_open.
+			cancelled := ctx.Err() != nil
 			// Observe never blocks, and streaming.on_error is the stream's
 			// answer for entries that can: an observe entry that could not
 			// inspect a segment records that it failed open and lets the
 			// rest of the chain carry on, as its buffered leg does.
-			if !Blocks(entry.mode) {
-				SetDecisionFromOutcome(event, decisionFailedOpen)
+			//
+			// An enforcing entry whose own streaming.on_error resolved to
+			// fail_open is handled the same way. The stream carries ONE on_error
+			// for the whole chain, so returning its error to the guard would
+			// apply another policy's fail_closed to it (and blame it for the
+			// cut), and would end the walk, blinding every entry behind it on
+			// the block, which matters most on the final one. Only an entry that
+			// asked for fail_closed (or states nothing) hands its error back.
+			if !Blocks(entry.mode) || entryFailsOpen(inspector, entry) {
+				if !cancelled {
+					first, retiredNow := spans.fail(spanKey(seg, entry))
+					SetDecisionFromOutcome(event, DecisionFailedOpen)
+					outcome.FailedEntries++
+					e.warnAbsorbedStreamFailure(entry, seg, err, first, retiredNow)
+				}
 				continue
 			}
 			failedKey = spanKey(seg, entry)
+			if !cancelled {
+				spans.handedBack(failedKey)
+			}
 			failure := fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
 			// An earlier enforcing entry may already have masked this segment.
 			// Hand that mask back with the error: a caller that resolves the
@@ -215,6 +242,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 				return outcome, failure
 			}
 			return nil, failure
+		}
+		if !seg.Closing {
+			spans.recovered(spanKey(seg, entry))
 		}
 		if seg.Closing || verdict == nil {
 			continue
@@ -244,6 +274,15 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		}
 	}
 	return outcome, nil
+}
+
+// entryFailsOpen reports whether the entry's own settings resolved
+// streaming.on_error to fail_open. An empty or unparseable answer is not an
+// opt-in to swallowing: the error then goes to the guard, which resolves it with
+// the stream's on_error as it always did.
+func entryFailsOpen(inspector StreamInspector, entry chainEntry) bool {
+	_, opts := inspector.StreamSettings(entry.config.Settings)
+	return opts.OnError == streamOnErrorFailOpen
 }
 
 func (e *executor) streamEntries(in StageInput) []chainEntry {
@@ -411,7 +450,7 @@ func (e *executor) runOne(
 			origErr := err
 			if event != nil {
 				event.SetError(origErr)
-				SetDecisionFromOutcome(event, decisionFailedOpen)
+				SetDecisionFromOutcome(event, DecisionFailedOpen)
 			}
 			e.warnFailedOpen(entry, stage, origErr)
 			res, err = &Result{StatusCode: http.StatusOK}, nil
@@ -571,8 +610,29 @@ func (e *executor) warnFailedOpen(entry chainEntry, stage policy.Stage, err erro
 		slog.String("plugin", entry.plugin.Name()),
 		slog.String("stage", string(stage)),
 		slog.String("mode", string(entry.mode)),
-		slog.String("decision", decisionFailedOpen),
+		slog.String("decision", DecisionFailedOpen),
 		slog.Any("error", err))
+}
+
+// warnAbsorbedStreamFailure logs an entry's failure that RunStreamSegment
+// absorbed per entry. The guard logs the failures it resolves itself and never
+// sees these, so without this an outage of a default-on guardrail would leave
+// nothing in the logs: once per stream for the first failure, and once more when
+// the entry is retired.
+func (e *executor) warnAbsorbedStreamFailure(entry chainEntry, seg StreamSegment, err error, first, retired bool) {
+	if e.logger == nil || (!first && !retired) {
+		return
+	}
+	msg := "stream block inspection failed; releasing the block"
+	if retired {
+		msg = "stream block inspection failed repeatedly; retiring this policy for the rest of the stream"
+	}
+	e.logger.Warn(msg,
+		slog.String("plugin", entry.plugin.Name()),
+		slog.String("mode", string(entry.mode)),
+		slog.Int("seq", seg.Seq),
+		slog.String("decision", DecisionFailedOpen),
+		slog.String("error", err.Error()))
 }
 
 func (e *executor) warnExcessWriter(stage policy.Stage, capability string) {

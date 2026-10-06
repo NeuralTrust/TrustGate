@@ -25,6 +25,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -260,13 +261,19 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 // pre_request, again to keep Model Armor billing to one call per turn per
 // stage rather than resending history.
 func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings, cl *client) (*appplugins.Result, error) {
-	if in.Request == nil || in.Response == nil || p.registry == nil {
+	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	if in.Request.Provider == "" || len(in.Response.Body) == 0 {
-		return passThrough(), nil
-	}
+	// A streamed response is inspected block by block by the stream guard when
+	// streaming is enabled for this policy. When it is not, the response goes
+	// out uninspected and the trace says so, rather than omitting the policy.
 	if in.Response.Streaming {
+		if !cfg.Streaming.IsEnabled() {
+			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
+		}
+		return passThrough(), nil
+	}
+	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
 		return passThrough(), nil
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
@@ -346,15 +353,25 @@ func (p *Plugin) runGuardrail(
 	// outright failure rather than mistake silence for safety. A filter that
 	// did run and matched still wins: it is a real verdict, and naming it is
 	// more useful than naming the one that was missing.
+	//
+	// The exception is a usable mask in a blocking mode: Model Armor already
+	// handed us the de-identified text, and failing open would forward the
+	// ORIGINAL prompt with the raw PII. Apply the mask and record the
+	// incomplete verdict on the same Data instead.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			return p.externalFailure(ctx, in, cfg, latency, failureInfo{
-				reason:        appplugins.FailureVerdictIncomplete,
-				filter:        f,
-				armorReason:   reason,
-				filterVersion: result.filterVersion(),
-				err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
-			})
+			if res.anonymize != nil && appplugins.Blocks(in.Mode) {
+				data.FailureReason = string(appplugins.FailureVerdictIncomplete)
+				data.FailureDetail = f + ": " + reason
+			} else {
+				return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+					reason:        appplugins.FailureVerdictIncomplete,
+					filter:        f,
+					armorReason:   reason,
+					filterVersion: result.filterVersion(),
+					err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
+				})
+			}
 		}
 	}
 
@@ -416,6 +433,7 @@ func (p *Plugin) anonymizeEnforce(
 	return span.result(body), nil
 }
 
+// anonymizeDegraded blocks by design (RUN-1792): the provider confirmed sensitive data and gave no way to mask it, so this is the one deliberate exception to fail-open.
 func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
@@ -440,10 +458,10 @@ type failureInfo struct {
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.HandleExternalFailure: fail closed (502
-// guardrail_unavailable) in a blocking mode, fail open (pass through) in
-// observe, or always fail open for a decode_failed reason. It builds this
-// plugin's own Data so failure_reason/failure_detail travel in the same
+// shared appplugins.HandleExternalFailure: on the buffered leg it always fails
+// open (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792). It builds this plugin's own Data so
+// failure_reason/failure_detail travel in the same
 // shape as every other external guardrail, while keeping filter and
 // filter_version, which are specific to this plugin.
 func (p *Plugin) externalFailure(

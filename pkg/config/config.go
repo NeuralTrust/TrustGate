@@ -159,6 +159,7 @@ const (
 	defaultConfigSyncGRPCMaxBackoff             = 30 * time.Second
 	defaultConfigSyncOutboxRetention            = 24 * time.Hour
 	defaultConfigSyncOutboxMaxRows        int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge             = 7 * 24 * time.Hour
 
 	configSyncKeyBytes = 32
 
@@ -182,6 +183,7 @@ type Config struct {
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
+	Outbound            OutboundConfig
 	Catalog             CatalogConfig
 	CORS                CORSConfig
 	Logger              LoggerConfig
@@ -263,6 +265,11 @@ type ConfigSyncConfig struct {
 	GRPCMaxBackoff       time.Duration
 	OutboxRetention      time.Duration
 	OutboxMaxRows        int64
+	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
+	// serve them after a restart while compiling fails.
+	AdminLKGEnabled bool
+	// AdminLKGMaxAge refuses a persisted snapshot older than this.
+	AdminLKGMaxAge time.Duration
 }
 
 type ServerConfig struct {
@@ -449,9 +456,18 @@ type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
 	MaxRetries            int
-	// AllowPrivateNetworks lets provider clients dial loopback, RFC1918,
-	// link-local and other non-public addresses. Registry base_url is tenant
-	// input, so this is off by default; see PROVIDER_ALLOW_PRIVATE_NETWORKS.
+}
+
+// OutboundConfig governs every outbound client whose destination a tenant can
+// steer: provider base_url, OAuth/OIDC/STS/introspection endpoints, telemetry
+// exporters.
+type OutboundConfig struct {
+	// AllowPrivateNetworks lets those clients dial loopback, RFC1918,
+	// link-local and other non-public addresses. On by default: hybrid and
+	// self-hosted gateways serve one operator and reach its private model
+	// hosts, IdPs and collectors. The destinations are tenant input, so shared
+	// gateways turn it off (OUTBOUND_ALLOW_PRIVATE_NETWORKS=false in
+	// k8s/overlays/*/config.env).
 	AllowPrivateNetworks bool
 }
 
@@ -501,8 +517,10 @@ type OpenAIModerationConfig struct {
 // AllowAmbientIdentity lets a policy authenticate as the gateway pod's own
 // identity (no credentials, or impersonate_service_account, which the pod
 // identity performs). That identity is shared by every tenant on the gateway,
-// so on a multi-tenant deploy it is a cross-tenant confused deputy and stays
-// off; enable it only on a single-tenant or self-hosted gateway.
+// so on a multi-tenant deploy it is a cross-tenant confused deputy. On by
+// default for single-operator (hybrid, self-hosted) gateways; shared gateways
+// turn it off (MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=false in
+// k8s/overlays/*/config.env).
 type ModelArmorConfig struct {
 	BaseURL              string
 	Timeout              time.Duration
@@ -559,6 +577,7 @@ func LoadConfig() (*Config, error) {
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
+		Outbound:            getOutboundConfig(),
 		Catalog:             getCatalogConfig(),
 		CORS:                getCORSConfig(),
 		Logger:              getLoggerConfig(),
@@ -832,7 +851,15 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
-		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", false),
+	}
+}
+
+func getOutboundConfig() OutboundConfig {
+	return OutboundConfig{
+		// PROVIDER_ALLOW_PRIVATE_NETWORKS is the pre-rename name: an operator who
+		// set it false keeps the guard until they move to the new name.
+		AllowPrivateNetworks: getEnvBool("OUTBOUND_ALLOW_PRIVATE_NETWORKS",
+			getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", true)),
 	}
 }
 
@@ -897,7 +924,7 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 }
 
 // getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT and
-// MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY (default false). Unlike
+// MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY (default true). Unlike
 // OpenAIModeration, BaseURL has no default host: Model Armor is regional, so
 // an empty value tells the client to derive the host per call from the
 // request's own location instead of pinning one region.
@@ -905,8 +932,8 @@ func getModelArmorConfig() ModelArmorConfig {
 	return ModelArmorConfig{
 		BaseURL: getEnv("MODEL_ARMOR_BASE_URL", ""),
 		Timeout: getEnvDuration("MODEL_ARMOR_TIMEOUT", defaultModelArmorTimeout),
-		// Default false: the pod identity is shared across tenants.
-		AllowAmbientIdentity: getEnvBool("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", false),
+		// Default true for single-operator gateways; shared ones set false.
+		AllowAmbientIdentity: getEnvBool("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", true),
 	}
 }
 
@@ -939,6 +966,8 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
+		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
 	}
 }
 

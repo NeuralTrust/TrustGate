@@ -39,11 +39,20 @@ type Server struct {
 	gracefulStopTimeout time.Duration
 }
 
+// ServiceRegistration registers one more service on the listener, behind the same
+// auth interceptors as the rest.
+type ServiceRegistration func(grpc.ServiceRegistrar)
+
+// RegisterPinnedTools returns the registration of the PinnedTools channel.
+func RegisterPinnedTools(srv snapshotpb.PinnedToolsServer) ServiceRegistration {
+	return func(r grpc.ServiceRegistrar) { snapshotpb.RegisterPinnedToolsServer(r, srv) }
+}
+
 // NewServer builds the control-plane ConfigSync gRPC listener with TLS (when
 // configured), the auth interceptors, and keepalive enforcement. The optional
 // installations service, when non-nil, is registered on the same listener so the
 // data plane persists Store installs over the connection it already holds.
-func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *AuthInterceptor, logger *slog.Logger) (*Server, error) {
+func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *AuthInterceptor, logger *slog.Logger, extra ...ServiceRegistration) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -72,6 +81,9 @@ func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, ins
 	}
 	gsrv := grpc.NewServer(opts...)
 	snapshotpb.RegisterConfigSyncServer(gsrv, svc)
+	for _, register := range extra {
+		register(gsrv)
+	}
 	if installations != nil {
 		snapshotpb.RegisterStoreInstallationsServer(gsrv, installations)
 		if operations, ok := installations.(installationOperationsServer); ok {

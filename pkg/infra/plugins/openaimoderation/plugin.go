@@ -27,6 +27,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -243,6 +244,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
+	// A streamed response is moderated block by block by the stream guard when
+	// streaming is enabled for this policy. When it is not, the response goes
+	// out unmoderated and the trace says so, rather than omitting the policy.
+	if in.Stage == policy.StagePreResponse && in.Response != nil && in.Response.Streaming {
+		if !cfg.Streaming.IsEnabled() {
+			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
+		}
+		return passThrough(), nil
+	}
+
 	// Not a policy-level failure: the gateway operator never configured an
 	// OpenAI base URL for this deployment, so there is nowhere to call.
 	// Left as a silent pass-through rather than routed through the failure
@@ -407,11 +418,11 @@ func (p *Plugin) warnUnknownConfig(ctx context.Context, in appplugins.ExecInput,
 }
 
 // externalFailure turns a failed moderation call into a plugin outcome via
-// the shared appplugins.HandleExternalFailure: fail closed (502
-// guardrail_unavailable) in a blocking mode, fail open (pass through) in
-// observe, or always fail open for a decode_failed reason. It builds this
-// plugin's own ModerationData so failure_reason/failure_detail travel in the
-// same shape as every other external guardrail.
+// the shared appplugins.HandleExternalFailure: on the buffered leg it always
+// fails open (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792). It builds this plugin's own ModerationData so
+// failure_reason/failure_detail travel in the same shape as every other
+// external guardrail.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,

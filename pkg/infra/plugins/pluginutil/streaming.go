@@ -63,11 +63,15 @@ const (
 // flight by construction, which is what makes each payload a contiguous prefix
 // of the produced text.
 type StreamingSettings struct {
-	Enabled              bool `mapstructure:"enabled"`
-	HeadChars            int  `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int  `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int  `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int  `mapstructure:"max_accumulated_bytes"`
+	// Enabled is a pointer so an explicit false, the opt-out, is
+	// distinguishable from an absent key. What an absent key means is the
+	// plugin's call (StreamingDefaults.EnabledByDefault); read the resolved
+	// value through IsEnabled, never by dereferencing this.
+	Enabled              *bool `mapstructure:"enabled"`
+	HeadChars            int   `mapstructure:"head_chars"`
+	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
+	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
+	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
 	// FinalPass is a pointer so that an explicit false is distinguishable from
 	// an absent key, which defaults to true.
 	FinalPass    *bool  `mapstructure:"final_pass"`
@@ -76,6 +80,11 @@ type StreamingSettings struct {
 	// on_error when unset, so the stream leg cannot be made stricter or laxer
 	// than the rest of the plugin by accident.
 	OnError string `mapstructure:"on_error"`
+
+	// defaultOn is what an absent Enabled means for the plugin that parsed
+	// these settings. It is set by ApplyDefaults and never read from the
+	// stored settings.
+	defaultOn bool
 }
 
 // StreamingDefaults is what a plugin fills an absent key with. They are the
@@ -83,6 +92,9 @@ type StreamingSettings struct {
 // inspection costs: a local regex pass and a remote classifier do not want the
 // same cadence.
 type StreamingDefaults struct {
+	// EnabledByDefault is what a policy that does not mention streaming.enabled
+	// gets. An explicit enabled: false always wins over it.
+	EnabledByDefault     bool
 	HeadChars            int
 	MinCharsBetweenEvals int
 	MaxHoldMS            int
@@ -93,6 +105,7 @@ type StreamingDefaults struct {
 // ApplyDefaults fills every absent key from d, and inherits onError for the
 // stream leg when the block does not override it.
 func (s *StreamingSettings) ApplyDefaults(d StreamingDefaults, onError string) {
+	s.defaultOn = d.EnabledByDefault
 	if s.HeadChars == 0 {
 		s.HeadChars = d.HeadChars
 	}
@@ -161,6 +174,16 @@ func (s StreamingSettings) Validate(plugin string) error {
 		return fmt.Errorf("%s: streaming.on_error must be one of fail_open, fail_closed", plugin)
 	}
 	return nil
+}
+
+// IsEnabled reports whether a streamed response leg is inspected: the explicit
+// setting when there is one, otherwise the plugin's default. ApplyDefaults must
+// have run first, or an absent key reads as off.
+func (s StreamingSettings) IsEnabled() bool {
+	if s.Enabled != nil {
+		return *s.Enabled
+	}
+	return s.defaultOn
 }
 
 // FinalPassEnabled reports whether the block carrying the end of the stream is
@@ -321,4 +344,21 @@ func (s StreamingSettings) Options() appplugins.StreamOptions {
 		MaxHoldMS:            s.MaxHoldMS,
 		MaxAccumulatedBytes:  s.MaxAccumulatedBytes,
 	}
+}
+
+// StreamFailedOpen reports whether the leg released text it could not inspect
+// because this entry's own provider call failed, so the closing segment can say
+// so instead of publishing "allowed" over it.
+//
+// The count is the executor's, per entry, and covers enforce and observe alike:
+// in enforce the guard resolves the failure (the block is released), in observe
+// the executor swallows it before the guard sees it. It is deliberately not read
+// from DegradedReason, which is one value for the whole chain: it is copied to
+// every entry, so a second policy with a good key would be labelled too, and a
+// later size degrade overwrites it. Caller cancellation is not counted.
+//
+// A cut wins: the stream was stopped, which is a stronger fact than the earlier
+// blocks that failed.
+func StreamFailedOpen(r appplugins.StreamReport) bool {
+	return r.CutAtEval == 0 && r.FailedEvals > 0
 }

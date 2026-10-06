@@ -29,12 +29,30 @@ type ReadinessCheck struct {
 	Ping func(ctx context.Context) error
 }
 
+// SnapshotReport describes the config snapshot a data-plane pod is serving.
+type SnapshotReport struct {
+	// State is none, lkg (restored last-known-good, not yet refreshed) or live.
+	// The snapshot version is deliberately absent: /readyz is unauthenticated and
+	// the etag is a sha256 fingerprint of tenant config. It stays in logs only.
+	State      string     `json:"state"`
+	AppliedAt  *time.Time `json:"applied_at,omitempty"`
+	AgeSeconds *int64     `json:"age_seconds,omitempty"`
+}
+
 type HealthHandler struct {
-	checks []ReadinessCheck
+	checks   []ReadinessCheck
+	snapshot func() SnapshotReport
 }
 
 func NewHealthHandler(checks ...ReadinessCheck) *HealthHandler {
 	return &HealthHandler{checks: checks}
+}
+
+// WithSnapshotReport adds the snapshot state to the /readyz body. It is purely
+// informational: readiness is still decided by the checks.
+func (h *HealthHandler) WithSnapshotReport(report func() SnapshotReport) *HealthHandler {
+	h.snapshot = report
+	return h
 }
 
 // Liveness godoc
@@ -82,10 +100,14 @@ func (h *HealthHandler) Readiness(c *fiber.Ctx) error {
 		status = fiber.StatusServiceUnavailable
 		state = "not_ready"
 	}
-	return c.Status(status).JSON(fiber.Map{
+	body := fiber.Map{
 		"status":       state,
 		"version":      version.Version,
 		"time":         time.Now().Format(time.RFC3339),
 		"dependencies": dependencies,
-	})
+	}
+	if h.snapshot != nil {
+		body["snapshot"] = h.snapshot()
+	}
+	return c.Status(status).JSON(body)
 }

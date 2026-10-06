@@ -105,3 +105,27 @@ func TestAuthResponseMasksTheExchangeClientSecret(t *testing.T) {
 	echoed.ResolveSecretsFrom(original.Config)
 	require.Equal(t, original.Config, echoed)
 }
+
+func TestAuthResponseKeepsLoginScopesOnRenameOnlyEdit(t *testing.T) {
+	t.Parallel()
+	input := []byte(`{"name":"entra","type":"oauth2","config":{"oauth2":{
+		"issuer":"https://login.microsoftonline.com/tid/v2.0","audiences":["api://gateway"],
+		"client_id":"gw-app","client_secret":"super-secret-value",
+		"login_scopes":[" api://gw/mcp.access ","offline_access"]}}}`)
+	var create request.CreateAuthRequest
+	require.NoError(t, json.Unmarshal(input, &create))
+	original, err := domain.NewAuth(ids.New[ids.GatewayKind](), create.Name, domain.TypeOAuth2, true, create.Config.ToDomain())
+	require.NoError(t, err)
+	require.Equal(t, []string{"api://gw/mcp.access", "offline_access"}, original.Config.OAuth2.LoginScopes)
+
+	wire, err := json.Marshal(response.FromAuth(original))
+	require.NoError(t, err)
+	require.Contains(t, string(wire), `"login_scopes":["api://gw/mcp.access","offline_access"]`)
+
+	var edit request.CreateAuthRequest
+	require.NoError(t, json.Unmarshal(wire, &edit))
+	edit.Name = "renamed"
+	echoed := edit.Config.ToDomain()
+	echoed.ResolveSecretsFrom(original.Config)
+	require.Equal(t, original.Config, echoed)
+}

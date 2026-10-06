@@ -35,7 +35,8 @@ func testDefaults() StreamingDefaults {
 }
 
 func validSettings() StreamingSettings {
-	s := StreamingSettings{Enabled: true}
+	on := true
+	s := StreamingSettings{Enabled: &on}
 	s.ApplyDefaults(testDefaults(), StreamOnErrorFailOpen)
 	return s
 }
@@ -402,7 +403,7 @@ func TestStreamingDecodesFromASettingsMap(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	s := cfg.Streaming
-	if !s.Enabled {
+	if s.Enabled == nil || !*s.Enabled {
 		t.Error("enabled did not decode")
 	}
 	if s.HeadChars != 200 || s.MinCharsBetweenEvals != 512 || s.MaxHoldMS != 300 ||
@@ -426,7 +427,92 @@ func TestAbsentStreamingBlockIsDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if cfg.Streaming.Enabled {
-		t.Error("an absent streaming block must not enable per-block inspection")
+	if cfg.Streaming.Enabled != nil {
+		t.Error("an absent streaming block must decode to an absent enabled key")
+	}
+	cfg.Streaming.ApplyDefaults(testDefaults(), StreamOnErrorFailClosed)
+	if cfg.Streaming.IsEnabled() {
+		t.Error("a plugin that does not default streaming on must not enable per-block inspection for an absent key")
+	}
+}
+
+func TestIsEnabledResolvesAbsentKeyFromPluginDefault(t *testing.T) {
+	t.Parallel()
+	yes, no := true, false
+	cases := []struct {
+		name      string
+		enabled   *bool
+		defaultOn bool
+		want      bool
+	}{
+		{"absent, default off", nil, false, false},
+		{"absent, default on", nil, true, true},
+		{"explicit false beats default on", &no, true, false},
+		{"explicit true beats default off", &yes, false, true},
+		{"explicit true, default on", &yes, true, true},
+		{"explicit false, default off", &no, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := StreamingSettings{Enabled: tc.enabled}
+			d := testDefaults()
+			d.EnabledByDefault = tc.defaultOn
+			s.ApplyDefaults(d, StreamOnErrorFailClosed)
+			if got := s.IsEnabled(); got != tc.want {
+				t.Errorf("IsEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsEnabledFromDecodedSettings(t *testing.T) {
+	t.Parallel()
+	d := testDefaults()
+	d.EnabledByDefault = true
+	for name, tc := range map[string]struct {
+		settings map[string]any
+		want     bool
+	}{
+		"no streaming key": {map[string]any{}, true},
+		"empty streaming":  {map[string]any{"streaming": map[string]any{}}, true},
+		"explicit false":   {map[string]any{"streaming": map[string]any{"enabled": false}}, false},
+		"explicit true":    {map[string]any{"streaming": map[string]any{"enabled": true}}, true},
+		"tuning keys only": {map[string]any{"streaming": map[string]any{"head_chars": 100}}, true},
+	} {
+		cfg, err := Parse[hostSettings](tc.settings)
+		if err != nil {
+			t.Fatalf("%s: decode: %v", name, err)
+		}
+		cfg.Streaming.ApplyDefaults(d, StreamOnErrorFailClosed)
+		if got := cfg.Streaming.IsEnabled(); got != tc.want {
+			t.Errorf("%s: IsEnabled() = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestStreamFailedOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		report appplugins.StreamReport
+		want   bool
+	}{
+		{"clean stream", appplugins.StreamReport{}, false},
+		{"this entry's call failed", appplugins.StreamReport{FailedEvals: 1}, true},
+		{"several failures", appplugins.StreamReport{FailedEvals: 3}, true},
+		// The chain-wide reason is copied to every entry and overwritten by a
+		// later size degrade, so it says nothing about this entry.
+		{"a chain degrade alone is not this entry's failure", appplugins.StreamReport{DegradedReason: appplugins.StreamDegradeGuardError}, false},
+		{"a later size degrade does not hide a failure", appplugins.StreamReport{FailedEvals: 1, DegradedReason: appplugins.StreamDegradeAccumulationCap}, true},
+		{"a cut wins over an earlier failure", appplugins.StreamReport{FailedEvals: 1, CutAtEval: 2}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StreamFailedOpen(tt.report); got != tt.want {
+				t.Errorf("StreamFailedOpen() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
