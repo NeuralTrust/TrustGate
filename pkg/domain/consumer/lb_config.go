@@ -70,7 +70,17 @@ func (l *LBConfig) Scan(value interface{}) error {
 }
 
 func (l *LBConfig) Validate(inline ModelPolicies) error {
-	if l == nil || !l.Enabled {
+	if l == nil {
+		return nil
+	}
+	if l.SmartRouting != nil {
+		normalized, err := l.NormalizeSmartRouting(inline)
+		if err != nil {
+			return err
+		}
+		*l = *normalized
+	}
+	if !l.Enabled {
 		return nil
 	}
 	if l.Algorithm == "" {
@@ -109,9 +119,11 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 		if l.SmartRouting == nil {
 			return fmt.Errorf("%w: smart_routing required for smart-routing algorithm", ErrInvalidLBConfig)
 		}
-		if err := l.SmartRouting.Validate(); err != nil {
+		normalized, err := l.SmartRouting.Normalize()
+		if err != nil {
 			return fmt.Errorf("%w: %s", ErrInvalidLBConfig, err.Error())
 		}
+		l.SmartRouting = normalized
 		return l.validateSmartRoutingTiers()
 	default:
 		if l.EmbeddingConfig != nil {
@@ -122,6 +134,84 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 		}
 		return nil
 	}
+}
+
+// NormalizeSmartRouting resolves only unambiguous declared routes for migration.
+func (l *LBConfig) NormalizeSmartRouting(inline ModelPolicies) (*LBConfig, error) {
+	if l == nil || l.SmartRouting == nil {
+		return l, nil
+	}
+	next := *l
+	next.Members = append([]LBPoolMember(nil), l.Members...)
+	config := *l.SmartRouting
+	config.Tiers = append([]registry.SmartRoutingTier(nil), l.SmartRouting.Tiers...)
+	for i, tier := range config.Tiers {
+		if tier.RouteModel() != "" {
+			for index, member := range next.Members {
+				if member.RegistryID == tier.RegistryID && member.RouteModel() == "" {
+					policy, _ := inline.For(tier.RegistryID)
+					if declaredRouteModel(member, policy) == tier.RouteModel() {
+						next.Members[index].Model = tier.RouteModel()
+					}
+				}
+			}
+			continue
+		}
+		model := ""
+		memberIndex := -1
+		for index, member := range next.Members {
+			if member.RegistryID != tier.RegistryID {
+				continue
+			}
+			if memberIndex >= 0 {
+				return nil, fmt.Errorf("%w: tiers[%d] has ambiguous model routes", ErrInvalidLBConfig, i)
+			}
+			memberIndex = index
+			model = member.RouteModel()
+			if model == "" {
+				policy, _ := inline.For(tier.RegistryID)
+				model = declaredRouteModel(member, policy)
+			}
+		}
+		if model == "" || modelmatch.IsPattern(model) || memberIndex < 0 {
+			return nil, fmt.Errorf("%w: tiers[%d] needs an unambiguous concrete model", ErrInvalidLBConfig, i)
+		}
+		config.Tiers[i].Model = model
+		next.Members[memberIndex].Model = model
+	}
+	normalized, err := config.Normalize()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidLBConfig, err)
+	}
+	next.SmartRouting = normalized
+	if err := next.validateRouteIdentity(); err != nil {
+		return nil, err
+	}
+	if err := next.validateSmartRoutingTiers(); err != nil {
+		return nil, err
+	}
+	return &next, nil
+}
+
+func declaredRouteModel(member LBPoolMember, policy ModelPolicy) string {
+	model := member.RouteModel()
+	if model == "" {
+		candidate := strings.TrimSpace(policy.Default)
+		if candidate != "" && (len(member.Models) == 0 || slices.Contains(member.Models, candidate)) {
+			model = candidate
+		} else if len(member.Models) == 1 {
+			model = member.Models[0]
+		}
+	}
+	if model == "" || modelmatch.IsPattern(model) {
+		return ""
+	}
+	if len(policy.Allowed) > 0 {
+		if _, allowed := modelmatch.MatchAny(model, policy.Allowed); !allowed {
+			return ""
+		}
+	}
+	return model
 }
 
 // ValidateTierRegistries checks the smart-routing ladder against the registries

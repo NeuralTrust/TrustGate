@@ -16,7 +16,7 @@ import (
 
 // setupSmartRoute wires a gateway with two OpenAI-compatible upstreams and a
 // consumer whose load balancer uses the smart-routing algorithm. The tiers map
-// score >= 0.0 to the low upstream and score >= 0.5 to the high upstream. Each
+// score >= 0.0 to the low upstream and score >= 0.45 to the high upstream. Each
 // registry declares its own default model, so once smart routing picks a
 // registry by score the request is forwarded with that registry's default
 // model injected.
@@ -36,13 +36,14 @@ func setupSmartRoute(t *testing.T, low, high *fakeUpstream, lowModel, highModel 
 			"enabled":   true,
 			"algorithm": "smart-routing",
 			"members": []map[string]any{
-				{"registry_id": lowID},
-				{"registry_id": highID},
+				{"registry_id": lowID, "model": lowModel},
+				{"registry_id": highID, "model": highModel},
 			},
 			"smart_routing": map[string]any{
+				"sr1": map[string]any{"cache_ttl_seconds": 300, "escape_hatch_enabled": false},
 				"tiers": []map[string]any{
-					{"min_score": 0.0, "registry_id": lowID},
-					{"min_score": 0.5, "registry_id": highID},
+					{"min_score": 0.0, "registry_id": lowID, "model": lowModel},
+					{"min_score": 0.45, "registry_id": highID, "model": highModel},
 				},
 			},
 		},
@@ -99,7 +100,7 @@ func TestSmartRoutingE2E_RoutesByScoreAndInjectsRegistryDefaultModel(t *testing.
 	})
 }
 
-func TestSmartRoutingE2E_FallsBackToRoundRobinOnScoreError(t *testing.T) {
+func TestSmartRoutingE2E_SelectsStrongestOnScoreError(t *testing.T) {
 	defer Track(t, "SmartRoutingE2E")()
 
 	low := newJSONUpstream(t, "served-by-low")
@@ -112,8 +113,8 @@ func TestSmartRoutingE2E_FallsBackToRoundRobinOnScoreError(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, "request %d must still be served via fallback, body: %s", i, body)
 	}
 
-	assert.Greater(t, low.Hits(), 0, "fallback round-robin must reach the low upstream")
-	assert.Greater(t, high.Hits(), 0, "fallback round-robin must reach the high upstream")
+	assert.Equal(t, 0, low.Hits(), "a scorer failure must not select the weaker rung")
+	assert.Equal(t, total, high.Hits(), "a scorer failure selects the strongest available rung")
 	assert.Equal(t, total, low.Hits()+high.Hits(), "every request must reach exactly one upstream")
 }
 
@@ -179,13 +180,14 @@ func setupSmartRouteSavings(
 			"enabled":   true,
 			"algorithm": "smart-routing",
 			"members": []map[string]any{
-				{"registry_id": lowID},
-				{"registry_id": highID},
+				{"registry_id": lowID, "model": lowModel},
+				{"registry_id": highID, "model": highModel},
 			},
 			"smart_routing": map[string]any{
+				"sr1": map[string]any{"cache_ttl_seconds": 300, "escape_hatch_enabled": false},
 				"tiers": []map[string]any{
-					{"min_score": 0.0, "registry_id": lowID},
-					{"min_score": 0.5, "registry_id": highID},
+					{"min_score": 0.0, "registry_id": lowID, "model": lowModel},
+					{"min_score": 0.45, "registry_id": highID, "model": highModel},
 				},
 			},
 		},
@@ -257,8 +259,7 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 		assert.InDelta(t, 0, *evt.Cost.SavingsUsd, 1e-12)
 	})
 
-	// The single most important assertion here: a fail-open round-robin pick is
-	// not a tier decision, so it must not be credited with savings.
+	// A scorer failure is not a scored tier decision and receives no savings credit.
 	t.Run("a scorer error falls back and records no savings", func(t *testing.T) {
 		low := newSplitUsageUpstream(t, "served-by-low", promptTok, outputTok)
 		high := newSplitUsageUpstream(t, "served-by-high", promptTok, outputTok)
@@ -267,6 +268,6 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteErrorContent)
 
 		require.NotNil(t, evt.Cost, "a fail-open request is still costed")
-		assert.Nil(t, evt.Cost.SavingsUsd, "a round-robin fail-open must not report savings")
+		assert.Nil(t, evt.Cost.SavingsUsd, "a strongest-rung failure fallback must not report savings")
 	})
 }

@@ -189,9 +189,10 @@ func TestLBConfig_ValidateSmartRoutingTiers(t *testing.T) {
 			},
 		},
 		{
-			name:    "tier may omit the model for a single-route registry",
+			name:    "one-rung legacy configuration is unsupported",
 			members: []LBPoolMember{{RegistryID: single}},
 			tiers:   []registry.SmartRoutingTier{{MinScore: 0, RegistryID: single}},
+			wantErr: true,
 		},
 		{
 			name:    "tier omits the model on a multi-route registry",

@@ -31,7 +31,7 @@ type fakeScorer struct {
 	calls      int
 }
 
-func (f *fakeScorer) Score(_ context.Context, _, _, _ string) (float64, error) {
+func (f *fakeScorer) ScoreSR1(_ context.Context, _, _ string) (float64, error) {
 	f.calls++
 	return f.score, f.err
 }
@@ -41,6 +41,9 @@ func (f *fakeScorer) Configured() bool { return f.configured }
 func tiersFor(routes []routingdomain.Route, minScores ...float64) *registry.SmartRoutingConfig {
 	cfg := &registry.SmartRoutingConfig{}
 	for i, min := range minScores {
+		if routes[i].Model == "" {
+			routes[i].Model = routes[i].Registry.Name
+		}
 		cfg.Tiers = append(cfg.Tiers, registry.SmartRoutingTier{
 			MinScore:   min,
 			RegistryID: routes[i].RegistryID(),
@@ -51,7 +54,7 @@ func tiersFor(routes []routingdomain.Route, minScores ...float64) *registry.Smar
 }
 
 func promptReq() *infracontext.RequestContext {
-	return &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`), SessionID: "chat_1", GatewayID: "gw_1"}
+	return &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`), GatewayID: "gw_1"}
 }
 
 func TestSmartRouting_Name(t *testing.T) {
@@ -69,9 +72,9 @@ func TestSmartRouting_MapsScoreToTier(t *testing.T) {
 		want  string
 	}{
 		{"low", 0.1, "a"},
-		{"mid", 0.5, "b"},
+		{"mid", 0.25, "b"},
 		{"high", 0.9, "c"},
-		{"boundary", 0.4, "b"},
+		{"boundary", 0.187, "b"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -100,7 +103,7 @@ func TestSmartRouting_MapsScoreToModelOnOneRegistry(t *testing.T) {
 		want  string
 	}{
 		{"simple", 0.1, "gpt-4o-mini"},
-		{"medium", 0.5, "gpt-4.1-mini"},
+		{"medium", 0.25, "gpt-4.1-mini"},
 		{"complex", 0.9, "gpt-5"},
 	}
 	for _, tc := range cases {
@@ -128,7 +131,7 @@ func TestSmartRouting_MapsScoreToModelOnOneRegistry(t *testing.T) {
 	}
 }
 
-func TestSmartRouting_ExcludedModelRouteFallsBackToItsSibling(t *testing.T) {
+func TestSmartRouting_ExcludedStrongestModelExhaustsPolicy(t *testing.T) {
 	t.Parallel()
 	routes := modelRoutes("gpt-4o-mini", "gpt-5")
 	cfg := tiersFor(routes, 0.0, 0.8)
@@ -137,16 +140,11 @@ func TestSmartRouting_ExcludedModelRouteFallsBackToItsSibling(t *testing.T) {
 
 	got := s.Next(context.Background(), promptReq(), excludeRoutes(routes[1]))
 
-	if got == nil || got.Model != "gpt-4o-mini" {
-		t.Fatalf("excluding the mapped model must leave its sibling on the same registry, got %+v", got)
+	if got != nil {
+		t.Fatalf("excluding the strongest mapped model must not downgrade, got %+v", got)
 	}
 }
 
-// A ladder whose cheapest tier sits above 0 leaves scores under that floor
-// matching no tier at all. Those are the easiest requests in the pool, so they
-// belong on the lowest tier - round-robin could hand them the priciest model.
-// The tiers below are declared so the lowest one is NOT the first route in the
-// pool, which is what round-robin would return.
 func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -155,9 +153,9 @@ func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
 		want  string
 	}{
 		{"below every threshold", 0.1, "c"},
-		{"at the lowest threshold", 0.49, "c"},
-		{"between thresholds", 0.5, "c"},
-		{"middle tier", 0.8, "b"},
+		{"at the lowest threshold", 0, "c"},
+		{"between thresholds", 0.18, "c"},
+		{"middle tier", 0.3, "b"},
 		{"highest tier", 0.95, "a"},
 	}
 	for _, tc := range cases {
@@ -185,11 +183,7 @@ func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
 	}
 }
 
-// Routing a sub-threshold score to the lowest tier must not swallow the
-// separate case where that tier's route is excluded or unhealthy: with no
-// candidate left to honour the tier, round-robin remains the right answer and
-// the decision must not claim a tier was applied.
-func TestSmartRouting_LowestTierExcludedFallsBackToRoundRobin(t *testing.T) {
+func TestSmartRouting_LowestTierExcludedSelectsHigherRung(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
 	cfg := tiersFor(routes, 0.9, 0.7, 0.49)
@@ -199,77 +193,77 @@ func TestSmartRouting_LowestTierExcludedFallsBackToRoundRobin(t *testing.T) {
 
 	got := s.Next(context.Background(), req, excludeRoutes(routes[2]))
 
-	if got == nil || routeName(t, got) != "a" {
-		t.Fatalf("excluding the lowest tier must round-robin from the first candidate, got %+v", got)
+	if got == nil || routeName(t, got) != "b" {
+		t.Fatalf("excluding the lowest tier must select the next higher rung, got %+v", got)
 	}
-	if req.RoutingDecision == nil || req.RoutingDecision.TierApplied {
-		t.Fatalf("round-robin fail-open must not be recorded as a tier decision, got %+v", req.RoutingDecision)
+	if req.RoutingDecision == nil || !req.RoutingDecision.TierApplied {
+		t.Fatalf("a bounded higher-rung selection remains a tier decision, got %+v", req.RoutingDecision)
 	}
 }
 
-func TestSmartRouting_NotConfiguredFallsBackToRoundRobin(t *testing.T) {
+func TestSmartRouting_NotConfiguredSelectsStrongest(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
 	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{score: 0.9, configured: false}
 	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
-	if got == nil || routeName(t, got) != "a" {
-		t.Fatalf("unconfigured scorer should round-robin from first route, got %+v", got)
+	if got == nil || routeName(t, got) != "c" {
+		t.Fatalf("failure should select the strongest declared route, got %+v", got)
 	}
 	if scorer.calls != 0 {
 		t.Fatalf("scorer must not be called when unconfigured, calls=%d", scorer.calls)
 	}
 }
 
-func TestSmartRouting_ScoreErrorFallsBackToRoundRobin(t *testing.T) {
+func TestSmartRouting_ScoreErrorSelectsStrongest(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
 	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{err: errors.New("boom"), configured: true}
 	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
-	if got == nil || routeName(t, got) != "a" {
-		t.Fatalf("score error should round-robin from first route, got %+v", got)
+	if got == nil || routeName(t, got) != "c" {
+		t.Fatalf("failure should select the strongest declared route, got %+v", got)
 	}
 }
 
-func TestSmartRouting_EmptyBodyFallsBackToRoundRobin(t *testing.T) {
+func TestSmartRouting_EmptyBodySelectsStrongest(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
 	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{score: 0.9, configured: true}
 	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), &infracontext.RequestContext{}, nil)
-	if got == nil || routeName(t, got) != "a" {
-		t.Fatalf("empty body should round-robin from first route, got %+v", got)
+	if got == nil || routeName(t, got) != "c" {
+		t.Fatalf("failure should select the strongest declared route, got %+v", got)
 	}
 	if scorer.calls != 0 {
 		t.Fatalf("scorer must not be called when input cannot be extracted, calls=%d", scorer.calls)
 	}
 }
 
-func TestSmartRouting_MappedRegistryExcludedFallsBack(t *testing.T) {
+func TestSmartRouting_MappedStrongestRegistryExcludedExhaustsPolicy(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
 	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{score: 0.9, configured: true}
 	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), excludeRoutes(routes[2]))
-	if got == nil || routeName(t, got) == "c" {
-		t.Fatalf("excluded mapped registry must fall back to a candidate, got %+v", got)
+	if got != nil {
+		t.Fatalf("excluded strongest registry must not downgrade, got %+v", got)
 	}
 }
 
-func TestSmartRouting_SingleCandidateSkipsScorer(t *testing.T) {
+func TestSmartRouting_UnsupportedSingleRungSkipsScorer(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("only")
 	cfg := tiersFor(routes, 0.0)
 	scorer := &fakeScorer{score: 0.9, configured: true}
 	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
-	if got == nil || routeName(t, got) != "only" {
-		t.Fatalf("single candidate should be returned without scoring, got %+v", got)
+	if got != nil {
+		t.Fatalf("unsupported one-rung ladder must return no route, got %+v", got)
 	}
 	if scorer.calls != 0 {
 		t.Fatalf("scorer must not be called with a single candidate, calls=%d", scorer.calls)
@@ -284,8 +278,6 @@ func TestSmartRouting_EmptyReturnsNil(t *testing.T) {
 	}
 }
 
-// The forwarder cannot tell a tier decision from the round-robin fail-open by
-// looking at the returned route, so the strategy has to say which one it made.
 func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

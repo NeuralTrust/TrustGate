@@ -33,6 +33,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
@@ -389,7 +390,7 @@ func (f *forwarder) nextCandidate(
 				return next, false
 			}
 		}
-		if cfg := lb.SmartRouting(); cfg != nil && cfg.SR1 != nil {
+		if lb.Algorithm() == algorithm.SmartRouting {
 			return nil, false
 		}
 	}

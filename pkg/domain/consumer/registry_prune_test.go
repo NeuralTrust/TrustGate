@@ -89,7 +89,7 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 			},
 		},
 		{
-			name: "smart routing tier above the floor is dropped and the ladder survives",
+			name: "two-rung ladder losing its top drops smart routing",
 			consumer: func() *Consumer {
 				return &Consumer{
 					ModelPolicies: ModelPolicies{
@@ -112,6 +112,7 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 			},
 			wantChanged:   true,
 			wantRewritten: []string{registry.PrunedModelPolicies, registry.PrunedLBConfig},
+			wantNulled:    []string{registry.PrunedSmartRouting},
 			assert: func(t *testing.T, c *Consumer) {
 				if c.LBConfig == nil {
 					t.Fatal("lb_config was dropped even though a member and the floor tier remain")
@@ -119,12 +120,11 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 				if len(c.LBConfig.Members) != 1 || c.LBConfig.Members[0].RegistryID != keeper {
 					t.Fatalf("Members = %+v, want only the keeper", c.LBConfig.Members)
 				}
-				if c.LBConfig.Algorithm != algorithm.SmartRouting {
-					t.Fatalf("Algorithm = %q, want it untouched", c.LBConfig.Algorithm)
+				if c.LBConfig.Algorithm != algorithm.RoundRobin {
+					t.Fatalf("Algorithm = %q, want round robin after unsupported pruning", c.LBConfig.Algorithm)
 				}
-				if c.LBConfig.SmartRouting == nil || len(c.LBConfig.SmartRouting.Tiers) != 1 ||
-					c.LBConfig.SmartRouting.Tiers[0].RegistryID != keeper {
-					t.Fatalf("SmartRouting = %+v, want only the keeper tier", c.LBConfig.SmartRouting)
+				if c.LBConfig.SmartRouting != nil {
+					t.Fatalf("SmartRouting = %+v, want nil for an unsupported one-rung survivor", c.LBConfig.SmartRouting)
 				}
 			},
 		},

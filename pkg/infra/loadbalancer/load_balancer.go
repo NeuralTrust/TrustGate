@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/redis/go-redis/v9"
 )
@@ -213,7 +214,7 @@ func (lb *LoadBalancer) NextRoute(
 		attempts = 1
 	}
 	health := lb.healthMap(ctx)
-	if lb.smart != nil && lb.smart.SR1 != nil {
+	if lb.Algorithm() == algorithm.SmartRouting {
 		filtered := make(map[routingdomain.RouteKey]struct{}, len(exclude)+len(lb.routes))
 		for key := range exclude {
 			filtered[key] = struct{}{}

@@ -68,7 +68,7 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "disabled pool with a tier on an attached registry",
+			name: "disabled one-rung smart routing configuration is unsupported",
 			lbConfig: &LBConfig{
 				Algorithm: algorithm.SmartRouting,
 				Members:   []LBPoolMember{{RegistryID: attached, Model: "gpt-4o"}},
@@ -76,6 +76,7 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 					{MinScore: 0, RegistryID: attached, Model: "gpt-4o"},
 				}},
 			},
+			wantErr: true,
 		},
 	}
 

@@ -17,13 +17,14 @@ package request
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"testing"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestSR1HTTPConfigPreservedOnCreateAndUpdate(t *testing.T) {
 	id := ids.New[ids.RegistryKind]().String()
-	raw := []byte(fmt.Sprintf(`{"lb_config":{"enabled":true,"algorithm":"smart-routing","members":[{"registry_id":%q,"model":"low"},{"registry_id":%q,"model":"high"}],"smart_routing":{"sr1":{"cache_ttl_seconds":30},"tiers":[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]}}}`, id, id, id, id))
+	raw := []byte(fmt.Sprintf(`{"lb_config":{"enabled":true,"algorithm":"smart-routing","members":[{"registry_id":%q,"model":"low"},{"registry_id":%q,"model":"high"}],"smart_routing":{"sr1":{"cache_ttl_seconds":30,"escape_hatch_enabled":true},"tiers":[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]}}}`, id, id, id, id))
 	var create CreateConsumerRequest
 	var update UpdateConsumerRequest
 	if err := json.Unmarshal(raw, &create); err != nil {
@@ -45,11 +46,74 @@ func TestSR1HTTPConfigPreservedOnCreateAndUpdate(t *testing.T) {
 			t.Fatal("JSON SR1 dropped")
 		}
 	}
-	if c.SmartRouting.SR1 == nil || u.SmartRouting.SR1 == nil || c.SmartRouting.SR1.CacheTTLSeconds != 30 || u.SmartRouting.SR1.CacheTTLSeconds != 30 {
+	if c.SmartRouting.SR1 == nil || u.SmartRouting.SR1 == nil || c.SmartRouting.SR1.CacheTTLSeconds != 30 || u.SmartRouting.SR1.CacheTTLSeconds != 30 || !c.SmartRouting.SR1.EscapeEnabled() || !u.SmartRouting.SR1.EscapeEnabled() {
 		t.Fatal("domain conversion dropped SR1")
 	}
 	c.SmartRouting.SR1.CacheTTLSeconds = 0
 	if c.Validate(nil) == nil {
 		t.Fatal("invalid SR1 TTL accepted")
+	}
+}
+
+func TestSR1HTTPNewWritePreferenceDefaults(t *testing.T) {
+	id := ids.New[ids.RegistryKind]().String()
+	for _, tc := range []struct {
+		name, envelope string
+		want           bool
+	}{
+		{"no envelope", "", false},
+		{"omitted flag", `"sr1":{"cache_ttl_seconds":30},`, false},
+		{"explicit false", `"sr1":{"cache_ttl_seconds":30,"escape_hatch_enabled":false},`, false},
+		{"explicit true", `"sr1":{"cache_ttl_seconds":30,"escape_hatch_enabled":true},`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{"lb_config":{"enabled":true,"algorithm":"smart-routing","members":[{"registry_id":%q,"model":"low"},{"registry_id":%q,"model":"high"}],"smart_routing":{%s"tiers":[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]}}}`, id, id, tc.envelope, id, id))
+			var create CreateConsumerRequest
+			var update UpdateConsumerRequest
+			if err := json.Unmarshal(raw, &create); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &update); err != nil {
+				t.Fatal(err)
+			}
+			for _, wire := range []*LBConfigRequest{create.LBConfig, update.LBConfig} {
+				cfg, err := wire.ToDomain()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := cfg.Validate(nil); err != nil {
+					t.Fatal(err)
+				}
+				flag := cfg.SmartRouting.SR1.EscapeHatchEnabled
+				if flag == nil || *flag != tc.want {
+					t.Fatalf("new write flag=%v want explicit %t", flag, tc.want)
+				}
+				wantTTL := 30
+				if tc.envelope == "" {
+					wantTTL = 300
+				}
+				if cfg.SmartRouting.SR1.CacheTTLSeconds != wantTTL {
+					t.Fatalf("TTL=%d want=%d", cfg.SmartRouting.SR1.CacheTTLSeconds, wantTTL)
+				}
+			}
+		})
+	}
+}
+
+func TestSR1HTTPRejectsNonBooleanPreference(t *testing.T) {
+	for _, field := range []string{"escape_hatch_enabled", "ESCAPE_HATCH_ENABLED"} {
+		for _, literal := range []string{"null", "1", `"false"`, "[]", "{}"} {
+			t.Run(field+"="+literal, func(t *testing.T) {
+				raw := []byte(fmt.Sprintf(`{"lb_config":{"smart_routing":{"sr1":{"cache_ttl_seconds":30,%q:%s}}}}`, field, literal))
+				var create CreateConsumerRequest
+				var update UpdateConsumerRequest
+				if err := json.Unmarshal(raw, &create); err == nil {
+					t.Fatal("create accepted a nonboolean preference")
+				}
+				if err := json.Unmarshal(raw, &update); err == nil {
+					t.Fatal("update accepted a nonboolean preference")
+				}
+			})
+		}
 	}
 }
