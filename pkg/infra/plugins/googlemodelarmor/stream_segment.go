@@ -55,7 +55,9 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, cfg.Streaming.Options()
+	opts := cfg.Streaming.Options()
+	opts.MaxAccumulatedBytes = min(opts.MaxAccumulatedBytes, maxSanitizeBytes)
+	return true, opts
 }
 
 // InspectSegment sanitizes one closed block of a streamed response.

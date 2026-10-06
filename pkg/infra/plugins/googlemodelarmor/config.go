@@ -80,9 +80,17 @@ var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
-	MaxAccumulatedBytes:  262144,
+	MaxAccumulatedBytes:  maxSanitizeBytes,
 	GuardTimeout:         2 * time.Second,
 }
+
+// maxSanitizeBytes caps the streaming window. Model Armor screens at most
+// 65,536 tokens and skips a filter above that, which this plugin counts as a
+// filter that did not run, so on a fail_closed stream a longer payload is a
+// cut. A token covers at least one byte, so 64 KiB stays under the limit in any
+// language. The limit is Google's and cannot be raised. Only a block whose own
+// new text exceeds it is sent larger (segmentWithin).
+const maxSanitizeBytes = 65536
 
 type Settings struct {
 	Project     string      `mapstructure:"project"`

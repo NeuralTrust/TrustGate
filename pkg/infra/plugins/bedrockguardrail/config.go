@@ -34,11 +34,19 @@ const (
 // configuration rather than a single classifier, so it is slower than
 // openai_moderation and the block loop calls it less often to keep the hold on
 // a client's bytes bounded.
+//
+// MaxAccumulatedBytes fits the smallest per-request quota AWS ships: each
+// policy of a guardrail bounds one ApplyGuardrail input in text units of up to
+// 1,000 characters, as low as 25 units by default (eu-west-3, eu-south-1 and
+// sa-east-1 among others). AWS does not document what a larger input gets, and
+// any failed call cuts a stream on the fail_closed default. The quotas are
+// adjustable, so a larger window stays configurable. It bounds request size
+// only; the per-second text-unit quota is a separate limit.
 var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
-	MaxAccumulatedBytes:  262144,
+	MaxAccumulatedBytes:  24576,
 	GuardTimeout:         2 * time.Second,
 }
 

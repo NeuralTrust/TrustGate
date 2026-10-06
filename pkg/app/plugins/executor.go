@@ -174,10 +174,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		}
 		event := spans.eventFor(ctx, current, entry)
 		call := current
+		var head string
 		if seg.Closing {
 			call.Report = spans.entryReport(seg, entry)
 			call.Findings = entryFindings(seg.Findings, entry)
 			call.ReportsStream = reporters[spanKey(seg, entry)]
+		} else {
+			call, head = segmentWithin(call, entry.streamWindow)
 		}
 		started := e.clock()
 		verdict, err := inspector.InspectSegment(ctx, ExecInput{
@@ -219,6 +222,11 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		if seg.Closing || verdict == nil {
 			continue
 		}
+		if verdict.HasTransform && head != "" {
+			whole := *verdict
+			whole.Transformed = head + verdict.Transformed
+			verdict = &whole
+		}
 		stop := e.mergeVerdict(outcome, verdict, entry)
 		// Hand-off mirrors mergeVerdict: only a transform from an entry that
 		// blocks is applied to what the client receives, so only that one
@@ -251,6 +259,35 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 		return in.Plan.streamEntriesFor()
 	}
 	return streamParticipants(OrderStreamEntries(buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false)))
+}
+
+// segmentWithin narrows a segment to the tail of Accumulated that an entry's
+// own window allows, advanced to a rune boundary, and returns the head it cut
+// off. The stream-wide window is the owner's, and a provider can refuse or skip
+// a payload far below it: Bedrock bounds each ApplyGuardrail request by a
+// regional text-unit quota, and Model Armor skips its filters above 65,536
+// tokens. A transform covers only the tail, so the caller puts the head back
+// in front of it before anything else reads it (RUN-1745 F10).
+//
+// The block's own text is never cut: it is about to be released, and text this
+// entry never saw would reach the client uninspected. A block larger than the
+// window is sent whole, so the provider refuses it and on_error decides.
+func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
+	if window <= 0 {
+		return seg, ""
+	}
+	window = max(window, len(seg.Text))
+	if len(seg.Accumulated) <= window {
+		return seg, ""
+	}
+	cut := len(seg.Accumulated) - window
+	for cut < len(seg.Accumulated) && !utf8.RuneStart(seg.Accumulated[cut]) {
+		cut++
+	}
+	head := seg.Accumulated[:cut]
+	seg.Accumulated = seg.Accumulated[cut:]
+	seg.Truncated = true
+	return seg, head
 }
 
 // segmentAfterTransform is the segment the entries behind a rewriter receive.

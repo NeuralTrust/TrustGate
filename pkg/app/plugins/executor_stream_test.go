@@ -90,6 +90,7 @@ func (p *streamPlugin) StreamSettings(settings map[string]any) (bool, StreamOpti
 	var opts StreamOptions
 	opts.HeadChars, _ = settings["head_chars"].(int)
 	opts.OnError, _ = settings["on_error"].(string)
+	opts.MaxAccumulatedBytes, _ = settings["max_accumulated_bytes"].(int)
 	return true, opts
 }
 
