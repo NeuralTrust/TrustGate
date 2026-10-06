@@ -183,38 +183,16 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 		return nil, nil
 	}
 	scope := authScope{}
-	hasOAuth2 := false
 	hasEnabledOAuth2 := false
-	hasEnabledAuth := false
-	signInMatch := false
 	for _, m := range matches {
-		if m.Consumer.WantsSignIn() {
-			signInMatch = true
-		}
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
-			if a.Enabled {
-				hasEnabledAuth = true
-			}
-			if a.Type == authdomain.TypeOAuth2 {
-				hasOAuth2 = true
-				if a.Enabled {
-					hasEnabledOAuth2 = true
-				}
+			if a.Type == authdomain.TypeOAuth2 && a.Enabled {
+				hasEnabledOAuth2 = true
 			}
 		}
 	}
-	// The built-in provider bootstraps consumers whose *users sign in* and that
-	// carry no identity provider of their own. Two things exclude it. An enabled
-	// credential on the path — an api key, mTLS, or its own oauth2 IdP — is then
-	// the only way in: falling back here would let any platform login reach the
-	// consumer without it. And a consumer that is not entered by a person —
-	// acts_for_users off, or the app source, where the application authenticates
-	// as itself and names its end users — must not be rescued when it holds no
-	// credential: revoking its last api key would otherwise not lock it down but
-	// open it up, since an empty auth binding accepts any client the provider
-	// verifies.
-	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth && signInMatch
+	defaultIdPUsable := r.defaultIdPEnabled && appconsumer.DefaultIdPAdmitted(matches)
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}
