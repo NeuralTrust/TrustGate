@@ -82,7 +82,7 @@ func TestCodecSR1MigrationDoesNotLetInvalidConsumerBlockSnapshot(t *testing.T) {
 			require.Error(t, err, "the fixture must require operator repair")
 			codec := configsnapshot.NewCodec()
 			raw, err := codec.Encode(readmodel.Build(readmodel.Data{
-				Gateways:  []gatewaydomain.Gateway{{ID: gatewayID, Slug: "gateway"}},
+				Gateways:  []gatewaydomain.Gateway{{ID: gatewayID, Slug: "gateway", Entitlements: gatewaydomain.DefaultEntitlements()}},
 				Consumers: []consumerdomain.Consumer{valid, invalid},
 			}))
 			require.NoError(t, err, "one invalid consumer must not stop config sync")
