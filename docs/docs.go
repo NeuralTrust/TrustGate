@@ -3068,6 +3068,172 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/registries/{id}/pinned-tools": {
+            "get": {
+                "description": "Returns the tool definitions the registry has recorded, each with its decision. A definition is identified by (name, fingerprint): when an upstream changes a tool, the new definition appears as a pending item beside the approved one, and carries approved_version (the exposed definition) so it can be diffed. Filter with status=pending|approved|rejected. Paginated with limit (default 100, max 500) and offset over a stable first_seen_at, name, fingerprint order; total is the number of matching definitions across all pages.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "List the tool definitions of a pinned MCP registry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "pending",
+                            "approved",
+                            "rejected"
+                        ],
+                        "type": "string",
+                        "description": "Only definitions in this status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 500,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Page size (default 100, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "description": "Rows to skip, in first_seen_at, name, fingerprint order",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/pinned-tools/decisions": {
+            "post": {
+                "description": "Applies approvals and rejections atomically, recording the authenticated admin as the decider, and publishes a new config snapshot. A definition is identified by (name, fingerprint) as listed by pinned-tools. If any ref does not exist for the registry the call returns 422 and nothing is applied; a ref in both lists, an empty body or an oversized list is 400.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Approve or reject tool definitions of a pinned MCP registry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Definitions to approve and reject",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PinnedToolDecisionsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_registry.DecidePinnedToolsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/registries/{id}/shared-account": {
             "get": {
                 "description": "Reports whether the account this MCP instance holds for every caller is connected.",
@@ -3245,9 +3411,94 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/registries/{id}/tool-pinning": {
+            "put": {
+                "description": "Makes the listed tools exactly the approved set and sets the registry's tool_policy to pinned, in one transaction, then publishes a new config snapshot. Tools are identified by the (name, fingerprint) returned by GET .../tools; the server re-reads the live tool list and approves the definitions it finds there. If a listed tool is no longer in the live list with that fingerprint (the upstream changed since it was reviewed) the call is 422 naming the stale tools and nothing is applied; an unreachable upstream is 502. A registry whose tools depend on the caller (per-principal auth or URL variables) cannot be introspected, so only an empty list is accepted for it. An empty list is allowed. Every live tool that is not on the list was seen and declined by the admin: it is recorded as rejected, decided by the caller, in the same transaction (inserted if absent, a pending row flipped, an already rejected row untouched). Approved rows that are neither listed nor live go back to pending. Only MCP registries can be pinned; an LLM registry is 422. Disabling pinning is a plain registry update with tool_policy=auto.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Enable tool pinning with a confirmed list",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The confirmed tools, by name and fingerprint",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.EnableToolPinningRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/registries/{id}/tools": {
             "get": {
-                "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
+                "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema), with two additive fields: fingerprint, the identity a pinned registry screens tools by (the value to send to PUT tool-pinning), and pinnable, false (with no fingerprint) for a tool whose definition cannot be stored. Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
                 "produces": [
                     "application/json"
                 ],
@@ -5059,6 +5310,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "exchange_client_secret": {
+                    "description": "#nosec G117",
                     "type": "string"
                 },
                 "introspection_url": {
@@ -5320,6 +5572,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "exchange_client_secret": {
+                    "description": "#nosec G117 -- masked before serialization",
                     "type": "string"
                 },
                 "introspection_url": {
@@ -6910,8 +7163,23 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "tool_policy": {
+                    "description": "ToolPolicy is auto (default) or pinned; pinned is only valid for MCP.",
+                    "type": "string"
+                },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.EnableToolPinningRequest": {
+            "type": "object",
+            "properties": {
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest"
+                    }
                 }
             }
         },
@@ -7041,6 +7309,23 @@ const docTemplate = `{
             "properties": {
                 "spec_url": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PinnedToolDecisionsRequest": {
+            "type": "object",
+            "properties": {
+                "approve": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest"
+                    }
+                },
+                "reject": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest"
+                    }
                 }
             }
         },
@@ -7184,6 +7469,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UpdateRegistryRequest": {
             "type": "object",
             "properties": {
@@ -7214,6 +7510,10 @@ const docTemplate = `{
                 "provider_options": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "tool_policy": {
+                    "description": "ToolPolicy absent leaves the stored policy unchanged.",
+                    "type": "string"
                 }
             }
         },
@@ -7462,6 +7762,88 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolApproved": {
+            "type": "object",
+            "properties": {
+                "decided_at": {
+                    "type": "string"
+                },
+                "decided_by": {
+                    "type": "string"
+                },
+                "definition": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "fingerprint": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolItem": {
+            "type": "object",
+            "properties": {
+                "approved_version": {
+                    "description": "ApprovedVersion is set only on a pending item whose name already has an\napproved definition: the one currently exposed, to diff against.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolApproved"
+                        }
+                    ]
+                },
+                "decided_at": {
+                    "type": "string"
+                },
+                "decided_by": {
+                    "type": "string"
+                },
+                "definition": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "fingerprint": {
+                    "type": "string"
+                },
+                "first_seen_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolItem"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "tool_policy": {
+                    "description": "ToolPolicy is \"auto\" or \"pinned\". Decisions only take effect when pinned.",
+                    "type": "string"
+                },
+                "total": {
+                    "description": "Total counts every definition matching the filter, not just this page.",
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse": {
             "type": "object",
             "properties": {
@@ -7555,6 +7937,9 @@ const docTemplate = `{
                 "provider_options": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "tool_policy": {
+                    "type": "string"
                 },
                 "type": {
                     "type": "string"
@@ -8783,8 +9168,7 @@ const docTemplate = `{
             "additionalProperties": {
                 "type": "array",
                 "items": {
-                    "type": "integer",
-                    "format": "int32"
+                    "type": "integer"
                 }
             }
         },
@@ -9177,6 +9561,13 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "tool": {
+                    "type": "string"
+                },
+                "tool_open_world": {
+                    "type": "boolean"
+                },
+                "tool_risk": {
+                    "description": "ToolRisk is the called tool's declared risk class (read_only, additive\nor destructive) and ToolOpenWorld its open-world hint, both from the MCP\nannotations its server publishes. Empty and nil when the tool declares\nno hint: the server's claim, advisory only.",
                     "type": "string"
                 },
                 "transport": {
@@ -9614,14 +10005,39 @@ const docTemplate = `{
                 }
             }
         },
+        "pkg_api_handler_http_registry.DecidePinnedToolsResponse": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "type": "integer"
+                },
+                "rejected": {
+                    "type": "integer"
+                }
+            }
+        },
         "pkg_api_handler_http_registry.ListRegistryToolsResponse": {
             "type": "object",
             "properties": {
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool"
+                        "$ref": "#/definitions/pkg_api_handler_http_registry.RegistryTool"
                     }
+                }
+            }
+        },
+        "pkg_api_handler_http_registry.RegistryTool": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string"
+                },
+                "pinnable": {
+                    "type": "boolean"
+                },
+                "tool": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool"
                 }
             }
         },

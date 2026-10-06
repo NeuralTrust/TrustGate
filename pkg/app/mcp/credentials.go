@@ -375,6 +375,9 @@ func (r *credentialResolver) refreshCredential(
 		}
 		refreshCfg, err := r.connect.RefreshAuth(ctx, gatewayID, reg)
 		if err != nil {
+			if errors.Is(err, appoauth.ErrNoRegisteredClient) {
+				r.requireReconnect(ctx, cred, provider, ConsentCauseRegisteredClientLost)
+			}
 			return nil, err
 		}
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
@@ -398,6 +401,7 @@ func (r *credentialResolver) refreshCredential(
 					return latest, nil
 				}
 				r.markGrantDead(key, cred.RefreshToken)
+				r.requireReconnect(ctx, cred, provider, ConsentCauseRefreshRejected)
 			}
 			return nil, err
 		}
@@ -491,6 +495,33 @@ func (r *credentialResolver) persistRefreshed(ctx context.Context, cred *vaultdo
 		return writer.UpsertRefreshed(ctx, cred)
 	}
 	return r.vault.Upsert(ctx, cred)
+}
+
+// The dead-grant marker is per replica; the status views and the other
+// replicas only read the vault. Best effort: the caller gets the consent
+// prompt either way, and a reconnect racing this wins.
+func (r *credentialResolver) requireReconnect(ctx context.Context, cred *vaultdomain.Credential, provider, cause string) {
+	requirer, ok := r.vault.(vaultdomain.ReconnectRequirer)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialPersistenceTimeout)
+	defer cancel()
+	attrs := []any{
+		"provider", provider,
+		"credential_scope", cred.Provider,
+		"principal_ref", logref.Opaque(cred.PrincipalSub),
+		"gateway_id", cred.GatewayID.String(),
+		"cause", cause,
+	}
+	switch err := requirer.RequireReconnect(ctx, cred); {
+	case err == nil:
+		r.logger.Info("mcp credentials: stored credential marked as needing a reconnect", attrs...)
+	case errors.Is(err, vaultdomain.ErrCredentialChanged):
+		r.logger.Info("mcp credentials: stored credential changed since it was read; not marked as needing a reconnect", attrs...)
+	default:
+		r.logger.Warn("mcp credentials: failed to mark stored credential as needing a reconnect", append(attrs, "error", err)...)
+	}
 }
 
 func (r *credentialResolver) grantIsDead(key, refreshToken string) bool {

@@ -73,6 +73,7 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Provider:        req.Provider,
 		ProviderOptions: req.ProviderOptions,
 		Description:     req.Description,
+		ToolPolicy:      req.ToToolPolicy(),
 		Auth:            req.ToAuth(),
 		HealthChecks:    req.ToHealthChecks(),
 		Pricing:         req.ToPricing(),

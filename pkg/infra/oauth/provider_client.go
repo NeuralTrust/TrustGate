@@ -27,7 +27,9 @@ import (
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var _ appoauth.ProviderClient = (*providerClient)(nil)
@@ -38,7 +40,7 @@ type providerClient struct {
 
 func NewProviderClient(client *http.Client) appoauth.ProviderClient {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	return &providerClient{client: client}
 }
@@ -219,12 +221,11 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 					description = strings.ReplaceAll(description, secret, "[redacted]")
 				}
 			}
-			if len(description) > 512 {
-				description = description[:512]
-			}
-			return nil, &appoauth.InvalidGrantError{Code: doc.Error, Description: description}
+			description = strutil.SanitizeUpstream(description, 512)
+			return nil, &appoauth.InvalidGrantError{Code: strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen), Description: description}
 		}
-		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
+		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s",
+			strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen), strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
 	}
 	if doc.TokenType != "" &&
 		!strings.EqualFold(doc.TokenType, "Bearer") &&
@@ -248,6 +249,14 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 	}
 	return out, nil
 }
+
+// The error code is kept (callers branch on it); the free-text description is
+// attacker controlled when the provider is tenant-chosen, so it is capped and
+// stripped of control characters before it is reflected.
+const (
+	maxErrorCodeLen = 64
+	maxErrorDescLen = 200
+)
 
 func grantIsInvalid(code string) bool {
 	switch code {

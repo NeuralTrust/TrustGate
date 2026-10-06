@@ -28,6 +28,20 @@ type Registry struct {
 	Type        Type           `json:"type"`
 	Enabled     bool           `json:"enabled"`
 	Description string         `json:"description,omitempty"`
+	// ToolPolicy only applies to MCP registries; the zero value reads as auto.
+	ToolPolicy ToolPolicy `json:"tool_policy,omitempty"`
+	// KeepStoredToolPolicy tells Update not to write ToolPolicy: the caller did
+	// not change it, and the stored value may have moved since the registry was
+	// read (a concurrent "enable pinning"). Writing the stale copy back would
+	// silently turn pinning off. Update leaves the stored policy in ToolPolicy.
+	KeepStoredToolPolicy bool `json:"-"`
+	// PinnedTools is the decided tool set of a pinned registry as the config
+	// snapshot carries it to DB-less data planes, which have no registry_tools
+	// table to read. It is filled by the snapshot compiler only: the registry
+	// repository never loads or stores it. An empty set on a pinned registry
+	// means nothing is approved, so nothing is exposed. The slice is omitted
+	// when empty, which keeps the snapshot bytes of auto registries unchanged.
+	PinnedTools []ToolDecision `json:"pinned_tools,omitempty"`
 	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
@@ -65,6 +79,7 @@ func NewLLMRegistry(
 		Type:        TypeLLM,
 		Enabled:     true,
 		Description: description,
+		ToolPolicy:  ToolPolicyAuto,
 		LLMTarget:   target,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -92,6 +107,7 @@ func NewMCPRegistry(
 		Type:        TypeMCP,
 		Enabled:     true,
 		Description: description,
+		ToolPolicy:  ToolPolicyAuto,
 		MCPTarget:   target,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -148,6 +164,7 @@ type RehydrateParams struct {
 	Type        Type
 	Enabled     bool
 	Description string
+	ToolPolicy  ToolPolicy
 	LLMTarget   *LLMTarget
 	MCPTarget   *MCPTarget
 	CreatedAt   time.Time
@@ -166,6 +183,7 @@ func Rehydrate(params RehydrateParams) *Registry {
 		Type:        regType,
 		Enabled:     params.Enabled,
 		Description: params.Description,
+		ToolPolicy:  params.ToolPolicy.Normalize(),
 		LLMTarget:   params.LLMTarget,
 		MCPTarget:   params.MCPTarget,
 		CreatedAt:   params.CreatedAt,
@@ -182,6 +200,13 @@ func (b *Registry) Validate() error {
 	}
 	if b.Type == "" {
 		b.Type = TypeLLM
+	}
+	b.ToolPolicy = b.ToolPolicy.Normalize()
+	if err := b.ToolPolicy.Validate(); err != nil {
+		return err
+	}
+	if b.ToolPolicy.IsPinned() && b.Type != TypeMCP {
+		return fmt.Errorf("%w: pinned is only valid for MCP registries", ErrInvalidToolPolicy)
 	}
 	switch b.Type {
 	case TypeLLM:

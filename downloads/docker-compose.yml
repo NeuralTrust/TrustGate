@@ -61,6 +61,20 @@ services:
       CONFIG_SYNC_TLS_CA: ${CONFIG_SYNC_TLS_CA:-}
 
       # ----------------------------------------------------------------------
+      # TrustGate proxy — single-tenant trust
+      # This stack serves one operator, so the people who configure providers,
+      # identity providers and exporters are the people who run it. Let those
+      # outbound clients reach private and loopback addresses (self-hosted
+      # providers, an in-network IdP) and let Model Armor use the container's
+      # ambient Google identity. Multi-tenant gateways leave all of these off.
+      # ----------------------------------------------------------------------
+      OUTBOUND_ALLOW_PRIVATE_NETWORKS: "true"
+      # Pre-OUTBOUND_ALLOW_PRIVATE_NETWORKS name of the same switch, still read by
+      # images built before it was renamed. Remove once that rename has shipped.
+      PROVIDER_ALLOW_PRIVATE_NETWORKS: "true"
+      MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY: "true"
+
+      # ----------------------------------------------------------------------
       # TrustGate proxy — Redis
       # ----------------------------------------------------------------------
       REDIS_HOST: redis

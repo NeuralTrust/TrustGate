@@ -44,6 +44,13 @@ func (t *Tool) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Description is the tool's description as the upstream listed it, "" when
+// absent or not a string.
+func (t Tool) Description() string { return stringField(t.payload, "description") }
+
+// InputSchema is the raw JSON of the tool's inputSchema, nil when absent.
+func (t Tool) InputSchema() json.RawMessage { return t.payload["inputSchema"] }
+
 type Prompt struct {
 	Name string
 
