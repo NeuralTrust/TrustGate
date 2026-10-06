@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -252,6 +253,9 @@ type RuntimeScope struct {
 	AuthID     string
 	OwnerID    string
 	Global     bool
+	// KeyBudget is the spending limit of the authenticated personal key, nil
+	// when it has none. It is shared with the request: read it, never modify it.
+	KeyBudget *authdomain.KeyBudget
 }
 
 // Subject resolves the partition for this execution: gateway-wide when the

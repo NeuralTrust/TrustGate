@@ -16,15 +16,20 @@ package request
 
 import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
-type ListAuthRequest struct {
-	Search  string
-	Type    domain.Type
-	Enabled *bool
-	OwnerID string
-	Owned   *bool
-	Page    listing.Page
-	Sort    listing.Sort
+// UpdateAuthBudgetRequest is the spending limit of a personal key. A JSON null
+// in its place clears the budget.
+type UpdateAuthBudgetRequest struct {
+	Max        float64 `json:"max" example:"50"`
+	TimeWindow string  `json:"time_window" enums:"calendar_month,calendar_day" example:"calendar_month"`
+}
+
+// ToBudget returns the budget the body asks for, nil for a null body, leaving
+// its validation to the domain.
+func (r *UpdateAuthBudgetRequest) ToBudget() *domain.KeyBudget {
+	if r == nil {
+		return nil
+	}
+	return &domain.KeyBudget{Max: r.Max, TimeWindow: r.TimeWindow}
 }

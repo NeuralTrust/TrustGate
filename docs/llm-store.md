@@ -44,7 +44,27 @@ POST /v1/gateways/{gateway_id}/consumers/{consumer_id}/auths/{auth_id}
 ```
 
 `DELETE` on the same path removes the link. `GET /v1/gateways/{gateway_id}/auths?owner_id=<user id>`
-finds a user's key. These calls answer 422:
+finds a user's key, and `GET …/auths?owned=true` lists every personal key of
+the gateway with the list's usual pagination (`owned=false` and no parameter
+list application keys only). Each personal key in a response carries
+`owner_id` and, when it has one, `budget`.
+
+Give a user a spending limit by setting a budget on their key:
+
+```json
+PUT /v1/gateways/{gateway_id}/auths/{auth_id}/budget
+{"max": 50, "time_window": "calendar_month"}
+```
+
+The answer is 200 with the auth, `budget` included. A body of `null` clears the
+budget. `max` is a finite number above zero, counted in the unit of the
+`key_budgets` policy that enforces it (Budgets, below); `time_window` is
+`calendar_month` or `calendar_day` (UTC). The call never changes the secret,
+the expiry or the links, a rotation keeps the budget, and a revoke drops it
+with the key, so set it again on the re-created key. An unknown key, or one of
+another gateway, answers 404.
+
+These calls answer 422:
 
 - `personal` on an MCP consumer, a personal consumer without a primary default,
   a personal consumer on a hybrid gateway, or a change of `audience`;
@@ -55,7 +75,10 @@ finds a user's key. These calls answer 422:
 - an owned key attached to an application consumer, an application key attached
   to a personal consumer, link attributes on an application consumer, or a link
   without `level` or `granted_at`;
-- `PUT` or `POST …/rotate` on an owned key (`owned_key`).
+- `PUT` or `POST …/rotate` on an owned key (`owned_key`);
+- `PUT …/budget` on an application key (`application_key`), or with a body
+  other than `null` or a valid budget (`validation_failed`);
+- `GET …/auths` with both `owned` and `owner_id` (`invalid_filter`).
 
 Deleting a personal consumer removes its links and keeps the keys. Admin
 `DELETE /auths/{auth_id}` revokes a key and all of its links.
@@ -179,6 +202,28 @@ of her consumers.
 {"slug": "token_rate_limiter", "settings": {"partition": "key", "aggregate": {"max": 500000, "time_window": "calendar_month"}}}
 ```
 
+A policy with `"key_budgets": true` (it needs `partition: key`) holds a key
+with a `budget` (Admin setup) to it instead of `aggregate`: its `max`, in the
+policy's `unit`, over its `time_window`. With `key_budgets` the `aggregate` is
+optional, so a policy without it caps only the keys that carry a budget, and a
+key without one is not counted by that policy. Only a policy that sets
+`key_budgets` reads key budgets: any other `partition: key` policy keeps its
+own limit and unit for every key. This is the policy the app uses for per-user
+limits, with every budget in dollars, attached to the consumers it manages:
+
+```json
+{"slug": "token_rate_limiter", "settings": {"partition": "key", "key_budgets": true, "unit": "dollars"}}
+```
+
+A budget counts on the owner's counter for its window,
+`trl:<policy>:key:owner:<owner_id>:p:<2006-01 | 2006-01-02>`, the counter an
+aggregate with the same window uses, so clearing a monthly budget under a
+`calendar_month` aggregate keeps the month's spend. Per-model `rules` still
+apply, and the answers below and the rate-limit headers report a budget as they
+report an aggregate. A budget change reaches the proxies as a rotation does: on
+the next `InvalidateGatewayDataEvent` on the full plane, and with the config
+snapshot on a DB-less proxy.
+
 `calendar_month` and `calendar_day` (UTC) are valid only with `partition: key`;
 `custom_pricing` and `group_by_header` are refused with it. In a blocking mode,
 over budget answers 429, a Redis read error 503 `budget_unavailable` (the
@@ -214,8 +259,12 @@ Every plane (admin, proxy, MCP, DB-less) must run a build with the LLM Store
 before the app creates the first personal consumer: an older data plane ignores
 `audience`, `owner_id` and the links, and would serve a personal consumer at its
 slug. Create `partition: key` policies only once every plane understands them.
+Set key budgets, and create `key_budgets` policies, only once every plane runs a
+build with key budgets: an older plane ignores `budget` and `key_budgets` and
+refuses a policy with no limit of its own.
 
-To roll back: disable the `partition: key` policies, then
+To roll back: disable the `partition: key` policies (budgets can stay: nothing
+reads them without such a policy), then
 `UPDATE consumers SET active = false WHERE audience = 'personal';` before an
 older binary serves, and optionally delete the owned keys and their links. The
 columns can stay.
@@ -248,6 +297,7 @@ the first personal consumer exists.
 | g | Deleting a registry that holds a personal consumer's last primary default model answers 422 `validation_failed`, like detaching it. | Personal consumers are new; an earlier build of this change answered 409 `has_dependents`. |
 | h | The MCP connect ticket re-check refuses an expired or personal key. | Only enabled, type and gateway were checked. |
 | i | `token_rate_limiter` gains `partition: key`, the `calendar_month` and `calendar_day` windows and the hard limits (503 `budget_unavailable`, 403 `model_unpriced`). All are opt-in: a policy without `partition` counts, fails open and prices exactly as before. | — |
+| j | `GET /v1/gateways/{gateway_id}/auths` reads `owned`: `true` lists personal keys only, `owned` together with `owner_id` answers 422 `invalid_filter`, and a value that is not a boolean answers 422 `invalid_filter`. Admin auth responses carry `budget` on a personal key that has one. `PUT …/auths/{auth_id}/budget` is new, and `auths` gains a nullable `budget` column. `token_rate_limiter` gains `key_budgets` (needs `partition: key`): such a policy holds each key to its budget and may have no `aggregate`, `rules`, `window` or `cost_cap`; every other policy still needs one, and no other policy reads key budgets. | `owned` was ignored, and a policy had no way to read a key's budget. |
 
 Roll back (a) by reverting it; the rest needs no action.
 

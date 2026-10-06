@@ -39,11 +39,20 @@ type AuthResponse struct {
 	OwnerID   string     `json:"owner_id,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// Budget is the spending limit of a personal key. Absent means it has none.
+	Budget *KeyBudgetResponse `json:"budget,omitempty"`
 	// Consumers are the consumers this auth reaches, which is what a caller
 	// needs before revoking one: a key can be attached to several, so
 	// disabling it stops more than the endpoint the reader was looking at.
 	// Empty means it reaches none, which is an answer rather than a gap.
 	Consumers []AuthConsumerResponse `json:"consumers"`
+}
+
+// KeyBudgetResponse is the spending limit of a personal key, in the unit of
+// the token_rate_limiter policy with partition key that enforces it.
+type KeyBudgetResponse struct {
+	Max        float64 `json:"max"`
+	TimeWindow string  `json:"time_window" enums:"calendar_month,calendar_day"`
 }
 
 // AuthConsumerResponse names one consumer an auth reaches.
@@ -116,9 +125,17 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		KeySuffix: a.KeySuffix,
 		ExpiresAt: a.ExpiresAt,
 		OwnerID:   a.OwnerID,
+		Budget:    fromBudget(a.Budget),
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}
+}
+
+func fromBudget(b *domain.KeyBudget) *KeyBudgetResponse {
+	if b == nil {
+		return nil
+	}
+	return &KeyBudgetResponse{Max: b.Max, TimeWindow: b.TimeWindow}
 }
 
 func FromCreatedAuth(a *domain.Auth) AuthResponse {

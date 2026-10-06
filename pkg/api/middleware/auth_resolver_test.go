@@ -941,6 +941,7 @@ func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T)
 		principal := &identity.Principal{Subject: "alice", Method: identity.MethodAPIKey}
 		authCtx, _ := appauth.AuthContextFromContext(ctx)
 		require.Equal(t, &appauth.AuthContext{Principal: principal, Method: appauth.MethodAPIKey, GatewayID: f.gw.ID, GatewaySlug: f.gw.Slug, AuthID: f.ownedID, OwnerID: "alice", Subject: "alice"}, authCtx)
+		require.Nil(t, authCtx.KeyBudget, "a key without a budget carries none")
 		require.Equal(t, principal, identity.PrincipalFromContext(ctx))
 		require.True(t, ctx.Value(appconsumer.ConsumerKey) == nil && c.Locals(string(appconsumer.ConsumerKey)) == nil)
 		data, _ := appconsumer.DataFromContext(ctx)
@@ -953,6 +954,21 @@ func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T)
 		status, _ := callStore(t, app, storeChatPath, h[0], h[1])
 		require.Equal(t, fiber.StatusNoContent, status, h[0])
 	}
+}
+
+func TestAuthMiddleware_StoreCarriesACopyOfTheKeyBudget(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	budget := &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}
+	f.finder.keys["ag_alice"].Budget = budget
+	app := f.app(func(c *fiber.Ctx) error {
+		authCtx, _ := appauth.AuthContextFromContext(c.UserContext())
+		require.Equal(t, budget, authCtx.KeyBudget)
+		require.NotSame(t, budget, authCtx.KeyBudget, "a request never shares the cached key's budget")
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusNoContent, status)
 }
 
 func TestAuthMiddleware_StoreAnswersInternalErrorWhenALookupFails(t *testing.T) {

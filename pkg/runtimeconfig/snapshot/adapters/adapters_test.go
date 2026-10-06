@@ -342,6 +342,8 @@ func TestAuthAdapter(t *testing.T) {
 
 	assert.ErrorIs(t, repo.Save(ctx, &authdomain.Auth{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.auth.ID), configsync.ErrReadOnly)
+	_, err = repo.UpdateBudget(ctx, &authdomain.Auth{})
+	assert.ErrorIs(t, err, configsync.ErrReadOnly)
 }
 
 func TestCatalogAdapter(t *testing.T) {
@@ -388,7 +390,8 @@ func TestCatalogNotReady(t *testing.T) {
 func TestAuthAdapterFindByOwner(t *testing.T) {
 	t.Parallel()
 	f := newFixture()
-	owned := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gateway.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice"}
+	owned := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gateway.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice",
+		Budget: &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
 	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
 	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{f.auth, owned}})})
 	repo := adapters.NewAuthRepository(store)
@@ -398,6 +401,12 @@ func TestAuthAdapterFindByOwner(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, owned.ID, got.ID)
 	assert.Equal(t, "owned-hash", got.KeyHash)
+	byHash, err := repo.FindByAPIKeyHash(ctx, "owned-hash")
+	require.NoError(t, err)
+	for _, read := range []*authdomain.Auth{got, byHash} {
+		assert.Equal(t, owned.Budget, read.Budget, "the budget is carried through the snapshot")
+		assert.NotSame(t, owned.Budget, read.Budget, "a read never shares the snapshot's budget")
+	}
 	for _, miss := range []struct {
 		gateway ids.GatewayID
 		owner   string

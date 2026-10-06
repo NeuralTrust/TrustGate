@@ -478,6 +478,8 @@ func TestRepository_List_OwnedKeyFilters(t *testing.T) {
 		"exclude owned on page two": {filter: domain.ListFilter{ExcludeOwned: true, Page: listing.Page{Number: 2, Size: 2}}, total: 3, items: 1},
 		"one owner":                 {filter: domain.ListFilter{OwnerID: "alice"}, total: 1, items: 1},
 		"owner without a key":       {filter: domain.ListFilter{OwnerID: "carol"}, total: 0, items: 0},
+		"only owned":                {filter: domain.ListFilter{OnlyOwned: true}, total: 2, items: 2},
+		"only owned on page two":    {filter: domain.ListFilter{OnlyOwned: true, Page: listing.Page{Number: 2, Size: 1}}, total: 2, items: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tc.filter.GatewayID = gwID
@@ -487,8 +489,105 @@ func TestRepository_List_OwnedKeyFilters(t *testing.T) {
 			require.Len(t, items, tc.items)
 			for _, a := range items {
 				require.False(t, tc.filter.ExcludeOwned && a.IsOwned(), "owned key %s listed", a.ID)
+				require.False(t, tc.filter.OnlyOwned && !a.IsOwned(), "application key %s listed", a.ID)
 				require.True(t, tc.filter.OwnerID == "" || (a.ID == alice.ID && a.OwnerID == "alice"), "unexpected key %s", a.ID)
 			}
 		})
 	}
+}
+
+func TestRepository_BudgetIsReadEverywhereAnAuthIs(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "budget-read")
+	application, owned := validAuth(t, gwID, "application"), ownedAuth(t, gwID, "alice")
+	owned.Budget = &domain.KeyBudget{Max: 12.5, TimeWindow: domain.BudgetWindowCalendarDay}
+	require.NoError(t, r.Save(ctx, application))
+	require.NoError(t, r.Save(ctx, owned))
+
+	byID, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	byHash, err := r.FindByAPIKeyHash(ctx, owned.KeyHash)
+	require.NoError(t, err)
+	byOwner, err := r.FindByOwner(ctx, gwID, "alice")
+	require.NoError(t, err)
+	byIDs, err := r.FindByIDs(ctx, gwID, []ids.AuthID{owned.ID})
+	require.NoError(t, err)
+	require.Len(t, byIDs, 1)
+	listed, _, err := r.List(ctx, domain.ListFilter{GatewayID: gwID, OnlyOwned: true})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	enabled, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeAPIKey)
+	require.NoError(t, err)
+	require.Len(t, enabled, 2)
+	for _, a := range []*domain.Auth{byID, byHash, byOwner, byIDs[0], listed[0]} {
+		require.Equal(t, owned.Budget, a.Budget)
+	}
+	for _, a := range enabled {
+		if a.ID == owned.ID {
+			require.Equal(t, owned.Budget, a.Budget)
+		} else {
+			require.Nil(t, a.Budget)
+		}
+	}
+	got, err := r.FindByID(ctx, application.ID)
+	require.NoError(t, err)
+	require.Nil(t, got.Budget)
+}
+
+func TestRepository_UpdateBudgetWritesOnlyTheBudget(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID, otherGW := seedGateway(t, gw, "budget-write"), seedGateway(t, gw, "budget-other")
+	owned := ownedAuth(t, gwID, "alice")
+	require.NoError(t, r.Save(ctx, owned))
+
+	stale, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	rotated, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	previousHash, err := rotated.RotateAPIKey(time.Now())
+	require.NoError(t, err)
+	require.NoError(t, r.Update(ctx, rotated))
+
+	monthly := &domain.KeyBudget{Max: 50, TimeWindow: domain.BudgetWindowCalendarMonth}
+	stale.Name, stale.Enabled, stale.UpdatedAt = "renamed", false, time.Now().UTC().Truncate(time.Microsecond)
+	stale.Budget = monthly
+	stored, err := r.UpdateBudget(ctx, stale)
+	require.NoError(t, err)
+	require.Equal(t, monthly, stored.Budget)
+	require.Equal(t, rotated.KeyHash, stored.KeyHash, "a concurrent rotation is neither undone nor hidden")
+	require.NotEqual(t, previousHash, stored.KeyHash)
+	require.Equal(t, owned.Name, stored.Name)
+	require.True(t, stored.Enabled)
+	require.True(t, stored.UpdatedAt.Equal(stale.UpdatedAt))
+	_, err = r.FindByAPIKeyHash(ctx, previousHash)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+
+	again, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	_, err = again.RotateAPIKey(time.Now())
+	require.NoError(t, err)
+	again.Budget = nil
+	require.NoError(t, r.Update(ctx, again))
+	afterRotate, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	require.Equal(t, monthly, afterRotate.Budget, "a rotation keeps the budget")
+
+	afterRotate.Budget = nil
+	cleared, err := r.UpdateBudget(ctx, afterRotate)
+	require.NoError(t, err)
+	require.Nil(t, cleared.Budget)
+	reread, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	require.Nil(t, reread.Budget)
+
+	foreign := *reread
+	foreign.GatewayID = otherGW
+	_, err = r.UpdateBudget(ctx, &foreign)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	missing := *reread
+	missing.ID = ids.New[ids.AuthKind]()
+	_, err = r.UpdateBudget(ctx, &missing)
+	require.ErrorIs(t, err, domain.ErrNotFound)
 }

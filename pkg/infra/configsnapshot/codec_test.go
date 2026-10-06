@@ -344,3 +344,27 @@ func TestCodecRoundTripsPersonalConsumerAndOwnedAuth(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
 }
+
+func TestCodecRoundTripsOwnedAuthBudget(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	auth.OwnerID = "alice"
+	auth.Budget = &authdomain.KeyBudget{Max: 12.5, TimeWindow: authdomain.BudgetWindowCalendarDay}
+
+	raw, _, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, authJSON, `"owner_id":"alice","budget":{"max":12.5,"time_window":"calendar_day"}`)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	gotAuth, ok := snap.AuthByAPIKeyHash(auth.KeyHash)
+	require.True(t, ok)
+	assert.Equal(t, auth.Budget, gotAuth.Budget)
+	gotAuth, ok = snap.AuthByOwner(auth.GatewayID, "alice")
+	require.True(t, ok)
+	assert.Equal(t, auth.Budget, gotAuth.Budget)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}

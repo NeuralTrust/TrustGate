@@ -299,6 +299,14 @@ func TestTokenRateLimiterSchema_KeyPartition(t *testing.T) {
 		assert.Contains(t, partition.Description, want)
 	}
 
+	keyBudgets, ok := fieldByKey(meta.schema.Fields, "key_budgets")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, keyBudgets.Type)
+	assert.False(t, keyBudgets.Required)
+	for _, want := range []string{"partition key", "budget it carries", "instead of aggregate", "not counted"} {
+		assert.Contains(t, keyBudgets.Description, want)
+	}
+
 	rules, _ := fieldByKey(meta.schema.Fields, "rules")
 	require.NotNil(t, rules.Item)
 	ruleWindow, _ := fieldByKey(rules.Item.Fields, "time_window")

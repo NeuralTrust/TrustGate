@@ -17,6 +17,7 @@ package auth
 import (
 	"context"
 
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -39,6 +40,7 @@ type AuthContext struct {
 	ConsumerID  ids.ConsumerID
 	AuthID      ids.AuthID
 	OwnerID     string
+	KeyBudget   *domain.KeyBudget
 	Subject     string
 	Claims      map[string]any
 	Scopes      []string

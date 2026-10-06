@@ -105,6 +105,10 @@ func (r *authRepository) Update(_ context.Context, _ *domain.Auth) error {
 	return configsync.ErrReadOnly
 }
 
+func (r *authRepository) UpdateBudget(_ context.Context, _ *domain.Auth) (*domain.Auth, error) {
+	return nil, configsync.ErrReadOnly
+}
+
 func (r *authRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.AuthID) error {
 	return configsync.ErrReadOnly
 }

@@ -424,6 +424,22 @@ func TestDBLessDataPlane_LLMStore(t *testing.T) {
 	eventuallyStore(t, storeServes(t, base, f, "opus-5.5", http.StatusForbidden, storeGuard("B")),
 		"the priority change never reached the db-less plane")
 
+	budget := CreatePolicy(t, f.gatewayID, map[string]any{
+		"name": uniqueName("dbless-key-budget"), "slug": "token_rate_limiter", "enabled": true, "mode": "enforce",
+		"settings": map[string]any{"partition": "key", "key_budgets": true, "unit": "dollars"},
+	})
+	SetPolicyGlobal(t, f.gatewayID, budget)
+	status, set := SetKeyBudget(t, f.gatewayID, f.keyID, monthlyBudget(5))
+	require.Equal(t, http.StatusOK, status, "body=%v", set)
+	eventuallyStore(t, func() bool {
+		status, body := storeChat(t, base, f.gatewayID, f.key, "gpt6")
+		return status == http.StatusForbidden && strings.Contains(body, "model_unpriced")
+	}, "the key budget never reached the db-less plane: a dollar budget refuses the unpriced gpt6")
+	status, _ = SetKeyBudget(t, f.gatewayID, f.keyID, nil)
+	require.Equal(t, http.StatusOK, status)
+	eventuallyStore(t, storeServes(t, base, f, "gpt6", http.StatusOK, "store-d-openai"),
+		"clearing the key budget never reached the db-less plane")
+
 	for _, name := range []string{"A", "B", "D"} {
 		DetachAuth(t, f.gatewayID, f.consumers[name], f.keyID)
 	}

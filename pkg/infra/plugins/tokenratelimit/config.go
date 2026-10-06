@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -40,8 +41,8 @@ const (
 	minWindowSeconds = 60
 
 	partitionKey        = "key"
-	windowCalendarMonth = "calendar_month"
-	windowCalendarDay   = "calendar_day"
+	windowCalendarMonth = authdomain.BudgetWindowCalendarMonth
+	windowCalendarDay   = authdomain.BudgetWindowCalendarDay
 )
 
 type windowConfig struct {
@@ -74,6 +75,10 @@ type config struct {
 	Window             windowConfig                   `mapstructure:"window"`
 	GroupByHeader      string                         `mapstructure:"group_by_header"`
 	Partition          string                         `mapstructure:"partition"`
+	// KeyBudgets makes the policy hold each key to the budget it carries, in
+	// place of the aggregate. Only a policy that opts in reads key budgets, so
+	// a tenant's own partition key policy keeps its limit and its unit.
+	KeyBudgets bool `mapstructure:"key_budgets"`
 }
 
 var validUnits = map[string]int{
@@ -204,15 +209,35 @@ func (c *config) validate() error {
 		}
 	}
 
-	if !hasLegacyWindow && len(c.Rules) == 0 && c.Aggregate == nil && (c.CostCap == nil || !c.CostCap.Enabled) {
+	if !c.KeyBudgets && !c.limits() {
 		return fmt.Errorf("token_rate_limiter: at least one of window, rules, aggregate, or cost_cap must be set")
 	}
 
 	return nil
 }
 
+// limits reports whether the config sets a limit of its own. With key_budgets
+// it may set none and cap only the keys that carry a budget.
+func (c *config) limits() bool {
+	return c.Window.Max > 0 || len(c.Rules) > 0 || c.Aggregate != nil || (c.CostCap != nil && c.CostCap.Enabled)
+}
+
+// forKey returns the config one request is held to under key_budgets: the
+// budget of the request's key, when it has one, replaces the aggregate. The
+// parsed config is left as it is, so no other request ever sees the budget.
+func (c *config) forKey(budget *authdomain.KeyBudget) *config {
+	if !c.KeyBudgets || budget == nil {
+		return c
+	}
+	scoped := *c
+	scoped.Aggregate = &aggregateConfig{Max: budget.Max, TimeWindow: budget.TimeWindow}
+	return &scoped
+}
+
 func (c *config) validatePartition() error {
 	switch {
+	case c.Partition == "" && c.KeyBudgets:
+		return fmt.Errorf("token_rate_limiter: key_budgets requires partition %s", partitionKey)
 	case c.Partition == "":
 		return nil
 	case c.Partition != partitionKey:

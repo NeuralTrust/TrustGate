@@ -36,7 +36,7 @@ const (
 
 	ownerUniqueIndex = "auths_gateway_owner_uniq"
 
-	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, created_at, updated_at`
+	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, budget, created_at, updated_at`
 )
 
 var _ domain.Repository = (*Repository)(nil)
@@ -72,14 +72,18 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	if err != nil {
 		return fmt.Errorf("auth repository: marshal config: %w", err)
 	}
+	budget, err := budgetParam(a.Budget)
+	if err != nil {
+		return err
+	}
 	const query = `
 		INSERT INTO auths (` + authColumns + `)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
 			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
-			nullableString(a.OwnerID), a.CreatedAt, a.UpdatedAt,
+			nullableString(a.OwnerID), budget, a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -121,6 +125,38 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		}
 		return nil
 	})
+}
+
+func (r *Repository) UpdateBudget(ctx context.Context, a *domain.Auth) (*domain.Auth, error) {
+	if a == nil {
+		return nil, errors.New("auth repository: nil auth")
+	}
+	budget, err := budgetParam(a.Budget)
+	if err != nil {
+		return nil, err
+	}
+	const query = `
+		UPDATE auths
+		   SET budget     = $3,
+		       updated_at = $4
+		 WHERE id = $1 AND gateway_id = $2
+		RETURNING ` + authColumns
+	var stored *domain.Auth
+	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var scanErr error
+		stored, scanErr = scanAuth(tx.QueryRow(ctx, query, a.ID, a.GatewayID, budget, a.UpdatedAt))
+		if errors.Is(scanErr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if scanErr != nil {
+			return fmt.Errorf("auth repository: update budget: %w", scanErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
@@ -297,14 +333,15 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)
 		   AND ($5::boolean IS NOT TRUE OR owner_id IS NULL)
-		   AND ($6 = '' OR owner_id = $6)`
+		   AND ($6 = '' OR owner_id = $6)
+		   AND ($7::boolean IS NOT TRUE OR owner_id IS NOT NULL)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 	typeParam := storedTypeNames(filter.Type)
 
 	var total int
 	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
-		filter.ExcludeOwned, filter.OwnerID).Scan(&total); err != nil {
+		filter.ExcludeOwned, filter.OwnerID, filter.OnlyOwned).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("auth repository: count: %w", err)
 	}
 
@@ -317,10 +354,11 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($4::boolean IS NULL OR enabled = $4)
 		   AND ($5::boolean IS NOT TRUE OR owner_id IS NULL)
 		   AND ($6 = '' OR owner_id = $6)
+		   AND ($7::boolean IS NOT TRUE OR owner_id IS NOT NULL)
 		 ORDER BY ` + authOrderBy(filter.Sort) + `
-		 LIMIT $7 OFFSET $8`
+		 LIMIT $8 OFFSET $9`
 	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
-		filter.ExcludeOwned, filter.OwnerID, page.Size, offset)
+		filter.ExcludeOwned, filter.OwnerID, filter.OnlyOwned, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("auth repository: list: %w", err)
 	}
@@ -353,11 +391,12 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 		keyPrefix *string
 		keySuffix *string
 		ownerID   *string
+		budgetRaw []byte
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
 		&configRaw, &keyHash, &keyPrefix, &keySuffix, &a.ExpiresAt,
-		&ownerID, &a.CreatedAt, &a.UpdatedAt,
+		&ownerID, &budgetRaw, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -379,7 +418,23 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 			return nil, fmt.Errorf("scan config: %w", err)
 		}
 	}
+	if len(budgetRaw) > 0 {
+		if err := json.Unmarshal(budgetRaw, &a.Budget); err != nil {
+			return nil, fmt.Errorf("scan budget: %w", err)
+		}
+	}
 	return a, nil
+}
+
+func budgetParam(b *domain.KeyBudget) (any, error) {
+	if b == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: marshal budget: %w", err)
+	}
+	return raw, nil
 }
 
 func nullableUUID(id uuid.UUID) any {

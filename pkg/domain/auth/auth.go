@@ -119,6 +119,7 @@ type Auth struct {
 	// existed is: an expiry nobody asked for would have retired them all.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	OwnerID   string     `json:"owner_id,omitempty"`
+	Budget    *KeyBudget `json:"budget,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }

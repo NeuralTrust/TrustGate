@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -104,4 +105,85 @@ func TestLLMKey_AdminPlaneOnAnOwnedKey(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, status)
 	status, _ = GetLLMKey(t, gwID, owner)
 	assert.Equal(t, http.StatusNotFound, status, "the admin revocation removes the owner's key")
+}
+
+func TestLLMKey_AdminBudgetAndOwnedList(t *testing.T) {
+	defer Track(t, "LLMKey")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-budget")})
+	alice, bob := uniqueName("alice"), uniqueName("bob")
+	status, aliceKey := CreateLLMKey(t, gwID, alice, llmKeyExpiry(llmKeyDay))
+	require.Equal(t, http.StatusCreated, status, "body=%v", aliceKey)
+	status, bobKey := CreateLLMKey(t, gwID, bob, llmKeyExpiry(llmKeyDay))
+	require.Equal(t, http.StatusCreated, status, "body=%v", bobKey)
+	aliceID, bobID := fmt.Sprint(aliceKey["id"]), fmt.Sprint(bobKey["id"])
+	appID, _ := CreateAPIKeyAuth(t, gwID, uniqueName("app-key"))
+	authsURL := fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID)
+
+	status, set := SetKeyBudget(t, gwID, aliceID, monthlyBudget(50))
+	require.Equal(t, http.StatusOK, status, "body=%v", set)
+	assert.Equal(t, map[string]any{"max": float64(50), "time_window": "calendar_month"}, set["budget"])
+	assert.Equal(t, alice, set["owner_id"])
+	assert.NotContains(t, set, "api_key", "the secret is never returned")
+	createdExpiry, err := time.Parse(time.RFC3339Nano, fmt.Sprint(aliceKey["expires_at"]))
+	require.NoError(t, err)
+	budgetExpiry, err := time.Parse(time.RFC3339Nano, fmt.Sprint(set["expires_at"]))
+	require.NoError(t, err)
+	assert.True(t, createdExpiry.Equal(budgetExpiry), "the expiry is untouched: %v, %v", createdExpiry, budgetExpiry)
+
+	status, list := sendRequest(t, http.MethodGet, authsURL+"?owned=true", nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", list)
+	assert.Equal(t, float64(2), list["total"])
+	byID := map[string]map[string]any{}
+	for _, item := range list["items"].([]any) {
+		entry := item.(map[string]any)
+		byID[fmt.Sprint(entry["id"])] = entry
+	}
+	require.Contains(t, byID, aliceID)
+	require.Contains(t, byID, bobID)
+	assert.NotContains(t, byID, appID, "owned=true lists no application key")
+	assert.Equal(t, alice, byID[aliceID]["owner_id"])
+	assert.Equal(t, set["budget"], byID[aliceID]["budget"])
+	assert.Equal(t, bob, byID[bobID]["owner_id"])
+	assert.NotContains(t, byID[bobID], "budget")
+	status, list = sendRequest(t, http.MethodGet, authsURL+"?owned=true&size=1&page=2", nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", list)
+	assert.Equal(t, float64(2), list["total"])
+	assert.Len(t, list["items"], 1)
+	status, list = sendRequest(t, http.MethodGet, authsURL, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", list)
+	assert.Contains(t, fmt.Sprint(list["items"]), appID)
+	assert.NotContains(t, fmt.Sprint(list["items"]), aliceID, "without owned, personal keys stay hidden")
+	status, resp := sendRequest(t, http.MethodGet, authsURL+"?owned=true&owner_id="+alice, nil, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", resp)
+	assert.Equal(t, "invalid_filter", resp["error"])
+
+	status, resp = SetKeyBudget(t, gwID, appID, monthlyBudget(50))
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", resp)
+	assert.Equal(t, "application_key", resp["error"])
+	status, resp = SetKeyBudget(t, gwID, uuid.NewString(), monthlyBudget(50))
+	assert.Equal(t, http.StatusNotFound, status, "body=%v", resp)
+	otherGW := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-budget-other")})
+	status, resp = SetKeyBudget(t, otherGW, aliceID, monthlyBudget(50))
+	assert.Equal(t, http.StatusNotFound, status, "body=%v", resp)
+	for _, body := range []any{map[string]any{"max": 0, "time_window": "calendar_month"}, map[string]any{"max": 50, "time_window": "1h"}, map[string]any{"max": 50}, map[string]any{}} {
+		status, resp = SetKeyBudget(t, gwID, aliceID, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", resp)
+		assert.Equal(t, "validation_failed", resp["error"], "%v", body)
+	}
+
+	status, rotated := RotateLLMKey(t, gwID, alice, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", rotated)
+	status, got := sendRequest(t, http.MethodGet, authsURL+"/"+aliceID, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", got)
+	assert.Equal(t, set["budget"], got["budget"], "a rotation keeps the budget")
+	status, resp = sendRequest(t, http.MethodPut, authsURL+"/"+aliceID, nil, validAuthPayload("renamed"))
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", resp)
+	assert.Equal(t, "owned_key", resp["error"], "the budget route does not open the admin update to owned keys")
+
+	status, cleared := SetKeyBudget(t, gwID, aliceID, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", cleared)
+	assert.NotContains(t, cleared, "budget")
+	status, got = sendRequest(t, http.MethodGet, authsURL+"/"+aliceID, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", got)
+	assert.NotContains(t, got, "budget")
 }

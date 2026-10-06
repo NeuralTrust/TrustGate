@@ -27,6 +27,7 @@ var (
 	ErrCorruptData    = errors.New("corrupt persisted data")
 	ErrResultTooLarge = errors.New("result set too large")
 	ErrManagedByOwner = errors.New("managed by its owner")
+	ErrApplicationKey = errors.New("not a personal key")
 	// ErrForbidden is an authenticated caller asking for something that is not
 	// theirs to ask for. It is not ErrNotFound: the resource exists and the
 	// caller is known, they are simply not the one allowed to act on it.

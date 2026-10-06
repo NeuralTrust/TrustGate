@@ -218,8 +218,13 @@ type keyOutcome struct {
 
 func execKey(ctx context.Context, t *testing.T, p *Plugin, stage policy.Stage, mode policy.Mode, settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) keyOutcome {
 	t.Helper()
+	return execKeyAs(ctx, t, p, aliceScope, stage, mode, settings, req, resp)
+}
+
+func execKeyAs(ctx context.Context, t *testing.T, p *Plugin, scope appplugins.RuntimeScope, stage policy.Stage, mode policy.Mode, settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) keyOutcome {
+	t.Helper()
 	span := trace.New("t", trace.Metadata{}).StartSpan(trace.SpanPlugin, PluginName)
-	in := scopedInput(stage, settings, req, resp, aliceScope)
+	in := scopedInput(stage, settings, req, resp, scope)
 	in.Mode = mode
 	in.Event = metrics.NewEventContext(span)
 	res, err := p.Execute(ctx, in)

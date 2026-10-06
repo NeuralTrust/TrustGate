@@ -199,7 +199,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "aggregate",
 					Label:       "Aggregate Budget",
 					Type:        FieldTypeObject,
-					Description: "Single budget counter for the whole scope, used when per-model rules are not set.",
+					Description: "Single budget counter for the whole scope, used when per-model rules are not set. Optional with key_budgets, where a personal key's own budget replaces it.",
 					Fields: []Field{
 						{
 							Key:         "max",
@@ -276,6 +276,12 @@ var pluginCatalogMeta = map[string]catalogMeta{
 						"In enforce mode a key budget fails closed: 503 budget_unavailable when the counter store is unavailable, and 403 model_unpriced on a dollar budget for a model with no catalog or registry price. " +
 						"Not allowed with custom_pricing or group_by_header.",
 					Enum: enumOptions("key"),
+				},
+				{
+					Key:         "key_budgets",
+					Label:       "Key Budgets",
+					Type:        FieldTypeBoolean,
+					Description: "With partition key, hold each personal key to the budget it carries (set by the console per user), in this policy's unit, instead of aggregate; aggregate then becomes optional, and a key without a budget is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets.",
 				},
 			},
 		},

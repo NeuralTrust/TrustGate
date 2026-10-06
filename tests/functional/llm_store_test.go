@@ -319,6 +319,65 @@ func TestLLMStore_DollarKeyBudgetPricesTheServedModel(t *testing.T) {
 	assert.Equal(t, 1, up.Hits())
 }
 
+func TestLLMStore_PerKeyBudgetReplacesTheAggregate(t *testing.T) {
+	defer Track(t, "LLMStore")()
+	up := newUsageUpstream(t, "store-key-budget", 8)
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("store-key-budget")})
+	registryID := CreateRegistry(t, gatewayID, pricedBackendPayload(uniqueName("store-key-budget-be"), up.URL(), "gpt-4o-mini", 0.0001, 0))
+	consumerID := CreatePersonalConsumer(t, gatewayID, storeRegistry(registryID, []string{"gpt-4o-mini"}, "gpt-4o-mini"))
+	policyID := CreatePolicy(t, gatewayID, map[string]any{
+		"name": uniqueName("store-key-budget"), "slug": "token_rate_limiter", "enabled": true, "mode": "enforce",
+		"settings": map[string]any{"partition": "key", "key_budgets": true, "unit": "dollars"},
+	})
+	SetPolicyGlobal(t, gatewayID, policyID)
+	ana, bob := uniqueName("ana"), uniqueName("bob")
+	anaKey, bobKey := createLinkedLLMKey(t, gatewayID, ana, consumerID), createLinkedLLMKey(t, gatewayID, bob, consumerID)
+	anaID := ownedKeyID(t, gatewayID, ana)
+	chat := func(key string) int {
+		status, _ := storeChat(t, ProxyURL, gatewayID, key, "gpt-4o-mini")
+		return status
+	}
+	monthCounter := func(owner string) string {
+		return fmt.Sprintf("trl:%s:key:owner:%s:p:%s", policyID, owner, time.Now().UTC().Format("2006-01"))
+	}
+	spent := func(key string) int64 {
+		v, err := redisDB.Get(context.Background(), key).Int64()
+		if errors.Is(err, redis.Nil) {
+			return 0
+		}
+		require.NoError(t, err)
+		return v
+	}
+
+	status, body := SetKeyBudget(t, gatewayID, anaID, monthlyBudget(0.0005))
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	eventuallyStore(t, func() bool { return chat(anaKey) == http.StatusTooManyRequests },
+		"ana's budget never held her: 800 micro-USD per call against 500")
+	charged := spent(monthCounter(ana))
+	assert.True(t, charged >= 800 && charged%800 == 0, "the budget counts in the policy's unit on the budget's window, got %d", charged)
+	require.Equal(t, http.StatusTooManyRequests, chat(anaKey))
+
+	for range 3 {
+		require.Equal(t, http.StatusOK, chat(bobKey), "a key without a budget is not held by a policy without aggregate")
+	}
+	counters, err := redisDB.Keys(context.Background(), fmt.Sprintf("trl:%s:key:owner:%s*", policyID, bob)).Result()
+	require.NoError(t, err)
+	assert.Empty(t, counters, "nor counted")
+
+	status, body = SetKeyBudget(t, gatewayID, anaID, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	eventuallyStore(t, func() bool { return chat(anaKey) == http.StatusOK }, "clearing ana's budget never reached the proxy")
+}
+
+func ownedKeyID(t *testing.T, gatewayID, owner string) string {
+	t.Helper()
+	status, list := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/v1/gateways/%s/auths?owner_id=%s", AdminURL, gatewayID, owner), nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", list)
+	items, _ := list["items"].([]any)
+	require.Len(t, items, 1)
+	return fmt.Sprint(items[0].(map[string]any)["id"])
+}
+
 func TestLLMStore_FilesAreNotAStoreRoute(t *testing.T) {
 	defer Track(t, "LLMStore")()
 	up := newJSONUpstream(t, "store-files")
