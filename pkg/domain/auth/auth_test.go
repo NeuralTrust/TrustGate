@@ -43,12 +43,14 @@ func TestConfig_ResolveSecretsFrom_KeepsOAuth2Secret(t *testing.T) {
 		Issuer:       "https://issuer.example.com",
 		Audiences:    []string{"gateway"},
 		JWKSURL:      "https://issuer.example.com/jwks",
+		ClientID:     "gateway-client",
 		ClientSecret: "stored-secret",
 	}}
 	next := Config{OAuth2: &OAuth2Config{
 		Issuer:       "https://issuer.example.com",
 		Audiences:    []string{"gateway"},
 		JWKSURL:      "https://issuer.example.com/jwks",
+		ClientID:     "gateway-client",
 		ClientSecret: secret.Mask("stored-secret"),
 	}}
 	next.ResolveSecretsFrom(prev)

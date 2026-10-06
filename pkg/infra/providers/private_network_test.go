@@ -14,7 +14,9 @@
 
 package providers
 
+import "github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
+
 // The tests in this package stub the upstream with httptest, which listens on
 // loopback; the pool refuses that unless the operator opts in. Tests that
 // exercise the guard itself switch it back off with denyPrivateNetworks.
-func init() { allowPrivateNetworks.Store(true) }
+func init() { netguard.SetAllowPrivate(true) }

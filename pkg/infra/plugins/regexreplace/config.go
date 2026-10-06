@@ -50,7 +50,13 @@ type Rule struct {
 // delta alone is not safe to match against — which makes the work quadratic in
 // the length of the response. The cadence is what bounds it, so blocks are
 // deliberately larger here than the cost of one pass would suggest.
+//
+// Unlike the guardrails it sits beside, it is on by default: the rewrite is
+// local, costs no provider call, and a masking policy that lets the same text
+// through the moment a client streams is not masking. A policy opts out with
+// streaming.enabled: false.
 var streamingDefaults = pluginutil.StreamingDefaults{
+	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            500,
@@ -61,9 +67,9 @@ var streamingDefaults = pluginutil.StreamingDefaults{
 type Settings struct {
 	Target string `mapstructure:"target"`
 	Rules  []Rule `mapstructure:"rules"`
-	// Streaming opts the pre_response leg into per-block rewriting. Absent, a
-	// streamed response is not rewritten at all, which is what this plugin did
-	// before the block loop existed.
+	// Streaming configures per-block rewriting of the pre_response leg. Absent,
+	// it is on; only an explicit enabled: false leaves a streamed response
+	// unrewritten.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 
 	compiled []compiledRule

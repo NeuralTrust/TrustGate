@@ -327,7 +327,7 @@ func TestExecutePreResponseBlock(t *testing.T) {
 	assert.Equal(t, 1, f.count())
 }
 
-func TestExecuteEnforceFailureReturns502(t *testing.T) {
+func TestExecuteEnforceFailurePassesThrough(t *testing.T) {
 	t.Parallel()
 	const secret = "SECRET_OPENAI_DETAIL"
 	f := &fakeModerator{status: http.StatusInternalServerError, rawBody: `{"error":"` + secret + `"}`}
@@ -338,18 +338,14 @@ func TestExecuteEnforceFailureReturns502(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
 
-	require.Nil(t, res)
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok, "expected *PluginError, got %v", err)
-	assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
-	assert.Equal(t, "guardrail_unavailable", pe.Type)
-	assert.NotContains(t, string(pe.Body), secret)
-	assert.NotContains(t, pe.Message, secret)
-	assert.Contains(t, string(pe.Body), "guardrail_unavailable")
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Nil(t, res.Body, "the upstream error text must never reach the client")
 
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
-	assert.Equal(t, "failed_closed", data.Decision)
+	assert.Equal(t, "failed_open", data.Decision)
 	assert.Equal(t, "transport", data.FailureReason)
 }
 
@@ -444,21 +440,19 @@ func TestExecuteEmptyBaseURLPassThrough(t *testing.T) {
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 }
 
-func TestExecuteInvalidConfigErrors(t *testing.T) {
+func TestExecuteInvalidConfigEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
 	event, span := newEvent()
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
-	require.Nil(t, res)
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok, "expected *PluginError on a config_invalid failure in enforce mode, got %v", err)
-	assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
-	assert.Equal(t, "guardrail_unavailable", pe.Type)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
 
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
-	assert.Equal(t, "failed_closed", data.Decision)
+	assert.Equal(t, "failed_open", data.Decision)
 	assert.Equal(t, "config_invalid", data.FailureReason)
 }
 
@@ -490,7 +484,7 @@ func missingThresholdSettings() map[string]any {
 	}
 }
 
-func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
+func TestExecuteVerdictIncompleteEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	// Below its own configured threshold ("hate" is not even asked for
 	// here), so nothing about this response looks like a block - the only
@@ -508,15 +502,13 @@ func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, missingThresholdSettings(), requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
 
-	require.Nil(t, res, "expected nil result on verdict_incomplete in enforce mode")
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok, "expected *PluginError, got %v", err)
-	assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
-	assert.Equal(t, "guardrail_unavailable", pe.Type)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
 
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
-	assert.Equal(t, "failed_closed", data.Decision)
+	assert.Equal(t, "failed_open", data.Decision)
 	assert.Equal(t, "verdict_incomplete", data.FailureReason)
 	assert.Equal(t, CategoryViolence, data.FailureDetail)
 }

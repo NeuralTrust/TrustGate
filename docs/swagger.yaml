@@ -66,6 +66,7 @@ definitions:
           keep the stored one.
         type: string
       exchange_client_secret:
+        description: '#nosec G117'
         type: string
       introspection_url:
         type: string
@@ -73,6 +74,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      login_scopes:
+        items:
+          type: string
+        type: array
       public_keys:
         items:
           type: string
@@ -246,6 +251,7 @@ definitions:
           exchanges; the secret is masked.
         type: string
       exchange_client_secret:
+        description: '#nosec G117 -- masked before serialization'
         type: string
       introspection_url:
         type: string
@@ -253,6 +259,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      login_scopes:
+        items:
+          type: string
+        type: array
       public_keys:
         items:
           type: string
@@ -1342,8 +1352,19 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
+      tool_policy:
+        description: ToolPolicy is auto (default) or pinned; pinned is only valid
+          for MCP.
+        type: string
       type:
         type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.EnableToolPinningRequest:
+    properties:
+      tools:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest'
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest:
     properties:
@@ -1434,6 +1455,17 @@ definitions:
     properties:
       spec_url:
         type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PinnedToolDecisionsRequest:
+    properties:
+      approve:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest'
+        type: array
+      reject:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest'
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest:
     properties:
@@ -1531,6 +1563,13 @@ definitions:
       registry_id:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ToolRefRequest:
+    properties:
+      fingerprint:
+        type: string
+      name:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UpdateRegistryRequest:
     properties:
       auth:
@@ -1552,6 +1591,9 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
+      tool_policy:
+        description: ToolPolicy absent leaves the stored policy unchanged.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.APIKeyAuthResponse:
     properties:
@@ -1723,6 +1765,63 @@ definitions:
       spec_url:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolApproved:
+    properties:
+      decided_at:
+        type: string
+      decided_by:
+        type: string
+      definition:
+        items:
+          type: integer
+        type: array
+      fingerprint:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolItem:
+    properties:
+      approved_version:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolApproved'
+        description: |-
+          ApprovedVersion is set only on a pending item whose name already has an
+          approved definition: the one currently exposed, to diff against.
+      decided_at:
+        type: string
+      decided_by:
+        type: string
+      definition:
+        items:
+          type: integer
+        type: array
+      fingerprint:
+        type: string
+      first_seen_at:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolItem'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      tool_policy:
+        description: ToolPolicy is "auto" or "pinned". Decisions only take effect
+          when pinned.
+        type: string
+      total:
+        description: Total counts every definition matching the filter, not just this
+          page.
+        type: integer
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse:
     properties:
       cache_read:
@@ -1785,6 +1884,8 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
+      tool_policy:
+        type: string
       type:
         type: string
       updated_at:
@@ -2629,7 +2730,6 @@ definitions:
   github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig:
     additionalProperties:
       items:
-        format: int32
         type: integer
       type: array
     type: object
@@ -2907,6 +3007,15 @@ definitions:
       targets:
         type: integer
       tool:
+        type: string
+      tool_open_world:
+        type: boolean
+      tool_risk:
+        description: |-
+          ToolRisk is the called tool's declared risk class (read_only, additive
+          or destructive) and ToolOpenWorld its open-world hint, both from the MCP
+          annotations its server publishes. Empty and nil when the tool declares
+          no hint: the server's claim, advisory only.
         type: string
       transport:
         type: string
@@ -3220,12 +3329,28 @@ definitions:
       ticket:
         type: string
     type: object
+  pkg_api_handler_http_registry.DecidePinnedToolsResponse:
+    properties:
+      approved:
+        type: integer
+      rejected:
+        type: integer
+    type: object
   pkg_api_handler_http_registry.ListRegistryToolsResponse:
     properties:
       tools:
         items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool'
+          $ref: '#/definitions/pkg_api_handler_http_registry.RegistryTool'
         type: array
+    type: object
+  pkg_api_handler_http_registry.RegistryTool:
+    properties:
+      fingerprint:
+        type: string
+      pinnable:
+        type: boolean
+      tool:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool'
     type: object
   pkg_api_handler_http_registry.ValidateOpenAPIRequest:
     properties:
@@ -3523,12 +3648,13 @@ paths:
       consumes:
       - application/json
       description: 'Returns the URL an application shows one of its end users to connect
-        that person''s own account on one of the consumer''s servers (or on any of them when
-        provider is omitted; instance narrows it to one instance of that server). A server
-        whose instance holds one shared account for every caller is refused with 400: no end
-        user can connect it, and an administrator does in the console. Any MCP consumer may
-        name an end user — who a request runs as is read from the request, not declared on the
-        consumer. Authenticated with the consumer''s API key.'
+        that person''s own account on one of the consumer''s servers (or on any of
+        them when provider is omitted; instance narrows it to one instance of that
+        server). A server whose instance holds one shared account for every caller
+        is refused with 400: no end user can connect it, and an administrator does
+        in the console. Any MCP consumer may name an end user — who a request runs
+        as is read from the request, not declared on the consumer. Authenticated with
+        the consumer''s API key.'
       parameters:
       - description: Consumer slug
         in: path
@@ -5387,6 +5513,127 @@ paths:
       summary: Update a backend
       tags:
       - registries
+  /v1/gateways/{gateway_id}/registries/{id}/pinned-tools:
+    get:
+      description: 'Returns the tool definitions the registry has recorded, each with
+        its decision. A definition is identified by (name, fingerprint): when an upstream
+        changes a tool, the new definition appears as a pending item beside the approved
+        one, and carries approved_version (the exposed definition) so it can be diffed.
+        Filter with status=pending|approved|rejected. Paginated with limit (default
+        100, max 500) and offset over a stable first_seen_at, name, fingerprint order;
+        total is the number of matching definitions across all pages.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Only definitions in this status
+        enum:
+        - pending
+        - approved
+        - rejected
+        in: query
+        name: status
+        type: string
+      - description: Page size (default 100, max 500)
+        in: query
+        maximum: 500
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Rows to skip, in first_seen_at, name, fingerprint order
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PinnedToolsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the tool definitions of a pinned MCP registry
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/pinned-tools/decisions:
+    post:
+      consumes:
+      - application/json
+      description: Applies approvals and rejections atomically, recording the authenticated
+        admin as the decider, and publishes a new config snapshot. A definition is
+        identified by (name, fingerprint) as listed by pinned-tools. If any ref does
+        not exist for the registry the call returns 422 and nothing is applied; a
+        ref in both lists, an empty body or an oversized list is 400.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Definitions to approve and reject
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PinnedToolDecisionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_registry.DecidePinnedToolsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Approve or reject tool definitions of a pinned MCP registry
+      tags:
+      - registries
   /v1/gateways/{gateway_id}/registries/{id}/shared-account:
     delete:
       description: Forgets the stored account. Nothing is revoked upstream, but calls
@@ -5507,14 +5754,87 @@ paths:
       summary: Start connecting an instance's shared upstream account
       tags:
       - registries
+  /v1/gateways/{gateway_id}/registries/{id}/tool-pinning:
+    put:
+      consumes:
+      - application/json
+      description: 'Makes the listed tools exactly the approved set and sets the registry''s
+        tool_policy to pinned, in one transaction, then publishes a new config snapshot.
+        Tools are identified by the (name, fingerprint) returned by GET .../tools;
+        the server re-reads the live tool list and approves the definitions it finds
+        there. If a listed tool is no longer in the live list with that fingerprint
+        (the upstream changed since it was reviewed) the call is 422 naming the stale
+        tools and nothing is applied; an unreachable upstream is 502. A registry whose
+        tools depend on the caller (per-principal auth or URL variables) cannot be
+        introspected, so only an empty list is accepted for it. An empty list is allowed.
+        Every live tool that is not on the list was seen and declined by the admin:
+        it is recorded as rejected, decided by the caller, in the same transaction
+        (inserted if absent, a pending row flipped, an already rejected row untouched).
+        Approved rows that are neither listed nor live go back to pending. Only MCP
+        registries can be pinned; an LLM registry is 422. Disabling pinning is a plain
+        registry update with tool_policy=auto.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The confirmed tools, by name and fingerprint
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.EnableToolPinningRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Enable tool pinning with a confirmed list
+      tags:
+      - registries
   /v1/gateways/{gateway_id}/registries/{id}/tools:
     get:
-      description: Introspects the MCP server behind the registry and returns its
+      description: 'Introspects the MCP server behind the registry and returns its
         advertised tools under their native upstream names. Each tool is passed through
         as the server declared it (name plus whatever else it exposes, e.g. description
-        and inputSchema). Returns 409 when the registry cannot be introspected from
-        the admin plane (per-principal auth or URL variables), and 502 when the upstream
-        MCP server is unreachable or its tools/list call fails.
+        and inputSchema), with two additive fields: fingerprint, the identity a pinned
+        registry screens tools by (the value to send to PUT tool-pinning), and pinnable,
+        false (with no fingerprint) for a tool whose definition cannot be stored.
+        Returns 409 when the registry cannot be introspected from the admin plane
+        (per-principal auth or URL variables), and 502 when the upstream MCP server
+        is unreachable or its tools/list call fails.'
       parameters:
       - description: Gateway id
         format: uuid

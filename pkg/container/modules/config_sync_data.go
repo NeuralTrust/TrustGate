@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -43,6 +44,11 @@ func ConfigSyncData(c *container.Container) error {
 	}
 	if err := c.Provide(func() configsync.SnapshotCodec[*readmodel.Snapshot] {
 		return infrasnapshot.NewCodec()
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func() *configsync.SnapshotStatus {
+		return configsync.NewSnapshotStatus(nil)
 	}); err != nil {
 		return err
 	}
@@ -89,6 +95,13 @@ func ConfigSyncData(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// Pending pinned tools reach the control plane over the same connection; the
+	// recorder in MCP wraps this port with the queue, dedupe and retries.
+	if err := c.Provide(func(client *configsyncgrpc.Client, logger *slog.Logger) appmcp.PendingToolRecorder {
+		return configsyncgrpc.NewPinnedToolsClient(client.ClientConn(), logger)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(crypto configsync.Crypto, codec configsync.SnapshotCodec[*readmodel.Snapshot], cfg *config.Config) *configsync.LKGStore[*readmodel.Snapshot] {
 		return configsync.NewLKGStore(crypto, codec, cfg.ConfigSync.LKGPath)
 	}); err != nil {
@@ -103,12 +116,13 @@ func ConfigSyncData(c *container.Container) error {
 		cacheManager *cache.TTLMapManager,
 		logger *slog.Logger,
 		cfg *config.Config,
+		status *configsync.SnapshotStatus,
 	) *configsync.Worker[*readmodel.Snapshot] {
 		return configsync.NewWorker(fetcher, store, transport, lkg, codec, logger, configsync.WorkerConfig{
 			PollInterval: cfg.ConfigSync.PollInterval,
 			MinBackoff:   cfg.ConfigSync.GRPCMinBackoff,
 			MaxBackoff:   cfg.ConfigSync.GRPCMaxBackoff,
-		}, configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
+		}, configsync.WithStatus[*readmodel.Snapshot](status), configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
 			cacheManager.ClearAllTTLMaps()
 			logger.Debug("config-sync applied new snapshot; cleared derived caches",
 				slog.String("component", "configsync"))

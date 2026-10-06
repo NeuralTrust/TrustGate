@@ -80,6 +80,9 @@ type Dispatcher struct {
 	mu              sync.Mutex
 	publishedGlobal string
 	publishedScoped map[string]string
+
+	// lkg persists the compiled snapshots; nil when the feature is off.
+	lkg *lkgState
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
@@ -91,6 +94,7 @@ func NewDispatcher(
 	outbox configsyncport.OutboxRepository,
 	logger *slog.Logger,
 	cfg DispatcherConfig,
+	opts ...DispatcherOption,
 ) *Dispatcher {
 	if logger == nil {
 		logger = slog.Default()
@@ -111,7 +115,7 @@ func NewDispatcher(
 	if maxRows <= 0 {
 		maxRows = defaultMaxRows
 	}
-	return &Dispatcher{
+	d := &Dispatcher{
 		compiler:        compiler,
 		codec:           codec,
 		holder:          holder,
@@ -125,6 +129,10 @@ func NewDispatcher(
 		trigger:         make(chan struct{}, 1),
 		publishedScoped: make(map[string]string),
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // Signal requests a dispatch after an admin write: immediate when the loop is
@@ -228,8 +236,10 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	}
 
 	compileStart := time.Now()
+	compiledAt := d.compiledAt()
 	raw, version, scoped, err := d.compile(ctx)
 	if err != nil {
+		d.warnServingPersisted(err)
 		return err
 	}
 	compileDuration := time.Since(compileStart)
@@ -265,6 +275,11 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 			slog.Int("bytes", len(raw)))
 	}
 	d.mu.Unlock()
+
+	// A snapshot that compiled is the freshest truth: it replaces a restored one
+	// as the source, and is persisted. Persisting never fails the dispatch.
+	d.markCompiled(compiledAt)
+	d.persist(ctx, raw, version, scoped, compiledAt)
 
 	if len(pending) > 0 {
 		if _, err := d.outbox.DeleteSeqs(ctx, pending); err != nil && ctx.Err() == nil {

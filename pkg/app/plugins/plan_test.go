@@ -433,3 +433,149 @@ func TestStagePlan_StreamPlan(t *testing.T) {
 	ok, _ = NewStagePlan(reg, nil, nil).StreamPlan(policy.StagePreResponse)
 	assert.False(t, ok)
 }
+
+// passiveStreamPlugin is a local rewriter: a participant that must not decide
+// the stream-wide options, as regex_replace does not.
+type passiveStreamPlugin struct{ *streamPlugin }
+
+func (passiveStreamPlugin) OwnsStreamOptions() bool { return false }
+
+// One stream carries one set of options, so a passive participant that sorts
+// first must not decide them over the guard that has an opinion (ENG-1735: a
+// default-on regex_replace flipped a fail_open trustguard stream to
+// fail_closed just by having the lower priority).
+func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
+	owner := newStreamPlugin("guard", nil)
+	otherOwner := newStreamPlugin("guard2", nil)
+	reg := newRegistry(t, passive, owner, otherOwner)
+
+	passiveSet := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_closed"}
+	ownerSet := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_open"}
+	otherSet := map[string]any{"enabled": true, "head_chars": 128, "on_error": "fail_closed"}
+
+	plan := func(t *testing.T, specs ...polSpec) *StagePlan {
+		t.Helper()
+		pols := policies(t, specs...)
+		for i, spec := range specs {
+			switch spec.slug {
+			case "rewriter":
+				pols[i].Settings = passiveSet
+			case "guard":
+				pols[i].Settings = ownerSet
+			case "guard2":
+				pols[i].Settings = otherSet
+			}
+		}
+		return NewStagePlan(reg, pols, nil)
+	}
+
+	t.Run("passive first, owner second: the owner's options win", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("passive alone: its own options", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
+	})
+
+	t.Run("passive first, two owners: the first owner wins", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard2", enabled: true, priority: 2, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 3, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_closed"}, opts)
+	})
+
+	t.Run("owner first, passive second: unchanged", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "rewriter", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("a disabled owner does not count", func(t *testing.T) {
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		)
+		pols[0].Settings = passiveSet
+		pols[1].Settings = map[string]any{"enabled": false}
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
+	})
+}
+
+// A policy with no streaming block is a participant now, so which entry sorts
+// first must not decide the failure direction or the payload cap for the whole
+// stream.
+func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	a := newStreamPlugin("guard_a", nil)
+	b := newStreamPlugin("guard_b", nil)
+	reg := newRegistry(t, a, b)
+
+	plan := func(t *testing.T, first, second map[string]any, firstMode, secondMode policy.Mode) StreamOptions {
+		t.Helper()
+		pols := policies(t,
+			polSpec{slug: "guard_a", enabled: true, priority: 1, stages: pre, mode: firstMode},
+			polSpec{slug: "guard_b", enabled: true, priority: 2, stages: pre, mode: secondMode},
+		)
+		pols[0].Settings, pols[1].Settings = first, second
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		return opts
+	}
+	defaults := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open", "max_accumulated_bytes": 262144}
+	closed := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_closed", "max_accumulated_bytes": 24576}
+
+	t.Run("a later explicit fail_closed is not overridden by an earlier default", func(t *testing.T) {
+		opts := plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce)
+		assert.Equal(t, "fail_closed", opts.OnError)
+		assert.Equal(t, 400, opts.HeadChars, "the first owner still supplies the head gate")
+	})
+	t.Run("an earlier explicit fail_closed stays", func(t *testing.T) {
+		assert.Equal(t, "fail_closed", plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
+	})
+	t.Run("an observe entry's fail_closed decides nothing", func(t *testing.T) {
+		assert.Equal(t, "fail_open", plan(t, closed, defaults, policy.ModeObserve, policy.ModeEnforce).OnError)
+	})
+	t.Run("both fail_open stays fail_open", func(t *testing.T) {
+		assert.Equal(t, "fail_open", plan(t, defaults, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
+	})
+	t.Run("the payload cap is the smallest any participant asks for", func(t *testing.T) {
+		assert.Equal(t, 24576, plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+		assert.Equal(t, 24576, plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	})
+	t.Run("an unset cap does not zero the merge", func(t *testing.T) {
+		unset := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open"}
+		assert.Equal(t, 24576, plan(t, unset, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	})
+	t.Run("a passive rewriter's fail_closed does not flip an owner", func(t *testing.T) {
+		passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
+		regP := newRegistry(t, passive, a)
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre, mode: policy.ModeEnforce},
+			polSpec{slug: "guard_a", enabled: true, priority: 2, stages: pre, mode: policy.ModeEnforce},
+		)
+		pols[0].Settings = map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_closed", "max_accumulated_bytes": 262144}
+		pols[1].Settings = defaults
+		ok, opts := NewStagePlan(regP, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		assert.Equal(t, "fail_open", opts.OnError)
+	})
+}

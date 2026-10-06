@@ -28,7 +28,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var (
@@ -93,7 +93,7 @@ type asCacheEntry struct {
 
 func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, client *http.Client, clients FlowStore) MetadataService {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = netguard.NewHTTPClient(10 * time.Second)
 	}
 	return &metadataService{credentials: credentials, paths: paths, client: client, clients: clients, asCache: map[string]asCacheEntry{}}
 }
@@ -119,22 +119,18 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 		if u, err := url.Parse(resource); err == nil && u.Path != "" {
 			matches, err := s.paths.Match(ctx, u.Host, u.Path)
 			if err == nil && len(matches) > 0 {
-				providers, protected := pathOAuth2Auths(matches)
-				if len(providers) > 0 {
+				if providers := pathOAuth2Auths(matches); len(providers) > 0 {
 					return providers, nil
 				}
-				// The resource pinned a consumer that authenticates with its own
-				// credential. Advertising the gateway's identity provider would
-				// send a client through a login the auth chain cannot honour.
-				if protected {
-					return nil, nil
+				// Advertise only what the authorize path brokers: the built-in
+				// default when the auth chain admits it, scoped to the consumer's
+				// gateway, and otherwise no authorization server at all.
+				if appconsumer.DefaultIdPAdmitted(matches) {
+					if def := s.credentials.DefaultOAuth2ForGateway(matches[0].GatewayID); def != nil {
+						return []*authdomain.Auth{def}, nil
+					}
 				}
-				// The resource pinned a consumer with no provider of its own, so
-				// scope the fallback to that consumer's gateway the way the
-				// authorize path does. The platform-wide lookup below published
-				// other tenants' required scopes on this unauthenticated document
-				// (RUN-1501).
-				return s.gatewayScopedAuths(ctx, matches[0].GatewayID)
+				return nil, nil
 			}
 		}
 	}
@@ -143,21 +139,6 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
 	return auths, nil
-}
-
-func (s *metadataService) gatewayScopedAuths(ctx context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
-	auths, err := s.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
-	if err != nil {
-		return nil, fmt.Errorf("oauth: load oauth2 auths for gateway: %w", err)
-	}
-	def := s.credentials.DefaultOAuth2ForGateway(gatewayID)
-	if def == nil {
-		return auths, nil
-	}
-	out := make([]*authdomain.Auth, 0, len(auths)+1)
-	out = append(out, auths...)
-	out = append(out, def)
-	return out, nil
 }
 
 func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error) {
@@ -279,8 +260,14 @@ func isLegacyPrivateUseRedirectURI(raw string) bool {
 }
 
 func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (map[string]any, error) {
+	// A trusted (operator) fetch and a tenant fetch of the same issuer string
+	// are different requests with different network rules, so never share an entry.
+	cacheKey := issuer
+	if netguard.IsTrusted(ctx) {
+		cacheKey = "trusted\x00" + issuer
+	}
 	s.mu.Lock()
-	if e, ok := s.asCache[issuer]; ok && time.Since(e.fetchedAt) < asMetadataTTL {
+	if e, ok := s.asCache[cacheKey]; ok && time.Since(e.fetchedAt) < asMetadataTTL {
 		s.mu.Unlock()
 		return e.doc, nil
 	}
@@ -298,7 +285,7 @@ func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (m
 			continue
 		}
 		s.mu.Lock()
-		s.asCache[issuer] = asCacheEntry{doc: doc, fetchedAt: time.Now()}
+		s.asCache[cacheKey] = asCacheEntry{doc: doc, fetchedAt: time.Now()}
 		s.mu.Unlock()
 		return doc, nil
 	}

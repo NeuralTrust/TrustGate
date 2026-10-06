@@ -24,6 +24,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -158,13 +159,19 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 }
 
 func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
-	if in.Request == nil || in.Response == nil || p.registry == nil {
+	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	if in.Request.Provider == "" || len(in.Response.Body) == 0 {
-		return passThrough(), nil
-	}
+	// A streamed response is inspected block by block by the stream guard when
+	// streaming is enabled for this policy. When it is not, the response goes
+	// out uninspected and the trace says so, rather than omitting the policy.
 	if in.Response.Streaming {
+		if !cfg.Streaming.IsEnabled() {
+			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
+		}
+		return passThrough(), nil
+	}
+	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
 		return passThrough(), nil
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
@@ -266,6 +273,7 @@ func (p *Plugin) anonymizeEnforce(in appplugins.ExecInput, data *Data, message s
 	return span.result(body), nil
 }
 
+// anonymizeDegraded blocks by design (RUN-1792): the provider confirmed sensitive data and gave no way to mask it, so this is the one deliberate exception to fail-open.
 func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
@@ -276,11 +284,11 @@ func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message 
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.HandleExternalFailure: fail closed (502
-// guardrail_unavailable) in a blocking mode, fail open (pass through) in
-// observe, or always fail open for a decode_failed reason. It builds this
-// plugin's own Data so failure_reason/failure_detail travel in the same
-// shape as every other external guardrail.
+// shared appplugins.HandleExternalFailure: on the buffered leg it always fails
+// open (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792). It builds this plugin's own Data so
+// failure_reason/failure_detail travel in the same shape as every other
+// external guardrail.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,

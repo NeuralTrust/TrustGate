@@ -422,9 +422,9 @@ func trustGuardStreamedContent(t *testing.T, payload json.RawMessage) string {
 
 // trustGuardStreamCalls are the evaluate calls that carried a stream envelope,
 // in order, with each call's payload beside its envelope. The buffered
-// post_response pass runs after a cut — that is the audit trail the cut does
-// not remove — and it carries no envelope, so counting hits would count it as a
-// fourth inspection of the stream.
+// post_response pass carries no envelope, so counting hits would count it as an
+// extra inspection of the stream (after a cut it is skipped, but a completed
+// stream still gets it).
 //
 // Both lists are filtered on the same call index. Indexing the unfiltered
 // payloads with a filtered position lines up only as long as no envelope-less
