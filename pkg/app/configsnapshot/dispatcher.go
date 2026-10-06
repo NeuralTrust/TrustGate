@@ -245,20 +245,24 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	compileDuration := time.Since(compileStart)
 	raw, version, scoped := compiled.raw, compiled.version, compiled.scoped
 
-	// The global snapshot is derived from every gateway plus the shared catalog, so
-	// any change bumps the global version; that makes it a safe outer gate for the
-	// scoped diff below. A change to one gateway bumps only the global version and
-	// that gateway's scoped version, so only that scope's pods are notified.
+	// The global snapshot leaves out gateways served by a hybrid data plane, so it
+	// is not a safe outer gate on its own: a change to a hosted gateway bumps the
+	// global version and that gateway's scoped version, while a change to a hybrid
+	// one bumps only its scoped version. Either one publishes, and only the scopes
+	// whose version moved are notified.
 	d.mu.Lock()
-	published := version != d.publishedGlobal
+	globalChanged := version != d.publishedGlobal
+	published := globalChanged || d.scopesChanged(scoped)
 	if published {
 		if scoped != nil {
 			d.holder.SetPartitioned(raw, version, scoped)
 		} else {
 			d.holder.Set(raw, version)
 		}
-		d.broadcaster.BroadcastScope("", version)
-		d.publishedGlobal = version
+		if globalChanged {
+			d.broadcaster.BroadcastScope("", version)
+			d.publishedGlobal = version
+		}
 		for scope, snap := range scoped {
 			if d.publishedScoped[scope] != snap.Version {
 				d.broadcaster.BroadcastScope(scope, snap.Version)
@@ -305,6 +309,20 @@ type compiledSnapshot struct {
 	catalogBytes int
 	scopes       scopeSizes
 	entities     snapshotEntities
+}
+
+func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
+	for scope, snap := range scoped {
+		if d.publishedScoped[scope] != snap.Version {
+			return true
+		}
+	}
+	for scope := range d.publishedScoped {
+		if _, ok := scoped[scope]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
