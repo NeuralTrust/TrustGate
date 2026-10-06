@@ -58,9 +58,10 @@ func TestCodecSR1MigrationDoesNotLetInvalidConsumerBlockSnapshot(t *testing.T) {
 				},
 			}
 			count := 2
-			if kind == "one rung" {
+			switch kind {
+			case "one rung":
 				count = 1
-			} else if kind == "four rungs" {
+			case "four rungs":
 				count = 4
 			}
 			for i := 0; i < count; i++ {
