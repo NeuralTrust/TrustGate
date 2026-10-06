@@ -67,7 +67,10 @@ const (
 )
 
 const (
-	decisionFailedOpen   = "failed_open"
+	// DecisionFailedOpen is the decision recorded when a guardrail could not give
+	// a verdict and the traffic was let through. The buffered legs and the stream
+	// leg share it.
+	DecisionFailedOpen   = "failed_open"
 	decisionFailedClosed = "failed_closed"
 
 	typeGuardrailUnavailable = "guardrail_unavailable"
@@ -120,7 +123,7 @@ func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
 		outcome.Decision = decisionFailedClosed
 		outcome.Err = unavailableError()
 	} else {
-		outcome.Decision = decisionFailedOpen
+		outcome.Decision = DecisionFailedOpen
 		outcome.Result = &Result{StatusCode: http.StatusOK}
 	}
 	SetDecisionFromOutcome(f.Event, outcome.Decision)

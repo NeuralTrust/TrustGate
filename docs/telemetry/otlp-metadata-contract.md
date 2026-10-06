@@ -228,9 +228,10 @@ that never reported.
 
 Since RUN-1745:
 
-- **Only policies that opted into per-block inspection get an entry.** A policy of a
-  streaming-capable plugin whose settings leave streaming off is no longer walked per block,
-  so it writes no streamed entry with no decision. Its settings no longer failing to parse
+- **Only policies that take part in per-block inspection get an entry.** A policy of a
+  streaming-capable plugin takes part unless its `streaming.enabled` is `false`, or absent
+  for a plugin whose default is off (`bedrock_guardrail`). A policy that opted out is no
+  longer walked per block, so it writes no streamed entry with no decision. Its settings no longer failing to parse
   cannot fail the blocks of a stream another policy opted into.
 - **A cut on a failure is the failing policy's.** When a block's call fails and
   `streaming.on_error` is `fail_closed`, `cut_at_eval` lands on the policy whose call
@@ -322,6 +323,47 @@ Their `extras` carry two keys:
 
 A streamed response leg follows `streaming.on_error` for enforce entries; an observe entry
 that fails records `failed_open` and never cuts the stream.
+
+**Changed in RUN-1786.** `google_model_armor` and `openai_moderation` inspect a streamed
+response by default: a policy with no `streaming` block is on, and `streaming.enabled: false`
+is the opt-out (the trace then marks it `skipped` with `skip_reason: streaming_disabled`).
+`bedrock_guardrail` stays **opt-in** (`streaming.enabled: true`): every block resends the
+accumulated prefix to ApplyGuardrail, whose on-demand quota is per account and region (25 text
+units per second in most non-US regions), so inspecting every stream by default would throttle
+the customer's buffered requests too. Until the console exposes the control (RUN-1661) a
+Bedrock policy with no `streaming` block records `skipped` / `streaming_disabled` on a streamed
+response. For all three, the stream leg fails **open** by default once it takes part, unlike
+the buffered leg, which still fails closed in enforce: a provider error or timeout on a block
+releases the held text and does not cut the stream. A policy that wants the old behaviour sets
+`streaming.on_error: fail_closed`.
+
+When the stream leg has several participants the stream still runs on one head gate and one
+cadence (the first participant that owns them), but two options are merged across the chain:
+`on_error` is `fail_closed` when any enforcing policy asked for it, and
+`max_accumulated_bytes` is the smallest any participant asks for. `on_error` is also resolved per policy:
+a failing policy that resolved `fail_open` is recorded `failed_open` and the chain carries on
+with the next policy on the same block, so another policy's `fail_closed` neither cuts the
+stream on its behalf nor stops the policies behind it from inspecting. A `fail_closed` cut is
+labelled `blocked` on the failing policy, at the head (HTTP 403) and after it.
+
+When a policy's own provider call failed on at least one block and the stream was not cut,
+its `decision` is `failed_open`, in enforce and in observe alike. The count is per policy:
+two policies of one plugin on the same stream, one with a bad key, label only the bad one.
+Cancellation (a client that left) is not a failure. The `decision` of a stream leg is, in
+order of precedence: a cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
+failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
+a missing inspection. `streaming.degraded_reason` is a different, chain-wide signal and is
+not what the decision is read from: it is one value for the whole stream, overwritten by a
+later size degrade, and the failure of an observe policy, or of an enforcing policy that
+resolved `fail_open`, never reaches it (the chain absorbs it per policy).
+
+A policy absorbed this way whose provider fails on three blocks in a row is not called again
+for the rest of that stream: its span keeps `failed_open` and carries
+`streaming.fallback_reason: entry_retired`, and the other policies keep inspecting every
+block. A retired policy is not retried for the rest of that stream, and from then on it
+lowers `streaming.guard_calls` on every later block (each is a block without its verdict).
+`streaming.guard_calls` counts only the blocks that got every verdict, so an absorbed
+failure leaves it short of `evals_total`.
 
 **Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
 and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
