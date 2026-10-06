@@ -22,6 +22,9 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 const gatewayRefreshPrefix = "gwrt_"
@@ -48,6 +51,23 @@ func mergeScopes(requested string, required []string) string {
 		out = append(out, s)
 	}
 	return strings.Join(out, " ")
+}
+
+// upstreamScopes sends the operator's login scopes instead of the client's
+// request: MCP clients ask for the short form the token carries (Entra puts
+// "mcp.access" in scp), which Entra reads as a Microsoft Graph scope at
+// /authorize. Only the client's protocol scopes are kept alongside them.
+func upstreamScopes(cfg *authdomain.OAuth2Config, requested string) string {
+	if len(cfg.LoginScopes) == 0 {
+		return mergeScopes(requested, cfg.RequiredScopes)
+	}
+	var protocol []string
+	for _, s := range strings.Fields(requested) {
+		if identity.IsProtocolScope(s) {
+			protocol = append(protocol, s)
+		}
+	}
+	return mergeScopes(strings.Join(cfg.LoginScopes, " "), protocol)
 }
 
 func s256(verifier string) string {

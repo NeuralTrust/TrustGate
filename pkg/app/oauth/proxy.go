@@ -210,7 +210,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	q.Set("state", state)
 	q.Set("code_challenge", s256(verifier))
 	q.Set("code_challenge_method", "S256")
-	if scope := mergeScopes(req.Scope, cfg.RequiredScopes); scope != "" {
+	if scope := upstreamScopes(cfg, req.Scope); scope != "" {
 		q.Set("scope", scope)
 	}
 	// For the platform-wide default IdP, tell the app which tenant and which
@@ -860,7 +860,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	if cfg.ClientSecret != "" {
 		form.Set("client_secret", cfg.ClientSecret)
 	}
-	if scope := mergeScopes("", cfg.RequiredScopes); scope != "" {
+	if scope := upstreamScopes(cfg, ""); scope != "" {
 		form.Set("scope", scope)
 	}
 	return p.idp.tokenCall(ctx, endpoints.token, form)
