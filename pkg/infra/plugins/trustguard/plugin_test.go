@@ -2101,17 +2101,19 @@ func TestStreamedPreResponseLegReasonFollowsStreamingSetting(t *testing.T) {
 
 	for _, tc := range []struct {
 		name      string
+		direction string
 		streaming map[string]any
 		want      string
 	}{
-		{"default settings opt into the stream guard", nil, skipReasonInspectedAsStream},
-		{"streaming disabled", map[string]any{"enabled": false}, skipReasonStreamingMismatch},
+		{"default settings opt into the stream guard", "", nil, skipReasonInspectedAsStream},
+		{"streaming disabled", "", map[string]any{"enabled": false}, skipReasonStreamingMismatch},
+		{"policy does not select pre_response", "request", nil, skipReasonStreamingMismatch},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			p := newTestPlugin(t, adapter.NewRegistry(), "")
-			set := settings("")
+			set := settings(tc.direction)
 			if tc.streaming != nil {
 				set["streaming"] = tc.streaming
 			}
@@ -2167,7 +2169,7 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 			direction: directionOutput,
 			stage:     policy.StagePreResponse,
 			resp:      &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"text","text":"hi"}]}`), Streaming: true},
-			want:      skipReasonInspectedAsStream,
+			want:      skipReasonStreamingMismatch,
 		},
 		{
 			name:      "mcp result carries nothing inspectable",
@@ -2194,12 +2196,13 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 			want:      skipReasonInspectedAsStream,
 		},
 		{
-			name:      "mcp streamed pre_response leg is handed to the stream guard",
+			// MCP never reaches the stream guard, so it is never labelled as one.
+			name:      "mcp streamed pre_response leg is a stage mismatch, never the stream guard",
 			mcp:       true,
 			direction: directionOutput,
 			stage:     policy.StagePreResponse,
 			resp:      &infracontext.ResponseContext{Streaming: true},
-			want:      skipReasonInspectedAsStream,
+			want:      skipReasonStreamingMismatch,
 		},
 		{
 			name:      "llm streamed post_response with nothing drained is an empty body",

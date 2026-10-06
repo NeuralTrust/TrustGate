@@ -282,6 +282,9 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
 | `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
+| `inspected_as_stream` | `skip_reason` | The `pre_response` leg of a streamed LLM response whose policy opted into per-block inspection. The leg runs with headers only and hands the response to the stream guard, which writes its own entry. Emitted with `skipped: true`, but it is not a coverage gap: the response is inspected block by block and audited again by `post_response` |
+| `streaming_stage_mismatch` | `skip_reason` | The leg does not handle this response mode: a streamed `pre_response` with per-block inspection off or not selected (and every MCP streamed leg), or a buffered `post_response`. Another leg handles the response |
+| `empty_response_body` | `skip_reason` | A buffered response leg that arrived with no body, so there was nothing to send to the guard |
 
 **A cut is not always a verdict.** Under `on_error: fail_closed` a guard call that fails
 outright stops the stream too, and that stop is reported the way a verdict's is:

@@ -68,11 +68,17 @@ const (
 	// buffered leg.
 	skipReasonProviderNotStreaming = "provider_not_streaming"
 	// skipReasonInspectedAsStream marks the pre_response leg of a streamed
-	// response whose policy opted into per-block inspection. That leg runs when
-	// only the headers have arrived, so it has nothing to read by design: the
-	// response is inspected block by block by the stream guard, which writes its
-	// own entry, and once more after the drain. It is not a gap, and it must not
-	// read as one ("the response had no body").
+	// LLM response whose policy opted into per-block inspection, decided from
+	// the policy settings at pre_response time. That leg runs when only the
+	// headers have arrived, so it has nothing to read by design: the response
+	// is handed to the stream guard, which writes its own entry, and is
+	// audited once more after the drain. It is not a coverage gap, and it must
+	// not read as one ("the response had no body").
+	//
+	// Residual gap, dormant: if an earlier pre_response plugin errors or
+	// short-circuits a streamed leg, finalizeStream drains without building
+	// the guard, so the label would be optimistic. No plugin produces that on
+	// a stream today.
 	skipReasonInspectedAsStream = "inspected_as_stream"
 )
 
@@ -439,7 +445,9 @@ func (p *Plugin) mcpInspectionPayload(
 		}
 		return payload, tgt, false
 	}
-	if reason := outputInspectSkipReason(in.Stage, in.Response, p.streamGuardOwns(in)); reason != "" {
+	// An MCP response never reaches the stream guard (the MCP runner buffers
+	// the result), so it is never labelled as one.
+	if reason := outputInspectSkipReason(in.Stage, in.Response, false); reason != "" {
 		return p.skipInspection(ctx, in, tgt, direction, reason)
 	}
 	if !mcpOutputInspectable(in.Response.Body) {
@@ -907,7 +915,9 @@ func protocolFor(consumerType string) string {
 // this streaming mode, or the response is being inspected by another leg.
 //
 // streamGuard says the policy opted into per-block inspection of the response
-// (see StreamSettings). The stage/mode check runs before the empty-body check
+// (see StreamSettings), so the leg is handed to the stream guard. It is a
+// decision from settings, not proof the guard ran; see
+// skipReasonInspectedAsStream for the dormant case where it does not. The stage/mode check runs before the empty-body check
 // on purpose: a streamed pre_response leg runs when only the headers have
 // arrived, so its body is empty by construction, and reading that as
 // "empty_response_body" told operators a response the stream guard had
