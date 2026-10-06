@@ -68,13 +68,11 @@ func TestApplyDefaultsFillsAbsentKeys(t *testing.T) {
 
 func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
 	t.Parallel()
-	explicitFalse := false
 	s := StreamingSettings{
 		HeadChars:            10,
 		MinCharsBetweenEvals: 300,
 		MaxHoldMS:            60,
 		MaxAccumulatedBytes:  8192,
-		FinalPass:            &explicitFalse,
 		GuardTimeout:         "  1500ms  ",
 		OnError:              StreamOnErrorFailClosed,
 	}
@@ -90,19 +88,68 @@ func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
 	if s.OnError != StreamOnErrorFailClosed {
 		t.Errorf("OnError = %q, want the explicit value to survive inheritance", s.OnError)
 	}
-	if s.FinalPassEnabled() {
-		t.Error("FinalPassEnabled() = true, want an explicit false to be honoured")
+}
+
+func TestValidateFinalPassWrite(t *testing.T) {
+	t.Parallel()
+	finalPass := func(v any) map[string]any {
+		return map[string]any{"streaming": map[string]any{"final_pass": v}}
+	}
+	const (
+		optOut   = "cannot be false"
+		decoding = "invalid settings"
+	)
+	tests := []struct {
+		name     string
+		settings map[string]any
+		previous map[string]any
+		wantErr  string
+	}{
+		{name: "absent key", settings: map[string]any{"streaming": map[string]any{"enabled": true}}},
+		{name: "no streaming block", settings: map[string]any{}},
+		{name: "explicit true", settings: finalPass(true)},
+		{name: "false on create", settings: finalPass(false), wantErr: optOut},
+		{name: "false as a string", settings: finalPass("false"), wantErr: optOut},
+		{name: "zero", settings: finalPass(0), wantErr: optOut},
+		{name: "false newly added on update", settings: finalPass(false), previous: finalPass(true), wantErr: optOut},
+		{name: "false already stored", settings: finalPass(false), previous: finalPass(false)},
+		{name: "false already stored as a string", settings: finalPass(false), previous: finalPass("false")},
+		{name: "unparseable value", settings: finalPass([]any{1}), wantErr: decoding},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateFinalPassWrite("acme", tt.settings, tt.previous)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateFinalPassWrite() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateFinalPassWrite() = nil, want an error containing %q", tt.wantErr)
+			}
+			if !strings.HasPrefix(err.Error(), "acme: ") || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q must name the plugin and contain %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
-func TestFinalPassDefaultsToEnabled(t *testing.T) {
+func TestStoredFinalPassStillDecodes(t *testing.T) {
 	t.Parallel()
-	if !(StreamingSettings{}).FinalPassEnabled() {
-		t.Error("an absent final_pass must enable the final block")
-	}
-	enabled := true
-	if !(StreamingSettings{FinalPass: &enabled}).FinalPassEnabled() {
-		t.Error("an explicit true must enable the final block")
+	for _, v := range []any{false, "false", "maybe", []any{1}} {
+		cfg, err := Parse[hostSettings](map[string]any{
+			"streaming": map[string]any{"enabled": true, "final_pass": v},
+		})
+		if err != nil {
+			t.Errorf("final_pass %v: a stored policy must keep loading, got %v", v, err)
+			continue
+		}
+		cfg.Streaming.ApplyDefaults(testDefaults(), StreamOnErrorFailOpen)
+		if err := cfg.Streaming.Validate("acme"); err != nil {
+			t.Errorf("final_pass %v: a stored policy must keep validating, got %v", v, err)
+		}
 	}
 }
 
@@ -409,9 +456,6 @@ func TestStreamingDecodesFromASettingsMap(t *testing.T) {
 	if s.HeadChars != 200 || s.MinCharsBetweenEvals != 512 || s.MaxHoldMS != 300 ||
 		s.MaxAccumulatedBytes != 8192 {
 		t.Errorf("numeric keys did not decode: %+v", s)
-	}
-	if s.FinalPass == nil || *s.FinalPass {
-		t.Error("an explicit final_pass: false must decode as a non-nil false")
 	}
 	if s.GuardTimeout != "5s" || s.OnError != StreamOnErrorFailClosed {
 		t.Errorf("string keys did not decode: %+v", s)

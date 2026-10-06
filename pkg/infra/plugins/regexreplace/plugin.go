@@ -74,6 +74,14 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return nil
 }
 
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects a new streaming.final_pass: false, which the
+// block loop cannot honour (pluginutil.ValidateFinalPassWrite).
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
+	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {

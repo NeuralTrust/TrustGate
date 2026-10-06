@@ -199,7 +199,6 @@ func TestStreamingDefaults(t *testing.T) {
 	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, defaultStreamingMaxHoldMS, cfg.Streaming.MaxHoldMS)
 	assert.Equal(t, defaultStreamingMaxAccumulatedBytes, cfg.Streaming.MaxAccumulatedBytes)
-	assert.True(t, cfg.Streaming.finalPass())
 	assert.Equal(t, defaultStreamingGuardTimeout, cfg.Streaming.guardTimeout())
 	assert.Equal(t, onErrorFailClosed, cfg.Streaming.OnError,
 		"streaming.on_error inherits the policy on_error when unset")
@@ -227,9 +226,6 @@ func TestStreamingExplicitValues(t *testing.T) {
 	assert.Equal(t, 4096, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, 1500, cfg.Streaming.MaxHoldMS)
 	assert.Equal(t, 524288, cfg.Streaming.MaxAccumulatedBytes)
-	require.NotNil(t, cfg.Streaming.FinalPass)
-	assert.False(t, *cfg.Streaming.FinalPass)
-	assert.False(t, cfg.Streaming.finalPass(), "an explicit final_pass: false must not be taken for an absent key")
 	assert.Equal(t, 3*time.Second, cfg.Streaming.guardTimeout())
 	assert.Equal(t, onErrorFailOpen, cfg.Streaming.OnError,
 		"an explicit streaming.on_error overrides the policy on_error")
@@ -350,4 +346,17 @@ func TestOnTimeoutInheritsOnError(t *testing.T) {
 			t.Fatalf("on_timeout for %v = %q, want %q", tc.settings, cfg.OnTimeout, tc.want)
 		}
 	}
+}
+
+func TestValidateSettingsWriteRejectsFinalPassOptOut(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	settings := map[string]any{}
+	settings["streaming"] = map[string]any{"final_pass": false}
+
+	err := p.ValidateSettingsWrite(settings, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "streaming.final_pass")
+	require.NoError(t, p.ValidateSettingsWrite(settings, settings),
+		"a policy already stored with final_pass: false must stay editable")
 }
