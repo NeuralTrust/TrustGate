@@ -52,7 +52,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.Enabled {
+	if !cfg.Streaming.IsEnabled() {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, cfg.Streaming.Options()
@@ -79,7 +79,7 @@ func (p *Plugin) InspectSegment(
 	if err != nil {
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
-	if !cfg.Streaming.Enabled {
+	if !cfg.Streaming.IsEnabled() {
 		return segmentAllow(), nil
 	}
 	if err := p.checkIdentity(cfg); err != nil {
