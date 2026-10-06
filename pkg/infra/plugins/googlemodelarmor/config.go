@@ -76,7 +76,17 @@ type Credentials struct {
 // Streaming defaults. A sanitize call runs every filter in the template
 // against the text, so it is closer to bedrock's guardrail than to a single
 // classifier and the block loop calls it at the same cadence.
+//
+// It is on by default: a guardrail that silently stops guarding the moment a
+// client sets stream: true is not a guardrail. A policy opts out with
+// streaming.enabled: false.
+//
+// MaxAccumulatedBytes matches Model Armor's documented screening limit of
+// 65,536 tokens (about 262,144 characters) for the prompt injection, Responsible
+// AI and CSAM filters. Past it a filter answers EXECUTION_SKIPPED.
+// https://docs.cloud.google.com/model-armor/quotas
 var streamingDefaults = pluginutil.StreamingDefaults{
+	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
@@ -92,9 +102,8 @@ type Settings struct {
 	SDPAction   string      `mapstructure:"sdp_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
-	// Streaming opts the pre_response leg into per-block inspection. Absent, a
-	// streamed response reaches the client unsanitized, which is what this
-	// plugin did before the block loop existed.
+	// Streaming tunes the per-block inspection of the pre_response leg. It is on
+	// when the block is absent; streaming.enabled: false opts out.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
@@ -117,9 +126,10 @@ func (s *Settings) applyDefaults() {
 	if s.SDPAction == "" {
 		s.SDPAction = sdpActionBlock
 	}
-	// The buffered leg fails closed when the sanitize call fails, so the stream
-	// leg inherits that rather than a laxer default.
-	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
+	// The stream leg fails open by default whatever the buffered leg does: a
+	// Model Armor outage must not cut a response the client is already reading.
+	// An explicit streaming.on_error: fail_closed is still honoured.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailOpen)
 }
 
 var (

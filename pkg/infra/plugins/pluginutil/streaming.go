@@ -345,3 +345,20 @@ func (s StreamingSettings) Options() appplugins.StreamOptions {
 		MaxAccumulatedBytes:  s.MaxAccumulatedBytes,
 	}
 }
+
+// StreamFailedOpen reports whether the leg released text it could not inspect
+// because this entry's own provider call failed, so the closing segment can say
+// so instead of publishing "allowed" over it.
+//
+// The count is the executor's, per entry, and covers enforce and observe alike:
+// in enforce the guard resolves the failure (the block is released), in observe
+// the executor swallows it before the guard sees it. It is deliberately not read
+// from DegradedReason, which is one value for the whole chain: it is copied to
+// every entry, so a second policy with a good key would be labelled too, and a
+// later size degrade overwrites it. Caller cancellation is not counted.
+//
+// A cut wins: the stream was stopped, which is a stronger fact than the earlier
+// blocks that failed.
+func StreamFailedOpen(r appplugins.StreamReport) bool {
+	return r.CutAtEval == 0 && r.FailedEvals > 0
+}
