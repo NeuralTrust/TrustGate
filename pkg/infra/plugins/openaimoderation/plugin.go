@@ -27,6 +27,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -240,6 +241,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	p.warnUnknownConfig(ctx, in, cfg)
 
 	if !cfg.selectsStage(in.Stage) {
+		return passThrough(), nil
+	}
+
+	// A streamed response is moderated block by block by the stream guard when
+	// streaming is enabled for this policy. When it is not, the response goes
+	// out unmoderated and the trace says so, rather than omitting the policy.
+	if in.Stage == policy.StagePreResponse && in.Response != nil && in.Response.Streaming {
+		if !cfg.Streaming.IsEnabled() {
+			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
+		}
 		return passThrough(), nil
 	}
 
