@@ -557,9 +557,9 @@ func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) 
 	t.Run("both fail_open stays fail_open", func(t *testing.T) {
 		assert.Equal(t, "fail_open", plan(t, defaults, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
 	})
-	t.Run("the payload cap is the smallest any participant asks for", func(t *testing.T) {
-		assert.Equal(t, 24576, plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
-		assert.Equal(t, 24576, plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	t.Run("the stream keeps the largest window, each entry is narrowed to its own", func(t *testing.T) {
+		assert.Equal(t, 262144, plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+		assert.Equal(t, 262144, plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
 	})
 	t.Run("an unset cap does not zero the merge", func(t *testing.T) {
 		unset := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open"}
