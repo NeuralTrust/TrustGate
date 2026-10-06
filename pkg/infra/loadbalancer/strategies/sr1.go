@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -37,7 +36,7 @@ type SR1Scorer interface {
 	ScoreSR1(ctx context.Context, input, tenantID string) (float64, error)
 }
 
-// NewSmartRoutingWithSR1 adds the shared state store for an opt-in SR-1 configuration.
+// NewSmartRoutingWithSR1 adds shared state for the sole cold-point routing policy.
 func NewSmartRoutingWithSR1(routes []routingdomain.Route, config *registry.SmartRoutingConfig, scorer ComplexityScorer, state SR1Store, logger *slog.Logger) *SmartRouting {
 	strategy := NewSmartRouting(routes, config, scorer, logger)
 	strategy.sr1State = state
@@ -45,9 +44,24 @@ func NewSmartRoutingWithSR1(routes []routingdomain.Route, config *registry.Smart
 }
 
 func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestContext, candidates []routingdomain.Route) *routingdomain.Route {
-	tiers := append([]registry.SmartRoutingTier(nil), s.config.Tiers...)
-	sort.Slice(tiers, func(i, j int) bool { return tiers[i].MinScore < tiers[j].MinScore })
-	validConfig := s.config.Validate() == nil
+	config, err := s.config.Normalize()
+	if err != nil {
+		s.record(req, false)
+		return nil
+	}
+	tiers := config.Tiers
+	ttl := time.Duration(config.SR1.CacheTTLSeconds) * time.Second
+	escapeEnabled := config.SR1.EscapeEnabled()
+	selectRung := func(rung int) *routingdomain.Route {
+		for i := rung; i < len(tiers); i++ {
+			if route := sr1Route(tiers[i], candidates); route != nil {
+				s.record(req, true)
+				return route
+			}
+		}
+		s.record(req, false)
+		return nil
+	}
 	fallback := func(reason string) *routingdomain.Route {
 		s.record(req, false)
 		if s.logger != nil {
@@ -55,10 +69,10 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 		}
 		for i := len(tiers) - 1; i >= 0; i-- {
 			if route := sr1Route(tiers[i], candidates); route != nil {
-				if validConfig && req != nil && req.SessionID != "" && s.sr1State != nil {
+				if req != nil && req.SessionID != "" && s.sr1State != nil {
 					key, err := s.sr1Key(req)
 					if err == nil {
-						floor, stateErr := s.sr1State.Choose(ctx, key, "failure", i, len(tiers), time.Duration(s.config.SR1.CacheTTLSeconds)*time.Second, false)
+						floor, stateErr := s.sr1State.Choose(ctx, key, "failure", i, len(tiers), ttl, false, false)
 						if stateErr == nil && i < floor {
 							return nil
 						}
@@ -69,14 +83,33 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 		}
 		return nil
 	}
-	if err := s.config.Validate(); err != nil {
-		return fallback("invalid SR-1 configuration")
-	}
 	if req == nil {
 		return fallback("request unavailable")
 	}
-	input, turn, newUser, err := sr1Input(req.Body)
-	if err != nil {
+	input, turn, newUser, inputErr := sr1Input(req.Body)
+	if inputErr != nil {
+		turn, newUser = "invalid", false
+	}
+	turnHash := sha256.Sum256([]byte(turn + ":" + req.PreviousResponseID))
+	turnID := hex.EncodeToString(turnHash[:])
+	key := ""
+	if req.SessionID != "" {
+		if s.sr1State == nil {
+			return fallback("state store unavailable")
+		}
+		key, err = s.sr1Key(req)
+		if err != nil {
+			return fallback("invalid conversation scope")
+		}
+		decision, stateErr := s.sr1State.Probe(ctx, key, turnID, len(tiers), ttl, newUser, escapeEnabled)
+		if stateErr != nil {
+			return fallback("state selection unavailable")
+		}
+		if !decision.NeedsScore {
+			return selectRung(decision.Rung)
+		}
+	}
+	if inputErr != nil {
 		return fallback("latest user input unavailable")
 	}
 	desired := len(tiers) - 1
@@ -84,11 +117,7 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 		if s.scorer == nil || !s.scorer.Configured() {
 			return fallback("scorer unavailable")
 		}
-		scorer, ok := s.scorer.(SR1Scorer)
-		if !ok {
-			return fallback("frozen scorer provenance unavailable")
-		}
-		score, err := scorer.ScoreSR1(ctx, input, req.GatewayID)
+		score, err := s.scorer.ScoreSR1(ctx, input, req.GatewayID)
 		if err != nil || math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 1 {
 			return fallback("raw difficulty score unavailable")
 		}
@@ -100,28 +129,13 @@ func (s *SmartRouting) nextSR1(ctx context.Context, req *infracontext.RequestCon
 		}
 	}
 	rung := desired
-	if req.SessionID != "" {
-		if s.sr1State == nil {
-			return fallback("state store unavailable")
-		}
-		key, err := s.sr1Key(req)
-		if err != nil {
-			return fallback("invalid conversation scope")
-		}
-		turnHash := sha256.Sum256([]byte(turn + ":" + req.PreviousResponseID))
-		rung, err = s.sr1State.Choose(ctx, key, hex.EncodeToString(turnHash[:]), desired, len(tiers), time.Duration(s.config.SR1.CacheTTLSeconds)*time.Second, newUser)
+	if key != "" {
+		rung, err = s.sr1State.Choose(ctx, key, turnID, desired, len(tiers), ttl, newUser, escapeEnabled)
 		if err != nil {
 			return fallback("state selection unavailable")
 		}
 	}
-	for i := rung; i < len(tiers); i++ {
-		if route := sr1Route(tiers[i], candidates); route != nil {
-			s.record(req, true)
-			return route
-		}
-	}
-	s.record(req, false)
-	return nil
+	return selectRung(rung)
 }
 
 func (s *SmartRouting) sr1Key(req *infracontext.RequestContext) (string, error) {

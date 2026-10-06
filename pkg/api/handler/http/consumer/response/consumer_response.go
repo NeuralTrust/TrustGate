@@ -82,7 +82,8 @@ type LBConfigResponse struct {
 }
 
 type SR1ConfigResponse struct {
-	CacheTTLSeconds int `json:"cache_ttl_seconds"`
+	CacheTTLSeconds    int  `json:"cache_ttl_seconds"`
+	EscapeHatchEnabled bool `json:"escape_hatch_enabled"`
 }
 
 type SmartRoutingConfigResponse struct {
@@ -148,7 +149,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		Name:            c.Name,
 		Type:            string(c.Type),
 		Slug:            c.Slug,
-		LBConfig:        fromLBConfig(c.LBConfig),
+		LBConfig:        fromLBConfig(c.LBConfig, c.ModelPolicies),
 		Headers:         c.Headers,
 		Active:          c.Active,
 		RegistryIDs:     registryIDs,
@@ -181,9 +182,12 @@ func fromRegistryWeights(weights map[ids.RegistryID]int) []RegistryWeightRespons
 	return out
 }
 
-func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
+func fromLBConfig(config *domain.LBConfig, inline domain.ModelPolicies) *LBConfigResponse {
 	if config == nil {
 		return nil
+	}
+	if normalized, err := config.NormalizeSmartRouting(inline); err == nil {
+		config = normalized
 	}
 	members := make([]LBPoolMemberResponse, 0, len(config.Members))
 	for _, member := range config.Members {
@@ -216,6 +220,9 @@ func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingCo
 	if config == nil {
 		return nil
 	}
+	if normalized, err := config.Normalize(); err == nil {
+		config = normalized
+	}
 	tiers := make([]SmartRoutingTierResponse, 0, len(config.Tiers))
 	for _, tier := range config.Tiers {
 		tiers = append(tiers, SmartRoutingTierResponse{
@@ -226,7 +233,7 @@ func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingCo
 	}
 	var sr1 *SR1ConfigResponse
 	if config.SR1 != nil {
-		sr1 = &SR1ConfigResponse{CacheTTLSeconds: config.SR1.CacheTTLSeconds}
+		sr1 = &SR1ConfigResponse{CacheTTLSeconds: config.SR1.CacheTTLSeconds, EscapeHatchEnabled: config.SR1.EscapeEnabled()}
 	}
 	return &SmartRoutingConfigResponse{Tiers: tiers, SR1: sr1}
 }

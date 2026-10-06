@@ -15,6 +15,7 @@
 package request
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -153,7 +154,28 @@ type LBConfigRequest struct {
 }
 
 type SR1ConfigRequest struct {
-	CacheTTLSeconds int `json:"cache_ttl_seconds" minimum:"1" maximum:"86400"`
+	CacheTTLSeconds    int  `json:"cache_ttl_seconds" minimum:"1" maximum:"86400"`
+	EscapeHatchEnabled bool `json:"escape_hatch_enabled"`
+}
+
+// UnmarshalJSON requires an explicit boolean when the escape-hatch field is sent.
+func (r *SR1ConfigRequest) UnmarshalJSON(raw []byte) error {
+	type wire SR1ConfigRequest
+	var decoded wire
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for name, value := range fields {
+		if strings.EqualFold(name, "escape_hatch_enabled") && strings.TrimSpace(string(value)) == "null" {
+			return fmt.Errorf("escape_hatch_enabled must be a boolean: %w", commonerrors.ErrValidation)
+		}
+	}
+	*r = SR1ConfigRequest(decoded)
+	return nil
 }
 
 type SmartRoutingConfigRequest struct {
@@ -238,7 +260,8 @@ func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConf
 	}
 	var sr1 *registrydomain.SR1Config
 	if s.SR1 != nil {
-		sr1 = &registrydomain.SR1Config{CacheTTLSeconds: s.SR1.CacheTTLSeconds}
+		escape := s.SR1.EscapeHatchEnabled
+		sr1 = &registrydomain.SR1Config{CacheTTLSeconds: s.SR1.CacheTTLSeconds, EscapeHatchEnabled: &escape}
 	}
 	return &registrydomain.SmartRoutingConfig{Tiers: tiers, SR1: sr1}, nil
 }

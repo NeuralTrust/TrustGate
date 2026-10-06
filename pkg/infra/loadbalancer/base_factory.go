@@ -43,7 +43,7 @@ func NewBaseFactory(
 	return NewBaseFactoryWithSR1(embeddingRepo, serviceLocator, complexity, nil, logger)
 }
 
-// NewBaseFactoryWithSR1 wires shared state for the opt-in frozen SR-1 policy.
+// NewBaseFactoryWithSR1 wires shared state for frozen cold-point smart routing.
 func NewBaseFactoryWithSR1(embeddingRepo embedding.Repository, serviceLocator factory.EmbeddingServiceLocator, complexity strategies.ComplexityScorer, state strategies.SR1Store, logger *slog.Logger) Factory {
 	return &BaseFactory{
 		embeddingRepo:  embeddingRepo,

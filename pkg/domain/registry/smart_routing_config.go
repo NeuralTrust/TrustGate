@@ -15,7 +15,6 @@
 package registry
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -41,23 +40,8 @@ type SmartRoutingConfig struct {
 }
 
 func (c *SmartRoutingConfig) Validate() error {
-	if c == nil || len(c.Tiers) == 0 {
-		return fmt.Errorf("%w: at least one tier is required", ErrInvalidSmartRouting)
-	}
-	seen := make(map[float64]struct{}, len(c.Tiers))
-	for i, tier := range c.Tiers {
-		if tier.MinScore < 0 || tier.MinScore > 1 {
-			return fmt.Errorf("%w: tiers[%d].min_score must be in [0,1]", ErrInvalidSmartRouting, i)
-		}
-		if _, dup := seen[tier.MinScore]; dup {
-			return fmt.Errorf("%w: tiers[%d].min_score %g is duplicated", ErrInvalidSmartRouting, i, tier.MinScore)
-		}
-		seen[tier.MinScore] = struct{}{}
-		if tier.RegistryID.IsNil() {
-			return fmt.Errorf("%w: tiers[%d].registry_id is required", ErrInvalidSmartRouting, i)
-		}
-	}
-	return c.validateSR1()
+	_, err := c.Normalize()
+	return err
 }
 
 func (c *SmartRoutingConfig) HighestTier() (SmartRoutingTier, bool) {

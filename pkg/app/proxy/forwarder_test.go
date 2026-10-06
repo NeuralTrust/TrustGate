@@ -837,7 +837,7 @@ func TestForward_NilConsumer(t *testing.T) {
 
 type fixedScorer struct{ score float64 }
 
-func (f fixedScorer) Score(_ context.Context, _, _, _ string) (float64, error) { return f.score, nil }
+func (f fixedScorer) ScoreSR1(_ context.Context, _, _ string) (float64, error) { return f.score, nil }
 
 func (fixedScorer) Configured() bool { return true }
 
@@ -971,9 +971,7 @@ func TestForward_StampsServedAndBaselinePricingOnSpan(t *testing.T) {
 	assert.InDelta(t, 0.4, served.Baseline.Pricing.Discount, 1e-12)
 }
 
-// A fallback-chain hop never consults the strategy, so it must not inherit the
-// tier decision made for the pool route it replaced.
-func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
+func TestForward_SmartRoutingExhaustionDoesNotUseFallbackChain(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	low := backendFor(gatewayID, "openai")
 	high := backendFor(gatewayID, "anthropic")
@@ -986,10 +984,6 @@ func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
 	invoker.EXPECT().
 		Invoke(mock.Anything, mock.Anything, mock.Anything).
 		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
-		Times(2)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("recovered")}, nil).
 		Once()
 
 	rt := trace.New("trace-chain", trace.Metadata{GatewayID: gatewayID.String()})
@@ -1002,11 +996,11 @@ func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
 		Request:   &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`)},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 200, res.StatusCode)
+	require.Equal(t, 503, res.StatusCode)
 
 	served := servedLLMAttrs(t, rt)
-	assert.True(t, served.Fallback, "expected the chain hop to be the served attempt")
-	assert.False(t, served.TierApplied, "a chain hop must not inherit a tier decision")
+	assert.False(t, served.Fallback, "smart routing cannot escape into the fallback chain")
+	assert.True(t, served.TierApplied, "the strongest tier remained the served attempt")
 }
 
 func TestForward_RefusesAChatBodyWithAmbiguousKeys(t *testing.T) {

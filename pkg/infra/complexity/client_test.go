@@ -52,7 +52,7 @@ func TestClient_Configured(t *testing.T) {
 	assert.True(t, NewClient("http://x", configured, 0).Configured())
 }
 
-func TestClient_Score_Success(t *testing.T) {
+func TestClient_ScoreSR1_Success(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -62,35 +62,34 @@ func TestClient_Score_Success(t *testing.T) {
 		var got scoreRequest
 		require.NoError(t, json.Unmarshal(body, &got))
 		assert.Equal(t, "hello", got.Input)
-		assert.Equal(t, "chat_1", got.ConversationID)
 		assert.Equal(t, "tenant_1", got.TenantID)
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(scoreResponse{Score: 0.41, RawScore: 0.38})
+		_ = json.NewEncoder(w).Encode(scoreResponse{Score: 0.41, RawScore: 0.38, Revision: "9619f81d9db28141fc1cc0a3833c8446260ce603"})
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "secret-token"}, time.Second)
-	score, err := c.Score(context.Background(), "hello", "chat_1", "tenant_1")
+	score, err := c.ScoreSR1(context.Background(), "hello", "tenant_1")
 	require.NoError(t, err)
-	assert.InDelta(t, 0.41, score, 1e-9)
+	assert.InDelta(t, 0.38, score, 1e-9)
 }
 
-func TestClient_Score_NotConfigured(t *testing.T) {
+func TestClient_ScoreSR1_NotConfigured(t *testing.T) {
 	t.Parallel()
 	c := NewClient("", nil, time.Second)
-	_, err := c.Score(context.Background(), "hello", "", "")
+	_, err := c.ScoreSR1(context.Background(), "hello", "")
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
-func TestClient_Score_TokenError(t *testing.T) {
+func TestClient_ScoreSR1_TokenError(t *testing.T) {
 	t.Parallel()
 	tokenErr := errors.New("mint token")
 	c := NewClient("http://x", tokenProviderStub{configured: true, err: tokenErr}, time.Second)
-	_, err := c.Score(context.Background(), "hello", "", "")
+	_, err := c.ScoreSR1(context.Background(), "hello", "")
 	assert.ErrorIs(t, err, tokenErr)
 }
 
-func TestClient_Score_Unauthorized(t *testing.T) {
+func TestClient_ScoreSR1_Unauthorized(t *testing.T) {
 	t.Parallel()
 	invalidated := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -103,12 +102,12 @@ func TestClient_Score_Unauthorized(t *testing.T) {
 		token:      "bad",
 		invalidate: func() { invalidated = true },
 	}, time.Second)
-	_, err := c.Score(context.Background(), "hello", "", "")
+	_, err := c.ScoreSR1(context.Background(), "hello", "")
 	assert.ErrorIs(t, err, ErrUnauthorized)
 	assert.True(t, invalidated)
 }
 
-func TestClient_Score_ServerError(t *testing.T) {
+func TestClient_ScoreSR1_ServerError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -116,7 +115,7 @@ func TestClient_Score_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "tok"}, time.Second)
-	_, err := c.Score(context.Background(), "hello", "", "")
+	_, err := c.ScoreSR1(context.Background(), "hello", "")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrUnauthorized))
 }

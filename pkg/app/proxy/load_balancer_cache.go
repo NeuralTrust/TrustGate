@@ -75,6 +75,13 @@ func (c *loadBalancerCache) PoolFor(
 // The aliased and implicit pools share this derivation and differ only in cache key,
 // so each keeps its own strategy state.
 func (c *loadBalancerCache) pool(rc *appconsumer.RoutableConsumer, key string) loadbalancer.Pool {
+	if normalized, err := rc.Consumer.LBConfig.NormalizeSmartRouting(rc.Consumer.ModelPolicies); err == nil {
+		consumer := *rc.Consumer
+		consumer.LBConfig = normalized
+		routable := *rc
+		routable.Consumer = &consumer
+		rc = &routable
+	}
 	lbAlgorithm, embeddingConfig, smartRouting := lbSettings(rc)
 	routes := approuting.BuildPoolRoutes(rc)
 	c.warnOnNarrowedPool(rc, routes)

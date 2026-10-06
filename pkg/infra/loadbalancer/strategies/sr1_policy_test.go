@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,13 +32,12 @@ import (
 type sr1TestScorer struct {
 	score float64
 	err   error
+	calls atomic.Int64
 }
 
 func (s *sr1TestScorer) Configured() bool { return true }
-func (s *sr1TestScorer) Score(context.Context, string, string, string) (float64, error) {
-	return s.score, s.err
-}
 func (s *sr1TestScorer) ScoreSR1(context.Context, string, string) (float64, error) {
+	s.calls.Add(1)
 	return s.score, s.err
 }
 
@@ -56,7 +56,7 @@ func TestSR1RedisPolicy(t *testing.T) {
 	ttl := time.Second
 	choose := func(key, turn string, desired int, newUser bool, want int) {
 		t.Helper()
-		got, err := store.Choose(ctx, key, turn, desired, 3, ttl, newUser)
+		got, err := store.Choose(ctx, key, turn, desired, 3, ttl, newUser, true)
 		if err != nil || got != want {
 			t.Fatalf("Choose(%s,%s)=%d,%v want %d", key, turn, got, err, want)
 		}
@@ -83,7 +83,7 @@ func TestSR1RedisPolicy(t *testing.T) {
 func TestSR1RedisConcurrentEscape(t *testing.T) {
 	_, client, store := sr1Fixture(t)
 	ctx := context.Background()
-	if _, err := store.Choose(ctx, "parallel", "seed", 0, 3, time.Minute, true); err != nil {
+	if _, err := store.Choose(ctx, "parallel", "seed", 0, 3, time.Minute, true, true); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -91,7 +91,7 @@ func TestSR1RedisConcurrentEscape(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			rung, err := store.Choose(ctx, "parallel", fmt.Sprint(i), 2, 3, time.Minute, true)
+			rung, err := store.Choose(ctx, "parallel", fmt.Sprint(i), 2, 3, time.Minute, true, true)
 			if err != nil || rung != 1 {
 				t.Errorf("rung=%d err=%v", rung, err)
 			}
@@ -100,6 +100,199 @@ func TestSR1RedisConcurrentEscape(t *testing.T) {
 	wg.Wait()
 	if got := client.HGet(ctx, "parallel", "escapes").Val(); got != "1" {
 		t.Fatalf("escapes=%s", got)
+	}
+}
+
+func TestSR1RedisProbeAndIdleBoundary(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("escape=%t", enabled), func(t *testing.T) {
+			mr, client, store := sr1Fixture(t)
+			ctx := context.Background()
+			const key = "probe"
+			ttl := time.Second
+			probe := func(turn string, newUser bool, rung int, needsScore bool) {
+				t.Helper()
+				got, err := store.Probe(ctx, key, turn, 3, ttl, newUser, enabled)
+				if err != nil || got.Rung != rung || got.NeedsScore != needsScore {
+					t.Fatalf("Probe(%s,%t)=%+v,%v want rung=%d score=%t", turn, newUser, got, err, rung, needsScore)
+				}
+			}
+			probe("a", true, -1, true)
+			if client.Exists(ctx, key).Val() != 0 {
+				t.Fatal("cold probe committed a rung before scoring")
+			}
+			if got, err := store.Choose(ctx, key, "a", 0, 3, ttl, true, enabled); err != nil || got != 0 {
+				t.Fatalf("seed=%d,%v", got, err)
+			}
+			probe("a", true, 0, false)
+			probe("tool", false, 0, false)
+			probe("b", true, 0, enabled)
+			if client.HGet(ctx, key, "turn").Val() != "a" || client.HGet(ctx, key, "escapes").Val() != "0" {
+				t.Fatal("probe changed turn identity or spent an escape")
+			}
+			mr.SetTime(time.Unix(1800000001, 0))
+			probe("tool", false, 0, false)
+			if got := client.HGet(ctx, key, "last").Val(); got != "1800000001000" {
+				t.Fatalf("warm probe did not touch lifetime: last=%s", got)
+			}
+			mr.SetTime(time.Unix(1800000002, 0).Add(time.Millisecond))
+			probe("c", true, -1, true)
+			if got := client.HGet(ctx, key, "last").Val(); got != "1800000001000" {
+				t.Fatalf("cold probe extended expired commitment: last=%s", got)
+			}
+			if got, err := store.Choose(ctx, key, "c", 2, 3, ttl, true, enabled); err != nil || got != 2 {
+				t.Fatalf("expired cold decision=%d,%v", got, err)
+			}
+			probe("d", true, 2, false)
+			if got := client.HGet(ctx, key, "escapes").Val(); got != "0" {
+				t.Fatalf("cold decision consumed escape=%s", got)
+			}
+		})
+	}
+}
+
+func TestSR1RedisConcurrentProbeAndChooseBothPreferences(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("escape=%t", enabled), func(t *testing.T) {
+			_, client, store := sr1Fixture(t)
+			ctx := context.Background()
+			if _, err := store.Choose(ctx, "parallel", "seed", 0, 3, time.Minute, true, enabled); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if enabled {
+				want = 1
+			}
+			var wg sync.WaitGroup
+			for i := 0; i < 32; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					turn := fmt.Sprint(i)
+					decision, err := store.Probe(ctx, "parallel", turn, 3, time.Minute, true, enabled)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					rung := decision.Rung
+					if decision.NeedsScore {
+						rung, err = store.Choose(ctx, "parallel", turn, 2, 3, time.Minute, true, enabled)
+					}
+					if err != nil || rung != want {
+						t.Errorf("rung=%d err=%v want=%d", rung, err, want)
+					}
+				}(i)
+			}
+			wg.Wait()
+			if got := client.HGet(ctx, "parallel", "escapes").Val(); got != fmt.Sprint(want) {
+				t.Fatalf("escapes=%s want=%d", got, want)
+			}
+		})
+	}
+}
+
+func TestSR1WarmReuseSkipsScorerAndResetsAfterIdle(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("escape=%t", enabled), func(t *testing.T) {
+			mr, _, store := sr1Fixture(t)
+			routes := modelRoutes("low", "mid", "high")
+			cfg := tiersFor(routes, 0, .187, .45)
+			cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 1, EscapeHatchEnabled: &enabled}
+			scorer := &sr1TestScorer{score: 0}
+			s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
+			req := promptReq()
+			req.SessionID = "conversation"
+			check := func(body, model string, calls int64) {
+				t.Helper()
+				req.Body = []byte(body)
+				got := s.Next(context.Background(), req, nil)
+				if got == nil || got.Model != model || scorer.calls.Load() != calls {
+					t.Fatalf("body=%s route=%v calls=%d want=%s/%d", body, got, scorer.calls.Load(), model, calls)
+				}
+			}
+			check(`{"prompt":"hi"}`, "low", 1)
+			scorer.score = 1
+			check(`{"prompt":"hi"}`, "low", 1)
+			check(`{"input":[{"type":"function_call_output","call_id":"a","output":"result"}]}`, "low", 1)
+			model, calls := "low", int64(1)
+			if enabled {
+				model, calls = "mid", 2
+			}
+			prefill := `{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"OK"},{"role":"user","content":"hard"},{"role":"assistant","content":"Here is"}]}`
+			check(prefill, model, calls)
+			check(prefill, model, calls)
+			scorer.err = errors.New("worker unavailable")
+			check(`{"prompt":"harder again"}`, model, calls)
+			check(`invalid JSON`, model, calls)
+			mr.SetTime(time.Unix(1800000001, 0))
+			check(`{"prompt":"at exact TTL"}`, model, calls)
+			mr.SetTime(time.Unix(1800000002, 0).Add(time.Millisecond))
+			scorer.err = nil
+			check(`{"prompt":"after idle expiry"}`, "high", calls+1)
+			check(`{"prompt":"strongest is already committed"}`, "high", calls+1)
+		})
+	}
+}
+
+func TestSR1EligibleScorerFailurePreservesFloorAndEscape(t *testing.T) {
+	_, client, store := sr1Fixture(t)
+	routes := modelRoutes("low", "mid", "high")
+	cfg := tiersFor(routes, 0, .187, .45)
+	enabled := true
+	cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60, EscapeHatchEnabled: &enabled}
+	scorer := &sr1TestScorer{score: .25}
+	s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
+	req := promptReq()
+	req.SessionID = "conversation"
+	ctx := context.Background()
+	if got := s.Next(ctx, req, nil); got == nil || got.Model != "mid" {
+		t.Fatalf("seed=%v", got)
+	}
+	key, err := s.sr1Key(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer.err = errors.New("worker unavailable")
+	req.Body = []byte(`{"prompt":"new harder turn"}`)
+	if got := s.Next(ctx, req, nil); got == nil || got.Model != "high" {
+		t.Fatalf("failure fallback=%v", got)
+	}
+	if got := s.Next(ctx, req, excludeRoutes(routes[1], routes[2])); got != nil {
+		t.Fatalf("failure downgraded below readable commitment=%v", got)
+	}
+	if scorer.calls.Load() != 3 || client.HGet(ctx, key, "rung").Val() != "1" || client.HGet(ctx, key, "escapes").Val() != "0" {
+		t.Fatal("eligible failures skipped scoring, changed commitment or consumed escape")
+	}
+	scorer.err, scorer.score = nil, 1
+	if got := s.Next(ctx, req, nil); got == nil || got.Model != "high" {
+		t.Fatalf("unspent escape after recovery=%v", got)
+	}
+	if scorer.calls.Load() != 4 || client.HGet(ctx, key, "escapes").Val() != "1" {
+		t.Fatal("recovery did not use exactly one previously unspent escape")
+	}
+}
+
+func TestSR1StateScopeIncludesPreferenceAndCanonicalHistoricalFlag(t *testing.T) {
+	routes := modelRoutes("low", "high")
+	req := promptReq()
+	req.SessionID = "conversation"
+	key := func(flag *bool) string {
+		t.Helper()
+		cfg := tiersFor(routes, 0, .45)
+		cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60, EscapeHatchEnabled: flag}
+		s := NewSmartRoutingWithSR1(routes, cfg, nil, nil, nil)
+		got, err := s.sr1Key(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	off, on := false, true
+	if key(&off) == key(&on) {
+		t.Fatal("different hatch preferences reused the same commitment")
+	}
+	if key(nil) != key(&on) {
+		t.Fatal("historical enabled flag did not share its canonical state scope")
 	}
 }
 
@@ -118,12 +311,12 @@ func TestSR1RedisFailures(t *testing.T) {
 		if err := client.HSet(ctx, "bad", fields).Err(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.Choose(ctx, "bad", "b", 2, 3, time.Second, true); err == nil {
+		if _, err := store.Choose(ctx, "bad", "b", 2, 3, time.Second, true, true); err == nil {
 			t.Fatal("corrupt state accepted")
 		}
 	}
 	mr.Close()
-	if _, err := store.Choose(ctx, "outage", "a", 0, 3, time.Second, true); err == nil {
+	if _, err := store.Choose(ctx, "outage", "a", 0, 3, time.Second, true, true); err == nil {
 		t.Fatal("outage accepted")
 	}
 }
@@ -163,6 +356,7 @@ func TestSR1FailurePreservesFloor(t *testing.T) {
 	scorer := &sr1TestScorer{score: 1}
 	s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
 	req := promptReq()
+	req.SessionID = "chat_1"
 	ctx := context.Background()
 	if got := s.Next(ctx, req, nil); got == nil || got.Model != "high" {
 		t.Fatalf("seed=%v", got)
@@ -201,6 +395,7 @@ func TestSR1PrefillAndToolTurnIdentity(t *testing.T) {
 	scorer := &sr1TestScorer{score: 0}
 	s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
 	req := promptReq()
+	req.SessionID = "chat_1"
 	ctx := context.Background()
 	if got := s.Next(ctx, req, nil); got == nil || got.Model != "low" {
 		t.Fatalf("seed=%v", got)

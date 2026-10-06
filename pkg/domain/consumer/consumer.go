@@ -15,6 +15,7 @@
 package consumer
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -83,6 +84,30 @@ type Consumer struct {
 	LabelSets []trafficlabel.LabelSet `json:"label_sets,omitempty"`
 	CreatedAt time.Time               `json:"created_at"`
 	UpdatedAt time.Time               `json:"updated_at"`
+}
+
+// MarshalJSON emits the same canonical smart-routing policy used by the proxy.
+func (c Consumer) MarshalJSON() ([]byte, error) {
+	normalized, err := c.LBConfig.NormalizeSmartRouting(c.ModelPolicies)
+	if err == nil {
+		c.LBConfig = normalized
+	}
+	type wire Consumer
+	return json.Marshal(wire(c))
+}
+
+// UnmarshalJSON migrates supported historical routing while retaining invalid targets.
+func (c *Consumer) UnmarshalJSON(raw []byte) error {
+	type wire Consumer
+	var decoded wire
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	*c = Consumer(decoded)
+	if normalized, err := c.LBConfig.NormalizeSmartRouting(c.ModelPolicies); err == nil {
+		c.LBConfig = normalized
+	}
+	return nil
 }
 
 func (c *Consumer) WeightFor(registryID ids.RegistryID) int {
