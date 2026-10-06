@@ -84,7 +84,7 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw), Auths: []*authdomain.Auth{apiKey}}},
 		"/nil-consumer": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
-		"/bare/mcp":     {{GatewayID: gw}},
+		"/bare/mcp":     {{GatewayID: gw, Consumer: consumerdomain.BuildStoreConsumer(gw)}},
 	}}
 	p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
 
@@ -95,26 +95,33 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 		require.Equal(t, "invalid_target", oauthError.Code, resource)
 	}
 
-	// A consumer with no credential of its own still reaches the default.
+	// A sign-in consumer with no credential of its own still reaches the default.
 	auth, err := p.authForResource(t.Context(), "https://gw.example.com/bare/mcp")
 	require.NoError(t, err)
 	require.True(t, appauth.IsDefaultIdP(auth))
 }
 
-// Whether a login may be brokered here is decided by Consumer.WantsSignIn,
-// the same predicate the request-time auth chain asks. So the identity source
-// is load-bearing, not just acts_for_users: a platform-source consumer's
-// residual api key or client certificate is not its credential and must not
-// suppress the login, while for an app-source consumer the api key is the only
-// legal credential and the login must stay refused — advertising one there
-// walked the user through a flow the chain then 401'd (RUN-1501).
-func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
+// A login is brokered through the built-in default only where the request-time
+// auth chain admits it (appconsumer.DefaultIdPAdmitted): any other answer mints
+// a session the chain refuses, and the client loops on 401 (RUN-1787).
+func TestAuthForResource_BrokersDefaultOnlyWhereTheChainAdmitsIt(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
 		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
 	})
 	apiKey, err := authdomain.NewAPIKeyAuth(gw, "residual", true, nil)
 	require.NoError(t, err)
+	disabledKey, err := authdomain.NewAPIKeyAuth(gw, "disabled", false, nil)
+	require.NoError(t, err)
+	disabledIdP := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeOAuth2,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:  "https://idp.example.com",
+			JWKSURL: "https://idp.example.com/jwks",
+		}},
+	}
 	mtls := &authdomain.Auth{
 		ID:        ids.New[ids.AuthKind](),
 		GatewayID: gw,
@@ -142,19 +149,20 @@ func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
 		auths       []*authdomain.Auth
 		wantDefault bool
 	}{
-		{name: "store consumer with residual api key", store: true, auths: []*authdomain.Auth{apiKey}, wantDefault: true},
-		{name: "store consumer with a residual client certificate", store: true, auths: []*authdomain.Auth{mtls}, wantDefault: true},
 		{name: "store consumer with no links", store: true, wantDefault: true},
+		{name: "store consumer with only a disabled api key", store: true, auths: []*authdomain.Auth{disabledKey}, wantDefault: true},
+		// An enabled credential is a way in the chain honours, and while it is
+		// there the chain keeps the default out.
+		{name: "store consumer with an api key", store: true, auths: []*authdomain.Auth{apiKey}},
+		{name: "store consumer with a client certificate", store: true, auths: []*authdomain.Auth{mtls}},
 		// The operator pinned this provider; overriding an explicit pin with the
 		// built-in default would widen who gets in on the gateway's own
 		// initiative, so it stays a dead end (RUN-1501).
 		{name: "store consumer with a validation only idp stays a dead end", store: true, auths: []*authdomain.Auth{validationOnlyIdP}},
+		{name: "store consumer whose only idp is disabled", store: true, auths: []*authdomain.Auth{disabledIdP}},
 		{name: "an ordinary consumer brings its own credential", auths: []*authdomain.Auth{apiKey}},
 		{name: "an ordinary consumer brings its own client certificate", auths: []*authdomain.Auth{mtls}},
-		// Authorize time, not request time: with nothing attached there is no
-		// provider pinned to contradict, so the default is still offered here —
-		// what the chain does with the token it issues is the chain's rule.
-		{name: "an ordinary consumer with nothing attached", wantDefault: true},
+		{name: "an ordinary consumer with nothing attached"},
 	}
 
 	for _, tt := range tests {
