@@ -36,14 +36,11 @@ var _ appplugins.StreamInspector = (*Plugin)(nil)
 // under. A policy targeting the request is not on the response leg at all, so
 // it never opts in however its streaming block is filled.
 func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
-	if _, ok := settings["streaming"]; !ok {
-		return false, appplugins.StreamOptions{}
-	}
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.Enabled || cfg.Target != targetResponse {
+	if !cfg.Streaming.IsEnabled() || cfg.Target != targetResponse {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, cfg.Streaming.Options()
@@ -70,7 +67,7 @@ func (p *Plugin) InspectSegment(
 	if err != nil {
 		return nil, fmt.Errorf("regex_replace: %w", err)
 	}
-	if !cfg.Streaming.Enabled || cfg.Target != targetResponse {
+	if !cfg.Streaming.IsEnabled() || cfg.Target != targetResponse {
 		return segmentAllow(), nil
 	}
 	if seg.Closing {

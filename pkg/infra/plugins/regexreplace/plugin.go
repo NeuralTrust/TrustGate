@@ -22,6 +22,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -116,13 +117,21 @@ func (p *Plugin) executeRequest(ctx context.Context, in appplugins.ExecInput, cf
 }
 
 func (p *Plugin) executeResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
-	if in.Request == nil || in.Response == nil || p.registry == nil {
+	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	if in.Request.Provider == "" || len(in.Response.Body) == 0 {
-		return passThrough(), nil
-	}
+	// A streamed response is rewritten block by block by the stream guard when
+	// streaming is on for this policy, so this buffered run has nothing to do
+	// with it. When streaming is off the response goes out unrewritten, and the
+	// trace has to say so: this check sits ahead of the body checks because a
+	// streamed response carries no buffered body to find.
 	if in.Response.Streaming {
+		if !cfg.Streaming.IsEnabled() {
+			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
+		}
+		return passThrough(), nil
+	}
+	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
 		return passThrough(), nil
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)

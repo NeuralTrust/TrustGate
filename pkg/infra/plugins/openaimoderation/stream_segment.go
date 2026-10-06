@@ -48,7 +48,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, cfg.Streaming.Options()
@@ -70,7 +70,7 @@ func (p *Plugin) InspectSegment(
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
 	p.warnUnknownConfig(ctx, in, cfg)
-	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
 	if seg.Closing {
