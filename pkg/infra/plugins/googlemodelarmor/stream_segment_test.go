@@ -70,7 +70,7 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block", modelArmorSettings(), false},
+		{"absent block: on by default", modelArmorSettings(), true},
 		{"enabled", streamSettings(nil), true},
 		{"explicitly disabled", streamSettings(map[string]any{"enabled": false}), false},
 		{
@@ -90,15 +90,39 @@ func TestStreamSettingsOptIn(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsDefaultsToFailClosed(t *testing.T) {
+func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", 0, true, nil)
-	on, opts := p.StreamSettings(streamSettings(nil))
-	if !on {
-		t.Fatal("expected the opt-in")
+	for name, set := range map[string]map[string]any{
+		"enabled, nothing else": streamSettings(nil),
+		"no streaming block":    modelArmorSettings(),
+	} {
+		on, opts := p.StreamSettings(set)
+		if !on {
+			t.Fatalf("%s: expected the opt-in", name)
+		}
+		if opts.OnError != "fail_open" {
+			t.Errorf("%s: OnError = %q, want fail_open: a Model Armor outage must not cut a stream", name, opts.OnError)
+		}
 	}
-	if opts.OnError != "fail_closed" {
-		t.Errorf("OnError = %q, want fail_closed: the buffered leg fails closed too", opts.OnError)
+}
+
+func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
+	if !on || opts.OnError != "fail_closed" {
+		t.Errorf("on=%v OnError=%q, want an explicit fail_closed to be kept", on, opts.OnError)
+	}
+}
+
+func TestStreamSettingsDefaultsFitTheProviderLimit(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
+	_, opts := p.StreamSettings(modelArmorSettings())
+	// 65,536 tokens at about 4 characters each is the documented screening limit.
+	if opts.MaxAccumulatedBytes > 65536*4 {
+		t.Errorf("MaxAccumulatedBytes = %d, above the documented 262144", opts.MaxAccumulatedBytes)
 	}
 }
 
@@ -333,19 +357,19 @@ func TestInspectSegmentIgnoresAbsentFilterNotInBlockOn(t *testing.T) {
 	}
 }
 
-func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
+func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, raiBlockResponse)
 	p := pluginWithStub(stub)
 
 	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, modelArmorSettings(), nil), segment(1, "unsafe output"))
+		streamInput(policy.ModeEnforce, streamSettings(map[string]any{"enabled": false}), nil), segment(1, "unsafe output"))
 
 	if err != nil {
 		t.Fatalf("InspectSegment: %v", err)
 	}
 	if got.Block {
-		t.Error("a policy that did not opt in must not cut")
+		t.Error("a policy that opted out must not cut")
 	}
 	if stub.count() != 0 {
 		t.Errorf("sanitize calls = %d, want none", stub.count())
@@ -429,6 +453,14 @@ func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
 			decisionReported,
 		},
 		{"cut", appplugins.StreamReport{Evals: 2, CutAtEval: 1}, nil, decisionBlocked},
+		{"a failed block on an otherwise clean stream", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1}, nil, "failed_open"},
+		{
+			"a finding outranks a missing inspection",
+			appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1},
+			[]appplugins.StreamFinding{{Entry: "p", Fingerprint: "abcd"}},
+			decisionReported,
+		},
+		{"a cut outranks a failure", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1, CutAtEval: 2}, nil, decisionBlocked},
 		// RUN-1745 F7: a masked stream used to read allowed.
 		{"masked", appplugins.StreamReport{Evals: 3, GuardCalls: 3, MaskedEvals: 2}, nil, decisionAnonymized},
 		{"masked, then cut", appplugins.StreamReport{Evals: 3, CutAtEval: 3, MaskedEvals: 2}, nil, decisionBlocked},

@@ -107,7 +107,11 @@ const (
 	// maxConsecutiveFailures is how many failing calls in a row retire the
 	// block loop. Past that they are latency spent on held text for a verdict
 	// that is not arriving, and the buffered post_response pass still audits
-	// the whole response.
+	// the whole response. It counts only the errors the chain hands the guard,
+	// that is those of entries that resolved fail_closed. An enforcing entry
+	// that resolved fail_open is absorbed by RunStreamSegment and retired there,
+	// per entry (streamEntryRetireAfter), so that a failing provider stops
+	// stalling its own policy without blinding the healthy ones.
 	maxConsecutiveFailures = 3
 	// cutDrainDeadline bounds the background drain a cut leaves behind. Usage
 	// rides the last chunk, so a stream that is still generating when the
@@ -426,6 +430,11 @@ func (g *streamGuard) headFailure(err error, partial *appplugins.SegmentOutcome)
 			slog.String("error", err.Error()))
 	}
 	if g.cfg.onError == streamFailClosed {
+		// A refusal is a cut, as it is after the head: without it the closing
+		// segment carries no cut and the failing policy is labelled failed_open
+		// for a request the client was refused.
+		g.cutOnFailure = g.cutAtEval == 0
+		g.markCut()
 		return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
 	}
 	// fail_open releases the held text, but never the raw text a mask already
@@ -801,6 +810,11 @@ func (g *streamGuard) call(
 		// masked text rather than raw text.
 		g.remember(outcome)
 		return outcome, err
+	}
+	// An entry whose failure the chain absorbed per entry gave no verdict on
+	// this block, so it is not a call that came back, whatever the guard saw.
+	if outcome != nil && outcome.FailedEntries > 0 {
+		g.callFailures++
 	}
 	g.remember(outcome)
 	return outcome, nil

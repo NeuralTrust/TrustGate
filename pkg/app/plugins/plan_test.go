@@ -519,3 +519,63 @@ func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing
 		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
 	})
 }
+
+// A policy with no streaming block is a participant now, so which entry sorts
+// first must not decide the failure direction or the payload cap for the whole
+// stream.
+func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	a := newStreamPlugin("guard_a", nil)
+	b := newStreamPlugin("guard_b", nil)
+	reg := newRegistry(t, a, b)
+
+	plan := func(t *testing.T, first, second map[string]any, firstMode, secondMode policy.Mode) StreamOptions {
+		t.Helper()
+		pols := policies(t,
+			polSpec{slug: "guard_a", enabled: true, priority: 1, stages: pre, mode: firstMode},
+			polSpec{slug: "guard_b", enabled: true, priority: 2, stages: pre, mode: secondMode},
+		)
+		pols[0].Settings, pols[1].Settings = first, second
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		return opts
+	}
+	defaults := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open", "max_accumulated_bytes": 262144}
+	closed := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_closed", "max_accumulated_bytes": 24576}
+
+	t.Run("a later explicit fail_closed is not overridden by an earlier default", func(t *testing.T) {
+		opts := plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce)
+		assert.Equal(t, "fail_closed", opts.OnError)
+		assert.Equal(t, 400, opts.HeadChars, "the first owner still supplies the head gate")
+	})
+	t.Run("an earlier explicit fail_closed stays", func(t *testing.T) {
+		assert.Equal(t, "fail_closed", plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
+	})
+	t.Run("an observe entry's fail_closed decides nothing", func(t *testing.T) {
+		assert.Equal(t, "fail_open", plan(t, closed, defaults, policy.ModeObserve, policy.ModeEnforce).OnError)
+	})
+	t.Run("both fail_open stays fail_open", func(t *testing.T) {
+		assert.Equal(t, "fail_open", plan(t, defaults, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
+	})
+	t.Run("the payload cap is the smallest any participant asks for", func(t *testing.T) {
+		assert.Equal(t, 24576, plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+		assert.Equal(t, 24576, plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	})
+	t.Run("an unset cap does not zero the merge", func(t *testing.T) {
+		unset := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open"}
+		assert.Equal(t, 24576, plan(t, unset, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	})
+	t.Run("a passive rewriter's fail_closed does not flip an owner", func(t *testing.T) {
+		passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
+		regP := newRegistry(t, passive, a)
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre, mode: policy.ModeEnforce},
+			polSpec{slug: "guard_a", enabled: true, priority: 2, stages: pre, mode: policy.ModeEnforce},
+		)
+		pols[0].Settings = map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_closed", "max_accumulated_bytes": 262144}
+		pols[1].Settings = defaults
+		ok, opts := NewStagePlan(regP, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		assert.Equal(t, "fail_open", opts.OnError)
+	})
+}

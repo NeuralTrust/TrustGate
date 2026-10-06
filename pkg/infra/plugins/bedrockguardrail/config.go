@@ -34,11 +34,32 @@ const (
 // configuration rather than a single classifier, so it is slower than
 // openai_moderation and the block loop calls it less often to keep the hold on
 // a client's bytes bounded.
+//
+// Unlike google_model_armor and openai_moderation it is OPT-IN
+// (streaming.enabled: true). Every block resends the whole accumulated prefix to
+// ApplyGuardrail, and the on-demand quota is per account and region: 25 text
+// units per second per policy type in most regions (only the largest US and
+// EU regions get more), and a text unit is up to 1000 characters. A few streams
+// inspected per block would throttle the customer's account, and their buffered
+// requests would then fail with 502 guardrail_unavailable. Until the console
+// exposes the control (RUN-1661) a policy without the key is not inspected per
+// block, and the trace marks it skipped with reason streaming_disabled.
+// https://docs.aws.amazon.com/general/latest/gr/bedrock.html
+//
+// Once a policy opts in, the stream leg fails open by default and
+// MaxAccumulatedBytes is 24 KiB because ApplyGuardrail caps the input per
+// policy at a number of text units (1 unit = up to 1000 characters) that
+// depends on region and tier, and the smallest default is 25 units
+// (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
+// tier). Bytes are never fewer than characters, so 24576 bytes fits in 25
+// units. Past it the guard sends the tail window. Regions with a larger quota
+// can raise streaming.max_accumulated_bytes.
+// https://docs.aws.amazon.com/general/latest/gr/bedrock.html
 var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
-	MaxAccumulatedBytes:  262144,
+	MaxAccumulatedBytes:  24576,
 	GuardTimeout:         2 * time.Second,
 }
 
@@ -58,9 +79,8 @@ type Settings struct {
 	PIIAction   string      `mapstructure:"pii_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
-	// Streaming opts the pre_response leg into per-block inspection. Absent, a
-	// streamed response reaches the client unguarded, which is what this plugin
-	// did before the block loop existed.
+	// Streaming tunes the per-block inspection of the pre_response leg. It is off
+	// when the block is absent; streaming.enabled: true turns it on.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
@@ -89,9 +109,10 @@ func (s *Settings) applyDefaults() {
 	if s.Credentials.UseRole && s.Credentials.SessionName == "" {
 		s.Credentials.SessionName = defaultSessionName
 	}
-	// The buffered leg fails closed when ApplyGuardrail is unreachable, so the
-	// stream leg inherits that rather than a laxer default.
-	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
+	// The stream leg fails open by default whatever the buffered leg does: a
+	// guardrail outage must not cut a response the client is already reading.
+	// An explicit streaming.on_error: fail_closed is still honoured.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailOpen)
 }
 
 func (s *Settings) validate() error {
