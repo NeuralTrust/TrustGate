@@ -255,6 +255,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	resp *infracontext.ResponseContext,
 	stream iter.Seq2[[]byte, error],
 	gate func() <-chan struct{},
+	cut func() bool,
 ) iter.Seq2[[]byte, error] {
 	if f.executor == nil || !hasPostResponse(plan) {
 		return stream
@@ -288,6 +289,9 @@ func (f *forwarder) wrapStreamWithPostResponse(
 			return
 		}
 		resp.Body = body
+		// Set here, from the guard's own state, and nowhere else: post_response
+		// reads it to skip the truncated body of a stream the guard cut.
+		resp.StreamCut = cut != nil && cut()
 		// gate is consulted here rather than captured above because a cut
 		// decides mid-stream: the guard installs the barrier on the goroutine
 		// this loop has just finished draining, so it is readable now and was
