@@ -105,6 +105,14 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects a new streaming.final_pass: false, which the
+// block loop cannot honour (pluginutil.ValidateFinalPassWrite).
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
+	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
+}
+
 // CredentialPaths declares the settings paths that hold secrets, so the policy
 // API masks them on read: the AWS credentials nested under "credentials".
 func (p *Plugin) CredentialPaths() []string {

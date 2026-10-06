@@ -103,9 +103,11 @@ var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 // no path to a violation: the policy would call OpenAI and never act), plus
 // an unknown model or an unknown thresholds/categories key for the
 // configured model - option "b": only a NEWLY introduced unknown key is
-// refused. previous is the settings as they were stored before this write
-// (nil on create, or when the write also changes the slug: settings that
-// belonged to a different plugin are not "previous" for this one). A key
+// refused. The same rule applies to streaming.final_pass: false
+// (pluginutil.ValidateFinalPassWrite). previous is the settings as they were
+// stored before this write (nil on create, or when the write also changes the
+// slug: settings that belonged to a different plugin are not "previous" for
+// this one). A key
 // already present in previous's same field stays editable even though it is
 // still not recognised, so a policy saved before this rule (or before this
 // build knew a category) does not turn every future edit into a hard
@@ -120,6 +122,9 @@ func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error 
 			"openai_moderation: block_on_flagged is explicitly false with no thresholds configured; " +
 				"this policy could never block or report a violation - set thresholds or block_on_flagged: true",
 		)
+	}
+	if err := pluginutil.ValidateFinalPassWrite(PluginName, settings, previous); err != nil {
+		return err
 	}
 
 	var prevCfg Settings

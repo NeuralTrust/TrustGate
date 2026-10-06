@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -191,6 +192,14 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	}
 	_, err := parseConfig(settings)
 	return err
+}
+
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects a new streaming.final_pass: false, which the
+// block loop cannot honour (pluginutil.ValidateFinalPassWrite).
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
+	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
