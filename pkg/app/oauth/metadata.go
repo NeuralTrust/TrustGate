@@ -28,7 +28,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
@@ -120,43 +119,24 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 		if u, err := url.Parse(resource); err == nil && u.Path != "" {
 			matches, err := s.paths.Match(ctx, u.Host, u.Path)
 			if err == nil && len(matches) > 0 {
-				providers, protected := pathOAuth2Auths(matches)
-				if len(providers) > 0 {
+				if providers := pathOAuth2Auths(matches); len(providers) > 0 {
 					return providers, nil
 				}
-				// The resource pinned a consumer that authenticates with its own
-				// credential. Advertising the gateway's identity provider would
-				// send a client through a login the auth chain cannot honour.
-				if protected {
-					return nil, nil
+				// Advertise only what the authorize path brokers: the built-in
+				// default when the auth chain admits it, scoped to the consumer's
+				// gateway, and otherwise no authorization server at all.
+				if appconsumer.DefaultIdPAdmitted(matches) {
+					if def := s.credentials.DefaultOAuth2ForGateway(matches[0].GatewayID); def != nil {
+						return []*authdomain.Auth{def}, nil
+					}
 				}
-				// The resource pinned a consumer with no provider of its own, so
-				// scope the fallback to that consumer's gateway the way the
-				// authorize path does. The platform-wide lookup below published
-				// other tenants' required scopes on this unauthenticated document
-				// (RUN-1501).
-				return s.gatewayScopedAuths(ctx, matches[0].GatewayID)
+				return nil, nil
 			}
 		}
 	}
 	auths, err := s.credentials.OAuth2Auths(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
-	}
-	return auths, nil
-}
-
-// gatewayScopedAuths advertises the IdP the authorize path brokers for a
-// consumer with no identity provider of its own: the built-in default alone
-// when it is configured, since the auth chain admits nothing else for that
-// consumer, and the gateway's operator IdPs only without one.
-func (s *metadataService) gatewayScopedAuths(ctx context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
-	if def := s.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
-		return []*authdomain.Auth{def}, nil
-	}
-	auths, err := s.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
-	if err != nil {
-		return nil, fmt.Errorf("oauth: load oauth2 auths for gateway: %w", err)
 	}
 	return auths, nil
 }
