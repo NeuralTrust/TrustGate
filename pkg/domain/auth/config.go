@@ -116,19 +116,42 @@ type MTLSConfig struct {
 }
 
 func (c *Config) ResolveSecretsFrom(prev Config) {
-	if c.OAuth2 != nil && prev.OAuth2 != nil {
-		c.OAuth2.ClientSecret = secret.Resolve(c.OAuth2.ClientSecret, prev.OAuth2.ClientSecret)
-		// The stored secret belongs to the stored client: it is carried over only
-		// while the client stays the same, so a new client needs its own secret
-		// and clearing the client clears the secret, even one echoed masked.
-		id := strings.TrimSpace(c.OAuth2.ExchangeClientID)
-		switch {
-		case id != "" && id == strings.TrimSpace(prev.OAuth2.ExchangeClientID):
-			c.OAuth2.ExchangeClientSecret = secret.Resolve(c.OAuth2.ExchangeClientSecret, prev.OAuth2.ExchangeClientSecret)
-		case id == "" && secret.IsMasked(c.OAuth2.ExchangeClientSecret):
-			c.OAuth2.ExchangeClientSecret = ""
-		}
+	if c.OAuth2 == nil || prev.OAuth2 == nil {
+		return
 	}
+	login := storedClient{id: prev.OAuth2.ClientID, secret: prev.OAuth2.ClientSecret}
+	exchange := storedClient{id: prev.OAuth2.ExchangeClientID, secret: prev.OAuth2.ExchangeClientSecret}
+	c.OAuth2.ClientSecret = carrySecret(c.OAuth2.ClientID, c.OAuth2.ClientSecret, login, exchange)
+	c.OAuth2.ExchangeClientSecret = carrySecret(c.OAuth2.ExchangeClientID, c.OAuth2.ExchangeClientSecret, exchange, login)
+}
+
+type storedClient struct{ id, secret string }
+
+// carrySecret fills a blank or masked secret from the stored client with the
+// same id: the same pair first, then the other pair only when the same pair
+// held a different id, so moving a client between the login and exchange pairs
+// keeps its secret. A stored secret belongs to its client: clearing the id
+// clears the secret, even one echoed masked. A new id with a blank secret is
+// public; with a masked one it stays masked so validation refuses it. A
+// same-pair public client is never filled from the other pair.
+func carrySecret(id, incoming string, same, other storedClient) string {
+	if incoming != "" && !secret.IsMasked(incoming) {
+		return incoming
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if id == strings.TrimSpace(same.id) {
+		if same.secret != "" {
+			return same.secret
+		}
+		return incoming
+	}
+	if other.secret != "" && id == strings.TrimSpace(other.id) {
+		return other.secret
+	}
+	return incoming
 }
 
 func (c Config) Validate(t Type) error {
@@ -240,6 +263,11 @@ func (c *OAuth2Config) validateLoginScopes() error {
 	}
 	if strings.TrimSpace(c.ClientID) == "" {
 		return fmt.Errorf("%w: oauth2.login_scopes requires oauth2.client_id (they are only sent when the gateway signs people in)", ErrInvalidConfig)
+	}
+	// In session mode the provider returns the granted scopes in URI form
+	// (api://app/scope), which RequiredScopes then fails to match.
+	if c.SessionMode {
+		return fmt.Errorf("%w: oauth2.login_scopes are for pass-through sign-in; turn oauth2.session_mode off to use them", ErrInvalidConfig)
 	}
 	scopes := make([]string, 0, len(c.LoginScopes))
 	for _, scope := range c.LoginScopes {

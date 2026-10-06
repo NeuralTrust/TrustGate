@@ -314,7 +314,18 @@ function AuthFormDialog({
     if (type === "api_key") {
       body.config = {};
     } else if (type === "oauth2") {
+      // Keys this editor does not render (login_scopes, the exchange client)
+      // ride along from the loaded config so a save does not clear them. The
+      // secrets come back masked and are left out: the server keeps the stored
+      // ones for an unchanged client id.
+      const carried: Record<string, unknown> = { ...o2 };
+      delete carried.client_secret;
+      delete carried.exchange_client_secret;
+      // login_scopes need a pass-through client and cannot be edited here, so
+      // a save that removes either drops them instead of being refused.
+      if (!clientId || sessionMode) delete carried.login_scopes;
       const oauth2: Record<string, unknown> = {
+        ...carried,
         issuer,
         audiences: splitList(audiences),
         jwks_url: jwksUrl || undefined,
