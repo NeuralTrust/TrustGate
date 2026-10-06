@@ -325,7 +325,7 @@ func (s *endUserConnectionsService) authenticate(
 	}
 	auth, err := s.apiKeys.FindByAPIKey(ctx, strings.TrimSpace(rawKey))
 	if err != nil {
-		if errors.Is(err, authdomain.ErrNotFound) {
+		if errors.Is(err, commonerrors.ErrNotFound) {
 			return nil, nil, ErrAPIKeyConnectUnauthorized
 		}
 		return nil, nil, fmt.Errorf("oauth end-user connections: find API key: %w", err)
@@ -356,7 +356,7 @@ func (s *endUserConnectionsService) authenticateApp(
 	}
 	auth, err := s.apiKeys.FindByAPIKey(ctx, strings.TrimSpace(rawKey))
 	if err != nil {
-		if errors.Is(err, authdomain.ErrNotFound) {
+		if errors.Is(err, commonerrors.ErrNotFound) {
 			return nil, ErrAPIKeyConnectUnauthorized
 		}
 		return nil, fmt.Errorf("oauth connections: find API key: %w", err)
