@@ -596,6 +596,8 @@ definitions:
         maximum: 86400
         minimum: 1
         type: integer
+      escape_hatch_enabled:
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest:
     properties:
@@ -910,6 +912,8 @@ definitions:
     properties:
       cache_ttl_seconds:
         type: integer
+      escape_hatch_enabled:
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse:
     properties:
