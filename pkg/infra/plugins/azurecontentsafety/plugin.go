@@ -203,11 +203,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via
-// the shared appplugins.HandleExternalFailure: fail closed (502
-// guardrail_unavailable) in a blocking mode, fail open (pass through) in
-// observe, or always fail open for a decode_failed reason. It builds this
-// plugin's own Data so the failure_reason/failure_detail pair travels with
-// every other external guardrail's telemetry in the same shape.
+// the shared appplugins.HandleExternalFailure: on the buffered leg it always
+// fails open (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792). It builds this plugin's own Data so the
+// failure_reason/failure_detail pair travels with every other external
+// guardrail's telemetry in the same shape.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,

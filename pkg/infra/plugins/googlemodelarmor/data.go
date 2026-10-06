@@ -40,7 +40,7 @@ type Data struct {
 	DegradedReason string `json:"degraded_reason,omitempty"`
 	// FailureReason is one of appplugins.FailureReason (transport,
 	// verdict_incomplete, config_invalid, decode_failed) — the taxonomy shared
-	// by every external guardrail. It is set only on a failed_open/failed_closed
+	// by every external guardrail. It is set only on a failed_open
 	// decision.
 	FailureReason string `json:"failure_reason,omitempty"`
 	// FailureDetail is this plugin's own reason within FailureReason

@@ -273,6 +273,7 @@ func (p *Plugin) anonymizeEnforce(in appplugins.ExecInput, data *Data, message s
 	return span.result(body), nil
 }
 
+// anonymizeDegraded blocks by design (RUN-1792): the provider confirmed sensitive data and gave no way to mask it, so this is the one deliberate exception to fail-open.
 func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
@@ -283,11 +284,11 @@ func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message 
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.HandleExternalFailure: fail closed (502
-// guardrail_unavailable) in a blocking mode, fail open (pass through) in
-// observe, or always fail open for a decode_failed reason. It builds this
-// plugin's own Data so failure_reason/failure_detail travel in the same
-// shape as every other external guardrail.
+// shared appplugins.HandleExternalFailure: on the buffered leg it always fails
+// open (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792). It builds this plugin's own Data so
+// failure_reason/failure_detail travel in the same shape as every other
+// external guardrail.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,

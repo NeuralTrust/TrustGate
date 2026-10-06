@@ -120,7 +120,7 @@ func newModelArmorStub(t *testing.T) *modelArmorStub {
 
 // The stub plays a template enabling every filter, so it answers for every
 // filter, match or not. An empty filterResults is what a template enabling
-// none of them returns, and the plugin fails that closed (RUN-1667).
+// none of them returns, which the plugin treats as a failed_open verdict_incomplete (RUN-1667, RUN-1792).
 const (
 	modelArmorNoMatchSDP  = `"sdp":{"sdpFilterResult":{"inspectResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}}`
 	modelArmorNoMatchRAI  = `"rai":{"raiFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
