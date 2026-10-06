@@ -47,6 +47,7 @@ const (
 	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
 	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
 	msgOwnedKeyHint       = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
+	msgApplicationKeyHint = "Budgets apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
 	msgPersonalKeyHint    = "You already hold a key on this gateway. Rotate or revoke it instead."
 )
 
@@ -86,6 +87,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: publicMessage(err, msgConflictHint)}
 	case errors.Is(err, commonerrors.ErrManagedByOwner):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "owned_key", Message: publicMessage(err, msgOwnedKeyHint)}
+	case errors.Is(err, commonerrors.ErrApplicationKey):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "application_key", Message: publicMessage(err, msgApplicationKeyHint)}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
@@ -124,7 +127,8 @@ func isBareSentinel(msg string) bool {
 		commonerrors.ErrValidation.Error(),
 		commonerrors.ErrInvalidConfig.Error(),
 		commonerrors.ErrResultTooLarge.Error(),
-		commonerrors.ErrManagedByOwner.Error():
+		commonerrors.ErrManagedByOwner.Error(),
+		commonerrors.ErrApplicationKey.Error():
 		return true
 	default:
 		return false

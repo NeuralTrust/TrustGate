@@ -605,6 +605,7 @@ func stampAuth(req *infracontext.RequestContext, authCtx *appauth.AuthContext) {
 		req.AuthID = authCtx.AuthID.String()
 	}
 	req.OwnerID = authCtx.OwnerID
+	req.KeyBudget = authCtx.KeyBudget
 }
 
 func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolver.ProxyRoute) *infracontext.RequestContext {

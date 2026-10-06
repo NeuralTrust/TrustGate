@@ -98,6 +98,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if !counted {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
+	cfg = cfg.forKey(in.Scope.KeyBudget)
+	if !cfg.limits() {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
 	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader))
 
 	switch in.Stage {

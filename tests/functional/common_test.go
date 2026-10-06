@@ -349,6 +349,19 @@ func RevokeLLMKey(t *testing.T, gatewayID, userID string) int {
 	return status
 }
 
+func SetKeyBudget(t *testing.T, gatewayID, authID string, budget any) (int, map[string]any) {
+	t.Helper()
+	if budget == nil {
+		budget = json.RawMessage("null")
+	}
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths/%s/budget", AdminURL, gatewayID, authID)
+	return sendRequest(t, http.MethodPut, url, nil, budget)
+}
+
+func monthlyBudget(limit float64) map[string]any {
+	return map[string]any{"max": limit, "time_window": "calendar_month"}
+}
+
 func CreatePersonalConsumer(t *testing.T, gatewayID string, payload map[string]any) string {
 	t.Helper()
 	payload["name"], payload["audience"] = uniqueName("personal"), "personal"

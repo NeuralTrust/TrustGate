@@ -47,6 +47,7 @@ import (
 	labelmocks "github.com/NeuralTrust/TrustGate/pkg/app/trafficlabels/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -1402,12 +1403,16 @@ func TestHandle_Streaming_FinalizerReqCarriesPlaygroundVerdict(t *testing.T) {
 
 func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 	authID := ids.New[ids.AuthKind]()
+	monthlyBudget := &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}
 	tests := []struct {
 		name                string
 		authCtx             appauth.AuthContext
 		wantAuth, wantOwner string
+		wantBudget          *authdomain.KeyBudget
 	}{
 		{name: "owned key", authCtx: appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, OwnerID: "alice"}, wantAuth: authID.String(), wantOwner: "alice"},
+		{name: "owned key with a budget", authCtx: appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, OwnerID: "alice", KeyBudget: monthlyBudget}, wantAuth: authID.String(), wantOwner: "alice", wantBudget: monthlyBudget},
+		{name: "budget on another method", authCtx: appauth.AuthContext{Method: appauth.MethodOIDC, AuthID: authID, OwnerID: "alice", KeyBudget: monthlyBudget}},
 		{name: "application key", authCtx: appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID}, wantAuth: authID.String()},
 		{name: "playground", authCtx: appauth.AuthContext{Method: appauth.MethodPlayground}},
 		{name: "oidc", authCtx: appauth.AuthContext{Method: appauth.MethodOIDC, AuthID: authID, OwnerID: "alice"}},
@@ -1446,6 +1451,7 @@ func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 			require.NotNil(t, got)
 			assert.Equal(t, tt.wantAuth, got.AuthID)
 			assert.Equal(t, tt.wantOwner, got.OwnerID)
+			assert.Equal(t, tt.wantBudget, got.KeyBudget)
 		})
 	}
 }

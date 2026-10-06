@@ -151,6 +151,7 @@ func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, rou
 		GatewaySlug: gw.Slug,
 		AuthID:      key.ID,
 		OwnerID:     key.OwnerID,
+		KeyBudget:   key.Budget.Clone(),
 		Subject:     key.OwnerID,
 	}, gw, data, nil)
 	return c.Next()

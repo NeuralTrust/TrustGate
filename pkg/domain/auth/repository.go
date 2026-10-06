@@ -30,6 +30,7 @@ type ListFilter struct {
 	Type         Type
 	Enabled      *bool
 	ExcludeOwned bool
+	OnlyOwned    bool
 	OwnerID      string
 	Page         listing.Page
 	Sort         listing.Sort
@@ -39,6 +40,9 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, a *Auth) error
 	Update(ctx context.Context, a *Auth) error
+	// UpdateBudget writes only the budget and updated_at of a and returns the
+	// stored auth, so it never undoes a concurrent rotation of the secret.
+	UpdateBudget(ctx context.Context, a *Auth) (*Auth, error)
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error
 	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)

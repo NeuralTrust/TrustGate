@@ -523,6 +523,7 @@ func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScop
 		scope.ConsumerID = req.ConsumerID
 		scope.AuthID = req.AuthID
 		scope.OwnerID = req.OwnerID
+		scope.KeyBudget = req.KeyBudget
 	}
 	return scope
 }

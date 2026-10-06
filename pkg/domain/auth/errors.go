@@ -39,4 +39,6 @@ var (
 	ErrOwnedKey        = fmt.Errorf("auth: owned_key: %w", commonerrors.ErrManagedByOwner)
 	ErrOwnedExpiry     = fmt.Errorf("auth: expires_at must be in the future and within 90 days: %w", commonerrors.ErrValidation)
 	ErrInvalidOwner    = fmt.Errorf("auth: invalid owner_id: %w", commonerrors.ErrValidation)
+	ErrInvalidBudget   = fmt.Errorf("auth: invalid budget: %w", commonerrors.ErrValidation)
+	ErrApplicationKey  = fmt.Errorf("auth: application_key: %w", commonerrors.ErrApplicationKey)
 )

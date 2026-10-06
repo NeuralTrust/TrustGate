@@ -197,7 +197,7 @@
                 "key": "aggregate",
                 "label": "Aggregate Budget",
                 "type": "object",
-                "description": "Single budget counter for the whole scope, used when per-model rules are not set.",
+                "description": "Single budget counter for the whole scope, used when per-model rules are not set. Optional with key_budgets, where a personal key's own budget replaces it.",
                 "fields": [
                   {
                     "key": "max",
@@ -286,6 +286,12 @@
                     "label": "Key"
                   }
                 ]
+              },
+              {
+                "key": "key_budgets",
+                "label": "Key Budgets",
+                "type": "boolean",
+                "description": "With partition key, hold each personal key to the budget it carries (set by the console per user), in this policy's unit, instead of aggregate; aggregate then becomes optional, and a key without a budget is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets."
               }
             ]
           }

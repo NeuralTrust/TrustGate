@@ -24,6 +24,7 @@ type ListAuthRequest struct {
 	Type    domain.Type
 	Enabled *bool
 	OwnerID string
+	Owned   *bool
 	Page    listing.Page
 	Sort    listing.Sort
 }
