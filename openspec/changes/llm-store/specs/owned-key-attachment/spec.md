@@ -6,7 +6,7 @@ Change `llm-store` (RUN-1763), slice S3 (decisions B4, B5, D3, D4). New capabili
 
 ### Requirement: Link columns
 
-An in-code migration (`20261005120200_add_consumer_auth_grant`) MUST add `consumer_auth.level text NULL`, `consumer_auth.priority integer NULL` and `consumer_auth.granted_at timestamptz NULL`, with one CHECK: either none of the three is set (application link), or all three are set with `level IN ('user','group','all')`, `priority >= 0` and a finite `granted_at` (personal link). A row with only some of the three set MUST be refused. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table.
+An in-code migration (`20261006100200_add_consumer_auth_grant`) MUST add `consumer_auth.level text NULL`, `consumer_auth.priority integer NULL` and `consumer_auth.granted_at timestamptz NULL`, with one CHECK: either none of the three is set (application link), or all three are set with `level IN ('user','group','all')`, `priority >= 0` and a finite `granted_at` (personal link). A row with only some of the three set MUST be refused. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table.
 
 #### Scenario: Existing links untouched
 

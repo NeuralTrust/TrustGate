@@ -23,7 +23,7 @@ import (
 
 func init() {
 	database.RegisterMigration(database.Migration{
-		ID:   "20261005120100_add_auth_owner",
+		ID:   "20261006100100_add_auth_owner",
 		Name: "let an api key belong to one user per gateway",
 		Up:   upAddAuthOwner,
 		Down: downAddAuthOwner,

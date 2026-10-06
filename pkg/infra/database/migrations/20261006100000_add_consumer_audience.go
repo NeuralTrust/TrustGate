@@ -23,7 +23,7 @@ import (
 
 func init() {
 	database.RegisterMigration(database.Migration{
-		ID:   "20261005120000_add_consumer_audience",
+		ID:   "20261006100000_add_consumer_audience",
 		Name: "give consumers an application or personal audience",
 		Up:   upAddConsumerAudience,
 		Down: downAddConsumerAudience,

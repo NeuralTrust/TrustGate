@@ -6,7 +6,7 @@ Change `llm-store` (RUN-1763), slice S3 (decisions B3, D7). New capability. An `
 
 ### Requirement: `owner_id` column and one key per user per gateway
 
-An in-code migration (`20261005120100_add_auth_owner`) MUST add `auths.owner_id text NULL` and the partial unique index `auths_gateway_owner_uniq (gateway_id, owner_id) WHERE owner_id IS NOT NULL`. `NULL` MUST mean an application key. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table.
+An in-code migration (`20261006100100_add_auth_owner`) MUST add `auths.owner_id text NULL` and the partial unique index `auths_gateway_owner_uniq (gateway_id, owner_id) WHERE owner_id IS NOT NULL`. `NULL` MUST mean an application key. The migration MUST be idempotent, its up and down MUST each run in one transaction, and it MUST NOT create a table.
 
 #### Scenario: Existing rows untouched
 
