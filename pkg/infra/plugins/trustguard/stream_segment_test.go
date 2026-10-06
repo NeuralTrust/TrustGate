@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -799,4 +800,63 @@ func TestInspectSegmentObserveModeReportsNoCutItDidNotMake(t *testing.T) {
 	assert.Equal(t, int64(240), data.Streaming.AddedLatencyMs)
 	assert.Equal(t, 70*time.Millisecond, span.Latency(),
 		"the observing entry is charged its own share of the hold")
+}
+
+// RUN-1786: a fail_closed failure at the head is a refusal, so the stream guard
+// reports it as a cut by this entry (CutOnFailure). The policy's decision and the
+// outcome label of trustguard_stream_* are then blocked, and the cut is
+// attributed to this entry, not left to read as a fail-open failure.
+func TestHeadFailureUnderFailClosedIsReportedAsABlockByTheFailingEntry(t *testing.T) {
+	t.Parallel()
+
+	g := &segmentGuard{status: http.StatusInternalServerError}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(p))
+	pol := &policy.Policy{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     PluginName,
+		Slug:     PluginName,
+		Enabled:  true,
+		Parallel: true,
+		Stages:   []policy.Stage{policy.StagePreResponse},
+		Mode:     policy.ModeEnforce,
+		Settings: streamingSettings(map[string]any{"on_error": onErrorFailClosed}),
+	}
+	rt := trace.New(testStreamTraceID, trace.Metadata{})
+	ctx, publish := appplugins.NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	in := appplugins.StageInput{
+		Stage:    policy.StagePreResponse,
+		Policies: []*policy.Policy{pol},
+		Request:  segmentRequest(),
+		Response: &infracontext.ResponseContext{},
+	}
+	runner, ok := appplugins.NewExecutor(reg, nil).(interface {
+		RunStreamSegment(context.Context, appplugins.StageInput, appplugins.StreamSegment) (*appplugins.SegmentOutcome, error)
+	})
+	require.True(t, ok)
+
+	_, err := runner.RunStreamSegment(ctx, in, appplugins.StreamSegment{StreamID: "s-1", Seq: 1, Accumulated: "Hello world"})
+	require.Error(t, err, "fail_closed hands the head failure to the guard, which refuses with a 403")
+
+	// What the guard publishes after refusing at the head.
+	report := appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}
+	_, err = runner.RunStreamSegment(ctx, in, appplugins.StreamSegment{StreamID: "s-1", Seq: 1, Closing: true, Report: report})
+	require.NoError(t, err)
+	publish()
+
+	var found bool
+	for _, span := range rt.Spans() {
+		if span.Name != PluginName {
+			continue
+		}
+		found = true
+		attrs := span.PluginAttrsCopy()
+		data, ok := attrs.Extras.(guardData)
+		require.True(t, ok, "extras = %T", attrs.Extras)
+		assert.Equal(t, "block", attrs.Decision)
+		assert.Equal(t, 1, data.Streaming.CutAtEval, "the cut is this entry's")
+	}
+	require.True(t, found)
+	assert.Equal(t, streamOutcomeBlocked, streamOutcomeLabel(report))
 }

@@ -490,3 +490,29 @@ func TestIsEnabledFromDecodedSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamFailedOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		report appplugins.StreamReport
+		want   bool
+	}{
+		{"clean stream", appplugins.StreamReport{}, false},
+		{"this entry's call failed", appplugins.StreamReport{FailedEvals: 1}, true},
+		{"several failures", appplugins.StreamReport{FailedEvals: 3}, true},
+		// The chain-wide reason is copied to every entry and overwritten by a
+		// later size degrade, so it says nothing about this entry.
+		{"a chain degrade alone is not this entry's failure", appplugins.StreamReport{DegradedReason: appplugins.StreamDegradeGuardError}, false},
+		{"a later size degrade does not hide a failure", appplugins.StreamReport{FailedEvals: 1, DegradedReason: appplugins.StreamDegradeAccumulationCap}, true},
+		{"a cut wins over an earlier failure", appplugins.StreamReport{FailedEvals: 1, CutAtEval: 2}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StreamFailedOpen(tt.report); got != tt.want {
+				t.Errorf("StreamFailedOpen() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
