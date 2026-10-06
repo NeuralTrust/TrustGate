@@ -41,7 +41,7 @@ const (
 // units per second per policy type in most regions (only the largest US and
 // EU regions get more), and a text unit is up to 1000 characters. A few streams
 // inspected per block would throttle the customer's account, and their buffered
-// requests would then fail with 502 guardrail_unavailable. Until the console
+// requests would then go through uninspected (failed_open). Until the console
 // exposes the control (RUN-1661) a policy without the key is not inspected per
 // block, and the trace marks it skipped with reason streaming_disabled.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
