@@ -31,12 +31,21 @@ const streamLegResponse = "response"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 
+// OwnsStreamOptions is false: this plugin is a local rewriter that rides on
+// whatever head gate, cadence and failure direction the stream's other
+// participants chose, and only supplies its own when it is alone. Owning them
+// would let a default-on regex policy that sorts first turn a fail_open
+// guardrail's stream fail_closed.
+func (p *Plugin) OwnsStreamOptions() bool { return false }
+
+var _ appplugins.StreamOptionsOwner = (*Plugin)(nil)
+
 // StreamSettings reports whether these policy settings ask for per-block
 // rewriting of the response leg, and the options the block loop must run
 // under. A policy targeting the request is not on the response leg at all, so
 // it never opts in however its streaming block is filled.
 func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
-	cfg, err := parseConfig(settings)
+	cfg, err := p.config(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
@@ -63,7 +72,7 @@ func (p *Plugin) InspectSegment(
 	in appplugins.ExecInput,
 	seg appplugins.StreamSegment,
 ) (*appplugins.SegmentVerdict, error) {
-	cfg, err := parseConfig(in.Config.Settings)
+	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("regex_replace: %w", err)
 	}

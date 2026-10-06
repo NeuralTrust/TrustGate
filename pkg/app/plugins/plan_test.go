@@ -433,3 +433,89 @@ func TestStagePlan_StreamPlan(t *testing.T) {
 	ok, _ = NewStagePlan(reg, nil, nil).StreamPlan(policy.StagePreResponse)
 	assert.False(t, ok)
 }
+
+// passiveStreamPlugin is a local rewriter: a participant that must not decide
+// the stream-wide options, as regex_replace does not.
+type passiveStreamPlugin struct{ *streamPlugin }
+
+func (passiveStreamPlugin) OwnsStreamOptions() bool { return false }
+
+// One stream carries one set of options, so a passive participant that sorts
+// first must not decide them over the guard that has an opinion (ENG-1735: a
+// default-on regex_replace flipped a fail_open trustguard stream to
+// fail_closed just by having the lower priority).
+func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
+	owner := newStreamPlugin("guard", nil)
+	otherOwner := newStreamPlugin("guard2", nil)
+	reg := newRegistry(t, passive, owner, otherOwner)
+
+	passiveSet := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_closed"}
+	ownerSet := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_open"}
+	otherSet := map[string]any{"enabled": true, "head_chars": 128, "on_error": "fail_closed"}
+
+	plan := func(t *testing.T, specs ...polSpec) *StagePlan {
+		t.Helper()
+		pols := policies(t, specs...)
+		for i, spec := range specs {
+			switch spec.slug {
+			case "rewriter":
+				pols[i].Settings = passiveSet
+			case "guard":
+				pols[i].Settings = ownerSet
+			case "guard2":
+				pols[i].Settings = otherSet
+			}
+		}
+		return NewStagePlan(reg, pols, nil)
+	}
+
+	t.Run("passive first, owner second: the owner's options win", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("passive alone: its own options", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
+	})
+
+	t.Run("passive first, two owners: the first owner wins", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard2", enabled: true, priority: 2, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 3, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_closed"}, opts)
+	})
+
+	t.Run("owner first, passive second: unchanged", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "rewriter", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("a disabled owner does not count", func(t *testing.T) {
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		)
+		pols[0].Settings = passiveSet
+		pols[1].Settings = map[string]any{"enabled": false}
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
+	})
+}

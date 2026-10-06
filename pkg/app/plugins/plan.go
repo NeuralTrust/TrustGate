@@ -190,20 +190,38 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 // hand the caller no head_chars and no on_error, and the caller would run on
 // defaults an operator never asked for.
 //
-// The first participating entry wins. One stream carries one head gate, and
-// the entries are already ordered by priority.
+// The first participating entry that owns stream options wins. One stream
+// carries one head gate, and the entries are already ordered by priority. A
+// passive participant (StreamOptionsOwner returning false, such as a local
+// rewriter) yields to any owner, whatever the order, and its own options are
+// used only when it is the sole participant.
 func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 	if p == nil {
 		return false, StreamOptions{}
 	}
+	var (
+		passive    StreamOptions
+		hasPassive bool
+	)
 	for _, entry := range p.byStage[stage] {
 		inspector, ok := streamInspector(entry.plugin)
 		if !ok {
 			continue
 		}
-		if enabled, opts := inspector.StreamSettings(entry.config.Settings); enabled {
-			return true, opts
+		enabled, opts := inspector.StreamSettings(entry.config.Settings)
+		if !enabled {
+			continue
 		}
+		if !ownsStreamOptions(entry.plugin) {
+			if !hasPassive {
+				passive, hasPassive = opts, true
+			}
+			continue
+		}
+		return true, opts
+	}
+	if hasPassive {
+		return true, passive
 	}
 	return false, StreamOptions{}
 }
