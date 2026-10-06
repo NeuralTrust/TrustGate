@@ -124,7 +124,7 @@ func TestValidateConfigAllowsAmbientIdentityWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestExecuteRefusesAmbientIdentityWithoutAnyOutboundCall(t *testing.T) {
+func TestExecuteFailsOpenOnAmbientIdentityWithoutAnyOutboundCall(t *testing.T) {
 	t.Parallel()
 	for _, tc := range ambientCases() {
 		t.Run(tc.name+"/enforce", func(t *testing.T) {
@@ -137,13 +137,12 @@ func TestExecuteRefusesAmbientIdentityWithoutAnyOutboundCall(t *testing.T) {
 
 			res, err := rig.plugin.Execute(context.Background(), in)
 
-			assert.Nil(t, res)
-			pe, ok := appplugins.AsPluginError(err)
-			require.True(t, ok, "err = %v", err)
-			assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
 			data, ok := span.PluginAttrsCopy().Extras.(*Data)
 			require.True(t, ok)
-			assert.Equal(t, "failed_closed", data.Decision)
+			assert.Equal(t, "failed_open", data.Decision)
 			assert.Equal(t, "config_invalid", data.FailureReason)
 			assert.Zero(t, rig.tokens.Load(), "no token may be minted")
 			assert.Zero(t, rig.hits.Load(), "no request may reach Model Armor")

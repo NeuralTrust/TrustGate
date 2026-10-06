@@ -306,19 +306,22 @@ dialect's content-filter terminator, and on the event the cut is visible only th
 ### External guardrail failures
 
 `azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
-record a failure to reach a verdict the same way. The entry's `decision` says what happened
-to the request, not what the policy would have done in enforce:
+record a failure to reach a verdict the same way. On the buffered (non-streamed) leg they
+always **fail open**, in every mode and for every `failure_reason`: a guardrail the gateway
+could not consult never refuses the request. The stream leg is covered by RUN-1786. The entry's `decision` says what happened to the request:
 
 | Mode | `decision` | Request |
 |------|------------|---------|
-| enforce | `failed_closed` | Refused with HTTP 502, error type `guardrail_unavailable`; later policies in the chain do not run |
-| observe | `failed_open` | Forwarded; the chain carries on |
+| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
+
+There is no `failed_closed` decision and no `guardrail_unavailable` error for these four
+plugins on the buffered leg (RUN-1792).
 
 Their `extras` carry two keys:
 
 | Key | Meaning |
 |-----|---------|
-| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body; always `failed_open`, in both modes) |
+| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body) |
 | `failure_detail` | Optional. The category, or the Model Armor sub-reason, that produced no verdict |
 
 A streamed response leg follows `streaming.on_error` for enforce entries; an observe entry
@@ -332,8 +335,8 @@ accumulated prefix to ApplyGuardrail, whose on-demand quota is per account and r
 units per second in most non-US regions), so inspecting every stream by default would throttle
 the customer's buffered requests too. Until the console exposes the control (RUN-1661) a
 Bedrock policy with no `streaming` block records `skipped` / `streaming_disabled` on a streamed
-response. For all three, the stream leg fails **open** by default once it takes part, unlike
-the buffered leg, which still fails closed in enforce: a provider error or timeout on a block
+response. For all three, the stream leg fails **open** by default once it takes part, as the
+buffered leg does since RUN-1792: a provider error or timeout on a block
 releases the held text and does not cut the stream. A policy that wants the old behaviour sets
 `streaming.on_error: fail_closed`.
 
@@ -365,6 +368,19 @@ lowers `streaming.guard_calls` on every later block (each is a block without its
 `streaming.guard_calls` counts only the blocks that got every verdict, so an absorbed
 failure leaves it short of `evals_total`.
 
+**Changed in RUN-1792.** An enforce-mode failure used to record `failed_closed` and refuse the
+request with HTTP 502 (`guardrail_unavailable`); it now records `failed_open` and forwards it,
+exactly as observe always did. This replaces the RUN-1672 fail-closed rule. When a usable
+mask is available (Model Armor `sdp_action: anonymize` with a missing `block_on` filter),
+it is still applied: the decision is `anonymized` and the event also carries
+`failure_reason: verdict_incomplete`.
+
+One deliberate exception stays fail-closed: in enforce, when Model Armor or Bedrock flags
+sensitive data in an anonymize configuration but returns no masked output
+(`degraded_reason: anonymize_no_output`, `reasonAnonymizeNoOutput`), the request is blocked,
+because the provider confirmed the data and gave the gateway no way to mask it. The same
+applies to the other degraded reasons (unsupported format, encode failure).
+
 **Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
 and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
 `failure_reason` used to carry `filter_not_in_template` / `filter_not_executed`; those
@@ -374,11 +390,11 @@ values now travel in `failure_detail`, next to `failure_reason: verdict_incomple
 ### Counter-store (rate-limit / budget) failures
 
 `rate_limiter`, `per_tool_rate_limiter` and `token_rate_limiter` all read and write a
-counter in Redis on every call. Unlike the external guardrails above, an outage here is
+counter in Redis on every call. An outage here is
 **TrustGate's own infrastructure**, not a third party the operator asked to gate traffic:
 the product rule is that our own infrastructure fails open, in every mode, enforce
-included — only a third-party guardrail earns a fail-closed refusal. So, unlike the
-external guardrails' enforce/observe split, there is no mode-dependent branch here at all:
+included. The external guardrails above follow the same rule, so no mode-dependent branch
+exists for either:
 
 | Mode | `decision` | Request |
 |------|------------|---------|

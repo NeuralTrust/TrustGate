@@ -705,7 +705,7 @@ func newGuardrailStylePlugin(name string) *fakePlugin {
 	}
 }
 
-func TestExecutor_RunStage_EnforceGuardrailFailureStopsChain(t *testing.T) {
+func TestExecutor_RunStage_EnforceGuardrailFailureLetsLaterPluginRun(t *testing.T) {
 	calls := int32(0)
 	guardrail := newGuardrailStylePlugin("guardrail")
 	after := &fakePlugin{
@@ -726,11 +726,9 @@ func TestExecutor_RunStage_EnforceGuardrailFailureStopsChain(t *testing.T) {
 		Policies: pols,
 		Response: &infracontext.ResponseContext{},
 	})
-	require.Nil(t, out)
-	pe, ok := AsPluginError(err)
-	require.True(t, ok, "expected a *PluginError from the failed-closed guardrail, got %v", err)
-	assert.Equal(t, 502, pe.StatusCode)
-	assert.Equal(t, int32(0), atomic.LoadInt32(&calls), "a later plugin must not run once enforce fails the chain closed")
+	require.NoError(t, err)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "RUN-1792: enforce fails open too, so the later plugin still runs")
 }
 
 func TestExecutor_RunStage_ObserveGuardrailFailureLetsLaterPluginRun(t *testing.T) {
