@@ -19,12 +19,19 @@ import (
 )
 
 type ResponseContext struct {
-	GatewayID     string
-	RegistryID    string
-	Headers       map[string][]string
-	Body          []byte
-	StatusCode    int
-	Streaming     bool
+	GatewayID  string
+	RegistryID string
+	Headers    map[string][]string
+	Body       []byte
+	StatusCode int
+	Streaming  bool
+	// StreamCut is set by the proxy, and only there, when a stream guard cut
+	// the response mid-stream: what was delivered ends on the cut terminator
+	// and nothing after the cut reached the client. It is read at
+	// post_response so a plugin does not re-inspect, and report on, a body
+	// that was already blocked. Nothing derived from the request or the
+	// upstream response can set it.
+	StreamCut     bool
 	TargetLatency float64
 	ProcessAt     *time.Time
 	// Metadata carries values plugins pass across stages within a single

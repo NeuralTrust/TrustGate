@@ -80,6 +80,12 @@ const (
 	// the guard, so the label would be optimistic. No plugin produces that on
 	// a stream today.
 	skipReasonInspectedAsStream = "inspected_as_stream"
+	// skipReasonStreamCut marks the post_response leg of a stream the stream
+	// guard cut mid-way. What was delivered ends on the cut terminator and
+	// nothing after the cut reached the client; the guard's own entry already
+	// says "blocked". Inspecting the truncated body again would only record
+	// "allowed" right after it, so the leg is skipped. Not a coverage gap.
+	skipReasonStreamCut = "stream_cut"
 )
 
 // Why a streamed leg stopped being inspected the way the policy asked. The
@@ -937,6 +943,12 @@ func outputInspectSkipReason(stage policy.Stage, resp *infracontext.ResponseCont
 	case policy.StagePostResponse:
 		if !resp.Streaming {
 			return skipReasonStreamingMismatch
+		}
+		// The body is the truncated one the client got; the stream guard that
+		// cut it already reported. Checked before the empty-body test so a cut
+		// never reads as "no body".
+		if resp.StreamCut {
+			return skipReasonStreamCut
 		}
 	default:
 		return skipReasonStreamingMismatch
