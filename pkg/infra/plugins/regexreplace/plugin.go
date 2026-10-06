@@ -31,6 +31,7 @@ var _ appplugins.Plugin = (*Plugin)(nil)
 type Plugin struct {
 	registry *adapter.Registry
 	logger   *slog.Logger
+	cfgCache configCache
 }
 
 func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
@@ -74,7 +75,7 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	cfg, err := parseConfig(in.Config.Settings)
+	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("regex_replace: %w", err)
 	}
