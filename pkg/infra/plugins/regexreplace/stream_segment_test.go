@@ -32,6 +32,11 @@ func emailRule() map[string]any {
 	return map[string]any{"pattern": `\S+@\S+\.\w+`, "replacement": "[EMAIL]"}
 }
 
+func withStreaming(set map[string]any, streaming map[string]any) map[string]any {
+	set["streaming"] = streaming
+	return set
+}
+
 func streamSettings(target string, rules ...map[string]any) map[string]any {
 	set := settings(target, rules...)
 	set["streaming"] = map[string]any{"enabled": true}
@@ -61,7 +66,10 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block", settings(targetResponse, cardRule()), false},
+		{"absent block is on by default", settings(targetResponse, cardRule()), true},
+		{"empty block is on by default", withStreaming(settings(targetResponse, cardRule()), map[string]any{}), true},
+		{"tuning keys alone keep the default", withStreaming(settings(targetResponse, cardRule()), map[string]any{"head_chars": 100}), true},
+		{"absent block on a request policy", settings(targetRequest, cardRule()), false},
 		{"enabled on the response", streamSettings(targetResponse, cardRule()), true},
 		{
 			"enabled on the request",
@@ -72,6 +80,16 @@ func TestStreamSettingsOptIn(t *testing.T) {
 			"explicitly disabled",
 			map[string]any{"target": targetResponse, "rules": []map[string]any{cardRule()},
 				"streaming": map[string]any{"enabled": false}},
+			false,
+		},
+		{
+			"absent block but the rules do not parse",
+			map[string]any{"target": targetResponse, "rules": []map[string]any{{"pattern": "(", "replacement": "x"}}},
+			false,
+		},
+		{
+			"absent block but there are no rules",
+			map[string]any{"target": targetResponse},
 			false,
 		},
 		{
@@ -159,25 +177,45 @@ func TestInspectSegmentReportsNoTransformWhenNothingMatched(t *testing.T) {
 	}
 }
 
-func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
+func TestInspectSegmentIsInertWhenStreamingIsDisabled(t *testing.T) {
 	t.Parallel()
 	p := New(nil, nil)
 
 	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, settings(targetResponse, cardRule()), nil),
+		streamInput(policy.ModeEnforce, withStreaming(settings(targetResponse, cardRule()), map[string]any{"enabled": false}), nil),
 		segment(1, "the card is 4111111111111111"))
 
 	if err != nil {
 		t.Fatalf("InspectSegment: %v", err)
 	}
 	if got.HasTransform || got.Block {
-		t.Errorf("a policy that did not opt in must do nothing, got %+v", got)
+		t.Errorf("a policy that opted out must do nothing, got %+v", got)
 	}
 }
 
+// A request-only policy has no business on the response, and streaming being on
+// by default must not change that, with or without the key.
 func TestInspectSegmentIgnoresARequestTargetedPolicy(t *testing.T) {
 	t.Parallel()
 	p := New(nil, nil)
+
+	for name, set := range map[string]map[string]any{
+		"streaming enabled explicitly": streamSettings(targetRequest, cardRule()),
+		"streaming absent":             settings(targetRequest, cardRule()),
+	} {
+		got, err := p.InspectSegment(context.Background(),
+			streamInput(policy.ModeEnforce, set, nil),
+			segment(1, "the card is 4111111111111111"))
+		if err != nil {
+			t.Fatalf("%s: InspectSegment: %v", name, err)
+		}
+		if got.HasTransform {
+			t.Errorf("%s: a request-targeted policy must not rewrite the response", name)
+		}
+	}
+	if ok, _ := p.StreamSettings(settings(targetRequest, cardRule())); ok {
+		t.Error("a request-targeted policy must not join a stream guard")
+	}
 
 	got, err := p.InspectSegment(context.Background(),
 		streamInput(policy.ModeEnforce, streamSettings(targetRequest, cardRule()), nil),

@@ -187,6 +187,25 @@ type StreamInspector interface {
 	StreamSettings(settings map[string]any) (bool, StreamOptions)
 }
 
+// StreamOptionsOwner is the optional declaration of a StreamInspector that is a
+// passive participant: it rewrites or reads blocks but must not set the
+// stream-wide options. One stream carries one head gate, one cadence and one
+// failure direction, so whichever entry owns them decides how every other
+// participant's stream behaves. A local rewriter that owned them would flip a
+// third-party guardrail's chosen on_error and cadence just by sorting first.
+//
+// An inspector that does not implement it owns its options.
+type StreamOptionsOwner interface {
+	OwnsStreamOptions() bool
+}
+
+func ownsStreamOptions(d PluginDescriptor) bool {
+	if o, ok := d.(StreamOptionsOwner); ok {
+		return o.OwnsStreamOptions()
+	}
+	return true
+}
+
 // SegmentOutcome is the executor's consolidated answer across the chain for one
 // StreamSegment. Fingerprints carries what every entry reported on the segment,
 // each tagged with the entry that reported it.
