@@ -182,6 +182,17 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 		require.ErrorIs(t, err, appconsumer.ErrAPIKeyUnknown)
 	})
 
+	t.Run("an expired key", func(t *testing.T) {
+		t.Parallel()
+		keys := appauthmocks.NewAPIKeyFinder(t)
+		keys.EXPECT().FindByAPIKey(ctx, "ag_old").Return(nil, authdomain.ErrExpired).Once()
+
+		service, _ := appconsumer.NewAPIKeyConsumers(appconsumermocks.NewDataFinder(t), keys, nil)
+		_, err := service.ForAPIKey(ctx, gatewayID, "ag_old")
+
+		require.ErrorIs(t, err, appconsumer.ErrAPIKeyUnknown)
+	})
+
 	t.Run("no key at all", func(t *testing.T) {
 		t.Parallel()
 		service, _ := appconsumer.NewAPIKeyConsumers(
