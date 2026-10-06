@@ -149,10 +149,11 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 	}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/api-key/mcp":      {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID), Auths: []*authdomain.Auth{apiKey}}},
-		"/bare/mcp":         {{GatewayID: gatewayID}},
+		"/bare/mcp":         {{GatewayID: gatewayID, Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}},
 		"/nil-consumer/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
 	}}
-	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}}, paths, nil, newMemFlowStore())
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg"})
+	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}, defaultIdP: def}, paths, nil, newMemFlowStore())
 
 	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/api-key/mcp")
 	if err != nil {
@@ -173,7 +174,7 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 		t.Fatalf("expected no authorization server without a resolved consumer, got %v", meta.AuthorizationServers)
 	}
 
-	// A consumer with no credential of its own still reaches the fallback.
+	// A sign-in consumer with no credential of its own still reaches the default.
 	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/bare/mcp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -183,15 +184,16 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 	}
 }
 
-// A consumer that acts on behalf of end users brokers logins even when a
-// residual api key is still linked: RUN-1501 had it advertised as
-// credential protected, so clients got neither an authorization server nor
-// scopes and could not sign in at all.
-func TestProtectedResourceMetadataActsForUsersConsumerWithResidualAPIKey(t *testing.T) {
+// An enabled api key on a sign-in consumer is a way in the auth chain honours,
+// and while it is there the chain refuses the built-in default: advertising a
+// login would walk the client through a session it can never use. A disabled
+// key does not count, so the default is advertised again once it is the only
+// one left.
+func TestProtectedResourceMetadataSignInConsumerWithAPIKeyAdvertisesNoLogin(t *testing.T) {
 	t.Parallel()
-	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
-	gatewayID := idp.GatewayID
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "residual", true, nil)
+	gatewayID := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg"})
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}
@@ -199,24 +201,27 @@ func TestProtectedResourceMetadataActsForUsersConsumerWithResidualAPIKey(t *test
 	if err != nil {
 		t.Fatalf("build disabled api key auth: %v", err)
 	}
+	store := consumerdomain.BuildStoreConsumer(gatewayID)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/users/mcp": {{
-			GatewayID: gatewayID,
-			Consumer:  consumerdomain.BuildStoreConsumer(gatewayID),
-			Auths:     []*authdomain.Auth{apiKey, disabledKey},
-		}},
+		"/with-key/mcp":     {{GatewayID: gatewayID, Consumer: store, Auths: []*authdomain.Auth{apiKey, disabledKey}}},
+		"/disabled-key/mcp": {{GatewayID: gatewayID, Consumer: store, Auths: []*authdomain.Auth{disabledKey}}},
 	}}
-	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}}, paths, nil, newMemFlowStore())
+	svc := NewMetadataService(&fakeCredentialFinder{defaultIdP: def}, paths, nil, newMemFlowStore())
 
-	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/users/mcp")
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/with-key/mcp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 0 || len(meta.ScopesSupported) != 0 {
+		t.Fatalf("expected no login while the api key is enabled, got %v %v", meta.AuthorizationServers, meta.ScopesSupported)
+	}
+
+	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/disabled-key/mcp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "https://gw.example.com" {
 		t.Fatalf("expected the gateway as authorization server, got %v", meta.AuthorizationServers)
-	}
-	if len(meta.ScopesSupported) != 1 || meta.ScopesSupported[0] != "mcp:use" {
-		t.Fatalf("expected the gateway IdP scopes, got %v", meta.ScopesSupported)
 	}
 }
 
@@ -266,11 +271,12 @@ func TestProtectedResourceMetadataAppSourceConsumerAdvertisesNoLogin(t *testing.
 	}
 }
 
-// The protected-resource document is unauthenticated, so the fallback taken
-// when the matched consumer pinned no provider must be scoped to that
-// consumer's gateway. The platform-wide lookup published the union of every
-// tenant's RequiredScopes here (RUN-1501).
-func TestProtectedResourceMetadataFallbackDoesNotLeakOtherGatewayScopes(t *testing.T) {
+// The protected-resource document is unauthenticated. For a consumer that
+// pinned no provider and has no built-in default to fall back to, it names no
+// operator IdP at all, this gateway's or another tenant's: the auth chain
+// admits neither, and the platform-wide lookup once published the union of
+// every tenant's RequiredScopes here (RUN-1501).
+func TestProtectedResourceMetadataAdvertisesNoUnattachedOperatorIdP(t *testing.T) {
 	t.Parallel()
 	ourIdP := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://ours.example.com", RequiredScopes: []string{"ours:use"}})
 	otherIdP := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://theirs.example.com", RequiredScopes: []string{"theirs:secret-project"}})
@@ -286,8 +292,8 @@ func TestProtectedResourceMetadataFallbackDoesNotLeakOtherGatewayScopes(t *testi
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(meta.ScopesSupported) != 1 || meta.ScopesSupported[0] != "ours:use" {
-		t.Fatalf("expected only this gateway's scopes, got %v", meta.ScopesSupported)
+	if len(meta.AuthorizationServers) != 0 || len(meta.ScopesSupported) != 0 {
+		t.Fatalf("expected no operator IdP advertised, got %v %v", meta.AuthorizationServers, meta.ScopesSupported)
 	}
 }
 

@@ -605,47 +605,39 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	}
 }
 
-// When the resource pins a consumer that has no OAuth2 auth of its own and the
-// built-in default IdP is not configured, the fallback is the gateway's own
-// operator IdP, scoped to that consumer's gateway: a different tenant's IdP
-// must not turn the lookup ambiguous. With a default configured the default
-// wins instead (TestAuthForResource_UnpinnedSignInConsumerBrokersDefault).
-func TestAuthorizeResourceFallsBackToGatewayScopedIdPWithoutDefault(t *testing.T) {
+// A sign-in consumer with no identity provider of its own is admitted by the
+// auth chain only through the built-in default. Without one configured, the
+// gateway's operator IdP is not a fallback: its session would be refused on
+// every request and the client would loop on 401, so the refusal goes back to
+// the client and no IdP is contacted.
+func TestAuthorizeResourceRefusesUnattachedGatewayIdP(t *testing.T) {
 	t.Parallel()
-	idpGateway, _ := fakeIdP(t)
-	idpOtherTenant, capturedOther := fakeIdP(t)
+	idpGateway, capturedGateway := fakeIdP(t)
 	gatewayID := ids.New[ids.GatewayKind]()
 
 	gatewayAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpGateway.URL, ClientID: "client-gw"})
 	gatewayAuth.GatewayID = gatewayID
-	otherTenantAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOtherTenant.URL, ClientID: "client-other"})
 
-	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherTenantAuth}}
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth}}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
+		"/cons/mcp": {{GatewayID: gatewayID, Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}},
 	}}
 	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "client-gw",
-		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		RedirectURI:         "https://client.example.com/cb",
 		CodeChallenge:       s256("v"),
 		CodeChallengeMethod: "S256",
 		Resource:            "http://gw.example.com/cons/mcp",
 	})
 	if err != nil {
-		t.Fatalf("authorize must resolve the gateway's single IdP, got %v", err)
+		t.Fatalf("the refusal is the client's to hear about: %v", err)
 	}
-	loc, err := url.Parse(location)
-	if err != nil {
-		t.Fatalf("parse redirect: %v", err)
-	}
-	if got := loc.Scheme + "://" + loc.Host; got != idpGateway.URL {
-		t.Fatalf("authorize must redirect to the gateway IdP, got %s (want %s)", got, idpGateway.URL)
-	}
-	if len(*capturedOther) != 0 {
-		t.Fatalf("another tenant's IdP must never be contacted, got %v", *capturedOther)
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
+	if len(*capturedGateway) != 0 {
+		t.Fatalf("the unattached gateway IdP must not be contacted, got %v", *capturedGateway)
 	}
 }
 
@@ -786,7 +778,7 @@ func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a consumer without oauth2 is the client's to hear about: %v", err)
 	}
-	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_request")
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
 }
 
 // Multiple IdPs without a resource indicator cannot be disambiguated: the
