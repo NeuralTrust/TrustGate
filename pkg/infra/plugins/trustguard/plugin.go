@@ -67,6 +67,13 @@ const (
 	// clean, which is the same gap skipReasonEmptyResponseBody closed on the
 	// buffered leg.
 	skipReasonProviderNotStreaming = "provider_not_streaming"
+	// skipReasonInspectedAsStream marks the pre_response leg of a streamed
+	// response whose policy opted into per-block inspection. That leg runs when
+	// only the headers have arrived, so it has nothing to read by design: the
+	// response is inspected block by block by the stream guard, which writes its
+	// own entry, and once more after the drain. It is not a gap, and it must not
+	// read as one ("the response had no body").
+	skipReasonInspectedAsStream = "inspected_as_stream"
 )
 
 // Why a streamed leg stopped being inspected the way the policy asked. The
@@ -390,6 +397,13 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	}
 }
 
+// streamGuardOwns reports whether this policy's streamed response is inspected
+// block by block, so its header-only pre_response leg has nothing left to do.
+func (p *Plugin) streamGuardOwns(in appplugins.ExecInput) bool {
+	enabled, _ := p.StreamSettings(in.Config.Settings)
+	return enabled
+}
+
 func (p *Plugin) inspectionPayload(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -425,7 +439,7 @@ func (p *Plugin) mcpInspectionPayload(
 		}
 		return payload, tgt, false
 	}
-	if reason := outputInspectSkipReason(in.Stage, in.Response); reason != "" {
+	if reason := outputInspectSkipReason(in.Stage, in.Response, p.streamGuardOwns(in)); reason != "" {
 		return p.skipInspection(ctx, in, tgt, direction, reason)
 	}
 	if !mcpOutputInspectable(in.Response.Body) {
@@ -491,7 +505,7 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		return payload, tgt, false
 	}
-	if reason := outputInspectSkipReason(in.Stage, in.Response); reason != "" {
+	if reason := outputInspectSkipReason(in.Stage, in.Response, p.streamGuardOwns(in)); reason != "" {
 		return p.skipInspection(ctx, in, tgt, direction, reason)
 	}
 	response, tools := p.canonicalResponse(in, format)
@@ -888,17 +902,26 @@ func protocolFor(consumerType string) string {
 }
 
 // outputInspectSkipReason returns why this response leg is not inspected, or ""
-// when it is. It replaces a bool so the two very different causes — there was no
-// body at all, versus this stage does not handle this streaming mode — stop
-// being reported as the same thing. Behaviour is unchanged; only the caller's
-// ability to say why is new.
-func outputInspectSkipReason(stage policy.Stage, resp *infracontext.ResponseContext) string {
-	if resp == nil || len(resp.Body) == 0 {
+// when it is. The causes are kept apart because they mean different things to
+// whoever reads the trace: there was no body at all, this stage does not handle
+// this streaming mode, or the response is being inspected by another leg.
+//
+// streamGuard says the policy opted into per-block inspection of the response
+// (see StreamSettings). The stage/mode check runs before the empty-body check
+// on purpose: a streamed pre_response leg runs when only the headers have
+// arrived, so its body is empty by construction, and reading that as
+// "empty_response_body" told operators a response the stream guard had
+// inspected block by block, and sometimes cut, "had no body" (RUN-1759).
+func outputInspectSkipReason(stage policy.Stage, resp *infracontext.ResponseContext, streamGuard bool) string {
+	if resp == nil {
 		return skipReasonEmptyResponseBody
 	}
 	switch stage {
 	case policy.StagePreResponse:
 		if resp.Streaming {
+			if streamGuard {
+				return skipReasonInspectedAsStream
+			}
 			return skipReasonStreamingMismatch
 		}
 	case policy.StagePostResponse:
@@ -907,6 +930,9 @@ func outputInspectSkipReason(stage policy.Stage, resp *infracontext.ResponseCont
 		}
 	default:
 		return skipReasonStreamingMismatch
+	}
+	if len(resp.Body) == 0 {
+		return skipReasonEmptyResponseBody
 	}
 	return ""
 }

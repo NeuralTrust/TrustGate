@@ -2060,47 +2060,69 @@ func TestOutputInspectSkipReason(t *testing.T) {
 		name  string
 		stage policy.Stage
 		resp  *infracontext.ResponseContext
-		want  string
+		// streamGuard is whether the policy opted into per-block inspection.
+		streamGuard bool
+		want        string
 	}{
-		{"nil response", policy.StagePreResponse, nil, skipReasonEmptyResponseBody},
-		{"empty body", policy.StagePreResponse, &infracontext.ResponseContext{}, skipReasonEmptyResponseBody},
+		{"nil response", policy.StagePreResponse, nil, false, skipReasonEmptyResponseBody},
+		{"empty buffered body", policy.StagePreResponse, &infracontext.ResponseContext{}, false, skipReasonEmptyResponseBody},
+		{"empty buffered body with the stream guard on", policy.StagePreResponse, &infracontext.ResponseContext{}, true, skipReasonEmptyResponseBody},
+		{"pre-response handles the non-streaming leg", policy.StagePreResponse, &infracontext.ResponseContext{Body: body}, false, ""},
+		{"pre-response does not handle a stream", policy.StagePreResponse, &infracontext.ResponseContext{Body: body, Streaming: true}, false, skipReasonStreamingMismatch},
 		{
-			"pre-response handles the non-streaming leg",
-			policy.StagePreResponse,
-			&infracontext.ResponseContext{Body: body},
-			"",
+			"header-only streamed pre-response, stream guard off, is a stage mismatch",
+			policy.StagePreResponse, &infracontext.ResponseContext{Streaming: true}, false, skipReasonStreamingMismatch,
 		},
 		{
-			"pre-response does not handle a stream",
-			policy.StagePreResponse,
-			&infracontext.ResponseContext{Body: body, Streaming: true},
-			skipReasonStreamingMismatch,
+			"header-only streamed pre-response, stream guard on, is inspected as a stream",
+			policy.StagePreResponse, &infracontext.ResponseContext{Streaming: true}, true, skipReasonInspectedAsStream,
 		},
-		{
-			"post-response handles the stream",
-			policy.StagePostResponse,
-			&infracontext.ResponseContext{Body: body, Streaming: true},
-			"",
-		},
-		{
-			"post-response does not handle the non-streaming leg",
-			policy.StagePostResponse,
-			&infracontext.ResponseContext{Body: body},
-			skipReasonStreamingMismatch,
-		},
-		{
-			"a request stage never inspects output",
-			policy.StagePreRequest,
-			&infracontext.ResponseContext{Body: body},
-			skipReasonStreamingMismatch,
-		},
+		{"post-response handles the stream", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true}, true, ""},
+		{"post-response streamed with nothing drained is an empty body", policy.StagePostResponse, &infracontext.ResponseContext{Streaming: true}, true, skipReasonEmptyResponseBody},
+		{"post-response does not handle the non-streaming leg", policy.StagePostResponse, &infracontext.ResponseContext{Body: body}, true, skipReasonStreamingMismatch},
+		{"a request stage never inspects output", policy.StagePreRequest, &infracontext.ResponseContext{Body: body}, false, skipReasonStreamingMismatch},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := outputInspectSkipReason(tc.stage, tc.resp); got != tc.want {
+			if got := outputInspectSkipReason(tc.stage, tc.resp, tc.streamGuard); got != tc.want {
 				t.Fatalf("outputInspectSkipReason() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// RUN-1759: with the stream guard off, a streamed pre_response leg is a plain
+// stage mismatch (post_response inspects the drained body); with it on, the
+// leg is reported as handed to the stream guard.
+func TestStreamedPreResponseLegReasonFollowsStreamingSetting(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		streaming map[string]any
+		want      string
+	}{
+		{"default settings opt into the stream guard", nil, skipReasonInspectedAsStream},
+		{"streaming disabled", map[string]any{"enabled": false}, skipReasonStreamingMismatch},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := newTestPlugin(t, adapter.NewRegistry(), "")
+			set := settings("")
+			if tc.streaming != nil {
+				set["streaming"] = tc.streaming
+			}
+			event, span := newEvent()
+			in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, set, requestContext(), &infracontext.ResponseContext{Streaming: true}, event)
+			if _, _, skipped := p.llmInspectionPayload(context.Background(), in, directionOutput); !skipped {
+				t.Fatal("expected the leg to be skipped")
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			if !ok || extras.SkipReason != tc.want {
+				t.Fatalf("extras = %+v, want skip_reason %q", span.PluginAttrsCopy().Extras, tc.want)
 			}
 		})
 	}
@@ -2145,7 +2167,7 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 			direction: directionOutput,
 			stage:     policy.StagePreResponse,
 			resp:      &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"text","text":"hi"}]}`), Streaming: true},
-			want:      skipReasonStreamingMismatch,
+			want:      skipReasonInspectedAsStream,
 		},
 		{
 			name:      "mcp result carries nothing inspectable",
@@ -2161,6 +2183,37 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 			stage:     policy.StagePreResponse,
 			resp:      &infracontext.ResponseContext{},
 			want:      skipReasonEmptyResponseBody,
+		},
+		{
+			// RUN-1759: the stream guard inspects this response block by block,
+			// so a header-only pre_response leg is not "no body".
+			name:      "llm streamed pre_response leg is handed to the stream guard",
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{Streaming: true},
+			want:      skipReasonInspectedAsStream,
+		},
+		{
+			name:      "mcp streamed pre_response leg is handed to the stream guard",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{Streaming: true},
+			want:      skipReasonInspectedAsStream,
+		},
+		{
+			name:      "llm streamed post_response with nothing drained is an empty body",
+			direction: directionOutput,
+			stage:     policy.StagePostResponse,
+			resp:      &infracontext.ResponseContext{Streaming: true},
+			want:      skipReasonEmptyResponseBody,
+		},
+		{
+			name:      "llm buffered post_response is a stage mismatch",
+			direction: directionOutput,
+			stage:     policy.StagePostResponse,
+			resp:      &infracontext.ResponseContext{Body: []byte(`{"choices":[]}`)},
+			want:      skipReasonStreamingMismatch,
 		},
 	}
 	for _, tc := range cases {
