@@ -33,6 +33,10 @@ type chainEntry struct {
 	mutatesMeta  bool
 	readsContent bool
 	local        bool
+	// streamWindow is the entry's own streaming.max_accumulated_bytes. The
+	// stream-wide window belongs to one entry (StreamPlan), so without it a
+	// policy could not bound what its own provider receives.
+	streamWindow int
 }
 
 // rewritesAt reports whether the entry rewrites the content the given stage

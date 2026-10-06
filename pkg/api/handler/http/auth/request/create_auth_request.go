@@ -50,6 +50,7 @@ type OAuth2ConfigRequest struct {
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
 	RequiredScopes   []string `json:"required_scopes,omitempty"`
+	LoginScopes      []string `json:"login_scopes,omitempty"`
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
 	SessionMode      bool     `json:"session_mode,omitempty"`
 	UserInfoURL      string   `json:"userinfo_url,omitempty"`
@@ -129,6 +130,7 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     c.OAuth2.ClientSecret,
 			RequiredScopes:   c.OAuth2.RequiredScopes,
+			LoginScopes:      c.OAuth2.LoginScopes,
 			Algorithms:       c.OAuth2.Algorithms,
 			SessionMode:      c.OAuth2.SessionMode,
 			UserInfoURL:      c.OAuth2.UserInfoURL,
