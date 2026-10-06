@@ -32,9 +32,10 @@ import (
 // building it from released text would hide a finding split across the block in
 // flight and the one being inspected. Text is the delta of this block alone;
 // Reasoning and ToolCalls are cumulative like Accumulated, not per-block
-// deltas. Truncated says the guard hit its accumulation cap and swapped
-// Accumulated from a full prefix to a tail window, so the plugin can carry the
-// distinction onto the wire envelope the engine reads.
+// deltas. Truncated says Accumulated is a tail window rather than a full
+// prefix, because the guard hit its accumulation cap or the entry's own
+// max_accumulated_bytes is smaller, so the plugin can carry the distinction
+// onto the wire envelope the engine reads.
 type StreamSegment struct {
 	StreamID    string
 	Seq         int

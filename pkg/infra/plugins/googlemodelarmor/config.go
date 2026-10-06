@@ -81,18 +81,28 @@ type Credentials struct {
 // client sets stream: true is not a guardrail. A policy opts out with
 // streaming.enabled: false.
 //
-// MaxAccumulatedBytes matches Model Armor's documented screening limit of
-// 65,536 tokens (about 262,144 characters) for the prompt injection, Responsible
-// AI and CSAM filters. Past it a filter answers EXECUTION_SKIPPED.
+// MaxAccumulatedBytes is maxSanitizeBytes, below Model Armor's documented
+// screening limit of 65,536 tokens for the prompt injection, Responsible AI and
+// CSAM filters. Past it a filter answers EXECUTION_SKIPPED.
 // https://docs.cloud.google.com/model-armor/quotas
 var streamingDefaults = pluginutil.StreamingDefaults{
 	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
-	MaxAccumulatedBytes:  262144,
+	MaxAccumulatedBytes:  maxSanitizeBytes,
 	GuardTimeout:         2 * time.Second,
 }
+
+// maxSanitizeBytes caps the streaming window. Model Armor screens at most
+// 65,536 tokens and skips a filter above that, which this plugin counts as a
+// filter that did not run: a longer payload is a cut on fail_closed and a block
+// released uninspected on fail_open. About 262,144 characters of English fit in
+// 65,536 tokens, but code and most other languages take more tokens per byte; a
+// token covers at least one byte, so 64 KiB stays under the limit in any
+// language. The limit is Google's and cannot be raised. Only a block whose own
+// new text exceeds it is sent larger (segmentWithin).
+const maxSanitizeBytes = 65536
 
 type Settings struct {
 	Project     string      `mapstructure:"project"`

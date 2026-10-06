@@ -213,9 +213,11 @@ const (
 //     fail_open is absorbed per entry, like an observe one. So the merge is
 //     what makes the guard CUT on a fail_closed entry's error, and it can no
 //     longer cut on behalf of a fail_open entry that failed beside it.
-//   - max_accumulated_bytes is the smallest any participant asks for, passive
-//     ones included: a larger prefix than one provider accepts is unguarded for
-//     that provider, whereas a smaller window only costs the others context.
+//   - max_accumulated_bytes is the largest any participant asks for, passive
+//     ones included, and the executor narrows each entry to its own
+//     (segmentWithin). No provider receives a larger prefix than its policy
+//     allows, and a provider with a small per-request limit does not shrink
+//     the context every other policy inspects (RUN-1745 F10).
 //
 // A passive participant (StreamOptionsOwner returning false, such as a local
 // rewriter) yields to any owner, whatever the order, and its own options are
@@ -241,9 +243,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		if !enabled {
 			continue
 		}
-		if opts.MaxAccumulatedBytes > 0 && (maxBytes == 0 || opts.MaxAccumulatedBytes < maxBytes) {
-			maxBytes = opts.MaxAccumulatedBytes
-		}
+		maxBytes = max(maxBytes, opts.MaxAccumulatedBytes)
 		if !ownsStreamOptions(entry.plugin) {
 			if !hasPassive {
 				passive, hasPassive = opts, true
@@ -375,7 +375,8 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 // stream's per-response instruments to an entry that records none, and let a
 // policy whose settings no longer parse fail every block of a stream another
 // policy opted into (F8). The opt-in reads only the policy's settings, so it
-// is answered once when the plan is built. The result is never nil.
+// is answered once when the plan is built, together with the entry's own
+// window. The result is never nil.
 func streamParticipants(entries []chainEntry) []chainEntry {
 	out := make([]chainEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -383,7 +384,8 @@ func streamParticipants(entries []chainEntry) []chainEntry {
 		if !ok {
 			continue
 		}
-		if enabled, _ := inspector.StreamSettings(entry.config.Settings); enabled {
+		if enabled, opts := inspector.StreamSettings(entry.config.Settings); enabled {
+			entry.streamWindow = opts.MaxAccumulatedBytes
 			out = append(out, entry)
 		}
 	}
