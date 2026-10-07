@@ -881,9 +881,9 @@ func TestWarner_Overlaps_OwnedAPIKeysDoNotWarn(t *testing.T) {
 	ownedID := ids.New[ids.AuthKind]()
 	p := groupScopedPolicy(gwID, "trustguard", "Finanzas", consumerID)
 	auths := authmocks.NewRepository(t)
-	auths.EXPECT().ListEnabledByGatewayAndType(mock.Anything, gwID, authdomain.TypeAPIKey).Return([]*authdomain.Auth{
-		{ID: ownedID, GatewayID: gwID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice"},
-	}, nil).Once()
+	// The repository lists application credentials only, so the personal key
+	// the consumer holds is not among them.
+	auths.EXPECT().ListEnabledByGatewayAndType(mock.Anything, gwID, authdomain.TypeAPIKey).Return([]*authdomain.Auth{}, nil).Once()
 
 	w := warnerOverAuths(t, gwID,
 		[]*consumerdomain.Consumer{mcpConsumerWithAuths(gwID, consumerID, ownedID)},

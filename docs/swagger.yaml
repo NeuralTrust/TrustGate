@@ -125,6 +125,24 @@ definitions:
       expires_at:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest:
+    properties:
+      max:
+        example: 50
+        type: number
+      time_window:
+        enum:
+        - calendar_month
+        - calendar_day
+        example: calendar_month
+        type: string
+      unit:
+        enum:
+        - tokens
+        - dollars
+        example: dollars
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest:
     properties:
       config:
@@ -157,6 +175,11 @@ definitions:
       api_key:
         description: '#nosec G101'
         type: string
+      budget:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse'
+        description: Budget is the spending limit of a personal key. Absent means
+          it has none.
       config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse'
       consumers:
@@ -200,6 +223,21 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse:
+    properties:
+      max:
+        type: number
+      time_window:
+        enum:
+        - calendar_month
+        - calendar_day
+        type: string
+      unit:
+        enum:
+        - tokens
+        - dollars
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ListAuthResponse:
     properties:
@@ -2198,6 +2236,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse:
     properties:
+      api_key:
+        type: string
       consumer_ids:
         items:
           type: string
@@ -2209,8 +2249,6 @@ definitions:
       expires_at:
         type: string
       id:
-        type: string
-      key:
         type: string
       key_prefix:
         type: string
@@ -3941,7 +3979,9 @@ paths:
       - gateways
   /v1/gateways/{gateway_id}/auths:
     get:
-      description: Returns a paginated list of auths in a gateway.
+      description: Returns a paginated list of auths in a gateway. Personal (owned)
+        keys are excluded unless owner_id or owned=true asks for them; each owned
+        key carries owner_id and, when it has one, its budget.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3970,6 +4010,11 @@ paths:
         in: query
         name: owner_id
         type: string
+      - description: true lists only personal keys, of every owner; false lists only
+          application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)
+        in: query
+        name: owned
+        type: boolean
       - description: Sort field (name, created_at, updated_at, type)
         in: query
         name: sort
@@ -4190,6 +4235,67 @@ paths:
       security:
       - BearerAuth: []
       summary: Update an auth
+      tags:
+      - auths
+  /v1/gateways/{gateway_id}/auths/{id}/budget:
+    put:
+      consumes:
+      - application/json
+      description: 'Sets or clears the spending limit of a personal (owned) key. The
+        body is {"max": <number>, "unit": "tokens" or "dollars", "time_window": "calendar_month"
+        or "calendar_day"}, or null to clear the budget. max must be a finite number
+        above zero, and a whole number of tokens when unit is tokens. Every token_rate_limiter
+        policy with key_budgets that counts in that unit holds the key to this budget
+        in place of its aggregate; a policy counting in the other unit keeps its own
+        limit. The secret, the expiry and the consumers of the key do not change,
+        and a rotation keeps the budget. An application key answers 422 application_key;
+        an invalid body answers 422 validation_failed.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The budget, or null to clear it
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: An application key (application_key), or an invalid budget
+            (validation_failed)
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Set the budget of a personal key
       tags:
       - auths
   /v1/gateways/{gateway_id}/auths/{id}/rotate:

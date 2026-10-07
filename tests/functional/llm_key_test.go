@@ -32,7 +32,7 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	status, created := CreateLLMKey(t, gwID, alice, body)
 	require.Equal(t, http.StatusCreated, status, "body=%v", created)
 	keyID := fmt.Sprint(created["id"])
-	assert.True(t, strings.HasPrefix(fmt.Sprint(created["key"]), "ag_"), "create returns the secret once: %v", created)
+	assert.True(t, strings.HasPrefix(fmt.Sprint(created["api_key"]), "ag_"), "create returns the secret once: %v", created)
 	assert.Equal(t, []any{}, created["consumer_ids"])
 
 	status, got := GetLLMKey(t, gwID, alice)
@@ -47,7 +47,7 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	status, rotated := RotateLLMKey(t, gwID, alice, llmKeyExpiry(89*llmKeyDay))
 	require.Equal(t, http.StatusOK, status, "body=%v", rotated)
 	assert.Equal(t, keyID, rotated["id"], "rotate keeps the auth id")
-	assert.NotEqual(t, created["key"], rotated["key"])
+	assert.NotEqual(t, created["api_key"], rotated["api_key"])
 	assert.NotEqual(t, created["expires_at"], rotated["expires_at"])
 
 	status, _ = GetLLMKey(t, gwID, bob)
@@ -121,7 +121,7 @@ func TestLLMKey_AdminBudgetAndOwnedList(t *testing.T) {
 
 	status, set := SetKeyBudget(t, gwID, aliceID, monthlyBudget(50))
 	require.Equal(t, http.StatusOK, status, "body=%v", set)
-	assert.Equal(t, map[string]any{"max": float64(50), "time_window": "calendar_month"}, set["budget"])
+	assert.Equal(t, map[string]any{"max": float64(50), "unit": "dollars", "time_window": "calendar_month"}, set["budget"])
 	assert.Equal(t, alice, set["owner_id"])
 	assert.NotContains(t, set, "api_key", "the secret is never returned")
 	createdExpiry, err := time.Parse(time.RFC3339Nano, fmt.Sprint(aliceKey["expires_at"]))
@@ -165,7 +165,14 @@ func TestLLMKey_AdminBudgetAndOwnedList(t *testing.T) {
 	otherGW := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-budget-other")})
 	status, resp = SetKeyBudget(t, otherGW, aliceID, monthlyBudget(50))
 	assert.Equal(t, http.StatusNotFound, status, "body=%v", resp)
-	for _, body := range []any{map[string]any{"max": 0, "time_window": "calendar_month"}, map[string]any{"max": 50, "time_window": "1h"}, map[string]any{"max": 50}, map[string]any{}} {
+	for _, body := range []any{
+		map[string]any{"max": 0, "unit": "dollars", "time_window": "calendar_month"},
+		map[string]any{"max": 50, "unit": "dollars", "time_window": "1h"},
+		map[string]any{"max": 50, "time_window": "calendar_month"},
+		map[string]any{"max": 0.5, "unit": "tokens", "time_window": "calendar_month"},
+		map[string]any{"max": 50},
+		map[string]any{},
+	} {
 		status, resp = SetKeyBudget(t, gwID, aliceID, body)
 		assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", resp)
 		assert.Equal(t, "validation_failed", resp["error"], "%v", body)

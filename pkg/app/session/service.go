@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"time"
 
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 )
@@ -50,6 +49,7 @@ func (s Scope) partition() string {
 	return s.GatewayID + ownerPartition + url.QueryEscape(s.OwnerID)
 }
 
+// RecordInput is the turn a request produced in a session.
 type RecordInput struct {
 	Scope
 	SessionID string
@@ -62,7 +62,7 @@ type RecordInput struct {
 type Store interface {
 	Record(ctx context.Context, in RecordInput)
 	LastTurnID(ctx context.Context, scope Scope, sessionID string) string
-	SessionForTurn(ctx context.Context, gatewayID, turnID string) string
+	SessionForTurn(ctx context.Context, scope Scope, turnID string) string
 }
 
 var _ Store = (*Service)(nil)
@@ -129,13 +129,12 @@ func (s *Service) LastTurnID(ctx context.Context, scope Scope, sessionID string)
 // under, so a continuation that only names the turn (OpenAI Responses
 // previous_response_id) inherits its conversation. It runs on the request
 // path, so the lookup is bounded and any failure reads as a miss. The turn is
-// looked up in the scope of the owner of the API key ctx was authenticated
-// with, so a turn recorded for another owner, or for no owner, is a miss.
-func (s *Service) SessionForTurn(ctx context.Context, gatewayID, turnID string) string {
-	if !s.enabled || s.repo == nil || gatewayID == "" || turnID == "" {
+// looked up in scope, so a turn recorded for another owner, or for no owner,
+// is a miss.
+func (s *Service) SessionForTurn(ctx context.Context, scope Scope, turnID string) string {
+	if !s.enabled || s.repo == nil || scope.GatewayID == "" || turnID == "" {
 		return ""
 	}
-	scope := Scope{GatewayID: gatewayID, OwnerID: keyOwner(ctx)}
 	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
 	sessionID, err := s.repo.FindSessionIDByTurn(lookupCtx, scope.partition(), turnID)
@@ -146,12 +145,4 @@ func (s *Service) SessionForTurn(ctx context.Context, gatewayID, turnID string) 
 		return ""
 	}
 	return sessionID
-}
-
-func keyOwner(ctx context.Context) string {
-	authCtx, ok := appauth.AuthContextFromContext(ctx)
-	if !ok || authCtx.Method != appauth.MethodAPIKey {
-		return ""
-	}
-	return authCtx.OwnerID
 }

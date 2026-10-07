@@ -21,6 +21,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+// Audience is who a consumer serves: an application, or users through the LLM
+// Store.
 type Audience string
 
 const (
@@ -45,10 +47,12 @@ func (a Audience) canonical() Audience {
 	return a
 }
 
+// IsPersonal reports whether c serves users through the LLM Store.
 func (c *Consumer) IsPersonal() bool {
 	return c.Audience == AudiencePersonal
 }
 
+// AudienceName returns c's audience, application when it was stored without one.
 func (c *Consumer) AudienceName() Audience {
 	if c.Audience == "" {
 		return AudienceApplication

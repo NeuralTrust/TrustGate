@@ -20,6 +20,8 @@ import (
 	"time"
 )
 
+// GrantLevel is how a personal key reached a consumer: granted to its user,
+// to one of the user's groups, or to everyone.
 type GrantLevel string
 
 const (
@@ -28,6 +30,7 @@ const (
 	GrantLevelAll   GrantLevel = "all"
 )
 
+// DefaultGrantPriority is the priority of a grant that sets none.
 const DefaultGrantPriority = 1
 
 var (
@@ -35,6 +38,7 @@ var (
 	maxGrantedAt = time.Date(9999, time.December, 31, 23, 59, 59, 999999000, time.UTC)
 )
 
+// ParseGrantLevel parses a grant level.
 func ParseGrantLevel(s string) (GrantLevel, error) {
 	switch level := GrantLevel(s); level {
 	case GrantLevelUser, GrantLevelGroup, GrantLevelAll:
@@ -43,6 +47,7 @@ func ParseGrantLevel(s string) (GrantLevel, error) {
 	return "", fmt.Errorf("%w: unknown level %q", ErrInvalidAuthLink, s)
 }
 
+// Rank orders grant levels, the most specific first.
 func (l GrantLevel) Rank() int {
 	switch l {
 	case GrantLevelUser:
@@ -55,12 +60,14 @@ func (l GrantLevel) Rank() int {
 	return 3
 }
 
+// AuthLink is how a personal key is attached to a personal consumer.
 type AuthLink struct {
 	Level     GrantLevel `json:"level"`
 	Priority  int        `json:"priority"`
 	GrantedAt time.Time  `json:"granted_at"`
 }
 
+// Validate reports whether l can be stored.
 func (l AuthLink) Validate() error {
 	if _, err := ParseGrantLevel(string(l.Level)); err != nil {
 		return err

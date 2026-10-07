@@ -48,10 +48,11 @@ type AuthResponse struct {
 	Consumers []AuthConsumerResponse `json:"consumers"`
 }
 
-// KeyBudgetResponse is the spending limit of a personal key, in the unit of
-// the token_rate_limiter policy with partition key that enforces it.
+// KeyBudgetResponse is the spending limit of a personal key. It holds the key
+// under every token_rate_limiter policy with key_budgets counting in Unit.
 type KeyBudgetResponse struct {
 	Max        float64 `json:"max"`
+	Unit       string  `json:"unit" enums:"tokens,dollars"`
 	TimeWindow string  `json:"time_window" enums:"calendar_month,calendar_day"`
 }
 
@@ -135,7 +136,7 @@ func fromBudget(b *domain.KeyBudget) *KeyBudgetResponse {
 	if b == nil {
 		return nil
 	}
-	return &KeyBudgetResponse{Max: b.Max, TimeWindow: b.TimeWindow}
+	return &KeyBudgetResponse{Max: b.Max, Unit: b.Unit, TimeWindow: b.TimeWindow}
 }
 
 func FromCreatedAuth(a *domain.Auth) AuthResponse {

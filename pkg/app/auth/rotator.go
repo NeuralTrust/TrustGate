@@ -109,7 +109,7 @@ func (r *rotator) Rotate(ctx context.Context, in RotateInput) (*domain.Auth, err
 			return nil, err
 		}
 	}
-	if err := r.repo.Update(ctx, existing); err != nil {
+	if err := r.repo.RotateKey(ctx, existing, previousHash); err != nil {
 		return nil, err
 	}
 

@@ -48,9 +48,9 @@ func TestRotator_Rotate_ReplacesTheSecretAndKeepsTheAuth(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+	repo.EXPECT().RotateKey(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 		return a.ID == existing.ID && a.KeyHash != firstHash
-	})).Return(nil).Once()
+	}), firstHash).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -131,7 +131,7 @@ func TestRotator_Rotate_OwnedKeyNeedsItsOwner(t *testing.T) {
 			publisher := cachemocks.NewEventPublisher(t)
 			signaler := &configsynctest.FakeSignaler{}
 			if tc.wantErr == nil {
-				repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+				repo.EXPECT().RotateKey(mock.Anything, existing, mock.Anything).Return(nil).Once()
 				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
 			}
 
@@ -157,7 +157,7 @@ func TestRotator_Rotate_NilClockReadsUTCNow(t *testing.T) {
 	existing := existingAPIKey(t, gwID)
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+	repo.EXPECT().RotateKey(mock.Anything, existing, mock.Anything).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
 
@@ -167,4 +167,24 @@ func TestRotator_Rotate_NilClockReadsUTCNow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, time.UTC, rotated.UpdatedAt.Location())
 	require.False(t, rotated.UpdatedAt.Before(before))
+}
+
+func TestRotator_Rotate_LosingAConcurrentRotationChangesNothing(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingAPIKey(t, gwID)
+	firstHash := existing.KeyHash
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().RotateKey(mock.Anything, existing, firstHash).Return(domain.ErrRotatedConcurrently).Once()
+	manager := newCacheManager()
+	keyCache := manager.GetTTLMap(cache.AuthKeyTTLName)
+	keyCache.Set(firstHash, existing)
+
+	_, err := appauth.NewRotator(repo, manager, cachemocks.NewEventPublisher(t), newTestLogger(), nil, time.Now).
+		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
+	require.ErrorIs(t, err, domain.ErrRotatedConcurrently)
+	require.ErrorIs(t, err, commonerrors.ErrConflict)
+	_, cached := keyCache.Get(firstHash)
+	require.True(t, cached, "a rotation that wrote nothing leaves the caches alone")
 }

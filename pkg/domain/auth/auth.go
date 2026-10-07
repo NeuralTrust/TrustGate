@@ -124,6 +124,7 @@ type Auth struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+// IsOwned reports whether a is a personal key, held by one user.
 func (a *Auth) IsOwned() bool {
 	return a.OwnerID != ""
 }
@@ -153,12 +154,16 @@ func (a *Auth) AcceptsAPIKey(hash string, now time.Time) bool {
 	return a != nil && a.Enabled && a.Type == TypeAPIKey && a.KeyHash == hash && !a.IsExpired(now)
 }
 
+// IsApplicationKey reports whether a authenticates as an application at now:
+// an enabled, unexpired api key that no user owns.
+func (a *Auth) IsApplicationKey(now time.Time) bool {
+	return a != nil && a.Enabled && a.Type == TypeAPIKey && !a.IsOwned() && !a.IsExpired(now)
+}
+
 // AcceptsApplicationKey reports whether a authenticates as an application on
-// gatewayID at now: an enabled, unexpired api key of that gateway that no user
-// owns.
+// gatewayID at now: an application key of that gateway.
 func (a *Auth) AcceptsApplicationKey(gatewayID ids.GatewayID, now time.Time) bool {
-	return a != nil && a.Enabled && a.Type == TypeAPIKey && !a.IsOwned() &&
-		!gatewayID.IsNil() && a.GatewayID == gatewayID && !a.IsExpired(now)
+	return a.IsApplicationKey(now) && !gatewayID.IsNil() && a.GatewayID == gatewayID
 }
 
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
@@ -203,6 +208,7 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 	return a, nil
 }
 
+// NewOwnedAPIKeyAuth mints the personal api key of ownerID on gatewayID.
 func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, expiresAt, now time.Time) (*Auth, error) {
 	if err := ValidateOwner(ownerID); err != nil {
 		return nil, err
@@ -222,6 +228,7 @@ func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, expiresAt, now 
 	return a, nil
 }
 
+// ValidateOwner reports whether ownerID can own a personal key.
 func ValidateOwner(ownerID string) error {
 	if strings.TrimSpace(ownerID) == "" {
 		return ErrInvalidOwner
@@ -229,6 +236,8 @@ func ValidateOwner(ownerID string) error {
 	return nil
 }
 
+// ValidateOwnedExpiry reports whether expiresAt is an expiry a personal key may
+// carry at now.
 func ValidateOwnedExpiry(expiresAt, now time.Time) error {
 	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxOwnedKeyLifetime)) {
 		return ErrOwnedExpiry

@@ -1403,7 +1403,7 @@ func TestHandle_Streaming_FinalizerReqCarriesPlaygroundVerdict(t *testing.T) {
 
 func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 	authID := ids.New[ids.AuthKind]()
-	monthlyBudget := &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}
+	monthlyBudget := &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}
 	tests := []struct {
 		name                string
 		authCtx             appauth.AuthContext
@@ -1591,7 +1591,7 @@ func TestHandleStore_RejectionsBeforeForwarding(t *testing.T) {
 			status: fiber.StatusMethodNotAllowed, code: "method_not_allowed"},
 		{name: "ambiguous body", req: storeChatBody(`{"model":"gpt-4o-mini","model":"gpt-4o"}`),
 			status: fiber.StatusBadRequest, code: "invalid_request_body"},
-		{name: "rate limited before selection", req: storeChat("claude-sonnet-4-5"), limited: limited,
+		{name: "rate limited after selection", req: storeChat("gpt-4o-mini"), limited: limited,
 			status: fiber.StatusTooManyRequests},
 	}
 	for _, tc := range cases {
@@ -1607,6 +1607,18 @@ func TestHandleStore_RejectionsBeforeForwarding(t *testing.T) {
 			assert.Empty(t, rt.Metadata().ConsumerID)
 		})
 	}
+}
+
+func TestHandleStore_DeniedModelSpendsNoPlanToken(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	data := storeData(gatewayID, authID, personalSpec{provider: "openai", allowed: []string{"gpt-4o*"}})
+	fwd := proxymocks.NewForwarder(t)
+	app, _ := newStoreAppWith(data, ownerAuth(gatewayID, authID), fwd)
+
+	resp, err := app.Test(storeChat("claude-sonnet-4-5"))
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	fwd.AssertNotCalled(t, "Precheck", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandleStore_AmbiguousBodyAnswers400WithoutARateLimitToken(t *testing.T) {

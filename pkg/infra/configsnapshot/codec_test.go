@@ -351,10 +351,10 @@ func TestCodecRoundTripsOwnedAuthBudget(t *testing.T) {
 	consumer, auth := applicationFixture()
 	consumer.Audience = consumerdomain.AudiencePersonal
 	auth.OwnerID = "alice"
-	auth.Budget = &authdomain.KeyBudget{Max: 12.5, TimeWindow: authdomain.BudgetWindowCalendarDay}
+	auth.Budget = &authdomain.KeyBudget{Max: 12.5, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarDay}
 
 	raw, _, authJSON := encodeConsumerAndAuth(t, consumer, auth)
-	assert.Contains(t, authJSON, `"owner_id":"alice","budget":{"max":12.5,"time_window":"calendar_day"}`)
+	assert.Contains(t, authJSON, `"owner_id":"alice","budget":{"max":12.5,"unit":"dollars","time_window":"calendar_day"}`)
 	snap, err := codec.Decode(raw)
 	require.NoError(t, err)
 	gotAuth, ok := snap.AuthByAPIKeyHash(auth.KeyHash)

@@ -144,6 +144,7 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 	t.mu.Unlock()
 }
 
+// SetAuthID records the auth that authenticated the request.
 func (t *RequestTrace) SetAuthID(id string) {
 	if id == "" {
 		return

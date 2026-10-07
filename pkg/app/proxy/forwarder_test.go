@@ -115,7 +115,7 @@ func (f *fakeSessionStore) LastTurnID(_ context.Context, scope appsession.Scope,
 	return f.last
 }
 
-func (f *fakeSessionStore) SessionForTurn(_ context.Context, _, _ string) string {
+func (f *fakeSessionStore) SessionForTurn(_ context.Context, _ appsession.Scope, _ string) string {
 	return ""
 }
 

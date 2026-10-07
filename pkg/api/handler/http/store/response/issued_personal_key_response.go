@@ -16,11 +16,15 @@ package response
 
 import appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 
+// IssuedPersonalKeyResponse is a personal key with its secret, returned only
+// when the secret is minted. The secret is api_key, as on the admin auth
+// responses.
 type IssuedPersonalKeyResponse struct {
 	PersonalKeyResponse
-	Key string `json:"key"`
+	APIKey string `json:"api_key"`
 }
 
+// FromIssuedPersonalKey maps a key that was just created or rotated.
 func FromIssuedPersonalKey(key *appauth.PersonalKey) IssuedPersonalKeyResponse {
-	return IssuedPersonalKeyResponse{PersonalKeyResponse: FromPersonalKey(key), Key: key.Auth.RawKey}
+	return IssuedPersonalKeyResponse{PersonalKeyResponse: FromPersonalKey(key), APIKey: key.Auth.RawKey}
 }

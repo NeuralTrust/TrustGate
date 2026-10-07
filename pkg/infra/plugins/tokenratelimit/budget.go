@@ -70,11 +70,26 @@ func ruleWindowSeconds(cfg *config, r budgetRule) int {
 	return cfg.windowSeconds()
 }
 
-func windowsFor(cfg *config, base, model string, now time.Time) []budgetWindow {
+// budgetClock is when a request arrived, which names its calendar period, and
+// the current time, which sets how long that period's counter lives.
+type budgetClock struct {
+	at  time.Time
+	now time.Time
+}
+
+func (p *Plugin) clockFor(req *infracontext.RequestContext) budgetClock {
+	now := p.now()
+	if req != nil && req.ProcessAt != nil && !req.ProcessAt.IsZero() {
+		return budgetClock{at: *req.ProcessAt, now: now}
+	}
+	return budgetClock{at: now, now: now}
+}
+
+func windowsFor(cfg *config, base, model string, clock budgetClock) []budgetWindow {
 	var windows []budgetWindow
 	if cfg.PerModel {
 		if r, ok := selectRule(cfg, model); ok {
-			key, secs := periodWindow(base, r.TimeWindow, now, ruleWindowSeconds(cfg, r))
+			key, secs := periodWindow(base, r.TimeWindow, clock, ruleWindowSeconds(cfg, r))
 			windows = append(windows, budgetWindow{
 				key:       modelKey(key, r.Model),
 				max:       counterMax(cfg, r.Max),
@@ -85,7 +100,7 @@ func windowsFor(cfg *config, base, model string, now time.Time) []budgetWindow {
 		}
 	}
 	if cfg.Aggregate != nil {
-		key, secs := periodWindow(base, cfg.Aggregate.TimeWindow, now, aggregateWindowSeconds(cfg))
+		key, secs := periodWindow(base, cfg.Aggregate.TimeWindow, clock, aggregateWindowSeconds(cfg))
 		windows = append(windows, budgetWindow{
 			key:       key,
 			max:       counterMax(cfg, cfg.Aggregate.Max),
@@ -97,8 +112,8 @@ func windowsFor(cfg *config, base, model string, now time.Time) []budgetWindow {
 	return windows
 }
 
-func periodWindow(base, timeWindow string, now time.Time, rollingSeconds int) (string, int) {
-	period, ttl, ok := calendarPeriod(timeWindow, now)
+func periodWindow(base, timeWindow string, clock budgetClock, rollingSeconds int) (string, int) {
+	period, ttl, ok := calendarPeriod(timeWindow, clock.at, clock.now)
 	if !ok {
 		return base, rollingSeconds
 	}
@@ -168,7 +183,12 @@ func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	}
 }
 
-func modelFor(req *infracontext.RequestContext) string {
+// modelFor names the model a request is counted against. A key-partitioned
+// policy falls back to the default model of the routed registry when the
+// request names none (no model, auto, a pool), so a hard limit cannot be
+// dodged by leaving the model out; every other policy keeps counting such a
+// request under the requested ref, as it always has.
+func modelFor(cfg *config, req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
 	}
@@ -177,7 +197,7 @@ func modelFor(req *infracontext.RequestContext) string {
 			return m
 		}
 	}
-	if req.DefaultModel != "" && !namesModel(req.RequestedModel) {
+	if cfg.keyPartitioned() && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
 		return req.DefaultModel
 	}
 	return req.RequestedModel
@@ -201,7 +221,7 @@ func (p *Plugin) budgetGate(
 	if req != nil {
 		provider = req.Provider
 	}
-	windows := windowsFor(cfg, base, model, p.now())
+	windows := windowsFor(cfg, base, model, p.clockFor(req))
 	if len(windows) == 0 {
 		if capTel != nil {
 			data := TokenRateLimiterData{
@@ -215,7 +235,7 @@ func (p *Plugin) budgetGate(
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 
-	unpriced := cfg.Partition == partitionKey && cfg.Unit == unitDollars && !p.priced(ctx, cfg, req, model)
+	unpriced := cfg.refusesUnpriced() && !p.priced(ctx, cfg, req, model)
 	if unpriced {
 		appplugins.SetDecision(event, mode)
 		if appplugins.Blocks(mode) {
@@ -247,7 +267,7 @@ func (p *Plugin) budgetGate(
 				failData.Model = windows[i].model
 			}
 			applyCostCapTelemetry(&failData, capTel)
-			if cfg.Partition == partitionKey && appplugins.Blocks(mode) && ctx.Err() == nil {
+			if cfg.keyPartitioned() && appplugins.Blocks(mode) && ctx.Err() == nil {
 				return nil, failClosed(ctx, mode, event, failData, "read_counter", err)
 			}
 			return p.counterUnavailable(ctx, policy.StagePreRequest, mode, event, failData, "read_counter", err)
@@ -369,14 +389,14 @@ func failClosed(
 	detail string,
 	err error,
 ) *appplugins.PluginError {
-	slog.WarnContext(ctx, "counter store call failed",
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(policy.StagePreRequest)),
-		slog.String("mode", string(mode)),
-		slog.String("reason", string(appplugins.FailureCounterUnavailable)),
-		slog.String("decision", decisionFailedClosed),
-		slog.String("detail", detail),
-		slog.Any("error", err))
+	appplugins.LogCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  policy.StagePreRequest,
+		Mode:   mode,
+		Detail: detail,
+		Err:    err,
+	}, decisionFailedClosed)
 	data.Stage = string(policy.StagePreRequest)
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
@@ -430,7 +450,7 @@ func (p *Plugin) accrue(
 		return &appplugins.Result{}, nil
 	}
 
-	windows := windowsFor(cfg, base, model, p.now())
+	windows := windowsFor(cfg, base, model, p.clockFor(req))
 	if len(windows) == 0 {
 		return &appplugins.Result{}, nil
 	}
@@ -519,7 +539,7 @@ func (p *Plugin) accrueDollars(
 		return &appplugins.Result{}, nil
 	}
 
-	windows := windowsFor(cfg, base, model, p.now())
+	windows := windowsFor(cfg, base, model, p.clockFor(req))
 	if len(windows) == 0 {
 		return &appplugins.Result{}, nil
 	}

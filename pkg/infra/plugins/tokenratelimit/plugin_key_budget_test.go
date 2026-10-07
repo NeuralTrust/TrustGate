@@ -29,8 +29,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func budgeted(scope appplugins.RuntimeScope, limit float64, window string) appplugins.RuntimeScope {
-	scope.KeyBudget = &authdomain.KeyBudget{Max: limit, TimeWindow: window}
+func budgeted(scope appplugins.RuntimeScope, unit string, limit float64, window string) appplugins.RuntimeScope {
+	scope.KeyBudget = &authdomain.KeyBudget{Max: limit, Unit: unit, TimeWindow: window}
 	return scope
 }
 
@@ -55,7 +55,7 @@ func TestPlugin_KeyBudget_OverridesTheAggregate(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	p, mr := newClockedPlugin(t, &now)
 	settings := withKeyBudgets(keyBudget(windowCalendarMonth, 1000))
-	alice := budgeted(aliceScope, 100, windowCalendarMonth)
+	alice := budgeted(aliceScope, unitTokens, 100, windowCalendarMonth)
 	bob := aliceScope
 	bob.AuthID, bob.OwnerID = "auth-2", "bob"
 
@@ -74,15 +74,16 @@ func TestPlugin_KeyBudget_EnforcedWithoutAnAggregate(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	for name, tc := range map[string]struct {
 		settings map[string]any
+		unit     string
 		max      float64
 	}{
-		"tokens":  {settings: keyBudgetsOnly(), max: 10},
-		"dollars": {settings: map[string]any{"partition": "key", "key_budgets": true, "unit": "dollars"}, max: 0.005},
+		"tokens":  {settings: keyBudgetsOnly(), unit: unitTokens, max: 10},
+		"dollars": {settings: map[string]any{"partition": "key", "key_budgets": true, "unit": "dollars"}, unit: unitDollars, max: 0.005},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, mr := newClockedPlugin(t, &now)
 			settings := tc.settings
-			alice := budgeted(aliceScope, tc.max, windowCalendarDay)
+			alice := budgeted(aliceScope, tc.unit, tc.max, windowCalendarDay)
 			req := registryPriced("gpt-4o-mini")
 
 			require.Equal(t, http.StatusOK, admit(p, settings, alice, req))
@@ -122,7 +123,7 @@ func TestPlugin_KeyBudget_WindowKeys(t *testing.T) {
 	} {
 		t.Run(tt.window, func(t *testing.T) {
 			p, mr := newClockedPlugin(t, &now)
-			alice := budgeted(aliceScope, 1000, tt.window)
+			alice := budgeted(aliceScope, unitTokens, 1000, tt.window)
 
 			spend(t, p, keyBudgetsOnly(), alice, llmRequest("", nil), 40)
 
@@ -138,7 +139,7 @@ func TestPlugin_KeyBudget_LeavesTheRulesAlone(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	p, mr := newClockedPlugin(t, &now)
 	settings := map[string]any{"partition": "key", "key_budgets": true, "rules": []map[string]any{{"model": "gpt-5", "max": 50, "time_window": windowCalendarDay}}}
-	alice := budgeted(aliceScope, 1000, windowCalendarMonth)
+	alice := budgeted(aliceScope, unitTokens, 1000, windowCalendarMonth)
 	gpt5, gpt4 := llmRequest(`{"model":"gpt-5"}`, nil), llmRequest(`{"model":"gpt-4o"}`, nil)
 
 	spend(t, p, settings, alice, gpt5, 50)
@@ -157,9 +158,10 @@ func TestPlugin_KeyBudget_LeavesTheRulesAlone(t *testing.T) {
 func TestPlugin_KeyBudget_HardLimits(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	dollars := map[string]any{"partition": "key", "key_budgets": true, "unit": "dollars"}
-	alice := budgeted(aliceScope, 0.005, windowCalendarMonth)
+	alice := budgeted(aliceScope, unitDollars, 0.005, windowCalendarMonth)
+	tokenAlice := budgeted(aliceScope, unitTokens, 10, windowCalendarMonth)
 
-	got := execKeyAs(context.Background(), t, newDownPlugin(t), alice, policy.StagePreRequest, policy.ModeEnforce, keyBudgetsOnly(), llmRequest("", nil), &infracontext.ResponseContext{})
+	got := execKeyAs(context.Background(), t, newDownPlugin(t), tokenAlice, policy.StagePreRequest, policy.ModeEnforce, keyBudgetsOnly(), llmRequest("", nil), &infracontext.ResponseContext{})
 	assert.Equal(t, keyOutcome{status: http.StatusServiceUnavailable, errType: budgetUnavailable, scope: partitionKey, decision: decisionFailedClosed, reason: string(appplugins.FailureCounterUnavailable), failure: "read_counter"}, got)
 
 	got = execKeyAs(context.Background(), t, newTestPlugin(t), alice, policy.StagePreRequest, policy.ModeEnforce, dollars, llmRequest(`{"model":"gpt-unpriced"}`, nil), &infracontext.ResponseContext{})
@@ -175,7 +177,7 @@ func TestPlugin_KeyBudget_IgnoredWithoutPartitionKey(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	p, mr := newClockedPlugin(t, &now)
 	settings := map[string]any{"aggregate": map[string]any{"max": 1000, "time_window": "1h"}}
-	consumer := budgeted(aliceScope, 1, windowCalendarDay)
+	consumer := budgeted(aliceScope, unitTokens, 1, windowCalendarDay)
 	consumer.Global = false
 
 	spend(t, p, settings, consumer, llmRequest("", nil), 10)
@@ -192,7 +194,7 @@ func TestPlugin_KeyBudget_NeverReachesTheSharedConfig(t *testing.T) {
 	bob := aliceScope
 	bob.AuthID, bob.OwnerID = "auth-2", "bob"
 
-	spend(t, p, settings, budgeted(aliceScope, 5, windowCalendarDay), llmRequest("", nil), 5)
+	spend(t, p, settings, budgeted(aliceScope, unitTokens, 5, windowCalendarDay), llmRequest("", nil), 5)
 	assert.Equal(t, []string{"1000"}, preRequestHeaders(t, p, settings, bob)["X-Ratelimit-Limit-Tokens"], "the next key does not inherit the budget")
 	assert.Equal(t, pristine, settings)
 	assert.Equal(t, pristineAggregate, settings["aggregate"])
@@ -200,14 +202,16 @@ func TestPlugin_KeyBudget_NeverReachesTheSharedConfig(t *testing.T) {
 	cfg, err := parseConfig(settings)
 	require.NoError(t, err)
 	aggregate, before := cfg.Aggregate, *cfg.Aggregate
-	scoped := cfg.forKey(&authdomain.KeyBudget{Max: 5, TimeWindow: windowCalendarDay})
+	scoped := cfg.forKey(&authdomain.KeyBudget{Max: 5, Unit: unitTokens, TimeWindow: windowCalendarDay})
 	assert.NotSame(t, cfg, scoped)
 	assert.Equal(t, &aggregateConfig{Max: 5, TimeWindow: windowCalendarDay}, scoped.Aggregate)
 	assert.Same(t, aggregate, cfg.Aggregate)
 	assert.Equal(t, before, *cfg.Aggregate)
 	assert.Same(t, cfg, cfg.forKey(nil), "a key without a budget uses the parsed config as is")
+	assert.Same(t, cfg, cfg.forKey(&authdomain.KeyBudget{Max: 5, Unit: unitDollars, TimeWindow: windowCalendarDay}),
+		"a budget in another unit does not replace the policy's limit")
 	unpartitioned := &config{Aggregate: aggregate}
-	assert.Same(t, unpartitioned, unpartitioned.forKey(&authdomain.KeyBudget{Max: 5, TimeWindow: windowCalendarDay}))
+	assert.Same(t, unpartitioned, unpartitioned.forKey(&authdomain.KeyBudget{Max: 5, Unit: unitTokens, TimeWindow: windowCalendarDay}))
 }
 
 func TestPlugin_ValidateConfig_AggregateIsOptionalWithKeyBudgets(t *testing.T) {
@@ -224,7 +228,7 @@ func TestPlugin_ValidateConfig_AggregateIsOptionalWithKeyBudgets(t *testing.T) {
 
 func TestCalendarWindowsAreTheKeyBudgetWindows(t *testing.T) {
 	for _, window := range []string{authdomain.BudgetWindowCalendarMonth, authdomain.BudgetWindowCalendarDay} {
-		require.NoError(t, (authdomain.KeyBudget{Max: 1, TimeWindow: window}).Validate())
+		require.NoError(t, (authdomain.KeyBudget{Max: 1, Unit: unitTokens, TimeWindow: window}).Validate())
 		assert.True(t, isCalendarWindow(window), window)
 	}
 }
@@ -235,10 +239,39 @@ func TestPlugin_KeyBudget_IgnoredByAPolicyThatDoesNotOptIn(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	p, mr := newClockedPlugin(t, &now)
 	settings := keyBudget(windowCalendarMonth, 1000)
-	alice := budgeted(aliceScope, 1, windowCalendarDay)
+	alice := budgeted(aliceScope, unitTokens, 1, windowCalendarDay)
 
 	assert.Equal(t, []string{"1000"}, preRequestHeaders(t, p, settings, alice)["X-Ratelimit-Limit-Tokens"])
 	spend(t, p, settings, alice, llmRequest("", nil), 10)
 	assert.Equal(t, http.StatusOK, admit(p, settings, alice, llmRequest("", nil)))
 	mr.CheckGet(t, "trl:tk-1:key:owner:alice:p:2026-10", "10")
+}
+
+func TestPlugin_KeyBudget_ChargesThePeriodThatAdmittedTheRequest(t *testing.T) {
+	arrived := time.Date(2026, 10, 31, 23, 59, 58, 0, time.UTC)
+	now := arrived
+	p, mr := newClockedPlugin(t, &now)
+	alice := budgeted(aliceScope, unitTokens, 1000, windowCalendarMonth)
+	req := llmRequest("", nil)
+	req.ProcessAt = &arrived
+
+	require.Equal(t, http.StatusOK, admit(p, keyBudgetsOnly(), alice, req))
+	now = time.Date(2026, 11, 1, 0, 0, 5, 0, time.UTC)
+	spend(t, p, keyBudgetsOnly(), alice, req, 40)
+
+	assert.Equal(t, []string{"trl:tk-1:key:owner:alice:p:2026-10"}, mr.Keys(), "a stream that ends in november is charged to october")
+	assert.Equal(t, time.Duration(minWindowSeconds)*time.Second, mr.TTL("trl:tk-1:key:owner:alice:p:2026-10"))
+}
+
+func TestPlugin_KeyBudget_RefusesDowngradeModel(t *testing.T) {
+	p := New(nil, nil, nil)
+	err := p.ValidateConfig(map[string]any{
+		"partition": "key", "behavior_on_exceeded": "downgrade_model", "downgrade_to": "gpt-4o-mini",
+		"aggregate": map[string]any{"max": 10, "time_window": "calendar_month"},
+	})
+	require.ErrorContains(t, err, "does not support behavior_on_exceeded=downgrade_model", "a hard limit cannot serve past the budget")
+}
+
+func TestBudgetUnavailableTellsTheClientWhenToRetry(t *testing.T) {
+	assert.Equal(t, []string{budgetUnavailableRetryAfter}, budgetUnavailableError().Headers[headerRetryAfter])
 }

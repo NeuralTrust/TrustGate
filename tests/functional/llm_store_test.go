@@ -60,7 +60,7 @@ func createLinkedLLMKey(t *testing.T, gatewayID, owner string, consumerIDs ...st
 	for _, consumerID := range consumerIDs {
 		AttachAuthLink(t, gatewayID, consumerID, fmt.Sprint(created["id"]), "group", 1, time.Now())
 	}
-	return fmt.Sprint(created["key"])
+	return fmt.Sprint(created["api_key"])
 }
 
 func ownerCounter(t *testing.T, policyID, owner string) int64 {
@@ -114,7 +114,7 @@ func TestLLMStore_FallbackAndFreshness(t *testing.T) {
 	oldKey := f.key
 	status, rotated := RotateLLMKey(t, f.gatewayID, f.owner, nil)
 	require.Equal(t, http.StatusOK, status, "body=%v", rotated)
-	f.key = fmt.Sprint(rotated["key"])
+	f.key = fmt.Sprint(rotated["api_key"])
 	eventuallyStore(t, func() bool { return storeModelsStatus(t, base, f.gatewayID, oldKey) == http.StatusUnauthorized },
 		"the rotated secret kept resolving on the proxy")
 	assert.Equal(t, http.StatusOK, storeModelsStatus(t, base, f.gatewayID, f.key))
@@ -209,7 +209,7 @@ func TestLLMStore_KeyIsolation(t *testing.T) {
 	otherGW := CreateGateway(t, map[string]any{"slug": uniqueName("store-other")})
 	status, other := CreateLLMKey(t, otherGW, f.owner, llmKeyExpiry(llmKeyDay))
 	require.Equal(t, http.StatusCreated, status, "body=%v", other)
-	for name, key := range map[string]string{"no key": "", "unknown key": unknownKey, "application key": appKey, "another gateway's key": fmt.Sprint(other["key"])} {
+	for name, key := range map[string]string{"no key": "", "unknown key": unknownKey, "application key": appKey, "another gateway's key": fmt.Sprint(other["api_key"])} {
 		assert.Equal(t, http.StatusUnauthorized, storeModelsStatus(t, ProxyURL, f.gatewayID, key), name)
 	}
 
@@ -217,13 +217,13 @@ func TestLLMStore_KeyIsolation(t *testing.T) {
 	expiresAt := time.Now().Add(15 * time.Second).UTC().Truncate(time.Second)
 	status, expiring := CreateLLMKey(t, f.gatewayID, dave, map[string]any{"expires_at": expiresAt.Format(time.RFC3339)})
 	require.Equal(t, http.StatusCreated, status, "body=%v", expiring)
-	daveKey := fmt.Sprint(expiring["key"])
+	daveKey := fmt.Sprint(expiring["api_key"])
 	require.Equal(t, http.StatusOK, storeModelsStatus(t, ProxyURL, f.gatewayID, daveKey), "the key works before its expiry")
 	status, linkless := CreateLLMKey(t, f.gatewayID, bob, llmKeyExpiry(llmKeyDay))
 	require.Equal(t, http.StatusCreated, status, "body=%v", linkless)
 	status, revoked := CreateLLMKey(t, f.gatewayID, carol, llmKeyExpiry(llmKeyDay))
 	require.Equal(t, http.StatusCreated, status, "body=%v", revoked)
-	bobKey, carolKey := fmt.Sprint(linkless["key"]), fmt.Sprint(revoked["key"])
+	bobKey, carolKey := fmt.Sprint(linkless["api_key"]), fmt.Sprint(revoked["api_key"])
 	assert.Empty(t, storeModels(t, ProxyURL, f.gatewayID, bobKey), "a key without links authenticates and lists nothing")
 	status, body := storeChat(t, ProxyURL, f.gatewayID, bobKey, "gpt6")
 	assert.Equal(t, http.StatusForbidden, status, body)
@@ -280,7 +280,7 @@ func TestLLMStore_KeyBudget(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "body=%v", rotated)
 	eventuallyStore(t, func() bool { return storeModelsStatus(t, ProxyURL, gatewayID, anaKey) == http.StatusUnauthorized },
 		"the rotation never reached the proxy")
-	rotatedKey := fmt.Sprint(rotated["key"])
+	rotatedKey := fmt.Sprint(rotated["api_key"])
 	require.Equal(t, http.StatusTooManyRequests, chat(rotatedKey, "gpt-4o-mini"), "the owner's counter survives a rotation")
 
 	require.Equal(t, http.StatusNoContent, RevokeLLMKey(t, gatewayID, ana))
@@ -449,7 +449,7 @@ func TestLLMStore_EndUserIsTheKeyOwner(t *testing.T) {
 	owner := uniqueName("ana")
 	status, created := CreateLLMKey(t, gatewayID, owner, llmKeyExpiry(llmKeyDay))
 	require.Equal(t, http.StatusCreated, status, "body=%v", created)
-	keyID, key := fmt.Sprint(created["id"]), fmt.Sprint(created["key"])
+	keyID, key := fmt.Sprint(created["id"]), fmt.Sprint(created["api_key"])
 	AttachAuthLink(t, gatewayID, consumerID, keyID, "user", 1, time.Now())
 
 	spoofed, sessionID := uniqueName("mallory"), uniqueName("end-user-session")

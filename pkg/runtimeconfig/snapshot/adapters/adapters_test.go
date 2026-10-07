@@ -391,7 +391,7 @@ func TestAuthAdapterFindByOwner(t *testing.T) {
 	t.Parallel()
 	f := newFixture()
 	owned := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gateway.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice",
-		Budget: &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
+		Budget: &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
 	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
 	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{f.auth, owned}})})
 	repo := adapters.NewAuthRepository(store)

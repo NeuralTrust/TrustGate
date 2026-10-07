@@ -31,7 +31,7 @@ func init() {
 }
 
 func upAddAuthOwner(ctx context.Context, tx pgx.Tx) error {
-	const ddl = `
+	const ddl = llmStoreLockTimeout + `
 		ALTER TABLE auths ADD COLUMN IF NOT EXISTS owner_id TEXT NULL;
 		CREATE UNIQUE INDEX IF NOT EXISTS auths_gateway_owner_uniq ON auths (gateway_id, owner_id) WHERE owner_id IS NOT NULL;`
 	_, err := tx.Exec(ctx, ddl)

@@ -54,6 +54,7 @@ type WhoAmIHandler struct {
 	// their keys are pointed at their own data plane instead of being handed
 	// this plane's URLs, which would refuse every call made on them.
 	refuseHybrid bool
+	now          func() time.Time
 }
 
 // WhoAmIKeyFinder finds the credential behind a raw API key, whichever gateway
@@ -122,7 +123,7 @@ func NewWhoAmIHandler(
 	proxyDomain string,
 	opts ...WhoAmIOption,
 ) *WhoAmIHandler {
-	h := &WhoAmIHandler{gateways: gateways, consumers: consumers, proxyDomain: proxyDomain}
+	h := &WhoAmIHandler{gateways: gateways, consumers: consumers, proxyDomain: proxyDomain, now: time.Now}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(h)
@@ -344,7 +345,7 @@ func (h *WhoAmIHandler) gatewayForKey(c *fiber.Ctx) *gatewaydomain.Gateway {
 		return nil
 	}
 	auth, err := h.byKey.keys.FindByAPIKey(c.UserContext(), key)
-	if err != nil || auth == nil || !auth.AcceptsApplicationKey(auth.GatewayID, time.Now().UTC()) {
+	if err != nil || !auth.IsApplicationKey(h.now().UTC()) {
 		return nil
 	}
 	gateway, err := h.byKey.gateways.FindByID(c.UserContext(), auth.GatewayID)

@@ -29,19 +29,24 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
+// ErrNoStoreConsumer is returned when none of the caller's personal consumers
+// admits the request's model.
 var ErrNoStoreConsumer = fmt.Errorf("store: no consumer admits the request: %w", routingdomain.ErrModelDenied)
 
 var errNoPrimaryCandidate = fmt.Errorf("store: no primary candidate admits the request: %w", routingdomain.ErrModelDenied)
 
+// StoreSelectInput is a store request and the personal consumers its key
+// reaches, in the order Data.StoreLinks returns them.
 type StoreSelectInput struct {
 	Links   []appconsumer.StoreLink
 	Data    *appconsumer.Data
 	Request *infracontext.RequestContext
 }
 
+// StoreSelection is the personal consumer that serves a store request and the
+// routing already resolved against it.
 type StoreSelection struct {
 	Link appconsumer.StoreLink
-	Keep CandidateFilter
 	ResolvedRouting
 }
 
@@ -64,11 +69,11 @@ type storeSelector struct {
 
 type storeChoice struct {
 	link        *scopedLink
-	keep        CandidateFilter
 	candidates  *routingdomain.CandidateSet
 	specificity specificity
 }
 
+// NewStoreSelector returns the StoreSelector the store route uses.
 func NewStoreSelector(resolver approuting.Resolver, listing appcatalog.ModelListing, logger *slog.Logger) StoreSelector {
 	return &storeSelector{
 		pipeline: candidatePipeline{resolver: resolver, listing: listing, logger: logger},
@@ -92,8 +97,8 @@ func (s *storeSelector) Select(ctx context.Context, in StoreSelectInput) (*Store
 		strictListing: true,
 	}
 	links := storeScope(in.Links)
-	unknownPool := intent.IsPool() && len(links) > 0
 	var best storeChoice
+	var refused refusals
 	for i := range links {
 		link := &links[i]
 		if best.link != nil && (best.specificity == specificityLiteral || !sameTier(best.link.Link, link.Link)) {
@@ -102,30 +107,64 @@ func (s *storeSelector) Select(ctx context.Context, in StoreSelectInput) (*Store
 		choice, err := s.admit(ctx, query, link)
 		if err != nil {
 			s.logRefusedLink(ctx, link, err)
-			unknownPool = unknownPool && errors.Is(err, routingdomain.ErrUnknownPoolAlias)
+			refused.add(err)
 			continue
 		}
 		if best.link == nil || choice.specificity < best.specificity {
 			best = choice
 		}
 	}
-	switch {
-	case best.link != nil:
-		return &StoreSelection{
-			Link: best.link.StoreLink, Keep: best.keep,
-			ResolvedRouting: ResolvedRouting{Intent: intent, Ref: ref, Candidates: best.candidates},
-		}, nil
-	case unknownPool:
-		return nil, fmt.Errorf("%w: pool %q is not configured for any linked consumer",
-			routingdomain.ErrUnknownPoolAlias, intent.PoolAlias)
-	default:
-		return nil, ErrNoStoreConsumer
+	if best.link == nil {
+		return nil, refused.err(intent)
 	}
+	return &StoreSelection{
+		Link:            best.link.StoreLink,
+		ResolvedRouting: ResolvedRouting{Intent: intent, Ref: ref, Candidates: best.candidates},
+	}, nil
+}
+
+// refusals collects why each link refused a request. When every link refused
+// it for the same reason other than the model, the caller gets that reason
+// (an unknown pool, a capability no provider supports, no backend) and not a
+// permissions error it would read as a missing grant.
+type refusals struct {
+	kind    error
+	count   int
+	uniform bool
+}
+
+func (r *refusals) add(err error) {
+	kind := refusalKind(err)
+	if r.count == 0 {
+		r.kind, r.uniform = kind, true
+	} else if kind != r.kind {
+		r.uniform = false
+	}
+	r.count++
+}
+
+func (r *refusals) err(intent routingdomain.Intent) error {
+	if r.count == 0 || !r.uniform || r.kind == nil {
+		return ErrNoStoreConsumer
+	}
+	if r.kind == routingdomain.ErrUnknownPoolAlias {
+		return fmt.Errorf("%w: pool %q is not configured for any linked consumer", routingdomain.ErrUnknownPoolAlias, intent.PoolAlias)
+	}
+	return fmt.Errorf("store: no linked consumer can serve the request: %w", r.kind)
+}
+
+func refusalKind(err error) error {
+	for _, kind := range []error{routingdomain.ErrUnknownPoolAlias, ErrCapabilityNotSupported, ErrNoBackendsInPool} {
+		if errors.Is(err, kind) {
+			return kind
+		}
+	}
+	return nil
 }
 
 func (s *storeSelector) admit(ctx context.Context, query candidateQuery, link *scopedLink) (storeChoice, error) {
-	choice := storeChoice{link: link, keep: link.filter()}
-	query.consumer, query.keep = link.Consumer, choice.keep
+	choice := storeChoice{link: link}
+	query.consumer, query.keep = link.Consumer, link.filter()
 	candidates, err := s.pipeline.run(ctx, query)
 	if err != nil {
 		return storeChoice{}, err

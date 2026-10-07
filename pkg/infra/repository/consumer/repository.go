@@ -56,11 +56,22 @@ const consumerSelectColumns = `
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
-		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
-		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids,
-		       COALESCE((SELECT json_object_agg(cl.auth_id, json_build_object('level', cl.level, 'priority', cl.priority,
-		                          'granted_at', to_char(cl.granted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
-		                   FROM consumer_auth cl WHERE cl.consumer_id = c.id AND cl.level IS NOT NULL), '{}')::jsonb AS auth_links`
+		       links.auth_ids, links.auth_links`
+
+// consumerSelectFrom reads a consumer's auth ids and personal link attributes
+// in one pass over consumer_auth: a personal consumer holds a link per user,
+// so scanning them twice per row doubles the cost of every read and snapshot
+// compile.
+const consumerSelectFrom = consumerSelectColumns + `
+		  FROM consumers c
+		  LEFT JOIN LATERAL (
+		       SELECT COALESCE(array_agg(cal.auth_id ORDER BY cal.auth_id), '{}')::uuid[] AS auth_ids,
+		              COALESCE(json_object_agg(cal.auth_id, json_build_object('level', cal.level, 'priority', cal.priority,
+		                         'granted_at', to_char(cal.granted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+		                       FILTER (WHERE cal.level IS NOT NULL), '{}')::jsonb AS auth_links
+		         FROM consumer_auth cal
+		        WHERE cal.consumer_id = c.id
+		  ) links ON TRUE`
 
 var (
 	_ domain.Repository = (*Repository)(nil)
@@ -548,8 +559,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 }
 
 func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE c.id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
 	c, err := scanConsumer(row)
@@ -595,8 +605,7 @@ func (r *Repository) ListIDsByAuthID(ctx context.Context, authID ids.AuthID) ([]
 }
 
 func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE c.slug = $1
 		   AND c.active = TRUE`
 	row := r.conn.Pool.QueryRow(ctx, query, strings.TrimSpace(slug))
@@ -632,8 +641,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		return nil, 0, fmt.Errorf("consumer repository: count: %w", err)
 	}
 
-	listQuery := consumerSelectColumns + `
-		  FROM consumers c
+	listQuery := consumerSelectFrom + `
 		 WHERE ($1::uuid IS NULL OR c.gateway_id = $1)
 		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%' OR lower(c.slug) LIKE '%' || lower($2) || '%')
 		   AND ($3 = '' OR c.type = $3)
@@ -663,8 +671,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 }
 
 func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE c.gateway_id = $1
 		 ORDER BY c.created_at DESC, c.id`
 	rows, err := r.conn.Pool.Query(ctx, query, gatewayID)
@@ -688,8 +695,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 }
 
 func (r *Repository) ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE EXISTS (SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $1)
 		 ORDER BY c.created_at DESC, c.id`
 	rows, err := r.conn.Pool.Query(ctx, query, authID)

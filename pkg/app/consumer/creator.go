@@ -137,7 +137,7 @@ func (c *creator) refusePersonalCreate(ctx context.Context, cons *domain.Consume
 	if err != nil {
 		return err
 	}
-	if gw.ServedByHybridDataPlane() {
+	if !gw.AllowsPersonal() {
 		return domain.ErrHybridPersonal
 	}
 	return nil

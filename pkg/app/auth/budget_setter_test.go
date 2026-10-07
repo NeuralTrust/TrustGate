@@ -49,14 +49,14 @@ func newBudgetSetter(repo domain.Repository, manager *cache.TTLMapManager, publi
 func TestBudgetSetter_SetsOrClearsTheBudgetOfAnOwnedKey(t *testing.T) {
 	t.Parallel()
 	for name, budget := range map[string]*domain.KeyBudget{
-		"set":   {Max: 50, TimeWindow: domain.BudgetWindowCalendarMonth},
+		"set":   {Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth},
 		"clear": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			gwID := ids.New[ids.GatewayKind]()
 			existing := ownedKey(t, gwID)
-			existing.Budget = &domain.KeyBudget{Max: 5, TimeWindow: domain.BudgetWindowCalendarDay}
+			existing.Budget = &domain.KeyBudget{Max: 5, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarDay}
 			hash, prefix, expiry := existing.KeyHash, existing.KeyPrefix, *existing.ExpiresAt
 			stored := *existing
 			stored.KeyHash = "rotated-meanwhile"
@@ -90,7 +90,7 @@ func TestBudgetSetter_SetsOrClearsTheBudgetOfAnOwnedKey(t *testing.T) {
 func TestBudgetSetter_WritesNothingItRefuses(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	monthly := &domain.KeyBudget{Max: 50, TimeWindow: domain.BudgetWindowCalendarMonth}
+	monthly := &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth}
 	for name, tc := range map[string]struct {
 		found   func(t *testing.T) (*domain.Auth, error)
 		gateway ids.GatewayID
@@ -115,7 +115,7 @@ func TestBudgetSetter_WritesNothingItRefuses(t *testing.T) {
 		},
 		"invalid budget": {
 			found:   func(t *testing.T) (*domain.Auth, error) { return ownedKey(t, gwID), nil },
-			gateway: gwID, budget: &domain.KeyBudget{Max: 50, TimeWindow: "30d"}, want: domain.ErrInvalidBudget,
+			gateway: gwID, budget: &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: "30d"}, want: domain.ErrInvalidBudget,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -148,7 +148,7 @@ func TestBudgetSetter_DoesNotSignalWhenTheWriteFails(t *testing.T) {
 	signaler := &configsynctest.FakeSignaler{}
 
 	_, err := newBudgetSetter(repo, manager, cachemocks.NewEventPublisher(t), signaler).
-		SetBudget(context.Background(), appauth.SetBudgetInput{ID: existing.ID, GatewayID: gwID, Budget: &domain.KeyBudget{Max: 1, TimeWindow: domain.BudgetWindowCalendarDay}})
+		SetBudget(context.Background(), appauth.SetBudgetInput{ID: existing.ID, GatewayID: gwID, Budget: &domain.KeyBudget{Max: 1, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarDay}})
 	require.EqualError(t, err, "boom")
 	require.Zero(t, signaler.Count())
 	_, cached := manager.GetTTLMap(cache.AuthTTLName).Get(existing.ID.String())

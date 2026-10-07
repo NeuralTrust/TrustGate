@@ -159,6 +159,41 @@ func (r *Repository) UpdateBudget(ctx context.Context, a *domain.Auth) (*domain.
 	return stored, nil
 }
 
+func (r *Repository) RotateKey(ctx context.Context, a *domain.Auth, previousHash string) error {
+	if a == nil {
+		return errors.New("auth repository: nil auth")
+	}
+	const query = `
+		UPDATE auths
+		   SET key_hash   = $3,
+		       key_prefix = $4,
+		       key_suffix = $5,
+		       expires_at = $6,
+		       updated_at = $7
+		 WHERE id = $1 AND gateway_id = $2 AND key_hash IS NOT DISTINCT FROM $8`
+	const exists = `SELECT EXISTS (SELECT 1 FROM auths WHERE id = $1 AND gateway_id = $2)`
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, query,
+			a.ID, a.GatewayID, nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix),
+			a.ExpiresAt, a.UpdatedAt, nullableString(previousHash),
+		)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() > 0 {
+			return nil
+		}
+		var found bool
+		if err := tx.QueryRow(ctx, exists, a.ID, a.GatewayID).Scan(&found); err != nil {
+			return fmt.Errorf("auth repository: rotate key: %w", err)
+		}
+		if !found {
+			return domain.ErrNotFound
+		}
+		return domain.ErrRotatedConcurrently
+	})
+}
+
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
 	const query = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
@@ -168,6 +203,31 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 		}
 		if cmd.RowsAffected() == 0 {
 			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
+// DeleteOwned locks the key first, so an attach racing the revoke either
+// commits before it and has its link removed here, or waits on the foreign
+// key and fails once the key is gone.
+func (r *Repository) DeleteOwned(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
+	const lock = `SELECT 1 FROM auths WHERE id = $1 AND gateway_id = $2 AND owner_id IS NOT NULL FOR UPDATE`
+	const unlink = `DELETE FROM consumer_auth WHERE auth_id = $1`
+	const remove = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var found int
+		if err := tx.QueryRow(ctx, lock, id, gatewayID).Scan(&found); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.ErrNotFound
+			}
+			return fmt.Errorf("auth repository: lock personal key: %w", err)
+		}
+		if _, err := tx.Exec(ctx, unlink, id); err != nil {
+			return fmt.Errorf("auth repository: unlink personal key: %w", err)
+		}
+		if _, err := tx.Exec(ctx, remove, id, gatewayID); err != nil {
+			return mapPgDeleteError(err)
 		}
 		return nil
 	})
@@ -300,6 +360,7 @@ func (r *Repository) ListEnabledByGatewayAndType(
 		 WHERE gateway_id = $1
 		   AND type = ANY($2::text[])
 		   AND enabled = TRUE
+		   AND owner_id IS NULL
 		 ORDER BY created_at DESC, id`
 	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, storedTypeNames(authType))
 	if err != nil {

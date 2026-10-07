@@ -30,15 +30,19 @@ func init() {
 	})
 }
 
+// The grant time is bounded to the unix epoch through year 9999 UTC, the range
+// every plane can round-trip through JSON and time.Time.
 func upAddConsumerAuthGrant(ctx context.Context, tx pgx.Tx) error {
-	const ddl = `
+	const ddl = llmStoreLockTimeout + `
 		ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS level TEXT NULL;
 		ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS priority INTEGER NULL;
 		ALTER TABLE consumer_auth ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ NULL;
 		ALTER TABLE consumer_auth DROP CONSTRAINT IF EXISTS consumer_auth_grant_check;
 		ALTER TABLE consumer_auth ADD CONSTRAINT consumer_auth_grant_check CHECK (
 			num_nonnulls(level, priority, granted_at) = 0
-			OR (num_nonnulls(level, priority, granted_at) = 3 AND level IN ('user', 'group', 'all') AND priority >= 0 AND isfinite(granted_at)));`
+			OR (num_nonnulls(level, priority, granted_at) = 3 AND level IN ('user', 'group', 'all') AND priority >= 0
+				AND granted_at >= TIMESTAMPTZ '1970-01-01 00:00:00+00'
+				AND granted_at <= TIMESTAMPTZ '9999-12-31 23:59:59.999999+00'));`
 	_, err := tx.Exec(ctx, ddl)
 	return err
 }

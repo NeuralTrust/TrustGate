@@ -406,7 +406,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/auths": {
             "get": {
-                "description": "Returns a paginated list of auths in a gateway.",
+                "description": "Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.",
                 "produces": [
                     "application/json"
                 ],
@@ -451,6 +451,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "List only the personal key of this owner. Without it, personal keys are excluded",
                         "name": "owner_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true lists only personal keys, of every owner; false lists only application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)",
+                        "name": "owned",
                         "in": "query"
                     },
                     {
@@ -774,6 +780,85 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/auths/{id}/budget": {
+            "put": {
+                "description": "Sets or clears the spending limit of a personal (owned) key. The body is {\"max\": \u003cnumber\u003e, \"unit\": \"tokens\" or \"dollars\", \"time_window\": \"calendar_month\" or \"calendar_day\"}, or null to clear the budget. max must be a finite number above zero, and a whole number of tokens when unit is tokens. Every token_rate_limiter policy with key_budgets that counts in that unit holds the key to this budget in place of its aggregate; a policy counting in the other unit keeps its own limit. The secret, the expiry and the consumers of the key do not change, and a rotation keeps the budget. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Set the budget of a personal key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The budget, or null to clear it",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "An application key (application_key), or an invalid budget (validation_failed)",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -5400,6 +5485,31 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number",
+                    "example": 50
+                },
+                "time_window": {
+                    "type": "string",
+                    "enum": [
+                        "calendar_month",
+                        "calendar_day"
+                    ],
+                    "example": "calendar_month"
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "tokens",
+                        "dollars"
+                    ],
+                    "example": "dollars"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -5444,6 +5554,14 @@ const docTemplate = `{
                 "api_key": {
                     "description": "#nosec G101",
                     "type": "string"
+                },
+                "budget": {
+                    "description": "Budget is the spending limit of a personal key. Absent means it has none.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse"
+                        }
+                    ]
                 },
                 "config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse"
@@ -5500,6 +5618,28 @@ const docTemplate = `{
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number"
+                },
+                "time_window": {
+                    "type": "string",
+                    "enum": [
+                        "calendar_month",
+                        "calendar_day"
+                    ]
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "tokens",
+                        "dollars"
+                    ]
                 }
             }
         },
@@ -8367,6 +8507,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "type": "string"
+                },
                 "consumer_ids": {
                     "type": "array",
                     "items": {
@@ -8383,9 +8526,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
-                    "type": "string"
-                },
-                "key": {
                     "type": "string"
                 },
                 "key_prefix": {

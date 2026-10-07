@@ -26,6 +26,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -37,10 +38,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// unreached holds no auth on any consumer.
+type unreached struct{}
+
+func (unreached) ForAuths(_ context.Context, _ ids.GatewayID, authIDs []ids.AuthID) (map[ids.AuthID][]appconsumer.AuthConsumer, error) {
+	out := make(map[ids.AuthID][]appconsumer.AuthConsumer, len(authIDs))
+	for _, id := range authIDs {
+		out[id] = []appconsumer.AuthConsumer{}
+	}
+	return out, nil
+}
+
 func budgetApp(repo domain.Repository, publisher cache.EventPublisher, signaler *configsynctest.FakeSignaler) *fiber.App {
 	setter := appauth.NewBudgetSetter(repo, cache.NewTTLMapManager(time.Hour), publisher, slog.New(slog.DiscardHandler), signaler, nil)
 	app := fiber.New()
-	app.Put("/gateways/:gateway_id/auths/:id/budget", authhttp.NewUpdateAuthBudgetHandler(setter, nil).Handle)
+	app.Put("/gateways/:gateway_id/auths/:id/budget", authhttp.NewUpdateAuthBudgetHandler(setter, unreached{}).Handle)
 	return app
 }
 
@@ -55,14 +67,14 @@ func TestUpdateAuthBudget_SetsAndClearsTheBudgetOfAnOwnedKey(t *testing.T) {
 		budget     *domain.KeyBudget
 		wantInBody string
 	}{
-		"set":   {body: `{"max":50,"time_window":"calendar_month"}`, budget: &domain.KeyBudget{Max: 50, TimeWindow: domain.BudgetWindowCalendarMonth}, wantInBody: `"budget":{"max":50,"time_window":"calendar_month"}`},
+		"set":   {body: `{"max":50,"unit":"dollars","time_window":"calendar_month"}`, budget: &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth}, wantInBody: `"budget":{"max":50,"unit":"dollars","time_window":"calendar_month"}`},
 		"clear": {body: `null`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			gwID := ids.New[ids.GatewayKind]()
 			owned := testAPIKeyAuth(t, gwID, "personal-alice", "alice")
-			owned.Budget = &domain.KeyBudget{Max: 1, TimeWindow: domain.BudgetWindowCalendarDay}
+			owned.Budget = &domain.KeyBudget{Max: 1, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarDay}
 			hash, expiry := owned.KeyHash, owned.ExpiresAt
 			repo := repomocks.NewRepository(t)
 			repo.EXPECT().FindByID(mock.Anything, owned.ID).Return(owned, nil).Once()
@@ -91,7 +103,7 @@ func TestUpdateAuthBudget_SetsAndClearsTheBudgetOfAnOwnedKey(t *testing.T) {
 
 func TestUpdateAuthBudget_RefusesWithoutWriting(t *testing.T) {
 	t.Parallel()
-	const monthly = `{"max":50,"time_window":"calendar_month"}`
+	const monthly = `{"max":50,"unit":"dollars","time_window":"calendar_month"}`
 	for name, tc := range map[string]struct {
 		body       string
 		auth       func(t *testing.T, gwID ids.GatewayID) *domain.Auth
@@ -152,7 +164,7 @@ func TestListAuths_OwnedListsEveryPersonalKey(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	alice, bob := testAPIKeyAuth(t, gwID, "personal-alice", "alice"), testAPIKeyAuth(t, gwID, "personal-bob", "bob")
-	alice.Budget = &domain.KeyBudget{Max: 50, TimeWindow: domain.BudgetWindowCalendarMonth}
+	alice.Budget = &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth}
 	for name, tc := range map[string]struct {
 		query      string
 		wantFilter func(domain.ListFilter) bool
@@ -190,7 +202,7 @@ func TestListAuths_OwnedListsEveryPersonalKey(t *testing.T) {
 				require.Contains(t, raw, `"owner_id":"`+a.OwnerID+`"`)
 			}
 			if len(tc.listed) > 0 {
-				require.Contains(t, raw, `"budget":{"max":50,"time_window":"calendar_month"}`)
+				require.Contains(t, raw, `"budget":{"max":50,"unit":"dollars","time_window":"calendar_month"}`)
 				require.Equal(t, 1, strings.Count(raw, `"budget"`), "only the key with a budget carries one")
 			}
 		})

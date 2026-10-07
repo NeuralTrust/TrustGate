@@ -544,8 +544,8 @@ func TestAuth_ManagedBy(t *testing.T) {
 			}
 		})
 	}
-	if !errors.Is(ErrOwnedKey, commonerrors.ErrManagedByOwner) {
-		t.Fatal("ErrOwnedKey must answer as managed by its owner")
+	if errors.Is(ErrOwnedKey, commonerrors.ErrValidation) {
+		t.Fatal("ErrOwnedKey must answer with its own code, not as a validation error")
 	}
 }
 

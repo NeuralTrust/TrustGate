@@ -37,6 +37,12 @@ const (
 	headerBudgetLimitUSD     = "X-Budget-Limit-Usd"
 	headerBudgetRemainingUSD = "X-Budget-Remaining-Usd"
 	headerBudgetReset        = "X-Budget-Reset"
+	headerRetryAfter         = "Retry-After"
+
+	// budgetUnavailableRetryAfter is how long a client waits before retrying a
+	// request refused because the counter store could not be read. The store
+	// is usually back within seconds; the budget itself has not run out.
+	budgetUnavailableRetryAfter = "5"
 )
 
 func dollarBudgetHeaders(limitMicros, consumedMicros int64, scope, window string, resetSeconds int) map[string][]string {
@@ -83,7 +89,8 @@ func budgetExceededError(unit, scope, window string, headers map[string][]string
 }
 
 func budgetUnavailableError() *appplugins.PluginError {
-	return budgetError(http.StatusServiceUnavailable, budgetUnavailable, nil, map[string]any{"scope": partitionKey})
+	headers := map[string][]string{headerRetryAfter: {budgetUnavailableRetryAfter}}
+	return budgetError(http.StatusServiceUnavailable, budgetUnavailable, headers, map[string]any{"scope": partitionKey})
 }
 
 func modelUnpricedError(model string) *appplugins.PluginError {

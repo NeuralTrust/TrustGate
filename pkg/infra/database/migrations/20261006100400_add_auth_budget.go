@@ -31,7 +31,7 @@ func init() {
 }
 
 func upAddAuthBudget(ctx context.Context, tx pgx.Tx) error {
-	const ddl = `ALTER TABLE auths ADD COLUMN IF NOT EXISTS budget JSONB NULL;`
+	const ddl = llmStoreLockTimeout + `ALTER TABLE auths ADD COLUMN IF NOT EXISTS budget JSONB NULL;`
 	_, err := tx.Exec(ctx, ddl)
 	return err
 }

@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -92,6 +93,7 @@ type ForwardedHandler struct {
 	storeSelector   appproxy.StoreSelector
 	storeModels     appproxy.StoreModels
 	logger          *slog.Logger
+	now             func() time.Time
 }
 
 func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
@@ -99,6 +101,7 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 		forwarder:       forwarder,
 		resolveClientIP: requestmeta.NewIPResolver("peer", nil),
 		logger:          slog.Default(),
+		now:             time.Now,
 	}
 }
 
@@ -123,6 +126,8 @@ func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHa
 	return h
 }
 
+// WithStore serves /store/v1/* with selector picking the personal consumer and
+// models listing what the caller's key reaches.
 func (h *ForwardedHandler) WithStore(selector appproxy.StoreSelector, models appproxy.StoreModels) *ForwardedHandler {
 	h.storeSelector = selector
 	h.storeModels = models
@@ -180,7 +185,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
-		Request:   newForwardRequest(c, gatewayID, route, authCtx),
+		Request:   h.newForwardRequest(c, gatewayID, route, authCtx),
 	})
 }
 
@@ -204,7 +209,13 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	if route.Capability == apiresolver.CapabilityModels {
 		return serveModels(c, route, h.storeModels, appproxy.StoreModelsInput{Links: links, Data: data})
 	}
-	reqCtx := newForwardRequest(c, gatewayID, route, authCtx)
+	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx)
+	// Selection holds no state, so it runs before the plan limit: a request
+	// no linked consumer can serve is refused without spending a plan token.
+	sel, err := h.storeSelector.Select(c.UserContext(), appproxy.StoreSelectInput{Links: links, Data: data, Request: reqCtx})
+	if err != nil {
+		return writeProxyError(c, err)
+	}
 	limited, err := h.forwarder.Precheck(c.UserContext(), gatewayID, reqCtx)
 	if err != nil {
 		return writeProxyError(c, err)
@@ -212,10 +223,6 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	if limited != nil {
 		relayHeaders(c, limited.Headers)
 		return c.Status(limited.StatusCode).Send(limited.Body)
-	}
-	sel, err := h.storeSelector.Select(c.UserContext(), appproxy.StoreSelectInput{Links: links, Data: data, Request: reqCtx})
-	if err != nil {
-		return writeProxyError(c, err)
 	}
 	consumer := sel.Link.Consumer
 	authCtx.ConsumerID = consumer.Consumer.ID
@@ -280,13 +287,15 @@ func stampKeyOwner(c *fiber.Ctx, ownerID string) {
 	}
 }
 
-func newForwardRequest(
+func (h *ForwardedHandler) newForwardRequest(
 	c *fiber.Ctx,
 	gatewayID ids.GatewayID,
 	route apiresolver.ProxyRoute,
 	authCtx *appauth.AuthContext,
 ) *infracontext.RequestContext {
 	reqCtx := buildRequestContext(c, gatewayID, route)
+	arrived := h.now().UTC()
+	reqCtx.ProcessAt = &arrived
 	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
 	stampAuth(reqCtx, authCtx)
 	return reqCtx

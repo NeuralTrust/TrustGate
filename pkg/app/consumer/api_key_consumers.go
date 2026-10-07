@@ -131,6 +131,7 @@ type apiKeyConsumers struct {
 	// vault is optional: a plane without it answers the same question with the
 	// upstream part left out rather than refusing it.
 	vault vaultdomain.Repository
+	now   func() time.Time
 }
 
 func NewAPIKeyConsumers(
@@ -141,7 +142,7 @@ func NewAPIKeyConsumers(
 	if consumers == nil || apiKeys == nil {
 		return nil, errors.New("consumer api key consumers: consumers and api keys are required")
 	}
-	return &apiKeyConsumers{consumers: consumers, apiKeys: apiKeys, vault: vault}, nil
+	return &apiKeyConsumers{consumers: consumers, apiKeys: apiKeys, vault: vault, now: time.Now}, nil
 }
 
 func (s *apiKeyConsumers) ForAPIKey(
@@ -160,7 +161,7 @@ func (s *apiKeyConsumers) ForAPIKey(
 		}
 		return nil, fmt.Errorf("consumer api key consumers: find api key: %w", err)
 	}
-	if !auth.AcceptsApplicationKey(gatewayID, time.Now().UTC()) {
+	if !auth.AcceptsApplicationKey(gatewayID, s.now().UTC()) {
 		return nil, ErrAPIKeyUnknown
 	}
 	data, err := s.consumers.FindByGateway(ctx, gatewayID)

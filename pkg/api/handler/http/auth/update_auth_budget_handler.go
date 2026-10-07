@@ -27,18 +27,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// UpdateAuthBudgetHandler sets or clears the spending limit of a personal key.
 type UpdateAuthBudgetHandler struct {
 	setter appauth.BudgetSetter
 	reach  appconsumer.AuthConsumers
 }
 
+// NewUpdateAuthBudgetHandler returns the handler; reach lists the consumers the
+// key holds, which the response carries like every admin auth response.
 func NewUpdateAuthBudgetHandler(setter appauth.BudgetSetter, reach appconsumer.AuthConsumers) *UpdateAuthBudgetHandler {
 	return &UpdateAuthBudgetHandler{setter: setter, reach: reach}
 }
 
 // Handle godoc
 // @Summary      Set the budget of a personal key
-// @Description  Sets or clears the spending limit of a personal (owned) key. The body is {"max": <number>, "time_window": "calendar_month" or "calendar_day"}, or null to clear the budget. max must be a finite number above zero and is counted in the unit (tokens or dollars) of the token_rate_limiter policy with partition key that enforces it, where it replaces that policy's aggregate for this key. The secret, the expiry and the consumers of the key do not change, and a rotation keeps the budget. An application key answers 422 application_key; an invalid body answers 422 validation_failed.
+// @Description  Sets or clears the spending limit of a personal (owned) key. The body is {"max": <number>, "unit": "tokens" or "dollars", "time_window": "calendar_month" or "calendar_day"}, or null to clear the budget. max must be a finite number above zero, and a whole number of tokens when unit is tokens. Every token_rate_limiter policy with key_budgets that counts in that unit holds the key to this budget in place of its aggregate; a policy counting in the other unit keeps its own limit. The secret, the expiry and the consumers of the key do not change, and a rotation keeps the budget. An application key answers 422 application_key; an invalid body answers 422 validation_failed.
 // @Tags         auths
 // @Accept       json
 // @Produce      json
@@ -69,9 +72,6 @@ func (h *UpdateAuthBudgetHandler) Handle(c *fiber.Ctx) error {
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
-	}
-	if h.reach == nil {
-		return httpio.WriteOK(c, response.FromAuth(a))
 	}
 	held, err := h.reach.ForAuths(c.UserContext(), gatewayID, []ids.AuthID{a.ID})
 	if err != nil {

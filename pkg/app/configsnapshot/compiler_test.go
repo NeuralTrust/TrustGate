@@ -587,7 +587,7 @@ func TestCompilerShipsOwnedKeys(t *testing.T) {
 	corrupt := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
 	application := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "application-hash"}
 	owned := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice",
-		Budget: &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
+		Budget: &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
 	perGateway := fakeRegistries{errByGateway: map[string]error{corrupt.String(): fmt.Errorf("decrypt auth: %w", commonerrors.ErrCorruptData)}}
 
 	for name, registries := range map[string]fakeRegistries{"bulk": {}, "per gateway": perGateway} {

@@ -25,10 +25,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// APIKeyIdentityResolver resolves the identity behind an API key presented to
+// the proxy.
 type APIKeyIdentityResolver struct {
 	now func() time.Time
 }
 
+// NewAPIKeyIdentityResolver returns a resolver that checks expiry against now,
+// the UTC wall clock when now is nil.
 func NewAPIKeyIdentityResolver(now func() time.Time) *APIKeyIdentityResolver {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }

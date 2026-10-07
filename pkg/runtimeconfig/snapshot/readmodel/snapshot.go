@@ -84,6 +84,7 @@ type Snapshot struct {
 	authsByID           map[ids.AuthID]*authdomain.Auth
 	authsByGateway      map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth
 	authsByAPIKeyHash   map[string]*authdomain.Auth
+	authsByOwner        map[authOwnerKey]*authdomain.Auth
 	authsEnabledByAge   []*authdomain.Auth
 	authsEnabledGateway map[ids.GatewayID][]*authdomain.Auth
 
@@ -118,6 +119,7 @@ func Build(data Data) *Snapshot {
 		authsByID:              make(map[ids.AuthID]*authdomain.Auth, len(data.Auths)),
 		authsByGateway:         make(map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth),
 		authsByAPIKeyHash:      make(map[string]*authdomain.Auth),
+		authsByOwner:           make(map[authOwnerKey]*authdomain.Auth),
 		authsEnabledGateway:    make(map[ids.GatewayID][]*authdomain.Auth),
 		catalogByProviderSlug:  make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
 		catalogByProviderCode:  make(map[string][]*catalogdomain.Model),
@@ -263,6 +265,9 @@ func (s *Snapshot) buildAuths() {
 		byID[a.ID] = a
 		if a.Type == authdomain.TypeAPIKey && a.Enabled && a.KeyHash != "" {
 			s.authsByAPIKeyHash[a.KeyHash] = a
+		}
+		if a.IsOwned() {
+			s.authsByOwner[authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID}] = a
 		}
 	}
 
@@ -477,16 +482,18 @@ func (s *Snapshot) AuthByAPIKeyHash(keyHash string) (*authdomain.Auth, bool) {
 	return a, ok
 }
 
+type authOwnerKey struct {
+	gatewayID ids.GatewayID
+	ownerID   string
+}
+
+// AuthByOwner returns the personal key ownerID holds on gatewayID.
 func (s *Snapshot) AuthByOwner(gatewayID ids.GatewayID, ownerID string) (*authdomain.Auth, bool) {
 	if ownerID == "" {
 		return nil, false
 	}
-	for _, a := range s.authsByGateway[gatewayID] {
-		if a.OwnerID == ownerID {
-			return a, true
-		}
-	}
-	return nil, false
+	a, ok := s.authsByOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID}]
+	return a, ok
 }
 
 func (s *Snapshot) AuthsEnabledByTypes(types []authdomain.Type) []*authdomain.Auth {
@@ -506,11 +513,13 @@ func (s *Snapshot) AuthsEnabledByTypes(types []authdomain.Type) []*authdomain.Au
 	return out
 }
 
+// AuthsEnabledByGatewayAndType returns the enabled application credentials of
+// authType on gatewayID, newest first. Personal keys are left out.
 func (s *Snapshot) AuthsEnabledByGatewayAndType(gatewayID ids.GatewayID, authType authdomain.Type) []*authdomain.Auth {
 	out := make([]*authdomain.Auth, 0)
 	want := authdomain.NormalizeType(authType)
 	for _, a := range s.authsEnabledGateway[gatewayID] {
-		if authdomain.NormalizeType(a.Type) == want {
+		if !a.IsOwned() && authdomain.NormalizeType(a.Type) == want {
 			out = append(out, a)
 		}
 	}

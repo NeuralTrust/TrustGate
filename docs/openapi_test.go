@@ -302,7 +302,7 @@ func TestPersonalKeyOpenAPIDocumentsTheSelfOnlyEndpoints(t *testing.T) {
 		"rotate": rotate.Post.Responses["200"].Content["application/json"].Schema.Ref,
 	} {
 		issued := schemaByRef(t, document, ref)
-		for _, field := range append(fields, "key") {
+		for _, field := range append(fields, "api_key") {
 			assert.Contains(t, issued.Properties, field, "%s answers %s", name, field)
 		}
 		assert.NotContains(t, issued.Properties, "key_hash")
@@ -311,7 +311,7 @@ func TestPersonalKeyOpenAPIDocumentsTheSelfOnlyEndpoints(t *testing.T) {
 	for _, field := range fields {
 		assert.Contains(t, read.Properties, field)
 	}
-	assert.NotContains(t, read.Properties, "key", "GET never carries the secret")
+	assert.NotContains(t, read.Properties, "api_key", "GET never carries the secret")
 	create := schemaByRef(t, document, key.Post.RequestBody.Content["application/json"].Schema.Ref)
 	assert.Contains(t, create.Properties, "expires_at")
 	assert.NotContains(t, create.Properties, "principal_sub", "the owner is always the caller")

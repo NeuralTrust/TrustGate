@@ -359,7 +359,7 @@ func SetKeyBudget(t *testing.T, gatewayID, authID string, budget any) (int, map[
 }
 
 func monthlyBudget(limit float64) map[string]any {
-	return map[string]any{"max": limit, "time_window": "calendar_month"}
+	return map[string]any{"max": limit, "unit": "dollars", "time_window": "calendar_month"}
 }
 
 func CreatePersonalConsumer(t *testing.T, gatewayID string, payload map[string]any) string {
@@ -468,7 +468,7 @@ func setupStoreFixture(t *testing.T, gateway map[string]any) *storeFixture {
 	status, created := CreateLLMKey(t, f.gatewayID, f.owner, llmKeyExpiry(30*llmKeyDay))
 	require.Equal(t, http.StatusCreated, status, "body=%v", created)
 	assert.Equal(t, []any{}, created["consumer_ids"])
-	f.keyID, f.key = fmt.Sprint(created["id"]), fmt.Sprint(created["key"])
+	f.keyID, f.key = fmt.Sprint(created["id"]), fmt.Sprint(created["api_key"])
 	grantedAt := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	for i, name := range []string{"A", "B", "C", "D"} {
 		level := "group"

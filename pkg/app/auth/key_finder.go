@@ -59,23 +59,27 @@ func (f *apiKeyFinder) FindByAPIKey(ctx context.Context, rawKey string) (*domain
 	if _, missed := f.missCache.Get(hash); missed {
 		return nil, domain.ErrNotFound
 	}
+	// The generations are read before the store: a rotation, revocation or
+	// snapshot swap that clears the caches while the read is in flight makes
+	// the fill below a no-op instead of putting back what it replaced.
+	keyGen, missGen := f.keyCache.Generation(), f.missCache.Generation()
 	a, err := f.repo.FindByAPIKeyHash(ctx, hash)
 	if errors.Is(err, domain.ErrNotFound) {
-		f.rememberMiss(hash)
+		f.rememberMiss(hash, missGen)
 	}
 	if err != nil {
 		return nil, err
 	}
-	f.keyCache.Set(hash, a)
+	f.keyCache.SetIfGeneration(hash, a, keyGen)
 	return f.live(a)
 }
 
 // rememberMiss keeps an unknown digest for a short while, so the same random
 // key presented again does not reach the database every time. Any change to a
 // gateway's credentials clears the map with InvalidateGatewayDataEvent.
-func (f *apiKeyFinder) rememberMiss(hash string) {
+func (f *apiKeyFinder) rememberMiss(hash string, generation uint64) {
 	if f.missCache.Len() < cache.AuthKeyMissCacheMaxEntries {
-		f.missCache.Set(hash, struct{}{})
+		f.missCache.SetIfGeneration(hash, struct{}{}, generation)
 	}
 }
 

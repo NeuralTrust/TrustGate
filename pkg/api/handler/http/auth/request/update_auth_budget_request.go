@@ -22,6 +22,7 @@ import (
 // in its place clears the budget.
 type UpdateAuthBudgetRequest struct {
 	Max        float64 `json:"max" example:"50"`
+	Unit       string  `json:"unit" enums:"tokens,dollars" example:"dollars"`
 	TimeWindow string  `json:"time_window" enums:"calendar_month,calendar_day" example:"calendar_month"`
 }
 
@@ -31,5 +32,5 @@ func (r *UpdateAuthBudgetRequest) ToBudget() *domain.KeyBudget {
 	if r == nil {
 		return nil
 	}
-	return &domain.KeyBudget{Max: r.Max, TimeWindow: r.TimeWindow}
+	return &domain.KeyBudget{Max: r.Max, Unit: r.Unit, TimeWindow: r.TimeWindow}
 }
