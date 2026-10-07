@@ -139,6 +139,34 @@ func (h *ForwardedHandler) WithStore(selector appproxy.StoreSelector, models app
 	return h
 }
 
+// HandleBedrockNative godoc
+// @Summary      Proxy a native Amazon Bedrock Runtime call
+// @Description  Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never rewrite it: a change that cannot be carried onto the original body fails open, or blocks when the policy's on_mask_failure is block. Every error the gateway makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.
+// @Tags         proxy
+// @Accept       json
+// @Produce      json
+// @Param        consumer_slug      path   string  true   "Consumer slug"
+// @Param        model_id           path   string  true   "Model ID, inference profile ID or URL-encoded ARN"
+// @Param        Authorization      header string  false  "An AWS SigV4 Authorization header is accepted and ignored; authenticate with X-AG-API-Key"
+// @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
+// @Param        body               body   object  true   "The Bedrock Runtime request body for the operation"
+// @Success      200                {object}  map[string]interface{}
+// @Failure      400                {object}  httpio.BedrockErrorBody
+// @Failure      401                {object}  httpio.BedrockErrorBody
+// @Failure      403                {object}  httpio.BedrockErrorBody
+// @Failure      404                {object}  httpio.BedrockErrorBody
+// @Failure      429                {object}  httpio.BedrockErrorBody
+// @Failure      500                {object}  httpio.BedrockErrorBody
+// @Failure      502                {object}  httpio.BedrockErrorBody
+// @Router       /{consumer_slug}/model/{model_id}/converse [post]
+// @Router       /{consumer_slug}/model/{model_id}/converse-stream [post]
+// @Router       /{consumer_slug}/model/{model_id}/invoke [post]
+// @Router       /{consumer_slug}/model/{model_id}/invoke-with-response-stream [post]
+// It exists for the OpenAPI spec: routing goes through Handle.
+func (h *ForwardedHandler) HandleBedrockNative(c *fiber.Ctx) error {
+	return h.Handle(c)
+}
+
 // Handle godoc
 // @Summary      Proxy chat completion
 // @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….
@@ -195,7 +223,11 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 }
 
 func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRoute) error {
-	if h.storeSelector == nil || h.storeModels == nil || route.Capability == apiresolver.CapabilityFiles {
+	// The store serves the OpenAI-shaped routes only: a native Bedrock route is
+	// never parsed under its slug, and one that got here anyway is refused rather
+	// than selected and relayed.
+	if h.storeSelector == nil || h.storeModels == nil || route.Capability == apiresolver.CapabilityFiles ||
+		route.IsBedrockNative() {
 		return writeProxyError(c, errPathNotFound)
 	}
 	gatewayID, authCtx, data, err := requestCaller(c)
@@ -261,6 +293,9 @@ func (h *ForwardedHandler) forward(c *fiber.Ctx, in appproxy.ForwardInput) error
 		return writeProxyError(c, err)
 	}
 
+	if in.Request.IsBedrockNative() {
+		envelopeNativeError(result)
+	}
 	relayHeaders(c, result.Headers)
 
 	if result.Stream != nil {
@@ -307,6 +342,27 @@ func (h *ForwardedHandler) newForwardRequest(
 	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
 	stampAuth(reqCtx, authCtx)
 	return reqCtx
+}
+
+// envelopeNativeError gives an error the gateway made itself, a plugin block, a
+// rate limit or a refused short circuit, the AWS error envelope, so an AWS SDK
+// raises a typed exception from it. An answer marked Upstream is AWS's own and
+// stays exactly as AWS sent it.
+func envelopeNativeError(result *appproxy.ForwardResult) {
+	if result.Upstream || result.Stream != nil || result.StatusCode < fiber.StatusBadRequest {
+		return
+	}
+	extra, body := adapter.BedrockErrorEnvelope(result.StatusCode, result.Body)
+	headers := make(map[string][]string, len(result.Headers)+len(extra))
+	for name, values := range result.Headers {
+		if _, replaced := extra[textproto.CanonicalMIMEHeaderKey(name)]; !replaced {
+			headers[name] = values
+		}
+	}
+	for name, values := range extra {
+		headers[name] = values
+	}
+	result.Headers, result.Body = headers, body
 }
 
 func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
@@ -378,7 +434,7 @@ func writeStream(
 					slog.Any("panic", value),
 					slog.String("stack", string(stack)))
 				if !terminated {
-					writeStreamError(w, &captured, finalizer != nil, format)
+					writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames)
 				}
 			}
 		}()
@@ -390,8 +446,21 @@ func writeStream(
 			}
 			if err != nil {
 				terminated = true
-				writeStreamError(w, &captured, finalizer != nil, format)
+				writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames)
 				return
+			}
+			if result.RawFrames {
+				if finalizer != nil && result.StreamView != nil {
+					for _, viewed := range result.StreamView(line) {
+						captured.Write(viewed)
+						captured.Write(newline)
+					}
+				}
+				if !writeRawFrame(w, line) {
+					terminated = true
+					return
+				}
+				continue
 			}
 			if finalizer != nil {
 				captured.Write(line)
@@ -422,6 +491,13 @@ func cancelWhenSettled(result *appproxy.ForwardResult, cancel context.CancelFunc
 	cancel()
 }
 
+func writeRawFrame(w *bufio.Writer, frame []byte) bool {
+	if _, err := w.Write(frame); err != nil {
+		return false
+	}
+	return w.Flush() == nil
+}
+
 func writeStreamLine(w *bufio.Writer, line []byte) bool {
 	if _, err := w.Write(line); err != nil {
 		return false
@@ -435,7 +511,16 @@ func writeStreamLine(w *bufio.Writer, line []byte) bool {
 // writeStreamError ends a stream that failed after its 200 went out. The
 // status can no longer change, so an explicit error event, in the client's
 // dialect, tells the client the stream was aborted rather than finished.
-func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format) {
+//
+// A native Bedrock stream ends with the exception frame Bedrock itself uses for
+// a failure after the 200, which SDKs raise as a typed error, not with an SSE
+// event no eventstream parser can read.
+func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format, raw bool) {
+	if raw {
+		_, _ = w.Write(adapter.BedrockExceptionFrame("internalServerException", adapter.StreamErrorMessageUpstreamTerminated))
+		_ = w.Flush()
+		return
+	}
 	event := adapter.StreamErrorEvent(
 		format,
 		fiber.StatusInternalServerError,
@@ -646,8 +731,9 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 		Body:            append([]byte(nil), c.Body()...),
 		IP:              strings.Clone(c.IP()),
 		SessionID:       strings.Clone(middleware.EffectiveSessionID(c)),
-		SourceFormat:    string(route.SourceFormat),
+		SourceFormat:    string(route.RequestFormat()),
 		ProxyCapability: string(route.Capability),
+		BedrockNative:   route.BedrockTarget(),
 	}
 }
 
@@ -670,8 +756,15 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 		)
 	}
 	format := adapter.FormatOpenAI
-	if route, rerr := proxyRoute(c); rerr == nil && route.SourceFormat != "" {
-		format = route.SourceFormat
+	native := false
+	if route, rerr := proxyRoute(c); rerr == nil {
+		native = route.IsBedrockNative()
+		if route.SourceFormat != "" {
+			format = route.SourceFormat
+		}
+	}
+	if native {
+		return httpio.WriteBedrockError(c, status, body)
 	}
 	if adapter.NeedsAdaptedError(format) {
 		msg := body.Message
