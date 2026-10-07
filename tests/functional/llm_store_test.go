@@ -173,7 +173,7 @@ func TestLLMStore_FallbackAndFreshness(t *testing.T) {
 	eventuallyStore(t, func() bool { return len(storeModels(t, base, f.gatewayID, f.key)) == 0 }, "a key without links still lists models")
 	status, body = storeChat(t, base, f.gatewayID, f.key, "opus-5.5")
 	assert.Equal(t, http.StatusForbidden, status, body)
-	assert.Contains(t, body, `"error":"model_not_allowed"`)
+	assert.Contains(t, body, `"error":"no_model_access"`, "a key without links is told it has no model access")
 	_, key = GetLLMKey(t, f.gatewayID, f.owner)
 	assert.Equal(t, []any{}, key["consumer_ids"])
 }
@@ -227,7 +227,7 @@ func TestLLMStore_KeyIsolation(t *testing.T) {
 	assert.Empty(t, storeModels(t, ProxyURL, f.gatewayID, bobKey), "a key without links authenticates and lists nothing")
 	status, body := storeChat(t, ProxyURL, f.gatewayID, bobKey, "gpt6")
 	assert.Equal(t, http.StatusForbidden, status, body)
-	assert.Contains(t, body, `"error":"model_not_allowed"`)
+	assert.Contains(t, body, `"error":"no_model_access"`, "a key its owner can no longer use says why")
 	assert.Equal(t, http.StatusOK, storeModelsStatus(t, ProxyURL, f.gatewayID, carolKey))
 	require.Equal(t, http.StatusNoContent, RevokeLLMKey(t, f.gatewayID, carol))
 	eventuallyStore(t, func() bool { return storeModelsStatus(t, ProxyURL, f.gatewayID, carolKey) == http.StatusUnauthorized }, "a revoked key")
@@ -376,6 +376,37 @@ func ownedKeyID(t *testing.T, gatewayID, owner string) string {
 	items, _ := list["items"].([]any)
 	require.Len(t, items, 1)
 	return fmt.Sprint(items[0].(map[string]any)["id"])
+}
+
+// The last personal consumer of a gateway goes away (its owner's access set to
+// None), the owner's key stays: that key is told it has no model access, while
+// every other caller still gets the 404 of a gateway without a store.
+func TestLLMStore_KeyWithoutModelAccessIsForbidden(t *testing.T) {
+	defer Track(t, "LLMStore")()
+	up := newJSONUpstream(t, "store-no-access")
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("store-no-access")})
+	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("store-no-access-be"), up.URL()))
+	consumerID := CreatePersonalConsumer(t, gatewayID, storeRegistry(registryID, []string{"gpt-4o-mini"}, "gpt-4o-mini"))
+	key := createLinkedLLMKey(t, gatewayID, uniqueName("ana"), consumerID)
+	status, body := storeChat(t, ProxyURL, gatewayID, key, "gpt-4o-mini")
+	require.Equal(t, http.StatusOK, status, body)
+
+	status, _ = sendRequest(t, http.MethodDelete, fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, consumerID), nil, nil)
+	require.Equal(t, http.StatusNoContent, status)
+	eventuallyStore(t, func() bool {
+		status, body = storeChat(t, ProxyURL, gatewayID, key, "gpt-4o-mini")
+		return status == http.StatusForbidden
+	}, "the key kept reaching a model")
+	assert.Contains(t, body, `"error":"no_model_access"`)
+	assert.Equal(t, http.StatusOK, storeModelsStatus(t, ProxyURL, gatewayID, key), "listing models still answers, with nothing in it")
+
+	unknownKey := "ag_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	_, unknownSlug := gatewayCall(t, ProxyURL, gatewayID, unknownKey, http.MethodGet, "/zz9zz9zz/v1/models", nil)
+	for _, other := range []string{"", unknownKey} {
+		status, body := gatewayCall(t, ProxyURL, gatewayID, other, http.MethodPost, "/store/v1/chat/completions", chatRequest(false))
+		assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
+		assert.Equal(t, string(unknownSlug), string(body))
+	}
 }
 
 func TestLLMStore_FilesAreNotAStoreRoute(t *testing.T) {
