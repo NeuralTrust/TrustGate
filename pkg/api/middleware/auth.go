@@ -125,16 +125,24 @@ func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, rou
 	if err != nil {
 		return internalError(c, "failed to load gateway data")
 	}
-	if !data.HasPersonalConsumers() {
-		return notFound(c)
-	}
+	// A gateway with no personal consumer answers like an unknown slug, so a
+	// gateway that never used the store keeps its 404. A personal key of the
+	// gateway still gets through: its owner lost every model, and the store
+	// handler says so instead of claiming the route does not exist.
+	inUse := data.HasPersonalConsumers()
 	rawKey := resolver.APIKeyFromRequest(c)
 	if rawKey == "" {
+		if !inUse {
+			return notFound(c)
+		}
 		return unauthenticated(c)
 	}
 	key, err := m.storeKeys.Resolve(c.UserContext(), gw.ID, rawKey)
 	if errors.Is(err, appconsumer.ErrStoreKeyRejected) {
 		m.debug(c).Debug("store key rejected", slog.String("gateway_slug", gw.Slug))
+		if !inUse {
+			return notFound(c)
+		}
 		return unauthenticated(c)
 	}
 	if err != nil {

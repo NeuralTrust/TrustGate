@@ -56,6 +56,10 @@ var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 var errMethodNotAllowed = errors.New("method is not allowed for this route")
 
+// errNoModelAccess answers a valid personal key linked to no personal
+// consumer: its owner has no model access on the gateway.
+var errNoModelAccess = errors.New("this key has no model access; ask your admin to grant it")
+
 const (
 	errCodePluginRejected        = "plugin_rejected"
 	errCodeUnauthenticated       = "unauthenticated"
@@ -68,6 +72,7 @@ const (
 	errCodeContextLengthExceeded = "context_length_exceeded"
 	errCodeInvalidModel          = "invalid_model"
 	errCodeModelNotAllowed       = "model_not_allowed"
+	errCodeNoModelAccess         = "no_model_access"
 	errCodeModelNotSupported     = "model_not_supported"
 	errCodeProviderCredential    = "provider_credential_error"
 	errCodeBackendError          = "backend_error"
@@ -208,6 +213,9 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	links := data.StoreLinks(authCtx.AuthID)
 	if route.Capability == apiresolver.CapabilityModels {
 		return serveModels(c, route, h.storeModels, appproxy.StoreModelsInput{Links: links, Data: data})
+	}
+	if len(links) == 0 {
+		return writeProxyError(c, errNoModelAccess)
 	}
 	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx)
 	// Selection holds no state, so it runs before the plan limit: a request
@@ -684,6 +692,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusUnauthorized, httpio.ErrorBody{Error: errCodeUnauthenticated, Message: err.Error()}
 	case errors.Is(err, errForbidden):
 		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeForbidden, Message: err.Error()}
+	case errors.Is(err, errNoModelAccess):
+		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeNoModelAccess, Message: err.Error()}
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
 		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound}
