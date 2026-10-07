@@ -501,7 +501,7 @@ func TestRepository_BudgetIsReadEverywhereAnAuthIs(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "budget-read")
 	application, owned := validAuth(t, gwID, "application"), ownedAuth(t, gwID, "alice")
-	owned.Budget = &domain.KeyBudget{Max: 12.5, TimeWindow: domain.BudgetWindowCalendarDay}
+	owned.Budget = &domain.KeyBudget{Max: 12.5, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarDay}
 	require.NoError(t, r.Save(ctx, application))
 	require.NoError(t, r.Save(ctx, owned))
 
@@ -519,16 +519,11 @@ func TestRepository_BudgetIsReadEverywhereAnAuthIs(t *testing.T) {
 	require.Len(t, listed, 1)
 	enabled, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeAPIKey)
 	require.NoError(t, err)
-	require.Len(t, enabled, 2)
+	require.Len(t, enabled, 1, "personal keys are not application credentials")
+	require.Equal(t, application.ID, enabled[0].ID)
+	require.Nil(t, enabled[0].Budget)
 	for _, a := range []*domain.Auth{byID, byHash, byOwner, byIDs[0], listed[0]} {
 		require.Equal(t, owned.Budget, a.Budget)
-	}
-	for _, a := range enabled {
-		if a.ID == owned.ID {
-			require.Equal(t, owned.Budget, a.Budget)
-		} else {
-			require.Nil(t, a.Budget)
-		}
 	}
 	got, err := r.FindByID(ctx, application.ID)
 	require.NoError(t, err)
@@ -550,7 +545,7 @@ func TestRepository_UpdateBudgetWritesOnlyTheBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.Update(ctx, rotated))
 
-	monthly := &domain.KeyBudget{Max: 50, TimeWindow: domain.BudgetWindowCalendarMonth}
+	monthly := &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth}
 	stale.Name, stale.Enabled, stale.UpdatedAt = "renamed", false, time.Now().UTC().Truncate(time.Microsecond)
 	stale.Budget = monthly
 	stored, err := r.UpdateBudget(ctx, stale)
@@ -590,4 +585,39 @@ func TestRepository_UpdateBudgetWritesOnlyTheBudget(t *testing.T) {
 	missing.ID = ids.New[ids.AuthKind]()
 	_, err = r.UpdateBudget(ctx, &missing)
 	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestRepository_RotateKeyOnlyWinsAgainstTheSecretItRead(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID, otherGW := seedGateway(t, gw, "rotate-cas"), seedGateway(t, gw, "rotate-cas-other")
+	owned := ownedAuth(t, gwID, "alice")
+	owned.Budget = &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth}
+	require.NoError(t, r.Save(ctx, owned))
+
+	first, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	second, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	firstPrevious, err := first.RotateAPIKey(time.Now())
+	require.NoError(t, err)
+	secondPrevious, err := second.RotateAPIKey(time.Now())
+	require.NoError(t, err)
+
+	require.NoError(t, r.RotateKey(ctx, first, firstPrevious))
+	require.ErrorIs(t, r.RotateKey(ctx, second, secondPrevious), domain.ErrRotatedConcurrently, "the second rotation read a secret that is gone")
+
+	stored, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	require.Equal(t, first.KeyHash, stored.KeyHash, "the first rotation's secret stands")
+	require.Equal(t, owned.Budget, stored.Budget, "a rotation keeps the budget")
+	_, err = r.FindByAPIKeyHash(ctx, second.KeyHash)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+
+	foreign := *stored
+	foreign.GatewayID = otherGW
+	require.ErrorIs(t, r.RotateKey(ctx, &foreign, stored.KeyHash), domain.ErrNotFound)
+	missing := *stored
+	missing.ID = ids.New[ids.AuthKind]()
+	require.ErrorIs(t, r.RotateKey(ctx, &missing, stored.KeyHash), domain.ErrNotFound)
 }

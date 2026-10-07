@@ -30,8 +30,13 @@ func init() {
 	})
 }
 
+// llmStoreLockTimeout bounds how long an LLM Store migration waits for a table
+// lock. Without it an ALTER queued behind a long read would in turn queue
+// every later read and write on the table; failing fast lets the rollout retry.
+const llmStoreLockTimeout = `SET LOCAL lock_timeout = '5s';`
+
 func upAddConsumerAudience(ctx context.Context, tx pgx.Tx) error {
-	const ddl = `
+	const ddl = llmStoreLockTimeout + `
 		ALTER TABLE consumers ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'application';
 		ALTER TABLE consumers DROP CONSTRAINT IF EXISTS consumers_audience_check;
 		ALTER TABLE consumers ADD CONSTRAINT consumers_audience_check CHECK (audience IN ('application', 'personal'));`

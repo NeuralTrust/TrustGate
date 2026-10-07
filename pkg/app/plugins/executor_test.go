@@ -457,7 +457,7 @@ func TestScopeFromRequest_Key(t *testing.T) {
 }
 
 func TestScopeFromRequest_CarriesTheKeyBudget(t *testing.T) {
-	budget := &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}
+	budget := &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}
 	assert.Same(t, budget, scopeFromRequest(&infracontext.RequestContext{AuthID: "auth-1", OwnerID: "alice", KeyBudget: budget}, true).KeyBudget)
 	assert.Nil(t, scopeFromRequest(&infracontext.RequestContext{AuthID: "auth-1", OwnerID: "alice"}, true).KeyBudget)
 	assert.Nil(t, scopeFromRequest(nil, true).KeyBudget)

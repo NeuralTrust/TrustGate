@@ -225,3 +225,46 @@ func TestAPIKeyFinder_KeyWithTimeLeft_IsServed(t *testing.T) {
 		t.Fatal("a key with time left must be served")
 	}
 }
+
+func TestAPIKeyFinder_DoesNotRefillWhatWasClearedDuringTheRead(t *testing.T) {
+	t.Parallel()
+	rawKey := "ag_revoked-key"
+	hash := domain.HashAPIKey(rawKey)
+	revoked := &domain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: ids.New[ids.GatewayKind](), Type: domain.TypeAPIKey, Enabled: true, KeyHash: hash}
+	mgr := newCacheManager()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByAPIKeyHash(mock.Anything, hash).
+		Run(func(context.Context, string) {
+			// The revoke commits and every cache is cleared while the read
+			// that still saw the key is in flight.
+			mgr.GetTTLMap(cache.AuthKeyTTLName).Clear()
+			mgr.GetTTLMap(cache.AuthKeyMissTTLName).Clear()
+		}).
+		Return(revoked, nil).Once()
+
+	if _, err := appauth.NewAPIKeyFinder(repo, mgr, newTestLogger()).FindByAPIKey(context.Background(), rawKey); err != nil {
+		t.Fatalf("FindByAPIKey: %v", err)
+	}
+	if _, ok := mgr.GetTTLMap(cache.AuthKeyTTLName).Get(hash); ok {
+		t.Fatal("the revoked key was cached back after the clear")
+	}
+}
+
+func TestAPIKeyFinder_DoesNotRememberAMissOverlappedByACreate(t *testing.T) {
+	t.Parallel()
+	rawKey := "ag_new-key"
+	hash := domain.HashAPIKey(rawKey)
+	mgr := newCacheManager()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByAPIKeyHash(mock.Anything, hash).
+		Run(func(context.Context, string) { mgr.GetTTLMap(cache.AuthKeyMissTTLName).Clear() }).
+		Return(nil, domain.ErrNotFound).Once()
+
+	_, err := appauth.NewAPIKeyFinder(repo, mgr, newTestLogger()).FindByAPIKey(context.Background(), rawKey)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if _, ok := mgr.GetTTLMap(cache.AuthKeyMissTTLName).Get(hash); ok {
+		t.Fatal("a key created during the read would be refused for the miss TTL")
+	}
+}

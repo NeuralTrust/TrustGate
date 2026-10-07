@@ -43,6 +43,8 @@ type storeKeyResolver struct {
 	now     func() time.Time
 }
 
+// NewStoreKeyResolver returns the StoreKeyResolver; now defaults to the UTC
+// wall clock.
 func NewStoreKeyResolver(apiKeys appauth.APIKeyFinder, now func() time.Time) StoreKeyResolver {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }

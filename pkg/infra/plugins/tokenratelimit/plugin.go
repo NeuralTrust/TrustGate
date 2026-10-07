@@ -115,7 +115,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 }
 
 func counterSubject(cfg *config, scope appplugins.RuntimeScope) (dimension, subject string, counted bool, err error) {
-	if cfg.Partition != partitionKey {
+	if !cfg.keyPartitioned() {
 		dimension, subject, err = scope.Subject()
 		return dimension, subject, err == nil, err
 	}
@@ -134,7 +134,7 @@ func (p *Plugin) preRequest(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	model := modelFor(req)
+	model := modelFor(cfg, req)
 	var capTel *llmcost.Telemetry
 	var downgradeHeaders map[string][]string
 	var downgradeBody []byte
@@ -199,7 +199,7 @@ func (p *Plugin) postResponse(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, mode, event)
+	return p.accrue(ctx, cfg, base, modelFor(cfg, req), req, resp, mode, event)
 }
 
 func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {

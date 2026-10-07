@@ -22,10 +22,12 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
+// CreateLLMKeyRequest is the body of a personal key create.
 type CreateLLMKeyRequest struct {
 	ExpiresAt string `json:"expires_at" format:"date-time" example:"2026-12-31T12:00:00Z"`
 }
 
+// Expiry parses expires_at, which a personal key cannot leave out.
 func (r CreateLLMKeyRequest) Expiry() (time.Time, error) {
 	at, err := httpio.ParseExpiresAt(r.ExpiresAt)
 	if err != nil {

@@ -74,17 +74,21 @@ func HandleCounterFailure(f CounterFailure) (*Result, error) {
 		return nil, f.Err
 	}
 	SetDecisionFromOutcome(f.Event, DecisionFailedOpen)
-	logCounterFailure(f)
+	LogCounterFailure(f, DecisionFailedOpen)
 	return &Result{StatusCode: http.StatusOK}, nil
 }
 
-func logCounterFailure(f CounterFailure) {
+// LogCounterFailure emits the one Warn line a counter-store failure gets,
+// with the decision the plugin took on it. HandleCounterFailure logs
+// DecisionFailedOpen; a plugin that fails closed logs its own decision here so
+// both outcomes share one log shape.
+func LogCounterFailure(f CounterFailure, decision string) {
 	attrs := []any{
 		slog.String("plugin", f.Plugin),
 		slog.String("stage", string(f.Stage)),
 		slog.String("mode", string(f.Mode)),
 		slog.String("reason", string(FailureCounterUnavailable)),
-		slog.String("decision", DecisionFailedOpen),
+		slog.String("decision", decision),
 	}
 	if f.Detail != "" {
 		attrs = append(attrs, slog.String("detail", f.Detail))

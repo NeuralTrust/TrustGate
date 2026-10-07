@@ -89,7 +89,7 @@ func NewAssociator(
 }
 
 func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func (a *associator) explainDetachConflict(
 }
 
 func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 }
 
 func (a *associator) DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func (a *associator) DetachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 }
 
 func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func (a *associator) validatePolicySettings(cons *domain.Consumer, pol *policydo
 }
 
 func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -256,7 +256,10 @@ func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	return nil
 }
 
-func (a *associator) consumerInGateway(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*domain.Consumer, error) {
+// consumerSummaryInGateway reads only the identity, gateway, type, audience and
+// active flag of a consumer: its registries, policies, model policies and auth
+// ids come back empty, so no rule here may read them.
+func (a *associator) consumerSummaryInGateway(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*domain.Consumer, error) {
 	cons, err := a.links.FindSummaryByID(ctx, consumerID)
 	if err != nil {
 		return nil, err

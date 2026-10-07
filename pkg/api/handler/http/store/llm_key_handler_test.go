@@ -100,19 +100,19 @@ func TestLLMKeyHandler_ActsOnTheCallerAndShowsTheSecretOnlyWhenIssued(t *testing
 	status, raw := callLLMKey(t, app, http.MethodPost, gw, "",
 		`{"expires_at":"2099-01-01T00:00:00Z","owner_id":"bob","principal_sub":"bob","consumer_id":"`+ids.New[ids.ConsumerKind]().String()+`"}`, fiber.MIMEApplicationJSON)
 	require.Equal(t, http.StatusCreated, status, raw)
-	require.Contains(t, raw, `"key":"`+a.RawKey+`"`)
+	require.Contains(t, raw, `"api_key":"`+a.RawKey+`"`)
 	require.Contains(t, raw, `"consumer_ids":[]`)
 	require.NotContains(t, raw, "bob")
 
 	status, raw = callLLMKey(t, app, http.MethodGet, gw, "", "", "")
 	require.Equal(t, http.StatusOK, status, raw)
-	require.NotContains(t, raw, `"key":`)
+	require.NotContains(t, raw, `"api_key":`)
 	require.NotContains(t, raw, a.RawKey)
 	require.NotContains(t, raw, a.KeyHash)
 
 	status, raw = callLLMKey(t, app, http.MethodPost, gw, "/rotate", validLLMKeyBody, fiber.MIMEApplicationJSON)
 	require.Equal(t, http.StatusOK, status, raw)
-	require.Contains(t, raw, `"key":"`+a.RawKey+`"`)
+	require.Contains(t, raw, `"api_key":"`+a.RawKey+`"`)
 }
 
 func TestLLMKeyHandler_StatusCodes(t *testing.T) {

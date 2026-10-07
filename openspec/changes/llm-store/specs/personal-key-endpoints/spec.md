@@ -50,7 +50,7 @@ Change `llm-store` (RUN-1763), slice S4 (decision D8). New capability. Self-only
 
 - GIVEN `alice` without a key on G, which has an active personal consumer P
 - WHEN she calls `POST …/llm-key` with `{"expires_at": <now + 30 d>}`
-- THEN 201 with the raw key and `consumer_ids: []`, the auth has `owner_id = alice` and that expiry, and after the next snapshot apply on a DB-less proxy the key answers 200 with an empty list on `/store/v1/models`
+- THEN 201 with the raw key in `api_key` (the field admin auth responses use) and `consumer_ids: []`, the auth has `owner_id = alice` and that expiry, and after the next snapshot apply on a DB-less proxy the key answers 200 with an empty list on `/store/v1/models`
 
 #### Scenario: Linked by the reconcile
 
@@ -129,6 +129,12 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 - THEN 200, and the new secret authenticates on `/store/v1/models`
 - AND the same rotation without `expires_at` answers 422, and the key, its secret and its expiry are unchanged
 
+#### Scenario: Concurrent rotations
+
+- GIVEN `alice`'s key with secret S1
+- WHEN two rotations read S1 and write at the same time
+- THEN one answers 200 with S2, the other answers **409** `conflict` and writes nothing, and S2 is the stored secret: the stored secret only changes while it is still the one the rotation read
+
 #### Scenario: Nothing to rotate
 
 - GIVEN `bob` without a key
@@ -137,7 +143,7 @@ A `POST …/llm-key` from a caller who already has a key on the gateway MUST ans
 
 ### Requirement: Revoke
 
-`DELETE …/llm-key` MUST delete the caller's key through the existing deleter (which also removes every link): 204, after which the key MUST NOT authenticate and the caller MAY create a new one. A caller without a key MUST get 404.
+`DELETE …/llm-key` MUST delete the caller's key and every one of its links in **one transaction** (`Repository.DeleteOwned`, which locks the key first so a racing attach either commits before it and loses its link, or fails on the foreign key), without loading the consumers the key reaches: 204, after which the key MUST NOT authenticate and the caller MAY create a new one. A caller without a key MUST get 404.
 
 #### Scenario: Revoke and re-create
 

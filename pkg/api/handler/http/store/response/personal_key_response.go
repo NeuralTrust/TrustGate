@@ -21,6 +21,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+// PersonalKeyResponse is the caller's personal key without its secret.
 type PersonalKeyResponse struct {
 	ID          ids.AuthID       `json:"id"`
 	ConsumerIDs []ids.ConsumerID `json:"consumer_ids"`
@@ -32,6 +33,8 @@ type PersonalKeyResponse struct {
 	UpdatedAt   time.Time        `json:"updated_at"`
 }
 
+// FromPersonalKey maps a personal key, listing its consumers as an empty array
+// rather than null when it has none.
 func FromPersonalKey(key *appauth.PersonalKey) PersonalKeyResponse {
 	consumerIDs := key.ConsumerIDs
 	if consumerIDs == nil {

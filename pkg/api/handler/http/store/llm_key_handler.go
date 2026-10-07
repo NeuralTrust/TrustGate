@@ -27,10 +27,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// LLMKeyHandler serves the caller's own personal LLM key.
 type LLMKeyHandler struct {
 	keys appauth.PersonalKeys
 }
 
+// NewLLMKeyHandler returns the handler over keys.
 func NewLLMKeyHandler(keys appauth.PersonalKeys) *LLMKeyHandler {
 	return &LLMKeyHandler{keys: keys}
 }

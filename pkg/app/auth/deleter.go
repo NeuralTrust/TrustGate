@@ -69,10 +69,7 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Au
 	if existing.GatewayID != gatewayID {
 		return domain.ErrNotFound
 	}
-	if err := guardAndDetachAuth(ctx, d.consumerRepo, d.repo, id); err != nil {
-		return err
-	}
-	if err := d.repo.Delete(ctx, gatewayID, id); err != nil {
+	if err := d.remove(ctx, existing); err != nil {
 		return err
 	}
 	d.memoryCache.Delete(id.String())
@@ -84,4 +81,18 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Au
 		d.signaler.Signal(ctx)
 	}
 	return nil
+}
+
+// remove deletes a and its links. A personal key only ever sits on personal
+// LLM consumers, which the guard does not protect, so it skips loading every
+// consumer it reaches, with the keys of all their users, and goes in one
+// transaction.
+func (d *deleter) remove(ctx context.Context, a *domain.Auth) error {
+	if a.IsOwned() {
+		return d.repo.DeleteOwned(ctx, a.GatewayID, a.ID)
+	}
+	if err := guardAndDetachAuth(ctx, d.consumerRepo, d.repo, a.ID); err != nil {
+		return err
+	}
+	return d.repo.Delete(ctx, a.GatewayID, a.ID)
 }

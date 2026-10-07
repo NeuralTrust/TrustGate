@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
+// SetBudgetInput names the personal key whose budget changes.
 type SetBudgetInput struct {
 	ID        ids.AuthID
 	GatewayID ids.GatewayID
@@ -53,6 +54,7 @@ type budgetSetter struct {
 	now         func() time.Time
 }
 
+// NewBudgetSetter returns the BudgetSetter; now defaults to the UTC wall clock.
 func NewBudgetSetter(
 	repo domain.Repository,
 	manager *cache.TTLMapManager,

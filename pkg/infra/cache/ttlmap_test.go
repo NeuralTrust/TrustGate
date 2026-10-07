@@ -239,3 +239,42 @@ func TestManager_GetTTLMap_Idempotent(t *testing.T) {
 		t.Fatal("manager handed out two different TTLMaps for the same namespace")
 	}
 }
+
+func TestTTLMap_SetIfGenerationDropsAFillOverlappedByARemoval(t *testing.T) {
+	t.Parallel()
+	for name, remove := range map[string]func(m *TTLMap){
+		"delete":    func(m *TTLMap) { m.Delete("other") },
+		"by prefix": func(m *TTLMap) { m.DeleteByPrefix("gw:") },
+		"clear":     func(m *TTLMap) { m.Clear() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			m := NewTTLMap(time.Minute)
+			gen := m.Generation()
+			remove(m)
+			if m.SetIfGeneration("k", "stale", gen) {
+				t.Fatal("a fill read before the removal was stored")
+			}
+			if _, ok := m.Get("k"); ok {
+				t.Fatal("the stale value is in the map")
+			}
+			if !m.SetIfGeneration("k", "fresh", m.Generation()) {
+				t.Fatal("a fill at the current generation was refused")
+			}
+			if v, _ := m.Get("k"); v != "fresh" {
+				t.Fatalf("Get = %v, want fresh", v)
+			}
+		})
+	}
+}
+
+func TestTTLMap_SetDoesNotAdvanceTheGeneration(t *testing.T) {
+	t.Parallel()
+	m := NewTTLMap(time.Minute)
+	gen := m.Generation()
+	m.Set("a", 1)
+	m.Set("a", 2)
+	if !m.SetIfGeneration("b", 3, gen) {
+		t.Fatal("a plain Set made a concurrent fill look stale")
+	}
+}

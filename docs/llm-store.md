@@ -53,12 +53,13 @@ Give a user a spending limit by setting a budget on their key:
 
 ```json
 PUT /v1/gateways/{gateway_id}/auths/{auth_id}/budget
-{"max": 50, "time_window": "calendar_month"}
+{"max": 50, "unit": "dollars", "time_window": "calendar_month"}
 ```
 
 The answer is 200 with the auth, `budget` included. A body of `null` clears the
-budget. `max` is a finite number above zero, counted in the unit of the
-`key_budgets` policy that enforces it (Budgets, below); `time_window` is
+budget. `max` is a finite number above zero, a whole number when `unit` is
+`tokens`; `unit` is `tokens` or `dollars`, and only a `key_budgets` policy
+counting in that unit holds the key to it (Budgets, below); `time_window` is
 `calendar_month` or `calendar_day` (UTC). The call never changes the secret,
 the expiry or the links, a rotation keeps the budget, and a revoke drops it
 with the key, so set it again on the re-created key. An unknown key, or one of
@@ -92,13 +93,16 @@ names another owner.
 | Call | Result |
 |---|---|
 | `GET /v1/gateways/{gateway_id}/store/principal/llm-key` | 200 with `id`, `consumer_ids`, prefix, suffix and expiry, never the secret. 404 without a key. |
-| `POST …/llm-key` `{"expires_at": "<RFC 3339>"}` | 201 with the secret in `key`, shown once, linked to nothing. 409 if the user already has a key, 422 for an expiry not in (now, now + 90 days] or a hybrid gateway. |
-| `POST …/llm-key/rotate` `{"expires_at"?}` | 200 with a new secret. Same id, same links. Without `expires_at` the current expiry stays, unless it has passed (422). |
-| `DELETE …/llm-key` | 204. The key and its links are gone; a new create starts with no links. |
+| `POST …/llm-key` `{"expires_at": "<RFC 3339>"}` | 201 with the secret in `api_key` (the field the admin auth responses use), shown once, linked to nothing. 409 if the user already has a key, 422 for an expiry not in (now, now + 90 days] or a hybrid gateway. |
+| `POST …/llm-key/rotate` `{"expires_at"?}` | 200 with a new secret. Same id, same links. Without `expires_at` the current expiry stays, unless it has passed (422). Two rotations racing each other: the first wins and the second answers 409 `conflict` without changing anything, so the secret shown is always the live one. |
+| `DELETE …/llm-key` | 204. The key and its links are gone in one transaction; a new create starts with no links. |
 
 A rotation or revocation reaches every full-plane replica at the next
 `InvalidateGatewayDataEvent` for the gateway and every DB-less proxy at the next
-snapshot apply.
+snapshot apply. A key lookup that was already reading when the caches were
+cleared does not put the old answer back: the old secret is not served from a
+cache refilled after the clear, and a key created during a lookup that missed
+is not remembered as unknown.
 
 ## Request routing
 
@@ -131,7 +135,11 @@ shared credential for every user it serves.
 5. **Order.** Among the consumers that admit, the first by level (`user`,
    `group`, `all`), then priority, then specificity (a literal allow-list entry,
    then a glob, then no allow-list), then the oldest `granted_at`, then the
-   consumer id. None → 403 `model_not_allowed`, before any upstream call.
+   consumer id. None → 403 `model_not_allowed`, before any upstream call and
+   before the gateway's plan rate limit is charged. When every consumer refused
+   the request for the same reason other than the model (a capability no linked
+   provider supports, no backend left), the answer is that reason, as on
+   `/<slug>/v1`: 400 for an unsupported capability, 503 for no backend.
 
 | Model in the request | A consumer admits it when |
 |---|---|
@@ -185,6 +193,7 @@ the OpenAI catalog, so `/store/v1/models` gains it.
 | 404 `not_found` | hybrid gateway, no active personal consumer, or the Files API |
 | 401 `unauthenticated` | the key is missing or not a valid personal key of this gateway |
 | 403 `model_not_allowed` | no consumer admits the request, including a key with no links |
+| 400 / 503 | every consumer refused it for the same capability or backend reason (Request routing, step 5) |
 | 400 `invalid_model` | malformed model reference, or a pool alias no consumer defines |
 | 429 / 503 / 403 `model_unpriced` | `partition: key` budgets, below |
 
@@ -204,7 +213,8 @@ of her consumers.
 
 A policy with `"key_budgets": true` (it needs `partition: key`) holds a key
 with a `budget` (Admin setup) to it instead of `aggregate`: its `max`, in the
-policy's `unit`, over its `time_window`. With `key_budgets` the `aggregate` is
+policy's `unit`, over its `time_window`. A budget in the other unit leaves the
+key under the policy's own limit. With `key_budgets` the `aggregate` is
 optional, so a policy without it caps only the keys that carry a budget, and a
 key without one is not counted by that policy. Only a policy that sets
 `key_budgets` reads key budgets: any other `partition: key` policy keeps its
@@ -225,14 +235,20 @@ the next `InvalidateGatewayDataEvent` on the full plane, and with the config
 snapshot on a DB-less proxy.
 
 `calendar_month` and `calendar_day` (UTC) are valid only with `partition: key`;
-`custom_pricing` and `group_by_header` are refused with it. In a blocking mode,
-over budget answers 429, a Redis read error 503 `budget_unavailable` (the
-default partition stays fail-open), and a dollar budget on a model without a
-price 403 `model_unpriced`. A dollar budget prices the model that will be
-served: for a request with no model, `auto` or `pool:<alias>` that is the
-selected route's default model, so such a request is served and charged, and
-403 `model_unpriced` answers only when that model has no catalog or registry
-price.
+`custom_pricing`, `group_by_header` and `behavior_on_exceeded: downgrade_model`
+are refused with it: a hard limit never serves past the budget. In a blocking
+mode, over budget answers 429, a Redis read error 503 `budget_unavailable` with
+`Retry-After: 5` (the default partition stays fail-open), and a dollar budget on
+a model without a price 403 `model_unpriced`. A `partition: key` policy counts
+the model that will be served: for a request with no model, `auto` or
+`pool:<alias>` that is the selected route's default model, so such a request is
+served and charged, and 403 `model_unpriced` answers only when that model has no
+catalog or registry price. A policy without `partition` keeps counting such a
+request under the model it names, as before.
+
+A request is charged to the calendar period it was admitted in: a stream that
+starts on the last second of a month and ends in the next one counts in the
+month that admitted it.
 
 ## Telemetry
 
@@ -298,6 +314,8 @@ the first personal consumer exists.
 | h | The MCP connect ticket re-check refuses an expired or personal key. | Only enabled, type and gateway were checked. |
 | i | `token_rate_limiter` gains `partition: key`, the `calendar_month` and `calendar_day` windows and the hard limits (503 `budget_unavailable`, 403 `model_unpriced`). All are opt-in: a policy without `partition` counts, fails open and prices exactly as before. | — |
 | j | `GET /v1/gateways/{gateway_id}/auths` reads `owned`: `true` lists personal keys only, `owned` together with `owner_id` answers 422 `invalid_filter`, and a value that is not a boolean answers 422 `invalid_filter`. Admin auth responses carry `budget` on a personal key that has one. `PUT …/auths/{auth_id}/budget` is new, and `auths` gains a nullable `budget` column. `token_rate_limiter` gains `key_budgets` (needs `partition: key`): such a policy holds each key to its budget and may have no `aggregate`, `rules`, `window` or `cost_cap`; every other policy still needs one, and no other policy reads key budgets. | `owned` was ignored, and a policy had no way to read a key's budget. |
+| k | `POST …/auths/{auth_id}/rotate` writes the new secret only while the stored one is the secret it read: of two rotations of the same key racing each other, the second answers 409 `conflict` and changes nothing. | Both answered 200; the secret the first one returned was already dead. |
+| l | The LLM Store migrations wait at most 5 s for a table lock (`lock_timeout`); one that cannot get it fails and the rollout retries it, instead of queueing every later read and write on `consumers`, `auths` or `consumer_auth` behind it. | — |
 
 Roll back (a) by reverting it; the rest needs no action.
 

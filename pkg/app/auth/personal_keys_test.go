@@ -74,7 +74,7 @@ func newPersonalKeysFixture(t *testing.T) *personalKeysFixture {
 	clock := func() time.Time { return personalNow }
 	rotator := appauth.NewRotator(f.repo, manager, f.publisher, logger, f.signaler, clock)
 	deleter := appauth.NewDeleter(f.repo, f.consumers, manager, f.publisher, logger, f.signaler)
-	f.keys = appauth.NewPersonalKeys(f.repo, f.linkReader, f.gateways, rotator, deleter, manager, f.publisher, logger, f.signaler, clock)
+	f.keys = appauth.NewPersonalKeys(f.repo, f.linkReader, f.gateways, rotator, deleter, appauth.NewKeyEvents(manager, f.publisher, logger, f.signaler), clock)
 	return f
 }
 
@@ -105,18 +105,6 @@ func (f *personalKeysFixture) links(authID ids.AuthID, n int) []ids.ConsumerID {
 		consumerIDs = append(consumerIDs, ids.New[ids.ConsumerKind]())
 	}
 	f.linkReader.EXPECT().ListIDsByAuthID(mock.Anything, authID).Return(consumerIDs, nil).Once()
-	return consumerIDs
-}
-
-func (f *personalKeysFixture) referencedBy(authID ids.AuthID, n int) []ids.ConsumerID {
-	var consumers []*consumerdomain.Consumer
-	consumerIDs := make([]ids.ConsumerID, 0, n)
-	for range n {
-		c := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: f.gwID, Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal}
-		consumers = append(consumers, c)
-		consumerIDs = append(consumerIDs, c.ID)
-	}
-	f.consumers.EXPECT().ListByAuthID(mock.Anything, authID).Return(consumers, nil).Once()
 	return consumerIDs
 }
 
@@ -206,7 +194,7 @@ func TestPersonalKeys_Rotate(t *testing.T) {
 			id, oldKey, oldHash := existing.ID, existing.RawKey, existing.KeyHash
 			consumerIDs := f.links(id, 2)
 			f.repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
-			f.repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+			f.repo.EXPECT().RotateKey(mock.Anything, existing, mock.Anything).Return(nil).Once()
 			f.published()
 			f.keyCache.Set(oldHash, existing)
 
@@ -302,11 +290,7 @@ func TestPersonalKeys_WithoutAKey(t *testing.T) {
 			t.Parallel()
 			f := newPersonalKeysFixture(t)
 			f.noKey("bob")
-			applicationKey, err := domain.NewAPIKeyAuth(f.gwID, "app", true, nil)
-			require.NoError(t, err)
-			f.repo.EXPECT().FindByOwner(mock.Anything, f.gwID, "carol").Return(applicationKey, nil).Once()
 			require.ErrorIs(t, op(f.keys, f.gwID, "bob"), commonerrors.ErrNotFound)
-			require.ErrorIs(t, op(f.keys, f.gwID, "carol"), commonerrors.ErrNotFound)
 			require.ErrorIs(t, op(f.keys, f.gwID, ""), domain.ErrInvalidOwner)
 			require.Zero(t, f.signaler.Count())
 		})
@@ -317,11 +301,8 @@ func TestPersonalKeys_RevokeThenCreate(t *testing.T) {
 	t.Parallel()
 	f := newPersonalKeysFixture(t)
 	existing := f.existingKey(t)
-	for _, consumerID := range f.referencedBy(existing.ID, 2) {
-		f.consumers.EXPECT().DetachAuth(mock.Anything, consumerID, existing.ID).Return(nil).Once()
-	}
 	f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	f.repo.EXPECT().Delete(mock.Anything, f.gwID, existing.ID).Return(nil).Once()
+	f.repo.EXPECT().DeleteOwned(mock.Anything, f.gwID, existing.ID).Return(nil).Once()
 	f.published()
 	f.keyCache.Set(existing.KeyHash, existing)
 
@@ -349,22 +330,13 @@ func TestPersonalKeys_RotateAndRevoke_FailuresChangeNothing(t *testing.T) {
 		"rotate when the update fails": {run: func(_ *testing.T, f *personalKeysFixture, existing *domain.Auth) error {
 			f.links(existing.ID, 1)
 			f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-			f.repo.EXPECT().Update(mock.Anything, existing).Return(errStore).Once()
+			f.repo.EXPECT().RotateKey(mock.Anything, existing, mock.Anything).Return(errStore).Once()
 			_, err := f.keys.Rotate(ctx, f.gwID, "alice", nil)
 			return err
 		}},
-		"revoke when a detach fails": {run: func(_ *testing.T, f *personalKeysFixture, existing *domain.Auth) error {
-			consumerIDs := f.referencedBy(existing.ID, 2)
-			f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-			f.consumers.EXPECT().DetachAuth(mock.Anything, consumerIDs[0], existing.ID).Return(errStore).Once()
-			return f.keys.Revoke(ctx, f.gwID, "alice")
-		}},
 		"revoke when the delete fails": {run: func(_ *testing.T, f *personalKeysFixture, existing *domain.Auth) error {
-			for _, consumerID := range f.referencedBy(existing.ID, 2) {
-				f.consumers.EXPECT().DetachAuth(mock.Anything, consumerID, existing.ID).Return(nil).Once()
-			}
 			f.repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-			f.repo.EXPECT().Delete(mock.Anything, f.gwID, existing.ID).Return(errStore).Once()
+			f.repo.EXPECT().DeleteOwned(mock.Anything, f.gwID, existing.ID).Return(errStore).Once()
 			return f.keys.Revoke(ctx, f.gwID, "alice")
 		}},
 	} {
@@ -401,7 +373,7 @@ func TestPersonalKeys_NilClockReadsUTCNow(t *testing.T) {
 	logger := newTestLogger()
 	keys := appauth.NewPersonalKeys(repo, consumermocks.NewLinkReader(t), gateways,
 		appauth.NewRotator(repo, manager, publisher, logger, nil, nil), appauth.NewDeleter(repo, consumermocks.NewRepository(t), manager, publisher, logger, nil),
-		manager, publisher, logger, nil, nil)
+		appauth.NewKeyEvents(manager, publisher, logger, nil), nil)
 
 	before := time.Now().UTC()
 	key, err := keys.Create(context.Background(), gwID, "alice", before.Add(day))

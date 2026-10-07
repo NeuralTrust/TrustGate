@@ -273,6 +273,7 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
+// ToAudience returns the requested audience, empty when the body sets none.
 func (r CreateConsumerRequest) ToAudience() domain.Audience {
 	return domain.Audience(r.Audience)
 }

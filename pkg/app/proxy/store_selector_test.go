@@ -141,9 +141,9 @@ func newStoreSelector(catalog appcatalog.ModelListing) appproxy.StoreSelector {
 
 func keptProviders(sel *appproxy.StoreSelection) []string {
 	var out []string
-	for _, reg := range append(slices.Clone(sel.Link.Consumer.Registries), sel.Link.Consumer.FallbackBackends...) {
-		if sel.Keep == nil || sel.Keep(routingdomain.Candidate{Registry: reg}) {
-			out = append(out, reg.Provider())
+	for _, c := range sel.Candidates.Candidates() {
+		if !slices.Contains(out, c.Registry.Provider()) {
+			out = append(out, c.Registry.Provider())
 		}
 	}
 	return out
@@ -182,7 +182,6 @@ type storeCase struct {
 	model, want      string
 	capability, path string
 	kept             []string
-	nilKeep          bool
 	err, notErr      error
 }
 
@@ -209,9 +208,6 @@ func runStoreCases(t *testing.T, cases []storeCase) {
 			if tc.kept != nil {
 				assert.Equal(t, tc.kept, keptProviders(sel))
 			}
-			if tc.nilKeep {
-				assert.Nil(t, sel.Keep)
-			}
 		})
 	}
 }
@@ -232,7 +228,7 @@ func TestStoreSelector_WorkedExample(t *testing.T) {
 		{name: "qualified gpt-4.1 is denied", grants: worked, model: "@openai/gpt-4.1", err: denied},
 		{name: "auto goes to D", grants: worked, model: "auto", want: "D"},
 		{name: "without D gpt-4.1 goes to A unfiltered", grants: withoutD, model: "gpt-4.1", want: "A",
-			nilKeep: true, kept: []string{"openai", "deepseek"}},
+			kept: []string{"openai"}},
 		{name: "without D deepseek-chat is denied", grants: withoutD, model: "deepseek-chat", err: denied},
 		{name: "B at priority 0 wins opus-5.5", grants: []storeGrant{grantA, withPriority(grantB, 0), grantC, grantD},
 			model: "opus-5.5", want: "B"},
@@ -320,8 +316,9 @@ func TestStoreSelector_CapabilityRoutes(t *testing.T) {
 	runStoreCases(t, []storeCase{
 		{name: "embeddings skip a user link whose provider lacks them", grants: []storeGrant{userAnthropic, groupOpenAI},
 			capability: "embeddings", model: "text-embedding-3-small", want: "G"},
-		{name: "embeddings with no capable link", grants: []storeGrant{userAnthropic},
-			capability: "embeddings", model: "text-embedding-3-small", err: appproxy.ErrNoStoreConsumer},
+		{name: "embeddings with no capable link name the missing capability", grants: []storeGrant{userAnthropic},
+			capability: "embeddings", model: "text-embedding-3-small", err: appproxy.ErrCapabilityNotSupported,
+			notErr: routingdomain.ErrModelDenied},
 		{name: "files id picks the provider that owns it, without a default", grants: []storeGrant{grantD, anthropicNoDefault},
 			capability: "files", path: "/v1/files/file_011abc", want: "B"},
 		{name: "openai files id goes to the user link", grants: []storeGrant{grantD, anthropicNoDefault},

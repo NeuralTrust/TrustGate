@@ -18,22 +18,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
+// PersonalKey is a user's personal key on a gateway and the personal
+// consumers it is attached to.
 type PersonalKey struct {
 	Auth        *domain.Auth
 	ConsumerIDs []ids.ConsumerID
 }
 
+// PersonalKeys is the self-service lifecycle of the one personal key a user
+// holds on a gateway: read, create, rotate and revoke, each scoped to the
+// caller as owner.
+//
 //go:generate mockery --name=PersonalKeys --dir=. --output=./mocks --filename=auth_personal_keys_mock.go --case=underscore --with-expecter
 type PersonalKeys interface {
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
@@ -50,20 +53,19 @@ type personalKeys struct {
 	gateways gatewaydomain.Repository
 	rotator  Rotator
 	deleter  Deleter
-	creator  *creator
+	events   *KeyEvents
 	now      func() time.Time
 }
 
+// NewPersonalKeys returns the PersonalKeys use case. events announces a key it
+// creates; rotation and revocation announce themselves.
 func NewPersonalKeys(
 	repo domain.Repository,
 	links consumerdomain.LinkReader,
 	gateways gatewaydomain.Repository,
 	rotator Rotator,
 	deleter Deleter,
-	manager *cache.TTLMapManager,
-	publisher cache.EventPublisher,
-	logger *slog.Logger,
-	signaler configsyncport.SnapshotSignaler,
+	events *KeyEvents,
 	now func() time.Time,
 ) PersonalKeys {
 	return &personalKeys{
@@ -72,7 +74,7 @@ func NewPersonalKeys(
 		gateways: gateways,
 		rotator:  rotator,
 		deleter:  deleter,
-		creator:  newCreator(repo, manager, publisher, logger, signaler),
+		events:   events,
 		now:      utcClock(now),
 	}
 }
@@ -109,7 +111,7 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	if err := p.repo.Save(ctx, a); err != nil {
 		return nil, fmt.Errorf("auth: save personal key: %w", err)
 	}
-	p.creator.saved(ctx, a)
+	p.events.Saved(ctx, a)
 	return &PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil
 }
 
@@ -152,9 +154,6 @@ func (p *personalKeys) find(ctx context.Context, gatewayID ids.GatewayID, ownerI
 	if err != nil {
 		return nil, fmt.Errorf("auth: find personal key: %w", err)
 	}
-	if err := a.ManagedBy(ownerID); err != nil {
-		return nil, domain.ErrNotFound
-	}
 	return a, nil
 }
 
@@ -163,7 +162,7 @@ func (p *personalKeys) ensureNotHybrid(ctx context.Context, gatewayID ids.Gatewa
 	if err != nil {
 		return fmt.Errorf("auth: load gateway: %w", err)
 	}
-	if gw.ServedByHybridDataPlane() {
+	if !gw.AllowsPersonal() {
 		return consumerdomain.ErrHybridPersonal
 	}
 	return nil

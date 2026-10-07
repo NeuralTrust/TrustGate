@@ -51,7 +51,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.tenant_id` | `tenant_id` |
 | `trustgate.consumer.id` | `consumer.id` |
 | `trustgate.consumer.name` | `consumer.name` |
-| `trustgate.auth.id` | `auth_id`: the id of the auth that authenticated an LLM proxy request (`/<slug>/v1/*`). Omitted when no auth id was resolved; MCP records do not carry it yet |
+| `trustgate.auth.id` | `auth_id`: the id of the auth that authenticated an LLM proxy request (`/<slug>/v1/*` and `/store/v1/*`, where it is the personal key). Omitted when no auth id was resolved; MCP records do not carry it yet |
 | `trustgate.principal.subject` | `principal_subject` (inbound identity: OIDC `sub`, the API key name for an application key, or the key owner for a personal key) |
 | `trustgate.principal.method` | `principal_method` (`api_key`, `jwt`, `introspection`, `mtls`) |
 | `trustgate.principal.email` | `principal_email` (display identity: inbound JWT `email` / `upn` / email-shaped `preferred_username`, or the unique vault `account_ref` when that is an email) |

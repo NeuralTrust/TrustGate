@@ -94,6 +94,7 @@ func (r UpdateConsumerRequest) ToType() *domain.Type {
 	return &t
 }
 
+// ToAudience returns the requested audience, nil when the body leaves it out.
 func (r UpdateConsumerRequest) ToAudience() *domain.Audience {
 	if r.Audience == nil {
 		return nil

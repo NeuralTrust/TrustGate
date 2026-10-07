@@ -289,7 +289,7 @@ func (w *warner) apiKeyAuths(ctx context.Context, gatewayID ids.GatewayID) (map[
 	}
 	out := make(map[ids.AuthID]struct{}, len(auths))
 	for _, a := range auths {
-		if a != nil && !a.IsOwned() {
+		if a != nil {
 			out[a.ID] = struct{}{}
 		}
 	}

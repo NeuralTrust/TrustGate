@@ -73,6 +73,54 @@ func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[
 	return _c
 }
 
+// DeleteOwned provides a mock function with given fields: ctx, gatewayID, id
+func (_m *Repository) DeleteOwned(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.AuthKind]) error {
+	ret := _m.Called(ctx, gatewayID, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteOwned")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.AuthKind]) error); ok {
+		r0 = rf(ctx, gatewayID, id)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_DeleteOwned_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteOwned'
+type Repository_DeleteOwned_Call struct {
+	*mock.Call
+}
+
+// DeleteOwned is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - id ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) DeleteOwned(ctx interface{}, gatewayID interface{}, id interface{}) *Repository_DeleteOwned_Call {
+	return &Repository_DeleteOwned_Call{Call: _e.mock.On("DeleteOwned", ctx, gatewayID, id)}
+}
+
+func (_c *Repository_DeleteOwned_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.AuthKind])) *Repository_DeleteOwned_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.AuthKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_DeleteOwned_Call) Return(_a0 error) *Repository_DeleteOwned_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_DeleteOwned_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.AuthKind]) error) *Repository_DeleteOwned_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // FindByAPIKeyHash provides a mock function with given fields: ctx, keyHash
 func (_m *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*auth.Auth, error) {
 	ret := _m.Called(ctx, keyHash)
@@ -492,6 +540,54 @@ func (_c *Repository_ListEnabledByGatewayAndType_Call) Return(_a0 []*auth.Auth, 
 }
 
 func (_c *Repository_ListEnabledByGatewayAndType_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], auth.Type) ([]*auth.Auth, error)) *Repository_ListEnabledByGatewayAndType_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RotateKey provides a mock function with given fields: ctx, a, previousHash
+func (_m *Repository) RotateKey(ctx context.Context, a *auth.Auth, previousHash string) error {
+	ret := _m.Called(ctx, a, previousHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RotateKey")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *auth.Auth, string) error); ok {
+		r0 = rf(ctx, a, previousHash)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_RotateKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RotateKey'
+type Repository_RotateKey_Call struct {
+	*mock.Call
+}
+
+// RotateKey is a helper method to define mock.On call
+//   - ctx context.Context
+//   - a *auth.Auth
+//   - previousHash string
+func (_e *Repository_Expecter) RotateKey(ctx interface{}, a interface{}, previousHash interface{}) *Repository_RotateKey_Call {
+	return &Repository_RotateKey_Call{Call: _e.mock.On("RotateKey", ctx, a, previousHash)}
+}
+
+func (_c *Repository_RotateKey_Call) Run(run func(ctx context.Context, a *auth.Auth, previousHash string)) *Repository_RotateKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*auth.Auth), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_RotateKey_Call) Return(_a0 error) *Repository_RotateKey_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_RotateKey_Call) RunAndReturn(run func(context.Context, *auth.Auth, string) error) *Repository_RotateKey_Call {
 	_c.Call.Return(run)
 	return _c
 }

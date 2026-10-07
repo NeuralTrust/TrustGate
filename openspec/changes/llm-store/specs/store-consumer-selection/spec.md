@@ -60,7 +60,7 @@ For a short-model intent (including a bare `provider/model`, which is a native s
 
 ### Requirement: Ordering
 
-Among the effective links that admit the request, the selector MUST pick the minimum of, in this order: level rank (`user` < `group` < `all`), `priority` (lower first), match specificity, `granted_at` (older first), consumer id. Specificity applies to qualified and short-model intents and is the best over the consumer's admitting primary candidates: 0 when the model is a literal entry of the allow-list, 1 when it matches only a glob of the allow-list, 2 when the registry has no allow-list. For every other intent kind specificity MUST be equal for all links. When no link admits, the request MUST fail with an error wrapping `routingdomain.ErrModelDenied` (403 `model_not_allowed`) before any upstream call.
+Among the effective links that admit the request, the selector MUST pick the minimum of, in this order: level rank (`user` < `group` < `all`), `priority` (lower first), match specificity, `granted_at` (older first), consumer id. Specificity applies to qualified and short-model intents and is the best over the consumer's admitting primary candidates: 0 when the model is a literal entry of the allow-list, 1 when it matches only a glob of the allow-list, 2 when the registry has no allow-list. For every other intent kind specificity MUST be equal for all links. When no link admits, the request MUST fail before any upstream call and before the gateway's plan rate limit is charged. When every evaluated link refused it for the same non-model reason (a capability no linked provider supports, no backend left), the error MUST be that reason, answered as on `/<slug>/v1` (400 for an unsupported capability, 503 for no backend); otherwise it MUST wrap `routingdomain.ErrModelDenied` (403 `model_not_allowed`).
 
 #### Scenario: Specificity at equal level and priority
 
@@ -85,6 +85,12 @@ Among the effective links that admit the request, the selector MUST pick the min
 - GIVEN G1 and G2, both `group`, priority 1, OpenAI `["gpt-4.1"]`, G2 granted before G1
 - WHEN `gpt-4.1` is requested
 - THEN G2 serves it
+
+#### Scenario: Every link lacks the capability
+
+- GIVEN `alice`'s only link is a user-level consumer on Anthropic, which serves no embeddings
+- WHEN she calls `/store/v1/embeddings`
+- THEN 400, the answer `/<slug>/v1/embeddings` gives on that consumer, not 403 `model_not_allowed`, and no plan rate-limit token is spent
 
 ### Requirement: Every intent kind
 

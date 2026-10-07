@@ -26,6 +26,7 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 )
 
+// StoreModelsInput is the personal consumers a key reaches.
 type StoreModelsInput struct {
 	Links []appconsumer.StoreLink
 	Data  *appconsumer.Data
@@ -43,6 +44,7 @@ type storeModels struct {
 	lister *modelsLister
 }
 
+// NewStoreModels returns the StoreModels lister.
 func NewStoreModels(resolver approuting.Resolver, catalog appcatalog.Service) StoreModels {
 	return &storeModels{lister: &modelsLister{resolver: resolver, catalog: catalog}}
 }

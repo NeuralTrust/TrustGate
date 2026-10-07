@@ -15,6 +15,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -35,10 +36,18 @@ var (
 	ErrExpired         = fmt.Errorf("auth: api key expired: %w", commonerrors.ErrNotFound)
 	ErrExpiryInThePast = fmt.Errorf("auth: expires_at is in the past: %w", commonerrors.ErrValidation)
 	ErrDuplicateOAuth2 = fmt.Errorf("auth: another enabled oauth2 auth already covers this issuer and audience: %w", commonerrors.ErrAlreadyExists)
-	ErrOwnedKeyExists  = fmt.Errorf("auth: %w: %w", commonerrors.ErrPersonalKeyExists, commonerrors.ErrAlreadyExists)
-	ErrOwnedKey        = fmt.Errorf("auth: owned_key: %w", commonerrors.ErrManagedByOwner)
-	ErrOwnedExpiry     = fmt.Errorf("auth: expires_at must be in the future and within 90 days: %w", commonerrors.ErrValidation)
-	ErrInvalidOwner    = fmt.Errorf("auth: invalid owner_id: %w", commonerrors.ErrValidation)
-	ErrInvalidBudget   = fmt.Errorf("auth: invalid budget: %w", commonerrors.ErrValidation)
-	ErrApplicationKey  = fmt.Errorf("auth: application_key: %w", commonerrors.ErrApplicationKey)
+	// ErrOwnedKeyExists is a second personal key for an owner who already
+	// holds one on the gateway.
+	ErrOwnedKeyExists = fmt.Errorf("auth: a personal key already exists for this owner: %w", commonerrors.ErrAlreadyExists)
+	// ErrOwnedKey is an admin change to a key only its owner may change.
+	ErrOwnedKey = errors.New("auth: owned_key: managed by its owner")
+	// ErrRotatedConcurrently is a rotation that lost the race to another one:
+	// the secret it read is no longer the stored one, so it changes nothing.
+	ErrRotatedConcurrently = fmt.Errorf("auth: the key was rotated by another request: %w", commonerrors.ErrConflict)
+	ErrOwnedExpiry         = fmt.Errorf("auth: expires_at must be in the future and within 90 days: %w", commonerrors.ErrValidation)
+	ErrInvalidOwner        = fmt.Errorf("auth: invalid owner_id: %w", commonerrors.ErrValidation)
+	ErrInvalidBudget       = fmt.Errorf("auth: invalid budget: %w", commonerrors.ErrValidation)
+	// ErrApplicationKey is an owner-only operation, such as a budget, asked of
+	// an application key.
+	ErrApplicationKey = errors.New("auth: application_key: not a personal key")
 )

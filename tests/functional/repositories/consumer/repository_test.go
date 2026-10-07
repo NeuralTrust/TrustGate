@@ -1070,3 +1070,45 @@ func TestRepository_LinkReaderReadsOnlyWhatALinkChangeNeeds(t *testing.T) {
 	require.NotNil(t, none)
 	require.Empty(t, none)
 }
+
+func TestRepository_DeleteOwnedRemovesThePersonalKeyWithItsLinks(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID, otherGW := seedGateway(t, f.gw, "delete-owned-gw"), seedGateway(t, f.gw, "delete-owned-other")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	alice, err := authdomain.NewAPIKeyAuth(gwID, "delete-owned-alice", true, nil)
+	require.NoError(t, err)
+	alice.OwnerID = "alice"
+	require.NoError(t, auths.Save(ctx, alice))
+	bob, err := authdomain.NewAPIKeyAuth(gwID, "delete-owned-bob", true, nil)
+	require.NoError(t, err)
+	bob.OwnerID = "bob"
+	require.NoError(t, auths.Save(ctx, bob))
+	application, err := authdomain.NewAPIKeyAuth(gwID, "delete-owned-app", true, nil)
+	require.NoError(t, err)
+	require.NoError(t, auths.Save(ctx, application))
+
+	p1 := seedLLMConsumer(t, f, gwID, "delete-owned-p1", domain.AudiencePersonal)
+	p2 := seedLLMConsumer(t, f, gwID, "delete-owned-p2", domain.AudiencePersonal)
+	link := domain.AuthLink{Level: domain.GrantLevelAll, Priority: 1, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)}
+	for _, consumerID := range []ids.ConsumerID{p1, p2} {
+		require.NoError(t, f.repo.AttachAuth(ctx, consumerID, alice.ID, &link))
+		require.NoError(t, f.repo.AttachAuth(ctx, consumerID, bob.ID, &link))
+	}
+
+	require.ErrorIs(t, auths.DeleteOwned(ctx, otherGW, alice.ID), authdomain.ErrNotFound, "another gateway's revoke")
+	require.ErrorIs(t, auths.DeleteOwned(ctx, gwID, application.ID), authdomain.ErrNotFound, "an application key is not revoked this way")
+	require.NoError(t, auths.DeleteOwned(ctx, gwID, alice.ID))
+
+	_, err = auths.FindByID(ctx, alice.ID)
+	require.ErrorIs(t, err, authdomain.ErrNotFound)
+	links := func(authID ids.AuthID) int {
+		var n int
+		require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, authID).Scan(&n))
+		return n
+	}
+	require.Zero(t, links(alice.ID))
+	require.Equal(t, 2, links(bob.ID), "another owner's links stay")
+	_, err = auths.FindByID(ctx, application.ID)
+	require.NoError(t, err)
+}

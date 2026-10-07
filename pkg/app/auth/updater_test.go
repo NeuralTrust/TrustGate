@@ -496,7 +496,7 @@ func TestUpdater_Update_RefusesAnOwnedKey(t *testing.T) {
 		Name:      ptr("renamed"),
 		Enabled:   ptr(false),
 	})
-	if !errors.Is(err, domain.ErrOwnedKey) || !errors.Is(err, commonerrors.ErrManagedByOwner) {
+	if !errors.Is(err, domain.ErrOwnedKey) {
 		t.Fatalf("err = %v, want ErrOwnedKey", err)
 	}
 	if existing.Name != "personal-alice" || !existing.Enabled {

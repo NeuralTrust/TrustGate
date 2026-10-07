@@ -55,6 +55,7 @@ type connectService struct {
 	catalog     authCatalog
 	registries  RegistryLister
 	urlValues   URLValueSource
+	now         func() time.Time
 }
 
 // URLValueSource returns a principal's values for a registry's URL
@@ -103,6 +104,7 @@ func NewConnectService(
 		userinfo:    userinfo,
 		catalog:     catalog,
 		registries:  registries,
+		now:         time.Now,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -575,7 +577,7 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	if appConnectTicket(ticket) &&
 		(ticket.Providers == nil ||
 			ticket.ConsumerID == "" ||
-			!currentAppIdentity(ticket, rc, gatewayID)) {
+			!currentAppIdentity(ticket, rc, gatewayID, s.now().UTC())) {
 		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
 	}
 	return gatewayID, data, rc, nil
@@ -637,6 +639,7 @@ func currentAppIdentity(
 	ticket *ConnectTicket,
 	rc *appconsumer.RoutableConsumer,
 	gatewayID ids.GatewayID,
+	now time.Time,
 ) bool {
 	if ticket == nil || rc == nil || rc.Consumer == nil ||
 		rc.Consumer.ID.String() != ticket.ConsumerID {
@@ -650,7 +653,7 @@ func currentAppIdentity(
 	}
 	for _, auth := range rc.Auths {
 		if auth != nil && auth.ID.String() == ticket.AuthID {
-			return validAPIKeyAuth(auth, rc.Consumer, gatewayID, time.Now().UTC())
+			return validAPIKeyAuth(auth, rc.Consumer, gatewayID, now)
 		}
 	}
 	return false

@@ -14,6 +14,12 @@ The plugin config MUST accept an optional `partition` field whose only value is 
 - WHEN a request on X spends tokens
 - THEN the Redis keys written are the same as before the change (`trl:<cfg>:consumer:<X id>…`), and the existing plugin tests pass unchanged
 
+#### Scenario: A request that names no model
+
+- GIVEN a `partition`-less policy with `rules: [{model: gpt-4o-mini, max: 100, time_window: 1h}]` and a route whose default model is `gpt-4o-mini`
+- WHEN a request with no model, `auto` or `pool:<alias>` is served
+- THEN it is counted under the model it names, as before, and matches no rule; only a `partition: key` policy counts it against the routed default model
+
 #### Scenario: Unknown partition
 
 - GIVEN a policy with `partition: owner`
@@ -74,6 +80,12 @@ Under `partition: key`, a request with neither an auth id nor an owner id (the p
 - WHEN she sends a request, and the clock then moves to `2026-11-01T00:00:00Z` and she sends another
 - THEN the first gets 429 and the second reaches the upstream, counted under `p:2026-11`
 
+#### Scenario: A stream that crosses the period end
+
+- GIVEN a `calendar_month` budget and a request admitted at `2026-10-31T23:59:58Z` whose response ends at `2026-11-01T00:00:05Z`
+- WHEN its usage accrues
+- THEN it is charged to `p:2026-10`, the period that admitted it (the request's arrival time, stamped once by the proxy handler), with that counter's TTL floored at 60 s, and `p:2026-11` is untouched
+
 #### Scenario: Day key and TTL
 
 - GIVEN a `calendar_day` budget and a clock at `2026-10-02T18:00:00Z`
@@ -94,11 +106,17 @@ Under `partition: key`, a request with neither an auth id nor an owner id (the p
 
 ### Requirement: Config combinations refused under `partition: key`
 
-`custom_pricing` or `group_by_header` together with `partition: key` MUST fail validation with 422.
+`custom_pricing`, `group_by_header` or `behavior_on_exceeded: downgrade_model` together with `partition: key` MUST fail validation with 422: a hard limit never serves past the budget on another model.
 
 #### Scenario: Custom pricing
 
 - GIVEN a config with `partition: key` and a `custom_pricing` entry
+- WHEN the policy is created
+- THEN 422
+
+#### Scenario: Downgrade instead of refusing
+
+- GIVEN a config with `partition: key`, `behavior_on_exceeded: downgrade_model` and `downgrade_to: gpt-4o-mini`
 - WHEN the policy is created
 - THEN 422
 

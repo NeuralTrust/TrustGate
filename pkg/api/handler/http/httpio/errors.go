@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -77,7 +78,7 @@ func MapDomainError(err error) (int, ErrorBody) {
 		body := NotFoundBody()
 		body.Message = notFoundMessage(err)
 		return fiber.StatusNotFound, body
-	case errors.Is(err, commonerrors.ErrPersonalKeyExists):
+	case errors.Is(err, authdomain.ErrOwnedKeyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgPersonalKeyHint)}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
@@ -85,9 +86,9 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: publicMessage(err, msgHasDependentsHint)}
 	case errors.Is(err, commonerrors.ErrConflict):
 		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: publicMessage(err, msgConflictHint)}
-	case errors.Is(err, commonerrors.ErrManagedByOwner):
+	case errors.Is(err, authdomain.ErrOwnedKey):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "owned_key", Message: publicMessage(err, msgOwnedKeyHint)}
-	case errors.Is(err, commonerrors.ErrApplicationKey):
+	case errors.Is(err, authdomain.ErrApplicationKey):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "application_key", Message: publicMessage(err, msgApplicationKeyHint)}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
@@ -126,9 +127,7 @@ func isBareSentinel(msg string) bool {
 		commonerrors.ErrHasDependents.Error(),
 		commonerrors.ErrValidation.Error(),
 		commonerrors.ErrInvalidConfig.Error(),
-		commonerrors.ErrResultTooLarge.Error(),
-		commonerrors.ErrManagedByOwner.Error(),
-		commonerrors.ErrApplicationKey.Error():
+		commonerrors.ErrResultTooLarge.Error():
 		return true
 	default:
 		return false

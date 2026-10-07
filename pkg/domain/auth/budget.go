@@ -28,17 +28,35 @@ const (
 	BudgetWindowCalendarDay   = "calendar_day"
 )
 
-// KeyBudget is the spending limit of one personal key. Max is counted in the
-// unit of the token_rate_limiter policy with partition key that enforces it,
-// tokens or dollars, and replaces that policy's aggregate for the key.
+// BudgetUnitTokens and BudgetUnitDollars are the units a key budget is
+// counted in. token_rate_limiter shares the names for its own unit.
+const (
+	BudgetUnitTokens  = "tokens"
+	BudgetUnitDollars = "dollars"
+)
+
+// KeyBudget is the spending limit of one personal key. It replaces the
+// aggregate of every token_rate_limiter policy with key_budgets that counts in
+// the same Unit; a policy counting in the other unit keeps its own limit.
 type KeyBudget struct {
 	Max        float64 `json:"max"`
+	Unit       string  `json:"unit"`
 	TimeWindow string  `json:"time_window"`
 }
 
+// Validate reports whether b is a budget a key can carry.
 func (b KeyBudget) Validate() error {
 	if math.IsNaN(b.Max) || math.IsInf(b.Max, 0) || b.Max <= 0 {
 		return fmt.Errorf("%w: max must be a finite number above zero", ErrInvalidBudget)
+	}
+	switch b.Unit {
+	case BudgetUnitDollars:
+	case BudgetUnitTokens:
+		if b.Max != math.Trunc(b.Max) {
+			return fmt.Errorf("%w: max must be a whole number of tokens", ErrInvalidBudget)
+		}
+	default:
+		return fmt.Errorf("%w: unit must be %s or %s", ErrInvalidBudget, BudgetUnitTokens, BudgetUnitDollars)
 	}
 	switch b.TimeWindow {
 	case BudgetWindowCalendarMonth, BudgetWindowCalendarDay:

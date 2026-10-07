@@ -158,16 +158,10 @@ func TestDeleter_Delete_RevokesAnOwnedKeyLikeAnyOther(t *testing.T) {
 	owned.OwnerID = "alice"
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, owned.ID).Return(owned, nil).Once()
-	repo.EXPECT().Delete(mock.Anything, gwID, owned.ID).Return(nil).Once()
-
-	personalA, personalB := ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind]()
+	repo.EXPECT().DeleteOwned(mock.Anything, gwID, owned.ID).Return(nil).Once()
+	// No consumer is loaded or detached one by one: DeleteOwned removes the
+	// links with the key.
 	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, owned.ID).Return([]*consumerdomain.Consumer{
-		{ID: personalA, Slug: "alice-gpt", Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal},
-		{ID: personalB, Slug: "alice-claude", Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal},
-	}, nil).Once()
-	consumerRepo.EXPECT().DetachAuth(mock.Anything, personalA, owned.ID).Return(nil).Once()
-	consumerRepo.EXPECT().DetachAuth(mock.Anything, personalB, owned.ID).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().

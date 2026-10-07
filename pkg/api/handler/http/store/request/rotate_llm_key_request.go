@@ -20,10 +20,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 )
 
+// RotateLLMKeyRequest is the body of a personal key rotation.
 type RotateLLMKeyRequest struct {
 	ExpiresAt string `json:"expires_at,omitempty" format:"date-time" example:"2026-12-31T12:00:00Z"`
 }
 
+// Expiry parses expires_at, nil when the rotation keeps the current expiry.
 func (r RotateLLMKeyRequest) Expiry() (*time.Time, error) {
 	return httpio.ParseExpiresAt(r.ExpiresAt)
 }

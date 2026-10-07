@@ -104,17 +104,17 @@ func (_c *Store_Record_Call) RunAndReturn(run func(context.Context, session.Reco
 	return _c
 }
 
-// SessionForTurn provides a mock function with given fields: ctx, gatewayID, turnID
-func (_m *Store) SessionForTurn(ctx context.Context, gatewayID string, turnID string) string {
-	ret := _m.Called(ctx, gatewayID, turnID)
+// SessionForTurn provides a mock function with given fields: ctx, scope, turnID
+func (_m *Store) SessionForTurn(ctx context.Context, scope session.Scope, turnID string) string {
+	ret := _m.Called(ctx, scope, turnID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SessionForTurn")
 	}
 
 	var r0 string
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
-		r0 = rf(ctx, gatewayID, turnID)
+	if rf, ok := ret.Get(0).(func(context.Context, session.Scope, string) string); ok {
+		r0 = rf(ctx, scope, turnID)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
@@ -129,15 +129,15 @@ type Store_SessionForTurn_Call struct {
 
 // SessionForTurn is a helper method to define mock.On call
 //   - ctx context.Context
-//   - gatewayID string
+//   - scope session.Scope
 //   - turnID string
-func (_e *Store_Expecter) SessionForTurn(ctx interface{}, gatewayID interface{}, turnID interface{}) *Store_SessionForTurn_Call {
-	return &Store_SessionForTurn_Call{Call: _e.mock.On("SessionForTurn", ctx, gatewayID, turnID)}
+func (_e *Store_Expecter) SessionForTurn(ctx interface{}, scope interface{}, turnID interface{}) *Store_SessionForTurn_Call {
+	return &Store_SessionForTurn_Call{Call: _e.mock.On("SessionForTurn", ctx, scope, turnID)}
 }
 
-func (_c *Store_SessionForTurn_Call) Run(run func(ctx context.Context, gatewayID string, turnID string)) *Store_SessionForTurn_Call {
+func (_c *Store_SessionForTurn_Call) Run(run func(ctx context.Context, scope session.Scope, turnID string)) *Store_SessionForTurn_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
+		run(args[0].(context.Context), args[1].(session.Scope), args[2].(string))
 	})
 	return _c
 }
@@ -147,7 +147,7 @@ func (_c *Store_SessionForTurn_Call) Return(_a0 string) *Store_SessionForTurn_Ca
 	return _c
 }
 
-func (_c *Store_SessionForTurn_Call) RunAndReturn(run func(context.Context, string, string) string) *Store_SessionForTurn_Call {
+func (_c *Store_SessionForTurn_Call) RunAndReturn(run func(context.Context, session.Scope, string) string) *Store_SessionForTurn_Call {
 	_c.Call.Return(run)
 	return _c
 }

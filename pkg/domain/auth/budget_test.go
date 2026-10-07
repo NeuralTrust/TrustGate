@@ -30,15 +30,19 @@ func TestKeyBudget_Validate(t *testing.T) {
 		budget KeyBudget
 		valid  bool
 	}{
-		"monthly dollars":      {budget: KeyBudget{Max: 50, TimeWindow: BudgetWindowCalendarMonth}, valid: true},
-		"daily fraction":       {budget: KeyBudget{Max: 0.25, TimeWindow: BudgetWindowCalendarDay}, valid: true},
-		"zero":                 {budget: KeyBudget{Max: 0, TimeWindow: BudgetWindowCalendarMonth}},
-		"negative":             {budget: KeyBudget{Max: -1, TimeWindow: BudgetWindowCalendarMonth}},
-		"not a number":         {budget: KeyBudget{Max: math.NaN(), TimeWindow: BudgetWindowCalendarMonth}},
-		"infinite":             {budget: KeyBudget{Max: math.Inf(1), TimeWindow: BudgetWindowCalendarMonth}},
-		"rolling window":       {budget: KeyBudget{Max: 50, TimeWindow: "24h"}},
-		"no window":            {budget: KeyBudget{Max: 50}},
-		"window not canonical": {budget: KeyBudget{Max: 50, TimeWindow: "Calendar_Month"}},
+		"monthly dollars":      {budget: KeyBudget{Max: 50, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}, valid: true},
+		"daily fraction":       {budget: KeyBudget{Max: 0.25, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarDay}, valid: true},
+		"zero":                 {budget: KeyBudget{Max: 0, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}},
+		"negative":             {budget: KeyBudget{Max: -1, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}},
+		"not a number":         {budget: KeyBudget{Max: math.NaN(), Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}},
+		"infinite":             {budget: KeyBudget{Max: math.Inf(1), Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}},
+		"rolling window":       {budget: KeyBudget{Max: 50, Unit: BudgetUnitDollars, TimeWindow: "24h"}},
+		"no window":            {budget: KeyBudget{Max: 50, Unit: BudgetUnitDollars}},
+		"no unit":              {budget: KeyBudget{Max: 50, TimeWindow: BudgetWindowCalendarMonth}},
+		"unknown unit":         {budget: KeyBudget{Max: 50, Unit: "euros", TimeWindow: BudgetWindowCalendarMonth}},
+		"whole tokens":         {budget: KeyBudget{Max: 100000, Unit: BudgetUnitTokens, TimeWindow: BudgetWindowCalendarDay}, valid: true},
+		"fractional tokens":    {budget: KeyBudget{Max: 0.5, Unit: BudgetUnitTokens, TimeWindow: BudgetWindowCalendarDay}},
+		"window not canonical": {budget: KeyBudget{Max: 50, Unit: BudgetUnitDollars, TimeWindow: "Calendar_Month"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -56,7 +60,7 @@ func TestKeyBudget_Validate(t *testing.T) {
 func TestAuth_SetBudget(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.FixedZone("CEST", 7200))
-	budget := &KeyBudget{Max: 50, TimeWindow: BudgetWindowCalendarMonth}
+	budget := &KeyBudget{Max: 50, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}
 
 	owned := &Auth{OwnerID: "alice"}
 	if err := owned.SetBudget(budget, now); err != nil {
@@ -69,7 +73,7 @@ func TestAuth_SetBudget(t *testing.T) {
 	if owned.Budget.Max != 50 {
 		t.Fatal("the auth must not share the caller's budget")
 	}
-	if err := owned.SetBudget(&KeyBudget{Max: 50, TimeWindow: "1h"}, now); !errors.Is(err, ErrInvalidBudget) || owned.Budget.Max != 50 {
+	if err := owned.SetBudget(&KeyBudget{Max: 50, Unit: BudgetUnitDollars, TimeWindow: "1h"}, now); !errors.Is(err, ErrInvalidBudget) || owned.Budget.Max != 50 {
 		t.Fatalf("an invalid budget: err = %v, budget = %+v, want ErrInvalidBudget and the budget kept", err, owned.Budget)
 	}
 	if err := owned.SetBudget(nil, now); err != nil || owned.Budget != nil {
@@ -77,12 +81,12 @@ func TestAuth_SetBudget(t *testing.T) {
 	}
 
 	application := &Auth{}
-	for _, b := range []*KeyBudget{{Max: 50, TimeWindow: BudgetWindowCalendarMonth}, nil} {
+	for _, b := range []*KeyBudget{{Max: 50, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}, nil} {
 		if err := application.SetBudget(b, now); !errors.Is(err, ErrApplicationKey) || !application.UpdatedAt.IsZero() {
 			t.Fatalf("SetBudget(%+v) on an application key = %v, want ErrApplicationKey and no change", b, err)
 		}
 	}
-	if !errors.Is(ErrApplicationKey, commonerrors.ErrApplicationKey) || errors.Is(ErrApplicationKey, commonerrors.ErrValidation) {
+	if errors.Is(ErrApplicationKey, commonerrors.ErrValidation) {
 		t.Fatal("ErrApplicationKey must answer with its own code, not as a validation error")
 	}
 }
@@ -92,7 +96,7 @@ func TestKeyBudget_Clone(t *testing.T) {
 	if (*KeyBudget)(nil).Clone() != nil {
 		t.Fatal("Clone of nil must be nil")
 	}
-	b := &KeyBudget{Max: 5, TimeWindow: BudgetWindowCalendarDay}
+	b := &KeyBudget{Max: 5, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarDay}
 	if c := b.Clone(); c == b || *c != *b {
 		t.Fatalf("Clone() = %p %+v, want a distinct copy of %p %+v", c, c, b, b)
 	}
@@ -100,7 +104,7 @@ func TestKeyBudget_Clone(t *testing.T) {
 
 func TestAuth_BudgetJSON(t *testing.T) {
 	t.Parallel()
-	raw, err := json.Marshal(&Auth{OwnerID: "alice", Budget: &KeyBudget{Max: 50, TimeWindow: BudgetWindowCalendarMonth}})
+	raw, err := json.Marshal(&Auth{OwnerID: "alice", Budget: &KeyBudget{Max: 50, Unit: BudgetUnitDollars, TimeWindow: BudgetWindowCalendarMonth}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -108,7 +112,7 @@ func TestAuth_BudgetJSON(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if want := map[string]any{"max": float64(50), "time_window": "calendar_month"}; !jsonEqual(got["budget"], want) {
+	if want := map[string]any{"max": float64(50), "unit": "dollars", "time_window": "calendar_month"}; !jsonEqual(got["budget"], want) {
 		t.Fatalf("budget = %v, want %v", got["budget"], want)
 	}
 	raw, err = json.Marshal(&Auth{})

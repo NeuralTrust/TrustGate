@@ -46,8 +46,11 @@ type routedBackend struct {
 	baseline     *trace.RouteBaseline
 }
 
+// CandidateFilter keeps the routing candidates a store link may use.
 type CandidateFilter func(routingdomain.Candidate) bool
 
+// ResolvedRouting is routing already resolved for a request, which the
+// forwarder uses as is instead of resolving it again.
 type ResolvedRouting struct {
 	Intent     routingdomain.Intent
 	Ref        string

@@ -392,7 +392,7 @@ func TestCalendarPeriod(t *testing.T) {
 	tests := []struct {
 		name       string
 		window     string
-		now        time.Time
+		at, now    time.Time
 		wantPeriod string
 		wantTTL    int
 	}{
@@ -401,10 +401,16 @@ func TestCalendarPeriod(t *testing.T) {
 		{name: "day", window: windowCalendarDay, now: at(10, 2, 18, 0, 0), wantPeriod: "2026-10-02", wantTTL: 6 * 3600},
 		{name: "day in UTC", window: windowCalendarDay, now: at(10, 2, 23, 0, 0).In(time.FixedZone("CEST", 7200)), wantPeriod: "2026-10-02", wantTTL: 3600},
 		{name: "rolling window", window: "24h", now: at(10, 2, 18, 0, 0)},
+		{name: "a request admitted in october is charged to october", window: windowCalendarMonth,
+			at: at(10, 31, 23, 59, 58), now: at(11, 1, 0, 0, 5), wantPeriod: "2026-10", wantTTL: minWindowSeconds},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			period, ttl, ok := calendarPeriod(tt.window, tt.now)
+			arrived := tt.at
+			if arrived.IsZero() {
+				arrived = tt.now
+			}
+			period, ttl, ok := calendarPeriod(tt.window, arrived, tt.now)
 			assert.Equal(t, tt.wantPeriod != "", ok)
 			assert.Equal(t, tt.wantPeriod, period)
 			assert.Equal(t, tt.wantTTL, ttl)

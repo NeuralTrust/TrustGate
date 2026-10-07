@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
@@ -126,16 +125,16 @@ func TestService_LastTurnIDMissOrError(t *testing.T) {
 
 func TestService_SessionForTurn(t *testing.T) {
 	hit := appsession.NewService(&fakeRepo{turnResp: "sess-1"}, enabledCfg(time.Hour), nil)
-	assert.Equal(t, "sess-1", hit.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+	assert.Equal(t, "sess-1", hit.SessionForTurn(context.Background(), gw1, "resp_1"))
 
 	miss := appsession.NewService(&fakeRepo{}, enabledCfg(time.Hour), nil)
-	assert.Empty(t, miss.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+	assert.Empty(t, miss.SessionForTurn(context.Background(), gw1, "resp_1"))
 
 	errored := appsession.NewService(&fakeRepo{turnResp: "sess-1", turnErr: errors.New("boom")}, enabledCfg(time.Hour), nil)
-	assert.Empty(t, errored.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+	assert.Empty(t, errored.SessionForTurn(context.Background(), gw1, "resp_1"))
 
 	disabled := appsession.NewService(&fakeRepo{turnResp: "sess-1"}, &config.Config{SessionStore: config.SessionStoreConfig{Enabled: false}}, nil)
-	assert.Empty(t, disabled.SessionForTurn(context.Background(), "gw-1", "resp_1"))
+	assert.Empty(t, disabled.SessionForTurn(context.Background(), gw1, "resp_1"))
 }
 
 type memRepo struct {
@@ -168,10 +167,6 @@ func (m *memRepo) FindSessionIDByTurn(_ context.Context, gatewayID, turnID strin
 	return m.turns[fmt.Sprintf("session_turn:%s:%s", gatewayID, turnID)], nil
 }
 
-func ownerCtx(owner string) context.Context {
-	return appauth.WithAuthContext(context.Background(), &appauth.AuthContext{Method: appauth.MethodAPIKey, OwnerID: owner})
-}
-
 func TestService_OwnersNeverShareASession(t *testing.T) {
 	repo := newMemRepo()
 	svc := appsession.NewService(repo, enabledCfg(time.Hour), nil)
@@ -197,24 +192,23 @@ func TestService_SessionForTurnStaysWithItsOwner(t *testing.T) {
 		Scope: appsession.Scope{GatewayID: "gw-1", OwnerID: "alice"}, SessionID: "sess-a", TurnID: "resp_a",
 	})
 	svc.Record(context.Background(), appsession.RecordInput{Scope: gw1, SessionID: "sess-app", TurnID: "resp_app"})
-	oidcAlice := appauth.WithAuthContext(context.Background(), &appauth.AuthContext{Method: appauth.MethodOIDC, OwnerID: "alice"})
+	alice := appsession.Scope{GatewayID: "gw-1", OwnerID: "alice"}
 
 	tests := []struct {
-		name string
-		ctx  context.Context
-		turn string
-		want string
+		name  string
+		scope appsession.Scope
+		turn  string
+		want  string
 	}{
-		{name: "the owner's own turn", ctx: ownerCtx("alice"), turn: "resp_a", want: "sess-a"},
-		{name: "another owner", ctx: ownerCtx("bob"), turn: "resp_a"},
-		{name: "an application key", ctx: context.Background(), turn: "resp_a"},
-		{name: "an owner on another method", ctx: oidcAlice, turn: "resp_a"},
-		{name: "an application turn for an owner", ctx: ownerCtx("alice"), turn: "resp_app"},
-		{name: "an application turn for an application key", ctx: context.Background(), turn: "resp_app", want: "sess-app"},
+		{name: "the owner's own turn", scope: alice, turn: "resp_a", want: "sess-a"},
+		{name: "another owner", scope: appsession.Scope{GatewayID: "gw-1", OwnerID: "bob"}, turn: "resp_a"},
+		{name: "an application key", scope: gw1, turn: "resp_a"},
+		{name: "an application turn for an owner", scope: alice, turn: "resp_app"},
+		{name: "an application turn for an application key", scope: gw1, turn: "resp_app", want: "sess-app"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, svc.SessionForTurn(tt.ctx, "gw-1", tt.turn))
+			assert.Equal(t, tt.want, svc.SessionForTurn(context.Background(), tt.scope, tt.turn))
 		})
 	}
 }

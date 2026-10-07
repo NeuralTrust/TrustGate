@@ -109,7 +109,15 @@ func (r *authRepository) UpdateBudget(_ context.Context, _ *domain.Auth) (*domai
 	return nil, configsync.ErrReadOnly
 }
 
+func (r *authRepository) RotateKey(_ context.Context, _ *domain.Auth, _ string) error {
+	return configsync.ErrReadOnly
+}
+
 func (r *authRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.AuthID) error {
+	return configsync.ErrReadOnly
+}
+
+func (r *authRepository) DeleteOwned(_ context.Context, _ ids.GatewayID, _ ids.AuthID) error {
 	return configsync.ErrReadOnly
 }
 

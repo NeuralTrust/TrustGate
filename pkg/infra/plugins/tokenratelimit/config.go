@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	unitTokens  = "tokens"
-	unitDollars = "dollars"
+	unitTokens  = authdomain.BudgetUnitTokens
+	unitDollars = authdomain.BudgetUnitDollars
 
 	countingTotal  = "total"
 	countingInput  = "input"
@@ -223,10 +223,11 @@ func (c *config) limits() bool {
 }
 
 // forKey returns the config one request is held to under key_budgets: the
-// budget of the request's key, when it has one, replaces the aggregate. The
-// parsed config is left as it is, so no other request ever sees the budget.
+// budget of the request's key, when it has one in the policy's unit, replaces
+// the aggregate. The parsed config is left as it is, so no other request ever
+// sees the budget.
 func (c *config) forKey(budget *authdomain.KeyBudget) *config {
-	if !c.KeyBudgets || budget == nil {
+	if !c.KeyBudgets || budget == nil || budget.Unit != c.Unit {
 		return c
 	}
 	scoped := *c
@@ -246,8 +247,21 @@ func (c *config) validatePartition() error {
 		return fmt.Errorf("token_rate_limiter: partition %s does not support custom_pricing", partitionKey)
 	case c.GroupByHeader != "":
 		return fmt.Errorf("token_rate_limiter: partition %s does not support group_by_header", partitionKey)
+	case c.BehaviorOnExceeded == behaviorDowngradeModel:
+		return fmt.Errorf("token_rate_limiter: partition %s does not support behavior_on_exceeded=%s", partitionKey, behaviorDowngradeModel)
 	}
 	return nil
+}
+
+// keyPartitioned reports a policy that counts per key. Such a policy is a hard
+// limit: it fails closed when the counter store is down and refuses a model it
+// cannot price in a dollar budget.
+func (c *config) keyPartitioned() bool {
+	return c.Partition == partitionKey
+}
+
+func (c *config) refusesUnpriced() bool {
+	return c.keyPartitioned() && c.Unit == unitDollars
 }
 
 func (c *config) validateWindow(window string) error {
@@ -300,16 +314,20 @@ func parseWindow(s string) (int, error) {
 	return secs, nil
 }
 
-func calendarPeriod(window string, now time.Time) (period string, ttlSeconds int, ok bool) {
-	now = now.UTC()
+// calendarPeriod names the calendar period at falls in and how long its counter
+// lives from now. Both stages of a request pass the time the request arrived as
+// at, so a request that ends after the period does is still charged to the
+// period that admitted it.
+func calendarPeriod(window string, at, now time.Time) (period string, ttlSeconds int, ok bool) {
+	at = at.UTC()
 	var start, end time.Time
 	var layout string
 	switch window {
 	case windowCalendarMonth:
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		start = time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
 		end, layout = start.AddDate(0, 1, 0), "2006-01"
 	case windowCalendarDay:
-		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		start = time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
 		end, layout = start.AddDate(0, 0, 1), "2006-01-02"
 	default:
 		return "", 0, false

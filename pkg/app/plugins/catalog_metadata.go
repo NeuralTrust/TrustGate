@@ -274,14 +274,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:  FieldTypeEnum,
 					Description: "Set to key to count the budget per API key: per owner when the key has one, so rotating or re-creating it keeps the spend, otherwise per key. Requests without an API key pass uncounted. " +
 						"In enforce mode a key budget fails closed: 503 budget_unavailable when the counter store is unavailable, and 403 model_unpriced on a dollar budget for a model with no catalog or registry price. " +
-						"Not allowed with custom_pricing or group_by_header.",
+						"Not allowed with custom_pricing, group_by_header or behavior_on_exceeded downgrade_model.",
 					Enum: enumOptions("key"),
 				},
 				{
 					Key:         "key_budgets",
 					Label:       "Key Budgets",
 					Type:        FieldTypeBoolean,
-					Description: "With partition key, hold each personal key to the budget it carries (set by the console per user), in this policy's unit, instead of aggregate; aggregate then becomes optional, and a key without a budget is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets.",
+					Description: "With partition key, hold each personal key to the budget it carries (set by the console per user) instead of aggregate, when the budget counts in this policy's unit; aggregate then becomes optional, and a key without a budget in this unit is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets.",
 				},
 			},
 		},

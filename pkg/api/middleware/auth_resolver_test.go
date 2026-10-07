@@ -959,7 +959,7 @@ func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T)
 func TestAuthMiddleware_StoreCarriesACopyOfTheKeyBudget(t *testing.T) {
 	t.Parallel()
 	f := newStoreFixture(t)
-	budget := &authdomain.KeyBudget{Max: 50, TimeWindow: authdomain.BudgetWindowCalendarMonth}
+	budget := &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}
 	f.finder.keys["ag_alice"].Budget = budget
 	app := f.app(func(c *fiber.Ctx) error {
 		authCtx, _ := appauth.AuthContextFromContext(c.UserContext())
