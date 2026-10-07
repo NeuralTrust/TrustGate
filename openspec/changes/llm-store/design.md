@@ -31,7 +31,7 @@ Proposal decisions are D#. Design-level decisions are DD#.
 |---|---|---|---|
 | DD1 (B1) | `Consumer.Audience` holds `""` for application and `"personal"` for personal. `ParseAudience` maps `"application"` to `""`. The repo writes `AudienceName()` and canonicalises on scan. | Storing `"application"` in memory | `omitempty` keeps existing consumers byte-identical with one in-memory form. |
 | DD2 (B5) | Link attributes are three nullable `consumer_auth` columns, read into `Consumer.AuthLinks map[ids.AuthID]AuthLink` (`json:"auth_links,omitempty"`) only for rows with `level IS NOT NULL`. `granted_at` is the tie-break. | A `rank` integer (the app would have to renumber on every grant change); a separate table (B2 forbids new tables) | `granted_at` is stable and already exists app-side (`createdAt`). A map keyed by auth id needs no ordering on the wire. `ids.AuthID` implements `TextMarshaler` (`ids.go:96-104`), so it is a valid JSON map key. |
-| DD3 (D1, R5) | Order in the middleware branch: hybrid → 404, `Data` → 500, no active personal consumer → 404, then the key. All three run before any key lookup. | Letting `HybridGatewayGuardMiddleware` answer 421 | A hosted proxy and a hybrid DP answer the same way (R5). OSS pays one string compare. |
+| DD3 (D1, R5) | Order in the middleware branch: hybrid → 404, `Data` → 500, then the key. With no active personal consumer, no key or a rejected key → 404 (the unknown-slug answer) instead of 401, and a personal key of the gateway goes on so its owner learns it has no model access. The first two run before any key lookup; the miss cache keeps repeated unknown keys off the store. | Letting `HybridGatewayGuardMiddleware` answer 421 | A hosted proxy and a hybrid DP answer the same way (R5). OSS pays one string compare. |
 | DD4 (D2) | `Data` gains `storeLinks map[ids.AuthID][]StoreLink` and `personal int` (active personal consumers), built in `NewData`. Each slice is sorted once by `(level rank, priority, granted_at, consumer id)`. Inactive personal consumers are left out, as `indexBySlug` leaves out inactive consumers. An auth id in `AuthIDs` with no `AuthLinks` entry is skipped. | Sorting per request; including inactive consumers | `Data` is immutable after `NewData`, so readers share the slices without a lock. A link change rebuilds `Data` on the same event. |
 | DD5 (R5) | `appconsumer.Creator` refuses `audience = personal` on a hybrid gateway with 422 `ErrHybridPersonal`. `PersonalKeys.Create` refuses a hybrid gateway too. | Gating only `/store/v1` | Nothing personal is created where it can never be served. |
 | DD6 (D4) | Attach of an owned key to a personal consumer is an upsert of one row in the existing `AttachAuth` transaction (consumer row lock as today, `repository.go:413`). `AttachAuth` gains `link *AuthLink`: `nil` keeps today's `ON CONFLICT DO NOTHING`; non-nil writes the columns with `ON CONFLICT (consumer_id, auth_id) DO UPDATE SET level, priority, granted_at`. | A move transaction; locking the auth row | Links are independent rows under option C; no invariant spans two of them. |
@@ -73,7 +73,7 @@ Proposal decisions are D#. Design-level decisions are DD#.
 | 2 | Path → slug `store` → `serveStore` | `ResolveProxyPath` (`proxy_path_resolver.go:69-78`), `route.ConsumerSlug == domainconsumer.StoreSlug` | string ops | — |
 | 3 | `gw.ServedByHybridDataPlane()` → **404** | `gateway.go:125` | field read | — |
 | 4 | Gateway `Data` → **500** on error | `dataFinder.FindByGateway` (`auth.go:69`) | TTL get | today's load + `storeLinks` build, O(personal links) |
-| 5 | `!data.HasPersonalConsumers()` → **404** | new | int compare | — |
+| 5 | `!data.HasPersonalConsumers()` and the key is not a personal key of the gateway → **404** | new | int compare + key lookup | — |
 | 6 | Raw key, empty → **401** | `resolver.APIKeyFromRequest` | header read | — |
 | 7 | SHA-256 → auth. `ErrNotFound`/`ErrExpired` → **401**, other → **500** | `APIKeyFinder.FindByAPIKey` (`key_finder.go:47-62`) | 1 hash + TTL get | snapshot `authsByAPIKeyHash` (DB-less), 1 PG (full) |
 | 8 | `Enabled ∧ Type == api_key ∧ IsOwned() ∧ GatewayID == gw.ID` → else **401** | `storeKeyResolver.Resolve` | O(1) | — |
@@ -389,10 +389,10 @@ New `pkg/app/configsnapshot/snapshot_metrics.go` with `otel.Meter("trustgate/con
 
 | Surface | Condition | Status / `error` |
 |---|---|---|
-| `/store/v1/*` | hybrid gateway; no active personal consumer; the Files API with a valid key (DD20) | 404 `not_found` |
+| `/store/v1/*` | hybrid gateway; no active personal consumer and the key is not a personal key of the gateway; the Files API with a valid key (DD20) | 404 `not_found` |
 | `/store/v1/*` | no key; unknown, expired, disabled, non-`api_key`, unowned, other gateway | 401 `unauthenticated` |
 | `/store/v1/*` | nothing effective admits the request (N = 0 included) | 403 `model_not_allowed` |
-| `/store/v1/*` | no links (N = 0), whatever the intent: takes precedence over the unknown pool alias row | 403 `model_not_allowed` |
+| `/store/v1/*` | no links (N = 0), whatever the intent: takes precedence over the unknown pool alias row | 403 `no_model_access` |
 | `/store/v1/*` | invalid model reference, unknown pool alias everywhere | 400 `invalid_model` |
 | `/store/v1/*` | `Data` load or key lookup infra error | 500 `internal_error` |
 | `/store/v1/models` | nothing effective | 200 `{"object":"list","data":[]}` |
