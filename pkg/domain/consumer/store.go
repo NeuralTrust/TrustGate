@@ -18,7 +18,8 @@ import "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 
 // StoreSlug is the reserved, well-known slug of the MCP Store: the fixed
 // self-service catalog surface served at /{StoreSlug}/mcp on every gateway.
-// Unlike a normal consumer slug it is not random and is never persisted.
+// Unlike a normal consumer slug it is not random and is never persisted. The
+// proxy plane serves personal keys under /{StoreSlug}/v1.
 const StoreSlug = "store"
 
 // StoreConsumerName is the display name carried by the synthetic Store consumer.
@@ -43,7 +44,8 @@ func IsStoreConsumer(c *Consumer) bool {
 	return c != nil && c.ID == StoreConsumerID()
 }
 
-// IsStoreSlug reports whether a resolved slug addresses the MCP Store.
+// IsStoreSlug reports whether a resolved slug addresses the MCP Store on the
+// MCP plane, or the LLM store of personal keys on the proxy plane.
 func IsStoreSlug(slug string) bool {
 	return slug == StoreSlug
 }

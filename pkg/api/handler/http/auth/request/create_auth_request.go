@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
@@ -94,7 +95,7 @@ func (r CreateAuthRequest) Validate() error {
 	if strings.TrimSpace(r.Type) == "" {
 		return fmt.Errorf("type is required: %w", commonerrors.ErrValidation)
 	}
-	if _, err := parseExpiresAt(r.ExpiresAt); err != nil {
+	if _, err := httpio.ParseExpiresAt(r.ExpiresAt); err != nil {
 		return err
 	}
 	return nil
@@ -103,7 +104,7 @@ func (r CreateAuthRequest) Validate() error {
 // ToExpiresAt returns the parsed expiry. Validate has already rejected a
 // malformed one, so the error here can only repeat itself.
 func (r CreateAuthRequest) ToExpiresAt() *time.Time {
-	at, err := parseExpiresAt(r.ExpiresAt)
+	at, err := httpio.ParseExpiresAt(r.ExpiresAt)
 	if err != nil {
 		return nil
 	}

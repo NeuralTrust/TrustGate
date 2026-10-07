@@ -66,6 +66,7 @@ type Consumer struct {
 	GatewayID       ids.GatewayID          `json:"gateway_id"`
 	Name            string                 `json:"name"`
 	Type            Type                   `json:"type"`
+	Audience        Audience               `json:"audience,omitempty"`
 	Slug            string                 `json:"slug"`
 	LBConfig        *LBConfig              `json:"lb_config,omitempty"`
 	Headers         map[string]string      `json:"headers,omitempty"`
@@ -82,6 +83,7 @@ type Consumer struct {
 	// classified against. They are projected from the app and only ever
 	// written through SetLabelSets.
 	LabelSets []trafficlabel.LabelSet `json:"label_sets,omitempty"`
+	AuthLinks map[ids.AuthID]AuthLink `json:"auth_links,omitempty"`
 	CreatedAt time.Time               `json:"created_at"`
 	UpdatedAt time.Time               `json:"updated_at"`
 }
@@ -110,10 +112,20 @@ func (c *Consumer) FailMode() FailMode {
 	return c.MCP.FailMode
 }
 
+// ActiveFallbackChain returns the fallback chain when fallback is enabled, and
+// nil otherwise.
+func (c *Consumer) ActiveFallbackChain() []ids.RegistryID {
+	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
+		return nil
+	}
+	return c.Fallback.Chain
+}
+
 type CreateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            Type
+	Audience        Audience
 	LBConfig        *LBConfig
 	Headers         map[string]string
 	Active          *bool
@@ -152,6 +164,7 @@ func New(params CreateParams) (*Consumer, error) {
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
+		Audience:        params.Audience,
 		Slug:            slug,
 		LBConfig:        lbConfig,
 		Headers:         params.Headers,
@@ -182,6 +195,7 @@ type RehydrateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            Type
+	Audience        Audience
 	Slug            string
 	LBConfig        *LBConfig
 	Headers         map[string]string
@@ -189,6 +203,7 @@ type RehydrateParams struct {
 	RegistryIDs     []ids.RegistryID
 	RegistryWeights map[ids.RegistryID]int
 	AuthIDs         []ids.AuthID
+	AuthLinks       map[ids.AuthID]AuthLink
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
 	MCP             *MCPPolicy
@@ -205,6 +220,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
+		Audience:        params.Audience.canonical(),
 		Slug:            params.Slug,
 		LBConfig:        params.LBConfig,
 		Headers:         params.Headers,
@@ -212,6 +228,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		RegistryIDs:     params.RegistryIDs,
 		RegistryWeights: params.RegistryWeights,
 		AuthIDs:         params.AuthIDs,
+		AuthLinks:       params.AuthLinks,
 		Fallback:        params.Fallback,
 		ModelPolicies:   params.ModelPolicies,
 		MCP:             params.MCP,
@@ -236,6 +253,11 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
+	audience, err := ParseAudience(string(c.Audience))
+	if err != nil {
+		return err
+	}
+	c.Audience = audience
 	if !IsValidSlug(c.Slug) {
 		return fmt.Errorf("%w: %q", ErrInvalidSlug, c.Slug)
 	}
@@ -266,6 +288,9 @@ func (c *Consumer) Validate() error {
 		return err
 	}
 	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+		return err
+	}
+	if err := c.validatePersonal(); err != nil {
 		return err
 	}
 	if c.Type == TypeMCP {

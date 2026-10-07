@@ -46,19 +46,37 @@ const (
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
 	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerSlugUniqueIndex      = "consumers_slug_unique_idx"
+	consumerAuthGrantCheck       = "consumer_auth_grant_check"
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.audience, c.slug, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
 		       c.identity, c.auth_binding, c.label_sets, c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
-		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
-		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids`
+		       links.auth_ids, links.auth_links`
 
-var _ domain.Repository = (*Repository)(nil)
+// consumerSelectFrom reads a consumer's auth ids and personal link attributes
+// in one pass over consumer_auth: a personal consumer holds a link per user,
+// so scanning them twice per row doubles the cost of every read and snapshot
+// compile.
+const consumerSelectFrom = consumerSelectColumns + `
+		  FROM consumers c
+		  LEFT JOIN LATERAL (
+		       SELECT COALESCE(array_agg(cal.auth_id ORDER BY cal.auth_id), '{}')::uuid[] AS auth_ids,
+		              COALESCE(json_object_agg(cal.auth_id, json_build_object('level', cal.level, 'priority', cal.priority,
+		                         'granted_at', to_char(cal.granted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+		                       FILTER (WHERE cal.level IS NOT NULL), '{}')::jsonb AS auth_links
+		         FROM consumer_auth cal
+		        WHERE cal.consumer_id = c.id
+		  ) links ON TRUE`
+
+var (
+	_ domain.Repository = (*Repository)(nil)
+	_ domain.LinkReader = (*Repository)(nil)
+)
 
 type Repository struct {
 	conn   *database.Connection
@@ -121,9 +139,9 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, auth_binding, created_at, updated_at, label_sets
+			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, auth_binding, created_at, updated_at, label_sets, audience
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
@@ -132,6 +150,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, authBindingBytes, c.CreatedAt, c.UpdatedAt, labelSetsBytes,
+			string(c.AudienceName()),
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -436,7 +455,12 @@ func (r *Repository) detachRegistryIfUnreferenced(
 	return current, nil
 }
 
-func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
+func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error {
+	if link != nil {
+		if err := link.Validate(); err != nil {
+			return err
+		}
+	}
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, consumerID); err != nil {
 			return err
@@ -449,8 +473,18 @@ func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 		if !exists {
 			return domain.ErrNotFound
 		}
-		const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-		if _, err := tx.Exec(ctx, query, consumerID, authID); err != nil {
+		if link == nil {
+			const attach = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+			if _, err := tx.Exec(ctx, attach, consumerID, authID); err != nil {
+				return mapPgError(err)
+			}
+			return nil
+		}
+		const upsertLink = `
+			INSERT INTO consumer_auth (consumer_id, auth_id, level, priority, granted_at) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (consumer_id, auth_id) DO UPDATE
+			SET level = EXCLUDED.level, priority = EXCLUDED.priority, granted_at = EXCLUDED.granted_at`
+		if _, err := tx.Exec(ctx, upsertLink, consumerID, authID, string(link.Level), link.Priority, link.GrantedAt); err != nil {
 			return mapPgError(err)
 		}
 		return nil
@@ -525,8 +559,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 }
 
 func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE c.id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
 	c, err := scanConsumer(row)
@@ -539,9 +572,40 @@ func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.C
 	return c, nil
 }
 
+func (r *Repository) FindSummaryByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
+	const query = `SELECT id, gateway_id, type, audience, active FROM consumers WHERE id = $1`
+	c := &domain.Consumer{}
+	var consumerType, audience string
+	if err := r.conn.Pool.QueryRow(ctx, query, id).Scan(&c.ID, &c.GatewayID, &consumerType, &audience, &c.Active); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("consumer repository: find summary: %w", err)
+	}
+	parsedAudience, err := domain.ParseAudience(audience)
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: scan audience: %w", err)
+	}
+	c.Type = domain.Type(consumerType)
+	c.Audience = parsedAudience
+	return c, nil
+}
+
+func (r *Repository) ListIDsByAuthID(ctx context.Context, authID ids.AuthID) ([]ids.ConsumerID, error) {
+	const query = `SELECT consumer_id FROM consumer_auth WHERE auth_id = $1 ORDER BY consumer_id`
+	rows, err := r.conn.Pool.Query(ctx, query, authID)
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: list ids by auth: %w", err)
+	}
+	consumerIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: scan ids by auth: %w", err)
+	}
+	return ids.FromUUIDs[ids.ConsumerKind](consumerIDs), nil
+}
+
 func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE c.slug = $1
 		   AND c.active = TRUE`
 	row := r.conn.Pool.QueryRow(ctx, query, strings.TrimSpace(slug))
@@ -577,8 +641,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		return nil, 0, fmt.Errorf("consumer repository: count: %w", err)
 	}
 
-	listQuery := consumerSelectColumns + `
-		  FROM consumers c
+	listQuery := consumerSelectFrom + `
 		 WHERE ($1::uuid IS NULL OR c.gateway_id = $1)
 		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%' OR lower(c.slug) LIKE '%' || lower($2) || '%')
 		   AND ($3 = '' OR c.type = $3)
@@ -608,8 +671,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 }
 
 func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE c.gateway_id = $1
 		 ORDER BY c.created_at DESC, c.id`
 	rows, err := r.conn.Pool.Query(ctx, query, gatewayID)
@@ -633,8 +695,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 }
 
 func (r *Repository) ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*domain.Consumer, error) {
-	query := consumerSelectColumns + `
-		  FROM consumers c
+	query := consumerSelectFrom + `
 		 WHERE EXISTS (SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $1)
 		 ORDER BY c.created_at DESC, c.id`
 	rows, err := r.conn.Pool.Query(ctx, query, authID)
@@ -768,18 +829,25 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		labelSetsRaw     []byte
 		failModeRaw      *string
 		consumerType     string
+		audience         string
 		registryIDs      []uuid.UUID
 		registryWeights  []byte
 		authIDs          []uuid.UUID
+		authLinks        []byte
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &audience, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&identityRaw, &authBindingRaw, &labelSetsRaw, &c.CreatedAt, &c.UpdatedAt,
-		&registryIDs, &registryWeights, &authIDs,
+		&registryIDs, &registryWeights, &authIDs, &authLinks,
 	); err != nil {
 		return nil, err
 	}
 	c.Type = domain.Type(consumerType)
+	parsedAudience, err := domain.ParseAudience(audience)
+	if err != nil {
+		return nil, fmt.Errorf("scan audience: %w", err)
+	}
+	c.Audience = parsedAudience
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)
@@ -846,6 +914,9 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		return nil, err
 	}
 	c.RegistryWeights = weights
+	if c.AuthLinks, err = parseAuthLinks(authLinks); err != nil {
+		return nil, err
+	}
 	if c.RegistryIDs == nil {
 		c.RegistryIDs = []ids.RegistryID{}
 	}
@@ -875,6 +946,24 @@ func parseRegistryWeights(raw []byte) (map[ids.RegistryID]int, error) {
 		out[id] = v
 	}
 	return out, nil
+}
+
+func parseAuthLinks(raw []byte) (map[ids.AuthID]domain.AuthLink, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var links map[ids.AuthID]domain.AuthLink
+	if err := json.Unmarshal(raw, &links); err != nil {
+		return nil, fmt.Errorf("scan auth_links: %w", err)
+	}
+	if len(links) == 0 {
+		return nil, nil
+	}
+	for id, link := range links {
+		link.GrantedAt = link.GrantedAt.UTC()
+		links[id] = link
+	}
+	return links, nil
 }
 
 func marshalHeaders(v map[string]string) ([]byte, error) {
@@ -960,6 +1049,10 @@ func mapPgError(err error) error {
 		switch pgErr.Code {
 		case pgCrossGatewayLink:
 			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
+		case pgCheckViolation:
+			if pgErr.ConstraintName == consumerAuthGrantCheck {
+				return fmt.Errorf("%w: %s", domain.ErrInvalidAuthLink, pgErr.Message)
+			}
 		case pgUniqueViolation:
 			if strings.Contains(pgErr.ConstraintName, consumerSlugUniqueIndex) {
 				return domain.ErrSlugAlreadyExists

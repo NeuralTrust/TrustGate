@@ -163,6 +163,9 @@ func (f fakeAuths) List(_ context.Context, filter authdomain.ListFilter) ([]*aut
 	if f.err != nil {
 		return nil, 0, f.err
 	}
+	if filter.ExcludeOwned || filter.OnlyOwned || filter.OwnerID != "" {
+		return nil, 0, errors.New("the compiler must read every auth, owned keys included")
+	}
 	if filter.Page.Number > 1 {
 		return nil, 0, nil
 	}
@@ -576,5 +579,38 @@ func TestCompilerMassUnreadablePoliciesFailEvenWhenRegistriesAreCorrupt(t *testi
 	_, err := compileWithSkippedPoliciesAndRegistries(t, registries, true, 20, 1, 2, 3)
 	if !errors.Is(err, appsnapshot.ErrUnreadablePolicies) {
 		t.Fatalf("expected ErrUnreadablePolicies, got %v", err)
+	}
+}
+
+func TestCompilerShipsOwnedKeys(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	corrupt := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	application := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "application-hash"}
+	owned := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice",
+		Budget: &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
+	perGateway := fakeRegistries{errByGateway: map[string]error{corrupt.String(): fmt.Errorf("decrypt auth: %w", commonerrors.ErrCorruptData)}}
+
+	for name, registries := range map[string]fakeRegistries{"bulk": {}, "per gateway": perGateway} {
+		t.Run(name, func(t *testing.T) {
+			snapshot, err := appsnapshot.NewCompiler(
+				fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}, {ID: corrupt}}},
+				fakeConsumers{},
+				registries,
+				fakePolicies{},
+				fakeAuths{byGateway: map[string][]*authdomain.Auth{gw.String(): {application, owned}}},
+				fakeCatalog{},
+				nil,
+			).Compile(context.Background())
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			found, ok := snapshot.AuthByAPIKeyHash("owned-hash")
+			if len(snapshot.Data().Auths) != 2 || !ok || found.ID != owned.ID || found.OwnerID != "alice" {
+				t.Fatalf("auths = %+v, owned lookup = %+v, %v", snapshot.Data().Auths, found, ok)
+			}
+			if found.Budget == nil || *found.Budget != *owned.Budget {
+				t.Fatalf("owned budget = %+v, want %+v", found.Budget, owned.Budget)
+			}
+		})
 	}
 }

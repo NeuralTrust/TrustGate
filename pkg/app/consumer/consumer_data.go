@@ -15,6 +15,10 @@
 package consumer
 
 import (
+	"bytes"
+	"cmp"
+	"slices"
+
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -51,19 +55,75 @@ type RoutableConsumer struct {
 	MCPPlans *PolicyPlans
 }
 
+// StoreLink is one personal consumer an owned key is linked to, with the
+// attributes of that link.
+type StoreLink struct {
+	Consumer *RoutableConsumer
+	Link     domain.AuthLink
+}
+
 type Data struct {
 	GatewayID     ids.GatewayID
 	Consumers     []RoutableConsumer
 	StoreConsumer *RoutableConsumer
 	bySlug        map[string]*RoutableConsumer
 	registryByID  map[ids.RegistryID]*registrydomain.Registry
+	storeLinks    map[ids.AuthID][]StoreLink
+	personal      int
 }
 
 func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
 	d := &Data{GatewayID: gatewayID, Consumers: consumers}
 	d.indexBySlug()
 	d.indexRegistries()
+	d.indexStoreLinks()
 	return d
+}
+
+// HasPersonalConsumers reports whether the gateway has at least one active
+// personal consumer.
+func (d *Data) HasPersonalConsumers() bool {
+	return d != nil && d.personal > 0
+}
+
+// StoreLinks returns the personal consumers the auth is linked to, in
+// selection order. The slice is shared by every reader and must not be
+// modified.
+func (d *Data) StoreLinks(id ids.AuthID) []StoreLink {
+	if d == nil {
+		return nil
+	}
+	return d.storeLinks[id]
+}
+
+func (d *Data) indexStoreLinks() {
+	d.storeLinks = make(map[ids.AuthID][]StoreLink)
+	for i := range d.Consumers {
+		rc := &d.Consumers[i]
+		if rc.Consumer == nil || !rc.Consumer.Active || !rc.Consumer.IsPersonal() {
+			continue
+		}
+		d.personal++
+		for _, authID := range rc.Consumer.AuthIDs {
+			if link, ok := rc.Consumer.AuthLinks[authID]; ok {
+				d.storeLinks[authID] = append(d.storeLinks[authID], StoreLink{Consumer: rc, Link: link})
+			}
+		}
+	}
+	for id, links := range d.storeLinks {
+		slices.SortFunc(links, compareStoreLinks)
+		d.storeLinks[id] = slices.Clip(links)
+	}
+}
+
+func compareStoreLinks(a, b StoreLink) int {
+	idA, idB := a.Consumer.Consumer.ID.UUID(), b.Consumer.Consumer.ID.UUID()
+	return cmp.Or(
+		cmp.Compare(a.Link.Level.Rank(), b.Link.Level.Rank()),
+		cmp.Compare(a.Link.Priority, b.Link.Priority),
+		a.Link.GrantedAt.Compare(b.Link.GrantedAt),
+		bytes.Compare(idA[:], idB[:]),
+	)
 }
 
 func (d *Data) SetRegistryIndex(byID map[ids.RegistryID]*registrydomain.Registry) {
@@ -125,7 +185,7 @@ func (d *Data) indexBySlug() {
 	d.bySlug = make(map[string]*RoutableConsumer, len(d.Consumers))
 	for i := range d.Consumers {
 		rc := &d.Consumers[i]
-		if rc.Consumer == nil || !rc.Consumer.Active || rc.Consumer.Slug == "" {
+		if rc.Consumer == nil || !rc.Consumer.Active || rc.Consumer.Slug == "" || rc.Consumer.IsPersonal() {
 			continue
 		}
 		d.bySlug[rc.Consumer.Slug] = rc

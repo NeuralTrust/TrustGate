@@ -213,3 +213,21 @@ func TestPathResolver_NonMCPPathReturnsNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, matches)
 }
+
+func TestPathResolver_PersonalConsumerIsNoMatch(t *testing.T) {
+	t.Parallel()
+	gwA := ids.New[ids.GatewayKind]()
+	personal := slugConsumer(t, gwA, "pslug001", ids.New[ids.AuthKind]())
+	personal.Audience = domain.AudiencePersonal
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().FindActiveBySlug(mock.Anything, "pslug001").Return(personal, nil).Once()
+
+	resolver := appconsumer.NewPathResolver(
+		consumers, authmocks.NewRepository(t), gatewaymocks.NewRepository(t),
+		cache.NewTTLMapManager(time.Hour), newTestLogger(),
+	)
+	matches, err := resolver.Match(context.Background(), "tenant-a.example.com", "/pslug001/mcp")
+	require.NoError(t, err)
+	require.Empty(t, matches)
+}

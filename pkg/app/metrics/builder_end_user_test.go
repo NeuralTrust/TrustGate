@@ -147,6 +147,21 @@ func TestBuilder_HeadersOutrankTheOpenAIUserField(t *testing.T) {
 	assert.Equal(t, "open_webui", evt.EndUser.Source)
 }
 
+func TestBuilder_PersonalKeyBodyNamesNoEndUser(t *testing.T) {
+	rt := trace.New("trace-end-user", trace.Metadata{GatewayID: "gw-1"})
+	req := &infracontext.RequestContext{
+		GatewayID: "gw-1", Method: "POST", Path: "/store/v1/chat/completions", OwnerID: "alice",
+		Body: []byte(`{"model":"gpt-4o","user":"bob"}`),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(1_000_000)
+
+	evt := newBuilder(appcatalog.Pricing{}).
+		Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	assert.Nil(t, evt.EndUser)
+}
+
 func TestBuilder_IgnoresAnUnusableUserField(t *testing.T) {
 	for name, body := range map[string]string{
 		"absent":       `{"model":"gpt-4o"}`,

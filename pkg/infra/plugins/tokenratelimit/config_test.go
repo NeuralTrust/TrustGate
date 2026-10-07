@@ -16,6 +16,7 @@ package tokenratelimit
 
 import (
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/stretchr/testify/assert"
@@ -350,4 +351,83 @@ func TestParseWindow(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestConfigValidate_Partition(t *testing.T) {
+	key := func(mutate func(*config)) *config {
+		return validConfig(func(c *config) { c.Partition = partitionKey; mutate(c) })
+	}
+	priced := map[string]llmcost.CustomPrice{"gpt-5": {Input: 1, Output: 2}}
+	dailyRule := []budgetRule{{Model: "gpt-5", Max: 10, TimeWindow: windowCalendarDay}}
+	tests := []struct {
+		name    string
+		cfg     *config
+		wantErr string
+	}{
+		{name: "no partition keeps group by header and custom pricing", cfg: validConfig(func(c *config) { c.GroupByHeader, c.CustomPricing = "X-Team", priced })},
+		{name: "unknown partition", cfg: validConfig(func(c *config) { c.Partition = "owner" }), wantErr: "partition must be key"},
+		{name: "calendar month without partition", cfg: validConfig(func(c *config) { c.Aggregate.TimeWindow = windowCalendarMonth }), wantErr: "aggregate.time_window: calendar_month requires partition key"},
+		{name: "calendar day rule without partition", cfg: validConfig(func(c *config) { c.Rules = dailyRule }), wantErr: "rules[0].time_window: calendar_day requires partition key"},
+		{name: "key with a rolling window", cfg: key(func(c *config) { c.Aggregate.TimeWindow = "24h" })},
+		{name: "key with calendar windows", cfg: key(func(c *config) { c.Aggregate.TimeWindow, c.Rules = windowCalendarMonth, dailyRule })},
+		{name: "key with custom pricing", cfg: key(func(c *config) { c.CustomPricing = priced }), wantErr: "does not support custom_pricing"},
+		{name: "key with group by header", cfg: key(func(c *config) { c.GroupByHeader = "X-Team" }), wantErr: "does not support group_by_header"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestCalendarPeriod(t *testing.T) {
+	at := func(month time.Month, day, hour, minute, sec int) time.Time {
+		return time.Date(2026, month, day, hour, minute, sec, 0, time.UTC)
+	}
+	tests := []struct {
+		name       string
+		window     string
+		at, now    time.Time
+		wantPeriod string
+		wantTTL    int
+	}{
+		{name: "december ends at the new year", window: windowCalendarMonth, now: at(12, 31, 0, 0, 0), wantPeriod: "2026-12", wantTTL: 86400},
+		{name: "ttl floor", window: windowCalendarMonth, now: at(10, 31, 23, 59, 30), wantPeriod: "2026-10", wantTTL: minWindowSeconds},
+		{name: "day", window: windowCalendarDay, now: at(10, 2, 18, 0, 0), wantPeriod: "2026-10-02", wantTTL: 6 * 3600},
+		{name: "day in UTC", window: windowCalendarDay, now: at(10, 2, 23, 0, 0).In(time.FixedZone("CEST", 7200)), wantPeriod: "2026-10-02", wantTTL: 3600},
+		{name: "rolling window", window: "24h", now: at(10, 2, 18, 0, 0)},
+		{name: "a request admitted in october is charged to october", window: windowCalendarMonth,
+			at: at(10, 31, 23, 59, 58), now: at(11, 1, 0, 0, 5), wantPeriod: "2026-10", wantTTL: minWindowSeconds},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arrived := tt.at
+			if arrived.IsZero() {
+				arrived = tt.now
+			}
+			period, ttl, ok := calendarPeriod(tt.window, arrived, tt.now)
+			assert.Equal(t, tt.wantPeriod != "", ok)
+			assert.Equal(t, tt.wantPeriod, period)
+			assert.Equal(t, tt.wantTTL, ttl)
+		})
+	}
+}
+
+func TestConfigNormalizeCanonicalizesOnlyCalendarWindows(t *testing.T) {
+	c := &config{
+		Partition: partitionKey,
+		Rules:     []budgetRule{{Model: "gpt-5", Max: 10, TimeWindow: " Calendar_Day "}, {Model: "gpt-4", Max: 10, TimeWindow: " 24H "}},
+		Aggregate: &aggregateConfig{Max: 100, TimeWindow: "CALENDAR_MONTH"},
+	}
+	c.normalize()
+
+	assert.Equal(t, windowCalendarDay, c.Rules[0].TimeWindow)
+	assert.Equal(t, " 24H ", c.Rules[1].TimeWindow, "rolling windows keep their spelling")
+	assert.Equal(t, windowCalendarMonth, c.Aggregate.TimeWindow)
+	require.NoError(t, c.validate())
 }

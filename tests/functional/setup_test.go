@@ -155,6 +155,7 @@ func setupTestEnvironment() {
 	// starting the proxy so the two boots do not race on the (idempotent) schema.
 	adminCmd = startServer("ADMIN", "admin", cmdEnv)
 	waitForServerReady(fmt.Sprintf("%s/healthz", AdminURL), "admin server", cfg.Server.AdminPort)
+	seedStoreCatalog()
 
 	// The proxy plane serves the E2E forwarding tests; it shares the same DB and
 	// Redis as the admin plane.
@@ -309,9 +310,64 @@ func waitForServerReady(url, name string, port int) {
 // database; required because you cannot CREATE/DROP the database you
 // are currently connected to.
 func pgxAdminConn(ctx context.Context) (*pgx.Conn, error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable",
-		GlobalConfig.Database.User, GlobalConfig.Database.Password, GlobalConfig.Database.Host, strconv.Itoa(GlobalConfig.Database.Port))
+	return pgxConnect(ctx, "postgres")
+}
+
+func pgxConnect(ctx context.Context, database string) (*pgx.Conn, error) {
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		GlobalConfig.Database.User, GlobalConfig.Database.Password, GlobalConfig.Database.Host, strconv.Itoa(GlobalConfig.Database.Port), database)
 	return pgx.Connect(ctx, dsn)
+}
+
+const catalogSeedSource = "functional"
+
+func seedStoreCatalog() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := seedCatalogModels(ctx, "anthropic", "Anthropic", storeAnthropicModels); err != nil {
+		log.Fatalf("failed to seed the store catalog: %v", err)
+	}
+}
+
+func seedCatalogModels(ctx context.Context, provider, displayName string, slugs []string) ([]string, error) {
+	conn, err := pgxConnect(ctx, dbName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	const seed = `
+		WITH provider AS (
+			INSERT INTO providers_catalog (id, code, display_name, wire_format, created_at, updated_at)
+			VALUES (gen_random_uuid(), $1, $2, $1, now(), now())
+			ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+			RETURNING id
+		)
+		INSERT INTO models_catalog (id, provider_id, slug, external_id, display_name, source, created_at, updated_at)
+		SELECT gen_random_uuid(), provider.id, slug, slug, slug, $4, now(), now()
+		  FROM provider, unnest($3::text[]) AS slug
+		ON CONFLICT (provider_id, slug) DO NOTHING
+		RETURNING id::text`
+	rows, err := conn.Query(ctx, seed, provider, displayName, slugs, catalogSeedSource)
+	if err != nil {
+		return nil, fmt.Errorf("seed the %s catalog: %w", provider, err)
+	}
+	seeded, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("read the seeded %s models: %w", provider, err)
+	}
+	return seeded, nil
+}
+
+func unseedCatalogModels(ctx context.Context, modelIDs []string) error {
+	conn, err := pgxConnect(ctx, dbName)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, `DELETE FROM models_catalog WHERE id = ANY($1::uuid[]) AND source = $2`, modelIDs, catalogSeedSource); err != nil {
+		return fmt.Errorf("remove the seeded models: %w", err)
+	}
+	return nil
 }
 
 func createTestDB(name string) {

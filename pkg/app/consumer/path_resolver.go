@@ -149,6 +149,9 @@ func (r *pathResolver) load(ctx context.Context, host, slug string) ([]PathMatch
 		}
 		return nil, err
 	}
+	if c.IsPersonal() {
+		return []PathMatch{}, nil
+	}
 	consumers := []*domain.Consumer{c}
 	consumers, err = r.filterByHost(ctx, host, consumers)
 	if err != nil {

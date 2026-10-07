@@ -16,6 +16,7 @@ package tokenratelimit
 
 import (
 	"bytes"
+	"cmp"
 	"testing"
 
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -64,7 +65,7 @@ func TestWindowsFor(t *testing.T) {
 
 	t.Run("aggregate only", func(t *testing.T) {
 		cfg := &config{Aggregate: &aggregateConfig{Max: 1000, TimeWindow: "1h"}}
-		windows := windowsFor(cfg, base, "gpt-5")
+		windows := windowsFor(cfg, base, "gpt-5", budgetClock{})
 		require.Len(t, windows, 1)
 		assert.Equal(t, base, windows[0].key)
 		assert.Equal(t, float64(1000), windows[0].max)
@@ -79,7 +80,7 @@ func TestWindowsFor(t *testing.T) {
 				{Model: "gpt-5", Max: 100, TimeWindow: "30m"},
 			},
 		}
-		windows := windowsFor(cfg, base, "gpt-5")
+		windows := windowsFor(cfg, base, "gpt-5", budgetClock{})
 		require.Len(t, windows, 1)
 		assert.Equal(t, base+":model:gpt-5", windows[0].key)
 		assert.Equal(t, float64(100), windows[0].max)
@@ -92,7 +93,7 @@ func TestWindowsFor(t *testing.T) {
 			PerModel: true,
 			Rules:    []budgetRule{{Model: "claude-opus-*", Max: 200, TimeWindow: "1h"}},
 		}
-		windows := windowsFor(cfg, base, "claude-opus-4")
+		windows := windowsFor(cfg, base, "claude-opus-4", budgetClock{})
 		require.Len(t, windows, 1)
 		assert.Equal(t, base+":model:claude-opus-*", windows[0].key)
 	})
@@ -103,7 +104,7 @@ func TestWindowsFor(t *testing.T) {
 			Rules:     []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}},
 			Aggregate: &aggregateConfig{Max: 1000, TimeWindow: "1h"},
 		}
-		windows := windowsFor(cfg, base, "gpt-5")
+		windows := windowsFor(cfg, base, "gpt-5", budgetClock{})
 		require.Len(t, windows, 2)
 		primary := windows[primaryWindowIndex(windows)]
 		assert.Equal(t, base, primary.key)
@@ -115,7 +116,7 @@ func TestWindowsFor(t *testing.T) {
 			PerModel: true,
 			Rules:    []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}},
 		}
-		windows := windowsFor(cfg, base, "gemini-2")
+		windows := windowsFor(cfg, base, "gemini-2", budgetClock{})
 		assert.Empty(t, windows)
 	})
 }
@@ -216,16 +217,27 @@ func TestValidate_FractionalDollarMaxAllowed(t *testing.T) {
 }
 
 func TestModelFor(t *testing.T) {
+	keyed := &config{Partition: partitionKey}
+	unpartitioned := &config{}
 	t.Run("from body", func(t *testing.T) {
-		req := &infracontext.RequestContext{Body: []byte(`{"model":"gpt-5"}`)}
-		assert.Equal(t, "gpt-5", modelFor(req))
+		req := &infracontext.RequestContext{Body: []byte(`{"model":"gpt-5"}`), DefaultModel: "gpt-4o"}
+		assert.Equal(t, "gpt-5", modelFor(keyed, req))
+		assert.Equal(t, "gpt-5", modelFor(unpartitioned, req))
 	})
 	t.Run("from requested model when body has none", func(t *testing.T) {
-		req := &infracontext.RequestContext{Body: []byte(`{"messages":[]}`), RequestedModel: "claude-opus-4"}
-		assert.Equal(t, "claude-opus-4", modelFor(req))
+		req := &infracontext.RequestContext{Body: []byte(`{"messages":[]}`), RequestedModel: "claude-opus-4", DefaultModel: "gpt-4o"}
+		assert.Equal(t, "claude-opus-4", modelFor(keyed, req))
+		assert.Equal(t, "claude-opus-4", modelFor(unpartitioned, req))
 	})
+	for _, ref := range []string{"", "auto", "pool:fast"} {
+		t.Run("routed default for "+cmp.Or(ref, "no model")+" only under partition key", func(t *testing.T) {
+			req := &infracontext.RequestContext{Body: []byte(`{"messages":[]}`), RequestedModel: ref, DefaultModel: "gpt-4o"}
+			assert.Equal(t, "gpt-4o", modelFor(keyed, req))
+			assert.Equal(t, ref, modelFor(unpartitioned, req), "a policy without partition counts as it always has")
+		})
+	}
 	t.Run("nil request", func(t *testing.T) {
-		assert.Equal(t, "", modelFor(nil))
+		assert.Equal(t, "", modelFor(keyed, nil))
 	})
 }
 

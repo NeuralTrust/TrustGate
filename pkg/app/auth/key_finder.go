@@ -16,6 +16,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -31,16 +32,18 @@ type APIKeyFinder interface {
 var _ APIKeyFinder = (*apiKeyFinder)(nil)
 
 type apiKeyFinder struct {
-	repo     domain.Repository
-	keyCache *cache.TTLMap
-	logger   *slog.Logger
+	repo      domain.Repository
+	keyCache  *cache.TTLMap
+	missCache *cache.TTLMap
+	logger    *slog.Logger
 }
 
 func NewAPIKeyFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) APIKeyFinder {
 	return &apiKeyFinder{
-		repo:     repo,
-		keyCache: manager.GetTTLMap(cache.AuthKeyTTLName),
-		logger:   logger,
+		repo:      repo,
+		keyCache:  manager.GetTTLMap(cache.AuthKeyTTLName),
+		missCache: manager.GetTTLMap(cache.AuthKeyMissTTLName),
+		logger:    logger,
 	}
 }
 
@@ -53,12 +56,31 @@ func (f *apiKeyFinder) FindByAPIKey(ctx context.Context, rawKey string) (*domain
 		f.logger.Warn("auth-key cache entry failed type assertion; falling back to database")
 		f.keyCache.Delete(hash)
 	}
+	if _, missed := f.missCache.Get(hash); missed {
+		return nil, domain.ErrNotFound
+	}
+	// The generations are read before the store: a rotation, revocation or
+	// snapshot swap that clears the caches while the read is in flight makes
+	// the fill below a no-op instead of putting back what it replaced.
+	keyGen, missGen := f.keyCache.Generation(), f.missCache.Generation()
 	a, err := f.repo.FindByAPIKeyHash(ctx, hash)
+	if errors.Is(err, domain.ErrNotFound) {
+		f.rememberMiss(hash, missGen)
+	}
 	if err != nil {
 		return nil, err
 	}
-	f.keyCache.Set(hash, a)
+	f.keyCache.SetIfGeneration(hash, a, keyGen)
 	return f.live(a)
+}
+
+// rememberMiss keeps an unknown digest for a short while, so the same random
+// key presented again does not reach the database every time. Any change to a
+// gateway's credentials clears the map with InvalidateGatewayDataEvent.
+func (f *apiKeyFinder) rememberMiss(hash string, generation uint64) {
+	if f.missCache.Len() < cache.AuthKeyMissCacheMaxEntries {
+		f.missCache.SetIfGeneration(hash, struct{}{}, generation)
+	}
 }
 
 // live refuses a key that has passed its expiry.

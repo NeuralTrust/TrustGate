@@ -29,6 +29,7 @@ type ConsumerResponse struct {
 	GatewayID       ids.GatewayID            `json:"gateway_id"`
 	Name            string                   `json:"name"`
 	Type            string                   `json:"type"`
+	Audience        string                   `json:"audience" enums:"application,personal"`
 	Slug            string                   `json:"slug"`
 	LBConfig        *LBConfigResponse        `json:"lb_config,omitempty"`
 	Headers         map[string]string        `json:"headers,omitempty"`
@@ -143,6 +144,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		GatewayID:       c.GatewayID,
 		Name:            c.Name,
 		Type:            string(c.Type),
+		Audience:        string(c.AudienceName()),
 		Slug:            c.Slug,
 		LBConfig:        fromLBConfig(c.LBConfig),
 		Headers:         c.Headers,

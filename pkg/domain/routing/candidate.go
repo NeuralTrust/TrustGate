@@ -16,12 +16,17 @@ package routing
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
+
+// SourceFallback marks a candidate reached through the consumer's fallback
+// chain rather than its primary registries.
+const SourceFallback = "fallback"
 
 type Candidate struct {
 	Registry *registrydomain.Registry
@@ -41,6 +46,12 @@ func (c Candidate) PolicyAllowsModel(model string) bool {
 
 func (c Candidate) DefersModelChoice() bool {
 	return c.Allowed == nil
+}
+
+// FallbackOnly reports whether the candidate is reachable only as a fallback;
+// a candidate with no recorded source is not.
+func (c Candidate) FallbackOnly() bool {
+	return len(c.Sources) > 0 && !slices.ContainsFunc(c.Sources, func(s string) bool { return s != SourceFallback })
 }
 
 type CandidateSet struct {

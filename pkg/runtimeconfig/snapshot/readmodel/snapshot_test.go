@@ -129,6 +129,31 @@ func TestAuthEnabledOrderings(t *testing.T) {
 	assert.Empty(t, snap.AuthsEnabledByTypes(nil))
 }
 
+func TestPersonalKeysAreIndexedByOwnerAndNeverListedAsCredentials(t *testing.T) {
+	t.Parallel()
+	gw, other := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
+	application := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-app", CreatedAt: baseTime}
+	alice := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-alice", OwnerID: "alice", CreatedAt: baseTime}
+	aliceElsewhere := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: other, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-alice-2", OwnerID: "alice", CreatedAt: baseTime}
+
+	snap := readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{application, alice, aliceElsewhere}})
+
+	got, ok := snap.AuthByOwner(gw, "alice")
+	require.True(t, ok)
+	assert.Equal(t, alice.ID, got.ID)
+	got, ok = snap.AuthByOwner(other, "alice")
+	require.True(t, ok)
+	assert.Equal(t, aliceElsewhere.ID, got.ID, "one key per owner per gateway")
+	_, ok = snap.AuthByOwner(gw, "bob")
+	assert.False(t, ok)
+	_, ok = snap.AuthByOwner(gw, "")
+	assert.False(t, ok, "an application key has no owner to look it up by")
+
+	listed := snap.AuthsEnabledByGatewayAndType(gw, authdomain.TypeAPIKey)
+	require.Len(t, listed, 1)
+	assert.Equal(t, application.ID, listed[0].ID)
+}
+
 func TestPolicyOrderingByPriority(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()

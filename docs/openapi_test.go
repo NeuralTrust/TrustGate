@@ -274,6 +274,50 @@ func TestAttachPolicyOpenAPIDescribesTheGroupOnlyScopeAsAttachable(t *testing.T)
 	assert.Contains(t, attach.Post.Responses["422"].Description, "The policy is MCP-wide")
 }
 
+func TestPersonalKeyOpenAPIDocumentsTheSelfOnlyEndpoints(t *testing.T) {
+	document := loadOpenAPIDocument(t)
+
+	key, ok := document.Paths["/v1/gateways/{gateway_id}/store/principal/llm-key"]
+	require.True(t, ok)
+	rotate, ok := document.Paths["/v1/gateways/{gateway_id}/store/principal/llm-key/rotate"]
+	require.True(t, ok)
+	for name, tc := range map[string]struct {
+		op       openAPIOperation
+		statuses []string
+	}{
+		"GET":         {key.Get, []string{"200", "400", "403", "404"}},
+		"POST":        {key.Post, []string{"201", "400", "403", "404", "409", "422"}},
+		"POST rotate": {rotate.Post, []string{"200", "400", "403", "404", "422"}},
+		"DELETE":      {key.Delete, []string{"204", "400", "403", "404"}},
+	} {
+		for _, status := range tc.statuses {
+			_, ok := tc.op.Responses[status]
+			assert.True(t, ok, "%s must document %s", name, status)
+		}
+	}
+
+	fields := []string{"id", "consumer_ids", "key_prefix", "key_suffix", "expires_at", "enabled", "created_at", "updated_at"}
+	for name, ref := range map[string]string{
+		"create": key.Post.Responses["201"].Content["application/json"].Schema.Ref,
+		"rotate": rotate.Post.Responses["200"].Content["application/json"].Schema.Ref,
+	} {
+		issued := schemaByRef(t, document, ref)
+		for _, field := range append(fields, "api_key") {
+			assert.Contains(t, issued.Properties, field, "%s answers %s", name, field)
+		}
+		assert.NotContains(t, issued.Properties, "key_hash")
+	}
+	read := schemaByRef(t, document, key.Get.Responses["200"].Content["application/json"].Schema.Ref)
+	for _, field := range fields {
+		assert.Contains(t, read.Properties, field)
+	}
+	assert.NotContains(t, read.Properties, "api_key", "GET never carries the secret")
+	create := schemaByRef(t, document, key.Post.RequestBody.Content["application/json"].Schema.Ref)
+	assert.Contains(t, create.Properties, "expires_at")
+	assert.NotContains(t, create.Properties, "principal_sub", "the owner is always the caller")
+	assert.Contains(t, schemaByRef(t, document, rotate.Post.RequestBody.Content["application/json"].Schema.Ref).Properties, "expires_at")
+}
+
 // refOf extracts the $ref of a property, whether inline or wrapped in allOf
 // (swagger2openapi wraps referenced properties that carry a description).
 func refOf(t *testing.T, property json.RawMessage) string {
