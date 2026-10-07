@@ -292,6 +292,71 @@ func TestDispatch_ScopedBroadcastOnlyWakesChangedInstance(t *testing.T) {
 	}
 }
 
+func TestDispatch_HybridOnlyChangePublishesItsScope(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwH := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")
+	hybrid := gatewaydomain.Entitlements{DataPlane: gatewaydomain.DataPlaneHybrid}
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{
+		{ID: gwA},
+		{ID: gwH, Slug: "before", Entitlements: hybrid},
+	}}
+	holder := appsnapshot.NewHolder()
+	broadcaster := &fakeBroadcaster{}
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, &fakeOutbox{}, nil, appsnapshot.DispatcherConfig{})
+
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	_, heldBefore, ok := holder.SnapshotFor(gwH.String())
+	if !ok {
+		t.Fatalf("the hybrid scope must be held after the first dispatch")
+	}
+	gateways.set([]*gatewaydomain.Gateway{
+		{ID: gwA},
+		{ID: gwH, Slug: "after", Entitlements: hybrid},
+	})
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+
+	if got := broadcaster.broadcasted(); len(got) != 1 {
+		t.Fatalf("a hybrid-only change leaves the global snapshot alone, so it must not be re-broadcast; got %v", got)
+	}
+	if got := broadcaster.scopedBroadcasted(gwA.String()); len(got) != 1 {
+		t.Fatalf("a hybrid-only change must not wake the hosted gateway's pods; got %v", got)
+	}
+	gotH := broadcaster.scopedBroadcasted(gwH.String())
+	if len(gotH) != 2 || gotH[0] == gotH[1] {
+		t.Fatalf("the hybrid scope must be notified of its new version, got %v", gotH)
+	}
+	if _, heldAfter, ok := holder.SnapshotFor(gwH.String()); !ok || heldAfter != gotH[1] || heldAfter == heldBefore {
+		t.Fatalf("the holder must serve the new hybrid version %q, got %q (before %q) ok=%v", gotH[1], heldAfter, heldBefore, ok)
+	}
+}
+
+func TestDispatch_RemovedHybridScopeIsDropped(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwH := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")
+	hybrid := gatewaydomain.Entitlements{DataPlane: gatewaydomain.DataPlaneHybrid}
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}, {ID: gwH, Entitlements: hybrid}}}
+	holder := appsnapshot.NewHolder()
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, &fakeBroadcaster{}, &fakeOutbox{}, nil, appsnapshot.DispatcherConfig{})
+
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}})
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+
+	if _, _, ok := holder.SnapshotFor(gwH.String()); ok {
+		t.Fatalf("a deleted hybrid gateway's scope must no longer be served")
+	}
+}
+
 func TestDispatch_DrainsPreCompileFrontierSoMidCycleMarkerSurvives(t *testing.T) {
 	t.Parallel()
 	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
