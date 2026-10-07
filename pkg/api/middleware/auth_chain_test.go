@@ -232,6 +232,42 @@ func TestChain_APIKeyFallback_BuildsPrincipal(t *testing.T) {
 	require.Equal(t, "partner-key", id.Principal.Subject)
 }
 
+func TestChain_PersonalKeyIsUnknown(t *testing.T) {
+	owned, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "alice-key", true, nil)
+	require.NoError(t, err)
+	owned.OwnerID = "alice"
+	cases := map[string]appconsumer.PathResolver{
+		"without a consumer path":      nil,
+		"on a path that holds the key": fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(owned)}},
+	}
+	for name, paths := range cases {
+		t.Run(name, func(t *testing.T) {
+			resolver := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{auth: owned}, fakeCredentialFinder{}, paths, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+			)
+			for _, header := range []map[string]string{
+				{apiresolver.HeaderAPIKey: owned.RawKey},
+				{fiber.HeaderAuthorization: "Bearer " + owned.RawKey},
+			} {
+				_, err := resolveChain(t, resolver, header)
+				require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+			}
+		})
+	}
+}
+
+func TestChain_ExpiredApplicationKeyIsUnknown(t *testing.T) {
+	expired, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "stale-key", true, nil)
+	require.NoError(t, err)
+	at := time.Now().UTC().Add(-time.Minute)
+	expired.ExpiresAt = &at
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{auth: expired}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+	_, err = resolveChain(t, resolver, map[string]string{apiresolver.HeaderAPIKey: expired.RawKey})
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
 func TestChain_NoCredential_Unauthenticated(t *testing.T) {
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,

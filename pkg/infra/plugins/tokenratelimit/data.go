@@ -35,7 +35,7 @@ type TokenRateLimiterData struct {
 	OutputPricePer1k float64 `json:"output_price_per_1k,omitempty"`
 	MaxInputPer1k    float64 `json:"max_input_per_1k,omitempty"`
 	MaxOutputPer1k   float64 `json:"max_output_per_1k,omitempty"`
-	// FailureReason and FailureDetail are set only on a failed_open decision:
+	// FailureReason and FailureDetail are set only on a failed_open or failed_closed decision:
 	// the counter store (Redis) could not be read or written. FailureReason is
 	// always appplugins.FailureCounterUnavailable; FailureDetail names which
 	// call failed ("read_counter", "record_tokens" or "record_cost").

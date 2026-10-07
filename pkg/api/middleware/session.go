@@ -16,6 +16,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"regexp"
@@ -24,6 +25,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
@@ -287,7 +289,18 @@ func (m *SessionMiddleware) previousResponseSession(c *fiber.Ctx, fields map[str
 	if !ok {
 		return "", false
 	}
-	return configuredSessionID(m.sessions.SessionForTurn(c.UserContext(), gatewayID.String(), turnID))
+	return configuredSessionID(m.sessions.SessionForTurn(c.UserContext(), sessionScope(c.UserContext(), gatewayID.String()), turnID))
+}
+
+// sessionScope narrows a gateway's sessions to the owner of the personal key
+// the request was authenticated with, the same scope the forwarder records
+// turns under. Any other caller keeps the gateway-wide scope.
+func sessionScope(ctx context.Context, gatewayID string) appsession.Scope {
+	scope := appsession.Scope{GatewayID: gatewayID}
+	if authCtx, ok := appauth.AuthContextFromContext(ctx); ok && authCtx.Method == appauth.MethodAPIKey {
+		scope.OwnerID = authCtx.OwnerID
+	}
+	return scope
 }
 
 func jsonString(raw json.RawMessage) string {

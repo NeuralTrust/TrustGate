@@ -22,6 +22,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -61,6 +62,9 @@ func (r *Repository) PruneRegistryReferencesTx(
 	}
 	var report registrydomain.PruneReport
 	for _, consumer := range consumers {
+		if err := consumer.ValidateRegistryDetach(registryID); err != nil {
+			return registrydomain.PruneReport{}, err
+		}
 		prune, changed := consumer.PruneRegistry(registryID)
 		if !changed {
 			continue
@@ -83,10 +87,11 @@ func lockGatewayRoutingReferences(
 	// after this one locks policies. Postgres sorts before LockRows, so ORDER BY
 	// id is the acquisition order.
 	const query = `
-		SELECT id, gateway_id, fallback, model_policies, lb_config, toolkit
-		  FROM consumers
-		 WHERE gateway_id = $1
-		 ORDER BY id
+		SELECT c.id, c.gateway_id, c.audience, c.fallback, c.model_policies, c.lb_config, c.toolkit,
+		       COALESCE((SELECT array_agg(cb.registry_id) FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[]
+		  FROM consumers c
+		 WHERE c.gateway_id = $1
+		 ORDER BY c.id
 		 FOR UPDATE`
 	rows, err := tx.Query(ctx, query, gatewayID)
 	if err != nil {
@@ -97,17 +102,27 @@ func lockGatewayRoutingReferences(
 	consumers := make([]*domain.Consumer, 0)
 	for rows.Next() {
 		consumer := &domain.Consumer{}
+		var audience string
 		var fallbackRaw, modelPoliciesRaw, lbConfigRaw, toolkitRaw []byte
+		var registryIDs []uuid.UUID
 		if err := rows.Scan(
 			&consumer.ID,
 			&consumer.GatewayID,
+			&audience,
 			&fallbackRaw,
 			&modelPoliciesRaw,
 			&lbConfigRaw,
 			&toolkitRaw,
+			&registryIDs,
 		); err != nil {
 			return nil, fmt.Errorf("consumer repository: scan routing references: %w", err)
 		}
+		parsedAudience, err := domain.ParseAudience(audience)
+		if err != nil {
+			return nil, fmt.Errorf("consumer repository: scan audience: %w", err)
+		}
+		consumer.Audience = parsedAudience
+		consumer.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 		if err := hydrateConsumerRoutingReferences(consumer, fallbackRaw, modelPoliciesRaw, lbConfigRaw); err != nil {
 			return nil, err
 		}

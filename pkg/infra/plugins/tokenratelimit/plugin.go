@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -39,10 +40,11 @@ type Plugin struct {
 	redis    *redis.Client
 	registry *adapter.Registry
 	pricing  appcatalog.PricingResolver
+	now      func() time.Time
 }
 
 func New(redisClient *redis.Client, registry *adapter.Registry, pricing appcatalog.PricingResolver) *Plugin {
-	return &Plugin{redis: redisClient, registry: registry, pricing: pricing}
+	return &Plugin{redis: redisClient, registry: registry, pricing: pricing, now: time.Now}
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -89,9 +91,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
 	}
 
-	dimension, subject, err := in.Scope.Subject()
+	dimension, subject, counted, err := counterSubject(cfg, in.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
+	}
+	if !counted {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
+	cfg = cfg.forKey(in.Scope.KeyBudget)
+	if !cfg.limits() {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader))
 
@@ -105,6 +114,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 }
 
+func counterSubject(cfg *config, scope appplugins.RuntimeScope) (dimension, subject string, counted bool, err error) {
+	if !cfg.keyPartitioned() {
+		dimension, subject, err = scope.Subject()
+		return dimension, subject, err == nil, err
+	}
+	kind, id, ok := scope.Key()
+	if !ok {
+		return "", "", false, nil
+	}
+	return partitionKey, kind + ":" + url.QueryEscape(id), true, nil
+}
+
 func (p *Plugin) preRequest(
 	ctx context.Context,
 	cfg *config,
@@ -113,7 +134,7 @@ func (p *Plugin) preRequest(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	model := modelFor(req)
+	model := modelFor(cfg, req)
 	var capTel *llmcost.Telemetry
 	var downgradeHeaders map[string][]string
 	var downgradeBody []byte
@@ -151,6 +172,11 @@ func (p *Plugin) preRequest(
 	return res, nil
 }
 
+func (p *Plugin) priced(ctx context.Context, cfg *config, req *infracontext.RequestContext, model string) bool {
+	_, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), req.Provider, model, req.RequestedModel)
+	return found
+}
+
 func mergeHeaderValues(dst, src map[string][]string) map[string][]string {
 	if len(src) == 0 {
 		return dst
@@ -173,7 +199,7 @@ func (p *Plugin) postResponse(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, mode, event)
+	return p.accrue(ctx, cfg, base, modelFor(cfg, req), req, resp, mode, event)
 }
 
 func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {

@@ -59,6 +59,12 @@ func TestResolver_InlineZeroIntentIncludesPoolAndFallback(t *testing.T) {
 	if cs.Len() != 2 || !cs.HasRegistry(pool.ID) || !cs.HasRegistry(fallback.ID) {
 		t.Fatalf("expected pool and fallback candidates, got %d", cs.Len())
 	}
+	if c, _ := cs.ForRegistry(pool.ID); c.FallbackOnly() {
+		t.Fatal("the pool registry must not be fallback-only")
+	}
+	if c, _ := cs.ForRegistry(fallback.ID); !c.FallbackOnly() {
+		t.Fatal("the fallback backend must be fallback-only")
+	}
 }
 
 func TestResolver_InlineQualifiedHonorsPolicies(t *testing.T) {

@@ -103,7 +103,7 @@ func (r *consumerRepository) DetachRegistryIfUnreferenced(_ context.Context, _ i
 	return nil, configsync.ErrReadOnly
 }
 
-func (r *consumerRepository) AttachAuth(_ context.Context, _ ids.ConsumerID, _ ids.AuthID) error {
+func (r *consumerRepository) AttachAuth(_ context.Context, _ ids.ConsumerID, _ ids.AuthID, _ *domain.AuthLink) error {
 	return configsync.ErrReadOnly
 }
 

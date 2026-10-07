@@ -16,12 +16,14 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -34,7 +36,7 @@ import (
 type Associator interface {
 	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
-	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
+	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error
 	DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 	DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
@@ -44,6 +46,7 @@ var _ Associator = (*associator)(nil)
 
 type associator struct {
 	repo         domain.Repository
+	links        domain.LinkReader
 	registryRepo registrydomain.Repository
 	authRepo     authdomain.Repository
 	policyRepo   policydomain.Repository
@@ -58,6 +61,7 @@ type associator struct {
 
 func NewAssociator(
 	repo domain.Repository,
+	links domain.LinkReader,
 	registryRepo registrydomain.Repository,
 	authRepo authdomain.Repository,
 	policyRepo policydomain.Repository,
@@ -70,6 +74,7 @@ func NewAssociator(
 ) Associator {
 	return &associator{
 		repo:         repo,
+		links:        links,
 		registryRepo: registryRepo,
 		authRepo:     authRepo,
 		policyRepo:   policyRepo,
@@ -84,7 +89,7 @@ func NewAssociator(
 }
 
 func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -108,6 +113,9 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 
 func (a *associator) DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
 	cons, err := a.repo.DetachRegistryIfUnreferenced(ctx, gatewayID, consumerID, registryID)
+	if errors.Is(err, commonerrors.ErrConflict) {
+		return a.explainDetachConflict(ctx, gatewayID, consumerID, registryID, err)
+	}
 	if err != nil {
 		return err
 	}
@@ -115,8 +123,25 @@ func (a *associator) DetachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	return nil
 }
 
-func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+func (a *associator) explainDetachConflict(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	consumerID ids.ConsumerID,
+	registryID ids.RegistryID,
+	conflict error,
+) error {
+	current, err := a.repo.FindByID(ctx, consumerID)
+	if err != nil || current.GatewayID != gatewayID {
+		return conflict
+	}
+	if err := current.ValidateRegistryDetach(registryID); err != nil {
+		return err
+	}
+	return conflict
+}
+
+func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID, link *domain.AuthLink) error {
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -127,7 +152,10 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	if err := domain.ValidateAuthConfig(cons, au); err != nil {
 		return err
 	}
-	if err := a.repo.AttachAuth(ctx, consumerID, authID); err != nil {
+	if err := cons.ValidateAuthLink(link); err != nil {
+		return err
+	}
+	if err := a.repo.AttachAuth(ctx, consumerID, authID, link); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
@@ -135,7 +163,7 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 }
 
 func (a *associator) DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -147,7 +175,7 @@ func (a *associator) DetachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 }
 
 func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -216,7 +244,7 @@ func (a *associator) validatePolicySettings(cons *domain.Consumer, pol *policydo
 }
 
 func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	cons, err := a.consumerSummaryInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
@@ -228,8 +256,11 @@ func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	return nil
 }
 
-func (a *associator) consumerInGateway(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*domain.Consumer, error) {
-	cons, err := a.repo.FindByID(ctx, consumerID)
+// consumerSummaryInGateway reads only the identity, gateway, type, audience and
+// active flag of a consumer: its registries, policies, model policies and auth
+// ids come back empty, so no rule here may read them.
+func (a *associator) consumerSummaryInGateway(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*domain.Consumer, error) {
+	cons, err := a.links.FindSummaryByID(ctx, consumerID)
 	if err != nil {
 		return nil, err
 	}

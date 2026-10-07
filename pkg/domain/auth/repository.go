@@ -25,23 +25,40 @@ import (
 var SortableFields = []string{"name", "created_at", "updated_at", "type"}
 
 type ListFilter struct {
-	GatewayID ids.GatewayID
-	Search    string
-	Type      Type
-	Enabled   *bool
-	Page      listing.Page
-	Sort      listing.Sort
+	GatewayID    ids.GatewayID
+	Search       string
+	Type         Type
+	Enabled      *bool
+	ExcludeOwned bool
+	OnlyOwned    bool
+	OwnerID      string
+	Page         listing.Page
+	Sort         listing.Sort
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=auth_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Save(ctx context.Context, a *Auth) error
 	Update(ctx context.Context, a *Auth) error
+	// UpdateBudget writes only the budget and updated_at of a and returns the
+	// stored auth, so it never undoes a concurrent rotation of the secret.
+	UpdateBudget(ctx context.Context, a *Auth) (*Auth, error)
+	// RotateKey writes the secret and expiry of a rotated key, but only while
+	// the stored secret is still previousHash; otherwise it returns
+	// ErrRotatedConcurrently and the first rotation's secret stands.
+	RotateKey(ctx context.Context, a *Auth, previousHash string) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error
+	// DeleteOwned removes a personal key together with its links to consumers,
+	// in one transaction, so a revoke never leaves a key half detached.
+	DeleteOwned(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error
 	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
 	FindByAPIKeyHash(ctx context.Context, keyHash string) (*Auth, error)
+	FindByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*Auth, error)
 	FindEnabledByTypes(ctx context.Context, types []Type) ([]*Auth, error)
+	// ListEnabledByGatewayAndType lists the enabled application credentials of
+	// authType on gatewayID. Personal keys are left out: they are never an
+	// application's credential.
 	ListEnabledByGatewayAndType(ctx context.Context, gatewayID ids.GatewayID, authType Type) ([]*Auth, error)
 	List(ctx context.Context, filter ListFilter) (items []*Auth, total int, err error)
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
@@ -49,17 +50,32 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Updater {
-		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
+		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Rotator {
-		return appauth.NewRotator(repo, manager, publisher, logger, sig.Signaler)
+		return appauth.NewRotator(repo, manager, publisher, logger, sig.Signaler, utcNow)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.BudgetSetter {
+		return appauth.NewBudgetSetter(repo, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Deleter {
 		return appauth.NewDeleter(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) *appauth.KeyEvents {
+		return appauth.NewKeyEvents(manager, publisher, logger, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, links consumerdomain.LinkReader, gateways gatewaydomain.Repository, rotator appauth.Rotator, deleter appauth.Deleter, events *appauth.KeyEvents) appauth.PersonalKeys {
+		return appauth.NewPersonalKeys(repo, links, gateways, rotator, deleter, events, utcNow)
 	}); err != nil {
 		return err
 	}
@@ -108,6 +124,9 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(authhttp.NewRotateAuthHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(authhttp.NewUpdateAuthBudgetHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(authhttp.NewDeleteAuthHandler); err != nil {

@@ -25,17 +25,17 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 	return &Repository_Expecter{mock: &_m.Mock}
 }
 
-// AttachAuth provides a mock function with given fields: ctx, consumerID, authID
-func (_m *Repository) AttachAuth(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind]) error {
-	ret := _m.Called(ctx, consumerID, authID)
+// AttachAuth provides a mock function with given fields: ctx, consumerID, authID, link
+func (_m *Repository) AttachAuth(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], link *consumer.AuthLink) error {
+	ret := _m.Called(ctx, consumerID, authID, link)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AttachAuth")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error); ok {
-		r0 = rf(ctx, consumerID, authID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], *consumer.AuthLink) error); ok {
+		r0 = rf(ctx, consumerID, authID, link)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -52,13 +52,14 @@ type Repository_AttachAuth_Call struct {
 //   - ctx context.Context
 //   - consumerID ids.ID[ids.ConsumerKind]
 //   - authID ids.ID[ids.AuthKind]
-func (_e *Repository_Expecter) AttachAuth(ctx interface{}, consumerID interface{}, authID interface{}) *Repository_AttachAuth_Call {
-	return &Repository_AttachAuth_Call{Call: _e.mock.On("AttachAuth", ctx, consumerID, authID)}
+//   - link *consumer.AuthLink
+func (_e *Repository_Expecter) AttachAuth(ctx interface{}, consumerID interface{}, authID interface{}, link interface{}) *Repository_AttachAuth_Call {
+	return &Repository_AttachAuth_Call{Call: _e.mock.On("AttachAuth", ctx, consumerID, authID, link)}
 }
 
-func (_c *Repository_AttachAuth_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind])) *Repository_AttachAuth_Call {
+func (_c *Repository_AttachAuth_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], link *consumer.AuthLink)) *Repository_AttachAuth_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.AuthKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.AuthKind]), args[3].(*consumer.AuthLink))
 	})
 	return _c
 }
@@ -68,7 +69,7 @@ func (_c *Repository_AttachAuth_Call) Return(_a0 error) *Repository_AttachAuth_C
 	return _c
 }
 
-func (_c *Repository_AttachAuth_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error) *Repository_AttachAuth_Call {
+func (_c *Repository_AttachAuth_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], *consumer.AuthLink) error) *Repository_AttachAuth_Call {
 	_c.Call.Return(run)
 	return _c
 }

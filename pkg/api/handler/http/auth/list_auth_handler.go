@@ -16,6 +16,7 @@ package auth
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
@@ -40,7 +41,7 @@ func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) 
 
 // Handle godoc
 // @Summary      List auths
-// @Description  Returns a paginated list of auths in a gateway.
+// @Description  Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
@@ -49,6 +50,8 @@ func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) 
 // @Param        name        query     string  false  "Alias of search"
 // @Param        type        query     string  false  "Filter by auth type (api_key, oauth2, oidc, mtls)"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
+// @Param        owner_id    query     string  false  "List only the personal key of this owner. Without it, personal keys are excluded"
+// @Param        owned       query     bool    false  "true lists only personal keys, of every owner; false lists only application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, type)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
@@ -82,21 +85,34 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "type"))
 		}
 	}
+	owned, err := httpio.ParseOptionalBool(c, "owned")
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 	req := request.ListAuthRequest{
 		Search:  httpio.ParseSearch(c),
 		Type:    authType,
 		Enabled: enabled,
+		OwnerID: strings.TrimSpace(c.Query("owner_id")),
+		Owned:   owned,
 		Page:    page,
 		Sort:    sort,
 	}
+	if req.Owned != nil && req.OwnerID != "" {
+		return httpio.WriteError(c, fmt.Errorf("%w: owned cannot be combined with owner_id", httpio.ErrInvalidFilter))
+	}
+	onlyOwned := req.Owned != nil && *req.Owned
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
-		GatewayID: gatewayID,
-		Search:    req.Search,
-		Type:      req.Type,
-		Enabled:   req.Enabled,
-		Page:      req.Page,
-		Sort:      req.Sort,
+		GatewayID:    gatewayID,
+		Search:       req.Search,
+		Type:         req.Type,
+		Enabled:      req.Enabled,
+		ExcludeOwned: req.OwnerID == "" && !onlyOwned,
+		OnlyOwned:    onlyOwned,
+		OwnerID:      req.OwnerID,
+		Page:         req.Page,
+		Sort:         req.Sort,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

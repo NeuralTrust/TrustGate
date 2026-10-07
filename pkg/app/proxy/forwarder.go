@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -58,6 +59,12 @@ type ForwardInput struct {
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
 	Request   *infracontext.RequestContext
+	Resolved  *ResolvedRouting
+	RouteSlug string
+	// Prechecked reports that the caller already ran Precheck on Request, so
+	// Forward neither refuses an ambiguous body nor charges the plan limit a
+	// second time.
+	Prechecked bool
 }
 
 type ForwardResult struct {
@@ -85,11 +92,13 @@ type forwardRequestDTO struct {
 	baseHeaders map[string][]string
 	baseline    *trace.RouteBaseline
 	tierRouted  bool
+	routeSlug   string
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
 type Forwarder interface {
 	Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error)
+	Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error)
 }
 
 var _ Forwarder = (*forwarder)(nil)
@@ -99,8 +108,7 @@ type forwarder struct {
 	invoker    ProviderInvoker
 	executor   appplugins.Executor
 	sessions   appsession.Store
-	resolver   approuting.Resolver
-	listing    appcatalog.ModelListing
+	pipeline   candidatePipeline
 	limiter    ratelimitapp.Checker
 	codec      guardCodec
 	maxRetries int
@@ -142,8 +150,7 @@ func NewForwarder(
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
-		resolver:   resolver,
-		listing:    listing,
+		pipeline:   candidatePipeline{resolver: resolver, listing: listing, logger: logger},
 		limiter:    limiter,
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
@@ -165,12 +172,10 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
-	if ambiguousChatBody(in.Request) {
-		return nil, ErrAmbiguousRequestBody
-	}
-
-	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
-		return result, err
+	if !in.Prechecked {
+		if result, err := f.Precheck(ctx, in.GatewayID, in.Request); result != nil || err != nil {
+			return result, err
+		}
 	}
 
 	intent, candidates, err := f.resolveRouting(ctx, in)
@@ -188,6 +193,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	}
 
 	stampTarget(in.Request, route.route.Registry)
+	_, in.Request.DefaultModel = routePolicy(candidates, in.Consumer, route.route)
 	resp := &infracontext.ResponseContext{
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
@@ -211,6 +217,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		plan:        plan,
 		baseHeaders: cloneHeaders(resp.Headers),
 		baseline:    route.baseline,
+		routeSlug:   cmp.Or(in.RouteSlug, in.Consumer.Consumer.Slug),
 	}
 	stream := DetectStream(dto.request)
 
@@ -337,7 +344,7 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, noRegistryServesModelError(dto.request.RequestedModel, rc.Consumer.Slug, route.chain, misses)
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, dto.routeSlug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
 }
@@ -481,7 +488,11 @@ func (f *forwarder) stampContinuation(ctx context.Context, req *infracontext.Req
 	if f.sessions == nil || req == nil || req.SessionID == "" {
 		return
 	}
-	req.PreviousResponseID = f.sessions.LastTurnID(ctx, req.GatewayID, req.SessionID)
+	req.PreviousResponseID = f.sessions.LastTurnID(ctx, sessionScope(req), req.SessionID)
+}
+
+func sessionScope(req *infracontext.RequestContext) appsession.Scope {
+	return appsession.Scope{GatewayID: req.GatewayID, OwnerID: req.OwnerID}
 }
 
 func (f *forwarder) recordSession(
@@ -497,7 +508,7 @@ func (f *forwarder) recordSession(
 		return
 	}
 	f.sessions.Record(ctx, appsession.RecordInput{
-		GatewayID: req.GatewayID,
+		Scope:     sessionScope(req),
 		SessionID: req.SessionID,
 		TurnID:    turnID,
 		Provider:  provider,
