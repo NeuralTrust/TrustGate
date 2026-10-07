@@ -228,9 +228,10 @@ that never reported.
 
 Since RUN-1745:
 
-- **Only policies that opted into per-block inspection get an entry.** A policy of a
-  streaming-capable plugin whose settings leave streaming off is no longer walked per block,
-  so it writes no streamed entry with no decision. Its settings no longer failing to parse
+- **Only policies that take part in per-block inspection get an entry.** A policy of a
+  streaming-capable plugin takes part unless its `streaming.enabled` is `false`, or absent
+  for a plugin whose default is off (`bedrock_guardrail`). A policy that opted out is no
+  longer walked per block, so it writes no streamed entry with no decision. Its settings no longer failing to parse
   cannot fail the blocks of a stream another policy opted into.
 - **A cut on a failure is the failing policy's.** When a block's call fails and
   `streaming.on_error` is `fail_closed`, `cut_at_eval` lands on the policy whose call
@@ -282,6 +283,10 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
 | `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
+| `inspected_as_stream` | `skip_reason` | The `pre_response` leg of a streamed LLM response whose policy opted into per-block inspection. The leg runs with headers only and hands the response to the stream guard, which writes its own entry. Emitted with `skipped: true`, but it is not a coverage gap: the response is inspected block by block and audited again by `post_response` |
+| `streaming_stage_mismatch` | `skip_reason` | The leg does not handle this response mode: a streamed `pre_response` with per-block inspection off or not selected (and every MCP streamed leg), or a buffered `post_response`. Another leg handles the response |
+| `empty_response_body` | `skip_reason` | A buffered response leg that arrived with no body, so there was nothing to send to the guard |
+| `stream_cut` | `skip_reason` | The `post_response` leg of a stream the stream guard cut mid-way. What was delivered ends on the cut terminator and nothing after the cut reached the client; the guard's own entry already reports `blocked`, so the truncated body is not inspected again. Emitted with `skipped: true`, but it is not a coverage gap. A stream that completes, degrades or whose client disconnects without a cut keeps its `post_response` audit |
 
 **A cut is not always a verdict.** Under `on_error: fail_closed` a guard call that fails
 outright stops the stream too, and that stop is reported the way a verdict's is:
@@ -301,23 +306,80 @@ dialect's content-filter terminator, and on the event the cut is visible only th
 ### External guardrail failures
 
 `azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
-record a failure to reach a verdict the same way. The entry's `decision` says what happened
-to the request, not what the policy would have done in enforce:
+record a failure to reach a verdict the same way. On the buffered (non-streamed) leg they
+always **fail open**, in every mode and for every `failure_reason`: a guardrail the gateway
+could not consult never refuses the request. The stream leg is covered by RUN-1786. The entry's `decision` says what happened to the request:
 
 | Mode | `decision` | Request |
 |------|------------|---------|
-| enforce | `failed_closed` | Refused with HTTP 502, error type `guardrail_unavailable`; later policies in the chain do not run |
-| observe | `failed_open` | Forwarded; the chain carries on |
+| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
+
+There is no `failed_closed` decision and no `guardrail_unavailable` error for these four
+plugins on the buffered leg (RUN-1792).
 
 Their `extras` carry two keys:
 
 | Key | Meaning |
 |-----|---------|
-| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body; always `failed_open`, in both modes) |
+| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body) |
 | `failure_detail` | Optional. The category, or the Model Armor sub-reason, that produced no verdict |
 
 A streamed response leg follows `streaming.on_error` for enforce entries; an observe entry
 that fails records `failed_open` and never cuts the stream.
+
+**Changed in RUN-1786.** `google_model_armor` and `openai_moderation` inspect a streamed
+response by default: a policy with no `streaming` block is on, and `streaming.enabled: false`
+is the opt-out (the trace then marks it `skipped` with `skip_reason: streaming_disabled`).
+`bedrock_guardrail` stays **opt-in** (`streaming.enabled: true`): every block resends the
+accumulated prefix to ApplyGuardrail, whose on-demand quota is per account and region (25 text
+units per second in most non-US regions), so inspecting every stream by default would throttle
+the customer's buffered requests too. Until the console exposes the control (RUN-1661) a
+Bedrock policy with no `streaming` block records `skipped` / `streaming_disabled` on a streamed
+response. For all three, the stream leg fails **open** by default once it takes part, as the
+buffered leg does since RUN-1792: a provider error or timeout on a block
+releases the held text and does not cut the stream. A policy that wants the old behaviour sets
+`streaming.on_error: fail_closed`.
+
+When the stream leg has several participants the stream still runs on one head gate and one
+cadence (the first participant that owns them), but two options are merged across the chain:
+`on_error` is `fail_closed` when any enforcing policy asked for it, and
+`max_accumulated_bytes` is the smallest any participant asks for. `on_error` is also resolved per policy:
+a failing policy that resolved `fail_open` is recorded `failed_open` and the chain carries on
+with the next policy on the same block, so another policy's `fail_closed` neither cuts the
+stream on its behalf nor stops the policies behind it from inspecting. A `fail_closed` cut is
+labelled `blocked` on the failing policy, at the head (HTTP 403) and after it.
+
+When a policy's own provider call failed on at least one block and the stream was not cut,
+its `decision` is `failed_open`, in enforce and in observe alike. The count is per policy:
+two policies of one plugin on the same stream, one with a bad key, label only the bad one.
+Cancellation (a client that left) is not a failure. The `decision` of a stream leg is, in
+order of precedence: a cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
+failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
+a missing inspection. `streaming.degraded_reason` is a different, chain-wide signal and is
+not what the decision is read from: it is one value for the whole stream, overwritten by a
+later size degrade, and the failure of an observe policy, or of an enforcing policy that
+resolved `fail_open`, never reaches it (the chain absorbs it per policy).
+
+A policy absorbed this way whose provider fails on three blocks in a row is not called again
+for the rest of that stream: its span keeps `failed_open` and carries
+`streaming.fallback_reason: entry_retired`, and the other policies keep inspecting every
+block. A retired policy is not retried for the rest of that stream, and from then on it
+lowers `streaming.guard_calls` on every later block (each is a block without its verdict).
+`streaming.guard_calls` counts only the blocks that got every verdict, so an absorbed
+failure leaves it short of `evals_total`.
+
+**Changed in RUN-1792.** An enforce-mode failure used to record `failed_closed` and refuse the
+request with HTTP 502 (`guardrail_unavailable`); it now records `failed_open` and forwards it,
+exactly as observe always did. This replaces the RUN-1672 fail-closed rule. When a usable
+mask is available (Model Armor `sdp_action: anonymize` with a missing `block_on` filter),
+it is still applied: the decision is `anonymized` and the event also carries
+`failure_reason: verdict_incomplete`.
+
+One deliberate exception stays fail-closed: in enforce, when Model Armor or Bedrock flags
+sensitive data in an anonymize configuration but returns no masked output
+(`degraded_reason: anonymize_no_output`, `reasonAnonymizeNoOutput`), the request is blocked,
+because the provider confirmed the data and gave the gateway no way to mask it. The same
+applies to the other degraded reasons (unsupported format, encode failure).
 
 **Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
 and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
@@ -328,11 +390,11 @@ values now travel in `failure_detail`, next to `failure_reason: verdict_incomple
 ### Counter-store (rate-limit / budget) failures
 
 `rate_limiter`, `per_tool_rate_limiter` and `token_rate_limiter` all read and write a
-counter in Redis on every call. Unlike the external guardrails above, an outage here is
+counter in Redis on every call. An outage here is
 **TrustGate's own infrastructure**, not a third party the operator asked to gate traffic:
 the product rule is that our own infrastructure fails open, in every mode, enforce
-included — only a third-party guardrail earns a fail-closed refusal. So, unlike the
-external guardrails' enforce/observe split, there is no mode-dependent branch here at all:
+included. The external guardrails above follow the same rule, so no mode-dependent branch
+exists for either:
 
 | Mode | `decision` | Request |
 |------|------------|---------|

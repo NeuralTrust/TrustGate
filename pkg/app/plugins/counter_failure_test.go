@@ -24,10 +24,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-// TestHandleCounterFailureAlwaysFailsOpen proves the rule that sets
-// HandleCounterFailure apart from HandleExternalFailure: our own
-// infrastructure fails open in every mode, including enforce, where an
-// external guardrail would fail closed.
+// TestHandleCounterFailureAlwaysFailsOpen proves our own infrastructure fails
+// open in every mode, including enforce.
 func TestHandleCounterFailureAlwaysFailsOpen(t *testing.T) {
 	t.Parallel()
 

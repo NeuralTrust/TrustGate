@@ -78,7 +78,10 @@ func smartRoutingConsumer(
 				{RegistryID: victim, Model: "gpt-4.1-nano"},
 				{RegistryID: keeper, Model: "gpt-4o"},
 			},
-			SmartRouting: &registrydomain.SmartRoutingConfig{Tiers: tiers},
+			SmartRouting: &registrydomain.SmartRoutingConfig{
+				SR1:   &registrydomain.SR1Config{CacheTTLSeconds: 300, EscapeHatchEnabled: false},
+				Tiers: tiers,
+			},
 		},
 	})
 	if err != nil {
@@ -97,7 +100,7 @@ func TestRepository_DeleteRegistry_PrunesRoutingReferences(t *testing.T) {
 	c := smartRoutingConsumer(t, gwID, "tiered-consumer", keeper, victim,
 		[]registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: keeper, Model: "gpt-4o"},
-			{MinScore: 0.6, RegistryID: victim, Model: "gpt-4.1-nano"},
+			{MinScore: 0.45, RegistryID: victim, Model: "gpt-4.1-nano"},
 		})
 	saveWithRegistries(t, f, c)
 
@@ -107,7 +110,8 @@ func TestRepository_DeleteRegistry_PrunesRoutingReferences(t *testing.T) {
 		t.Fatalf("Delete: %v, want the routing references pruned", err)
 	}
 	assertPrunedConsumer(t, report, c.ID,
-		[]string{registrydomain.PrunedModelPolicies, registrydomain.PrunedLBConfig}, nil)
+		[]string{registrydomain.PrunedModelPolicies, registrydomain.PrunedLBConfig},
+		[]string{registrydomain.PrunedSmartRouting})
 
 	got, err := f.repo.FindByID(ctx, c.ID)
 	if err != nil {
@@ -124,16 +128,17 @@ func TestRepository_DeleteRegistry_PrunesRoutingReferences(t *testing.T) {
 			t.Fatalf("lb_config members still reference %s: %+v", victim, got.LBConfig.Members)
 		}
 	}
-	if got.LBConfig.SmartRouting == nil {
-		t.Fatal("SmartRouting was dropped even though the floor tier remains")
+	if got.LBConfig.SmartRouting != nil {
+		t.Fatalf("SmartRouting = %+v, want nil for the unsupported one-rung survivor", got.LBConfig.SmartRouting)
 	}
-	for _, tier := range got.LBConfig.SmartRouting.Tiers {
-		if tier.RegistryID == victim {
-			t.Fatalf("smart_routing tiers still reference %s: %+v", victim, got.LBConfig.SmartRouting.Tiers)
-		}
+	if len(got.LBConfig.Members) != 1 || got.LBConfig.Members[0].RegistryID != keeper || got.LBConfig.Members[0].Model != "gpt-4o" {
+		t.Fatalf("Members = %+v, want the keeper model preserved", got.LBConfig.Members)
 	}
-	if got.LBConfig.Algorithm != algorithm.SmartRouting {
-		t.Fatalf("Algorithm = %q, want it untouched while the ladder survives", got.LBConfig.Algorithm)
+	if got.LBConfig.Algorithm != algorithm.RoundRobin {
+		t.Fatalf("Algorithm = %q, want round robin after dropping the unsupported ladder", got.LBConfig.Algorithm)
+	}
+	if got.LBConfig.PoolAlias != "prune-pool" {
+		t.Fatalf("PoolAlias = %q, want it preserved", got.LBConfig.PoolAlias)
 	}
 	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != keeper {
 		t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, keeper)
@@ -157,7 +162,7 @@ func TestRepository_DeleteRegistry_DropsLadderThatLosesItsCheapestTier(t *testin
 	c := smartRoutingConsumer(t, gwID, "floor-consumer", keeper, victim,
 		[]registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: victim, Model: "gpt-4.1-nano"},
-			{MinScore: 0.6, RegistryID: keeper, Model: "gpt-4o"},
+			{MinScore: 0.45, RegistryID: keeper, Model: "gpt-4o"},
 		})
 	saveWithRegistries(t, f, c)
 

@@ -83,7 +83,7 @@ func assertSurvivesIntoPolicyChain(t *testing.T, rt *trace.RequestTrace) {
 	}, entry.Extras)
 }
 
-func TestStreamedResponseRecordsSkipWhenStreamingIsNotEnabled(t *testing.T) {
+func TestStreamedResponseRecordsSkipOnlyWhenStreamingIsDisabled(t *testing.T) {
 	t.Parallel()
 	off, on := map[string]any{"enabled": false}, map[string]any{"enabled": true}
 	tests := []struct {
@@ -93,9 +93,9 @@ func TestStreamedResponseRecordsSkipWhenStreamingIsNotEnabled(t *testing.T) {
 		streamed  bool
 		wantSkip  bool
 	}{
-		{"streaming key absent", nil, false, true, true},
+		{"streaming key absent: on by default, the stream guard inspects it", nil, false, true, false},
 		{"explicitly disabled", off, true, true, true},
-		{"tuning keys only", map[string]any{"head_chars": 100}, true, true, true},
+		{"tuning keys only", map[string]any{"head_chars": 100}, true, true, false},
 		{"enabled: the stream guard inspects it", on, true, true, false},
 		{"not streamed: the buffered run inspects it", nil, false, false, false},
 	}

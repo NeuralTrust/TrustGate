@@ -24,6 +24,7 @@ import (
 var (
 	ErrInvalidModelRef       = fmt.Errorf("routing: invalid model reference: %w", commonerrors.ErrValidation)
 	ErrUnknownPoolAlias      = fmt.Errorf("routing: unknown pool alias: %w", commonerrors.ErrValidation)
+	ErrSR1PolicyExhausted    = errors.New("routing: no available smart-routing route at or above the committed rung")
 	ErrModelDenied           = errors.New("routing: model denied")
 	ErrNoRegistryServesModel = errors.New("routing: no registry serves the requested model")
 )

@@ -25,11 +25,14 @@ import (
 	"time"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/dig"
 )
 
 func readyz(t *testing.T, store configsync.ConfigStore[*readmodel.Snapshot], status *configsync.SnapshotStatus) (int, map[string]any) {
@@ -45,6 +48,41 @@ func readyz(t *testing.T, store configsync.ConfigStore[*readmodel.Snapshot], sta
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	return resp.StatusCode, body
+}
+
+func TestAdminSnapshotReadinessOnlyControlPlanes(t *testing.T) {
+	t.Parallel()
+	for _, plane := range []string{"admin", "run", "proxy", "mcp", "worker"} {
+		t.Run(plane, func(t *testing.T) {
+			t.Parallel()
+			c, err := container.New(container.WithModule(adminReadiness(plane)))
+			require.NoError(t, err)
+			// This fixture cannot compile and needs no external infrastructure.
+			// Non-admin planes must never resolve or wait for this dispatcher.
+			require.NoError(t, c.Provide(func() *appsnapshot.Dispatcher { return &appsnapshot.Dispatcher{} }))
+			var check adminSnapshotReadiness
+			require.NoError(t, c.Invoke(func(p struct {
+				dig.In
+				Check adminSnapshotReadiness `optional:"true"`
+			}) {
+				check = p.Check
+			}))
+			if plane != "admin" && plane != "run" {
+				assert.Nil(t, check)
+				return
+			}
+			require.NotNil(t, check)
+			app := fiber.New()
+			app.Get("/readyz", apihandler.NewHealthHandler(apihandler.ReadinessCheck{Name: "compiled_snapshot", Ping: check}).Readiness)
+			response, err := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			require.NoError(t, err)
+			defer func() { _ = response.Body.Close() }()
+			assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+			assert.Equal(t, map[string]any{"compiled_snapshot": "unavailable"}, body["dependencies"])
+		})
+	}
 }
 
 func TestReadyz_ReportsSnapshotState(t *testing.T) {

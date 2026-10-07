@@ -28,6 +28,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -238,7 +239,7 @@ func newDefaultIdPFixture(t *testing.T, idp *httptest.Server, issuer string, aud
 		Audiences:    []string{audience},
 	})
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/store/mcp": {{GatewayID: ids.GatewayID{}}},
+		"/store/mcp": {{GatewayID: ids.GatewayID{}, Consumer: consumerdomain.BuildStoreConsumer(ids.GatewayID{})}},
 	}}
 	store := newMemFlowStore()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}

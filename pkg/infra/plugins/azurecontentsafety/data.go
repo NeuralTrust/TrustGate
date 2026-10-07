@@ -24,7 +24,7 @@ type Data struct {
 	Decision   string         `json:"decision,omitempty"`
 	Mode       string         `json:"mode,omitempty"`
 	LatencyMS  int64          `json:"latency_ms,omitempty"`
-	// FailureReason and FailureDetail are set only on a failed_open/failed_closed
+	// FailureReason and FailureDetail are set only on a failed_open
 	// decision: FailureReason is one of appplugins.FailureReason (transport,
 	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
 	// what within that reason, e.g. the category missing from Azure's response

@@ -299,7 +299,7 @@ func TestExecuteBlockObserveReports(t *testing.T) {
 	}
 }
 
-func TestExecuteClientErrorEnforceFailsClosed(t *testing.T) {
+func TestExecuteClientErrorEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	client := &recordingClient{err: errors.New("boom")}
 	p := pluginWith(client)
@@ -308,23 +308,14 @@ func TestExecuteClientErrorEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on fail-closed, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("expected *PluginError on transport failure in enforce mode, got %v", err)
-	}
-	if pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, want 502 guardrail_unavailable", pe)
-	}
+	assertPassThrough(t, res, err)
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_closed" || extras.FailureReason != "transport" {
-		t.Fatalf("extras = %+v, ok=%v, want transport/failed_closed", extras, ok)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_open", extras, ok)
 	}
 }
 
-func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
+func TestExecuteVerdictIncompleteEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	// An intervention none of the read policy families (topic, content, word,
 	// sensitive-information, contextual-grounding) can explain: AWS added a
@@ -336,16 +327,10 @@ func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
-	}
+	assertPassThrough(t, res, err)
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_closed" || extras.FailureReason != "verdict_incomplete" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_closed", extras, ok)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "verdict_incomplete" {
+		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_open", extras, ok)
 	}
 }
 
@@ -359,10 +344,8 @@ func TestExecuteVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
 	event, span := eventFor(t)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
 	in.Event = event
-	_, err := p.Execute(context.Background(), in)
-	if pe, ok := appplugins.AsPluginError(err); !ok || pe.StatusCode != http.StatusBadGateway {
-		t.Fatalf("err = %v, want 502 guardrail_unavailable", err)
-	}
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 	if !ok || extras.FailureReason != "verdict_incomplete" || extras.FailureDetail != "automated_reasoning_policy" {
 		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/automated_reasoning_policy", extras, ok)
@@ -385,7 +368,7 @@ func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteConfigInvalidEnforceFailsClosed(t *testing.T) {
+func TestExecuteConfigInvalidEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 	p := pluginWith(&recordingClient{})
 
@@ -393,16 +376,10 @@ func TestExecuteConfigInvalidEnforceFailsClosed(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
-		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
-	}
+	assertPassThrough(t, res, err)
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_closed" || extras.FailureReason != "config_invalid" {
-		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", extras, ok)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", extras, ok)
 	}
 }
 
