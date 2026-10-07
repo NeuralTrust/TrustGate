@@ -52,8 +52,9 @@ const (
 // depends on region and tier, and the smallest default is 25 units
 // (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
 // tier). Bytes are never fewer than characters, so 24576 bytes fits in 25
-// units. Past it the guard sends the tail window. Regions with a larger quota
-// can raise streaming.max_accumulated_bytes.
+// units. Past it this policy is sent only the tail window, whatever window the
+// rest of the stream keeps. Regions with a larger quota can raise
+// streaming.max_accumulated_bytes.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
 var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,

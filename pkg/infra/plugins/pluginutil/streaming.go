@@ -67,15 +67,12 @@ type StreamingSettings struct {
 	// distinguishable from an absent key. What an absent key means is the
 	// plugin's call (StreamingDefaults.EnabledByDefault); read the resolved
 	// value through IsEnabled, never by dereferencing this.
-	Enabled              *bool `mapstructure:"enabled"`
-	HeadChars            int   `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
-	// FinalPass is a pointer so that an explicit false is distinguishable from
-	// an absent key, which defaults to true.
-	FinalPass    *bool  `mapstructure:"final_pass"`
-	GuardTimeout string `mapstructure:"guard_timeout"`
+	Enabled              *bool  `mapstructure:"enabled"`
+	HeadChars            int    `mapstructure:"head_chars"`
+	MinCharsBetweenEvals int    `mapstructure:"min_chars_between_evals"`
+	MaxHoldMS            int    `mapstructure:"max_hold_ms"`
+	MaxAccumulatedBytes  int    `mapstructure:"max_accumulated_bytes"`
+	GuardTimeout         string `mapstructure:"guard_timeout"`
 	// OnError bounds the per-block call only. It inherits the policy's own
 	// on_error when unset, so the stream leg cannot be made stricter or laxer
 	// than the rest of the plugin by accident.
@@ -186,10 +183,47 @@ func (s StreamingSettings) IsEnabled() bool {
 	return s.defaultOn
 }
 
-// FinalPassEnabled reports whether the block carrying the end of the stream is
-// inspected. An absent key enables it.
-func (s StreamingSettings) FinalPassEnabled() bool {
-	return s.FinalPass == nil || *s.FinalPass
+// finalPassSettings decodes only streaming.final_pass. StreamingSettings has
+// no such field because the block loop always inspects the end of a stream;
+// ValidateFinalPassWrite reads it only to refuse an opt-out.
+type finalPassSettings struct {
+	Streaming struct {
+		FinalPass *bool `mapstructure:"final_pass"`
+	} `mapstructure:"streaming"`
+}
+
+// ValidateFinalPassWrite rejects a write that sets streaming.final_pass to
+// false. The block loop inspects the end of every stream and has no way to
+// release the tail unread, so a false would be stored and silently ignored
+// (RUN-1745). A policy already stored with false stays editable while it
+// keeps the value: it never changed what the stream did, and refusing it would
+// block every later edit of that policy.
+func ValidateFinalPassWrite(plugin string, settings, previous map[string]any) error {
+	optOut, err := finalPassOptOut(settings)
+	if err != nil {
+		return fmt.Errorf("%s: %w", plugin, err)
+	}
+	if !optOut {
+		return nil
+	}
+	if stored, err := finalPassOptOut(previous); err == nil && stored {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s: streaming.final_pass cannot be false: the end of a streamed response is always inspected",
+		plugin,
+	)
+}
+
+func finalPassOptOut(settings map[string]any) (bool, error) {
+	if settings == nil {
+		return false, nil
+	}
+	cfg, err := Parse[finalPassSettings](settings)
+	if err != nil {
+		return false, err
+	}
+	return cfg.Streaming.FinalPass != nil && !*cfg.Streaming.FinalPass, nil
 }
 
 // Timeout is the parsed guard_timeout, falling back to d when the value cannot
