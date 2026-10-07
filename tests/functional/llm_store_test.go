@@ -173,7 +173,7 @@ func TestLLMStore_FallbackAndFreshness(t *testing.T) {
 	eventuallyStore(t, func() bool { return len(storeModels(t, base, f.gatewayID, f.key)) == 0 }, "a key without links still lists models")
 	status, body = storeChat(t, base, f.gatewayID, f.key, "opus-5.5")
 	assert.Equal(t, http.StatusForbidden, status, body)
-	assert.Contains(t, body, `"error":"model_not_allowed"`)
+	assert.Contains(t, body, `"error":"no_model_access"`, "a key without links is told it has no model access")
 	_, key = GetLLMKey(t, f.gatewayID, f.owner)
 	assert.Equal(t, []any{}, key["consumer_ids"])
 }
