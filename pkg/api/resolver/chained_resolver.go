@@ -58,14 +58,21 @@ func (r ChainedIdentityResolver) Resolve(
 	if APIKeyFromRequest(c) != "" {
 		return r.apiKey.Resolve(c, gw, rc)
 	}
+	authorization := strings.TrimSpace(c.Get(fiber.HeaderAuthorization))
+	// An AWS SDK always signs: its Authorization is a SigV4 signature for AWS
+	// credentials the gateway neither holds nor checks. It is no bearer token,
+	// so it must neither fail as a malformed one nor hide a client certificate.
+	if isNativeBedrockRoute(c) && isSigV4Authorization(authorization) {
+		authorization = ""
+	}
 	// A client certificate authenticates a consumer that trusts a CA; an
 	// explicit credential (api key, bearer) still wins when both are present,
 	// so a TLS-terminating proxy's cert never shadows the application's own.
-	if r.mtls != nil && strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" &&
+	if r.mtls != nil && authorization == "" &&
 		hasAttachedAuthType(rc, authdomain.TypeMTLS) && r.mtls.ClientCertificate(c) != nil {
 		return r.mtls.Resolve(c, gw, rc)
 	}
-	if strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" {
+	if authorization == "" {
 		return nil, ErrUnauthenticated
 	}
 	// A bearer token resolves through one path for every identity provider the
@@ -73,4 +80,15 @@ func (r ChainedIdentityResolver) Resolve(
 	// audience hints, not from the auth's type. Branching on type left an auth
 	// unusable whenever a consumer carried both shapes.
 	return r.oauth2.Resolve(c, gw, rc)
+}
+
+const sigV4AuthorizationPrefix = "AWS4-"
+
+func isSigV4Authorization(authorization string) bool {
+	return strings.HasPrefix(authorization, sigV4AuthorizationPrefix)
+}
+
+func isNativeBedrockRoute(c *fiber.Ctx) bool {
+	route, ok := c.Locals(ProxyRouteLocalsKey).(ProxyRoute)
+	return ok && route.IsBedrockNative()
 }

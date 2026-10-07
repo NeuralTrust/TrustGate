@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -43,6 +45,11 @@ const pathSeparator = "/"
 
 var ErrUnknownProxyPath = errors.New("no fixed proxy route matches the request path")
 
+// ErrInvalidBedrockModelID reports a native Bedrock path whose model identifier
+// the gateway refuses to forward; the caller answers 400, not 404, because the
+// route exists.
+var ErrInvalidBedrockModelID = adapter.ErrInvalidBedrockModelID
+
 type ProxyCapability string
 
 const (
@@ -54,6 +61,7 @@ const (
 	CapabilityImages             ProxyCapability = "images"
 	CapabilityAudioSpeech        ProxyCapability = "audio_speech"
 	CapabilityAudioTranscription ProxyCapability = "audio_transcription"
+	CapabilityBedrockNative      ProxyCapability = providers.CapabilityBedrockNative
 )
 
 // ProxyRoute is the result of parsing a proxy request path of the form
@@ -64,9 +72,65 @@ type ProxyRoute struct {
 	SourceFormat adapter.Format
 	Capability   ProxyCapability
 	Rest         string
+	// Bedrock is the parsed operation and model of a native Bedrock Runtime
+	// route, nil on every other route.
+	Bedrock *adapter.BedrockNativeRoute
 }
 
+// IsBedrockNative reports a native Bedrock Runtime route. It is the one way the
+// API layer asks: the format and the capability a route is tagged with say how
+// its body is read, not that the call is relayed as received.
+func (r ProxyRoute) IsBedrockNative() bool { return r.Bedrock != nil }
+
+// RequestFormat is the format the request context is tagged with. A native
+// Bedrock call is tagged apart from the route's own format so that the
+// read-only view of its bodies is never applied to the translated path.
+func (r ProxyRoute) RequestFormat() adapter.Format {
+	if r.IsBedrockNative() {
+		return adapter.FormatBedrockNative
+	}
+	return r.SourceFormat
+}
+
+// BedrockTarget returns the operation and model of a native Bedrock route as
+// the request context carries them, nil on every other route.
+func (r ProxyRoute) BedrockTarget() *infracontext.BedrockNativeTarget {
+	if !r.IsBedrockNative() {
+		return nil
+	}
+	return &infracontext.BedrockNativeTarget{
+		Op:         r.Bedrock.Op,
+		ModelID:    r.Bedrock.ModelID,
+		RawModelID: r.Bedrock.RawModelID,
+	}
+}
+
+// ResolveProxyPath parses a request path. The path handed in may be a view of a
+// buffer the HTTP server reuses for the next request (fiber's Path() is), and a
+// route outlives the handler: a stream, the budget, the metrics and the control
+// plane lookup all read its strings afterwards. Every string the route keeps is
+// therefore a copy.
 func ResolveProxyPath(path string) (ProxyRoute, error) {
+	route, err := resolveProxyPath(path)
+	if err != nil {
+		return ProxyRoute{}, err
+	}
+	return route.owned(), nil
+}
+
+func (r ProxyRoute) owned() ProxyRoute {
+	r.ConsumerSlug = strings.Clone(r.ConsumerSlug)
+	r.Rest = strings.Clone(r.Rest)
+	if r.Bedrock != nil {
+		native := *r.Bedrock
+		native.RawModelID = strings.Clone(native.RawModelID)
+		native.ModelID = strings.Clone(native.ModelID)
+		r.Bedrock = &native
+	}
+	return r
+}
+
+func resolveProxyPath(path string) (ProxyRoute, error) {
 	trimmed := strings.TrimPrefix(path, pathSeparator)
 	slug, rest, found := strings.Cut(trimmed, pathSeparator)
 	if !found || slug == "" {
@@ -75,6 +139,26 @@ func ResolveProxyPath(path string) (ProxyRoute, error) {
 	rest = pathSeparator + rest
 	if len(rest) > 1 {
 		rest = strings.TrimRight(rest, pathSeparator)
+	}
+	// The store slug addresses the LLM store of personal keys, which serves the
+	// OpenAI-shaped routes only: a native Bedrock path under it is not one.
+	if consumerdomain.IsStoreSlug(slug) {
+		format, capability, err := formatForRoute(rest)
+		if err != nil {
+			return ProxyRoute{}, err
+		}
+		return ProxyRoute{ConsumerSlug: slug, SourceFormat: format, Capability: capability, Rest: rest}, nil
+	}
+	if bedrock, err := adapter.ParseBedrockNativePath(rest); err == nil {
+		return ProxyRoute{
+			ConsumerSlug: slug,
+			SourceFormat: adapter.FormatBedrock,
+			Capability:   CapabilityBedrockNative,
+			Rest:         rest,
+			Bedrock:      &bedrock,
+		}, nil
+	} else if errors.Is(err, adapter.ErrInvalidBedrockModelID) {
+		return ProxyRoute{}, err
 	}
 	format, capability, err := formatForRoute(rest)
 	if err != nil {
