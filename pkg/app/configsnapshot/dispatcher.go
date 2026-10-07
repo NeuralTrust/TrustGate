@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
@@ -76,6 +77,7 @@ type Dispatcher struct {
 	retention   time.Duration
 	maxRows     int
 	trigger     chan struct{}
+	compiled    atomic.Bool
 
 	mu              sync.Mutex
 	publishedGlobal string
@@ -83,6 +85,15 @@ type Dispatcher struct {
 
 	// lkg persists the compiled snapshots; nil when the feature is off.
 	lkg *lkgState
+}
+
+// Readiness requires a successful compile in this process, after startup
+// migrations. Restoring a persisted snapshot never satisfies this gate.
+func (d *Dispatcher) Readiness(context.Context) error {
+	if !d.compiled.Load() {
+		return configsync.ErrNotReady
+	}
+	return nil
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
@@ -279,6 +290,7 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	// A snapshot that compiled is the freshest truth: it replaces a restored one
 	// as the source, and is persisted. Persisting never fails the dispatch.
 	d.markCompiled(compiledAt)
+	d.compiled.Store(true)
 	d.persist(ctx, raw, version, scoped, compiledAt)
 
 	if len(pending) > 0 {
