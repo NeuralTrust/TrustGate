@@ -139,12 +139,23 @@ the console. Roll out the admin plane first and verify its compiled snapshots
 contain canonical configurations before new proxies accept traffic. Snapshot
 admission validates the canonical routing contract for live updates and restored
 snapshots, including explicit lifetime and escape settings; it never migrates
-historical data. New admins advertise readiness only after a fresh successful
-canonical compilation following migration. During concurrent rolling updates,
-new proxies reject incompatible snapshots and stay unready while existing healthy
-replicas continue serving. Compatible admitted snapshots retain normal outage
-recovery. Development Firewall already serves the frozen revision; no HF
-`production` ref change is needed for this development rollout. Production
-promotion remains separate. Preserve matching prior image digests and the
-migration backup for rollback. Removing `sr1` cannot restore the retired router;
+historical data. Admission quarantines a consumer, never the snapshot: a consumer
+that fails it is published without its ladder, so its smart pool fails closed
+while every other consumer and tenant keeps receiving configuration. Each
+quarantine logs the gateway and consumer and increments
+`trustgate.configsnapshot.routing.quarantined` (attribute `stage`: `encode` on
+the admin, `decode` on readers); alert on any increase and repair the consumer.
+Admins advertise readiness after a successful compilation following migration,
+or while serving a restored last-good snapshot because compiling fails.
+
+Roll back proxies no later than the admin. A previous admin publishes smart
+routing without `sr1`, which new proxies quarantine, and its edits rewrite
+`lb_config` without `sr1`. After an image-only rollback, run the migration's
+`Down` before the previous admin accepts writes, or repair the consumers it
+edited once the new admin reports their quarantine.
+
+Development Firewall already serves the frozen revision; no HF `production` ref
+change is needed for this development rollout. Production promotion remains
+separate. Preserve matching prior image digests and the migration backup for
+rollback. Removing `sr1` cannot restore the retired router;
 new API writes without a canonical session configuration are rejected.
