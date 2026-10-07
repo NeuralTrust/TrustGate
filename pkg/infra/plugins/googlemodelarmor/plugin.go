@@ -127,12 +127,13 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
 // ValidateSettingsWrite rejects a service_account_json that names a non-Google
-// token endpoint, a custom universe or a non-service_account type. This cannot
+// token endpoint, a custom universe or a non-service_account type, and a new
+// streaming.final_pass: false (pluginutil.ValidateFinalPassWrite). This cannot
 // live in parseConfig, which runs on every request: a policy stored before the
 // rule existed would turn into a run-time config_invalid failure. The runtime
 // instead pins the token endpoint (gcpauth.ServiceAccountCache), so an
 // already-stored key keeps working and can never redirect the assertion.
-func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return err
@@ -142,7 +143,7 @@ func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 			return fmt.Errorf("google_model_armor: credentials.service_account_json: %s", err.Error())
 		}
 	}
-	return nil
+	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
