@@ -167,7 +167,7 @@ jobs:
       - name: Run Functional tests
         env:
           PG_TEST_URL: postgres://postgres:postgres@localhost:5432/trustgate_repo_test?sslmode=disable
-        run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/...
+        run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/... ./pkg/infra/database/migrations
 
       - name: Run Postgres exporter integration tests
         env:

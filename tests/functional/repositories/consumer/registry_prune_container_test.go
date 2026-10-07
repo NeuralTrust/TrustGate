@@ -58,7 +58,7 @@ func TestContainerGraph_RegistryDelete_PrunesConsumerRouting(t *testing.T) {
 	c := smartRoutingConsumer(t, gwID, "container-consumer", keeper, victim,
 		[]registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: keeper, Model: "gpt-4o"},
-			{MinScore: 0.6, RegistryID: victim, Model: "gpt-4.1-nano"},
+			{MinScore: 0.45, RegistryID: victim, Model: "gpt-4.1-nano"},
 		})
 	saveWithRegistries(t, f, c)
 
@@ -81,7 +81,8 @@ func TestContainerGraph_RegistryDelete_PrunesConsumerRouting(t *testing.T) {
 		t.Fatalf("registry delete through the container graph: %v", err)
 	}
 	assertPrunedConsumer(t, report, c.ID,
-		[]string{registrydomain.PrunedModelPolicies, registrydomain.PrunedLBConfig}, nil)
+		[]string{registrydomain.PrunedModelPolicies, registrydomain.PrunedLBConfig},
+		[]string{registrydomain.PrunedSmartRouting})
 
 	got, err := f.repo.FindByID(ctx, c.ID)
 	if err != nil {
@@ -98,13 +99,14 @@ func TestContainerGraph_RegistryDelete_PrunesConsumerRouting(t *testing.T) {
 			t.Fatalf("lb_config members still reference %s: %+v", victim, got.LBConfig.Members)
 		}
 	}
-	if got.LBConfig.SmartRouting == nil || got.LBConfig.Algorithm != algorithm.SmartRouting {
-		t.Fatalf("LBConfig = %+v, want the ladder kept", got.LBConfig)
+	if got.LBConfig.SmartRouting != nil || got.LBConfig.Algorithm != algorithm.RoundRobin {
+		t.Fatalf("LBConfig = %+v, want round robin without an unsupported one-rung ladder", got.LBConfig)
 	}
-	for _, tier := range got.LBConfig.SmartRouting.Tiers {
-		if tier.RegistryID == victim {
-			t.Fatalf("smart_routing tiers still reference %s: %+v", victim, got.LBConfig.SmartRouting.Tiers)
-		}
+	if len(got.LBConfig.Members) != 1 || got.LBConfig.Members[0].RegistryID != keeper || got.LBConfig.Members[0].Model != "gpt-4o" {
+		t.Fatalf("Members = %+v, want the keeper model preserved", got.LBConfig.Members)
+	}
+	if got.LBConfig.PoolAlias != "prune-pool" {
+		t.Fatalf("PoolAlias = %q, want it preserved", got.LBConfig.PoolAlias)
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("pruned consumer no longer validates: %v", err)

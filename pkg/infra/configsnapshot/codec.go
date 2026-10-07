@@ -75,12 +75,16 @@ func (Codec) Version(raw []byte) string {
 
 func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	msg := &snapshotpb.Snapshot{Version: data.Version}
+	owners := registryOwners(data.Registries)
+	consumers := admitConsumers(data.Consumers, admissionEncode, func(i int) error {
+		return validateConsumerSmartRouting(&data.Consumers[i], owners)
+	})
 
 	var err error
 	if msg.Gateways, err = encodeJSON(data.Gateways, "gateway", func(_ int, blob []byte) *snapshotpb.Gateway { return &snapshotpb.Gateway{Json: blob} }); err != nil {
 		return nil, err
 	}
-	if msg.Consumers, err = encodeJSON(data.Consumers, "consumer", func(_ int, blob []byte) *snapshotpb.Consumer { return &snapshotpb.Consumer{Json: blob} }); err != nil {
+	if msg.Consumers, err = encodeJSON(consumers, "consumer", func(_ int, blob []byte) *snapshotpb.Consumer { return &snapshotpb.Consumer{Json: blob} }); err != nil {
 		return nil, err
 	}
 	if msg.Registries, err = encodeJSON(data.Registries, "registry", func(_ int, blob []byte) *snapshotpb.Registry { return &snapshotpb.Registry{Json: blob} }); err != nil {
@@ -166,6 +170,10 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 	if data.Registries, err = decodeJSON[*snapshotpb.Registry, registrydomain.Registry](msg.GetRegistries(), "registry", func(m *snapshotpb.Registry) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}
+	owners := registryOwners(data.Registries)
+	data.Consumers = admitConsumers(data.Consumers, admissionDecode, func(i int) error {
+		return validateConsumerSmartRoutingJSON(msg.GetConsumers()[i].GetJson(), &data.Consumers[i], owners)
+	})
 	if data.Policies, err = decodeJSON[*snapshotpb.Policy, policydomain.Policy](msg.GetPolicies(), "policy", func(m *snapshotpb.Policy) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}

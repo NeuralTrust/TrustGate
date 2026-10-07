@@ -115,6 +115,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := c.refusePersonalCreate(ctx, cons); err != nil {
 		return nil, err
 	}
+	if err := validateSmartRoutingWrite(cons); err != nil {
+		return nil, err
+	}
 	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
 		return nil, err
 	}

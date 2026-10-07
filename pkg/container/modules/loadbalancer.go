@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/complexity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	embeddingopenai "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/openai"
@@ -35,6 +36,7 @@ type loadBalancerParams struct {
 	ServiceLocator factory.EmbeddingServiceLocator `optional:"true"`
 	Complexity     strategies.ComplexityScorer
 	Logger         *slog.Logger
+	Cache          cache.Client
 }
 
 func LoadBalancer(c *container.Container) error {
@@ -50,11 +52,12 @@ func LoadBalancer(c *container.Container) error {
 			cfg.FirewallComplexity.BaseURL,
 			firewall.NewTokenProvider(cfg.FirewallComplexity.SecretKey),
 			cfg.FirewallComplexity.Timeout,
+			cfg.FirewallComplexity.ModelRevision,
 		)
 	}); err != nil {
 		return err
 	}
 	return c.Provide(func(p loadBalancerParams) loadbalancer.Factory {
-		return loadbalancer.NewBaseFactory(p.EmbeddingRepo, p.ServiceLocator, p.Complexity, p.Logger)
+		return loadbalancer.NewBaseFactory(p.EmbeddingRepo, p.ServiceLocator, p.Complexity, strategies.NewRedisSR1Store(p.Cache.RedisClient()), p.Logger)
 	})
 }

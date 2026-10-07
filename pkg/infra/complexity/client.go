@@ -59,13 +59,14 @@ type TokenProvider interface {
 
 // Client calls the Firewall Complexity API.
 type Client struct {
-	http          *http.Client
-	baseURL       string
-	tokenProvider TokenProvider
+	http             *http.Client
+	baseURL          string
+	tokenProvider    TokenProvider
+	expectedRevision string
 }
 
 // NewClient builds a Client. Missing endpoint credentials leave it unconfigured.
-func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duration) *Client {
+func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duration, expectedRevision string) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
@@ -74,19 +75,23 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 			Timeout:   timeout,
 			Transport: o11y.InternalTransport(peerService, scoreSpanName),
 		},
-		baseURL:       strings.TrimRight(baseURL, "/"),
-		tokenProvider: tokenProvider,
+		baseURL:          strings.TrimRight(baseURL, "/"),
+		tokenProvider:    tokenProvider,
+		expectedRevision: strings.TrimSpace(expectedRevision),
 	}
 }
 
 // Configured reports whether the endpoint and token provider are configured.
 func (c *Client) Configured() bool {
-	return c.baseURL != "" && c.tokenProvider != nil && c.tokenProvider.Configured()
+	return c.baseURL != "" && c.tokenProvider != nil && c.tokenProvider.Configured() && c.expectedRevision != ""
 }
 
-// Score returns the session-smoothed complexity score in [0,1] for input.
-// conversationID and tenantID are optional and omitted from the request when empty.
-func (c *Client) Score(ctx context.Context, input, conversationID, tenantID string) (float64, error) {
+// ScoreSR1 returns an unsmoothed score only from the immutable SR-1 model.
+func (c *Client) ScoreSR1(ctx context.Context, input, tenantID string) (float64, error) {
+	return c.score(ctx, input, tenantID)
+}
+
+func (c *Client) score(ctx context.Context, input, tenantID string) (float64, error) {
 	if !c.Configured() {
 		return 0, ErrNotConfigured
 	}
@@ -95,9 +100,8 @@ func (c *Client) Score(ctx context.Context, input, conversationID, tenantID stri
 		return 0, fmt.Errorf("complexity: get token: %w", err)
 	}
 	payload, err := json.Marshal(scoreRequest{
-		Input:          input,
-		ConversationID: conversationID,
-		TenantID:       tenantID,
+		Input:    input,
+		TenantID: tenantID,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("complexity: marshal request: %w", err)
@@ -133,5 +137,8 @@ func (c *Client) Score(ctx context.Context, input, conversationID, tenantID stri
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return 0, fmt.Errorf("complexity: decode response: %w", err)
 	}
-	return out.Score, nil
+	if out.Revision != c.expectedRevision || out.RawScore == nil {
+		return 0, errors.New("complexity: frozen routing score provenance unavailable")
+	}
+	return *out.RawScore, nil
 }
