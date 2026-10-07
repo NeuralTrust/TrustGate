@@ -1556,19 +1556,21 @@ func TestHandleStore_ForbiddenWithoutAnUpstreamCall(t *testing.T) {
 	cases := []struct {
 		name   string
 		linked ids.AuthID
-		model  string
+		req    *http.Request
+		code   string
 	}{
-		{name: "denied model", linked: authID, model: "claude-sonnet-4-5"},
-		{name: "no links", linked: ids.New[ids.AuthKind](), model: "gpt-4o-mini"},
+		{name: "denied model", linked: authID, req: storeChat("claude-sonnet-4-5"), code: "model_not_allowed"},
+		// A key its owner can no longer use says why, not which model.
+		{name: "no links", linked: ids.New[ids.AuthKind](), req: storeChat("gpt-4o-mini"), code: "no_model_access"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			data := storeData(gatewayID, tc.linked, personalSpec{provider: "openai", allowed: []string{"gpt-4o*"}})
 			app, _, rt := newStoreApp(t, data, ownerAuth(gatewayID, authID), nil)
-			resp, err := app.Test(storeChat(tc.model))
+			resp, err := app.Test(tc.req)
 			require.NoError(t, err)
 			assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-			assert.Equal(t, "model_not_allowed", decodeError(t, resp.Body).Error)
+			assert.Equal(t, tc.code, decodeError(t, resp.Body).Error)
 			assert.Equal(t, authID.String(), rt.Metadata().AuthID)
 			assert.Equal(t, "alice", rt.Metadata().PrincipalSubject)
 			assert.Empty(t, rt.Metadata().ConsumerID)

@@ -883,9 +883,7 @@ func callStore(t *testing.T, app *fiber.App, path, header, value string) (int, [
 func TestAuthMiddleware_StoreAnswersNotFoundBeforeAnyKeyLookup(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(f *storeFixture){
-		"no personal consumers":            func(f *storeFixture) { f.consumers = f.consumers[:1] },
-		"only inactive personal consumers": func(f *storeFixture) { f.consumers[1].Consumer.Active = false },
-		"hybrid gateway":                   func(f *storeFixture) { f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid },
+		"hybrid gateway": func(f *storeFixture) { f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid },
 		"hybrid gateway with a data load error": func(f *storeFixture) {
 			f.gw.Entitlements.DataPlane, f.dataErr = gatewaydomain.DataPlaneHybrid, errors.New("down")
 		},
@@ -906,6 +904,35 @@ func TestAuthMiddleware_StoreAnswersNotFoundBeforeAnyKeyLookup(t *testing.T) {
 				require.Equal(t, fiber.StatusNotFound, status)
 			}
 			require.Zero(t, f.finder.calls.Load())
+		})
+	}
+}
+
+// A gateway with no active personal consumer still answers like an unknown
+// slug to every caller but one: a personal key of the gateway, whose owner lost
+// every model, reaches the store handler to be told so.
+func TestAuthMiddleware_StoreWithoutPersonalConsumersOnlyLetsPersonalKeysThrough(t *testing.T) {
+	t.Parallel()
+	cases := map[string]func(f *storeFixture){
+		"no personal consumers":            func(f *storeFixture) { f.consumers = f.consumers[:1] },
+		"only inactive personal consumers": func(f *storeFixture) { f.consumers[1].Consumer.Active = false },
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, unknownSlug := callStore(t, newStoreFixture(t).app(nil), "/zzzzzzzz/v1/chat/completions", "", "")
+			f := newStoreFixture(t)
+			arrange(f)
+			app := f.app(nil)
+			for _, key := range []string{"", f.appKey, "ag_unknown"} {
+				status, body := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, key)
+				require.Equal(t, fiber.StatusNotFound, status, key)
+				require.Equal(t, unknownSlug, body, key)
+			}
+			status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+			require.Equal(t, fiber.StatusOK, status)
+			status, _ = callStore(t, app, "/store/v1/models", resolver.HeaderAPIKey, "ag_alice")
+			require.Equal(t, fiber.StatusOK, status)
 		})
 	}
 }
