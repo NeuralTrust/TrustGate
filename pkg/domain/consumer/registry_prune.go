@@ -88,20 +88,13 @@ func (c *Consumer) pruneLBConfig(registryID ids.RegistryID, prune *registry.Cons
 	c.LBConfig.SmartRouting.Tiers = tiers
 }
 
-// RUN-1501: a ladder that loses a middle or top tier is safe to keep - the band
-// it served falls to the tier below it, which is cheaper. Losing the *cheapest*
-// tier instead raises the ladder's floor, and every score under the new floor
-// gets re-targeted upward by SmartRouting.LowestTier, silently promoting the
-// cheapest traffic in the pool to the priciest survivor. The gateway cannot
-// invent a cheap route in place of the deleted one, so the ladder does not
-// survive that: the caller drops it whole and the pool degrades to its plain
-// algorithm, which treats every band alike instead of promoting one.
 func (c *Consumer) prunedTiers(
 	registryID ids.RegistryID,
 ) (tiers []registry.SmartRoutingTier, changed, ladderSurvives bool) {
 	if c.LBConfig.SmartRouting == nil {
 		return nil, false, false
 	}
+	validationErr := c.LBConfig.SmartRouting.Validate()
 	original := c.LBConfig.SmartRouting.Tiers
 	tiers = make([]registry.SmartRoutingTier, 0, len(original))
 	for _, tier := range original {
@@ -112,9 +105,12 @@ func (c *Consumer) prunedTiers(
 	if len(tiers) == len(original) {
 		return original, false, true
 	}
-	oldFloor, hadFloor := (&registry.SmartRoutingConfig{Tiers: original}).LowestTier()
-	newFloor, hasFloor := (&registry.SmartRoutingConfig{Tiers: tiers}).LowestTier()
-	return tiers, true, hasFloor && (!hadFloor || newFloor.MinScore == oldFloor.MinScore)
+	if validationErr != nil {
+		return tiers, true, false
+	}
+	remaining := *c.LBConfig.SmartRouting
+	remaining.Tiers = tiers
+	return tiers, true, remaining.Validate() == nil
 }
 
 func (c *Consumer) pruneFallback(registryID ids.RegistryID, prune *registry.ConsumerPrune) {

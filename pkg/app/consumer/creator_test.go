@@ -334,3 +334,32 @@ func TestCreator_Create_PersonalRules(t *testing.T) {
 		})
 	}
 }
+
+func TestCreatorRejectsDisabledSmartRoutingOutsideActualPolicy(t *testing.T) {
+	gw, id, unknown := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	for _, tc := range []struct {
+		name   string
+		tierID ids.RegistryID
+		want   error
+	}{
+		{"disallowed pinned model", id, domain.ErrInvalidLBConfig},
+		{"unknown tier registry", unknown, domain.ErrInvalidLBConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := repomocks.NewRepository(t)
+			registryRepo := registrymocks.NewRepository(t)
+			publisher := cachemocks.NewEventPublisher(t)
+			creator := appconsumer.NewCreator(repo, registryRepo, gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+			cfg := &domain.LBConfig{Algorithm: "smart-routing", Members: []domain.LBPoolMember{{RegistryID: id, Model: "low"}, {RegistryID: id, Model: "high"}}, SmartRouting: &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 30}, Tiers: []registrydomain.SmartRoutingTier{{RegistryID: tc.tierID, Model: "low", MinScore: 0}, {RegistryID: id, Model: "high", MinScore: .45}}}}
+			_, err := creator.Create(context.Background(), appconsumer.CreateInput{GatewayID: gw, Name: "disabled", Type: domain.TypeLLM, RegistryIDs: []ids.RegistryID{id}, ModelPolicies: domain.ModelPolicies{id: {Allowed: []string{"low"}}}, LBConfig: cfg})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error=%v want%v", err, tc.want)
+			}
+			if cfg.Enabled {
+				t.Fatal("validation enabled the caller config")
+			}
+			repo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+		})
+	}
+}
