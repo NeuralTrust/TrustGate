@@ -20,6 +20,7 @@ import (
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -52,19 +53,28 @@ func (c *readinessCompiler) Compile(context.Context) (*readmodel.Snapshot, error
 	return readmodel.Build(c.data), nil
 }
 
-func TestDispatcherReadinessRejectsNoncanonicalCompilation(t *testing.T) {
+func TestDispatcherQuarantinesNoncanonicalRoutingWithoutBlockingCompilation(t *testing.T) {
 	t.Parallel()
-	compiler := &readinessCompiler{data: readmodel.Data{Consumers: []consumerdomain.Consumer{{
-		Active: false, LBConfig: &consumerdomain.LBConfig{Enabled: false, Algorithm: algorithm.SmartRouting},
-	}}}}
+	healthy := consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Active: true}
+	legacy := consumerdomain.Consumer{
+		ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](),
+		LBConfig: &consumerdomain.LBConfig{Enabled: true, Algorithm: algorithm.SmartRouting},
+	}
+	compiler := &readinessCompiler{data: readmodel.Data{Consumers: []consumerdomain.Consumer{healthy, legacy}}}
 	holder := appsnapshot.NewHolder()
-	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, &fakeBroadcaster{}, &fakeOutbox{}, nil, appsnapshot.DispatcherConfig{})
+	codec := infrasnapshot.NewCodec()
+	d := appsnapshot.NewDispatcher(compiler, codec, holder, &fakeBroadcaster{}, &fakeOutbox{}, nil, appsnapshot.DispatcherConfig{})
 	ctx := context.Background()
-	require.Error(t, d.Dispatch(ctx), "legacy disabled routing cannot be advertised as compiled")
-	assert.ErrorIs(t, d.Readiness(ctx), configsync.ErrNotReady)
-	_, _, loaded := holder.Snapshot()
-	assert.False(t, loaded)
-	compiler.data = readmodel.Data{}
-	require.NoError(t, d.Dispatch(ctx))
+	require.NoError(t, d.Dispatch(ctx), "one inadmissible consumer must not withhold every tenant's snapshot")
 	assert.NoError(t, d.Readiness(ctx))
+	raw, _, loaded := holder.Snapshot()
+	require.True(t, loaded)
+	published, err := codec.Decode(raw)
+	require.NoError(t, err)
+	_, ok := published.ConsumerByID(healthy.ID)
+	assert.True(t, ok, "unrelated tenants keep receiving configuration")
+	quarantined, ok := published.ConsumerByID(legacy.ID)
+	require.True(t, ok)
+	assert.Equal(t, algorithm.SmartRouting, quarantined.LBConfig.Algorithm)
+	assert.Nil(t, quarantined.LBConfig.SmartRouting, "the inadmissible ladder is withheld so only its pool fails closed")
 }

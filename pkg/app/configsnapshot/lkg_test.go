@@ -31,9 +31,7 @@ import (
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
-	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
-	"google.golang.org/protobuf/proto"
 )
 
 // fakeLKGStore mirrors the repository's guards: Save writes only a newer row.
@@ -370,8 +368,8 @@ func TestLKG_RestoreServesPersistedThenCompileFlipsToCompiled(t *testing.T) {
 	second, holder, comp := h.dispatcher()
 	comp.fail.Store(true)
 	second.Restore(context.Background())
-	if err := second.Readiness(context.Background()); err == nil {
-		t.Fatal("restored canonical LKG must not satisfy fresh-compile readiness")
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("a restored LKG must keep the admin ready while compiling fails: %v", err)
 	}
 
 	if second.Source() != appsnapshot.SourcePersisted {
@@ -393,8 +391,8 @@ func TestLKG_RestoreServesPersistedThenCompileFlipsToCompiled(t *testing.T) {
 	if err := second.Dispatch(context.Background()); err == nil {
 		t.Fatal("the dispatch must still report the compile failure")
 	}
-	if err := second.Readiness(context.Background()); err == nil {
-		t.Fatal("a failed compile after restore must remain unready")
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("a failed compile after restore must keep serving the LKG: %v", err)
 	}
 	if _, v, _ := holder.Snapshot(); v != wantVersion || second.Source() != appsnapshot.SourcePersisted {
 		t.Fatal("a failed compile must keep the persisted snapshot and source")
@@ -436,8 +434,8 @@ func TestLKG_RestoreThenIdenticalCompileFlipsToCompiledWithoutRewriting(t *testi
 	h.clock.advance(time.Minute)
 	second, _, _ := h.dispatcher()
 	second.Restore(context.Background())
-	if err := second.Readiness(context.Background()); err == nil {
-		t.Fatal("restoring an unchanged snapshot must not qualify readiness")
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("a restored snapshot must qualify readiness before the first compile: %v", err)
 	}
 	if err := second.Dispatch(context.Background()); err != nil {
 		t.Fatalf("dispatch: %v", err)
@@ -491,24 +489,6 @@ func TestLKG_RestoreRejectsUntrustedRows(t *testing.T) {
 			}
 			r := rows[""]
 			r.Version, r.Payload = "claimed-version", payload
-			rows[""] = r
-		}},
-		{"incompatible routing", func(h *lkgHarness, rows map[string]appsnapshot.LKGRecord) {
-			// Encryption and checksum are valid; the old producer's settings
-			// still require migration before admission.
-			raw, err := proto.Marshal(&snapshotpb.Snapshot{Consumers: []*snapshotpb.Consumer{{
-				Json: []byte(`{"active":false,"lb_config":{"enabled":false,"algorithm":"smart-routing"}}`),
-			}}})
-			if err != nil {
-				t.Fatalf("marshal historical snapshot: %v", err)
-			}
-			version := infrasnapshot.NewCodec().Version(raw)
-			payload, err := h.sealer.Seal("", version, raw)
-			if err != nil {
-				t.Fatalf("seal historical snapshot: %v", err)
-			}
-			r := rows[""]
-			r.Version, r.Payload = version, payload
 			rows[""] = r
 		}},
 	}

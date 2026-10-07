@@ -87,13 +87,16 @@ type Dispatcher struct {
 	lkg *lkgState
 }
 
-// Readiness requires a successful compile in this process, after startup
-// migrations. Restoring a persisted snapshot never satisfies this gate.
+// Readiness reports whether the admin has a snapshot to serve: one compiled in
+// this process after startup migrations, or a restored last-good snapshot while
+// compiling fails. Gating on a fresh compile alone would take every admin out
+// of its Service whenever a restart meets a compile failure, which is exactly
+// the outage the persisted snapshot exists to ride out.
 func (d *Dispatcher) Readiness(context.Context) error {
-	if !d.compiled.Load() {
-		return configsync.ErrNotReady
+	if d.compiled.Load() || d.Source() == SourcePersisted {
+		return nil
 	}
-	return nil
+	return configsync.ErrNotReady
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
