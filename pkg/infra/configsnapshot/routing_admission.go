@@ -52,6 +52,9 @@ func admitConsumers(consumers []consumerdomain.Consumer, stage string, validate 
 			cloned = true
 		}
 		lb := *admitted[i].LBConfig
+		// Keep a malformed smart envelope on the smart strategy path: dropping
+		// its ladder must never turn it into a runnable legacy pool.
+		lb.Algorithm = algorithm.SmartRouting
 		lb.SmartRouting = nil
 		admitted[i].LBConfig = &lb
 		slog.Error("config snapshot quarantined consumer smart routing",

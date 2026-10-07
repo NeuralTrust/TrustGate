@@ -18,18 +18,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
@@ -172,6 +186,111 @@ func TestCodecRoutingQuarantinesWrongGatewayReference(t *testing.T) {
 	consumer, ok = decoded.ConsumerByID(data.Consumers[0].ID)
 	require.True(t, ok)
 	assert.Nil(t, consumer.LBConfig.SmartRouting, "historical wire must also fail the owner check")
+}
+
+type admissionRedis struct{}
+
+func (admissionRedis) RedisClient() *redis.Client { return nil }
+
+type admissionScorer struct{}
+
+func (admissionScorer) Configured() bool { return true }
+
+func (admissionScorer) ScoreSR1(context.Context, string, string) (float64, error) {
+	return 0, nil
+}
+
+func TestCodecQuarantinedSmartRoutingFailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []string{"encode", "decode"} {
+		for _, invalidAlgorithm := range []string{algorithm.RoundRobin, algorithm.Semantic} {
+			for _, enabled := range []bool{true, false} {
+				name := stage + "/" + invalidAlgorithm + map[bool]string{true: "/enabled", false: "/disabled"}[enabled]
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					data, healthy := canonicalRoutingData(false), canonicalRoutingData(true)
+					badID, healthyID := data.Consumers[0].ID, healthy.Consumers[0].ID
+					data.Consumers[0].LBConfig.Enabled = enabled
+					outside := registrydomain.Registry{
+						ID: ids.New[ids.RegistryKind](), GatewayID: data.Consumers[0].GatewayID,
+						Type: registrydomain.TypeLLM, LLMTarget: &registrydomain.LLMTarget{Provider: "openai"},
+					}
+					data.Consumers[0].Fallback = &consumerdomain.Fallback{
+						Enabled: true, Triggers: []consumerdomain.FallbackTrigger{consumerdomain.TriggerHTTP5xx},
+						Budget: consumerdomain.FallbackBudget{MaxAttempts: 2}, Chain: registrydomain.Registries{outside.ID},
+					}
+					data.Consumers = append(data.Consumers, healthy.Consumers[0])
+					data.Registries = append(data.Registries, healthy.Registries[0], outside)
+					for i := range data.Registries {
+						data.Registries[i].Type = registrydomain.TypeLLM
+						data.Registries[i].LLMTarget = &registrydomain.LLMTarget{Provider: "openai"}
+					}
+					codec := configsnapshot.NewCodec()
+					var raw []byte
+					var err error
+					if stage == "encode" {
+						data.Consumers[0].LBConfig.Algorithm = invalidAlgorithm
+						raw, err = codec.Encode(readmodel.Build(data))
+						require.NoError(t, err)
+						assert.Equal(t, invalidAlgorithm, data.Consumers[0].LBConfig.Algorithm, "admission must not rewrite stored configuration")
+						assert.NotNil(t, data.Consumers[0].LBConfig.SmartRouting)
+					} else {
+						raw = historicalRoutingRaw(t, data, func(c map[string]any) {
+							c["lb_config"].(map[string]any)["algorithm"] = invalidAlgorithm
+						})
+					}
+					snapshot, err := codec.Decode(raw)
+					require.NoError(t, err)
+					quarantined, ok := snapshot.ConsumerByID(badID)
+					require.True(t, ok)
+					assert.Equal(t, enabled, quarantined.LBConfig.Enabled, "quarantine preserves the disabled-pool decision")
+					assert.Equal(t, algorithm.SmartRouting, quarantined.LBConfig.Algorithm)
+					assert.Nil(t, quarantined.LBConfig.SmartRouting)
+					good, ok := snapshot.ConsumerByID(healthyID)
+					require.True(t, ok)
+					assert.Equal(t, healthy.Consumers[0].LBConfig, good.LBConfig, "another tenant's valid ladder is unchanged")
+					if !enabled {
+						return
+					}
+					// Exercise the real strategy factory through the load-balancer
+					// cache and forwarder. No provider HTTP call is made: only the
+					// unaffected consumer may reach this mock invoker.
+					mr := miniredis.RunT(t)
+					client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+					t.Cleanup(func() { _ = client.Close() })
+					manager := cache.NewTTLMapManager(time.Minute)
+					manager.GetTTLMap(cache.LoadBalancerTTLName).SetOnEvict(func(value any) { value.(*loadbalancer.LoadBalancer).Close() })
+					t.Cleanup(manager.ClearAllTTLMaps)
+					logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+					invoker := proxymocks.NewProviderInvoker(t)
+					invoker.EXPECT().Invoke(mock.Anything, mock.MatchedBy(func(r *registrydomain.Registry) bool {
+						return r.ID == healthy.Registries[0].ID
+					}), mock.Anything).Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte(`{"id":"healthy"}`)}, nil).Once()
+					forwarder := appproxy.NewForwarder(
+						loadbalancer.NewBaseFactory(nil, nil, admissionScorer{}, strategies.NewRedisSR1Store(client), logger),
+						admissionRedis{}, manager, invoker, nil, nil, approuting.NewResolver(), nil, nil, nil, logger,
+					)
+					forward := func(c *consumerdomain.Consumer, fallback []*registrydomain.Registry) (*appproxy.ForwardResult, error) {
+						return forwarder.Forward(context.Background(), appproxy.ForwardInput{
+							GatewayID: c.GatewayID,
+							Consumer: &appconsumer.RoutableConsumer{
+								Consumer: c, Registries: snapshot.RegistriesByIDs(c.GatewayID, c.RegistryIDs), FallbackBackends: fallback,
+							},
+							Request: &infracontext.RequestContext{Body: []byte(`{"prompt":"synthetic"}`)},
+						})
+					}
+					result, err := forward(quarantined, []*registrydomain.Registry{&outside})
+					require.ErrorIs(t, err, registrydomain.ErrInvalidSmartRouting, "quarantine must fail at smart strategy creation before pool or fallback selection")
+					assert.Nil(t, result)
+					invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+					result, err = forward(good, nil)
+					require.NoError(t, err)
+					require.NotNil(t, result)
+					assert.Equal(t, 200, result.StatusCode)
+				})
+			}
+		}
+	}
 }
 
 type routingFetcher struct {
