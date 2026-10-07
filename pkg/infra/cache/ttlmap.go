@@ -30,6 +30,9 @@ type TTLMap struct {
 	data    map[string]*TTLEntry
 	ttl     time.Duration
 	onEvict func(value any)
+	// generation counts the removals (Delete, DeleteByPrefix, Clear), so a
+	// fill that read its source before one can be told it is stale.
+	generation uint64
 }
 
 func NewTTLMap(ttl time.Duration) *TTLMap {
@@ -82,12 +85,36 @@ func (m *TTLMap) Get(key string) (any, bool) {
 }
 
 func (m *TTLMap) Set(key string, value any) {
+	m.set(key, value, false, 0)
+}
+
+// Generation returns the map's current generation. A caller about to read the
+// source of a value takes it first and stores the value with
+// SetIfGeneration, so an entry removed while it was reading is not put back
+// from what it read before the removal.
+func (m *TTLMap) Generation() uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.generation
+}
+
+// SetIfGeneration stores value under key only while the map is still at
+// generation, and reports whether it did.
+func (m *TTLMap) SetIfGeneration(key string, value any, generation uint64) bool {
+	return m.set(key, value, true, generation)
+}
+
+func (m *TTLMap) set(key string, value any, checkGeneration bool, generation uint64) bool {
 	var (
 		evicted any
 		onEvict func(any)
 		hadPrev bool
 	)
 	m.mu.Lock()
+	if checkGeneration && m.generation != generation {
+		m.mu.Unlock()
+		return false
+	}
 	if prev, ok := m.data[key]; ok && m.onEvict != nil {
 		evicted = prev.Value
 		onEvict = m.onEvict
@@ -103,6 +130,7 @@ func (m *TTLMap) Set(key string, value any) {
 	if hadPrev && onEvict != nil {
 		onEvict(evicted)
 	}
+	return true
 }
 
 func (m *TTLMap) Delete(key string) {
@@ -111,6 +139,7 @@ func (m *TTLMap) Delete(key string) {
 		onEvict func(any)
 	)
 	m.mu.Lock()
+	m.generation++
 	if entry, ok := m.data[key]; ok {
 		evicted = entry.Value
 		onEvict = m.onEvict
@@ -129,6 +158,7 @@ func (m *TTLMap) Delete(key string) {
 func (m *TTLMap) DeleteByPrefix(prefix string) {
 	var evicted []any
 	m.mu.Lock()
+	m.generation++
 	onEvict := m.onEvict
 	for k, entry := range m.data {
 		if strings.HasPrefix(k, prefix) {
@@ -173,6 +203,7 @@ func (m *TTLMap) Len() int {
 
 func (m *TTLMap) Clear() {
 	m.mu.Lock()
+	m.generation++
 	old := m.data
 	onEvict := m.onEvict
 	m.data = make(map[string]*TTLEntry)

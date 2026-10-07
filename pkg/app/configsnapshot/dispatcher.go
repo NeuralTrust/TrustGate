@@ -251,12 +251,13 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 
 	compileStart := time.Now()
 	compiledAt := d.compiledAt()
-	raw, version, scoped, err := d.compile(ctx)
+	compiled, err := d.compile(ctx)
 	if err != nil {
 		d.warnServingPersisted(err)
 		return err
 	}
 	compileDuration := time.Since(compileStart)
+	raw, version, scoped := compiled.raw, compiled.version, compiled.scoped
 
 	// The global snapshot leaves out gateways served by a hybrid data plane, so it
 	// is not a safe outer gate on its own: a change to a hosted gateway bumps the
@@ -265,7 +266,8 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	// whose version moved are notified.
 	d.mu.Lock()
 	globalChanged := version != d.publishedGlobal
-	if globalChanged || d.scopesChanged(scoped) {
+	published := globalChanged || d.scopesChanged(scoped)
+	if published {
 		if scoped != nil {
 			d.holder.SetPartitioned(raw, version, scoped)
 		} else {
@@ -290,9 +292,15 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 			slog.String("component", component),
 			slog.String("version", version),
 			slog.Duration("compile", compileDuration),
-			slog.Int("bytes", len(raw)))
+			slog.Int("bytes", len(raw)),
+			slog.Int("scopes", compiled.scopes.count),
+			slog.String("largest_scope", compiled.scopes.largest),
+			slog.Int("largest_scope_bytes", compiled.scopes.largestBytes))
 	}
 	d.mu.Unlock()
+	if published {
+		recordSnapshotPublish(ctx, d.logger, compiled)
+	}
 
 	// A snapshot that compiled is the freshest truth: it replaces a restored one
 	// as the source, and is persisted. Persisting never fails the dispatch.
@@ -309,6 +317,15 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	return nil
 }
 
+type compiledSnapshot struct {
+	raw          []byte
+	version      string
+	scoped       map[string]ScopedSnapshot
+	catalogBytes int
+	scopes       scopeSizes
+	entities     snapshotEntities
+}
+
 func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
 	for scope, snap := range scoped {
 		if d.publishedScoped[scope] != snap.Version {
@@ -323,42 +340,46 @@ func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
 	return false
 }
 
-func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, scoped map[string]ScopedSnapshot, err error) {
+func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
 		global, scopedSnaps, catalog, cerr := partitioned.CompileAll(ctx)
 		if cerr != nil {
-			return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
+			return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 		}
 		// The catalog is usually the bulk of the encoded bytes and identical in
 		// every snapshot, so encode it once and append the bytes per snapshot.
 		catalogRaw, eerr := d.codec.Encode(catalog)
 		if eerr != nil {
-			return nil, "", nil, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
+			return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
 		}
-		raw, version, err = d.encodeWithCatalog(global, catalogRaw)
+		raw, version, err := d.encodeWithCatalog(global, catalogRaw)
 		if err != nil {
-			return nil, "", nil, err
+			return compiledSnapshot{}, err
 		}
-		scoped = make(map[string]ScopedSnapshot, len(scopedSnaps))
+		compiled := compiledSnapshot{raw: raw, version: version, scoped: make(map[string]ScopedSnapshot, len(scopedSnaps)), catalogBytes: len(catalogRaw)}
 		for scope, snap := range scopedSnaps {
 			scopedRaw, scopedVersion, serr := d.encodeWithCatalog(snap, catalogRaw)
 			if serr != nil {
-				return nil, "", nil, serr
+				return compiledSnapshot{}, serr
 			}
-			scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
+			compiled.scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
+			compiled.scopes.add(scope, len(scopedRaw))
+			compiled.entities.add(snap)
 		}
-		return raw, version, scoped, nil
+		return compiled, nil
 	}
 
 	snapshot, cerr := d.compiler.Compile(ctx)
 	if cerr != nil {
-		return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
+		return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 	}
-	raw, version, err = d.encode(snapshot)
+	raw, version, err := d.encode(snapshot)
 	if err != nil {
-		return nil, "", nil, err
+		return compiledSnapshot{}, err
 	}
-	return raw, version, nil, nil
+	compiled := compiledSnapshot{raw: raw, version: version}
+	compiled.entities.add(snapshot)
+	return compiled, nil
 }
 
 // encodeWithCatalog encodes a tenant-only snapshot and appends the

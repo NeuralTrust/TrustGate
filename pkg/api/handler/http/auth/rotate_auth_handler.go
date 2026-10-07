@@ -41,7 +41,7 @@ func NewRotateAuthHandler(rotator appauth.Rotator, reach appconsumer.AuthConsume
 
 // Handle godoc
 // @Summary      Rotate an api key
-// @Description  Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards.
+// @Description  Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
@@ -52,6 +52,7 @@ func NewRotateAuthHandler(rotator appauth.Rotator, reach appconsumer.AuthConsume
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/auths/{id}/rotate [post]
 func (h *RotateAuthHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.AuthKind](c)

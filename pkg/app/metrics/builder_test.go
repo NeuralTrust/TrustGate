@@ -16,11 +16,13 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -87,6 +89,40 @@ func TestBuilder_SetsTenantIDFromMetadata(t *testing.T) {
 	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
 
 	assert.Equal(t, "team-123", evt.TenantID)
+}
+
+func TestBuilder_CarriesTheAuthIDOnlyWhenStamped(t *testing.T) {
+	cases := map[string]struct {
+		authID string
+	}{
+		"application key on a consumer": {authID: "auth-1"},
+		"no auth id":                    {authID: ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rt := trace.New("trace-auth", trace.Metadata{GatewayID: "gw-1"})
+			rt.SetAuthID(tc.authID)
+			rt.SetPrincipalIdentity("billing-service", string(identity.MethodAPIKey), "")
+			req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/billing/v1/chat/completions"}
+			resp := &infracontext.ResponseContext{StatusCode: 200}
+			start := time.UnixMilli(1_000_000)
+
+			evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+			assert.Equal(t, tc.authID, evt.AuthID)
+			assert.Equal(t, "billing-service", evt.PrincipalSubject)
+			assert.Equal(t, string(identity.MethodAPIKey), evt.PrincipalMethod)
+			raw, err := json.Marshal(evt)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(raw, &fields))
+			got, present := fields["auth_id"]
+			assert.Equal(t, tc.authID != "", present)
+			if present {
+				assert.Equal(t, tc.authID, got)
+			}
+		})
+	}
 }
 
 func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {

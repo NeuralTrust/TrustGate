@@ -248,6 +248,55 @@ func TestAppConnections_RejectAForeignKeyAndAnUnknownSlug(t *testing.T) {
 	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
 }
 
+func TestConnections_RefuseAPersonalOrExpiredKeyEvenWhenTheConsumerHoldsIt(t *testing.T) {
+	t.Parallel()
+	expired := time.Now().UTC().Add(-time.Minute)
+	for name, change := range map[string]func(*authdomain.Auth){
+		"personal key": func(a *authdomain.Auth) { a.OwnerID = "alice" },
+		"expired key":  func(a *authdomain.Auth) { a.ExpiresAt = &expired },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			gatewayID := ids.New[ids.GatewayKind]()
+			authID := ids.New[ids.AuthKind]()
+			data := appUsersConsumerData(gatewayID, "assistant", authID)
+			key := validAPIKeyAuth(gatewayID, authID)
+			change(key)
+
+			consumers := appconsumermocks.NewDataFinder(t)
+			consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Twice()
+			apiKeys := appauthmocks.NewAPIKeyFinder(t)
+			apiKeys.EXPECT().FindByAPIKey(ctx, "ag_held").Return(key, nil).Twice()
+			svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
+
+			_, err := svc.Connections(ctx, gatewayID, "assistant", "ag_held", "user_123")
+			require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+			_, err = svc.AppConnections(ctx, gatewayID, "assistant", "ag_held")
+			require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+		})
+	}
+}
+
+func TestConnections_RefuseAnExpiredKeyAsUnknown(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
+
+	consumers := appconsumermocks.NewDataFinder(t)
+	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Twice()
+	apiKeys := appauthmocks.NewAPIKeyFinder(t)
+	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_old").Return(nil, authdomain.ErrExpired).Twice()
+	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
+
+	_, err := svc.Connections(ctx, gatewayID, "assistant", "ag_old", "user_123")
+	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+	_, err = svc.AppConnections(ctx, gatewayID, "assistant", "ag_old")
+	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+}
+
 // validAPIKeyAuth is an enabled api key of this gateway, as the finder returns
 // it. It lived beside the api-key connect page until that page was deleted.
 func validAPIKeyAuth(gatewayID ids.GatewayID, authID ids.AuthID) *authdomain.Auth {

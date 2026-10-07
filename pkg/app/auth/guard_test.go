@@ -176,7 +176,7 @@ func TestUpdater_RejectsEnablingConflictingAuth(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(true),
@@ -203,7 +203,7 @@ func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),

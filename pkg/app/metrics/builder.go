@@ -77,6 +77,7 @@ func (b *Builder) Build(
 		Consumer:         events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:        meta.SessionID,
 		IP:               meta.IP,
+		AuthID:           meta.AuthID,
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,
@@ -91,8 +92,9 @@ func (b *Builder) Build(
 	// Clients that send no identity headers may still name their end user the
 	// way the OpenAI API defines it, in the request body. Headers win when both
 	// are present: they carry a whole person (email, name, role) rather than one
-	// opaque identifier.
-	if evt.EndUser == nil {
+	// opaque identifier. A personal key already names its owner, so its body
+	// cannot name anyone else.
+	if evt.EndUser == nil && (req == nil || req.OwnerID == "") {
 		if id := requestBodyUser(req); id != "" {
 			evt.EndUser = &events.EndUser{ID: id, Source: events.EndUserSourceOpenAIUser}
 		}

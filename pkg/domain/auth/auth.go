@@ -30,6 +30,11 @@ const apiKeyPrefix = "ag_"
 
 const apiKeyEntropyBytes = 32
 
+const (
+	MaxOwnedKeyLifetime = 90 * 24 * time.Hour
+	ownedKeyName        = "personal"
+)
+
 // Non-secret preview of a generated api_key. Kept short so list/get can show
 // enough for operators to recognize a key without storing the plaintext.
 const (
@@ -113,14 +118,52 @@ type Auth struct {
 	// the key never expires, which is what every key written before the column
 	// existed is: an expiry nobody asked for would have retired them all.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	OwnerID   string     `json:"owner_id,omitempty"`
+	Budget    *KeyBudget `json:"budget,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// IsOwned reports whether a is a personal key, held by one user.
+func (a *Auth) IsOwned() bool {
+	return a.OwnerID != ""
+}
+
+// ManagedBy reports whether caller may change the auth: the admin (empty
+// caller) only an application key, a user only their own key.
+func (a *Auth) ManagedBy(caller string) error {
+	switch {
+	case caller == "" && a.IsOwned():
+		return ErrOwnedKey
+	case caller != "" && caller != a.OwnerID:
+		return ErrNotFound
+	default:
+		return nil
+	}
 }
 
 // IsExpired reports whether the credential has passed its expiry. An auth
 // without one never does.
 func (a *Auth) IsExpired(now time.Time) bool {
 	return a.ExpiresAt != nil && !now.Before(*a.ExpiresAt)
+}
+
+// AcceptsAPIKey reports whether a is an enabled, unexpired api_key auth whose
+// stored hash is hash.
+func (a *Auth) AcceptsAPIKey(hash string, now time.Time) bool {
+	return a != nil && a.Enabled && a.Type == TypeAPIKey && a.KeyHash == hash && !a.IsExpired(now)
+}
+
+// IsApplicationKey reports whether a authenticates as an application at now:
+// an enabled, unexpired api key that no user owns.
+func (a *Auth) IsApplicationKey(now time.Time) bool {
+	return a != nil && a.Enabled && a.Type == TypeAPIKey && !a.IsOwned() && !a.IsExpired(now)
+}
+
+// AcceptsApplicationKey reports whether a authenticates as an application on
+// gatewayID at now: an application key of that gateway.
+func (a *Auth) AcceptsApplicationKey(gatewayID ids.GatewayID, now time.Time) bool {
+	return a.IsApplicationKey(now) && !gatewayID.IsNil() && a.GatewayID == gatewayID
 }
 
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
@@ -156,7 +199,7 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 	if err != nil {
 		return nil, err
 	}
-	if err := a.SetExpiry(expiresAt); err != nil {
+	if err := a.SetExpiry(expiresAt, a.CreatedAt); err != nil {
 		return nil, err
 	}
 	a.RawKey = rawKey
@@ -165,11 +208,48 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 	return a, nil
 }
 
+// NewOwnedAPIKeyAuth mints the personal api key of ownerID on gatewayID.
+func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, expiresAt, now time.Time) (*Auth, error) {
+	if err := ValidateOwner(ownerID); err != nil {
+		return nil, err
+	}
+	if err := ValidateOwnedExpiry(expiresAt, now); err != nil {
+		return nil, err
+	}
+	a, err := NewAPIKeyAuth(gatewayID, ownedKeyName, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	at := expiresAt.UTC()
+	a.ExpiresAt = &at
+	a.OwnerID = ownerID
+	a.CreatedAt = now.UTC()
+	a.UpdatedAt = a.CreatedAt
+	return a, nil
+}
+
+// ValidateOwner reports whether ownerID can own a personal key.
+func ValidateOwner(ownerID string) error {
+	if strings.TrimSpace(ownerID) == "" {
+		return ErrInvalidOwner
+	}
+	return nil
+}
+
+// ValidateOwnedExpiry reports whether expiresAt is an expiry a personal key may
+// carry at now.
+func ValidateOwnedExpiry(expiresAt, now time.Time) error {
+	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxOwnedKeyLifetime)) {
+		return ErrOwnedExpiry
+	}
+	return nil
+}
+
 // SetExpiry attaches or clears the expiry. An expiry already in the past is
 // refused rather than stored: a key that is dead the moment it is handed over
 // is never what was meant, and the error says so at the point the mistake was
 // made instead of at the first request that fails.
-func (a *Auth) SetExpiry(expiresAt *time.Time) error {
+func (a *Auth) SetExpiry(expiresAt *time.Time, now time.Time) error {
 	if expiresAt == nil {
 		a.ExpiresAt = nil
 		return nil
@@ -177,7 +257,7 @@ func (a *Auth) SetExpiry(expiresAt *time.Time) error {
 	if a.Type != TypeAPIKey {
 		return fmt.Errorf("%w: only api_key auths expire; an identity provider's tokens carry their own lifetime", ErrInvalidType)
 	}
-	if !expiresAt.After(time.Now().UTC()) {
+	if !expiresAt.After(now) {
 		return ErrExpiryInThePast
 	}
 	utc := expiresAt.UTC()
@@ -193,7 +273,7 @@ func (a *Auth) SetExpiry(expiresAt *time.Time) error {
 // Everything else about the auth is untouched — its id, its name and every
 // consumer it is attached to — which is what separates rotating from revoking
 // and issuing again: the application keeps its key, the key gets a new secret.
-func (a *Auth) RotateAPIKey() (previousHash string, err error) {
+func (a *Auth) RotateAPIKey(now time.Time) (previousHash string, err error) {
 	if a.Type != TypeAPIKey {
 		return "", fmt.Errorf("%w: only api_key auths carry a secret to rotate", ErrInvalidType)
 	}
@@ -205,7 +285,7 @@ func (a *Auth) RotateAPIKey() (previousHash string, err error) {
 	a.RawKey = rawKey
 	a.KeyHash = HashAPIKey(rawKey)
 	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
-	a.UpdatedAt = time.Now().UTC()
+	a.UpdatedAt = now.UTC()
 	return previousHash, nil
 }
 

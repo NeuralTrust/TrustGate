@@ -8,14 +8,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
+	golangjwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
+
+const functionalTenantID = "functional-tenant"
 
 func gatewayBaseDomain() string {
 	if GlobalConfig != nil && GlobalConfig.Server.GatewayBaseDomain != "" {
@@ -47,7 +56,7 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 		payload = map[string]any{}
 	}
 	if _, ok := payload["tenant_id"]; !ok {
-		payload["tenant_id"] = "functional-tenant"
+		payload["tenant_id"] = functionalTenantID
 	}
 	if _, ok := payload["entitlements"]; !ok {
 		// The API rejects stamped limits unless all three are set, and
@@ -286,11 +295,341 @@ func CreateAPIKeyAuth(t *testing.T, gatewayID, name string) (string, string) {
 func createAndAttachAPIKey(t *testing.T, gatewayID, consumerID string) string {
 	t.Helper()
 	authID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("proxy-key"))
+	registerProxyKey(t, gatewayID, consumerID, authID, key)
+	return key
+}
+
+func registerProxyKey(t *testing.T, gatewayID, consumerID, authID, key string) {
+	t.Helper()
 	AttachAuth(t, gatewayID, consumerID, authID)
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
 	proxyHosts.Store(key, host.(string))
-	return key
+}
+
+func userToken(t *testing.T, tenantID, userID string) string {
+	t.Helper()
+	now := time.Now()
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, &jwt.Claims{
+		TenantID: tenantID,
+		UserID:   userID,
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			IssuedAt:  golangjwt.NewNumericDate(now),
+			ExpiresAt: golangjwt.NewNumericDate(now.Add(time.Hour)),
+		},
+	}).SignedString([]byte(GlobalConfig.Server.SecretKey))
+	require.NoError(t, err)
+	return token
+}
+
+func llmKeyRequest(t *testing.T, method, gatewayID, token, suffix string, body any) (int, map[string]any) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/store/principal/llm-key%s", AdminURL, gatewayID, suffix)
+	return sendRequest(t, method, url, map[string]string{"Authorization": "Bearer " + token}, body)
+}
+
+func GetLLMKey(t *testing.T, gatewayID, userID string) (int, map[string]any) {
+	t.Helper()
+	return llmKeyRequest(t, http.MethodGet, gatewayID, userToken(t, functionalTenantID, userID), "", nil)
+}
+
+func CreateLLMKey(t *testing.T, gatewayID, userID string, body any) (int, map[string]any) {
+	t.Helper()
+	return llmKeyRequest(t, http.MethodPost, gatewayID, userToken(t, functionalTenantID, userID), "", body)
+}
+
+func RotateLLMKey(t *testing.T, gatewayID, userID string, body any) (int, map[string]any) {
+	t.Helper()
+	return llmKeyRequest(t, http.MethodPost, gatewayID, userToken(t, functionalTenantID, userID), "/rotate", body)
+}
+
+func RevokeLLMKey(t *testing.T, gatewayID, userID string) int {
+	t.Helper()
+	status, _ := llmKeyRequest(t, http.MethodDelete, gatewayID, userToken(t, functionalTenantID, userID), "", nil)
+	return status
+}
+
+func SetKeyBudget(t *testing.T, gatewayID, authID string, budget any) (int, map[string]any) {
+	t.Helper()
+	if budget == nil {
+		budget = json.RawMessage("null")
+	}
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths/%s/budget", AdminURL, gatewayID, authID)
+	return sendRequest(t, http.MethodPut, url, nil, budget)
+}
+
+func monthlyBudget(limit float64) map[string]any {
+	return map[string]any{"max": limit, "unit": "dollars", "time_window": "calendar_month"}
+}
+
+func CreatePersonalConsumer(t *testing.T, gatewayID string, payload map[string]any) string {
+	t.Helper()
+	payload["name"], payload["audience"] = uniqueName("personal"), "personal"
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gatewayID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
+	require.Equal(t, http.StatusCreated, status, "create personal consumer failed: %v", body)
+	require.Equal(t, "personal", body["audience"])
+	id := fmt.Sprint(body["id"])
+	consumerSlugs.Store(id, fmt.Sprint(body["slug"]))
+	return id
+}
+
+func AttachAuthLink(t *testing.T, gatewayID, consumerID, authID, level string, priority int, grantedAt time.Time) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/auths/%s", AdminURL, gatewayID, consumerID, authID)
+	link := map[string]any{"level": level, "priority": priority, "granted_at": grantedAt.UTC().Format(time.RFC3339)}
+	status, body := sendRequest(t, http.MethodPost, url, nil, link)
+	require.Equal(t, http.StatusNoContent, status, "attach auth link failed: %v", body)
+}
+
+func DetachAuth(t *testing.T, gatewayID, consumerID, authID string) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/auths/%s", AdminURL, gatewayID, consumerID, authID)
+	status, body := sendRequest(t, http.MethodDelete, url, nil, nil)
+	require.Equal(t, http.StatusNoContent, status, "detach auth failed: %v", body)
+}
+
+var storeAnthropicModels = []string{"opus-4.8", "opus-5.5"}
+
+type switchableUpstream struct {
+	*fakeUpstream
+	failing atomic.Bool
+}
+
+func newSwitchableUpstream(t *testing.T, marker string) *switchableUpstream {
+	t.Helper()
+	u := &switchableUpstream{fakeUpstream: &fakeUpstream{}}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		if u.failing.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"upstream failure","type":"server_error"}}`)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"id":"chatcmpl-store","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}]}`, marker)
+	}))
+	t.Cleanup(u.server.Close)
+	return u
+}
+
+type storeFixture struct {
+	gatewayID string
+	owner     string
+	keyID     string
+	key       string
+	consumers map[string]string
+	openaiA   *switchableUpstream
+	deepseekA *fakeUpstream
+	openaiD   *fakeUpstream
+}
+
+func storeGuard(consumer string) string {
+	return "store-guard-" + strings.ToLower(consumer)
+}
+
+func storeRegistry(registryID string, allowed []string, defaultModel string) map[string]any {
+	policy := map[string]any{"default": defaultModel}
+	if allowed != nil {
+		policy["allowed"] = allowed
+	}
+	return map[string]any{"registries": []map[string]any{{"id": registryID, "model_policies": policy}}}
+}
+
+func setupStoreFixture(t *testing.T, gateway map[string]any) *storeFixture {
+	t.Helper()
+	f := &storeFixture{
+		gatewayID: CreateGateway(t, gateway),
+		owner:     uniqueName("ana"),
+		openaiA:   newSwitchableUpstream(t, "store-a-openai"),
+		deepseekA: newJSONUpstream(t, "store-a-deepseek"),
+		openaiD:   newJSONUpstream(t, "store-d-openai"),
+	}
+	openaiA := CreateRegistry(t, f.gatewayID, openaiBackendPayload(uniqueName("store-openai-a"), f.openaiA.URL()))
+	deepseekA := CreateRegistry(t, f.gatewayID, openaiCompatibleBackendPayload(uniqueName("store-deepseek-a"), f.deepseekA.URL()))
+	anthropic := CreateRegistry(t, f.gatewayID, anthropicBackendPayload(uniqueName("store-anthropic")))
+	openaiD := CreateRegistry(t, f.gatewayID, openaiBackendPayload(uniqueName("store-openai-d"), f.openaiD.URL()))
+	f.consumers = map[string]string{
+		"A": CreatePersonalConsumer(t, f.gatewayID, map[string]any{
+			"registries": []map[string]any{{"id": openaiA, "model_policies": map[string]any{"default": "gpt-4.1"}}, {"id": deepseekA}},
+			"fallback":   map[string]any{"enabled": true, "triggers": []string{"http_5xx"}, "chain": []string{deepseekA}},
+		}),
+		"B": CreatePersonalConsumer(t, f.gatewayID, storeRegistry(anthropic, nil, "opus-4.8")),
+		"C": CreatePersonalConsumer(t, f.gatewayID, storeRegistry(anthropic, []string{"opus-5.5"}, "opus-5.5")),
+		"D": CreatePersonalConsumer(t, f.gatewayID, storeRegistry(openaiD, []string{"gpt6"}, "gpt6")),
+	}
+	for _, name := range []string{"B", "C"} {
+		guard := CreatePolicy(t, f.gatewayID, map[string]any{
+			"name": uniqueName("store-guard"), "slug": "model_allowlist", "enabled": true,
+			"settings": map[string]any{"allowed_models": []string{storeGuard(name)}, "behavior_on_disallowed": "reject"},
+		})
+		AttachPolicy(t, f.gatewayID, f.consumers[name], guard)
+	}
+	status, created := CreateLLMKey(t, f.gatewayID, f.owner, llmKeyExpiry(30*llmKeyDay))
+	require.Equal(t, http.StatusCreated, status, "body=%v", created)
+	assert.Equal(t, []any{}, created["consumer_ids"])
+	f.keyID, f.key = fmt.Sprint(created["id"]), fmt.Sprint(created["api_key"])
+	grantedAt := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	for i, name := range []string{"A", "B", "C", "D"} {
+		level := "group"
+		if name == "D" {
+			level = "user"
+		}
+		AttachAuthLink(t, f.gatewayID, f.consumers[name], f.keyID, level, 1, grantedAt.Add(time.Duration(i)*time.Hour))
+	}
+	return f
+}
+
+func gatewayCall(t *testing.T, base, gatewayID, key, method, path string, body any) (int, []byte) {
+	t.Helper()
+	return gatewayCallWithHeaders(t, base, gatewayID, key, method, path, body, nil)
+}
+
+func gatewayCallWithHeaders(t *testing.T, base, gatewayID, key, method, path string, body any, headers map[string]string) (int, []byte) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(mustJSON(t, body))
+	}
+	req, err := http.NewRequest(method, base+path, reader)
+	require.NoError(t, err)
+	host, ok := gatewayHosts.Load(gatewayID)
+	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	req.Host = host.(string)
+	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set(proxyAPIKeyHeader, key)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, raw
+}
+
+func storeChat(t *testing.T, base, gatewayID, key, model string) (int, string) {
+	t.Helper()
+	body := chatRequestNoModel()
+	if model != "" {
+		body = chatRequestModel(model)
+	}
+	status, raw := gatewayCall(t, base, gatewayID, key, http.MethodPost, "/store/v1/chat/completions", body)
+	return status, string(raw)
+}
+
+func storeModelsStatus(t *testing.T, base, gatewayID, key string) int {
+	t.Helper()
+	status, _ := gatewayCall(t, base, gatewayID, key, http.MethodGet, "/store/v1/models", nil)
+	return status
+}
+
+func storeModels(t *testing.T, base, gatewayID, key string) map[string]string {
+	t.Helper()
+	status, raw := gatewayCall(t, base, gatewayID, key, http.MethodGet, "/store/v1/models", nil)
+	require.Equal(t, http.StatusOK, status, "body: %s", raw)
+	cards := map[string]string{}
+	for _, card := range decodeModelsList(t, raw).Data {
+		cards[card.ID] = card.OwnedBy
+	}
+	return cards
+}
+
+func eventuallyStore(t *testing.T, condition func() bool, msg string) {
+	t.Helper()
+	require.Eventually(t, condition, 20*time.Second, 200*time.Millisecond, msg)
+}
+
+func storeServes(t *testing.T, base string, f *storeFixture, model string, status int, marker string) func() bool {
+	return func() bool {
+		got, body := storeChat(t, base, f.gatewayID, f.key, model)
+		return got == status && strings.Contains(body, marker)
+	}
+}
+
+func assertWorkedExample(t *testing.T, base string, f *storeFixture) {
+	t.Helper()
+	cases := []struct {
+		model  string
+		status int
+		marker string
+	}{
+		{"gpt-4.1", http.StatusForbidden, `"error":"model_not_allowed"`},
+		{"gpt6", http.StatusOK, "store-d-openai"},
+		{"opus-5.5", http.StatusForbidden, storeGuard("C")},
+		{"opus-4.8", http.StatusForbidden, storeGuard("B")},
+		{"", http.StatusOK, "store-d-openai"},
+	}
+	for _, tc := range cases {
+		status, body := storeChat(t, base, f.gatewayID, f.key, tc.model)
+		assert.Equal(t, tc.status, status, "model %q: %s", tc.model, body)
+		assert.Contains(t, body, tc.marker, "model %q", tc.model)
+	}
+	assert.Contains(t, string(f.openaiD.LastBody()), `"gpt6"`, "a request without a model gets D's default")
+	assert.Zero(t, f.openaiA.Hits()+f.deepseekA.Hits(), "D substitutes A's OpenAI, so A never serves")
+
+	cards := storeModels(t, base, f.gatewayID, f.key)
+	assert.Equal(t, "openai", cards["gpt6"])
+	for _, id := range storeAnthropicModels {
+		assert.Equal(t, "anthropic", cards[id], id)
+	}
+	for id, owner := range cards {
+		if id != "gpt6" {
+			assert.Equal(t, "anthropic", owner, "OpenAI lists only D's gpt6 and A's DeepSeek fallback never lists: %s", id)
+		}
+	}
+}
+
+func otlpStringAttr(key, value string) []byte {
+	var str, kv []byte
+	str = protowire.AppendString(protowire.AppendTag(str, 1, protowire.BytesType), value)
+	kv = protowire.AppendString(protowire.AppendTag(kv, 1, protowire.BytesType), key)
+	return protowire.AppendBytes(protowire.AppendTag(kv, 2, protowire.BytesType), str)
+}
+
+func protoFields(msg []byte, field protowire.Number) [][]byte {
+	var out [][]byte
+	for len(msg) > 0 {
+		num, typ, n := protowire.ConsumeTag(msg)
+		if n < 0 {
+			return out
+		}
+		msg = msg[n:]
+		if num == field && typ == protowire.BytesType {
+			value, m := protowire.ConsumeBytes(msg)
+			if m < 0 {
+				return out
+			}
+			out, msg = append(out, value), msg[m:]
+			continue
+		}
+		m := protowire.ConsumeFieldValue(num, typ, msg)
+		if m < 0 {
+			return out
+		}
+		msg = msg[m:]
+	}
+	return out
+}
+
+func otlpRecordWith(r *otlpReceiver, attrs ...[]byte) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, body := range r.bodies {
+		for _, resource := range protoFields(body, 1) {
+			for _, scope := range protoFields(resource, 2) {
+				for _, record := range protoFields(scope, 2) {
+					if !slices.ContainsFunc(attrs, func(attr []byte) bool { return !bytes.Contains(record, attr) }) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // validRegistryPayload returns a minimal payload accepted by Validate(): a

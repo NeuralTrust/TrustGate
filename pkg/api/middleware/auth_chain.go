@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -45,6 +46,7 @@ type chainIdentityResolver struct {
 	session           appauth.SessionTokenVerifier
 	xfccPeers         []*net.IPNet
 	defaultIdPEnabled bool
+	now               func() time.Time
 }
 
 func NewChainIdentityResolver(
@@ -70,6 +72,7 @@ func NewChainIdentityResolver(
 		session:           sessionVerifier,
 		xfccPeers:         parseTrustedPeers(trustXFCCFrom),
 		defaultIdPEnabled: defaultIdPEnabled,
+		now:               time.Now,
 	}
 }
 
@@ -381,8 +384,9 @@ func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string
 	case err != nil:
 		return credentialRejected(ctx, slog.LevelWarn, "api key lookup failed", slog.String("error", err.Error()))
 	}
-	if a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
-		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled or not an api key")
+	// A personal key belongs to the LLM Store and is never an MCP credential.
+	if !a.IsApplicationKey(r.now().UTC()) {
+		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled, expired or personal", slog.String("auth_id", a.ID.String()))
 	}
 	if !scope.allows(a.ID) {
 		return credentialRejected(ctx, slog.LevelWarn, "api key is not attached to the path", slog.String("auth_id", a.ID.String()))

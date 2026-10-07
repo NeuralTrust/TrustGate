@@ -71,6 +71,15 @@ func TestSetPrincipalIdentity_DoesNotClearExistingFields(t *testing.T) {
 	assert.Equal(t, "ada@example.com", meta.PrincipalEmail)
 }
 
+func TestSetAuthID_IgnoresAnEmptyID(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{GatewayID: "gw"})
+	rt.SetAuthID("")
+	assert.Empty(t, rt.Metadata().AuthID)
+	rt.SetAuthID("auth-1")
+	rt.SetAuthID("")
+	assert.Equal(t, "auth-1", rt.Metadata().AuthID)
+}
+
 func TestStartSpan_RecordsTypedSpansInOrder(t *testing.T) {
 	rt := trace.New("t", trace.Metadata{})
 	llm := rt.StartSpan(trace.SpanLLM, "openai")

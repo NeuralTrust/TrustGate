@@ -184,7 +184,7 @@ func TestConsumerAdapter(t *testing.T) {
 	assert.ErrorIs(t, repo.Save(ctx, &consumerdomain.Consumer{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Update(ctx, &consumerdomain.Consumer{}, nil, nil), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, ids.New[ids.ConsumerKind]()), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.AttachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID), configsync.ErrReadOnly)
+	assert.ErrorIs(t, repo.AttachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID, &consumerdomain.AuthLink{Level: consumerdomain.GrantLevelUser}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.DetachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID), configsync.ErrReadOnly)
 	_, err = repo.DetachRegistryIfUnreferenced(ctx, f.gateway.ID, ids.New[ids.ConsumerKind](), ids.New[ids.RegistryKind]())
 	assert.ErrorIs(t, err, configsync.ErrReadOnly)
@@ -342,6 +342,8 @@ func TestAuthAdapter(t *testing.T) {
 
 	assert.ErrorIs(t, repo.Save(ctx, &authdomain.Auth{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.auth.ID), configsync.ErrReadOnly)
+	_, err = repo.UpdateBudget(ctx, &authdomain.Auth{})
+	assert.ErrorIs(t, err, configsync.ErrReadOnly)
 }
 
 func TestCatalogAdapter(t *testing.T) {
@@ -383,4 +385,33 @@ func TestCatalogNotReady(t *testing.T) {
 	repo := adapters.NewCatalogRepository(emptyStore())
 	_, err := repo.FindModel(context.Background(), "openai", "gpt-4")
 	assert.ErrorIs(t, err, commonerrors.ErrNotFound)
+}
+
+func TestAuthAdapterFindByOwner(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	owned := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gateway.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "owned-hash", OwnerID: "alice",
+		Budget: &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}}
+	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
+	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{f.auth, owned}})})
+	repo := adapters.NewAuthRepository(store)
+	ctx := context.Background()
+
+	got, err := repo.FindByOwner(ctx, f.gateway.ID, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, owned.ID, got.ID)
+	assert.Equal(t, "owned-hash", got.KeyHash)
+	byHash, err := repo.FindByAPIKeyHash(ctx, "owned-hash")
+	require.NoError(t, err)
+	for _, read := range []*authdomain.Auth{got, byHash} {
+		assert.Equal(t, owned.Budget, read.Budget, "the budget is carried through the snapshot")
+		assert.NotSame(t, owned.Budget, read.Budget, "a read never shares the snapshot's budget")
+	}
+	for _, miss := range []struct {
+		gateway ids.GatewayID
+		owner   string
+	}{{f.other, "alice"}, {f.gateway.ID, "bob"}, {f.gateway.ID, ""}} {
+		_, err := repo.FindByOwner(ctx, miss.gateway, miss.owner)
+		assert.ErrorIs(t, err, authdomain.ErrNotFound)
+	}
 }

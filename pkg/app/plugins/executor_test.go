@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -432,6 +433,34 @@ func TestExecutor_RunStage_PropagatesConsumerScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "consumer", dimension)
 	assert.Equal(t, "c-1", id)
+}
+
+func TestScopeFromRequest_Key(t *testing.T) {
+	tests := []struct {
+		name          string
+		req           *infracontext.RequestContext
+		wantDimension string
+		wantID        string
+	}{
+		{name: "owned key counts per owner", req: &infracontext.RequestContext{ConsumerID: "c-1", AuthID: "auth-1", OwnerID: "alice"}, wantDimension: "owner", wantID: "alice"},
+		{name: "application key counts per auth", req: &infracontext.RequestContext{ConsumerID: "c-1", AuthID: "auth-1"}, wantDimension: "auth", wantID: "auth-1"},
+		{name: "no auth is not counted", req: &infracontext.RequestContext{GatewayID: "gw-1", ConsumerID: "c-1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dimension, id, ok := scopeFromRequest(tt.req, true).Key()
+			assert.Equal(t, tt.wantDimension != "", ok)
+			assert.Equal(t, tt.wantDimension, dimension)
+			assert.Equal(t, tt.wantID, id)
+		})
+	}
+}
+
+func TestScopeFromRequest_CarriesTheKeyBudget(t *testing.T) {
+	budget := &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}
+	assert.Same(t, budget, scopeFromRequest(&infracontext.RequestContext{AuthID: "auth-1", OwnerID: "alice", KeyBudget: budget}, true).KeyBudget)
+	assert.Nil(t, scopeFromRequest(&infracontext.RequestContext{AuthID: "auth-1", OwnerID: "alice"}, true).KeyBudget)
+	assert.Nil(t, scopeFromRequest(nil, true).KeyBudget)
 }
 
 func TestExecutor_RunStage_PropagatesGlobalScopeFromPlan(t *testing.T) {

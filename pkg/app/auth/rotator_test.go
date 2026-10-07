@@ -18,8 +18,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
@@ -46,9 +48,9 @@ func TestRotator_Rotate_ReplacesTheSecretAndKeepsTheAuth(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+	repo.EXPECT().RotateKey(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 		return a.ID == existing.ID && a.KeyHash != firstHash
-	})).Return(nil).Once()
+	}), firstHash).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -62,7 +64,7 @@ func TestRotator_Rotate_ReplacesTheSecretAndKeepsTheAuth(t *testing.T) {
 	// presented it.
 	keyCache.Set(firstHash, existing)
 
-	rotated, err := appauth.NewRotator(repo, manager, publisher, newTestLogger(), nil).
+	rotated, err := appauth.NewRotator(repo, manager, publisher, newTestLogger(), nil, time.Now).
 		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
 	require.NoError(t, err)
 
@@ -88,7 +90,7 @@ func TestRotator_Rotate_RefusesAnAuthThatIsNotAnAPIKey(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, oauth.ID).Return(oauth, nil).Once()
 
-	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
+	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, time.Now).
 		Rotate(context.Background(), appauth.RotateInput{ID: oauth.ID, GatewayID: gwID})
 	require.ErrorIs(t, err, commonerrors.ErrValidation)
 }
@@ -101,7 +103,88 @@ func TestRotator_Rotate_RefusesAnAuthOfAnotherGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
+	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, time.Now).
 		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: ids.New[ids.GatewayKind]()})
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
+}
+
+func TestRotator_Rotate_OwnedKeyNeedsItsOwner(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		keyOwner, caller string
+		wantErr          error
+	}{
+		"owner rotates their key":           {keyOwner: "alice", caller: "alice"},
+		"admin rotates an owned key":        {keyOwner: "alice", caller: "", wantErr: domain.ErrOwnedKey},
+		"another user rotates an owned key": {keyOwner: "alice", caller: "bob", wantErr: domain.ErrNotFound},
+		"a user rotates an application key": {keyOwner: "", caller: "alice", wantErr: domain.ErrNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			existing := existingAPIKey(t, gwID)
+			existing.OwnerID = tc.keyOwner
+			firstHash := existing.KeyHash
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			signaler := &configsynctest.FakeSignaler{}
+			if tc.wantErr == nil {
+				repo.EXPECT().RotateKey(mock.Anything, existing, mock.Anything).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+
+			_, err := appauth.NewRotator(repo, newCacheManager(), publisher, newTestLogger(), signaler, time.Now).
+				Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID, OwnerID: tc.caller})
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				require.Equal(t, firstHash, existing.KeyHash)
+				require.Zero(t, signaler.Count())
+				return
+			}
+			require.NoError(t, err)
+			require.NotEqual(t, firstHash, existing.KeyHash)
+			require.Equal(t, tc.keyOwner, existing.OwnerID)
+			require.Equal(t, 1, signaler.Count())
+		})
+	}
+}
+
+func TestRotator_Rotate_NilClockReadsUTCNow(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingAPIKey(t, gwID)
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().RotateKey(mock.Anything, existing, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+
+	before := time.Now().UTC()
+	rotated, err := appauth.NewRotator(repo, newCacheManager(), publisher, newTestLogger(), nil, nil).
+		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
+	require.NoError(t, err)
+	require.Equal(t, time.UTC, rotated.UpdatedAt.Location())
+	require.False(t, rotated.UpdatedAt.Before(before))
+}
+
+func TestRotator_Rotate_LosingAConcurrentRotationChangesNothing(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingAPIKey(t, gwID)
+	firstHash := existing.KeyHash
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().RotateKey(mock.Anything, existing, firstHash).Return(domain.ErrRotatedConcurrently).Once()
+	manager := newCacheManager()
+	keyCache := manager.GetTTLMap(cache.AuthKeyTTLName)
+	keyCache.Set(firstHash, existing)
+
+	_, err := appauth.NewRotator(repo, manager, cachemocks.NewEventPublisher(t), newTestLogger(), nil, time.Now).
+		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
+	require.ErrorIs(t, err, domain.ErrRotatedConcurrently)
+	require.ErrorIs(t, err, commonerrors.ErrConflict)
+	_, cached := keyCache.Get(firstHash)
+	require.True(t, cached, "a rotation that wrote nothing leaves the caches alone")
 }

@@ -27,7 +27,7 @@ import (
 // SDK returns the same one for the same name, and a compile is far too rare for
 // the lookup to matter.
 func recordTenantCapsError(ctx context.Context) {
-	counter, err := otel.Meter("trustgate/configsnapshot").Int64Counter(
+	counter, err := otel.Meter(snapshotMeterName).Int64Counter(
 		"trustgate.configsnapshot.tenant_caps.errors",
 		metric.WithDescription("snapshots compiled without fresh tenant plan caps because reading them failed"),
 	)
