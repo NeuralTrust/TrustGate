@@ -42,6 +42,7 @@ func NewDeleteRegistryHandler(deleter appregistry.Deleter) *DeleteRegistryHandle
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody  "The registry carries the last primary default model of a personal consumer"
 // @Router       /v1/gateways/{gateway_id}/registries/{id} [delete]
 func (h *DeleteRegistryHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RegistryKind](c)

@@ -18,16 +18,22 @@ import (
 	"bytes"
 	"encoding/hex"
 	"testing"
+	"time"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
+	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCodecRoundTrip(t *testing.T) {
@@ -230,6 +236,133 @@ func TestCodecRoundTripsPolicyMCPWide(t *testing.T) {
 	assert.False(t, got[0].MCPWide)
 	assert.True(t, got[1].MCPWide)
 	assert.False(t, got[1].Global)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+const (
+	goldenApplicationConsumerJSON = `{"id":"0199a000-0000-7000-8000-000000000002","gateway_id":"0199a000-0000-7000-8000-000000000001","name":"chat","type":"LLM","slug":"chat0001","active":true,"registry_ids":["0199a000-0000-7000-8000-000000000004"],"auth_ids":["0199a000-0000-7000-8000-000000000003"],"identity":{},"auth_binding":{},"created_at":"2026-10-01T12:00:00Z","updated_at":"2026-10-01T12:00:00Z"}`
+	goldenApplicationAuthJSON     = `{"id":"0199a000-0000-7000-8000-000000000003","gateway_id":"0199a000-0000-7000-8000-000000000001","name":"app-key","type":"api_key","enabled":true,"config":{},"created_at":"2026-10-01T12:00:00Z","updated_at":"2026-10-01T12:00:00Z"}`
+	goldenApplicationVersion      = "7464076d2dbe1b1ea7a7a5fe86558d30e7801eae2a3ea640b61ec12412d647ee"
+)
+
+func applicationFixture() (consumerdomain.Consumer, authdomain.Auth) {
+	at := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	gatewayID := ids.From[ids.GatewayKind](uuid.MustParse("0199a000-0000-7000-8000-000000000001"))
+	authID := ids.From[ids.AuthKind](uuid.MustParse("0199a000-0000-7000-8000-000000000003"))
+	consumer := consumerdomain.Consumer{
+		ID: ids.From[ids.ConsumerKind](uuid.MustParse("0199a000-0000-7000-8000-000000000002")), GatewayID: gatewayID,
+		Name: "chat", Type: consumerdomain.TypeLLM, Slug: "chat0001", Active: true, AuthIDs: []ids.AuthID{authID},
+		RegistryIDs: []ids.RegistryID{ids.From[ids.RegistryKind](uuid.MustParse("0199a000-0000-7000-8000-000000000004"))},
+		CreatedAt:   at, UpdatedAt: at,
+	}
+	auth := authdomain.Auth{
+		ID: authID, GatewayID: gatewayID, Name: "app-key", Type: authdomain.TypeAPIKey, Enabled: true,
+		KeyHash: "golden-hash", CreatedAt: at, UpdatedAt: at,
+	}
+	return consumer, auth
+}
+
+func encodeConsumerAndAuth(t *testing.T, consumer consumerdomain.Consumer, auth authdomain.Auth) (raw []byte, consumerJSON, authJSON string) {
+	t.Helper()
+	raw, err := configsnapshot.NewCodec().Encode(readmodel.Build(readmodel.Data{
+		Version: "golden", Consumers: []consumerdomain.Consumer{consumer}, Auths: []authdomain.Auth{auth},
+	}))
+	require.NoError(t, err)
+	var msg snapshotpb.Snapshot
+	require.NoError(t, proto.Unmarshal(raw, &msg))
+	require.Len(t, msg.GetConsumers(), 1)
+	require.Len(t, msg.GetAuths(), 1)
+	return raw, string(msg.GetConsumers()[0].GetJson()), string(msg.GetAuths()[0].GetJson())
+}
+
+func TestCodecEncodesApplicationEntitiesAsBefore(t *testing.T) {
+	t.Parallel()
+	consumer, auth := applicationFixture()
+	raw, consumerJSON, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Equal(t, goldenApplicationConsumerJSON, consumerJSON)
+	assert.Equal(t, goldenApplicationAuthJSON, authJSON)
+	assert.Equal(t, goldenApplicationVersion, configsnapshot.NewCodec().Version(raw))
+}
+
+func TestCodecEncodesApplicationConsumerWithoutAuthLinksAsBefore(t *testing.T) {
+	t.Parallel()
+	for _, links := range []map[ids.AuthID]consumerdomain.AuthLink{nil, {}} {
+		consumer, auth := applicationFixture()
+		consumer.AuthLinks = links
+		raw, consumerJSON, _ := encodeConsumerAndAuth(t, consumer, auth)
+		assert.Equal(t, goldenApplicationConsumerJSON, consumerJSON)
+		assert.Equal(t, goldenApplicationVersion, configsnapshot.NewCodec().Version(raw))
+	}
+}
+
+func TestCodecRoundTripsPersonalAuthLinks(t *testing.T) {
+	t.Parallel()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	consumer.AuthLinks = map[ids.AuthID]consumerdomain.AuthLink{auth.ID: {
+		Level: consumerdomain.GrantLevelGroup, Priority: 2, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC),
+	}}
+	raw, consumerJSON, _ := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, consumerJSON, `"auth_links":{"0199a000-0000-7000-8000-000000000003":{"level":"group","priority":2,"granted_at":"2026-10-01T09:00:00Z"}}`)
+
+	codec := configsnapshot.NewCodec()
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	decoded := snap.Data().Consumers
+	require.Len(t, decoded, 1)
+	assert.True(t, decoded[0].IsPersonal())
+	assert.Equal(t, consumer.AuthLinks, decoded[0].AuthLinks)
+	assert.Contains(t, decoded[0].AuthIDs, auth.ID)
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsPersonalConsumerAndOwnedAuth(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	auth.OwnerID = "alice"
+
+	raw, consumerJSON, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, consumerJSON, `"audience":"personal"`)
+	assert.Contains(t, authJSON, `"owner_id":"alice"`)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	gotConsumer, ok := snap.ConsumerByID(consumer.ID)
+	require.True(t, ok)
+	assert.True(t, gotConsumer.IsPersonal())
+	gotAuth, ok := snap.AuthByAPIKeyHash(auth.KeyHash)
+	require.True(t, ok)
+	assert.Equal(t, "alice", gotAuth.OwnerID)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsOwnedAuthBudget(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	auth.OwnerID = "alice"
+	auth.Budget = &authdomain.KeyBudget{Max: 12.5, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarDay}
+
+	raw, _, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, authJSON, `"owner_id":"alice","budget":{"max":12.5,"unit":"dollars","time_window":"calendar_day"}`)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	gotAuth, ok := snap.AuthByAPIKeyHash(auth.KeyHash)
+	require.True(t, ok)
+	assert.Equal(t, auth.Budget, gotAuth.Budget)
+	gotAuth, ok = snap.AuthByOwner(auth.GatewayID, "alice")
+	require.True(t, ok)
+	assert.Equal(t, auth.Budget, gotAuth.Budget)
 
 	reraw, err := codec.Encode(snap)
 	require.NoError(t, err)

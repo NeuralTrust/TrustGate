@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -49,7 +50,10 @@ func provideConsumerRepository(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r })
+	if err := c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r }); err != nil {
+		return err
+	}
+	return c.Provide(func(r *consumerrepo.Repository) domain.LinkReader { return r })
 }
 
 // provideConsumerRepositoryViews exposes the consumer repository under its
@@ -69,8 +73,8 @@ func provideConsumerServices(c *container.Container) error {
 	if err := provideConsumerRepositoryViews(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
-		return appconsumer.NewCreator(repo, registryRepo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, gateways gatewaydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, gateways, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
@@ -112,8 +116,13 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewAuthConsumers); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, policyLevels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
-		return appconsumer.NewAssociator(repo, registryRepo, authRepo, policyRepo, policyLevels, manager, publisher, logger, sig.Signaler, resolver)
+	if err := c.Provide(func(apiKeys appauth.APIKeyFinder) appconsumer.StoreKeyResolver {
+		return appconsumer.NewStoreKeyResolver(apiKeys, utcNow)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, links domain.LinkReader, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, policyLevels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
+		return appconsumer.NewAssociator(repo, links, registryRepo, authRepo, policyRepo, policyLevels, manager, publisher, logger, sig.Signaler, resolver)
 	}); err != nil {
 		return err
 	}

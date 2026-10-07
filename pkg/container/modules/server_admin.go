@@ -112,6 +112,8 @@ type adminRouterParams struct {
 	RotateAuth *authhttp.RotateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
+	UpdateAuthBudget *authhttp.UpdateAuthBudgetHandler
+
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
 	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
@@ -127,6 +129,7 @@ type adminRouterParams struct {
 	StorePrincipal *storehttp.PrincipalHandler
 	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
 	StoreMaterialize *storehttp.MaterializeHandler
+	StoreLLMKey      *storehttp.LLMKeyHandler
 }
 
 type adminServerParams struct {
@@ -192,6 +195,7 @@ func ServerAdmin(c *container.Container) error {
 				ListAuth:                  p.ListAuth,
 				UpdateAuth:                p.UpdateAuth,
 				RotateAuth:                p.RotateAuth,
+				UpdateAuthBudget:          p.UpdateAuthBudget,
 				DeleteAuth:                p.DeleteAuth,
 
 				ListProvidersCatalog:  p.ListProvidersCatalog,
@@ -207,6 +211,7 @@ func ServerAdmin(c *container.Container) error {
 				StorePolicies:             p.StorePolicies,
 				StorePrincipal:            p.StorePrincipal,
 				StoreMaterialize:          p.StoreMaterialize,
+				StoreLLMKey:               p.StoreLLMKey,
 			})
 		},
 		dig.Name("admin"),

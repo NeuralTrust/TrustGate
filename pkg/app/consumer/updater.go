@@ -36,6 +36,7 @@ type UpdateInput struct {
 	GatewayID ids.GatewayID
 	Name      *string
 	Type      *domain.Type
+	Audience  *domain.Audience
 	LBConfig  *domain.LBConfig
 	Headers   *map[string]string
 	Active    *bool
@@ -99,6 +100,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	}
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
+	}
+	if err := validateAudienceUpdate(existing, in); err != nil {
+		return nil, err
 	}
 	if in.Name != nil {
 		existing.Name = *in.Name
@@ -167,6 +171,22 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		u.signaler.Signal(ctx)
 	}
 	return existing, nil
+}
+
+func validateAudienceUpdate(existing *domain.Consumer, in UpdateInput) error {
+	if in.Audience != nil {
+		audience, err := domain.ParseAudience(string(*in.Audience))
+		if err != nil {
+			return err
+		}
+		if audience != existing.Audience {
+			return domain.ErrAudienceImmutable
+		}
+	}
+	if in.Auths != nil && existing.IsPersonal() {
+		return domain.ErrPersonalAuthsBulk
+	}
+	return nil
 }
 
 // requestedRegistryBindings returns the association set the repository must

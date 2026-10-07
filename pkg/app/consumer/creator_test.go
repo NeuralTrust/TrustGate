@@ -25,6 +25,8 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	registrymocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
@@ -61,7 +63,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), mgr, publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), mgr, publisher, newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: gwID,
@@ -109,7 +111,7 @@ func TestCreator_Create_WithRegistries_BindsAtomically(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repo, registryRepo, gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:     gwID,
@@ -138,7 +140,7 @@ func TestCreator_Create_RejectsRegistryFromAnotherGateway(t *testing.T) {
 		Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registryRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registryRepo, gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:   gwID,
@@ -199,7 +201,7 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			publisher := cachemocks.NewEventPublisher(t)
-			creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+			creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 			tc.input.GatewayID = gwID
 			tc.input.Name = "chat"
 			tc.input.Type = domain.TypeLLM
@@ -216,7 +218,7 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 	t.Parallel()
 	publisher := cachemocks.NewEventPublisher(t)
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -243,7 +245,7 @@ func TestCreator_Create_RetriesOnSlugCollision(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: gwID,
@@ -264,7 +266,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -275,6 +277,62 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+}
+
+func TestCreator_Create_PersonalRules(t *testing.T) {
+	t.Parallel()
+	hybrid := &gatewaydomain.Gateway{Entitlements: gatewaydomain.Entitlements{DataPlane: gatewaydomain.DataPlaneHybrid}}
+	for _, tc := range []struct {
+		name     string
+		audience domain.Audience
+		gateway  *gatewaydomain.Gateway
+		wantErr  error
+	}{
+		{name: "personal on a hybrid gateway", audience: domain.AudiencePersonal, gateway: hybrid, wantErr: domain.ErrHybridPersonal},
+		{name: "personal on a hosted gateway", audience: domain.AudiencePersonal, gateway: &gatewaydomain.Gateway{}},
+		{name: "application never reads the gateway", audience: domain.AudienceApplication},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			registryID := ids.New[ids.RegistryKind]()
+			repo := repomocks.NewRepository(t)
+			registryRepo := registrymocks.NewRepository(t)
+			gatewayRepo := gatewaymocks.NewRepository(t)
+			publisher := cachemocks.NewEventPublisher(t)
+			if tc.gateway != nil {
+				gatewayRepo.EXPECT().FindByID(mock.Anything, gwID).Return(tc.gateway, nil).Once()
+			}
+			if tc.wantErr == nil {
+				registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.RegistryID{registryID}).
+					Return([]*registrydomain.Registry{{ID: registryID, GatewayID: gwID}}, nil).Once()
+				repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+			creator := appconsumer.NewCreator(repo, registryRepo, gatewayRepo, newCacheManager(), publisher, newTestLogger(), nil)
+
+			c, err := creator.Create(context.Background(), appconsumer.CreateInput{
+				GatewayID:     gwID,
+				Name:          "chat",
+				Type:          domain.TypeLLM,
+				Audience:      tc.audience,
+				RegistryIDs:   []ids.RegistryID{registryID},
+				ModelPolicies: domain.ModelPolicies{registryID: {Default: "gpt-4o"}},
+			})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Create error: %v", err)
+			}
+			if c.AudienceName() != tc.audience {
+				t.Fatalf("AudienceName() = %q, want %q", c.AudienceName(), tc.audience)
+			}
+		})
+	}
 }
 
 func TestCreatorRejectsDisabledSmartRoutingOutsideActualPolicy(t *testing.T) {
@@ -291,7 +349,7 @@ func TestCreatorRejectsDisabledSmartRoutingOutsideActualPolicy(t *testing.T) {
 			repo := repomocks.NewRepository(t)
 			registryRepo := registrymocks.NewRepository(t)
 			publisher := cachemocks.NewEventPublisher(t)
-			creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), publisher, newTestLogger(), nil)
+			creator := appconsumer.NewCreator(repo, registryRepo, gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 			cfg := &domain.LBConfig{Algorithm: "smart-routing", Members: []domain.LBPoolMember{{RegistryID: id, Model: "low"}, {RegistryID: id, Model: "high"}}, SmartRouting: &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 30}, Tiers: []registrydomain.SmartRoutingTier{{RegistryID: tc.tierID, Model: "low", MinScore: 0}, {RegistryID: id, Model: "high", MinScore: .45}}}}
 			_, err := creator.Create(context.Background(), appconsumer.CreateInput{GatewayID: gw, Name: "disabled", Type: domain.TypeLLM, RegistryIDs: []ids.RegistryID{id}, ModelPolicies: domain.ModelPolicies{id: {Allowed: []string{"low"}}}, LBConfig: cfg})
 			if !errors.Is(err, tc.want) {

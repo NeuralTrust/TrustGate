@@ -23,7 +23,7 @@ import (
 	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
-	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -131,6 +131,7 @@ type apiKeyConsumers struct {
 	// vault is optional: a plane without it answers the same question with the
 	// upstream part left out rather than refusing it.
 	vault vaultdomain.Repository
+	now   func() time.Time
 }
 
 func NewAPIKeyConsumers(
@@ -141,7 +142,7 @@ func NewAPIKeyConsumers(
 	if consumers == nil || apiKeys == nil {
 		return nil, errors.New("consumer api key consumers: consumers and api keys are required")
 	}
-	return &apiKeyConsumers{consumers: consumers, apiKeys: apiKeys, vault: vault}, nil
+	return &apiKeyConsumers{consumers: consumers, apiKeys: apiKeys, vault: vault, now: time.Now}, nil
 }
 
 func (s *apiKeyConsumers) ForAPIKey(
@@ -155,13 +156,12 @@ func (s *apiKeyConsumers) ForAPIKey(
 	}
 	auth, err := s.apiKeys.FindByAPIKey(ctx, key)
 	if err != nil {
-		if errors.Is(err, authdomain.ErrNotFound) {
+		if errors.Is(err, commonerrors.ErrNotFound) {
 			return nil, ErrAPIKeyUnknown
 		}
 		return nil, fmt.Errorf("consumer api key consumers: find api key: %w", err)
 	}
-	if auth == nil || !auth.Enabled ||
-		auth.Type != authdomain.TypeAPIKey || auth.GatewayID != gatewayID {
+	if !auth.AcceptsApplicationKey(gatewayID, s.now().UTC()) {
 		return nil, ErrAPIKeyUnknown
 	}
 	data, err := s.consumers.FindByGateway(ctx, gatewayID)

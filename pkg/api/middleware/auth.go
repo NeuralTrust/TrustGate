@@ -15,8 +15,10 @@
 package middleware
 
 import (
+	"cmp"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
@@ -36,20 +38,32 @@ type AuthMiddleware struct {
 	resolver        resolver.IdentityResolver
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
+	storeKeys       appconsumer.StoreKeyResolver
 	logger          *slog.Logger
+	now             func() time.Time
 }
 
 func NewAuthMiddleware(
 	identityResolver resolver.IdentityResolver,
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
+	storeKeys appconsumer.StoreKeyResolver,
 	logger *slog.Logger,
+	now func() time.Time,
 ) *AuthMiddleware {
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	if storeKeys == nil {
+		cmp.Or(logger, slog.Default()).Warn("no store key resolver is wired, so /store/v1 answers 404")
+	}
 	return &AuthMiddleware{
 		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
+		storeKeys:       storeKeys,
 		logger:          logger,
+		now:             now,
 	}
 }
 
@@ -66,6 +80,9 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		if err != nil {
 			return notFound(c)
 		}
+		if consumerdomain.IsStoreSlug(route.ConsumerSlug) {
+			return m.serveStore(c, gw, route)
+		}
 		data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)
 		if err != nil {
 			return internalError(c, "failed to load gateway data")
@@ -81,7 +98,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 				slog.String("gateway_slug", gw.Slug),
 				slog.String("consumer_slug", route.ConsumerSlug),
 				slog.String("error", err.Error()))
-			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(resolver.APIKeyFromRequest(c), data, rc) {
+			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(resolver.APIKeyFromRequest(c), data, rc, m.now()) {
 				return forbidden(c, resolver.ErrForbidden)
 			}
 			return writeAuthError(c, err)
@@ -98,6 +115,46 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
 	}
+}
+
+func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, route resolver.ProxyRoute) error {
+	if m.storeKeys == nil || gw.ServedByHybridDataPlane() {
+		return notFound(c)
+	}
+	data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)
+	if err != nil {
+		return internalError(c, "failed to load gateway data")
+	}
+	if !data.HasPersonalConsumers() {
+		return notFound(c)
+	}
+	rawKey := resolver.APIKeyFromRequest(c)
+	if rawKey == "" {
+		return unauthenticated(c)
+	}
+	key, err := m.storeKeys.Resolve(c.UserContext(), gw.ID, rawKey)
+	if errors.Is(err, appconsumer.ErrStoreKeyRejected) {
+		m.debug(c).Debug("store key rejected", slog.String("gateway_slug", gw.Slug))
+		return unauthenticated(c)
+	}
+	if err != nil {
+		m.debug(c).Warn("store key resolution failed",
+			slog.String("gateway_slug", gw.Slug),
+			slog.String("error", err.Error()))
+		return internalError(c, "failed to resolve api key")
+	}
+	c.Locals(resolver.ProxyRouteLocalsKey, route)
+	m.attach(c, &appauth.AuthContext{
+		Principal:   &identity.Principal{Subject: key.OwnerID, Method: identity.MethodAPIKey},
+		Method:      appauth.MethodAPIKey,
+		GatewayID:   gw.ID,
+		GatewaySlug: gw.Slug,
+		AuthID:      key.ID,
+		OwnerID:     key.OwnerID,
+		KeyBudget:   key.Budget.Clone(),
+		Subject:     key.OwnerID,
+	}, gw, data, nil)
+	return c.Next()
 }
 
 func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
@@ -178,7 +235,6 @@ func (m *AuthMiddleware) attach(
 		c.Locals(string(appconsumer.AuthIDKey), authCtx.AuthID)
 	}
 	c.Locals(string(appconsumer.ConsumerDataKey), data)
-	c.Locals(string(appconsumer.ConsumerKey), rc)
 	ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 	if authCtx.Principal != nil {
 		ctx = identity.WithPrincipal(ctx, authCtx.Principal)
@@ -188,23 +244,26 @@ func (m *AuthMiddleware) attach(
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
 	}
 	ctx = appconsumer.WithData(ctx, data)
-	ctx = appconsumer.WithConsumer(ctx, rc)
+	if rc != nil {
+		c.Locals(string(appconsumer.ConsumerKey), rc)
+		ctx = appconsumer.WithConsumer(ctx, rc)
+	}
 	ctx = appgateway.WithGateway(ctx, gw)
 	c.SetUserContext(ctx)
 }
 
-func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsumer.RoutableConsumer) bool {
+func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsumer.RoutableConsumer, now time.Time) bool {
 	if rawKey == "" || data == nil || rc == nil || rc.Consumer == nil {
 		return false
 	}
 	hash := authdomain.HashAPIKey(rawKey)
 	for i := range data.Consumers {
 		other := &data.Consumers[i]
-		if other.Consumer == nil || other.Consumer.ID == rc.Consumer.ID {
+		if other.Consumer == nil || other.Consumer.ID == rc.Consumer.ID || other.Consumer.IsPersonal() {
 			continue
 		}
 		for _, a := range other.Auths {
-			if a != nil && a.Enabled && a.Type == authdomain.TypeAPIKey && a.KeyHash == hash {
+			if a.AcceptsAPIKey(hash, now) {
 				return true
 			}
 		}

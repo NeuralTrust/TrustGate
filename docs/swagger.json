@@ -399,7 +399,7 @@
         },
         "/v1/gateways/{gateway_id}/auths": {
             "get": {
-                "description": "Returns a paginated list of auths in a gateway.",
+                "description": "Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.",
                 "produces": [
                     "application/json"
                 ],
@@ -438,6 +438,18 @@
                         "type": "boolean",
                         "description": "Filter by enabled flag",
                         "name": "enabled",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "List only the personal key of this owner. Without it, personal keys are excluded",
+                        "name": "owner_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true lists only personal keys, of every owner; false lists only application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)",
+                        "name": "owned",
                         "in": "query"
                     },
                     {
@@ -628,7 +640,7 @@
                 ]
             },
             "put": {
-                "description": "Updates an existing auth.",
+                "description": "Updates an existing auth. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -693,6 +705,12 @@
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -767,9 +785,88 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/auths/{id}/budget": {
+            "put": {
+                "description": "Sets or clears the spending limit of a personal (owned) key. The body is {\"max\": \u003cnumber\u003e, \"unit\": \"tokens\" or \"dollars\", \"time_window\": \"calendar_month\" or \"calendar_day\"}, or null to clear the budget. max must be a finite number above zero, and a whole number of tokens when unit is tokens. Every token_rate_limiter policy with key_budgets that counts in that unit holds the key to this budget in place of its aggregate; a policy counting in the other unit keeps its own limit. The secret, the expiry and the consumers of the key do not change, and a rotation keeps the budget. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Set the budget of a personal key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The budget, or null to clear it",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "An application key (application_key), or an invalid budget (validation_failed)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/auths/{id}/rotate": {
             "post": {
-                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards.",
+                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
                 "produces": [
                     "application/json"
                 ],
@@ -824,6 +921,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1010,6 +1113,12 @@
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -1148,6 +1257,12 @@
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -1221,7 +1336,10 @@
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}": {
             "post": {
-                "description": "Associates an auth credential with a consumer (idempotent).",
+                "description": "Associates an auth credential with a consumer (idempotent). An application consumer takes only unowned auths and no link attributes (an empty body or {}). A personal consumer takes only owned keys, and the body is required: level and granted_at must be present, and priority defaults to 1. Re-attaching a key to a personal consumer replaces that one link's attributes.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1253,6 +1371,14 @@
                         "name": "auth_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Link attributes, for an owned key on a personal consumer",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -1273,6 +1399,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The auth does not match the consumer audience, or the link attributes are missing, invalid or not allowed",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1705,6 +1837,18 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2987,6 +3131,12 @@
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "The registry carries the last primary default model of a personal consumer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -3969,6 +4119,273 @@
                     },
                     "422": {
                         "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-key": {
+            "get": {
+                "description": "Returns the caller's own personal key on the gateway: its id, recognition prefix and suffix, the consumers it is linked to, its expiry and timestamps. The secret is never returned. Acts on the signed-in tenant user only; a service credential or a platform token answers 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Read your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No key for the caller, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "description": "Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Create your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry of the key",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The caller already holds a key on this gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Missing or out-of-range expires_at, or a hybrid gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Deletes the caller's personal key and every consumer link it holds. The caller may create a new one afterwards.",
+                "tags": [
+                    "store"
+                ],
+                "summary": "Revoke your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No key for the caller, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-key/rotate": {
+            "post": {
+                "description": "Replaces the secret of the caller's personal key and returns the new one once. The key keeps its id and every consumer link. Without expires_at the current expiry stays, unless it has passed; with it, it must fall within the next 90 days.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Rotate your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry of the new secret",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No key for the caller, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Out-of-range expires_at, or an expired key rotated without one",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -5061,6 +5478,31 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number",
+                    "example": 50
+                },
+                "time_window": {
+                    "type": "string",
+                    "enum": [
+                        "calendar_month",
+                        "calendar_day"
+                    ],
+                    "example": "calendar_month"
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "tokens",
+                        "dollars"
+                    ],
+                    "example": "dollars"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -5106,6 +5548,14 @@
                     "description": "#nosec G101",
                     "type": "string"
                 },
+                "budget": {
+                    "description": "Budget is the spending limit of a personal key. Absent means it has none.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse"
+                        }
+                    ]
+                },
                 "config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse"
                 },
@@ -5142,6 +5592,9 @@
                 "name": {
                     "type": "string"
                 },
+                "owner_id": {
+                    "type": "string"
+                },
                 "type": {
                     "type": "string"
                 },
@@ -5158,6 +5611,28 @@
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number"
+                },
+                "time_window": {
+                    "type": "string",
+                    "enum": [
+                        "calendar_month",
+                        "calendar_day"
+                    ]
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "tokens",
+                        "dollars"
+                    ]
                 }
             }
         },
@@ -5439,6 +5914,31 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest": {
+            "type": "object",
+            "properties": {
+                "granted_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T09:00:00Z"
+                },
+                "level": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "group",
+                        "all"
+                    ],
+                    "example": "group"
+                },
+                "priority": {
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "example": 1
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
             "type": "object",
             "properties": {
@@ -5512,6 +6012,15 @@
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "audience": {
+                    "description": "Audience is application (the default) or personal. It is set at create\nand cannot change afterwards.",
+                    "type": "string",
+                    "default": "application",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
                 },
                 "auth_binding": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
@@ -5801,6 +6310,14 @@
                 "active": {
                     "type": "boolean"
                 },
+                "audience": {
+                    "description": "Audience is set at create and cannot change: a value other than the stored\none answers 422.",
+                    "type": "string",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
+                },
                 "auth_binding": {
                     "description": "AuthBinding replaces the whole binding. Omit to keep it; send empty lists\nto clear it.",
                     "allOf": [
@@ -5930,6 +6447,13 @@
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "audience": {
+                    "type": "string",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
                 },
                 "auth_binding": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse"
@@ -7762,6 +8286,16 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-12-31T12:00:00Z"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide": {
             "type": "object",
             "properties": {
@@ -7800,6 +8334,16 @@
                 "reason": {
                     "description": "Reason is why the user wants the server, in their own words. Kept only on\na request an approver has to decide, and shown to them there.",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-12-31T12:00:00Z"
                 }
             }
         },
@@ -7983,6 +8527,41 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "consumer_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key_prefix": {
+                    "type": "string"
+                },
+                "key_suffix": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest": {
             "type": "object",
             "properties": {
@@ -8028,6 +8607,38 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse": {
+            "type": "object",
+            "properties": {
+                "consumer_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key_prefix": {
+                    "type": "string"
+                },
+                "key_suffix": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -8971,6 +9582,9 @@
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt"
                     }
+                },
+                "auth_id": {
+                    "type": "string"
                 },
                 "consumer": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer"

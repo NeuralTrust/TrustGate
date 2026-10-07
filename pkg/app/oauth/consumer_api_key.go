@@ -16,6 +16,7 @@ package oauth
 
 import (
 	"errors"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -39,13 +40,10 @@ func validMCPConsumer(target *appconsumer.RoutableConsumer, gatewayID ids.Gatewa
 		target.Consumer.GatewayID == gatewayID
 }
 
-// validAPIKeyAuth reports whether the presented key is an enabled api key of
-// this gateway that the consumer actually holds.
-func validAPIKeyAuth(auth *authdomain.Auth, consumer *consumerdomain.Consumer, gatewayID ids.GatewayID) bool {
-	if auth == nil ||
-		!auth.Enabled ||
-		auth.Type != authdomain.TypeAPIKey ||
-		auth.GatewayID != gatewayID {
+// validAPIKeyAuth reports whether the presented key is an enabled, unexpired
+// application api key of this gateway that the consumer actually holds.
+func validAPIKeyAuth(auth *authdomain.Auth, consumer *consumerdomain.Consumer, gatewayID ids.GatewayID, now time.Time) bool {
+	if !auth.AcceptsApplicationKey(gatewayID, now) {
 		return false
 	}
 	for _, authID := range consumer.AuthIDs {

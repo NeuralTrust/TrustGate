@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -52,6 +53,8 @@ type RoutingDecision struct {
 type RequestContext struct {
 	GatewayID          string
 	ConsumerID         string
+	AuthID             string
+	OwnerID            string
 	ConsumerType       string
 	RegistryID         string
 	RegistryPricing    *domain.Pricing
@@ -84,6 +87,10 @@ type RequestContext struct {
 	// playground trace store can trust it where it cannot trust the raw header
 	// (MCP clients can send any header value and no resolver checks it there).
 	PlaygroundVerified bool
+	// KeyBudget is the spending limit of the personal key that authenticated
+	// the request, nil when it has none. The gateway sets it from the resolved
+	// key, never from a header; plugins read it and never modify it.
+	KeyBudget *authdomain.KeyBudget
 	// MCPTool is the upstream-native tool name a resolved tools/call is bound
 	// to, "" on any other request. A plugin deciding whether to allow the call
 	// must read it here and not from MetadataMCPTool: Metadata is a channel

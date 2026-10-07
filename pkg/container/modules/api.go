@@ -17,6 +17,7 @@ package modules
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
@@ -240,7 +241,9 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
+	if err := c.Provide(func() *resolver.APIKeyIdentityResolver {
+		return resolver.NewAPIKeyIdentityResolver(utcNow)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(p playgroundVerifierParams) (*resolver.PlaygroundIdentityResolver, error) {
@@ -294,7 +297,15 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {
+	if err := c.Provide(func(
+		identityResolver resolver.IdentityResolver,
+		dataFinder appconsumer.DataFinder,
+		gatewayResolver resolver.GatewayResolver,
+		storeKeys appconsumer.StoreKeyResolver,
+		logger *slog.Logger,
+	) *middleware.AuthMiddleware {
+		return middleware.NewAuthMiddleware(identityResolver, dataFinder, gatewayResolver, storeKeys, logger, utcNow)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewOAuthChallengeMiddleware); err != nil {
@@ -430,4 +441,8 @@ func provideEndUserConnectionsHandler(
 		)
 	}
 	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
+}
+
+func utcNow() time.Time {
+	return time.Now().UTC()
 }

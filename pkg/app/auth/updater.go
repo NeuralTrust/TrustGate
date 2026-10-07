@@ -52,6 +52,7 @@ type updater struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	now          func() time.Time
 }
 
 func NewUpdater(
@@ -61,6 +62,7 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	now func() time.Time,
 ) Updater {
 	return &updater{
 		repo:         repo,
@@ -70,6 +72,7 @@ func NewUpdater(
 		publisher:    publisher,
 		logger:       logger,
 		signaler:     signaler,
+		now:          utcClock(now),
 	}
 }
 
@@ -80,6 +83,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	}
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
+	}
+	if err := existing.ManagedBy(""); err != nil {
+		return nil, err
 	}
 	previousType := existing.Type
 	previousEnabled := existing.Enabled
@@ -98,12 +104,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 		in.Config.ResolveSecretsFrom(existing.Config)
 		existing.Config = *in.Config
 	}
+	now := u.now()
 	if in.Expiry != nil {
-		if err := existing.SetExpiry(in.Expiry.At); err != nil {
+		if err := existing.SetExpiry(in.Expiry.At, now); err != nil {
 			return nil, err
 		}
 	}
-	existing.UpdatedAt = time.Now().UTC()
+	existing.UpdatedAt = now
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}

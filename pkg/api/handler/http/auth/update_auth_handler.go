@@ -36,7 +36,7 @@ func NewUpdateAuthHandler(updater appauth.Updater) *UpdateAuthHandler {
 
 // Handle godoc
 // @Summary      Update an auth
-// @Description  Updates an existing auth.
+// @Description  Updates an existing auth. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.
 // @Tags         auths
 // @Accept       json
 // @Produce      json
@@ -49,6 +49,7 @@ func NewUpdateAuthHandler(updater appauth.Updater) *UpdateAuthHandler {
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/auths/{id} [put]
 func (h *UpdateAuthHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.AuthKind](c)

@@ -4,9 +4,11 @@ package consumer_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -264,5 +266,85 @@ func TestRepository_DeleteRegistry_PruneKeepsUnrelatedGatewayConsumer(t *testing
 	}
 	if _, ok := got.ModelPolicies[otherReg]; !ok {
 		t.Fatalf("ModelPolicies = %+v, want the other gateway's policy untouched", got.ModelPolicies)
+	}
+}
+
+func TestRepository_DeleteRegistry_KeepsThePersonalDefault(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "gw-prune-personal")
+	withDefault := seedRegistry(t, f.be, gwID, "personal-default")
+	plain := seedRegistry(t, f.be, gwID, "personal-plain")
+	c, err := domain.New(domain.CreateParams{
+		GatewayID: gwID, Name: "personal", Type: domain.TypeLLM, Audience: domain.AudiencePersonal,
+		RegistryIDs:   []ids.RegistryID{withDefault, plain},
+		ModelPolicies: domain.ModelPolicies{withDefault: {Default: "gpt-4o"}, plain: {Allowed: []string{"gpt-4o"}}},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	saveWithRegistries(t, f, c)
+
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	if _, err := registries.Delete(ctx, gwID, withDefault); !errors.Is(err, domain.ErrPersonalNoDefault) ||
+		!errors.Is(err, commonerrors.ErrValidation) || errors.Is(err, commonerrors.ErrHasDependents) {
+		t.Fatalf("Delete(default registry) = %v, want ErrPersonalNoDefault (422), as a detach answers", err)
+	}
+	report, err := registries.Delete(ctx, gwID, plain)
+	if err != nil {
+		t.Fatalf("Delete(plain registry): %v", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, []string{registrydomain.PrunedModelPolicies}, nil)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !slices.Equal(got.RegistryIDs, []ids.RegistryID{withDefault}) || got.ModelPolicies[withDefault].Default != "gpt-4o" {
+		t.Fatalf("got registries %v and policies %+v, want the default registry kept", got.RegistryIDs, got.ModelPolicies)
+	}
+}
+
+func TestRepository_DeleteRegistry_PersonalConsumerLosesOnlyItsFallback(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "gw-prune-personal-fallback")
+	primary := seedRegistry(t, f.be, gwID, "personal-primary")
+	fallback := seedRegistry(t, f.be, gwID, "personal-fallback")
+	c, err := domain.New(domain.CreateParams{
+		GatewayID: gwID, Name: "personal-with-fallback", Type: domain.TypeLLM, Audience: domain.AudiencePersonal,
+		RegistryIDs:   []ids.RegistryID{primary, fallback},
+		ModelPolicies: domain.ModelPolicies{primary: {Default: "gpt-4o"}, fallback: {Default: "gpt-4o-mini"}},
+		Fallback: &domain.Fallback{
+			Enabled:  true,
+			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+			Budget:   domain.FallbackBudget{MaxAttempts: 2},
+			Chain:    registrydomain.Registries{fallback},
+		},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	saveWithRegistries(t, f, c)
+
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	if _, err := registries.Delete(ctx, gwID, primary); !errors.Is(err, domain.ErrPersonalNoDefault) {
+		t.Fatalf("Delete(primary) = %v, want ErrPersonalNoDefault: the only other default sits on the active fallback", err)
+	}
+	report, err := registries.Delete(ctx, gwID, fallback)
+	if err != nil {
+		t.Fatalf("Delete(fallback registry): %v", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, []string{registrydomain.PrunedModelPolicies}, []string{registrydomain.PrunedFallback})
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback != nil {
+		t.Fatalf("Fallback = %+v, want it dropped with its only step", got.Fallback)
+	}
+	if !slices.Equal(got.RegistryIDs, []ids.RegistryID{primary}) || got.ModelPolicies[primary].Default != "gpt-4o" {
+		t.Fatalf("got registries %v and policies %+v, want the primary default kept", got.RegistryIDs, got.ModelPolicies)
 	}
 }

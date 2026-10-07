@@ -25,7 +25,9 @@ import (
 // Structures that cannot survive losing the reference are dropped whole rather
 // than left empty: a pool with no members, a smart-routing ladder that lost its
 // cheapest tier and a fallback with no chain are all set to nil, so a pruned
-// consumer still satisfies Validate.
+// consumer still satisfies Validate. The one exception is a personal consumer
+// losing its last primary default model: callers refuse that prune first with
+// ValidateRegistryDetach.
 func (c *Consumer) PruneRegistry(registryID ids.RegistryID) (registry.ConsumerPrune, bool) {
 	if c == nil || registryID.IsNil() {
 		return registry.ConsumerPrune{}, false

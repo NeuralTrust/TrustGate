@@ -66,6 +66,18 @@ func (r *authRepository) FindByAPIKeyHash(_ context.Context, keyHash string) (*d
 	return cloneAuth(a)
 }
 
+func (r *authRepository) FindByOwner(_ context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	a, ok := snap.AuthByOwner(gatewayID, ownerID)
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return cloneAuth(a)
+}
+
 func (r *authRepository) FindEnabledByTypes(_ context.Context, types []domain.Type) ([]*domain.Auth, error) {
 	if len(types) == 0 {
 		return nil, nil
@@ -93,7 +105,19 @@ func (r *authRepository) Update(_ context.Context, _ *domain.Auth) error {
 	return configsync.ErrReadOnly
 }
 
+func (r *authRepository) UpdateBudget(_ context.Context, _ *domain.Auth) (*domain.Auth, error) {
+	return nil, configsync.ErrReadOnly
+}
+
+func (r *authRepository) RotateKey(_ context.Context, _ *domain.Auth, _ string) error {
+	return configsync.ErrReadOnly
+}
+
 func (r *authRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.AuthID) error {
+	return configsync.ErrReadOnly
+}
+
+func (r *authRepository) DeleteOwned(_ context.Context, _ ids.GatewayID, _ ids.AuthID) error {
 	return configsync.ErrReadOnly
 }
 

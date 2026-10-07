@@ -23,6 +23,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrymocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -51,7 +52,7 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 		Once()
 
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), newSignalCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -69,7 +70,7 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), newSignalCreateInput(gwID)); err == nil {
 		t.Fatal("expected error, got nil")
@@ -92,7 +93,7 @@ func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), gatewaymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	if _, err := creator.Create(context.Background(), newSignalCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)

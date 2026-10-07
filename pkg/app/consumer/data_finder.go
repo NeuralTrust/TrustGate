@@ -121,7 +121,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	onMCP := partitionScoped(loaded.onMCP)
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
-		chain := fallbackChainOf(c)
+		chain := c.ActiveFallbackChain()
 		fallbackBackends := collectBackends(chain, backendByID)
 		f.warnUnresolvedFallbackChain(c, fallbackBackends)
 		gatewayWide := everywhere
@@ -140,7 +140,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 			PolicyPlan:       plan,
 			ScopedPolicies:   scoped,
 			MCPPlans:         mcpPlans,
-			Auths:            collectAuths(c.AuthIDs, authByID),
+			Auths:            collectAuths(slugAuthIDs(c), authByID),
 		})
 	}
 
@@ -287,7 +287,7 @@ func (f *dataFinder) loadBackends(
 	consumers []*domain.Consumer,
 ) (map[ids.RegistryID]*registrydomain.Registry, error) {
 	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
-		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
+		return append(append([]ids.RegistryID{}, c.RegistryIDs...), c.ActiveFallbackChain()...)
 	})
 	if len(idList) == 0 {
 		return map[ids.RegistryID]*registrydomain.Registry{}, nil
@@ -351,7 +351,7 @@ func (f *dataFinder) loadAuths(
 	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
 ) (map[ids.AuthID]*authdomain.Auth, error) {
-	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.AuthID { return c.AuthIDs })
+	idList := uniqueIDs(consumers, slugAuthIDs)
 	if len(idList) == 0 {
 		return map[ids.AuthID]*authdomain.Auth{}, nil
 	}
@@ -364,6 +364,13 @@ func (f *dataFinder) loadAuths(
 		byID[a.ID] = a
 	}
 	return byID, nil
+}
+
+func slugAuthIDs(c *domain.Consumer) []ids.AuthID {
+	if c.IsPersonal() {
+		return nil
+	}
+	return c.AuthIDs
 }
 
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {
@@ -382,7 +389,7 @@ func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Con
 }
 
 func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []*registrydomain.Registry) {
-	chain := fallbackChainOf(c)
+	chain := c.ActiveFallbackChain()
 	if len(chain) == len(resolved) {
 		return
 	}
@@ -391,17 +398,6 @@ func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []
 		slog.Int("chain_size", len(chain)),
 		slog.Int("resolved", len(resolved)),
 	)
-}
-
-func fallbackChainOf(c *domain.Consumer) []ids.RegistryID {
-	if c == nil {
-		return nil
-	}
-	fb := c.Fallback
-	if fb == nil || !fb.Enabled {
-		return nil
-	}
-	return []ids.RegistryID(fb.Chain)
 }
 
 func poolRegistryIDs(all []ids.RegistryID, chain []ids.RegistryID) []ids.RegistryID {
@@ -518,7 +514,7 @@ func composePolicies(gatewayWide, attached []*policydomain.Policy) []*policydoma
 func collectAuths(idList []ids.AuthID, byID map[ids.AuthID]*authdomain.Auth) []*authdomain.Auth {
 	out := make([]*authdomain.Auth, 0, len(idList))
 	for _, id := range idList {
-		if a, ok := byID[id]; ok {
+		if a, ok := byID[id]; ok && !a.IsOwned() {
 			out = append(out, a)
 		}
 	}

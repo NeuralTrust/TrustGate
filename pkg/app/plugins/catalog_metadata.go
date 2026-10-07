@@ -142,8 +142,8 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"token_rate_limiter": {
 		name:  "LLM Budget",
 		group: groupQuota,
-		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer. " +
-			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
+		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer. Partition key counts per API key instead. " +
+			"Without a partition, if the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -190,7 +190,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "time_window",
 								Label:       "Time Window",
 								Type:        FieldTypeString,
-								Description: "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s.",
+								Description: "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day.",
 							},
 						},
 					},
@@ -199,7 +199,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "aggregate",
 					Label:       "Aggregate Budget",
 					Type:        FieldTypeObject,
-					Description: "Single budget counter for the whole scope, used when per-model rules are not set.",
+					Description: "Single budget counter for the whole scope, used when per-model rules are not set. Optional with key_budgets, where a personal key's own budget replaces it.",
 					Fields: []Field{
 						{
 							Key:         "max",
@@ -212,7 +212,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "time_window",
 							Label:       "Time Window",
 							Type:        FieldTypeString,
-							Description: "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s.",
+							Description: "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day.",
 						},
 					},
 				},
@@ -241,7 +241,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "custom_pricing",
 					Label:       "Custom Pricing",
 					Type:        FieldTypeMap,
-					Description: "Per-token USD rates keyed by model slug or wildcard pattern, consulted before registry pricing and the models.dev catalog. Used for dollar budgets.",
+					Description: "Per-token USD rates keyed by model slug or wildcard pattern, consulted before registry pricing and the models.dev catalog. Used for dollar budgets. Not allowed with partition key.",
 					Value: &Field{
 						Key:   "price",
 						Label: "Price",
@@ -266,7 +266,22 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "group_by_header",
 					Label:       "Group By Header",
 					Type:        FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer.",
+					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer. Not allowed with partition key.",
+				},
+				{
+					Key:   "partition",
+					Label: "Partition",
+					Type:  FieldTypeEnum,
+					Description: "Set to key to count the budget per API key: per owner when the key has one, so rotating or re-creating it keeps the spend, otherwise per key. Requests without an API key pass uncounted. " +
+						"In enforce mode a key budget fails closed: 503 budget_unavailable when the counter store is unavailable, and 403 model_unpriced on a dollar budget for a model with no catalog or registry price. " +
+						"Not allowed with custom_pricing, group_by_header or behavior_on_exceeded downgrade_model.",
+					Enum: enumOptions("key"),
+				},
+				{
+					Key:         "key_budgets",
+					Label:       "Key Budgets",
+					Type:        FieldTypeBoolean,
+					Description: "With partition key, hold each personal key to the budget it carries (set by the console per user) instead of aggregate, when the budget counts in this policy's unit; aggregate then becomes optional, and a key without a budget in this unit is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets.",
 				},
 			},
 		},

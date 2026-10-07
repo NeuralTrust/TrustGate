@@ -45,7 +45,19 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo        domain.Repository
+	repo   domain.Repository
+	events *KeyEvents
+}
+
+// NewCreator returns the Creator of admin-managed auths.
+func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
+	return &creator{repo: repo, events: NewKeyEvents(manager, publisher, logger, signaler)}
+}
+
+// KeyEvents tells the rest of the gateway that a new auth was stored: it warms
+// this replica's caches with it, invalidates every other replica's and asks
+// for a new config snapshot.
+type KeyEvents struct {
 	memoryCache *cache.TTLMap
 	keyCache    *cache.TTLMap
 	publisher   cache.EventPublisher
@@ -53,14 +65,26 @@ type creator struct {
 	signaler    configsyncport.SnapshotSignaler
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
-	return &creator{
-		repo:        repo,
+// NewKeyEvents returns the KeyEvents of the auth caches in manager.
+func NewKeyEvents(manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) *KeyEvents {
+	return &KeyEvents{
 		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
 		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
 		publisher:   publisher,
 		logger:      logger,
 		signaler:    signaler,
+	}
+}
+
+// Saved announces a, which was just stored.
+func (e *KeyEvents) Saved(ctx context.Context, a *domain.Auth) {
+	e.memoryCache.Set(a.ID.String(), a)
+	if a.KeyHash != "" {
+		e.keyCache.Set(a.KeyHash, a)
+	}
+	invalidation.GatewayData(ctx, e.publisher, e.logger, a.GatewayID)
+	if e.signaler != nil {
+		e.signaler.Signal(ctx)
 	}
 }
 
@@ -75,14 +99,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 	if err := c.repo.Save(ctx, a); err != nil {
 		return nil, err
 	}
-	c.memoryCache.Set(a.ID.String(), a)
-	if a.KeyHash != "" {
-		c.keyCache.Set(a.KeyHash, a)
-	}
-	invalidation.GatewayData(ctx, c.publisher, c.logger, a.GatewayID)
-	if c.signaler != nil {
-		c.signaler.Signal(ctx)
-	}
+	c.events.Saved(ctx, a)
 	return a, nil
 }
 

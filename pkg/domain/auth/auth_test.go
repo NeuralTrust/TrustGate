@@ -356,8 +356,21 @@ func TestSetExpiry(t *testing.T) {
 			t.Fatalf("NewAPIKeyAuth: %v", err)
 		}
 		past := time.Now().UTC().Add(-time.Minute)
-		if err := a.SetExpiry(&past); !errors.Is(err, ErrExpiryInThePast) {
+		if err := a.SetExpiry(&past, time.Now().UTC()); !errors.Is(err, ErrExpiryInThePast) {
 			t.Fatalf("err = %v, want ErrExpiryInThePast", err)
+		}
+	})
+
+	t.Run("judges the expiry against the given clock", func(t *testing.T) {
+		t.Parallel()
+		a, err := NewAPIKeyAuth(gwID, "k", true, nil)
+		if err != nil {
+			t.Fatalf("NewAPIKeyAuth: %v", err)
+		}
+		now := time.Now().UTC().Add(48 * time.Hour)
+		tomorrow := now.Add(-24 * time.Hour)
+		if err := a.SetExpiry(&tomorrow, now); !errors.Is(err, ErrExpiryInThePast) {
+			t.Fatalf("err = %v, want ErrExpiryInThePast against the given clock", err)
 		}
 	})
 
@@ -372,7 +385,7 @@ func TestSetExpiry(t *testing.T) {
 			t.Fatalf("NewAuth: %v", err)
 		}
 		future := time.Now().UTC().Add(time.Hour)
-		if err := a.SetExpiry(&future); !errors.Is(err, ErrInvalidType) {
+		if err := a.SetExpiry(&future, time.Now().UTC()); !errors.Is(err, ErrInvalidType) {
 			t.Fatalf("err = %v, want ErrInvalidType", err)
 		}
 	})
@@ -387,7 +400,7 @@ func TestSetExpiry(t *testing.T) {
 		if a.ExpiresAt == nil {
 			t.Fatal("expected the expiry to be stored")
 		}
-		if err := a.SetExpiry(nil); err != nil {
+		if err := a.SetExpiry(nil, time.Now().UTC()); err != nil {
 			t.Fatalf("SetExpiry(nil): %v", err)
 		}
 		if a.ExpiresAt != nil {
@@ -418,6 +431,68 @@ func TestIsExpired(t *testing.T) {
 	}
 }
 
+func TestAcceptsAPIKey(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	past, future := now.Add(-time.Second), now.Add(time.Hour)
+	hash := HashAPIKey("ag_key")
+	live := func() *Auth { return &Auth{Type: TypeAPIKey, Enabled: true, KeyHash: hash} }
+	cases := map[string]struct {
+		auth func() *Auth
+		want bool
+	}{
+		"never expires":     {live, true},
+		"expires later":     {func() *Auth { a := live(); a.ExpiresAt = &future; return a }, true},
+		"expired":           {func() *Auth { a := live(); a.ExpiresAt = &past; return a }, false},
+		"expires right now": {func() *Auth { a := live(); a.ExpiresAt = &now; return a }, false},
+		"disabled":          {func() *Auth { a := live(); a.Enabled = false; return a }, false},
+		"other hash":        {func() *Auth { a := live(); a.KeyHash = HashAPIKey("ag_other"); return a }, false},
+		"not an api key":    {func() *Auth { a := live(); a.Type = TypeOAuth2; return a }, false},
+		"nil auth":          {func() *Auth { return nil }, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.auth().AcceptsAPIKey(hash, now); got != tc.want {
+				t.Fatalf("AcceptsAPIKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAcceptsApplicationKey(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	past, future := now.Add(-time.Second), now.Add(time.Hour)
+	gatewayID, otherGateway := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
+	live := func() *Auth { return &Auth{GatewayID: gatewayID, Type: TypeAPIKey, Enabled: true} }
+	cases := map[string]struct {
+		auth    func() *Auth
+		gateway ids.GatewayID
+		want    bool
+	}{
+		"application key":       {live, gatewayID, true},
+		"expires later":         {func() *Auth { a := live(); a.ExpiresAt = &future; return a }, gatewayID, true},
+		"expired":               {func() *Auth { a := live(); a.ExpiresAt = &past; return a }, gatewayID, false},
+		"expires right now":     {func() *Auth { a := live(); a.ExpiresAt = &now; return a }, gatewayID, false},
+		"disabled":              {func() *Auth { a := live(); a.Enabled = false; return a }, gatewayID, false},
+		"owned by a user":       {func() *Auth { a := live(); a.OwnerID = "alice"; return a }, gatewayID, false},
+		"not an api key":        {func() *Auth { a := live(); a.Type = TypeOAuth2; return a }, gatewayID, false},
+		"another gateway":       {live, otherGateway, false},
+		"no gateway asked":      {func() *Auth { a := live(); a.GatewayID = ids.GatewayID{}; return a }, ids.GatewayID{}, false},
+		"nil auth":              {func() *Auth { return nil }, gatewayID, false},
+		"key without a gateway": {func() *Auth { a := live(); a.GatewayID = ids.GatewayID{}; return a }, gatewayID, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.auth().AcceptsApplicationKey(tc.gateway, now); got != tc.want {
+				t.Fatalf("AcceptsApplicationKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // Rotating replaces the secret. It says nothing about the expiry, so a key with
 // three weeks left keeps them unless the caller asks for something else.
 func TestRotateAPIKey_KeepsTheExpiry(t *testing.T) {
@@ -427,10 +502,103 @@ func TestRotateAPIKey_KeepsTheExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAPIKeyAuth: %v", err)
 	}
-	if _, err := a.RotateAPIKey(); err != nil {
+	rotatedAt := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	if _, err := a.RotateAPIKey(rotatedAt); err != nil {
 		t.Fatalf("RotateAPIKey: %v", err)
 	}
 	if a.ExpiresAt == nil || !a.ExpiresAt.Equal(future) {
 		t.Fatalf("ExpiresAt = %v, want it untouched at %v", a.ExpiresAt, future)
+	}
+	if !a.UpdatedAt.Equal(rotatedAt) {
+		t.Fatalf("UpdatedAt = %v, want the given clock %v", a.UpdatedAt, rotatedAt)
+	}
+}
+
+func TestAuth_IsOwned(t *testing.T) {
+	t.Parallel()
+	if (&Auth{}).IsOwned() || !(&Auth{OwnerID: "alice"}).IsOwned() {
+		t.Fatal("IsOwned() must be true only for an auth with an owner")
+	}
+	if !errors.Is(ErrOwnedKeyExists, commonerrors.ErrAlreadyExists) {
+		t.Fatal("ErrOwnedKeyExists must answer as an already-exists conflict")
+	}
+}
+
+func TestAuth_ManagedBy(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		owner, caller string
+		want          error
+	}{
+		"admin on an application key":  {},
+		"admin on an owned key":        {owner: "alice", want: ErrOwnedKey},
+		"owner on their key":           {owner: "alice", caller: "alice"},
+		"another user on an owned key": {owner: "alice", caller: "bob", want: ErrNotFound},
+		"a user on an application key": {caller: "alice", want: ErrNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := (&Auth{OwnerID: tc.owner}).ManagedBy(tc.caller)
+			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("ManagedBy(%q) on owner %q = %v, want %v", tc.caller, tc.owner, err, tc.want)
+			}
+		})
+	}
+	if errors.Is(ErrOwnedKey, commonerrors.ErrValidation) {
+		t.Fatal("ErrOwnedKey must answer with its own code, not as a validation error")
+	}
+}
+
+func TestValidateOwnedExpiry(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		at   time.Time
+		want error
+	}{
+		"zero":            {at: time.Time{}, want: ErrOwnedExpiry},
+		"in the past":     {at: now.Add(-time.Hour), want: ErrOwnedExpiry},
+		"now":             {at: now, want: ErrOwnedExpiry},
+		"one second":      {at: now.Add(time.Second)},
+		"exactly 90 days": {at: time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC)},
+		"90 days and 1 s": {at: time.Date(2026, 12, 31, 12, 0, 1, 0, time.UTC), want: ErrOwnedExpiry},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateOwnedExpiry(tc.at, now)
+			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("ValidateOwnedExpiry(%v) = %v, want %v", tc.at, err, tc.want)
+			}
+		})
+	}
+	if !errors.Is(ErrOwnedExpiry, commonerrors.ErrValidation) {
+		t.Fatal("ErrOwnedExpiry must answer as a validation error")
+	}
+}
+
+func TestNewOwnedAPIKeyAuth(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(30 * 24 * time.Hour)
+
+	a, err := NewOwnedAPIKeyAuth(gwID, "alice", expiresAt, now)
+	if err != nil {
+		t.Fatalf("NewOwnedAPIKeyAuth: %v", err)
+	}
+	if !a.IsOwned() || a.OwnerID != "alice" || a.Name != "personal" || a.Type != TypeAPIKey || !a.Enabled || !a.ExpiresAt.Equal(expiresAt) || !a.CreatedAt.Equal(now) {
+		t.Fatalf("auth = %+v, want an enabled api_key named personal, owned by alice, expiring at %v", a, expiresAt)
+	}
+	if a.RawKey == "" || a.KeyHash != HashAPIKey(a.RawKey) || a.KeyPrefix == "" || a.KeySuffix == "" {
+		t.Fatal("an owned key must carry a fresh secret, its hash and its preview")
+	}
+	if _, err := NewOwnedAPIKeyAuth(gwID, " ", expiresAt, now); !errors.Is(err, ErrInvalidOwner) {
+		t.Fatalf("blank owner: err = %v, want ErrInvalidOwner", err)
+	}
+	if ValidateOwner("") == nil || ValidateOwner("alice") != nil || !errors.Is(ErrInvalidOwner, commonerrors.ErrValidation) {
+		t.Fatal("ValidateOwner must refuse only a blank owner, as a validation error")
+	}
+	if _, err := NewOwnedAPIKeyAuth(gwID, "alice", now.Add(MaxOwnedKeyLifetime+time.Second), now); !errors.Is(err, ErrOwnedExpiry) {
+		t.Fatalf("expiry beyond the cap: err = %v, want ErrOwnedExpiry", err)
 	}
 }

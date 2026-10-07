@@ -15,6 +15,7 @@
 package consumer
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 
@@ -102,6 +103,8 @@ func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
 // @Failure      400          {object}  httpio.ErrorBody
 // @Failure      401          {object}  httpio.ErrorBody
 // @Failure      404          {object}  httpio.ErrorBody
+// @Failure      409          {object}  httpio.ErrorBody
+// @Failure      422          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id} [delete]
 func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	gatewayID, consumerID, registryID, err := httpio.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")
@@ -116,27 +119,45 @@ func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 
 // AttachAuth godoc
 // @Summary      Attach an auth to a consumer
-// @Description  Associates an auth credential with a consumer (idempotent).
+// @Description  Associates an auth credential with a consumer (idempotent). An application consumer takes only unowned auths and no link attributes (an empty body or {}). A personal consumer takes only owned keys, and the body is required: level and granted_at must be present, and priority defaults to 1. Re-attaching a key to a personal consumer replaces that one link's attributes.
 // @Tags         consumers
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
-// @Param        auth_id     path  string  true  "Auth id"      format(uuid)
+// @Param        gateway_id  path  string                     true   "Gateway id"   format(uuid)
+// @Param        id          path  string                     true   "Consumer id"  format(uuid)
+// @Param        auth_id     path  string                     true   "Auth id"      format(uuid)
+// @Param        body        body  request.AttachAuthRequest  false  "Link attributes, for an owned key on a personal consumer"
 // @Success      204         "No Content"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody  "The auth does not match the consumer audience, or the link attributes are missing, invalid or not allowed"
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id} [post]
 func (h *AssociationHandler) AttachAuth(c *fiber.Ctx) error {
 	gatewayID, consumerID, authID, err := httpio.ParseConsumerAssociationID[ids.AuthKind](c, "auth_id")
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	if err := h.associator.AttachAuth(c.UserContext(), gatewayID, consumerID, authID); err != nil {
+	link, err := parseAttachAuthLink(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	if err := h.associator.AttachAuth(c.UserContext(), gatewayID, consumerID, authID, link); err != nil {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteNoContent(c)
+}
+
+func parseAttachAuthLink(c *fiber.Ctx) (*consumerdomain.AuthLink, error) {
+	if len(bytes.TrimSpace(c.Body())) == 0 {
+		return nil, nil
+	}
+	var req request.AttachAuthRequest
+	if err := c.BodyParser(&req); err != nil {
+		return nil, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation)
+	}
+	return req.ToLink()
 }
 
 // DetachAuth godoc

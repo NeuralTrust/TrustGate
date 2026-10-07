@@ -25,8 +25,10 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	gwmocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
+	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	sessionmocks "github.com/NeuralTrust/TrustGate/pkg/app/session/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -59,6 +61,11 @@ type sessionAppOption func(*sessionAppConfig)
 
 type sessionAppConfig struct {
 	store *sessionmocks.Store
+	auth  *appauth.AuthContext
+}
+
+func withAuth(authCtx *appauth.AuthContext) sessionAppOption {
+	return func(c *sessionAppConfig) { c.auth = authCtx }
 }
 
 func withStore(store *sessionmocks.Store) sessionAppOption {
@@ -86,7 +93,11 @@ func newSessionApp(t *testing.T, gw *domain.Gateway, opts ...sessionAppOption) (
 	app := fiber.New()
 	if gw != nil {
 		app.Use(func(c *fiber.Ctx) error {
-			c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), gwID))
+			ctx := appconsumer.WithGatewayID(c.UserContext(), gwID)
+			if cfg.auth != nil {
+				ctx = appauth.WithAuthContext(ctx, cfg.auth)
+			}
+			c.SetUserContext(ctx)
 			return c.Next()
 		})
 	}
@@ -433,7 +444,7 @@ func TestSession_ResponsesInvalidConversationFallsThrough(t *testing.T) {
 
 func TestSession_ResponsesPreviousResponseHit(t *testing.T) {
 	store := sessionmocks.NewStore(t)
-	store.EXPECT().SessionForTurn(mock.Anything, testGatewayID, "resp_prev1").Return("sess-chain").Once()
+	store.EXPECT().SessionForTurn(mock.Anything, appsession.Scope{GatewayID: testGatewayID}, "resp_prev1").Return("sess-chain").Once()
 	app, capt := newSessionApp(t, gatewayWithSession(nil), withStore(store))
 	resp := doPathRequest(t, app, pathResponses, `{"previous_response_id":"resp_prev1","input":"next"}`, nil)
 	require.Equal(t, "sess-chain", capt.effective)
@@ -441,9 +452,30 @@ func TestSession_ResponsesPreviousResponseHit(t *testing.T) {
 	require.Equal(t, "sess-chain", resp.Header.Get(defaultSessionHeader))
 }
 
+func TestSession_ResponsesPreviousResponseLooksUpTheKeyOwnersTurns(t *testing.T) {
+	cases := map[string]struct {
+		auth  *appauth.AuthContext
+		owner string
+	}{
+		"personal key":            {auth: &appauth.AuthContext{Method: appauth.MethodAPIKey, OwnerID: "alice"}, owner: "alice"},
+		"application key":         {auth: &appauth.AuthContext{Method: appauth.MethodAPIKey}},
+		"owner on another method": {auth: &appauth.AuthContext{Method: appauth.MethodOIDC, OwnerID: "alice"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := sessionmocks.NewStore(t)
+			scope := appsession.Scope{GatewayID: testGatewayID, OwnerID: tc.owner}
+			store.EXPECT().SessionForTurn(mock.Anything, scope, "resp_prev1").Return("sess-chain").Once()
+			app, capt := newSessionApp(t, gatewayWithSession(nil), withStore(store), withAuth(tc.auth))
+			doPathRequest(t, app, pathResponses, `{"previous_response_id":"resp_prev1","input":"next"}`, nil)
+			require.Equal(t, "sess-chain", capt.effective)
+		})
+	}
+}
+
 func TestSession_ResponsesPreviousResponseMissGeneratesAKeptID(t *testing.T) {
 	store := sessionmocks.NewStore(t)
-	store.EXPECT().SessionForTurn(mock.Anything, testGatewayID, "resp_expired").Return("").Once()
+	store.EXPECT().SessionForTurn(mock.Anything, appsession.Scope{GatewayID: testGatewayID}, "resp_expired").Return("").Once()
 	app, capt := newSessionApp(t, gatewayWithSession(nil), withStore(store))
 	doPathRequest(t, app, pathResponses, `{"previous_response_id":"resp_expired","input":"next"}`, nil)
 	require.True(t, capt.generated())

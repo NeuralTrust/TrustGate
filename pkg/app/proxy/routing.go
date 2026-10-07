@@ -47,10 +47,43 @@ type routedBackend struct {
 	baseline     *trace.RouteBaseline
 }
 
+// CandidateFilter keeps the routing candidates a store link may use.
+type CandidateFilter func(routingdomain.Candidate) bool
+
+// ResolvedRouting is routing already resolved for a request, which the
+// forwarder uses as is instead of resolving it again.
+type ResolvedRouting struct {
+	Intent     routingdomain.Intent
+	Ref        string
+	Candidates *routingdomain.CandidateSet
+}
+
+var errNoKeptCandidate = fmt.Errorf("no candidate survives the store scope: %w", routingdomain.ErrModelDenied)
+
+type candidateQuery struct {
+	intent        routingdomain.Intent
+	needed        string
+	consumer      *appconsumer.RoutableConsumer
+	data          *appconsumer.Data
+	request       *infracontext.RequestContext
+	keep          CandidateFilter
+	strictListing bool
+}
+
+type candidatePipeline struct {
+	resolver approuting.Resolver
+	listing  appcatalog.ModelListing
+	logger   *slog.Logger
+}
+
 func (f *forwarder) resolveRouting(
 	ctx context.Context,
 	in ForwardInput,
 ) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
+	if in.Resolved != nil {
+		in.Request.RequestedModel = in.Resolved.Ref
+		return in.Resolved.Intent, in.Resolved.Candidates, nil
+	}
 	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
@@ -61,43 +94,69 @@ func (f *forwarder) resolveRouting(
 	if intent.IsZero() && needed == "" {
 		return intent, nil, nil
 	}
-	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
-		Intent:     intent,
-		Consumer:   in.Consumer,
-		Registries: registryLookup(in.Data),
+	candidates, err := f.pipeline.run(ctx, candidateQuery{
+		intent:   intent,
+		needed:   needed,
+		consumer: in.Consumer,
+		data:     in.Data,
+		request:  in.Request,
 	})
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
-	if needed != "" {
-		capable := filterCandidatesByCapability(candidates, needed)
-		if capable.Len() == 0 && candidates.Len() > 0 {
-			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
-			f.logRejectedIntent(in.Consumer, ref, err)
-			return intent, nil, err
-		}
-		candidates = capable
-	}
-	if needed == capabilityFiles {
-		candidates = filterCandidatesByFilesID(candidates, in.Request)
-	}
-	if candidates.Len() == 0 {
-		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
-		return intent, nil, ErrNoBackendsInPool
-	}
-	if intent.IsShortModel() {
-		candidates = f.filterCandidatesByProviderListing(ctx, candidates, intent.Model)
-	}
 	return intent, candidates, nil
 }
 
-func (f *forwarder) filterCandidatesByProviderListing(
+func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingdomain.CandidateSet, error) {
+	candidates, err := p.resolver.Resolve(approuting.ResolveInput{
+		Intent:     q.intent,
+		Consumer:   q.consumer,
+		Registries: registryLookup(q.data),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if candidates, err = keepCandidates(candidates, q.keep); err != nil {
+		return nil, err
+	}
+	if q.needed != "" {
+		capable := filterCandidatesByCapability(candidates, q.needed)
+		if capable.Len() == 0 && candidates.Len() > 0 {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, q.needed)
+		}
+		candidates = capable
+	}
+	if q.needed == capabilityFiles {
+		candidates = filterCandidatesByFilesID(candidates, q.request)
+	}
+	if candidates.Len() == 0 {
+		return nil, ErrNoBackendsInPool
+	}
+	if q.intent.IsShortModel() {
+		candidates = p.filterCandidatesByProviderListing(ctx, candidates, q.intent.Model, q.strictListing)
+	}
+	return candidates, nil
+}
+
+func keepCandidates(candidates *routingdomain.CandidateSet, keep CandidateFilter) (*routingdomain.CandidateSet, error) {
+	if keep == nil {
+		return candidates, nil
+	}
+	kept := candidates.Filter(keep)
+	if kept.Len() == 0 {
+		return nil, errNoKeptCandidate
+	}
+	return kept, nil
+}
+
+func (p candidatePipeline) filterCandidatesByProviderListing(
 	ctx context.Context,
 	candidates *routingdomain.CandidateSet,
 	model string,
+	strict bool,
 ) *routingdomain.CandidateSet {
-	if f.listing == nil {
+	if p.listing == nil {
 		return candidates
 	}
 	served := candidates.Filter(func(c routingdomain.Candidate) bool {
@@ -107,23 +166,23 @@ func (f *forwarder) filterCandidatesByProviderListing(
 		if !c.DefersModelChoice() {
 			return true
 		}
-		if f.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
+		if p.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
 			return true
 		}
-		f.logSkippedRegistry(c.Registry, model)
+		p.logSkippedRegistry(c.Registry, model)
 		return false
 	})
-	if served.Len() == 0 {
+	if served.Len() == 0 && !strict {
 		return candidates
 	}
 	return served
 }
 
-func (f *forwarder) logSkippedRegistry(reg *domain.Registry, model string) {
-	if f.logger == nil {
+func (p candidatePipeline) logSkippedRegistry(reg *domain.Registry, model string) {
+	if p.logger == nil {
 		return
 	}
-	f.logger.Debug("registry skipped: provider catalog does not list model",
+	p.logger.Debug("registry skipped: provider catalog does not list model",
 		slog.String("registry_id", reg.ID.String()),
 		slog.String("provider", reg.Provider()),
 		slog.String("model", model),
@@ -508,20 +567,26 @@ func (f *forwarder) stampRoutingPolicy(
 	rc *appconsumer.RoutableConsumer,
 	route routingdomain.Route,
 ) {
-	bk := route.Registry
-	dto.routeSource = routeSourceFor(dto.candidates, bk)
-	allowed, defaultModel := candidatePolicy(dto.candidates, rc, bk)
+	dto.routeSource = routeSourceFor(dto.candidates, route.Registry)
+	dto.request.AllowedModels, dto.request.DefaultModel = routePolicy(dto.candidates, rc, route)
+}
+
+func routePolicy(
+	candidates *routingdomain.CandidateSet,
+	rc *appconsumer.RoutableConsumer,
+	route routingdomain.Route,
+) ([]string, string) {
+	allowed, defaultModel := candidatePolicy(candidates, rc, route.Registry)
 	if route.Allowed != nil {
 		allowed = route.Allowed
 	}
 	if route.Default != "" {
 		defaultModel = route.Default
 	}
-	dto.request.AllowedModels = allowed
 	if modelmatch.IsPattern(defaultModel) {
 		defaultModel = ""
 	}
-	dto.request.DefaultModel = defaultModel
+	return allowed, defaultModel
 }
 
 func candidatePolicy(

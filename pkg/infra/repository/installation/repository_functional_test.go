@@ -78,6 +78,11 @@ func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
 			installed_by TEXT NOT NULL DEFAULT '',
 			config JSONB,
 			registry_id UUID,
+			reason TEXT NOT NULL DEFAULT '',
+			requester_groups TEXT[] NOT NULL DEFAULT '{}',
+			decision TEXT NOT NULL DEFAULT '',
+			decided_by TEXT NOT NULL DEFAULT '',
+			decided_at TIMESTAMPTZ NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		);

@@ -297,3 +297,43 @@ func TestCandidate_DefersModelChoice(t *testing.T) {
 		t.Error("an allow-list is an explicit operator restriction, not a deferral")
 	}
 }
+
+func TestCandidate_FallbackOnly(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "deepseek")
+	cases := map[string]struct {
+		sources []string
+		want    bool
+	}{
+		"no sources":              {sources: nil, want: false},
+		"primary only":            {sources: []string{"consumer"}, want: false},
+		"fallback only":           {sources: []string{routing.SourceFallback}, want: true},
+		"fallback merged twice":   {sources: []string{routing.SourceFallback, routing.SourceFallback}, want: true},
+		"primary and fallback":    {sources: []string{"consumer", routing.SourceFallback}, want: false},
+		"fallback then a primary": {sources: []string{routing.SourceFallback, "consumer"}, want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := (routing.Candidate{Registry: reg, Sources: tc.sources}).FallbackOnly(); got != tc.want {
+				t.Errorf("FallbackOnly(%v) = %v, want %v", tc.sources, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCandidate_FallbackOnlyClearsOnMergeWithAPrimary(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg, Sources: []string{routing.SourceFallback}})
+	merged, _ := s.ForRegistry(reg.ID)
+	if !merged.FallbackOnly() {
+		t.Fatal("a registry reached only as a fallback must be fallback-only")
+	}
+	s.Add(routing.Candidate{Registry: reg, Sources: []string{"consumer"}})
+	merged, _ = s.ForRegistry(reg.ID)
+	if merged.FallbackOnly() {
+		t.Fatal("a registry that is also a primary must not be fallback-only")
+	}
+}

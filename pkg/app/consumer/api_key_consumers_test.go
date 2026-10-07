@@ -141,6 +141,7 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
+	expired := time.Now().UTC().Add(-time.Minute)
 
 	cases := map[string]*authdomain.Auth{
 		"another gateway's key": {
@@ -149,6 +150,12 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 		"a disabled key": {ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: false},
 		"a credential that is not an api key": {
 			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeOAuth2, Enabled: true,
+		},
+		"a personal key": {
+			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice",
+		},
+		"an expired key": {
+			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, ExpiresAt: &expired,
 		},
 	}
 	for name, auth := range cases {
@@ -171,6 +178,17 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 
 		service, _ := appconsumer.NewAPIKeyConsumers(appconsumermocks.NewDataFinder(t), keys, nil)
 		_, err := service.ForAPIKey(ctx, gatewayID, "ag_nope")
+
+		require.ErrorIs(t, err, appconsumer.ErrAPIKeyUnknown)
+	})
+
+	t.Run("an expired key", func(t *testing.T) {
+		t.Parallel()
+		keys := appauthmocks.NewAPIKeyFinder(t)
+		keys.EXPECT().FindByAPIKey(ctx, "ag_old").Return(nil, authdomain.ErrExpired).Once()
+
+		service, _ := appconsumer.NewAPIKeyConsumers(appconsumermocks.NewDataFinder(t), keys, nil)
+		_, err := service.ForAPIKey(ctx, gatewayID, "ag_old")
 
 		require.ErrorIs(t, err, appconsumer.ErrAPIKeyUnknown)
 	})

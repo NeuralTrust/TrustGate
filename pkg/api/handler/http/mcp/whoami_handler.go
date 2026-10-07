@@ -54,6 +54,7 @@ type WhoAmIHandler struct {
 	// their keys are pointed at their own data plane instead of being handed
 	// this plane's URLs, which would refuse every call made on them.
 	refuseHybrid bool
+	now          func() time.Time
 }
 
 // WhoAmIKeyFinder finds the credential behind a raw API key, whichever gateway
@@ -89,8 +90,8 @@ type WhoAmIOption func(*WhoAmIHandler)
 // mcpDomain is MCP_BASE_DOMAIN, the suffix a gateway's MCP plane is published
 // under: the request's own host is the fixed one and addresses no gateway, so
 // the MCP URL is built from it instead. Attempts on this path are counted per
-// source, like the connect pages', because an unknown key is never cached and
-// each one reaches the key store.
+// source, like the connect pages', because an unknown key is remembered only
+// briefly and only by its exact digest, so each new guess reaches the key store.
 func WithWhoAmIGatewayFromKey(
 	keys WhoAmIKeyFinder,
 	gateways WhoAmIGatewayFinder,
@@ -122,7 +123,7 @@ func NewWhoAmIHandler(
 	proxyDomain string,
 	opts ...WhoAmIOption,
 ) *WhoAmIHandler {
-	h := &WhoAmIHandler{gateways: gateways, consumers: consumers, proxyDomain: proxyDomain}
+	h := &WhoAmIHandler{gateways: gateways, consumers: consumers, proxyDomain: proxyDomain, now: time.Now}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(h)
@@ -344,7 +345,7 @@ func (h *WhoAmIHandler) gatewayForKey(c *fiber.Ctx) *gatewaydomain.Gateway {
 		return nil
 	}
 	auth, err := h.byKey.keys.FindByAPIKey(c.UserContext(), key)
-	if err != nil || auth == nil || auth.GatewayID.IsNil() {
+	if err != nil || !auth.IsApplicationKey(h.now().UTC()) {
 		return nil
 	}
 	gateway, err := h.byKey.gateways.FindByID(c.UserContext(), auth.GatewayID)
