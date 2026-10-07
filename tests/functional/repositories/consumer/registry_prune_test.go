@@ -78,7 +78,10 @@ func smartRoutingConsumer(
 				{RegistryID: victim, Model: "gpt-4.1-nano"},
 				{RegistryID: keeper, Model: "gpt-4o"},
 			},
-			SmartRouting: &registrydomain.SmartRoutingConfig{Tiers: tiers},
+			SmartRouting: &registrydomain.SmartRoutingConfig{
+				SR1:   &registrydomain.SR1Config{CacheTTLSeconds: 300, EscapeHatchEnabled: false},
+				Tiers: tiers,
+			},
 		},
 	})
 	if err != nil {
@@ -97,7 +100,7 @@ func TestRepository_DeleteRegistry_PrunesRoutingReferences(t *testing.T) {
 	c := smartRoutingConsumer(t, gwID, "tiered-consumer", keeper, victim,
 		[]registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: keeper, Model: "gpt-4o"},
-			{MinScore: 0.6, RegistryID: victim, Model: "gpt-4.1-nano"},
+			{MinScore: 0.45, RegistryID: victim, Model: "gpt-4.1-nano"},
 		})
 	saveWithRegistries(t, f, c)
 
@@ -159,7 +162,7 @@ func TestRepository_DeleteRegistry_DropsLadderThatLosesItsCheapestTier(t *testin
 	c := smartRoutingConsumer(t, gwID, "floor-consumer", keeper, victim,
 		[]registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: victim, Model: "gpt-4.1-nano"},
-			{MinScore: 0.6, RegistryID: keeper, Model: "gpt-4o"},
+			{MinScore: 0.45, RegistryID: keeper, Model: "gpt-4o"},
 		})
 	saveWithRegistries(t, f, c)
 
