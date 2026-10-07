@@ -15,12 +15,12 @@
 package consumer
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
@@ -86,30 +86,6 @@ type Consumer struct {
 	UpdatedAt time.Time               `json:"updated_at"`
 }
 
-// MarshalJSON emits the same canonical smart-routing policy used by the proxy.
-func (c Consumer) MarshalJSON() ([]byte, error) {
-	normalized, err := c.LBConfig.NormalizeSmartRouting(c.ModelPolicies)
-	if err == nil {
-		c.LBConfig = normalized
-	}
-	type wire Consumer
-	return json.Marshal(wire(c))
-}
-
-// UnmarshalJSON migrates supported historical routing while retaining invalid targets.
-func (c *Consumer) UnmarshalJSON(raw []byte) error {
-	type wire Consumer
-	var decoded wire
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return err
-	}
-	*c = Consumer(decoded)
-	if normalized, err := c.LBConfig.NormalizeSmartRouting(c.ModelPolicies); err == nil {
-		c.LBConfig = normalized
-	}
-	return nil
-}
-
 func (c *Consumer) WeightFor(registryID ids.RegistryID) int {
 	if c.RegistryWeights == nil {
 		return 1
@@ -165,13 +141,19 @@ func New(params CreateParams) (*Consumer, error) {
 	if params.Active != nil {
 		active = *params.Active
 	}
+	lbConfig := params.LBConfig
+	if lbConfig != nil && lbConfig.Enabled && lbConfig.Algorithm == "" {
+		copy := *lbConfig
+		copy.Algorithm = algorithm.RoundRobin
+		lbConfig = &copy
+	}
 	c := &Consumer{
 		ID:              id,
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
 		Slug:            slug,
-		LBConfig:        params.LBConfig,
+		LBConfig:        lbConfig,
 		Headers:         params.Headers,
 		Active:          active,
 		RegistryIDs:     params.RegistryIDs,

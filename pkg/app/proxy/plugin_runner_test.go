@@ -82,7 +82,7 @@ func forwarderWithPlugin(
 	exec := appplugins.NewExecutor(reg, newTestLogger())
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, exec, nil, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
 		opts...,
 	)

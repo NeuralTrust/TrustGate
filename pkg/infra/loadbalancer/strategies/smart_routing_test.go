@@ -39,7 +39,7 @@ func (f *fakeScorer) ScoreSR1(_ context.Context, _, _ string) (float64, error) {
 func (f *fakeScorer) Configured() bool { return f.configured }
 
 func tiersFor(routes []routingdomain.Route, minScores ...float64) *registry.SmartRoutingConfig {
-	cfg := &registry.SmartRoutingConfig{}
+	cfg := &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}}
 	for i, min := range minScores {
 		if routes[i].Model == "" {
 			routes[i].Model = routes[i].Registry.Name
@@ -81,9 +81,9 @@ func TestSmartRouting_MapsScoreToTier(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			routes := makeRoutes("a", "b", "c")
-			cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+			cfg := tiersFor(routes, 0.0, 0.187, 0.45)
 			scorer := &fakeScorer{score: tc.score, configured: true}
-			s := NewSmartRouting(routes, cfg, scorer, nil)
+			s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 			got := s.Next(context.Background(), promptReq(), nil)
 			if got == nil || routeName(t, got) != tc.want {
 				t.Fatalf("score %g: got %+v, want %q", tc.score, got, tc.want)
@@ -111,9 +111,9 @@ func TestSmartRouting_MapsScoreToModelOnOneRegistry(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			routes := modelRoutes("gpt-4o-mini", "gpt-4.1-mini", "gpt-5")
-			cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+			cfg := tiersFor(routes, 0.0, 0.187, 0.45)
 			scorer := &fakeScorer{score: tc.score, configured: true}
-			s := NewSmartRouting(routes, cfg, scorer, nil)
+			s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 
 			got := s.Next(context.Background(), promptReq(), nil)
 
@@ -134,9 +134,9 @@ func TestSmartRouting_MapsScoreToModelOnOneRegistry(t *testing.T) {
 func TestSmartRouting_ExcludedStrongestModelExhaustsPolicy(t *testing.T) {
 	t.Parallel()
 	routes := modelRoutes("gpt-4o-mini", "gpt-5")
-	cfg := tiersFor(routes, 0.0, 0.8)
+	cfg := tiersFor(routes, 0.0, 0.45)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 
 	got := s.Next(context.Background(), promptReq(), excludeRoutes(routes[1]))
 
@@ -145,14 +145,14 @@ func TestSmartRouting_ExcludedStrongestModelExhaustsPolicy(t *testing.T) {
 	}
 }
 
-func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
+func TestSmartRouting_LowScoresUseLowestTier(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name  string
 		score float64
 		want  string
 	}{
-		{"below every threshold", 0.1, "c"},
+		{"low score", 0.1, "c"},
 		{"at the lowest threshold", 0, "c"},
 		{"between thresholds", 0.18, "c"},
 		{"middle tier", 0.3, "b"},
@@ -163,9 +163,9 @@ func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			routes := makeRoutes("a", "b", "c")
-			cfg := tiersFor(routes, 0.9, 0.7, 0.49)
+			cfg := tiersFor(routes, 0.45, 0.187, 0)
 			scorer := &fakeScorer{score: tc.score, configured: true}
-			s := NewSmartRouting(routes, cfg, scorer, nil)
+			s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 			req := promptReq()
 
 			got := s.Next(context.Background(), req, nil)
@@ -186,9 +186,9 @@ func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
 func TestSmartRouting_LowestTierExcludedSelectsHigherRung(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
-	cfg := tiersFor(routes, 0.9, 0.7, 0.49)
+	cfg := tiersFor(routes, 0.45, 0.187, 0)
 	scorer := &fakeScorer{score: 0.1, configured: true}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 	req := promptReq()
 
 	got := s.Next(context.Background(), req, excludeRoutes(routes[2]))
@@ -204,9 +204,9 @@ func TestSmartRouting_LowestTierExcludedSelectsHigherRung(t *testing.T) {
 func TestSmartRouting_NotConfiguredSelectsStrongest(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
-	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+	cfg := tiersFor(routes, 0.0, 0.187, 0.45)
 	scorer := &fakeScorer{score: 0.9, configured: false}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
 	if got == nil || routeName(t, got) != "c" {
 		t.Fatalf("failure should select the strongest declared route, got %+v", got)
@@ -219,9 +219,9 @@ func TestSmartRouting_NotConfiguredSelectsStrongest(t *testing.T) {
 func TestSmartRouting_ScoreErrorSelectsStrongest(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
-	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+	cfg := tiersFor(routes, 0.0, 0.187, 0.45)
 	scorer := &fakeScorer{err: errors.New("boom"), configured: true}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
 	if got == nil || routeName(t, got) != "c" {
 		t.Fatalf("failure should select the strongest declared route, got %+v", got)
@@ -231,9 +231,9 @@ func TestSmartRouting_ScoreErrorSelectsStrongest(t *testing.T) {
 func TestSmartRouting_EmptyBodySelectsStrongest(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
-	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+	cfg := tiersFor(routes, 0.0, 0.187, 0.45)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 	got := s.Next(context.Background(), &infracontext.RequestContext{}, nil)
 	if got == nil || routeName(t, got) != "c" {
 		t.Fatalf("failure should select the strongest declared route, got %+v", got)
@@ -246,9 +246,9 @@ func TestSmartRouting_EmptyBodySelectsStrongest(t *testing.T) {
 func TestSmartRouting_MappedStrongestRegistryExcludedExhaustsPolicy(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
-	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+	cfg := tiersFor(routes, 0.0, 0.187, 0.45)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 	got := s.Next(context.Background(), promptReq(), excludeRoutes(routes[2]))
 	if got != nil {
 		t.Fatalf("excluded strongest registry must not downgrade, got %+v", got)
@@ -260,7 +260,7 @@ func TestSmartRouting_UnsupportedSingleRungSkipsScorer(t *testing.T) {
 	routes := makeRoutes("only")
 	cfg := tiersFor(routes, 0.0)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(routes, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
 	if got != nil {
 		t.Fatalf("unsupported one-rung ladder must return no route, got %+v", got)
@@ -272,7 +272,7 @@ func TestSmartRouting_UnsupportedSingleRungSkipsScorer(t *testing.T) {
 
 func TestSmartRouting_EmptyReturnsNil(t *testing.T) {
 	t.Parallel()
-	s := NewSmartRouting(nil, nil, nil, nil)
+	s := NewSmartRouting(nil, nil, nil, nil, nil)
 	if s.Next(context.Background(), promptReq(), nil) != nil {
 		t.Fatal("empty SmartRouting.Next must return nil")
 	}
@@ -311,9 +311,9 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 			req:    &infracontext.RequestContext{},
 		},
 		{
-			name:        "score below every threshold still lands on a tier",
+			name:        "low score still lands on a tier",
 			routes:      makeRoutes("a", "b", "c"),
-			scorer:      &fakeScorer{score: 0.9, configured: true},
+			scorer:      &fakeScorer{score: 0.1, configured: true},
 			wantApplied: true,
 		},
 		{
@@ -328,14 +328,11 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := tiersFor(tc.routes, thresholdsFor(len(tc.routes))...)
-			if tc.name == "score below every threshold still lands on a tier" {
-				cfg = tiersFor(tc.routes, 0.95, 0.96, 0.97)
-			}
 			req := tc.req
 			if req == nil {
 				req = promptReq()
 			}
-			s := NewSmartRouting(tc.routes, cfg, tc.scorer, nil)
+			s := NewSmartRouting(tc.routes, cfg, tc.scorer, nil, nil)
 			var excluded map[routingdomain.RouteKey]struct{}
 			if tc.onlyStrongest {
 				excluded = excludeRoutes(tc.routes[0])
@@ -359,16 +356,15 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 func TestSmartRouting_NilRequestRoutesWithoutPanicking(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b")
-	s := NewSmartRouting(routes, tiersFor(routes, 0.0, 0.5), &fakeScorer{configured: true}, nil)
+	s := NewSmartRouting(routes, tiersFor(routes, 0.0, 0.45), &fakeScorer{configured: true}, nil, nil)
 	if got := s.Next(context.Background(), nil, nil); got == nil {
 		t.Fatal("a nil request must still route, not panic")
 	}
 }
 
 func thresholdsFor(n int) []float64 {
-	out := make([]float64, 0, n)
-	for i := 0; i < n; i++ {
-		out = append(out, float64(i)*0.4)
+	if n == 2 {
+		return []float64{0, 0.45}
 	}
-	return out
+	return []float64{0, 0.187, 0.45}
 }

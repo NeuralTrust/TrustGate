@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCodecSR1MigrationDoesNotLetInvalidConsumerBlockSnapshot(t *testing.T) {
+func TestCodecPreservesCanonicalAndInvalidSmartRouting(t *testing.T) {
 	for _, kind := range []string{"one rung", "four rungs", "ambiguous pin", "invalid explicit cuts"} {
 		t.Run(kind, func(t *testing.T) {
 			gatewayID := ids.New[ids.GatewayKind]()
@@ -44,10 +44,10 @@ func TestCodecSR1MigrationDoesNotLetInvalidConsumerBlockSnapshot(t *testing.T) {
 						{RegistryID: registryID, Model: "mid"},
 						{RegistryID: registryID, Model: "high"},
 					},
-					SmartRouting: &registrydomain.SmartRoutingConfig{Tiers: []registrydomain.SmartRoutingTier{
-						{RegistryID: registryID, Model: "high", MinScore: .8},
-						{RegistryID: registryID, Model: "low", MinScore: .1},
-						{RegistryID: registryID, Model: "mid", MinScore: .4},
+					SmartRouting: &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300}, Tiers: []registrydomain.SmartRoutingTier{
+						{RegistryID: registryID, Model: "high", MinScore: .45},
+						{RegistryID: registryID, Model: "low", MinScore: 0},
+						{RegistryID: registryID, Model: "mid", MinScore: .187},
 					}},
 				},
 			}
@@ -76,10 +76,9 @@ func TestCodecSR1MigrationDoesNotLetInvalidConsumerBlockSnapshot(t *testing.T) {
 				invalid.LBConfig.SmartRouting.Tiers = append(invalid.LBConfig.SmartRouting.Tiers, tier)
 			}
 			if kind == "invalid explicit cuts" {
-				off := false
-				invalid.LBConfig.SmartRouting.SR1 = &registrydomain.SR1Config{CacheTTLSeconds: 300, EscapeHatchEnabled: &off}
+				invalid.LBConfig.SmartRouting.SR1 = &registrydomain.SR1Config{CacheTTLSeconds: 300, EscapeHatchEnabled: false}
 			}
-			_, err := invalid.LBConfig.NormalizeSmartRouting(nil)
+			err := invalid.LBConfig.Validate(nil)
 			require.Error(t, err, "the fixture must require operator repair")
 			codec := configsnapshot.NewCodec()
 			raw, err := codec.Encode(readmodel.Build(readmodel.Data{
@@ -93,18 +92,14 @@ func TestCodecSR1MigrationDoesNotLetInvalidConsumerBlockSnapshot(t *testing.T) {
 			gotValid, ok := snapshot.ConsumerByID(valid.ID)
 			require.True(t, ok)
 			require.NotNil(t, gotValid.LBConfig.SmartRouting.SR1)
-			require.NotNil(t, gotValid.LBConfig.SmartRouting.SR1.EscapeHatchEnabled)
 			assert.False(t, gotValid.LBConfig.SmartRouting.SR1.EscapeEnabled())
 			assert.Equal(t, 300, gotValid.LBConfig.SmartRouting.SR1.CacheTTLSeconds)
-			for i, cut := range []float64{0, .187, .45} {
-				assert.Equal(t, cut, gotValid.LBConfig.SmartRouting.Tiers[i].MinScore)
-				assert.Equal(t, []string{"low", "mid", "high"}[i], gotValid.LBConfig.SmartRouting.Tiers[i].Model)
-			}
+			assert.Equal(t, valid.LBConfig.SmartRouting, gotValid.LBConfig.SmartRouting, "serialization must preserve tier order and cuts")
 			gotInvalid, ok := snapshot.ConsumerByID(invalid.ID)
 			require.True(t, ok)
 			assert.Equal(t, invalid.LBConfig.Members, gotInvalid.LBConfig.Members)
 			assert.Equal(t, invalid.LBConfig.SmartRouting, gotInvalid.LBConfig.SmartRouting)
-			_, err = gotInvalid.LBConfig.NormalizeSmartRouting(nil)
+			err = gotInvalid.LBConfig.Validate(nil)
 			require.Error(t, err, "serialization must not invent a repaired ladder")
 			reraw, err := codec.Encode(snapshot)
 			require.NoError(t, err)

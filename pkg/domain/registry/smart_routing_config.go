@@ -15,9 +15,12 @@
 package registry
 
 import (
+	"fmt"
+	"math"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 // SmartRoutingTier binds a complexity-score threshold to a target route. A tier
@@ -40,8 +43,43 @@ type SmartRoutingConfig struct {
 }
 
 func (c *SmartRoutingConfig) Validate() error {
-	_, err := c.Normalize()
-	return err
+	if c == nil || (len(c.Tiers) != 2 && len(c.Tiers) != 3) {
+		return fmt.Errorf("%w: smart routing requires two or three rungs", ErrInvalidSmartRouting)
+	}
+	if c.SR1 == nil {
+		return fmt.Errorf("%w: session commitment configuration is required", ErrInvalidSmartRouting)
+	}
+	if c.SR1.CacheTTLSeconds < 1 || c.SR1.CacheTTLSeconds > 86400 {
+		return fmt.Errorf("%w: cache_ttl_seconds must be in [1,86400]", ErrInvalidSmartRouting)
+	}
+	cuts := map[float64]bool{0: false, .45: false}
+	if len(c.Tiers) == 3 {
+		cuts[.187] = false
+	}
+	routes := make(map[string]struct{}, len(c.Tiers))
+	for i, tier := range c.Tiers {
+		seen, valid := cuts[tier.MinScore]
+		if math.IsNaN(tier.MinScore) || math.IsInf(tier.MinScore, 0) || !valid || seen {
+			return fmt.Errorf("%w: tiers[%d].min_score must be a distinct frozen cut", ErrInvalidSmartRouting, i)
+		}
+		cuts[tier.MinScore] = true
+		if tier.RegistryID.IsNil() {
+			return fmt.Errorf("%w: tiers[%d].registry_id is required", ErrInvalidSmartRouting, i)
+		}
+		model := tier.RouteModel()
+		if model == "" {
+			return fmt.Errorf("%w: tiers[%d].model is required", ErrInvalidSmartRouting, i)
+		}
+		if err := modelmatch.RequireConcrete(fmt.Sprintf("tiers[%d].model", i), model); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidSmartRouting, err)
+		}
+		key := tier.RegistryID.String() + "/" + model
+		if _, exists := routes[key]; exists {
+			return fmt.Errorf("%w: rungs must name distinct routes", ErrInvalidSmartRouting)
+		}
+		routes[key] = struct{}{}
+	}
+	return nil
 }
 
 func (c *SmartRoutingConfig) HighestTier() (SmartRoutingTier, bool) {

@@ -129,7 +129,8 @@ const (
 
 	defaultTrustGuardTimeout = 30 * time.Second
 
-	defaultFirewallComplexityTimeout = 30 * time.Second
+	defaultFirewallComplexityTimeout       = 30 * time.Second
+	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
@@ -497,10 +498,12 @@ type TrustGuardConfig struct {
 	ClientSecret string
 }
 
+// FirewallComplexityConfig configures the scorer and its expected artifact revision.
 type FirewallComplexityConfig struct {
-	BaseURL   string
-	SecretKey string // #nosec G117 -- config struct field, not a hardcoded credential
-	Timeout   time.Duration
+	BaseURL       string
+	SecretKey     string // #nosec G117 -- config struct field, not a hardcoded credential
+	Timeout       time.Duration
+	ModelRevision string
 }
 
 type OpenAIModerationConfig struct {
@@ -910,9 +913,10 @@ func getTrustGuardConfig() TrustGuardConfig {
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
 	return FirewallComplexityConfig{
-		BaseURL:   getEnv("FIREWALL_BASE_URL", ""),
-		SecretKey: getEnv("FIREWALL_SECRET_KEY", ""),
-		Timeout:   defaultFirewallComplexityTimeout,
+		BaseURL:       getEnv("FIREWALL_BASE_URL", ""),
+		SecretKey:     getEnv("FIREWALL_SECRET_KEY", ""),
+		Timeout:       defaultFirewallComplexityTimeout,
+		ModelRevision: getEnv("FIREWALL_COMPLEXITY_MODEL_REVISION", defaultFirewallComplexityModelRevision),
 	}
 }
 

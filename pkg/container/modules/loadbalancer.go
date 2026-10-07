@@ -52,11 +52,12 @@ func LoadBalancer(c *container.Container) error {
 			cfg.FirewallComplexity.BaseURL,
 			firewall.NewTokenProvider(cfg.FirewallComplexity.SecretKey),
 			cfg.FirewallComplexity.Timeout,
+			cfg.FirewallComplexity.ModelRevision,
 		)
 	}); err != nil {
 		return err
 	}
 	return c.Provide(func(p loadBalancerParams) loadbalancer.Factory {
-		return loadbalancer.NewBaseFactoryWithSR1(p.EmbeddingRepo, p.ServiceLocator, p.Complexity, strategies.NewRedisSR1Store(p.Cache.RedisClient()), p.Logger)
+		return loadbalancer.NewBaseFactory(p.EmbeddingRepo, p.ServiceLocator, p.Complexity, strategies.NewRedisSR1Store(p.Cache.RedisClient()), p.Logger)
 	})
 }

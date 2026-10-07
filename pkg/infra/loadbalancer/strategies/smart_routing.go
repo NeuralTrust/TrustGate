@@ -16,7 +16,9 @@ package strategies
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"sort"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -33,29 +35,44 @@ type ComplexityScorer interface {
 
 // SmartRouting implements the frozen cold-point policy with an optional escape.
 type SmartRouting struct {
-	routes   []routingdomain.Route
-	config   *registry.SmartRoutingConfig
-	scorer   ComplexityScorer
-	logger   *slog.Logger
-	warnOnce sync.Once
-	sr1State SR1Store
+	routes      []routingdomain.Route
+	config      *registry.SmartRoutingConfig
+	scorer      ComplexityScorer
+	logger      *slog.Logger
+	warnOnce    sync.Once
+	sr1State    SR1Store
+	scopeSuffix []byte
 }
 
+// NewSmartRouting creates the frozen policy with its shared conversation store.
 func NewSmartRouting(
 	routes []routingdomain.Route,
 	config *registry.SmartRoutingConfig,
 	scorer ComplexityScorer,
+	state SR1Store,
 	logger *slog.Logger,
 ) *SmartRouting {
-	if normalized, err := config.Normalize(); err == nil {
-		config = normalized
+	strategy := &SmartRouting{
+		routes:   append([]routingdomain.Route(nil), routes...),
+		scorer:   scorer,
+		logger:   logger,
+		sr1State: state,
 	}
-	return &SmartRouting{
-		routes: routes,
-		config: config,
-		scorer: scorer,
-		logger: logger,
+	if config == nil || config.Validate() != nil {
+		return strategy
 	}
+	policy := *config
+	policy.Tiers = append([]registry.SmartRoutingTier(nil), config.Tiers...)
+	setting := *config.SR1
+	policy.SR1 = &setting
+	sort.SliceStable(policy.Tiers, func(i, j int) bool { return policy.Tiers[i].MinScore < policy.Tiers[j].MinScore })
+	scope, err := json.Marshal(policy)
+	if err != nil {
+		return strategy
+	}
+	strategy.config = &policy
+	strategy.scopeSuffix = append(append([]byte{','}, scope...), ']')
+	return strategy
 }
 
 func (s *SmartRouting) Name() string { return algorithm.SmartRouting }

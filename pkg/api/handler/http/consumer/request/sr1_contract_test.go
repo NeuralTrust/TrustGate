@@ -88,7 +88,7 @@ func TestSR1HTTPNewWritePreferenceDefaults(t *testing.T) {
 					t.Fatal(err)
 				}
 				flag := cfg.SmartRouting.SR1.EscapeHatchEnabled
-				if flag == nil || *flag != tc.want {
+				if flag != tc.want {
 					t.Fatalf("new write flag=%v want explicit %t", flag, tc.want)
 				}
 				wantTTL := 30
@@ -118,5 +118,49 @@ func TestSR1HTTPRejectsNonBooleanPreference(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSR1HTTPDisabledExplicitWritesRequireCanonicalConfig(t *testing.T) {
+	id := ids.New[ids.RegistryKind]().String()
+	other := ids.New[ids.RegistryKind]().String()
+	for _, tc := range []struct {
+		name, tiers, extra string
+		wantError          bool
+	}{
+		{"canonical", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, id, id), `"sr1":{"cache_ttl_seconds":30},`, false},
+		{"one rung", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"}]`, id), "", true},
+		{"custom cuts", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.8,"registry_id":%q,"model":"high"}]`, id, id), "", true},
+		{"pattern pin", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"model-*"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, id, id), "", true},
+		{"nonmember registry", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, other, id), "", true},
+		{"invalid lifetime", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, id, id), `"sr1":{"cache_ttl_seconds":0},`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{"lb_config":{"enabled":false,"algorithm":"smart-routing","members":[{"registry_id":%q,"model":"low"},{"registry_id":%q,"model":"high"}],"smart_routing":{%s"tiers":%s}}}`, id, id, tc.extra, tc.tiers))
+			var create CreateConsumerRequest
+			var update UpdateConsumerRequest
+			if err := json.Unmarshal(raw, &create); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &update); err != nil {
+				t.Fatal(err)
+			}
+			for _, wire := range []*LBConfigRequest{create.LBConfig, update.LBConfig} {
+				got, err := wire.ToDomain()
+				if (err != nil) != tc.wantError {
+					t.Fatalf("conversion error=%v wantError=%t", err, tc.wantError)
+				}
+				if err == nil && (got.Enabled || wire.Enabled) {
+					t.Fatal("ingress validation enabled a disabled pool")
+				}
+			}
+		})
+	}
+	var omitted UpdateConsumerRequest
+	if err := json.Unmarshal([]byte(`{"name":"updated"}`), &omitted); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := omitted.ToLBConfig(); err != nil || cfg != nil {
+		t.Fatal("omitted legacy config was validated or changed")
 	}
 }

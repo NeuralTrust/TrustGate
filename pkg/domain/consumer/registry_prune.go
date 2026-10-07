@@ -31,9 +31,6 @@ func (c *Consumer) PruneRegistry(registryID ids.RegistryID) (registry.ConsumerPr
 		return registry.ConsumerPrune{}, false
 	}
 	prune := registry.ConsumerPrune{ConsumerID: c.ID}
-	if normalized, err := c.LBConfig.NormalizeSmartRouting(c.ModelPolicies); err == nil {
-		c.LBConfig = normalized
-	}
 	c.pruneModelPolicies(registryID, &prune)
 	c.pruneLBConfig(registryID, &prune)
 	c.pruneFallback(registryID, &prune)
@@ -95,10 +92,7 @@ func (c *Consumer) prunedTiers(
 	if c.LBConfig.SmartRouting == nil {
 		return nil, false, false
 	}
-	normalized, normalizeErr := c.LBConfig.SmartRouting.Normalize()
-	if normalizeErr == nil {
-		c.LBConfig.SmartRouting = normalized
-	}
+	validationErr := c.LBConfig.SmartRouting.Validate()
 	original := c.LBConfig.SmartRouting.Tiers
 	tiers = make([]registry.SmartRoutingTier, 0, len(original))
 	for _, tier := range original {
@@ -109,7 +103,7 @@ func (c *Consumer) prunedTiers(
 	if len(tiers) == len(original) {
 		return original, false, true
 	}
-	if normalizeErr != nil {
+	if validationErr != nil {
 		return tiers, true, false
 	}
 	remaining := *c.LBConfig.SmartRouting

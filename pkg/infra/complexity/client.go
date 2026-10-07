@@ -59,13 +59,14 @@ type TokenProvider interface {
 
 // Client calls the Firewall Complexity API.
 type Client struct {
-	http          *http.Client
-	baseURL       string
-	tokenProvider TokenProvider
+	http             *http.Client
+	baseURL          string
+	tokenProvider    TokenProvider
+	expectedRevision string
 }
 
 // NewClient builds a Client. Missing endpoint credentials leave it unconfigured.
-func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duration) *Client {
+func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duration, expectedRevision string) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
@@ -74,14 +75,15 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 			Timeout:   timeout,
 			Transport: o11y.InternalTransport(peerService, scoreSpanName),
 		},
-		baseURL:       strings.TrimRight(baseURL, "/"),
-		tokenProvider: tokenProvider,
+		baseURL:          strings.TrimRight(baseURL, "/"),
+		tokenProvider:    tokenProvider,
+		expectedRevision: strings.TrimSpace(expectedRevision),
 	}
 }
 
 // Configured reports whether the endpoint and token provider are configured.
 func (c *Client) Configured() bool {
-	return c.baseURL != "" && c.tokenProvider != nil && c.tokenProvider.Configured()
+	return c.baseURL != "" && c.tokenProvider != nil && c.tokenProvider.Configured() && c.expectedRevision != ""
 }
 
 // ScoreSR1 returns an unsmoothed score only from the immutable SR-1 model.
@@ -135,14 +137,8 @@ func (c *Client) score(ctx context.Context, input, tenantID string) (float64, er
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return 0, fmt.Errorf("complexity: decode response: %w", err)
 	}
-	var rawScore struct {
-		Value *float64 `json:"raw_score"`
-	}
-	if err := json.Unmarshal(raw, &rawScore); err != nil {
-		return 0, fmt.Errorf("complexity: decode raw score: %w", err)
-	}
-	if out.Revision != "9619f81d9db28141fc1cc0a3833c8446260ce603" || rawScore.Value == nil {
+	if out.Revision != c.expectedRevision || out.RawScore == nil {
 		return 0, errors.New("complexity: frozen routing score provenance unavailable")
 	}
-	return *rawScore.Value, nil
+	return *out.RawScore, nil
 }

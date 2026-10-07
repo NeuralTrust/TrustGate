@@ -705,9 +705,6 @@ func hydrateConsumerRoutingReferences(consumer *domain.Consumer, fallbackRaw, mo
 		}
 		consumer.LBConfig = &lbConfig
 	}
-	if normalized, err := consumer.LBConfig.NormalizeSmartRouting(consumer.ModelPolicies); err == nil {
-		consumer.LBConfig = normalized
-	}
 	return nil
 }
 
@@ -854,9 +851,6 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	}
 	if c.AuthIDs == nil {
 		c.AuthIDs = []ids.AuthID{}
-	}
-	if normalized, err := c.LBConfig.NormalizeSmartRouting(c.ModelPolicies); err == nil {
-		c.LBConfig = normalized
 	}
 	return c, nil
 }
