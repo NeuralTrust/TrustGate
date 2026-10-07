@@ -368,6 +368,9 @@ func TestLKG_RestoreServesPersistedThenCompileFlipsToCompiled(t *testing.T) {
 	second, holder, comp := h.dispatcher()
 	comp.fail.Store(true)
 	second.Restore(context.Background())
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("a restored LKG must keep the admin ready while compiling fails: %v", err)
+	}
 
 	if second.Source() != appsnapshot.SourcePersisted {
 		t.Fatalf("source = %v, want persisted", second.Source())
@@ -388,6 +391,9 @@ func TestLKG_RestoreServesPersistedThenCompileFlipsToCompiled(t *testing.T) {
 	if err := second.Dispatch(context.Background()); err == nil {
 		t.Fatal("the dispatch must still report the compile failure")
 	}
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("a failed compile after restore must keep serving the LKG: %v", err)
+	}
 	if _, v, _ := holder.Snapshot(); v != wantVersion || second.Source() != appsnapshot.SourcePersisted {
 		t.Fatal("a failed compile must keep the persisted snapshot and source")
 	}
@@ -405,6 +411,9 @@ func TestLKG_RestoreServesPersistedThenCompileFlipsToCompiled(t *testing.T) {
 	}
 	if second.Source() != appsnapshot.SourceCompiled {
 		t.Fatalf("source = %v, want compiled", second.Source())
+	}
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("successful fresh compilation must satisfy readiness: %v", err)
 	}
 	if _, v, _ := holder.Snapshot(); v == wantVersion {
 		t.Fatal("the compiled snapshot must replace the persisted one")
@@ -425,8 +434,14 @@ func TestLKG_RestoreThenIdenticalCompileFlipsToCompiledWithoutRewriting(t *testi
 	h.clock.advance(time.Minute)
 	second, _, _ := h.dispatcher()
 	second.Restore(context.Background())
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("a restored snapshot must qualify readiness before the first compile: %v", err)
+	}
 	if err := second.Dispatch(context.Background()); err != nil {
 		t.Fatalf("dispatch: %v", err)
+	}
+	if err := second.Readiness(context.Background()); err != nil {
+		t.Fatalf("identical-version fresh compilation must qualify readiness: %v", err)
 	}
 	if second.Source() != appsnapshot.SourceCompiled {
 		t.Fatalf("source = %v, want compiled", second.Source())

@@ -544,3 +544,73 @@ func TestUpdater_Update_ReplacingAuthsChecksTheyExist(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdaterExplicitDisabledSmartRoutingUsesEffectivePolicy(t *testing.T) {
+	gw, id, unknown := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	for _, tc := range []struct {
+		name   string
+		tierID ids.RegistryID
+	}{
+		{"stored policy rejects model", id},
+		{"unknown tier registry", unknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := existingConsumer(gw, id)
+			existing.ModelPolicies = domain.ModelPolicies{id: {Allowed: []string{"low"}}}
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+			cfg := &domain.LBConfig{Algorithm: "smart-routing", Members: []domain.LBPoolMember{{RegistryID: id, Model: "low"}, {RegistryID: id, Model: "high"}}, SmartRouting: &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 30}, Tiers: []registrydomain.SmartRoutingTier{{RegistryID: tc.tierID, Model: "low", MinScore: 0}, {RegistryID: id, Model: "high", MinScore: .45}}}}
+			_, err := updater.Update(context.Background(), appconsumer.UpdateInput{ID: existing.ID, LBConfig: cfg})
+			if !errors.Is(err, domain.ErrInvalidLBConfig) {
+				t.Fatalf("error=%v want invalid config", err)
+			}
+			if cfg.Enabled {
+				t.Fatal("validation enabled the caller config")
+			}
+			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestUpdaterOmittedDisabledLegacyRoutingAllowsNameEdit(t *testing.T) {
+	gw, id, unknown := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gw, id)
+	existing.ModelPolicies = domain.ModelPolicies{id: {Allowed: []string{"low"}}}
+	existing.LBConfig = &domain.LBConfig{Algorithm: "smart-routing", Members: []domain.LBPoolMember{{RegistryID: id, Model: "low"}}, SmartRouting: &registrydomain.SmartRoutingConfig{Tiers: []registrydomain.SmartRoutingTier{{RegistryID: unknown, MinScore: .8}}}}
+	original := existing.LBConfig
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+		return c.Name == "renamed" && c.LBConfig == original && !c.LBConfig.Enabled && c.LBConfig.SmartRouting.SR1 == nil && c.LBConfig.SmartRouting.Tiers[0].MinScore == .8
+	}), (*domain.RegistryBindings)(nil), (*[]ids.AuthID)(nil)).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gw.String()}).Return(nil).Once()
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{ID: existing.ID, Name: ptr("renamed")}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdaterDisabledSmartRoutingPolicyEditCannotInvalidatePins(t *testing.T) {
+	gw, id := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gw, id)
+	existing.ModelPolicies = domain.ModelPolicies{id: {Allowed: []string{"low", "high"}}}
+	existing.LBConfig = &domain.LBConfig{Algorithm: "smart-routing", Members: []domain.LBPoolMember{{RegistryID: id, Model: "low"}, {RegistryID: id, Model: "high"}}, SmartRouting: &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 30}, Tiers: []registrydomain.SmartRoutingTier{{RegistryID: id, Model: "low", MinScore: 0}, {RegistryID: id, Model: "high", MinScore: .45}}}}
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	policies := domain.ModelPolicies{id: {Allowed: []string{"low"}}}
+	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{ID: existing.ID, ModelPolicies: &policies})
+	if !errors.Is(err, domain.ErrInvalidLBConfig) {
+		t.Fatalf("policy edit error=%v want invalid config", err)
+	}
+	if existing.LBConfig.Enabled {
+		t.Fatal("validation enabled the stored pool")
+	}
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+}
