@@ -85,8 +85,9 @@ func settingsWire(consumer map[string]any) map[string]any {
 	return smartWire(consumer)["sr1"].(map[string]any)
 }
 
-func TestCodecRejectsHistoricalRoutingSettings(t *testing.T) {
+func TestCodecQuarantinesHistoricalRoutingSettings(t *testing.T) {
 	t.Parallel()
+	malformed := map[string]bool{"nonboolean escape": true, "fractional TTL": true}
 	cases := []struct {
 		name   string
 		mutate func(map[string]any)
@@ -114,8 +115,15 @@ func TestCodecRejectsHistoricalRoutingSettings(t *testing.T) {
 				data := canonicalRoutingData(true)
 				data.Consumers[0].Active, data.Consumers[0].LBConfig.Enabled = enabled, enabled
 				raw := historicalRoutingRaw(t, data, tc.mutate)
-				_, err := configsnapshot.NewCodec().Decode(raw)
-				require.Error(t, err)
+				decoded, err := configsnapshot.NewCodec().Decode(raw)
+				if malformed[tc.name] {
+					require.Error(t, err, "mistyped wire values are not a producer's output and stay a decode error")
+					return
+				}
+				require.NoError(t, err)
+				consumer, ok := decoded.ConsumerByID(data.Consumers[0].ID)
+				require.True(t, ok)
+				assert.Nil(t, consumer.LBConfig.SmartRouting, "historical routing is withheld, never defaulted")
 			})
 		}
 	}
@@ -139,23 +147,31 @@ func TestCodecRoutingPreservesExplicitPreferences(t *testing.T) {
 	}
 }
 
-func TestCodecRoutingRejectsWrongGatewayReference(t *testing.T) {
+func TestCodecRoutingQuarantinesWrongGatewayReference(t *testing.T) {
 	t.Parallel()
 	data := canonicalRoutingData(false)
 	codec := configsnapshot.NewCodec()
 	raw, err := codec.Encode(readmodel.Build(data))
 	require.NoError(t, err)
 	data.Registries[0].GatewayID = ids.New[ids.GatewayKind]()
-	_, err = codec.Encode(readmodel.Build(data))
-	require.Error(t, err, "producer compilation must reject the wrong owner")
+	foreign, err := codec.Encode(readmodel.Build(data))
+	require.NoError(t, err)
+	decoded, err := codec.Decode(foreign)
+	require.NoError(t, err)
+	consumer, ok := decoded.ConsumerByID(data.Consumers[0].ID)
+	require.True(t, ok)
+	assert.Nil(t, consumer.LBConfig.SmartRouting, "producer compilation must withhold a foreign registry ladder")
 	var message snapshotpb.Snapshot
 	require.NoError(t, proto.Unmarshal(raw, &message))
 	message.Registries[0].Json, err = json.Marshal(data.Registries[0])
 	require.NoError(t, err)
 	raw, err = proto.Marshal(&message)
 	require.NoError(t, err)
-	_, err = codec.Decode(raw)
-	require.Error(t, err, "historical wire must also fail the owner check")
+	decoded, err = codec.Decode(raw)
+	require.NoError(t, err)
+	consumer, ok = decoded.ConsumerByID(data.Consumers[0].ID)
+	require.True(t, ok)
+	assert.Nil(t, consumer.LBConfig.SmartRouting, "historical wire must also fail the owner check")
 }
 
 type routingFetcher struct {
@@ -186,42 +202,32 @@ func routingLKG(t *testing.T) *configsync.LKGStore[*readmodel.Snapshot] {
 	return configsync.NewLKGStore[*readmodel.Snapshot](crypto, configsnapshot.NewCodec(), filepath.Join(t.TempDir(), "snapshot.lkg"))
 }
 
-func TestWorkerRoutingAdmissionKeepsLastCompatibleSnapshot(t *testing.T) {
+func TestWorkerAppliesSnapshotWithQuarantinedRouting(t *testing.T) {
 	t.Parallel()
 	codec := configsnapshot.NewCodec()
 	data := canonicalRoutingData(true)
-	good, err := codec.Encode(readmodel.Build(data))
-	require.NoError(t, err)
+	other := consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Active: true}
+	data.Consumers = append(data.Consumers, other)
 	bad := historicalRoutingRaw(t, data, func(c map[string]any) { delete(settingsWire(c), "escape_hatch_enabled") })
 	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
 	transport := &routingTransport{}
-	fetcher := &routingFetcher{raw: bad}
-	lkg := routingLKG(t)
-	worker := configsync.NewWorker[*readmodel.Snapshot](fetcher, store, transport, lkg, codec, nil, configsync.WorkerConfig{})
-	require.Error(t, worker.Converge(context.Background()))
-	assert.ErrorIs(t, configsync.ReadinessCheck(store)(context.Background()), configsync.ErrNotReady)
-	assert.Equal(t, configsync.SnapshotNone, worker.Status().Info().State)
-	assert.Empty(t, transport.acks)
-	fetcher.raw = good
-	require.NoError(t, worker.Converge(context.Background()))
-	fetcher.raw = bad
-	require.Error(t, worker.Converge(context.Background()))
-	retained, ok := store.Load()
-	require.True(t, ok)
-	assert.Equal(t, good, retained.Raw)
-	assert.Equal(t, codec.Version(good), retained.Version)
-	assert.Equal(t, []string{retained.Version}, transport.acks)
+	worker := configsync.NewWorker[*readmodel.Snapshot](&routingFetcher{raw: bad}, store, transport, routingLKG(t), codec, nil, configsync.WorkerConfig{})
+	require.NoError(t, worker.Converge(context.Background()), "one inadmissible consumer must not stall every tenant's update")
 	assert.NoError(t, configsync.ReadinessCheck(store)(context.Background()))
-	saved, err := lkg.Load()
-	require.NoError(t, err)
-	require.NotNil(t, saved)
-	assert.Equal(t, good, saved.Raw, "rejected live payload must not replace encrypted LKG")
+	assert.Equal(t, []string{codec.Version(bad)}, transport.acks)
+	applied, ok := store.Load()
+	require.True(t, ok)
+	_, ok = applied.Snapshot.ConsumerByID(other.ID)
+	assert.True(t, ok)
+	quarantined, ok := applied.Snapshot.ConsumerByID(data.Consumers[0].ID)
+	require.True(t, ok)
+	assert.Nil(t, quarantined.LBConfig.SmartRouting, "an omitted escape flag must not silently become false")
 }
 
 func TestWorkerRoutingLKGAdmissionDuringControlPlaneOutage(t *testing.T) {
 	t.Parallel()
 	for _, compatible := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reject historical", true: "recover canonical"}[compatible], func(t *testing.T) {
+		t.Run(map[bool]string{false: "quarantine historical", true: "recover canonical"}[compatible], func(t *testing.T) {
 			t.Parallel()
 			codec := configsnapshot.NewCodec()
 			data := canonicalRoutingData(false)
@@ -229,8 +235,6 @@ func TestWorkerRoutingLKGAdmissionDuringControlPlaneOutage(t *testing.T) {
 			require.NoError(t, err)
 			if !compatible {
 				raw = historicalRoutingRaw(t, data, func(c map[string]any) {
-					c["active"] = false
-					c["lb_config"].(map[string]any)["enabled"] = false
 					delete(settingsWire(c), "escape_hatch_enabled")
 				})
 			}
@@ -243,16 +247,14 @@ func TestWorkerRoutingLKGAdmissionDuringControlPlaneOutage(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			require.ErrorIs(t, worker.Run(ctx), context.Canceled)
-			if !compatible {
-				assert.ErrorIs(t, configsync.ReadinessCheck(store)(context.Background()), configsync.ErrNotReady)
-				assert.Equal(t, configsync.SnapshotNone, worker.Status().Info().State)
-				return
-			}
 			assert.NoError(t, configsync.ReadinessCheck(store)(context.Background()))
 			assert.Equal(t, configsync.SnapshotLKG, worker.Status().Info().State)
 			retained, ok := store.Load()
 			require.True(t, ok)
 			assert.Equal(t, raw, retained.Raw)
+			consumer, ok := retained.Snapshot.ConsumerByID(data.Consumers[0].ID)
+			require.True(t, ok)
+			assert.Equal(t, compatible, consumer.LBConfig.SmartRouting != nil)
 		})
 	}
 }
