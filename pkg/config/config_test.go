@@ -592,6 +592,17 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 		t.Errorf("Provider.MaxRetries = %d, want %d", cfg.Provider.MaxRetries, defaultProviderMaxRetries)
 	}
 
+	if cfg.BedrockNative != (BedrockNativeConfig{
+		LookupWait: 1500 * time.Millisecond, ToolHold: 30 * time.Second, MaxResponseBytes: 32 << 20,
+		ResolverMaxInFlight: 8, ResolverMaxPerRegistry: 2, ResolverCacheEntries: 2048,
+		ResolverResolvedTTL: 6 * time.Hour, ResolverUnresolvedTTL: 5 * time.Minute, ResolverControlPlaneTimeout: 10 * time.Second,
+	}) {
+		t.Errorf("BedrockNative defaults changed: %+v", cfg.BedrockNative)
+	}
+
+	t.Setenv("BEDROCK_NATIVE_LOOKUP_WAIT", "2s")
+	t.Setenv("BEDROCK_NATIVE_TOOL_HOLD", "10s")
+	t.Setenv("BEDROCK_MODEL_RESOLVER_MAX_PER_REGISTRY", "4")
 	t.Setenv("REDIS_TLS_ENABLED", "true")
 	t.Setenv("REDIS_TLS_INSECURE_VERIFY", "true")
 	t.Setenv("REDIS_USERNAME", "cacheuser")
@@ -625,6 +636,42 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.Provider.RequestTimeout != 9*time.Second || cfg.Provider.MaxRetries != 5 {
 		t.Errorf("Provider override not applied: %+v", cfg.Provider)
+	}
+	if cfg.BedrockNative.LookupWait != 2*time.Second || cfg.BedrockNative.ToolHold != 10*time.Second || cfg.BedrockNative.ResolverMaxPerRegistry != 4 {
+		t.Errorf("BedrockNative override not applied: %+v", cfg.BedrockNative)
+	}
+}
+
+func TestBedrockNativeConfig_ValidateRefusesNegativeDurations(t *testing.T) {
+	for name, mutate := range map[string]func(*BedrockNativeConfig){
+		"lookup wait": func(c *BedrockNativeConfig) { c.LookupWait = -1 },
+		"tool hold":   func(c *BedrockNativeConfig) { c.ToolHold = -1 },
+		"resolved":    func(c *BedrockNativeConfig) { c.ResolverResolvedTTL = -1 },
+		"unresolved":  func(c *BedrockNativeConfig) { c.ResolverUnresolvedTTL = -1 },
+		"timeout":     func(c *BedrockNativeConfig) { c.ResolverControlPlaneTimeout = -1 },
+	} {
+		c := DefaultBedrockNative()
+		mutate(&c)
+		if err := c.validate(); err == nil {
+			t.Errorf("%s: a negative duration was accepted", name)
+		}
+	}
+	if err := DefaultBedrockNative().validate(); err != nil {
+		t.Errorf("the defaults are invalid: %v", err)
+	}
+}
+
+func TestLoadConfig_BedrockNativeLimitsMustNotBeNegative(t *testing.T) {
+	for _, key := range []string{
+		"BEDROCK_MODEL_RESOLVER_MAX_IN_FLIGHT", "BEDROCK_MODEL_RESOLVER_MAX_PER_REGISTRY", "BEDROCK_MODEL_RESOLVER_CACHE_ENTRIES",
+	} {
+		t.Run(key, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(key, "-1")
+			if _, err := LoadConfig(); err == nil {
+				t.Fatalf("%s=-1 was accepted", key)
+			}
+		})
 	}
 }
 
