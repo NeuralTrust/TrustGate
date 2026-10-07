@@ -1327,3 +1327,14 @@ func TestOutboundAllowPrivateNetworks(t *testing.T) {
 		})
 	}
 }
+
+func TestFirewallComplexityModelRevision(t *testing.T) {
+	t.Setenv("FIREWALL_COMPLEXITY_MODEL_REVISION", "")
+	if got := getFirewallComplexityConfig().ModelRevision; got != defaultFirewallComplexityModelRevision {
+		t.Fatalf("default revision = %q", got)
+	}
+	t.Setenv("FIREWALL_COMPLEXITY_MODEL_REVISION", "configured-immutable-revision")
+	if got := getFirewallComplexityConfig().ModelRevision; got != "configured-immutable-revision" {
+		t.Fatalf("configured revision = %q", got)
+	}
+}

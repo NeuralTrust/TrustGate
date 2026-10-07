@@ -59,14 +59,19 @@ func TestConsumerRegistryPositionMigration(t *testing.T) {
 			registry_id UUID NOT NULL,
 			weight INT NOT NULL DEFAULT 1,
 			PRIMARY KEY (consumer_id, registry_id)
-		) ON COMMIT DROP;
-		SET LOCAL search_path TO pg_temp;
-		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES
+		) ON COMMIT DROP;`
+	if _, err := tx.Exec(ctx, setup); err != nil {
+		t.Fatalf("create fixture table: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL search_path TO pg_temp`); err != nil {
+		t.Fatalf("set fixture search path: %v", err)
+	}
+	const seed = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES
 			($1, $2),
 			($1, $3),
 			($1, $4);`
-	if _, err := tx.Exec(ctx, setup, consumerID, registryThree, registryOne, registryTwo); err != nil {
-		t.Fatalf("setup: %v", err)
+	if _, err := tx.Exec(ctx, seed, consumerID, registryThree, registryOne, registryTwo); err != nil {
+		t.Fatalf("seed fixture rows: %v", err)
 	}
 
 	if err := upConsumerRegistryPosition(ctx, tx); err != nil {

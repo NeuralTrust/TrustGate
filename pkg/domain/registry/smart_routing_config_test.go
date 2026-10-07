@@ -15,6 +15,8 @@
 package registry
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -214,6 +216,58 @@ func TestSmartRoutingConfig_HighestTier(t *testing.T) {
 			}
 			if tier.RegistryID != shared {
 				t.Fatalf("registry = %s, want %s", tier.RegistryID, shared)
+			}
+		})
+	}
+}
+
+func TestSmartRoutingConfigValidateCanonicalAndPure(t *testing.T) {
+	id := ids.New[ids.RegistryKind]()
+	for _, tc := range []struct {
+		name      string
+		cuts      []float64
+		ttl       int
+		envelope  bool
+		model     string
+		wantError bool
+	}{
+		{"two unordered", []float64{.45, 0}, 30, true, "low", false},
+		{"three unordered", []float64{.45, 0, .187}, 30, true, "low", false},
+		{"no envelope", []float64{0, .45}, 30, false, "low", true},
+		{"custom cuts", []float64{0, .8}, 30, true, "low", true},
+		{"duplicate cuts", []float64{0, 0}, 30, true, "low", true},
+		{"one rung", []float64{0}, 30, true, "low", true},
+		{"zero lifetime", []float64{0, .45}, 0, true, "low", true},
+		{"long lifetime", []float64{0, .45}, 86401, true, "low", true},
+		{"missing pin", []float64{0, .45}, 30, true, "", true},
+		{"pattern pin", []float64{0, .45}, 30, true, "model-*", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &SmartRoutingConfig{}
+			if tc.envelope {
+				cfg.SR1 = &SR1Config{CacheTTLSeconds: tc.ttl}
+			}
+			for i, cut := range tc.cuts {
+				model := tc.model
+				if i > 0 {
+					model = fmt.Sprintf("model-%d", i)
+				}
+				cfg.Tiers = append(cfg.Tiers, SmartRoutingTier{RegistryID: id, Model: model, MinScore: cut})
+			}
+			before, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = cfg.Validate()
+			if (err != nil) != tc.wantError {
+				t.Fatalf("Validate error=%v wantError=%t", err, tc.wantError)
+			}
+			after, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("validation rewrites cuts, order or preference")
 			}
 		})
 	}

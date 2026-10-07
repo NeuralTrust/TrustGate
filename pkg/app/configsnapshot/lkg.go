@@ -210,6 +210,9 @@ func (d *Dispatcher) openRecord(rec LKGRecord) ([]byte, string) {
 	if d.codec.Version(raw) != rec.Version {
 		return nil, "checksum_mismatch"
 	}
+	if _, err := d.codec.Decode(raw); err != nil {
+		return nil, "incompatible_snapshot"
+	}
 	return raw, ""
 }
 

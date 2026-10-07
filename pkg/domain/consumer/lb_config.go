@@ -70,13 +70,17 @@ func (l *LBConfig) Scan(value interface{}) error {
 }
 
 func (l *LBConfig) Validate(inline ModelPolicies) error {
-	if l == nil || !l.Enabled {
+	if l == nil {
 		return nil
 	}
-	if l.Algorithm == "" {
-		l.Algorithm = algorithm.RoundRobin
+	if !l.Enabled {
+		return nil
 	}
-	if !algorithm.IsValid(l.Algorithm) {
+	name := l.Algorithm
+	if name == "" {
+		name = algorithm.RoundRobin
+	}
+	if !algorithm.IsValid(name) {
 		return fmt.Errorf("%w: invalid algorithm %q", ErrInvalidLBConfig, l.Algorithm)
 	}
 	if len(l.Members) == 0 {
@@ -90,7 +94,7 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 	if err := l.validateRouteIdentity(); err != nil {
 		return err
 	}
-	switch l.Algorithm {
+	switch name {
 	case algorithm.Semantic:
 		if l.SmartRouting != nil {
 			return fmt.Errorf("%w: smart_routing is only valid for the smart-routing algorithm", ErrInvalidLBConfig)
@@ -125,10 +129,9 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 }
 
 // ValidateTierRegistries checks the smart-routing ladder against the registries
-// the consumer knows about. It runs even when the pool is disabled, so a tier
-// can never persist a registry_id that no longer resolves.
+// the enabled consumer pool knows about.
 func (l *LBConfig) ValidateTierRegistries(known map[ids.RegistryID]struct{}) error {
-	if l == nil || l.SmartRouting == nil {
+	if l == nil || !l.Enabled || l.SmartRouting == nil {
 		return nil
 	}
 	for i, tier := range l.SmartRouting.Tiers {
