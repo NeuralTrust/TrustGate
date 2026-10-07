@@ -17,6 +17,8 @@ package proxy
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -26,7 +28,9 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/complexity"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 	"github.com/alicebob/miniredis/v2"
@@ -49,7 +53,12 @@ func TestSR1ForwarderBounds(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	f := &forwarder{balancers: newLoadBalancerCache(loadbalancer.NewBaseFactoryWithSR1(nil, nil, nil, strategies.NewRedisSR1Store(client), nil), sr1BoundsRedis{client}, ttl, nil)}
+	scorerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"revision":"test-revision","raw_score":1}`))
+	}))
+	t.Cleanup(scorerServer.Close)
+	scorer := complexity.NewClient(scorerServer.URL, firewall.NewTokenProvider("synthetic-signing-secret"), time.Second, "test-revision")
+	f := &forwarder{balancers: newLoadBalancerCache(loadbalancer.NewBaseFactory(nil, nil, scorer, strategies.NewRedisSR1Store(client), nil), sr1BoundsRedis{client}, ttl, nil)}
 	lb, err := f.balancers.For(rc)
 	require.NoError(t, err)
 	t.Cleanup(lb.Close)

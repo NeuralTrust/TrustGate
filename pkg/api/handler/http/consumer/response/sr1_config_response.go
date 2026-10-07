@@ -12,15 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package registry
+package response
 
-// SR1Config configures session commitment and its optional warm escape.
-type SR1Config struct {
+// SR1ConfigResponse reports the stored session commitment preference.
+type SR1ConfigResponse struct {
 	CacheTTLSeconds    int  `json:"cache_ttl_seconds"`
 	EscapeHatchEnabled bool `json:"escape_hatch_enabled"`
-}
-
-// EscapeEnabled reports whether a new user turn may upgrade its committed rung.
-func (c *SR1Config) EscapeEnabled() bool {
-	return c != nil && c.EscapeHatchEnabled
 }

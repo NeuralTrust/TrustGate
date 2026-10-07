@@ -20,7 +20,7 @@ type scoreRequest struct {
 }
 
 type scoreResponse struct {
-	Revision string  `json:"revision"`
-	Score    float64 `json:"score"`
-	RawScore float64 `json:"raw_score"`
+	Revision string   `json:"revision"`
+	Score    float64  `json:"score"`
+	RawScore *float64 `json:"raw_score"`
 }

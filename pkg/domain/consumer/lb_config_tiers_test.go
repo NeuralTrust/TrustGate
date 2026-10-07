@@ -34,7 +34,7 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name: "disabled pool with a tier on an unknown registry",
+			name: "disabled pool preserves a tier on an unknown registry",
 			lbConfig: &LBConfig{
 				Algorithm: algorithm.SmartRouting,
 				Members:   []LBPoolMember{{RegistryID: attached, Model: "gpt-4o"}},
@@ -42,10 +42,10 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 					{MinScore: 0, RegistryID: unknown, Model: "gpt-4.1-nano"},
 				}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
-			name: "disabled pool with a nil tier registry",
+			name: "disabled pool preserves a nil tier registry",
 			lbConfig: &LBConfig{
 				Algorithm: algorithm.SmartRouting,
 				Members:   []LBPoolMember{{RegistryID: attached, Model: "gpt-4o"}},
@@ -53,7 +53,7 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 					{MinScore: 0, RegistryID: ids.RegistryID{}},
 				}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "enabled pool with a tier on an unknown registry",
@@ -68,7 +68,7 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "disabled one-rung smart routing configuration is unsupported",
+			name: "disabled one-rung configuration remains editable",
 			lbConfig: &LBConfig{
 				Algorithm: algorithm.SmartRouting,
 				Members:   []LBPoolMember{{RegistryID: attached, Model: "gpt-4o"}},
@@ -76,7 +76,7 @@ func TestConsumer_ValidateRejectsUnknownSmartRoutingTierRegistry(t *testing.T) {
 					{MinScore: 0, RegistryID: attached, Model: "gpt-4o"},
 				}},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 

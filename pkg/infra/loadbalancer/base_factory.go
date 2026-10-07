@@ -34,17 +34,14 @@ type BaseFactory struct {
 	sr1State       strategies.SR1Store
 }
 
+// NewBaseFactory builds strategies with the shared store required by smart routing.
 func NewBaseFactory(
 	embeddingRepo embedding.Repository,
 	serviceLocator factory.EmbeddingServiceLocator,
 	complexity strategies.ComplexityScorer,
+	state strategies.SR1Store,
 	logger *slog.Logger,
 ) Factory {
-	return NewBaseFactoryWithSR1(embeddingRepo, serviceLocator, complexity, nil, logger)
-}
-
-// NewBaseFactoryWithSR1 wires shared state for frozen cold-point smart routing.
-func NewBaseFactoryWithSR1(embeddingRepo embedding.Repository, serviceLocator factory.EmbeddingServiceLocator, complexity strategies.ComplexityScorer, state strategies.SR1Store, logger *slog.Logger) Factory {
 	return &BaseFactory{
 		embeddingRepo:  embeddingRepo,
 		serviceLocator: serviceLocator,
@@ -67,7 +64,13 @@ func (f *BaseFactory) CreateStrategy(input StrategyInput) (Strategy, error) {
 	case algorithm.Semantic:
 		return strategies.NewSemantic(input.EmbeddingConfig, input.Routes, f.embeddingRepo, f.serviceLocator), nil
 	case algorithm.SmartRouting:
-		return strategies.NewSmartRoutingWithSR1(input.Routes, input.SmartRoutingConfig, f.complexity, f.sr1State, f.logger), nil
+		if f.sr1State == nil {
+			return nil, fmt.Errorf("smart routing requires a shared conversation store")
+		}
+		if err := input.SmartRoutingConfig.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid smart routing configuration: %w", err)
+		}
+		return strategies.NewSmartRouting(input.Routes, input.SmartRoutingConfig, f.complexity, f.sr1State, f.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported load balancing algorithm: %s", input.Algorithm)
 	}

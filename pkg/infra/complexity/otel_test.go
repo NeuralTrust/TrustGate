@@ -57,11 +57,11 @@ func scoreHeaders(t *testing.T, ctx context.Context) http.Header {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
 		w.WriteHeader(http.StatusOK)
-		require.NoError(t, json.NewEncoder(w).Encode(scoreResponse{Score: 0.5, RawScore: 0.5, Revision: "9619f81d9db28141fc1cc0a3833c8446260ce603"}))
+		require.NoError(t, json.NewEncoder(w).Encode(scoreResponse{Score: 0.5, RawScore: newFloat(0.5), Revision: "9619f81d9db28141fc1cc0a3833c8446260ce603"}))
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewClient(srv.URL, tokenProviderStub{configured: true, token: "secret-token"}, time.Second)
+	client := NewClient(srv.URL, tokenProviderStub{configured: true, token: "secret-token"}, time.Second, testRevision)
 	_, err := client.ScoreSR1(ctx, "hello", "tenant_1")
 	require.NoError(t, err)
 	return got

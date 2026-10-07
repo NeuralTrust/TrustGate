@@ -40,8 +40,11 @@ import (
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -93,7 +96,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker, limiter ratelimitapp.Checker) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, limiter, nil, newTestLogger(),
 	)
 }
@@ -118,7 +121,7 @@ func (f *fakeSessionStore) SessionForTurn(_ context.Context, _, _ string) string
 func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, store appsession.Store) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
 	)
 }
@@ -857,9 +860,10 @@ func smartRoutedConsumer(gatewayID ids.GatewayID, low, high *registrydomain.Regi
 			{RegistryID: high.ID, Model: "model-high"},
 		},
 		SmartRouting: &registrydomain.SmartRoutingConfig{
+			SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300},
 			Tiers: []registrydomain.SmartRoutingTier{
 				{MinScore: 0, RegistryID: low.ID, Model: "model-low"},
-				{MinScore: 0.5, RegistryID: high.ID, Model: "model-high"},
+				{MinScore: 0.45, RegistryID: high.ID, Model: "model-high"},
 			},
 		},
 	}
@@ -876,8 +880,11 @@ func newSmartRoutedForwarder(
 	mgr := cache.NewTTLMapManager(time.Minute)
 	cfg := &config.Config{}
 	cfg.Provider.MaxRetries = maxRetries
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, fixedScorer{score: score}, newTestLogger()),
+		loadbalancer.NewBaseFactory(nil, nil, fixedScorer{score: score}, strategies.NewRedisSR1Store(client), newTestLogger()),
 		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, nil, cfg, newTestLogger(),
 	)
 }

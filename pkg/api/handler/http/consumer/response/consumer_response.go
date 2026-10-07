@@ -81,11 +81,6 @@ type LBConfigResponse struct {
 	SmartRouting    *SmartRoutingConfigResponse `json:"smart_routing,omitempty"`
 }
 
-type SR1ConfigResponse struct {
-	CacheTTLSeconds    int  `json:"cache_ttl_seconds"`
-	EscapeHatchEnabled bool `json:"escape_hatch_enabled"`
-}
-
 type SmartRoutingConfigResponse struct {
 	SR1   *SR1ConfigResponse         `json:"sr1,omitempty"`
 	Tiers []SmartRoutingTierResponse `json:"tiers"`
@@ -149,7 +144,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		Name:            c.Name,
 		Type:            string(c.Type),
 		Slug:            c.Slug,
-		LBConfig:        fromLBConfig(c.LBConfig, c.ModelPolicies),
+		LBConfig:        fromLBConfig(c.LBConfig),
 		Headers:         c.Headers,
 		Active:          c.Active,
 		RegistryIDs:     registryIDs,
@@ -182,12 +177,9 @@ func fromRegistryWeights(weights map[ids.RegistryID]int) []RegistryWeightRespons
 	return out
 }
 
-func fromLBConfig(config *domain.LBConfig, inline domain.ModelPolicies) *LBConfigResponse {
+func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
 	if config == nil {
 		return nil
-	}
-	if normalized, err := config.NormalizeSmartRouting(inline); err == nil {
-		config = normalized
 	}
 	members := make([]LBPoolMemberResponse, 0, len(config.Members))
 	for _, member := range config.Members {
@@ -219,9 +211,6 @@ func fromLBConfig(config *domain.LBConfig, inline domain.ModelPolicies) *LBConfi
 func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingConfigResponse {
 	if config == nil {
 		return nil
-	}
-	if normalized, err := config.Normalize(); err == nil {
-		config = normalized
 	}
 	tiers := make([]SmartRoutingTierResponse, 0, len(config.Tiers))
 	for _, tier := range config.Tiers {

@@ -185,7 +185,7 @@ func TestLBConfig_ValidateSmartRoutingTiers(t *testing.T) {
 			members: sharedMembers,
 			tiers: []registry.SmartRoutingTier{
 				{MinScore: 0, RegistryID: shared, Model: "gpt-4o-mini"},
-				{MinScore: 0.5, RegistryID: shared, Model: "gpt-5"},
+				{MinScore: 0.45, RegistryID: shared, Model: "gpt-5"},
 			},
 		},
 		{
@@ -221,7 +221,7 @@ func TestLBConfig_ValidateSmartRoutingTiers(t *testing.T) {
 				Enabled:      true,
 				Algorithm:    algorithm.SmartRouting,
 				Members:      tc.members,
-				SmartRouting: &registry.SmartRoutingConfig{Tiers: tc.tiers},
+				SmartRouting: &registry.SmartRoutingConfig{Tiers: tc.tiers, SR1: &registry.SR1Config{CacheTTLSeconds: 300}},
 			}
 			err := cfg.Validate(policies)
 			if tc.wantErr && !errors.Is(err, ErrInvalidLBConfig) {

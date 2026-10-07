@@ -3,8 +3,10 @@
 package functional_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -270,4 +272,33 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 		require.NotNil(t, evt.Cost, "a fail-open request is still costed")
 		assert.Nil(t, evt.Cost.SavingsUsd, "a strongest-rung failure fallback must not report savings")
 	})
+}
+
+func TestSmartRoutingE2E_ColdFailureRecoversWithinSameSession(t *testing.T) {
+	defer Track(t, "SmartRoutingE2E")()
+	low := newJSONUpstream(t, "served-by-low")
+	high := newJSONUpstream(t, "served-by-high")
+	apiKey, path := setupSmartRoute(t, low, high, "model-low-tier", "model-high-tier")
+	session := uniqueName("cold-recovery")
+	for _, content := range []string{smartRouteErrorContent, smartRouteLowContent, smartRouteHighContent} {
+		body, err := json.Marshal(smartChatRequest(content))
+		require.NoError(t, err)
+		request, err := http.NewRequest(http.MethodPost, ProxyURL+path, bytes.NewReader(body))
+		require.NoError(t, err)
+		host, ok := proxyHosts.Load(apiKey)
+		require.True(t, ok)
+		request.Host = host.(string)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(proxyAPIKeyHeader, apiKey)
+		request.Header.Set(sessionHeader, session)
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(response.Body)
+		require.NoError(t, response.Body.Close())
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, "body: %s", raw)
+		require.Equal(t, session, response.Header.Get(sessionHeader))
+	}
+	assert.Equal(t, 1, high.Hits(), "the temporary cold failure must not pin the strongest rung")
+	assert.Equal(t, 2, low.Hits(), "recovery commits the easy rung and K=0 retains it")
 }

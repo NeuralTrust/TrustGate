@@ -25,6 +25,7 @@ import (
 
 // SR1Store atomically selects a committed rung and enforces the one-escape budget.
 type SR1Store interface {
+	Read(ctx context.Context, key string, rungs int, ttl time.Duration) (int, error)
 	Probe(ctx context.Context, key, turnID string, rungs int, ttl time.Duration, newUser, escapeEnabled bool) (SR1StateDecision, error)
 	Choose(ctx context.Context, key, turnID string, desired, rungs int, ttl time.Duration, newUser, escapeEnabled bool) (int, error)
 }
@@ -46,7 +47,7 @@ func NewRedisSR1Store(client *redis.Client) *RedisSR1Store {
 var sr1Script = redis.NewScript(`
 local desired, rungs, ttl = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
 local new_user, turn_id = ARGV[4] == '1', ARGV[5]
-local escape_enabled, probe = ARGV[6] == '1', ARGV[7] == 'probe'
+local escape_enabled, operation = ARGV[6] == '1', ARGV[7]
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
 local stored = redis.call('EXISTS', KEYS[1]) == 1
@@ -58,7 +59,10 @@ if stored and (not rung or not escapes or not last or not turn or rung ~= math.f
     return redis.error_reply('invalid SR-1 state')
 end
 local cold = not stored or now - last > ttl
-if probe then
+if operation == 'read' then
+    return {cold and -1 or rung, 0}
+end
+if operation == 'probe' then
     if cold then return {-1, 1} end
     local needs_score = escape_enabled and new_user and turn ~= turn_id and escapes < 1 and rung < rungs - 1
     redis.call('HSET', KEYS[1], 'last', now)
@@ -76,6 +80,12 @@ redis.call('PEXPIRE', KEYS[1], ttl + 1000)
 return {rung, 0}
 `)
 
+// Read returns the active commitment without creating or touching session state.
+func (s *RedisSR1Store) Read(ctx context.Context, key string, rungs int, ttl time.Duration) (int, error) {
+	decision, err := s.run(ctx, key, "", -1, rungs, ttl, false, false, "read")
+	return decision.Rung, err
+}
+
 // Probe atomically touches warm state and skips scoring when no decision can change.
 func (s *RedisSR1Store) Probe(ctx context.Context, key, turnID string, rungs int, ttl time.Duration, newUser, escapeEnabled bool) (SR1StateDecision, error) {
 	return s.run(ctx, key, turnID, -1, rungs, ttl, newUser, escapeEnabled, "probe")
@@ -91,7 +101,8 @@ func (s *RedisSR1Store) run(ctx context.Context, key, turnID string, desired, ru
 	if s == nil || s.client == nil {
 		return SR1StateDecision{}, errors.New("SR-1 state store is unavailable")
 	}
-	if rungs < 2 || rungs > 3 || desired >= rungs || desired < 0 && operation != "probe" || ttl.Milliseconds() < 1 || turnID == "" || key == "" {
+	nonCommit := operation == "probe" || operation == "read"
+	if rungs < 2 || rungs > 3 || desired >= rungs || (desired < 0 && !nonCommit) || ttl.Milliseconds() < 1 || (turnID == "" && operation != "read") || key == "" {
 		return SR1StateDecision{}, errors.New("invalid SR-1 state request")
 	}
 	user := "0"
@@ -106,7 +117,7 @@ func (s *RedisSR1Store) run(ctx context.Context, key, turnID string, desired, ru
 	if err != nil {
 		return SR1StateDecision{}, fmt.Errorf("SR-1 state selection: %w", err)
 	}
-	if len(result) != 2 || result[0] < -1 || result[0] >= int64(rungs) || result[0] == -1 && operation != "probe" || result[1] < 0 || result[1] > 1 {
+	if len(result) != 2 || result[0] < -1 || result[0] >= int64(rungs) || (result[0] == -1 && !nonCommit) || result[1] < 0 || result[1] > 1 || (operation != "probe" && result[1] != 0) {
 		return SR1StateDecision{}, errors.New("invalid stored SR-1 decision")
 	}
 	return SR1StateDecision{Rung: int(result[0]), NeedsScore: result[1] == 1}, nil

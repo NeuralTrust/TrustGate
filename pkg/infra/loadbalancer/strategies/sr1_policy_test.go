@@ -197,9 +197,9 @@ func TestSR1WarmReuseSkipsScorerAndResetsAfterIdle(t *testing.T) {
 			mr, _, store := sr1Fixture(t)
 			routes := modelRoutes("low", "mid", "high")
 			cfg := tiersFor(routes, 0, .187, .45)
-			cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 1, EscapeHatchEnabled: &enabled}
+			cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 1, EscapeHatchEnabled: enabled}
 			scorer := &sr1TestScorer{score: 0}
-			s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
+			s := NewSmartRouting(routes, cfg, scorer, store, nil)
 			req := promptReq()
 			req.SessionID = "conversation"
 			check := func(body, model string, calls int64) {
@@ -239,9 +239,9 @@ func TestSR1EligibleScorerFailurePreservesFloorAndEscape(t *testing.T) {
 	routes := modelRoutes("low", "mid", "high")
 	cfg := tiersFor(routes, 0, .187, .45)
 	enabled := true
-	cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60, EscapeHatchEnabled: &enabled}
+	cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60, EscapeHatchEnabled: enabled}
 	scorer := &sr1TestScorer{score: .25}
-	s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
+	s := NewSmartRouting(routes, cfg, scorer, store, nil)
 	req := promptReq()
 	req.SessionID = "conversation"
 	ctx := context.Background()
@@ -272,27 +272,29 @@ func TestSR1EligibleScorerFailurePreservesFloorAndEscape(t *testing.T) {
 	}
 }
 
-func TestSR1StateScopeIncludesPreferenceAndCanonicalHistoricalFlag(t *testing.T) {
+func TestSR1StateScopeIncludesPreferenceAndCanonicalTierOrder(t *testing.T) {
 	routes := modelRoutes("low", "high")
 	req := promptReq()
 	req.SessionID = "conversation"
-	key := func(flag *bool) string {
+	key := func(flag bool, reverse bool) string {
 		t.Helper()
 		cfg := tiersFor(routes, 0, .45)
 		cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60, EscapeHatchEnabled: flag}
-		s := NewSmartRoutingWithSR1(routes, cfg, nil, nil, nil)
+		if reverse {
+			cfg.Tiers[0], cfg.Tiers[1] = cfg.Tiers[1], cfg.Tiers[0]
+		}
+		s := NewSmartRouting(routes, cfg, nil, nil, nil)
 		got, err := s.sr1Key(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return got
 	}
-	off, on := false, true
-	if key(&off) == key(&on) {
+	if key(false, false) == key(true, false) {
 		t.Fatal("different hatch preferences reused the same commitment")
 	}
-	if key(nil) != key(&on) {
-		t.Fatal("historical enabled flag did not share its canonical state scope")
+	if key(true, false) != key(true, true) {
+		t.Fatal("unordered canonical tiers did not share the same state scope")
 	}
 }
 
@@ -313,6 +315,9 @@ func TestSR1RedisFailures(t *testing.T) {
 		}
 		if _, err := store.Choose(ctx, "bad", "b", 2, 3, time.Second, true, true); err == nil {
 			t.Fatal("corrupt state accepted")
+		}
+		if _, err := store.Read(ctx, "bad", 3, time.Second); err == nil {
+			t.Fatal("read accepted corrupt state")
 		}
 	}
 	mr.Close()
@@ -337,7 +342,7 @@ func TestSR1ColdCuts(t *testing.T) {
 					want = i
 				}
 			}
-			s := NewSmartRoutingWithSR1(routes, cfg, &sr1TestScorer{score: score}, nil, nil)
+			s := NewSmartRouting(routes, cfg, &sr1TestScorer{score: score}, nil, nil)
 			req := promptReq()
 			req.SessionID = ""
 			got := s.Next(context.Background(), req, nil)
@@ -354,7 +359,7 @@ func TestSR1FailurePreservesFloor(t *testing.T) {
 	cfg := tiersFor(routes, 0, .187, .45)
 	cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60}
 	scorer := &sr1TestScorer{score: 1}
-	s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
+	s := NewSmartRouting(routes, cfg, scorer, store, nil)
 	req := promptReq()
 	req.SessionID = "chat_1"
 	ctx := context.Background()
@@ -379,6 +384,13 @@ func TestSR1FailurePreservesFloor(t *testing.T) {
 	if got := s.Next(ctx, req, excludeRoutes(routes[2])); got == nil || got.Model != "mid" {
 		t.Fatalf("cold failure=%v", got)
 	}
+	freshKey, err := s.sr1Key(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Exists(ctx, freshKey).Val() != 0 {
+		t.Fatal("cold failure committed the strongest survivor")
+	}
 	scorer.err = nil
 	scorer.score = math.NaN()
 	req.SessionID = "nan"
@@ -391,9 +403,9 @@ func TestSR1PrefillAndToolTurnIdentity(t *testing.T) {
 	_, _, store := sr1Fixture(t)
 	routes := modelRoutes("low", "mid", "high")
 	cfg := tiersFor(routes, 0, .187, .45)
-	cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60}
+	cfg.SR1 = &registry.SR1Config{CacheTTLSeconds: 60, EscapeHatchEnabled: true}
 	scorer := &sr1TestScorer{score: 0}
-	s := NewSmartRoutingWithSR1(routes, cfg, scorer, store, nil)
+	s := NewSmartRouting(routes, cfg, scorer, store, nil)
 	req := promptReq()
 	req.SessionID = "chat_1"
 	ctx := context.Background()
@@ -420,4 +432,4 @@ func TestSR1PrefillAndToolTurnIdentity(t *testing.T) {
 	}
 }
 
-var _ SR1Scorer = (*sr1TestScorer)(nil)
+var _ ComplexityScorer = (*sr1TestScorer)(nil)

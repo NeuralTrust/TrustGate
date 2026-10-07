@@ -16,18 +16,19 @@ package response
 
 import (
 	"encoding/json"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	registry "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"strings"
 	"testing"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registry "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-func TestSR1HTTPResponsePreservesHistoricalHatchAndMigratesLegacy(t *testing.T) {
+func TestSR1HTTPResponseReportsStoredConfigWithoutMigration(t *testing.T) {
 	id := ids.New[ids.RegistryKind]()
-	cfg := &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 30}, Tiers: []registry.SmartRoutingTier{{RegistryID: id, Model: "low", MinScore: 0}, {RegistryID: id, Model: "high", MinScore: .45}}}
+	cfg := &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 30, EscapeHatchEnabled: true}, Tiers: []registry.SmartRoutingTier{{RegistryID: id, Model: "high", MinScore: .45}, {RegistryID: id, Model: "low", MinScore: 0}}}
 	response := fromSmartRouting(cfg)
 	if response.SR1 == nil || response.SR1.CacheTTLSeconds != 30 || !response.SR1.EscapeHatchEnabled {
-		t.Fatal("response drops SR1")
+		t.Fatal("response drops canonical preference")
 	}
 	raw, err := json.Marshal(response)
 	if err != nil {
@@ -37,11 +38,12 @@ func TestSR1HTTPResponsePreservesHistoricalHatchAndMigratesLegacy(t *testing.T) 
 		t.Fatal(string(raw))
 	}
 	cfg.SR1 = nil
+	cfg.Tiers[0].MinScore = .8
 	raw, err = json.Marshal(fromSmartRouting(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"sr1":{"cache_ttl_seconds":300,"escape_hatch_enabled":false}`) {
-		t.Fatal("legacy JSON did not migrate to the default cold-point policy")
+	if strings.Contains(string(raw), `"sr1"`) || !strings.Contains(string(raw), `"min_score":0.8`) || cfg.SR1 != nil || cfg.Tiers[0].Model != "high" {
+		t.Fatal("response performs historical migration")
 	}
 }

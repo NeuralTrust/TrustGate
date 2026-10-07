@@ -38,21 +38,27 @@ the higher band.
 
 ## Historical configurations
 
-A supported two/three-model configuration without an `sr1` envelope migrates
-to these fixed cuts, preserving its sorted route order and setting the hatch
-to false with a 300-second lifetime. A historical explicit `sr1` envelope with
-an omitted flag retains its previously enabled hatch as a read compatibility
-rule. Valid stored lifetimes remain unchanged. New saves serialize the setting
-explicitly.
+The registered `20261007120000_canonicalize_smart_routing` database migration
+preflights every stored smart configuration, including disabled pools, inside a
+transaction. Supported historical two/three-model ladders without an `sr1`
+envelope receive fixed cuts by threshold rank; JSON array order, route targets
+and unrelated metadata are preserved. Their hatch defaults to false and their
+lifetime to 300 seconds. An existing explicit envelope with an omitted hatch
+flag retains its historical true setting only during this migration. Valid
+stored lifetimes remain unchanged.
 
-A missing historical model pin resolves only from an unambiguous declared pool
+A missing historical model pin resolves only from one unambiguous declared
 member, a compatible explicit consumer default, or a singleton concrete member
-model list. The gateway never guesses the first model of a larger list.
-Unsupported sizes, ambiguous models and invalid configurations retain all
-stored targets for inspection; configuration writes reject them, and routing
-fails with policy exhaustion. Raw invalid historical configurations remain
-serializable so they cannot block unrelated consumers or config-sync snapshots.
-The previous per-request routing strategy is no longer a serving option.
+model list. The migration rejects unsupported sizes, ambiguous models, invalid
+explicit cuts and unresolved registry references before writing any consumer.
+Owners must repair those configurations before rollout. The migration backs up
+original and canonical JSON plus update timestamps. Its transactional rollback
+refuses to overwrite later edits or deletions.
+
+Reading, validating and serializing configurations never migrate them. Disabled
+stored pools permit unrelated consumer edits without rewriting routing. Explicit API routing edits must be canonical even when disabled, including
+changes to model policies, registry associations and fallback references. The previous
+per-request smart router is no longer a serving option.
 
 ## Conversation state
 
@@ -62,6 +68,10 @@ Redis state is scoped by gateway, consumer, session and ladder configuration,
 including the hatch setting; no message text is stored. Changing the ladder or
 hatch starts a fresh lifetime. The console manages new lifetimes automatically;
 operators can retain a valid provider-specific lifetime of 1–86400 seconds.
+Each distinct client-supplied session ID can create another Redis key. TTL bounds
+retention, not key creation rate or cardinality. Require authenticated consumers
+and configure the gateway's rate and plan limits; reuse IDs per conversation and
+size/monitor Redis for the permitted request rate and lifetime.
 
 At a cold point, select the desired rung and reset the escape budget. While
 warm, retain the commitment. With the hatch disabled, warm requests atomically
@@ -78,27 +88,38 @@ uses the latest user message's position/text and Responses
 distinguish a retry from a new identical prompt. Send conversation history for
 that distinction.
 
-The scorer consumes latest user text only, including OpenAI/Responses and
-Anthropic text blocks. Tool-only Anthropic envelopes and Responses function-call
+The scorer consumes latest user text only from OpenAI/Responses, Anthropic,
+Bedrock Converse text blocks and Gemini `contents`/`parts`. Tool-only Anthropic envelopes and Responses function-call
 outputs are continuations. A trailing assistant text prefill keeps the latest
 user turn eligible for an enabled escape. A cold continuation lacking user
-history uses the strongest rung.
+history, image-only input or otherwise unreadable user text uses the strongest
+available rung for that request and creates no commitment.
 
 ## Failures and bounds
 
-Scoring requires raw scores from revision
+Scoring requires raw scores matching `FIREWALL_COMPLEXITY_MODEL_REVISION`,
+which defaults to the frozen revision
 `9619f81d9db28141fc1cc0a3833c8446260ce603`. The routing client never sends a
 Firewall conversation ID or consumes a session-modulated score. Missing
 provenance, invalid cold input, scorer failures and Redis failures use the
 strongest configured available rung. When state remains readable, failures
-respect its committed floor and cannot spend a quality escape.
+respect its committed floor and cannot spend a quality escape. A failed cold
+request does not create or reset a commitment: the next healthy request scores
+again. Fallback reads do not extend the lifetime; a warm request's normal probe
+still refreshes its idle clock. Fallback retains the greater of the probed floor
+and a fresh readable floor, including a commitment made by another replica.
 
 Backend health and exclusions apply before route selection. Serve the first
 available declared rung at or above the policy commitment. Operational health
 or failure fallback can temporarily serve a higher model without changing that
 commitment; recovery may return to the original committed model. This exception
 does not lower the stored policy floor or consume the optional escape budget.
-If Redis is unavailable, the prior floor cannot be recovered.
+A passive-unhealthy backend becomes eligible for another attempt after its
+configured health-check interval (30 seconds for historical missing settings),
+so it can recover before the one-hour health record expires. A fresh failure
+restarts cooldown; successful traffic restores healthy status. Explicit
+request exclusions still apply. If Redis is unavailable, a floor already read
+for this request is retained; an unreadable prior floor cannot be recovered.
 
 With no route satisfying the bound, routing returns a policy exhaustion error.
 Legacy fallback chains cannot bypass the ladder, including during upstream
@@ -107,10 +128,17 @@ Registry deletion retains smart routing only when the surviving fixed ladder
 still validates; otherwise the surviving pool uses round robin. Reconfigure
 its ladder explicitly.
 
+These availability bounds are deliberate: a declared stronger route may absorb
+failure, but an undeclared backup or weaker rung cannot. When the strongest
+commitment has no eligible provider, return policy exhaustion rather than change
+its floor. Choose resilient providers within the declared ladder.
+
 This routes demand and does not verify answers or guarantee output quality.
-Deploy the compatible gateway and frozen scorer together. The HF production
-tag and Firewall image must be updated separately; existing images do not
-reload mutable tags. Rollback requires the prior image digests and their
-matching complete consumer configurations. Removing `sr1` now selects the
-sole policy with the hatch off; it does not restore the retired per-request
-router. Preserve the previous HF production content commit.
+Deploy the compatible scorer first, then the gateway migration and runtime, then
+the console. Roll out the admin plane first and verify its compiled snapshots
+contain canonical configurations before new proxies accept traffic; older admin
+replicas can retain snapshots until their next recompile. Development Firewall already serves the frozen revision; no HF
+`production` ref change is needed for this development rollout. Production
+promotion remains separate. Preserve matching prior image digests and the
+migration backup for rollback. Removing `sr1` cannot restore the retired router;
+new API writes without a canonical session configuration are rejected.

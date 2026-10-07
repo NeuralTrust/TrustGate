@@ -103,9 +103,9 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 							{RegistryID: keeper, Model: "gpt-4o"},
 							{RegistryID: victim, Model: "gpt-4.1-nano"},
 						},
-						SmartRouting: &registry.SmartRoutingConfig{Tiers: []registry.SmartRoutingTier{
+						SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{
 							{MinScore: 0, RegistryID: keeper, Model: "gpt-4o"},
-							{MinScore: 0.5, RegistryID: victim, Model: "gpt-4.1-nano"},
+							{MinScore: 0.45, RegistryID: victim, Model: "gpt-4.1-nano"},
 						}},
 					},
 				}
@@ -144,9 +144,9 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 							{RegistryID: victim, Model: "gpt-4.1-nano"},
 							{RegistryID: keeper, Model: "gpt-4o"},
 						},
-						SmartRouting: &registry.SmartRoutingConfig{Tiers: []registry.SmartRoutingTier{
+						SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{
 							{MinScore: 0, RegistryID: victim, Model: "gpt-4.1-nano"},
-							{MinScore: 0.6, RegistryID: keeper, Model: "gpt-4o"},
+							{MinScore: 0.45, RegistryID: keeper, Model: "gpt-4o"},
 						}},
 					},
 				}
@@ -343,9 +343,9 @@ func TestConsumer_PruneRegistryLeavesAValidatableConsumer(t *testing.T) {
 				{RegistryID: victim, Model: "gpt-4.1-nano"},
 				{RegistryID: keeper, Model: "gpt-4o"},
 			},
-			SmartRouting: &registry.SmartRoutingConfig{Tiers: []registry.SmartRoutingTier{
+			SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{
 				{MinScore: 0, RegistryID: victim, Model: "gpt-4.1-nano"},
-				{MinScore: 0.6, RegistryID: keeper, Model: "gpt-4o"},
+				{MinScore: 0.45, RegistryID: keeper, Model: "gpt-4o"},
 			}},
 		},
 	})

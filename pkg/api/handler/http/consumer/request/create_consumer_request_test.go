@@ -78,9 +78,10 @@ func TestLBConfigRequest_ToDomain_RoutesPerModel(t *testing.T) {
 			{RegistryID: registryID.String(), Model: "gpt-5"},
 		},
 		SmartRouting: &SmartRoutingConfigRequest{
+			SR1: &SR1ConfigRequest{CacheTTLSeconds: 300},
 			Tiers: []SmartRoutingTierRequest{
 				{MinScore: 0, RegistryID: registryID.String(), Model: "gpt-5-mini"},
-				{MinScore: 0.5, RegistryID: registryID.String(), Model: "gpt-5"},
+				{MinScore: 0.45, RegistryID: registryID.String(), Model: "gpt-5"},
 			},
 		},
 	}
