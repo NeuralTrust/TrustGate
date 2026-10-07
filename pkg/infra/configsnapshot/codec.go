@@ -75,6 +75,12 @@ func (Codec) Version(raw []byte) string {
 
 func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	msg := &snapshotpb.Snapshot{Version: data.Version}
+	owners := registryOwners(data.Registries)
+	for i := range data.Consumers {
+		if err := validateConsumerSmartRouting(&data.Consumers[i], owners); err != nil {
+			return nil, fmt.Errorf("configsnapshot: consumer %s routing: %w", data.Consumers[i].ID, err)
+		}
+	}
 
 	var err error
 	if msg.Gateways, err = encodeJSON(data.Gateways, "gateway", func(_ int, blob []byte) *snapshotpb.Gateway { return &snapshotpb.Gateway{Json: blob} }); err != nil {
@@ -165,6 +171,12 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 	}
 	if data.Registries, err = decodeJSON[*snapshotpb.Registry, registrydomain.Registry](msg.GetRegistries(), "registry", func(m *snapshotpb.Registry) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
+	}
+	owners := registryOwners(data.Registries)
+	for i, message := range msg.GetConsumers() {
+		if err := validateConsumerSmartRoutingJSON(message.GetJson(), &data.Consumers[i], owners); err != nil {
+			return readmodel.Data{}, fmt.Errorf("configsnapshot: consumer %s routing: %w", data.Consumers[i].ID, err)
+		}
 	}
 	if data.Policies, err = decodeJSON[*snapshotpb.Policy, policydomain.Policy](msg.GetPolicies(), "policy", func(m *snapshotpb.Policy) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err

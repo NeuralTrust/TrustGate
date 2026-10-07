@@ -136,8 +136,14 @@ its floor. Choose resilient providers within the declared ladder.
 This routes demand and does not verify answers or guarantee output quality.
 Deploy the compatible scorer first, then the gateway migration and runtime, then
 the console. Roll out the admin plane first and verify its compiled snapshots
-contain canonical configurations before new proxies accept traffic; older admin
-replicas can retain snapshots until their next recompile. Development Firewall already serves the frozen revision; no HF
+contain canonical configurations before new proxies accept traffic. Snapshot
+admission validates the canonical routing contract for live updates and restored
+snapshots, including explicit lifetime and escape settings; it never migrates
+historical data. New admins advertise readiness only after a fresh successful
+canonical compilation following migration. During concurrent rolling updates,
+new proxies reject incompatible snapshots and stay unready while existing healthy
+replicas continue serving. Compatible admitted snapshots retain normal outage
+recovery. Development Firewall already serves the frozen revision; no HF
 `production` ref change is needed for this development rollout. Production
 promotion remains separate. Preserve matching prior image digests and the
 migration backup for rollback. Removing `sr1` cannot restore the retired router;
