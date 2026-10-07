@@ -208,6 +208,9 @@ func adaptStream(
 	opts ...streamOption,
 ) iter.Seq2[[]byte, error] {
 	options := newStreamOptions(opts)
+	if target == adapter.FormatAnthropic && (source == adapter.FormatOpenAI || source == adapter.FormatAzure) {
+		return coalesceOpenAIToolCallStream(adaptAnthropicChatStream(raw, registry, source, logger, onChunk, options))
+	}
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	var deferred *finishDeferral
 	var geminiCalls *adapter.GeminiCallIndexer
