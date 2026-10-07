@@ -39,6 +39,7 @@ import (
 	"time"
 
 	_ "github.com/NeuralTrust/TrustGate/docs"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -69,6 +70,8 @@ const (
 
 // serverConfigSyncGRPC names the control-plane config-sync gRPC listener in the shared serve loop.
 const serverConfigSyncGRPC = "config-sync-grpc"
+
+const bedrockModelsShutdownGrace = time.Second
 
 func main() {
 	// Local dev uses .env in cwd; k8s mounts GCP secrets at /etc/secrets/.env
@@ -196,6 +199,8 @@ type proxyParam struct {
 	Worker        appmetrics.Worker
 	TrafficLabels modules.TrafficLabelsParams
 	Conn          *database.Connection
+	BedrockModels appcatalog.BedrockModelResolver
+	Config        *config.Config
 	ConfigWorker  *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
 	RateLimit     rateLimitParams
@@ -222,6 +227,8 @@ type allParam struct {
 	Worker         appmetrics.Worker
 	TrafficLabels  modules.TrafficLabelsParams
 	Conn           *database.Connection
+	BedrockModels  appcatalog.BedrockModelResolver
+	Config         *config.Config
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
 	RateLimit      rateLimitParams
@@ -254,6 +261,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
+	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
@@ -288,6 +296,7 @@ func runAll(p allParam, logger *slog.Logger) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
+	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
 	defer stopDispatcher()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
@@ -411,6 +420,24 @@ func flushOpsTelemetry(sdk *o11y.SDK, logger *slog.Logger) {
 	defer cancel()
 	if err := sdk.Shutdown(ctx); err != nil {
 		logger.Warn("operational telemetry shutdown failed", slog.String("error", err.Error()))
+	}
+}
+
+// closeBedrockModels waits for the model lookups still in flight, so a rolling
+// restart does not cut a control plane call off mid-flight. A lookup is bounded by
+// the configured control plane timeout, so the wait is that plus a second.
+func closeBedrockModels(models appcatalog.BedrockModelResolver, cfg *config.Config, logger *slog.Logger) {
+	if models == nil {
+		return
+	}
+	timeout := config.DefaultBedrockNative().ResolverControlPlaneTimeout
+	if cfg != nil && cfg.BedrockNative.ResolverControlPlaneTimeout > 0 {
+		timeout = cfg.BedrockNative.ResolverControlPlaneTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+bedrockModelsShutdownGrace)
+	defer cancel()
+	if err := models.Close(ctx); err != nil {
+		logger.Warn("bedrock model resolver shutdown timed out", slog.String("error", err.Error()))
 	}
 }
 

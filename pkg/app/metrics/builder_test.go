@@ -22,7 +22,9 @@ import (
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -975,4 +977,74 @@ func TestBuilder_StreamedPoliciesLeaveProviderMs(t *testing.T) {
 	assert.Equal(t, int64(500), unmarked.ProviderMs)
 	assert.Zero(t, unmarked.GatewayMs,
 		"without the marker the guard's hold is counted twice and the remainder clamps to zero")
+}
+
+// A native Bedrock call names its model by ARN, or by a profile ARN that only the
+// control plane can resolve. Both must reach the catalog price, or the call is
+// recorded with usage and no cost.
+func TestBuilder_CostForNativeBedrockARNs(t *testing.T) {
+	const base = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+	systemARN := "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us." + base
+	appARN := "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123xyz"
+	pricing := map[string]appcatalog.Pricing{
+		"bedrock:" + base: {Found: true, InputPrice: 0.000003, OutputPrice: 0.000015},
+	}
+	cases := []struct {
+		name      string
+		sent      string
+		spanModel string
+		wantCost  bool
+	}{
+		{"system profile ARN", systemARN, systemARN, true},
+		{"foundation model ARN", "arn:aws:bedrock:us-east-1::foundation-model/" + base, "arn:aws:bedrock:us-east-1::foundation-model/" + base, true},
+		{"global system profile ARN", "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global." + base, "", true},
+		{"application profile resolved: span model is the resolved model", appARN, base, true},
+		{"application profile unresolved: usage without a cost", appARN, appARN, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := trace.New("trace-native", trace.Metadata{GatewayID: "gw-1"})
+			_ = rt.AddSpan(llmSpan("bedrock", &trace.LLMAttrs{
+				Provider: "bedrock", SentModel: tc.sent, Model: tc.spanModel, RequestedModel: tc.sent,
+				Attempt: 1, Outcome: "success",
+				Usage: &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+			}, 200, 300*time.Millisecond, ""))
+			req := &infracontext.RequestContext{
+				GatewayID: "gw-1", RequestedModel: tc.sent, SourceFormat: string(adapter.FormatBedrockNative),
+				Body: []byte(`{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`),
+			}
+			resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{}`)}
+
+			evt := newBuilderWithPricing(pricing).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+			if !tc.wantCost {
+				assert.Nil(t, evt.Cost)
+				return
+			}
+			require.NotNil(t, evt.Cost)
+			assert.InDelta(t, 10*0.000003, float64(evt.Cost.PromptUsd), 1e-12)
+			assert.InDelta(t, 5*0.000015, float64(evt.Cost.CompletionUsd), 1e-12)
+		})
+	}
+}
+
+// A mask a native Bedrock call could not have applied reaches the product event as
+// a policy-chain entry named native_bedrock_passthrough with decision failed_open and
+// a failure_reason; docs/telemetry/otlp-metadata-contract.md documents it, so the
+// shape is pinned here.
+func TestBuilder_NativeBedrockMaskNotApplicableIsAPolicyChainEntry(t *testing.T) {
+	rt := trace.New("trace-native-mask", trace.Metadata{GatewayID: "gw-1"})
+	appplugins.RecordNativeMaskNotApplied(trace.NewContext(context.Background(), rt), nil, policy.StagePreRequest, "leak_remaining", false)
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/acme/model/m/converse"}
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, &infracontext.ResponseContext{StatusCode: 200}, start, start.Add(time.Millisecond))
+
+	require.Len(t, evt.PolicyChain, 1)
+	entry := evt.PolicyChain[0]
+	assert.Equal(t, "native_bedrock_passthrough", entry.Name)
+	assert.Equal(t, "pre_request", entry.Stage)
+	assert.Equal(t, "failed_open", entry.Decision)
+	raw, err := json.Marshal(entry.Extras)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"decision":"failed_open","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining"}`, string(raw))
 }

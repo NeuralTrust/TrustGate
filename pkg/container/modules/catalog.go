@@ -88,6 +88,12 @@ func provideCatalogServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(newBedrockModelARNLookup); err != nil {
+		return err
+	}
+	if err := c.Provide(newBedrockModelResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
 		return err
 	}
@@ -106,6 +112,35 @@ func provideCatalogServices(c *container.Container) error {
 		return err
 	}
 	return c.Provide(cataloghttp.NewListModelsHandler)
+}
+
+// bedrockModelARNLookup adapts the infra control plane client to the port the
+// resolver depends on.
+type bedrockModelARNLookup struct {
+	client controlplane.Client
+}
+
+func newBedrockModelARNLookup(client controlplane.Client) appcatalog.BedrockModelARNLookup {
+	return &bedrockModelARNLookup{client: client}
+}
+
+func (l *bedrockModelARNLookup) ResolveModelARN(ctx context.Context, creds appcatalog.BedrockCredentials, arn string) (string, error) {
+	return l.client.ResolveModelARN(ctx, controlplane.Credentials{
+		Region: creds.Region, AccessKey: creds.AccessKey, SecretKey: creds.SecretKey,
+		SessionToken: creds.SessionToken, UseRole: creds.UseRole, RoleARN: creds.RoleARN,
+	}, arn)
+}
+
+func newBedrockModelResolver(lookup appcatalog.BedrockModelARNLookup, logger *slog.Logger, cfg *config.Config) appcatalog.BedrockModelResolver {
+	native := cfg.BedrockNative
+	return appcatalog.NewBedrockModelResolverWithLimits(lookup, logger, appcatalog.BedrockResolverLimits{
+		MaxInFlight:    native.ResolverMaxInFlight,
+		MaxPerRegistry: native.ResolverMaxPerRegistry,
+		MaxEntries:     native.ResolverCacheEntries,
+		ResolvedTTL:    native.ResolverResolvedTTL,
+		UnresolvedTTL:  native.ResolverUnresolvedTTL,
+		LookupTimeout:  native.ResolverControlPlaneTimeout,
+	})
 }
 
 type liveModelSource struct {

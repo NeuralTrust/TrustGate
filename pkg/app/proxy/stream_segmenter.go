@@ -126,6 +126,99 @@ type streamEvent struct {
 	// mask path re-encodes an event, and this is what tells it which ones it
 	// must leave alone.
 	beyondText bool
+	// tool is what a native Bedrock frame does to a tool call, and toolIndex the
+	// content block it does it to (-1 when the frame does not say).
+	tool      toolPhase
+	toolIndex int
+	// toolHandled is set once the guard has asked the chain about the tool call
+	// this frame belongs to and applied its verdict, so a mask on the text of the
+	// same window no longer has to treat the frame as tool input it cannot edit.
+	toolHandled bool
+}
+
+type toolPhase uint8
+
+const (
+	toolNone toolPhase = iota
+	toolStart
+	toolDelta
+	toolStop
+)
+
+// nativeToolPhase reads the tool phase off the view of a native frame. Only the
+// two formats whose tool call is understood are read: ConverseStream, and the
+// Anthropic events of an InvokeModel chunk. Any other family keeps no phase, so
+// its tool deltas are never held as a block.
+func nativeToolPhase(payload []byte) (toolPhase, int) {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(payload, &top) != nil {
+		return toolNone, -1
+	}
+	index := func(p *int) int {
+		if p == nil {
+			return -1
+		}
+		return *p
+	}
+	if raw, ok := top["contentBlockStart"]; ok {
+		var v struct {
+			Index *int `json:"contentBlockIndex"`
+			Start struct {
+				ToolUse json.RawMessage `json:"toolUse"`
+			} `json:"start"`
+		}
+		if json.Unmarshal(raw, &v) == nil && len(v.Start.ToolUse) > 0 {
+			return toolStart, index(v.Index)
+		}
+		return toolNone, -1
+	}
+	if raw, ok := top["contentBlockDelta"]; ok {
+		var v struct {
+			Index *int `json:"contentBlockIndex"`
+			Delta struct {
+				ToolUse json.RawMessage `json:"toolUse"`
+			} `json:"delta"`
+		}
+		if json.Unmarshal(raw, &v) == nil && len(v.Delta.ToolUse) > 0 {
+			return toolDelta, index(v.Index)
+		}
+		return toolNone, -1
+	}
+	if raw, ok := top["contentBlockStop"]; ok {
+		var v struct {
+			Index *int `json:"contentBlockIndex"`
+		}
+		if json.Unmarshal(raw, &v) == nil {
+			return toolStop, index(v.Index)
+		}
+		return toolStop, -1
+	}
+	var v struct {
+		Type         string `json:"type"`
+		Index        *int   `json:"index"`
+		ContentBlock struct {
+			Type string `json:"type"`
+		} `json:"content_block"`
+		Delta struct {
+			Type string `json:"type"`
+		} `json:"delta"`
+	}
+	if json.Unmarshal(payload, &v) != nil {
+		return toolNone, -1
+	}
+	switch v.Type {
+	case "content_block_start":
+		if v.ContentBlock.Type == "tool_use" || v.ContentBlock.Type == "server_tool_use" {
+			return toolStart, index(v.Index)
+		}
+	case "content_block_delta":
+		if v.Delta.Type == "input_json_delta" {
+			return toolDelta, index(v.Index)
+		}
+	case "content_block_stop":
+		return toolStop, index(v.Index)
+	}
+	return toolNone, -1
 }
 
 // streamMark is what one event does to the structure a client can see open: the
@@ -249,6 +342,11 @@ type segmenter struct {
 	format adapter.Format
 	buf    [][]byte
 	anchor cutAnchor
+	// frames marks a stream whose items are whole Bedrock eventstream frames,
+	// each one an event of its own. What the codec decodes is the frame's
+	// read-only view, while the event keeps the frame's own bytes, which is
+	// what the guard releases.
+	frames bool
 }
 
 // newSegmenter builds a segmenter for the source format. After adaptStream the
@@ -263,6 +361,10 @@ func newSegmenter(codec streamCodec, source adapter.Format) *segmenter {
 // release the original lines byte for byte. The line is handed over under the
 // ownership contract on segmenter.
 func (s *segmenter) feed(line []byte) (*streamEvent, error) {
+	if s.frames {
+		s.buf = append(s.buf, line)
+		return s.flush()
+	}
 	standalone := len(s.buf) == 0 && isSSEComment(line)
 	s.buf = append(s.buf, line)
 	if !standalone && len(bytes.TrimSpace(line)) != 0 {
@@ -284,13 +386,21 @@ func (s *segmenter) flush() (*streamEvent, error) {
 
 func (s *segmenter) classify(ev *streamEvent) error {
 	var payload []byte
-	for _, line := range ev.lines {
-		if isSSEDone(line) {
-			ev.unit = unitTerminal
-			return nil
+	if s.frames {
+		for _, view := range adapter.BedrockFrameView(ev.lines[0]) {
+			if p, ok := dataPayload(view); ok && payload == nil {
+				payload = p
+			}
 		}
-		if p, ok := dataPayload(line); ok && payload == nil {
-			payload = p
+	} else {
+		for _, line := range ev.lines {
+			if isSSEDone(line) {
+				ev.unit = unitTerminal
+				return nil
+			}
+			if p, ok := dataPayload(line); ok && payload == nil {
+				payload = p
+			}
 		}
 	}
 	// Only the first data: line of an event is accounted for. No registry
@@ -306,6 +416,9 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	if isTerminalPayload(eventType) {
 		ev.unit = unitTerminal
 		return nil
+	}
+	if s.frames {
+		ev.tool, ev.toolIndex = nativeToolPhase(payload)
 	}
 	ev.mark = streamMarkFor(s.format, eventType, payload)
 	ev.beyondText = ev.mark.op != markNone

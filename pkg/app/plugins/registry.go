@@ -100,6 +100,11 @@ func (r *registry) Validate(name string, settings map[string]any) error {
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
 	}
+	if BedrockNativeOf(p) == BedrockNativeMasks {
+		if err := ValidateMaskFailure(settings); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
 	return p.ValidateConfig(settings)
 }
 

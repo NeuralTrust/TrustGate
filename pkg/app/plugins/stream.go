@@ -133,9 +133,13 @@ type StreamReport struct {
 // two must not drift: these strings land in ClickHouse, so renaming one after
 // release is a data migration rather than a code change.
 const (
-	StreamDegradeAccumulationCap      = "accumulation_cap"
-	StreamDegradeGuardTimeout         = "guard_timeout"
-	StreamDegradeGuardError           = "guard_error"
+	StreamDegradeAccumulationCap = "accumulation_cap"
+	StreamDegradeGuardTimeout    = "guard_timeout"
+	StreamDegradeGuardError      = "guard_error"
+	// StreamDegradeToolInputUninspected says a native tool call was released
+	// without its input having been read as a text of its own: it outgrew the hold,
+	// the stream ended before it closed, or its format is not understood.
+	StreamDegradeToolInputUninspected = "tool_input_uninspected"
 	StreamFallbackSegmentationUnavail = "segmentation_unavailable"
 	StreamFallbackClientDisconnected  = "client_disconnected"
 	// StreamFallbackEntryRetired is published on ONE entry's span: its provider
@@ -232,7 +236,10 @@ type SegmentOutcome struct {
 	Message       string
 	HasTransform  bool
 	Transformed   string
-	Fingerprints  []StreamFinding
+	// MaskFailureBlock says an entry whose transform is in this outcome asked, with
+	// on_mask_failure, for the stream to end when its mask cannot be applied.
+	MaskFailureBlock bool
+	Fingerprints     []StreamFinding
 }
 
 // StreamFinding is one finding fingerprint and the chain entry that reported

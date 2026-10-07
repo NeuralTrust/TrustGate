@@ -45,8 +45,12 @@ func Proxy(c *container.Container) error {
 		registry *adapter.Registry,
 		logger *slog.Logger,
 		catalog catalogdomain.Repository,
+		models appcatalog.BedrockModelResolver,
+		cfg *config.Config,
 	) appproxy.ProviderInvoker {
-		return appproxy.NewProviderInvoker(locator, registry, logger, appproxy.WithCatalog(catalog))
+		return appproxy.NewProviderInvoker(locator, registry, logger,
+			appproxy.WithCatalog(catalog), appproxy.WithBedrockModelResolver(models),
+			appproxy.WithNativeMaxResponseBytes(cfg.BedrockNative.MaxResponseBytes))
 	}); err != nil {
 		return err
 	}
@@ -68,12 +72,14 @@ func Proxy(c *container.Container) error {
 		listing appcatalog.ModelListing,
 		limiter ratelimitapp.Checker,
 		registry *adapter.Registry,
+		bedrockModels appcatalog.BedrockModelResolver,
 		cfg *config.Config,
 		logger *slog.Logger,
 	) appproxy.Forwarder {
 		return appproxy.NewForwarder(
 			factory, cacheClient, manager, invoker, executor, sessions, resolver, listing, limiter, cfg, logger,
 			appproxy.WithStreamCodec(registry),
+			appproxy.WithForwarderBedrockModelResolver(bedrockModels),
 		)
 	}); err != nil {
 		return err
