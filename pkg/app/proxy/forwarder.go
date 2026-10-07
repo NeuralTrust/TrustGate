@@ -15,12 +15,14 @@
 package proxy
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -78,6 +80,16 @@ type ForwardResult struct {
 	// reads the rest of the upstream so its usage is still charged. The
 	// caller keeps the forward context alive until then.
 	StreamSettled func() <-chan struct{}
+	// Upstream marks a response that is exactly what the provider answered,
+	// status, body and stream alike. The handler uses it to leave a native
+	// Bedrock answer, AWS errors included, as AWS sent it, and to put the AWS
+	// error envelope on every other error the gateway makes itself.
+	Upstream bool
+	// RawFrames and StreamView carry ProviderResponse's, for a native Bedrock
+	// eventstream: Stream yields whole frames the handler writes with no
+	// separator, and StreamView turns one into the lines metrics capture.
+	RawFrames  bool
+	StreamView func(frame []byte) [][]byte
 }
 
 type forwardRequestDTO struct {
@@ -111,8 +123,13 @@ type forwarder struct {
 	pipeline   candidatePipeline
 	limiter    ratelimitapp.Checker
 	codec      guardCodec
+	models     appcatalog.BedrockModelResolver
+	masker     NativeBodyMasker
 	maxRetries int
-	logger     *slog.Logger
+
+	nativeToolHold   time.Duration
+	nativeLookupWait time.Duration
+	logger           *slog.Logger
 }
 
 // ForwarderOption configures an optional forwarder capability.
@@ -125,6 +142,19 @@ func WithStreamCodec(codec guardCodec) ForwarderOption {
 	return func(f *forwarder) {
 		f.codec = codec
 	}
+}
+
+// WithForwarderBedrockModelResolver lets the forwarder name the model behind an
+// opaque Bedrock ARN before the pre_request stage, so a cost cap and the token
+// budgets see it on the first call.
+func WithForwarderBedrockModelResolver(models appcatalog.BedrockModelResolver) ForwarderOption {
+	return func(f *forwarder) { f.models = models }
+}
+
+// WithNativeMasker replaces how a mask is carried onto a native Bedrock body.
+// It exists for tests that need a patcher that fails.
+func WithNativeMasker(masker NativeBodyMasker) ForwarderOption {
+	return func(f *forwarder) { f.masker = masker }
 }
 
 // NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
@@ -152,8 +182,12 @@ func NewForwarder(
 		sessions:   sessions,
 		pipeline:   candidatePipeline{resolver: resolver, listing: listing, logger: logger},
 		limiter:    limiter,
+		masker:     adapter.NativeMasker{},
 		maxRetries: maxRetriesFromConfig(cfg),
-		logger:     logger,
+
+		nativeToolHold:   nativeToolHoldFromConfig(cfg),
+		nativeLookupWait: nativeLookupWaitFromConfig(cfg),
+		logger:           logger,
 	}
 	for _, opt := range opts {
 		opt(fwd)
@@ -166,6 +200,20 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 		return 0
 	}
 	return cfg.Provider.MaxRetries
+}
+
+func nativeToolHoldFromConfig(cfg *config.Config) time.Duration {
+	if cfg == nil || cfg.BedrockNative.ToolHold <= 0 {
+		return config.DefaultBedrockNative().ToolHold
+	}
+	return cfg.BedrockNative.ToolHold
+}
+
+func nativeLookupWaitFromConfig(cfg *config.Config) time.Duration {
+	if cfg == nil || cfg.BedrockNative.LookupWait <= 0 {
+		return config.DefaultBedrockNative().LookupWait
+	}
+	return cfg.BedrockNative.LookupWait
 }
 
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
@@ -194,6 +242,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 
 	stampTarget(in.Request, route.route.Registry)
 	_, in.Request.DefaultModel = routePolicy(candidates, in.Consumer, route.route)
+	f.resolveOpaqueNativeModel(ctx, route.route.Registry, in.Request)
 	resp := &infracontext.ResponseContext{
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
@@ -201,10 +250,21 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	policies := in.Consumer.Policies
 	plan := in.Consumer.PolicyPlan
 
+	nativeBody := nativeBodySnapshot(in.Request)
+	if nativeBody != nil {
+		in.Request.NativeMask = &infracontext.NativeMaskLog{}
+	}
 	if short, err := f.runPreRequest(ctx, policies, plan, in.Request, resp); err != nil {
 		return nil, err
 	} else if short != nil {
-		return short, nil
+		return nativeShortCircuit(in.Request, short), nil
+	}
+	if nativeBody != nil && !bytes.Equal(nativeBody, in.Request.Body) {
+		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreRequest, in.Request, nativeBody, in.Request.Body, f.masker.MaskRequestWhy)
+		if pe != nil {
+			return pluginErrorResult(pe), nil
+		}
+		in.Request.Body = masked
 	}
 
 	dto := &forwardRequestDTO{
@@ -231,6 +291,12 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 func ambiguousChatBody(req *infracontext.RequestContext) bool {
 	if req == nil || len(req.Body) == 0 {
 		return false
+	}
+	if req.IsBedrockNative() {
+		if adapter.BedrockNativeOp(req.BedrockNative.Op).IsConverse() {
+			return adapter.HasAmbiguousKeys(adapter.FormatBedrock, req.Body)
+		}
+		return adapter.HasAmbiguousInvokeKeys(req.Body)
 	}
 	format := sourceFormatFromRequest(req)
 	return adapter.IsChatRequest(req.ProxyCapability, format) && adapter.HasAmbiguousKeys(format, req.Body)
@@ -275,6 +341,7 @@ func (f *forwarder) invokeWithFailover(
 			}
 			budget.recordAttempt()
 
+			dto.request.NativeMask.Reset(policydomain.StagePreResponse)
 			startedAt := time.Now()
 			resp, err := f.invokeOnce(ctx, bk, dto.request, stream)
 			elapsed := time.Since(startedAt)
@@ -312,7 +379,7 @@ func (f *forwarder) invokeWithFailover(
 					}
 					break
 				}
-				if sequential && responseCarriesModelNotFound(resp) {
+				if sequential && (responseCarriesModelNotFound(resp) || nativeAccessDenied(dto.request, resp)) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
 					misses = append(misses, newModelMiss(bk, resp))
@@ -344,6 +411,14 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
+		// A native Bedrock caller is talking to AWS, and AWS's own answer to an
+		// unknown model identifier is the error its SDK knows how to read: the
+		// status, the x-amzn-ErrorType and the request id. Every registry was
+		// probed, so the last answer is relayed as it came instead of being
+		// replaced by a gateway 404 the SDK cannot classify.
+		if dto.request.IsBedrockNative() && last.resp != nil {
+			return f.finalizeBody(ctx, dto, last.resp), nil
+		}
 		return nil, noRegistryServesModelError(dto.request.RequestedModel, dto.routeSlug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
@@ -602,6 +677,7 @@ func (f *forwarder) finalizeStream(
 	startedAt time.Time,
 ) *ForwardResult {
 	pluginResp := dto.response
+	native := dto.request.IsBedrockNative()
 	mergeStreamingResponse(pluginResp, providerResp)
 	outcome, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	if pe != nil {
@@ -610,7 +686,7 @@ func (f *forwarder) finalizeStream(
 	}
 	if outcome != nil && outcome.ShortCircuit {
 		f.drainAsync(providerResp.Stream)
-		return f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome)
+		return nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome))
 	}
 	stream := providerResp.Stream
 	var cutBarrier func() <-chan struct{}
@@ -625,7 +701,9 @@ func (f *forwarder) finalizeStream(
 		cutBarrier = guard.cutBarrier
 		wasCut = guard.wasCut
 	}
-	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier, wasCut)
+	stream = f.refreshModelAtStreamEnd(ctx, dto, stream)
+	out := f.wrapStreamWithPostResponse(
+		ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier, wasCut, providerResp.StreamView)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
@@ -633,6 +711,9 @@ func (f *forwarder) finalizeStream(
 		Headers:       pluginResp.Headers,
 		Stream:        out,
 		StreamSettled: cutBarrier,
+		Upstream:      native,
+		RawFrames:     providerResp.RawFrames,
+		StreamView:    providerResp.StreamView,
 	}
 }
 
@@ -720,6 +801,8 @@ func (f *forwarder) newStreamGuard(
 			minChars:      opts.MinCharsBetweenEvals,
 			maxHold:       time.Duration(opts.MaxHoldMS) * time.Millisecond,
 			maxAccumBytes: opts.MaxAccumulatedBytes,
+
+			nativeToolHold: f.nativeToolHold,
 		},
 		f.logger,
 	)
@@ -729,6 +812,14 @@ func (f *forwarder) newStreamGuard(
 	// charged. post_response then orders itself behind guard.cutBarrier, which
 	// is what makes "charged" true rather than aspirational.
 	guard.drain = f.drainAsync
+	if dto.request.IsBedrockNative() {
+		// The same segmentation and plugin calls as an SSE stream, over frames:
+		// each frame is an event, its decoded text is what is inspected, and the
+		// original frame is what is released. Each policy's streaming.on_error is
+		// honoured, as on every other stream.
+		guard.native = true
+		guard.seg.frames = true
+	}
 	return guard
 }
 
@@ -791,11 +882,33 @@ func (f *forwarder) finalizeBodyGated(
 	if _, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
 	}
+	native := dto.request.IsBedrockNative()
+	if native && nativeResponseChanged(providerResp, pluginResp) {
+		errorResponse := providerResp.StatusCode >= http.StatusMultipleChoices &&
+			len(dto.request.NativeMask.Sources(policydomain.StagePreResponse)) > 0
+		if !errorResponse && pluginResp.StatusCode != providerResp.StatusCode {
+			pe := nativeModified(nativeResponseModified)
+			return pluginErrorResult(pe), pe
+		}
+		maskResponse := f.masker.MaskResponseWhy
+		if errorResponse {
+			maskResponse = func(_, _ []byte) ([]byte, adapter.MaskCause) {
+				return nil, adapter.MaskCauseErrorResponse
+			}
+		}
+		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreResponse, dto.request, providerResp.Body, pluginResp.Body, maskResponse)
+		if pe != nil {
+			return pluginErrorResult(pe), pe
+		}
+		pluginResp.Body = masked
+		pluginResp.StatusCode = providerResp.StatusCode
+	}
 	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
 		Body:       pluginResp.Body,
+		Upstream:   native,
 	}, nil
 }

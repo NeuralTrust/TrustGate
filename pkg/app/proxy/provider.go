@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -78,6 +79,12 @@ type ProviderResponse struct {
 	SentModel    string
 	FinishReason string
 	ResponseID   string
+	// RawFrames marks a Stream whose items are whole Bedrock eventstream
+	// frames, written to the client as they are with no line separator.
+	// StreamView turns one such frame into the SSE-style lines the observers
+	// and post_response read; it never feeds what the client receives.
+	RawFrames  bool
+	StreamView func(frame []byte) [][]byte
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -108,9 +115,23 @@ type providerInvoker struct {
 	logger   *slog.Logger
 	catalog  CatalogReader
 	limits   *outputLimits
+	models   appcatalog.BedrockModelResolver
+
+	nativeMaxResponseBytes int64
 }
 
 type InvokerOption func(*providerInvoker)
+
+// WithBedrockModelResolver attaches the lookup that names the model behind an
+// opaque Bedrock ARN, so a native call through one can be priced.
+func WithBedrockModelResolver(models appcatalog.BedrockModelResolver) InvokerOption {
+	return func(p *providerInvoker) { p.models = models }
+}
+
+// WithNativeMaxResponseBytes bounds a buffered answer of a native Bedrock call.
+func WithNativeMaxResponseBytes(n int64) InvokerOption {
+	return func(p *providerInvoker) { p.nativeMaxResponseBytes = n }
+}
 
 // WithCatalog attaches the catalog used for output-token clamps and
 // context-window preflight. Tests omit it to keep those paths off.
@@ -165,6 +186,9 @@ func (p *providerInvoker) Invoke(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
+	if req.IsBedrockNative() {
+		return p.invokeBedrockNative(ctx, bk, req)
+	}
 	prep, err := p.prepare(ctx, bk, req)
 	if err != nil {
 		return nil, err
@@ -239,6 +263,9 @@ func (p *providerInvoker) InvokeStream(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
+	if req.IsBedrockNative() {
+		return p.invokeBedrockNative(ctx, bk, req)
+	}
 	prep, err := p.prepare(ctx, bk, req)
 	if err != nil {
 		return nil, err

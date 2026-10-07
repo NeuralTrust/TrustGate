@@ -26,6 +26,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
@@ -109,9 +110,16 @@ func (f *forwarder) resolveRouting(
 }
 
 func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingdomain.CandidateSet, error) {
+	consumer := q.consumer
+	if q.request.IsBedrockNative() {
+		var err error
+		if consumer, err = bedrockOnlyConsumer(q.consumer); err != nil {
+			return nil, err
+		}
+	}
 	candidates, err := p.resolver.Resolve(approuting.ResolveInput{
 		Intent:     q.intent,
-		Consumer:   q.consumer,
+		Consumer:   consumer,
 		Registries: registryLookup(q.data),
 	})
 	if err != nil {
@@ -148,6 +156,30 @@ func keepCandidates(candidates *routingdomain.CandidateSet, keep CandidateFilter
 		return nil, errNoKeptCandidate
 	}
 	return kept, nil
+}
+
+// bedrockOnlyConsumer returns a copy of rc that only holds its Bedrock
+// registries. A native Bedrock request is relayed, not translated, so a
+// registry of any other provider must never be a candidate, even one that
+// allows the model: the call would have nowhere valid to go, and the error for
+// an application with no Bedrock registry at all would be hidden behind it.
+func bedrockOnlyConsumer(rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
+	bedrock := func(regs []*domain.Registry) []*domain.Registry {
+		out := make([]*domain.Registry, 0, len(regs))
+		for _, reg := range regs {
+			if reg != nil && reg.Provider() == provider.Bedrock {
+				out = append(out, reg)
+			}
+		}
+		return out
+	}
+	only := *rc
+	only.Registries = bedrock(rc.Registries)
+	only.FallbackBackends = bedrock(rc.FallbackBackends)
+	if len(only.Registries)+len(only.FallbackBackends) == 0 {
+		return nil, fmt.Errorf("%w: application has no Amazon Bedrock registry", routingdomain.ErrNoRegistryServesModel)
+	}
+	return &only, nil
 }
 
 func (p candidatePipeline) filterCandidatesByProviderListing(
@@ -260,6 +292,12 @@ func parseIntent(req *infracontext.RequestContext) (routingdomain.Intent, string
 	if req == nil {
 		return routingdomain.Intent{}, "", nil
 	}
+	if req.IsBedrockNative() {
+		// The identifier names a Bedrock model, ARN or inference profile; it is
+		// never routing syntax, so "auto" or "pool:x" are literal model IDs.
+		id := req.BedrockNative.ModelID
+		return routingdomain.Intent{Model: id}, id, nil
+	}
 	ref, err := modelRefFromRequest(req)
 	if err != nil {
 		return routingdomain.Intent{}, "", err
@@ -269,6 +307,9 @@ func parseIntent(req *infracontext.RequestContext) (routingdomain.Intent, string
 }
 
 func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
+	if req.IsBedrockNative() {
+		return req.BedrockNative.ModelID, nil
+	}
 	if adapter.Format(req.SourceFormat) == adapter.FormatGemini {
 		return adapter.GeminiModelFromPath(req.Path), nil
 	}
@@ -294,6 +335,11 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 
 func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.Intent) {
 	if req == nil {
+		return
+	}
+	// A native Bedrock body is relayed as received: the model rides in the
+	// path, and nothing may be stamped onto or stripped from the body.
+	if req.IsBedrockNative() {
 		return
 	}
 	if intent.IsAuto() {

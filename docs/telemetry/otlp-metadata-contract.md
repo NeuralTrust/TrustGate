@@ -281,6 +281,7 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `accumulation_cap` | `degraded_reason` | The payload crossed its size cap and the block was inspected against a tail window rather than the whole prefix |
 | `guard_timeout` | `degraded_reason` | A block's verdict did not arrive within `guard_timeout` and the held text was released uninspected |
 | `guard_error` | `degraded_reason` | A block's call failed for another reason (the provider rejected it, a transport error) and the held text was released uninspected. Before RUN-1745 these read `guard_timeout` |
+| `tool_input_uninspected` | `degraded_reason` | A native Amazon Bedrock stream released a tool call without its input having been read by the policies as a text of its own: the call outgrew the hold (the configured hold, `BEDROCK_NATIVE_TOOL_HOLD`, 30 seconds by default, or the bytes the guard keeps), the stream ended before it closed, another frame sat inside it, its start had already been released, or its model family's tool calls are not understood. The call is not cut. It stays the reason of the stream when a later `accumulation_cap`, `guard_timeout` or `guard_error` would have replaced it |
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
 | `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
@@ -387,6 +388,46 @@ and its observe-mode failures used to say `failed_closed`. `google_model_armor`'
 `failure_reason` used to carry `filter_not_in_template` / `filter_not_executed`; those
 values now travel in `failure_detail`, next to `failure_reason: verdict_incomplete`.
 `openai_moderation`'s enforce failures used to say `unavailable`.
+
+### Native Amazon Bedrock Runtime calls (`native_bedrock_passthrough`)
+
+A call to a native Bedrock Runtime route (`/{slug}/model/{modelId}/converse`, `converse-stream`,
+`invoke`, `invoke-with-response-stream`) is relayed as the client sent it, so policies cannot
+rewrite it the way they rewrite a translated one. Three outcomes are recorded in
+`policy_chain[]`, all under the entry name **`native_bedrock_passthrough`** (one constant,
+`appplugins.NativeBedrockPassthrough`):
+
+| Entry | When | `decision` | Extras |
+|-------|------|------------|--------|
+| A plugin that did not run | `prompt_template`, `tool_injection`, `prompt_compression` and `semantic_cache`, which transform the request and have nowhere to write on a relayed call | none (`skipped: true`) | `stage`, `skipped: true`, `skip_reason: native_bedrock_passthrough` |
+| A mask that could not be applied | A masking policy (`regex_replace`, `trustguard`, `bedrock_guardrail`, `google_model_armor`) changed the text a call carries and the change could not be carried onto the client's bytes safely, and the policy's `on_mask_failure` is `pass` (the default). The call goes through unmasked | `failed_open` | `decision: failed_open`, `stage` (`pre_request` or `pre_response`), `mode`, `failure_reason: mask_not_applicable:<cause>`, `streamed: true` on a stream |
+| A refusal | A policy that does not mask rewrote the call (a tool filter, a per-tool limit that strips a tool, a model downgrade), or a masking policy whose `on_mask_failure` is `block` could not apply its mask. The call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`. On a stream the stream ends like a block verdict | the policy's own (`block`) | the error of the block |
+
+`failure_reason` is `mask_not_applicable:` followed by one of these causes, which are additive
+tokens:
+
+| Cause | Meaning |
+|-------|---------|
+| `decode_failed` | The original body or the policy's could not be read |
+| `not_a_text_replacement` | The policy added text, or changed something that is not text |
+| `short_value_place_unknown` | A value under three characters whose place in the call could not be established |
+| `signed_block` | The mask would edit a signed thinking or reasoning block |
+| `patch_failed` | The substitutions could not be written into the original bytes |
+| `outside_read_strings` | Something outside the text the policies read would have changed |
+| `shape_mismatch` | The masked call does not read as the policy's own result |
+| `leak_remaining` | Text the policy removed would remain somewhere in the result (a key, a number, a signed block) |
+| `error_response` | The response is an AWS error, which is never masked |
+| `reasoning_not_maskable` | A stream window holds model reasoning |
+| `tool_call_not_held` | A stream window holds a tool call the guard could not hold whole, or of a family whose tool calls are not understood |
+| `already_released_text` | The mask reaches text the client has already read |
+| `already_released_input` | The removed text is in tool input or reasoning that was already released |
+| `no_inspected_window` | The verdict does not name a window of the held text |
+| `tool_input_not_maskable` | The mask is not a replacement inside a string of the tool input, or the input is not valid JSON or does not read back exactly |
+| `tool_frames_not_rewritable` | The held frames of a tool call cannot be rewritten |
+
+A failed-open entry is written once per kind of cause on a request, or on a stream.
+`on_mask_failure` (`pass` or `block`) is a setting of the policies that mask; it changes the
+outcome of a mask that cannot be applied from `failed_open` to a block, and nothing else.
 
 ### Counter-store (rate-limit / budget) failures
 
