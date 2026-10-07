@@ -39,10 +39,11 @@ type timeTicker struct{ *time.Ticker }
 func (t timeTicker) Chan() <-chan time.Time { return t.C }
 
 type streamOptions struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	now       func() time.Time
-	newTicker func(time.Duration) streamTicker
+	ctx          context.Context
+	cancel       context.CancelFunc
+	now          func() time.Time
+	newTicker    func(time.Duration) streamTicker
+	includeUsage bool
 }
 
 type streamOption func(*streamOptions)

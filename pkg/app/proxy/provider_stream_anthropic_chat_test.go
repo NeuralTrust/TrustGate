@@ -60,11 +60,16 @@ type anthropicChatChunk struct {
 
 func TestInvokeStream_AnthropicChatCompletion(t *testing.T) {
 	for _, format := range []adapter.Format{adapter.FormatOpenAI, adapter.FormatAzure} {
-		for _, includeUsage := range []bool{false, true} {
-			name := string(format) + "/without_usage"
-			if includeUsage {
-				name = string(format) + "/include_usage"
-			}
+		for _, usageMode := range []struct {
+			name, options string
+			include       bool
+		}{
+			{name: "omitted"},
+			{name: "disabled", options: `,"stream_options":{"include_usage":false}`},
+			{name: "enabled", options: `,"stream_options":{"include_usage":true}`, include: true},
+		} {
+			includeUsage := usageMode.include
+			name := string(format) + "/usage_" + usageMode.name
 			t.Run(name, func(t *testing.T) {
 				client := providermocks.NewClient(t)
 				client.EXPECT().CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
@@ -75,10 +80,12 @@ func TestInvokeStream_AnthropicChatCompletion(t *testing.T) {
 					assert.NotContains(t, request, "thinking")
 					assert.NotContains(t, request, "stream_options")
 					return true
-				})).Return(seqOf([]byte(anthropicChatStart), []byte(anthropicChatText), []byte(anthropicChatFinish), []byte(anthropicChatStop)), nil).Once()
+				})).Return(seqOf([]byte(anthropicChatStart), []byte(`data: {"type":"future_event","usage":"opaque"}`),
+					[]byte(`data: {"type":"ping"}`), []byte(anthropicChatText), []byte(anthropicChatFinish),
+					[]byte(anthropicChatFinish), []byte(anthropicChatStop), []byte(anthropicChatStop)), nil).Once()
 				body := `{"model":"claude-chat","messages":[{"role":"user","content":"hi"}],"stream":true,"max_completion_tokens":64}`
-				if includeUsage {
-					body = strings.TrimSuffix(body, "}") + `,"stream_options":{"include_usage":true}}`
+				if usageMode.options != "" {
+					body = strings.TrimSuffix(body, "}") + usageMode.options + "}"
 				}
 				invoker := newStreamInvoker(t, "anthropic", client)
 				response, err := invoker.InvokeStream(context.Background(), apiKeyTarget("anthropic"), &infracontext.RequestContext{Body: []byte(body), SourceFormat: string(format)})
@@ -139,6 +146,16 @@ func TestInvokeStream_AnthropicChatFailureHasNoSuccessTerminal(t *testing.T) {
 		{name: "missing message stop", lines: []string{anthropicChatStart, anthropicChatText, anthropicChatFinish}},
 		{name: "error event", lines: []string{anthropicChatStart, anthropicChatText, `data: {"type":"error","error":{"type":"overloaded_error","message":"private upstream detail"}}`}},
 		{name: "error after finish", lines: []string{anthropicChatStart, anthropicChatFinish, `data: {"type":"error","error":{"type":"overloaded_error","message":"private upstream detail"}}`, anthropicChatStop}},
+		{name: "malformed event", lines: []string{anthropicChatStart, `data: {malformed`, anthropicChatFinish, anthropicChatStop}},
+		{name: "null event", lines: []string{anthropicChatStart, `data: null`, anthropicChatFinish, anthropicChatStop}},
+		{name: "empty event", lines: []string{anthropicChatStart, `data: {}`, anthropicChatFinish, anthropicChatStop}},
+		{name: "malformed delta", lines: []string{anthropicChatStart, `data: {"type":"content_block_delta","delta":42}`, anthropicChatFinish, anthropicChatStop}},
+		{name: "malformed delta text", lines: []string{anthropicChatStart, `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":42}}`, anthropicChatFinish, anthropicChatStop}},
+		{name: "malformed usage", lines: []string{anthropicChatStart, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":"bad"}}`, anthropicChatStop}},
+		{name: "malformed content block", lines: []string{anthropicChatStart, `data: {"type":"content_block_start","content_block":42}`, anthropicChatFinish, anthropicChatStop}},
+		{name: "missing message start", lines: []string{anthropicChatText, anthropicChatFinish, anthropicChatStop}},
+		{name: "missing model", lines: []string{`data: {"type":"message_start","message":{"id":"msg_chat","role":"assistant"}}`, anthropicChatFinish, anthropicChatStop}},
+		{name: "missing id", lines: []string{`data: {"type":"message_start","message":{"model":"claude-chat","role":"assistant"}}`, anthropicChatFinish, anthropicChatStop}},
 		{name: "transport error", lines: []string{anthropicChatStart, anthropicChatText}, err: transportErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
