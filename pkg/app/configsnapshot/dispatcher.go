@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
@@ -76,6 +77,7 @@ type Dispatcher struct {
 	retention   time.Duration
 	maxRows     int
 	trigger     chan struct{}
+	compiled    atomic.Bool
 
 	mu              sync.Mutex
 	publishedGlobal string
@@ -83,6 +85,18 @@ type Dispatcher struct {
 
 	// lkg persists the compiled snapshots; nil when the feature is off.
 	lkg *lkgState
+}
+
+// Readiness reports whether the admin has a snapshot to serve: one compiled in
+// this process after startup migrations, or a restored last-good snapshot while
+// compiling fails. Gating on a fresh compile alone would take every admin out
+// of its Service whenever a restart meets a compile failure, which is exactly
+// the outage the persisted snapshot exists to ride out.
+func (d *Dispatcher) Readiness(context.Context) error {
+	if d.compiled.Load() || d.Source() == SourcePersisted {
+		return nil
+	}
+	return configsync.ErrNotReady
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
@@ -283,6 +297,7 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	// A snapshot that compiled is the freshest truth: it replaces a restored one
 	// as the source, and is persisted. Persisting never fails the dispatch.
 	d.markCompiled(compiledAt)
+	d.compiled.Store(true)
 	d.persist(ctx, raw, version, scoped, compiledAt)
 
 	if len(pending) > 0 {

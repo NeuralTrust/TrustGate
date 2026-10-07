@@ -33,6 +33,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
@@ -389,6 +390,9 @@ func (f *forwarder) nextCandidate(
 				return next, false
 			}
 		}
+		if lb.Algorithm() == algorithm.SmartRouting {
+			return nil, false
+		}
 	}
 	if !allowChain {
 		return nil, false
@@ -599,6 +603,7 @@ func (f *forwarder) finalizeStream(
 	}
 	stream := providerResp.Stream
 	var cutBarrier func() <-chan struct{}
+	var wasCut func() bool
 	if guard := f.newStreamGuard(dto, pluginResp); guard != nil {
 		remaining, pe := guard.Run(ctx, stream)
 		if pe != nil {
@@ -607,8 +612,9 @@ func (f *forwarder) finalizeStream(
 		}
 		stream = remaining
 		cutBarrier = guard.cutBarrier
+		wasCut = guard.wasCut
 	}
-	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier)
+	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier, wasCut)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{

@@ -60,7 +60,7 @@ func newSequentialForwarder(
 	t.Helper()
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, nil,
 		approuting.NewResolver(), listing, nil, nil, newTestLogger(),
 	)
@@ -501,7 +501,7 @@ func newSequentialForwarderWithRetries(t *testing.T, invoker appproxy.ProviderIn
 	cfg := &config.Config{}
 	cfg.Provider.MaxRetries = maxRetries
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), cache.NewTTLMapManager(time.Minute), invoker, nil, nil,
 		approuting.NewResolver(), stubListing{}, nil, cfg, newTestLogger(),
 	)

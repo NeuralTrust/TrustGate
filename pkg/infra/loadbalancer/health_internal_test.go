@@ -28,6 +28,7 @@ func TestParseHealthy(t *testing.T) {
 		{name: "malformed json", val: "not-json", want: true},
 		{name: "healthy status", val: `{"healthy":true}`, want: true},
 		{name: "unhealthy status", val: `{"healthy":false}`, want: false},
+		{name: "serialized error", val: `{"Healthy":false,"LastError":{}}`, want: false},
 	}
 	for _, tc := range tests {
 		tc := tc

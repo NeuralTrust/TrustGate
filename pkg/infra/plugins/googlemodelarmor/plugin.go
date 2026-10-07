@@ -127,12 +127,13 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
 // ValidateSettingsWrite rejects a service_account_json that names a non-Google
-// token endpoint, a custom universe or a non-service_account type. This cannot
+// token endpoint, a custom universe or a non-service_account type, and a new
+// streaming.final_pass: false (pluginutil.ValidateFinalPassWrite). This cannot
 // live in parseConfig, which runs on every request: a policy stored before the
 // rule existed would turn into a run-time config_invalid failure. The runtime
 // instead pins the token endpoint (gcpauth.ServiceAccountCache), so an
 // already-stored key keeps working and can never redirect the assertion.
-func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return err
@@ -142,7 +143,7 @@ func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 			return fmt.Errorf("google_model_armor: credentials.service_account_json: %s", err.Error())
 		}
 	}
-	return nil
+	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
@@ -353,15 +354,25 @@ func (p *Plugin) runGuardrail(
 	// outright failure rather than mistake silence for safety. A filter that
 	// did run and matched still wins: it is a real verdict, and naming it is
 	// more useful than naming the one that was missing.
+	//
+	// The exception is a usable mask in a blocking mode: Model Armor already
+	// handed us the de-identified text, and failing open would forward the
+	// ORIGINAL prompt with the raw PII. Apply the mask and record the
+	// incomplete verdict on the same Data instead.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			return p.externalFailure(ctx, in, cfg, latency, failureInfo{
-				reason:        appplugins.FailureVerdictIncomplete,
-				filter:        f,
-				armorReason:   reason,
-				filterVersion: result.filterVersion(),
-				err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
-			})
+			if res.anonymize != nil && appplugins.Blocks(in.Mode) {
+				data.FailureReason = string(appplugins.FailureVerdictIncomplete)
+				data.FailureDetail = f + ": " + reason
+			} else {
+				return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+					reason:        appplugins.FailureVerdictIncomplete,
+					filter:        f,
+					armorReason:   reason,
+					filterVersion: result.filterVersion(),
+					err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
+				})
+			}
 		}
 	}
 
@@ -423,6 +434,7 @@ func (p *Plugin) anonymizeEnforce(
 	return span.result(body), nil
 }
 
+// anonymizeDegraded blocks by design (RUN-1792): the provider confirmed sensitive data and gave no way to mask it, so this is the one deliberate exception to fail-open.
 func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
@@ -447,10 +459,10 @@ type failureInfo struct {
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.HandleExternalFailure: fail closed (502
-// guardrail_unavailable) in a blocking mode, fail open (pass through) in
-// observe, or always fail open for a decode_failed reason. It builds this
-// plugin's own Data so failure_reason/failure_detail travel in the same
+// shared appplugins.HandleExternalFailure: on the buffered leg it always fails
+// open (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792). It builds this plugin's own Data so
+// failure_reason/failure_detail travel in the same
 // shape as every other external guardrail, while keeping filter and
 // filter_version, which are specific to this plugin.
 func (p *Plugin) externalFailure(

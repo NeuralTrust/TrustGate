@@ -27,6 +27,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -140,6 +141,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
 		return nil, err
+	}
+	if in.LBConfig != nil || in.ModelPolicies != nil || in.Registries != nil || in.Fallback != nil {
+		if err := validateSmartRoutingWrite(existing); err != nil {
+			return nil, err
+		}
 	}
 	if err := existing.Validate(); err != nil {
 		return nil, err
@@ -273,4 +279,21 @@ func resolveLBConfigSecrets(next, prev *domain.LBConfig) {
 		return
 	}
 	next.EmbeddingConfig.ResolveSecretsFrom(prev.EmbeddingConfig)
+}
+
+func validateSmartRoutingWrite(c *domain.Consumer) error {
+	config := c.LBConfig
+	if config == nil || (config.SmartRouting == nil && config.Algorithm != algorithm.SmartRouting) {
+		return nil
+	}
+	validation := *config
+	validation.Enabled = true
+	known := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
+	for _, id := range c.RegistryIDs {
+		known[id] = struct{}{}
+	}
+	if err := validation.ValidateTierRegistries(known); err != nil {
+		return err
+	}
+	return validation.Validate(c.ModelPolicies)
 }

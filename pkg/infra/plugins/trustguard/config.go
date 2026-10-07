@@ -111,15 +111,12 @@ type StreamingSettings struct {
 	// Response" silently means "request only" on the traffic that streams,
 	// which for chat is most of it. It is a pointer so an explicit false,
 	// the opt-out, is distinguishable from an absent key.
-	Enabled              *bool `mapstructure:"enabled"`
-	HeadChars            int   `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
-	// FinalPass is a pointer so that an explicit false is distinguishable from
-	// an absent key, which defaults to true.
-	FinalPass    *bool  `mapstructure:"final_pass"`
-	GuardTimeout string `mapstructure:"guard_timeout"`
+	Enabled              *bool  `mapstructure:"enabled"`
+	HeadChars            int    `mapstructure:"head_chars"`
+	MinCharsBetweenEvals int    `mapstructure:"min_chars_between_evals"`
+	MaxHoldMS            int    `mapstructure:"max_hold_ms"`
+	MaxAccumulatedBytes  int    `mapstructure:"max_accumulated_bytes"`
+	GuardTimeout         string `mapstructure:"guard_timeout"`
 	// OnError bounds the per-block guard call only. It inherits the policy's
 	// on_error when unset, so the stream leg cannot be made stricter or laxer
 	// by accident.
@@ -259,10 +256,6 @@ func (s StreamingSettings) validate() error {
 
 func (s StreamingSettings) enabled() bool {
 	return s.Enabled == nil || *s.Enabled
-}
-
-func (s StreamingSettings) finalPass() bool {
-	return s.FinalPass == nil || *s.FinalPass
 }
 
 func (s StreamingSettings) guardTimeout() time.Duration {

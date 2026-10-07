@@ -82,7 +82,7 @@ func forwarderWithPlugin(
 	exec := appplugins.NewExecutor(reg, newTestLogger())
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, exec, nil, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
 		opts...,
 	)
@@ -253,6 +253,9 @@ type streamInspectorPlugin struct {
 	blockSeq int
 	options  appplugins.StreamOptions
 	postSeen chan appplugins.ExecInput
+	// segErr, when set, makes every InspectSegment call fail, which under
+	// fail_open degrades the stream without cutting it.
+	segErr error
 }
 
 func (s *streamInspectorPlugin) Execute(
@@ -270,6 +273,9 @@ func (s *streamInspectorPlugin) InspectSegment(
 	_ appplugins.ExecInput,
 	seg appplugins.StreamSegment,
 ) (*appplugins.SegmentVerdict, error) {
+	if s.segErr != nil {
+		return nil, s.segErr
+	}
 	if s.blockSeq > 0 && seg.Seq != s.blockSeq {
 		return &appplugins.SegmentVerdict{}, nil
 	}
@@ -875,4 +881,82 @@ func TestForward_PostResponseWaitsForTheCutDrain(t *testing.T) {
 	}
 	assert.Equal(t, int64(len(lines)), pulled.Load(),
 		"the drain reached the usage chunk before post_response read the request")
+}
+
+// postResponseStreamCut drives one streamed response through the stream guard
+// and returns what the post_response leg saw. It is the proxy half of RUN-1759:
+// the plugin skips a cut stream only because the proxy says the stream was cut.
+func postResponseStreamCut(t *testing.T, p *streamInspectorPlugin, lines [][]byte, drained <-chan appplugins.ExecInput) bool {
+	t.Helper()
+	gatewayID := ids.New[ids.GatewayKind]()
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: sseLinesStream(lines)}, nil).
+		Once()
+	rc := streamingPolicy(t, gatewayID, p)
+	fwd := forwarderWithPlugin(t, invoker, p, appproxy.WithStreamCodec(adapter.NewRegistry()))
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Stream)
+	for _, lineErr := range res.Stream {
+		require.NoError(t, lineErr)
+	}
+	select {
+	case in := <-drained:
+		require.Equal(t, policy.StagePostResponse, in.Stage)
+		require.NotNil(t, in.Response)
+		return in.Response.StreamCut
+	case <-time.After(2 * time.Second):
+		t.Fatal("post_response never ran")
+	}
+	return false
+}
+
+func streamCutTestLines() [][]byte {
+	return [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"one"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"two"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"three"}}]}`), {},
+		[]byte(`data: [DONE]`), {},
+	}
+}
+
+func newStreamCutPlugin(seen chan appplugins.ExecInput) *streamInspectorPlugin {
+	return &streamInspectorPlugin{
+		stubPlugin: stubPlugin{
+			name:   "guardrail",
+			stages: []policy.Stage{policy.StagePreResponse, policy.StagePostResponse},
+			result: &appplugins.Result{StatusCode: 200},
+		},
+		verdict:  &appplugins.SegmentVerdict{},
+		options:  appplugins.StreamOptions{HeadChars: 1, MinCharsBetweenEvals: 1},
+		postSeen: seen,
+	}
+}
+
+func TestForward_PostResponseSeesWhetherTheStreamWasCut(t *testing.T) {
+	t.Run("a block verdict after the head is a cut", func(t *testing.T) {
+		seen := make(chan appplugins.ExecInput, 1)
+		p := newStreamCutPlugin(seen)
+		p.verdict = &appplugins.SegmentVerdict{Block: true, Type: "guardrail_violation", Message: "blocked mid-stream"}
+		p.blockSeq = 2
+		assert.True(t, postResponseStreamCut(t, p, streamCutTestLines(), seen))
+	})
+	t.Run("a stream that completes is not a cut", func(t *testing.T) {
+		seen := make(chan appplugins.ExecInput, 1)
+		p := newStreamCutPlugin(seen)
+		assert.False(t, postResponseStreamCut(t, p, streamCutTestLines(), seen))
+	})
+	t.Run("a degraded fail_open stream that was not cut is not a cut", func(t *testing.T) {
+		seen := make(chan appplugins.ExecInput, 1)
+		p := newStreamCutPlugin(seen)
+		p.segErr = errors.New("guard unavailable")
+		assert.False(t, postResponseStreamCut(t, p, streamCutTestLines(), seen))
+	})
 }

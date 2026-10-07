@@ -89,7 +89,7 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 			},
 		},
 		{
-			name: "smart routing tier above the floor is dropped and the ladder survives",
+			name: "two-rung ladder losing its top drops smart routing",
 			consumer: func() *Consumer {
 				return &Consumer{
 					ModelPolicies: ModelPolicies{
@@ -103,15 +103,16 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 							{RegistryID: keeper, Model: "gpt-4o"},
 							{RegistryID: victim, Model: "gpt-4.1-nano"},
 						},
-						SmartRouting: &registry.SmartRoutingConfig{Tiers: []registry.SmartRoutingTier{
+						SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{
 							{MinScore: 0, RegistryID: keeper, Model: "gpt-4o"},
-							{MinScore: 0.5, RegistryID: victim, Model: "gpt-4.1-nano"},
+							{MinScore: 0.45, RegistryID: victim, Model: "gpt-4.1-nano"},
 						}},
 					},
 				}
 			},
 			wantChanged:   true,
 			wantRewritten: []string{registry.PrunedModelPolicies, registry.PrunedLBConfig},
+			wantNulled:    []string{registry.PrunedSmartRouting},
 			assert: func(t *testing.T, c *Consumer) {
 				if c.LBConfig == nil {
 					t.Fatal("lb_config was dropped even though a member and the floor tier remain")
@@ -119,12 +120,11 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 				if len(c.LBConfig.Members) != 1 || c.LBConfig.Members[0].RegistryID != keeper {
 					t.Fatalf("Members = %+v, want only the keeper", c.LBConfig.Members)
 				}
-				if c.LBConfig.Algorithm != algorithm.SmartRouting {
-					t.Fatalf("Algorithm = %q, want it untouched", c.LBConfig.Algorithm)
+				if c.LBConfig.Algorithm != algorithm.RoundRobin {
+					t.Fatalf("Algorithm = %q, want round robin after unsupported pruning", c.LBConfig.Algorithm)
 				}
-				if c.LBConfig.SmartRouting == nil || len(c.LBConfig.SmartRouting.Tiers) != 1 ||
-					c.LBConfig.SmartRouting.Tiers[0].RegistryID != keeper {
-					t.Fatalf("SmartRouting = %+v, want only the keeper tier", c.LBConfig.SmartRouting)
+				if c.LBConfig.SmartRouting != nil {
+					t.Fatalf("SmartRouting = %+v, want nil for an unsupported one-rung survivor", c.LBConfig.SmartRouting)
 				}
 			},
 		},
@@ -144,9 +144,9 @@ func TestConsumer_PruneRegistry(t *testing.T) {
 							{RegistryID: victim, Model: "gpt-4.1-nano"},
 							{RegistryID: keeper, Model: "gpt-4o"},
 						},
-						SmartRouting: &registry.SmartRoutingConfig{Tiers: []registry.SmartRoutingTier{
+						SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{
 							{MinScore: 0, RegistryID: victim, Model: "gpt-4.1-nano"},
-							{MinScore: 0.6, RegistryID: keeper, Model: "gpt-4o"},
+							{MinScore: 0.45, RegistryID: keeper, Model: "gpt-4o"},
 						}},
 					},
 				}
@@ -343,9 +343,9 @@ func TestConsumer_PruneRegistryLeavesAValidatableConsumer(t *testing.T) {
 				{RegistryID: victim, Model: "gpt-4.1-nano"},
 				{RegistryID: keeper, Model: "gpt-4o"},
 			},
-			SmartRouting: &registry.SmartRoutingConfig{Tiers: []registry.SmartRoutingTier{
+			SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{
 				{MinScore: 0, RegistryID: victim, Model: "gpt-4.1-nano"},
-				{MinScore: 0.6, RegistryID: keeper, Model: "gpt-4o"},
+				{MinScore: 0.45, RegistryID: keeper, Model: "gpt-4o"},
 			}},
 		},
 	})
@@ -374,5 +374,35 @@ func TestConsumer_PruneRegistryIgnoresNilRegistry(t *testing.T) {
 	c := &Consumer{ModelPolicies: ModelPolicies{ids.New[ids.RegistryKind](): {}}}
 	if _, changed := c.PruneRegistry(ids.RegistryID{}); changed {
 		t.Fatal("PruneRegistry(nil) changed = true, want false")
+	}
+}
+
+func TestConsumer_PruneSR1Registry(t *testing.T) {
+	for _, n := range []int{2, 3} {
+		for victim := 0; victim < n; victim++ {
+			c := &Consumer{ModelPolicies: ModelPolicies{}, LBConfig: &LBConfig{Enabled: true, Algorithm: algorithm.SmartRouting, SmartRouting: &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 60}}}}
+			cuts := []float64{0, .45}
+			if n == 3 {
+				cuts = []float64{0, .187, .45}
+			}
+			idsList := make([]ids.RegistryID, n)
+			for i := range idsList {
+				idsList[i] = ids.New[ids.RegistryKind]()
+				c.ModelPolicies[idsList[i]] = ModelPolicy{Allowed: []string{"model"}, Default: "model"}
+				c.LBConfig.Members = append(c.LBConfig.Members, LBPoolMember{RegistryID: idsList[i], Model: "model"})
+				c.LBConfig.SmartRouting.Tiers = append(c.LBConfig.SmartRouting.Tiers, registry.SmartRoutingTier{RegistryID: idsList[i], Model: "model", MinScore: cuts[i]})
+			}
+			_, changed := c.PruneRegistry(idsList[victim])
+			if !changed {
+				t.Fatal("not pruned")
+			}
+			survives := n == 3 && victim == 1
+			if (c.LBConfig.SmartRouting != nil) != survives {
+				t.Fatalf("n=%d victim=%d config=%+v", n, victim, c.LBConfig)
+			}
+			if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+				t.Fatalf("invalid surviving consumer: %v", err)
+			}
+		}
 	}
 }

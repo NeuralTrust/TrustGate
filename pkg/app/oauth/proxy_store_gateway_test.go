@@ -24,6 +24,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func TestAuthorizeDefaultIdPBindsAddressedGatewayIntoPending(t *testing.T) {
 	require.True(t, def.GatewayID.IsNil(), "the default IdP has no gateway of its own")
 
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/store/mcp": {{GatewayID: ids.GatewayID{}}},
+		"/store/mcp": {{GatewayID: ids.GatewayID{}, Consumer: consumerdomain.BuildStoreConsumer(ids.GatewayID{})}},
 	}}
 	store := newMemFlowStore()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
@@ -81,7 +82,7 @@ func TestAuthorizeDefaultIdPPassesGatewayTenantAsOrgHint(t *testing.T) {
 		Issuer: "https://idp.example.com", ClientID: "trustgate",
 	})
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/store/mcp": {{GatewayID: ids.GatewayID{}}},
+		"/store/mcp": {{GatewayID: ids.GatewayID{}, Consumer: consumerdomain.BuildStoreConsumer(ids.GatewayID{})}},
 	}}
 	store := newMemFlowStore()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
@@ -125,7 +126,7 @@ func TestAuthorizeDefaultIdPWithoutGatewayIsRefused(t *testing.T) {
 		Issuer: "https://idp.example.com", ClientID: "trustgate",
 	})
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/store/mcp": {{GatewayID: ids.GatewayID{}}},
+		"/store/mcp": {{GatewayID: ids.GatewayID{}, Consumer: consumerdomain.BuildStoreConsumer(ids.GatewayID{})}},
 	}}
 	store := newMemFlowStore()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}

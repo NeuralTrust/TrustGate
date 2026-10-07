@@ -48,10 +48,9 @@ type CounterFailure struct {
 }
 
 // HandleCounterFailure applies the rule the product owner set for our own
-// infrastructure: unlike a third-party guardrail (HandleExternalFailure),
-// which fails closed in a mode that blocks, a counter-store outage always
-// fails OPEN, in every mode, enforce included. The request is never refused
-// for trouble on our side; only a third-party guardrail earns that refusal.
+// infrastructure: a counter-store outage always fails OPEN, in every mode,
+// enforce included. The request is never refused for trouble on our side.
+// Third-party guardrails follow the same rule (HandleExternalFailure).
 //
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
@@ -74,7 +73,7 @@ func HandleCounterFailure(f CounterFailure) (*Result, error) {
 	if f.Ctx != nil && f.Ctx.Err() != nil {
 		return nil, f.Err
 	}
-	SetDecisionFromOutcome(f.Event, decisionFailedOpen)
+	SetDecisionFromOutcome(f.Event, DecisionFailedOpen)
 	logCounterFailure(f)
 	return &Result{StatusCode: http.StatusOK}, nil
 }
@@ -85,7 +84,7 @@ func logCounterFailure(f CounterFailure) {
 		slog.String("stage", string(f.Stage)),
 		slog.String("mode", string(f.Mode)),
 		slog.String("reason", string(FailureCounterUnavailable)),
-		slog.String("decision", decisionFailedOpen),
+		slog.String("decision", DecisionFailedOpen),
 	}
 	if f.Detail != "" {
 		attrs = append(attrs, slog.String("detail", f.Detail))

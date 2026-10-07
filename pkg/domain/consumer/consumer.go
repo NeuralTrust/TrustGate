@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
@@ -140,13 +141,19 @@ func New(params CreateParams) (*Consumer, error) {
 	if params.Active != nil {
 		active = *params.Active
 	}
+	lbConfig := params.LBConfig
+	if lbConfig != nil && lbConfig.Enabled && lbConfig.Algorithm == "" {
+		copy := *lbConfig
+		copy.Algorithm = algorithm.RoundRobin
+		lbConfig = &copy
+	}
 	c := &Consumer{
 		ID:              id,
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
 		Slug:            slug,
-		LBConfig:        params.LBConfig,
+		LBConfig:        lbConfig,
 		Headers:         params.Headers,
 		Active:          active,
 		RegistryIDs:     params.RegistryIDs,

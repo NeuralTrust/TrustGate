@@ -4990,6 +4990,12 @@ const docTemplate = `{
                 "jwks_url": {
                     "type": "string"
                 },
+                "login_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "public_keys": {
                     "type": "array",
                     "items": {
@@ -5248,6 +5254,12 @@ const docTemplate = `{
                 },
                 "jwks_url": {
                     "type": "string"
+                },
+                "login_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "public_keys": {
                     "type": "array",
@@ -5717,9 +5729,25 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SR1ConfigRequest": {
+            "type": "object",
+            "properties": {
+                "cache_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "escape_hatch_enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest": {
             "type": "object",
             "properties": {
+                "sr1": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SR1ConfigRequest"
+                },
                 "tiers": {
                     "type": "array",
                     "items": {
@@ -6164,9 +6192,23 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SR1ConfigResponse": {
+            "type": "object",
+            "properties": {
+                "cache_ttl_seconds": {
+                    "type": "integer"
+                },
+                "escape_hatch_enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse": {
             "type": "object",
             "properties": {
+                "sr1": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SR1ConfigResponse"
+                },
                 "tiers": {
                     "type": "array",
                     "items": {

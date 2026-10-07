@@ -25,6 +25,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +57,7 @@ func baselineBalancer(
 ) *loadbalancer.LoadBalancer {
 	t.Helper()
 	lb, err := loadbalancer.NewLoadBalancer(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		baselineFactory(t, alg),
 		loadbalancer.Pool{ID: "pool", Routes: routes, Algorithm: alg, SmartRoutingConfig: cfg},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		nilRedis{},
@@ -63,6 +65,27 @@ func baselineBalancer(
 	require.NoError(t, err)
 	t.Cleanup(lb.Close)
 	return lb
+}
+
+func baselineFactory(t *testing.T, alg string) loadbalancer.Factory {
+	t.Helper()
+	var state strategies.SR1Store
+	if alg == algorithm.SmartRouting {
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = client.Close() })
+		state = strategies.NewRedisSR1Store(client)
+	}
+	return loadbalancer.NewBaseFactory(nil, nil, nil, state, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func assertUnpinnedBaselineRejected(t *testing.T, routes []routingdomain.Route, cfg *registrydomain.SmartRoutingConfig) {
+	t.Helper()
+	strategy, err := baselineFactory(t, algorithm.SmartRouting).CreateStrategy(loadbalancer.StrategyInput{
+		Algorithm: algorithm.SmartRouting, Routes: routes, SmartRoutingConfig: cfg,
+	})
+	require.ErrorIs(t, err, registrydomain.ErrInvalidSmartRouting)
+	assert.Nil(t, strategy)
 }
 
 func TestSmartRoutingBaseline(t *testing.T) {
@@ -73,14 +96,14 @@ func TestSmartRoutingBaseline(t *testing.T) {
 		{Registry: premium, Model: "claude-opus"},
 	}
 	tiers := func(topModel string) *registrydomain.SmartRoutingConfig {
-		return &registrydomain.SmartRoutingConfig{Tiers: []registrydomain.SmartRoutingTier{
+		return &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300}, Tiers: []registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: cheap.ID, Model: "gpt-4o-mini"},
-			{MinScore: 0.8, RegistryID: premium.ID, Model: topModel},
+			{MinScore: 0.45, RegistryID: premium.ID, Model: topModel},
 		}}
 	}
-	unpinnedTiers := &registrydomain.SmartRoutingConfig{Tiers: []registrydomain.SmartRoutingTier{
+	unpinnedTiers := &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300}, Tiers: []registrydomain.SmartRoutingTier{
 		{MinScore: 0, RegistryID: cheap.ID},
-		{MinScore: 0.8, RegistryID: premium.ID},
+		{MinScore: 0.45, RegistryID: premium.ID},
 	}}
 
 	t.Run("resolves the top tier to its route", func(t *testing.T) {
@@ -95,33 +118,21 @@ func TestSmartRoutingBaseline(t *testing.T) {
 		assert.InDelta(t, 0.25, base.Pricing.Discount, 1e-12)
 	})
 
-	t.Run("an unpinned tier takes the route model", func(t *testing.T) {
-		lb := baselineBalancer(t, algorithm.SmartRouting, pinnedRoutes, unpinnedTiers)
-
-		base := smartRoutingBaseline(lb, nil)
-
-		require.NotNil(t, base)
-		assert.Equal(t, "claude-opus", base.Model)
+	t.Run("rejects unpinned tiers even with pinned routes", func(t *testing.T) {
+		assertUnpinnedBaselineRejected(t, pinnedRoutes, unpinnedTiers)
 	})
 
-	t.Run("an unpinned tier on an unpinned route takes the consumer default", func(t *testing.T) {
+	t.Run("rejects unpinned tiers even with route defaults", func(t *testing.T) {
 		routes := []routingdomain.Route{
 			{Registry: cheap, Default: "gpt-4o-mini"},
 			{Registry: premium, Default: "claude-opus"},
 		}
-		lb := baselineBalancer(t, algorithm.SmartRouting, routes, unpinnedTiers)
-
-		base := smartRoutingBaseline(lb, nil)
-
-		require.NotNil(t, base)
-		assert.Equal(t, "claude-opus", base.Model)
+		assertUnpinnedBaselineRejected(t, routes, unpinnedTiers)
 	})
 
-	t.Run("no baseline when the top tier resolves to no model at all", func(t *testing.T) {
+	t.Run("rejects unpinned tiers without any route model", func(t *testing.T) {
 		routes := []routingdomain.Route{{Registry: cheap}, {Registry: premium}}
-		lb := baselineBalancer(t, algorithm.SmartRouting, routes, unpinnedTiers)
-
-		assert.Nil(t, smartRoutingBaseline(lb, nil))
+		assertUnpinnedBaselineRejected(t, routes, unpinnedTiers)
 	})
 
 	t.Run("no baseline when the top tier matches no route", func(t *testing.T) {
