@@ -58,7 +58,7 @@ func TestContainerGraph_RegistryDelete_PrunesConsumerRouting(t *testing.T) {
 	c := smartRoutingConsumer(t, gwID, "container-consumer", keeper, victim,
 		[]registrydomain.SmartRoutingTier{
 			{MinScore: 0, RegistryID: keeper, Model: "gpt-4o"},
-			{MinScore: 0.6, RegistryID: victim, Model: "gpt-4.1-nano"},
+			{MinScore: 0.45, RegistryID: victim, Model: "gpt-4.1-nano"},
 		})
 	saveWithRegistries(t, f, c)
 
