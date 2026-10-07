@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCodecRejectsInvalidSmartRoutingAndPreservesRepositoryReads(t *testing.T) {
+func TestCodecQuarantinesInvalidSmartRoutingAndPreservesRepositoryReads(t *testing.T) {
 	for _, kind := range []string{"one rung", "four rungs", "ambiguous pin", "invalid explicit cuts"} {
 		t.Run(kind, func(t *testing.T) {
 			gatewayID := ids.New[ids.GatewayKind]()
@@ -88,8 +88,19 @@ func TestCodecRejectsInvalidSmartRoutingAndPreservesRepositoryReads(t *testing.T
 				Consumers:  []consumerdomain.Consumer{valid, invalid},
 				Registries: []registrydomain.Registry{{ID: registryID, GatewayID: gatewayID}},
 			}
-			_, err = codec.Encode(readmodel.Build(data))
-			require.Error(t, err, "invalid historical routing must be repaired before snapshot publication")
+			served := readmodel.Build(data)
+			mixed, err := codec.Encode(served)
+			require.NoError(t, err, "one invalid consumer must not withhold the snapshot from the rest")
+			assert.NotNil(t, served.Data().Consumers[1].LBConfig.SmartRouting, "quarantine must not mutate the served snapshot")
+			published, err := codec.Decode(mixed)
+			require.NoError(t, err)
+			publishedInvalid, ok := published.ConsumerByID(invalid.ID)
+			require.True(t, ok)
+			assert.Equal(t, algorithm.SmartRouting, publishedInvalid.LBConfig.Algorithm)
+			assert.Nil(t, publishedInvalid.LBConfig.SmartRouting, "the invalid ladder is withheld so only its pool fails closed")
+			publishedValid, ok := published.ConsumerByID(valid.ID)
+			require.True(t, ok)
+			assert.Equal(t, valid.LBConfig.SmartRouting, publishedValid.LBConfig.SmartRouting)
 			validData := data
 			validData.Consumers = []consumerdomain.Consumer{valid}
 			raw, err := codec.Encode(readmodel.Build(validData))

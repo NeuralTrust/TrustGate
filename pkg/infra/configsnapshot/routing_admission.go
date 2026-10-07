@@ -15,14 +15,70 @@
 package configsnapshot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"slices"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
+
+const (
+	admissionEncode = "encode"
+	admissionDecode = "decode"
+)
+
+// admitConsumers withdraws the smart-routing ladder of every consumer that
+// fails validate, so that consumer's pool fails closed on its own instead of
+// one inadmissible row withholding the snapshot from every other tenant. The
+// input slice is never modified: on encode it belongs to the served snapshot.
+func admitConsumers(consumers []consumerdomain.Consumer, stage string, validate func(int) error) []consumerdomain.Consumer {
+	admitted := consumers
+	cloned := false
+	for i := range consumers {
+		err := validate(i)
+		if err == nil {
+			continue
+		}
+		if !cloned {
+			admitted = slices.Clone(consumers)
+			cloned = true
+		}
+		lb := *admitted[i].LBConfig
+		lb.SmartRouting = nil
+		admitted[i].LBConfig = &lb
+		slog.Error("config snapshot quarantined consumer smart routing",
+			slog.String("component", "configsnapshot"),
+			slog.String("stage", stage),
+			slog.String("gateway_id", admitted[i].GatewayID.String()),
+			slog.String("consumer_id", admitted[i].ID.String()),
+			slog.String("error", err.Error()))
+		recordRoutingQuarantine(stage)
+	}
+	return admitted
+}
+
+// recordRoutingQuarantine counts quarantined consumers by codec stage only:
+// consumer and tenant identifiers stay in the log, never in metric labels.
+func recordRoutingQuarantine(stage string) {
+	counter, err := otel.Meter("trustgate/configsnapshot").Int64Counter(
+		"trustgate.configsnapshot.routing.quarantined",
+		metric.WithDescription("consumers whose smart routing was withheld from a config snapshot because it failed admission"),
+	)
+	if err != nil {
+		slog.Warn("failed to create routing quarantine counter", slog.String("error", err.Error()))
+		return
+	}
+	// The snapshot codec interface carries no context.
+	counter.Add(context.Background(), 1, metric.WithAttributes(attribute.String("stage", stage)))
+}
 
 // Smart settings are migration output, including when the pool or consumer is
 // disabled. An old producer must not silently turn an omitted historical flag
