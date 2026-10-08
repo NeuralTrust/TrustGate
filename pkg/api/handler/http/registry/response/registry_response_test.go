@@ -106,17 +106,17 @@ func TestFromRegistry_MasksHeaderValues(t *testing.T) {
 		Type:      domain.TypeMCP,
 		MCPTarget: &domain.MCPTarget{
 			URL:     "https://mcp.example.com/mcp",
-			Headers: map[string]string{"X-Api-Key": "key-123456789", "X-Short": "abc"},
+			Headers: map[string]string{"X-Api-Key": "header-value-aaaa", "X-Short": "abc"},
 		},
 	}
 	got := FromRegistry(mcp).MCPTarget.Headers
-	if got["X-Api-Key"] != secret.Mask("key-123456789") || got["X-Short"] != secret.Redacted {
+	if got["X-Api-Key"] != secret.Mask("header-value-aaaa") || got["X-Short"] != secret.Redacted {
 		t.Fatalf("mcp_target headers not masked: %v", got)
 	}
 	if len(got) != 2 {
 		t.Fatalf("header names must be kept: %v", got)
 	}
-	if mcp.MCPTarget.Headers["X-Api-Key"] != "key-123456789" {
+	if mcp.MCPTarget.Headers["X-Api-Key"] != "header-value-aaaa" {
 		t.Fatal("masking must not modify the registry")
 	}
 
