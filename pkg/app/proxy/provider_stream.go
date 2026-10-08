@@ -961,17 +961,17 @@ func (d *finishDeferral) encode(
 	var lines [][]byte
 	switch {
 	case d.chat != nil:
-		copy := *chunk
-		if copy.ID == "" {
-			copy.ID = d.id
+		content := *chunk
+		if content.ID == "" {
+			content.ID = d.id
 		}
-		if copy.Model == "" {
-			copy.Model = d.model
-			if copy.Model == "" {
-				copy.Model = d.fallbackModel
+		if content.Model == "" {
+			content.Model = d.model
+			if content.Model == "" {
+				content.Model = d.fallbackModel
 			}
 		}
-		lines = d.chat.Content(&copy)
+		lines = d.chat.Content(&content)
 	case d.anthropic != nil:
 		lines = d.anthropic.Content(chunk)
 	case d.cohere != nil:
@@ -1017,6 +1017,12 @@ func emitDeferred(
 	if canonical.UpstreamError != nil {
 		if deferred.chat != nil {
 			return true, canonical.UpstreamError
+		}
+		// Only a Chat Completions client fails its stream on an unreadable
+		// event; the other clients skip it, as they skip a decode error.
+		if canonical.UpstreamError.Type == adapter.InvalidStreamEventType {
+			logger.Warn("stream decode chunk failed", slog.String("error", canonical.UpstreamError.Message))
+			return true, nil
 		}
 		if deferred.anthropic != nil || deferred.cohere != nil || deferred.responses != nil || deferred.gemini != nil {
 			deferred.recordUsage(canonical)
