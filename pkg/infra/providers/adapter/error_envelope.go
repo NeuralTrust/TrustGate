@@ -214,15 +214,18 @@ func StreamErrorEvent(source Format, status int, errType, message string) []byte
 //
 // Each element is one SSE line and every dialect that emits one ends with the
 // same empty-line separator, so callers frame them identically; a nil return
-// means this dialect has nothing to add and the caller appends nothing. reason
+// means this dialect has nothing to add and the caller appends nothing.
+//
+// reason reaches the wire only where the dialect has a free-form slot
+// (OpenAI-chat "type", Responses "code") and is constrained to the closed set
+// streamBlockedReason allows; the rest carry the block through their own
+// permission-denied taxonomy.
+//
 // direction ("input" or "output"; a stream is only ever cut on output) is added
 // to the error object of the two dialects whose error object is free to carry
 // it, the OpenAI-chat default and Responses. Gemini's error object is the
 // google.rpc.Status shape and is left as it is, and the dialects above carry no
-// event at all. reason reaches the wire only where the dialect has a free-form slot (OpenAI-chat
-// "type", Responses "code") and is constrained to the closed set
-// streamBlockedReason allows; the rest carry the block through their own
-// permission-denied taxonomy.
+// event at all.
 func StreamBlockedEvent(source Format, reason, message, direction string) [][]byte {
 	reason = streamBlockedReason(reason)
 	if message == "" {

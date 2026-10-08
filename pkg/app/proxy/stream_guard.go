@@ -517,6 +517,11 @@ func streamError(source adapter.Format, errType, message string) *appplugins.Plu
 	if adapter.NeedsAdaptedError(source) {
 		pe.Body = adapter.EncodeErrorBody(source, pe.StatusCode, message)
 	}
+	if errType == streamUnverifiableType {
+		// The guard could not be consulted: a failure of the guard, not a
+		// verdict on the response.
+		pe.NotAVerdict = true
+	}
 	// The head gate refuses before any byte of the response is sent, so this is
 	// a plain 403 and the header is still a channel. It always inspects the
 	// response.
