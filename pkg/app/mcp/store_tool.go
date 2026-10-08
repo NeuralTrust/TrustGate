@@ -600,11 +600,17 @@ func (t *storeTool) displayNameFor(code string) string {
 	return code
 }
 
+// toolsRefreshHint is what to tell a user whose client does not pick up the
+// new tools. The gateway announces them (tools/list_changed), but some clients
+// read the tool list only when asked to or when a conversation opens, and the
+// user is the only one who can make them.
+const toolsRefreshHint = "Its tools are announced to the user's client; if they do not show up in your tool list, tell the user to refresh this connector's tools in their client or start a new conversation."
+
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {
 		text := fmt.Sprintf("%s was already installed.", res.Name)
 		if res.RequiresAuth && connectURL != "" {
-			text += fmt.Sprintf(" If its tools aren't working yet, present this link to the user to connect their account: %s", linkMarkdown("Connect "+res.Name, connectURL))
+			text += fmt.Sprintf(" If its tools aren't working yet, present this link to the user to connect their account: %s. %s", linkMarkdown("Connect "+res.Name, connectURL), toolsRefreshHint)
 		}
 		return text
 	}
@@ -618,15 +624,16 @@ func installMessage(res *appstore.InstallResult, configureURL, connectURL string
 		return fmt.Sprintf("%s has been requested and is awaiting approval; you'll get its tools once an admin approves it.", res.Name)
 	}
 	text := fmt.Sprintf("Installed %s.", res.Name)
-	if res.RequiresAuth {
-		if connectURL != "" {
-			// The connect link is the second install step; the tools appear once the
-			// user authorizes their account. Present it as a labeled link, not a raw
-			// URL, so the user sees "Connect <server>".
-			text += fmt.Sprintf(" To finish, present this link to the user to connect their account: %s. Once they authorize, its tools become available (they may need to refresh the tool list).", linkMarkdown("Connect "+res.Name, connectURL))
-		} else {
-			text += " It needs your account connected before its tools can be used."
-		}
+	if !res.RequiresAuth {
+		return text + " " + toolsRefreshHint
+	}
+	if connectURL != "" {
+		// The connect link is the second install step; the tools appear once the
+		// user authorizes their account. Present it as a labeled link, not a raw
+		// URL, so the user sees "Connect <server>".
+		text += fmt.Sprintf(" To finish, present this link to the user to connect their account: %s. Once they authorize: %s", linkMarkdown("Connect "+res.Name, connectURL), toolsRefreshHint)
+	} else {
+		text += " It needs your account connected before its tools can be used."
 	}
 	return text
 }
