@@ -15,6 +15,8 @@
 package regexreplace
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -85,11 +87,13 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 		}
 	}
 	for i := range creq.Messages {
-		if creq.Messages[i].Content == "" {
-			continue
+		if creq.Messages[i].Content != "" {
+			if out, did := applyRules(rules, creq.Messages[i].Content); did {
+				creq.Messages[i].Content = out
+				changed = true
+			}
 		}
-		if out, did := applyRules(rules, creq.Messages[i].Content); did {
-			creq.Messages[i].Content = out
+		if applyRulesToToolCalls(rules, creq.Messages[i].ToolCalls) {
 			changed = true
 		}
 	}
@@ -109,6 +113,9 @@ func rewriteResponse(reg *adapter.Registry, format adapter.Format, cresp *adapte
 		return nil, false, err
 	}
 	out, changed := applyRules(rules, cresp.Content)
+	if applyRulesToToolCalls(rules, cresp.ToolCalls) {
+		changed = true
+	}
 	if !changed {
 		return nil, false, nil
 	}
@@ -118,4 +125,69 @@ func rewriteResponse(reg *adapter.Registry, format adapter.Format, cresp *adapte
 		return nil, false, err
 	}
 	return body, true, nil
+}
+
+func applyRulesToToolCalls(rules []compiledRule, calls []adapter.CanonicalToolCall) bool {
+	changed := false
+	for i := range calls {
+		if out, did := applyRulesToArguments(rules, calls[i].Arguments); did {
+			calls[i].Arguments = out
+			changed = true
+		}
+	}
+	return changed
+}
+
+// applyRulesToArguments masks a tool call's arguments. A JSON document is
+// rewritten inside its string values only, so a replacement can never break the
+// syntax around them; anything that is not JSON (a custom tool's freeform
+// input) is plain text and takes the rules whole.
+func applyRulesToArguments(rules []compiledRule, args string) (string, bool) {
+	if strings.TrimSpace(args) == "" {
+		return args, false
+	}
+	var doc any
+	dec := json.NewDecoder(strings.NewReader(args))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil || dec.More() {
+		return applyRules(rules, args)
+	}
+	masked, changed := applyRulesToJSON(rules, doc)
+	if !changed {
+		return args, false
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(masked); err != nil {
+		return args, false
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), true
+}
+
+func applyRulesToJSON(rules []compiledRule, v any) (any, bool) {
+	switch t := v.(type) {
+	case string:
+		return applyRules(rules, t)
+	case []any:
+		changed := false
+		for i := range t {
+			if out, did := applyRulesToJSON(rules, t[i]); did {
+				t[i] = out
+				changed = true
+			}
+		}
+		return t, changed
+	case map[string]any:
+		changed := false
+		for k, val := range t {
+			if out, did := applyRulesToJSON(rules, val); did {
+				t[k] = out
+				changed = true
+			}
+		}
+		return t, changed
+	default:
+		return v, false
+	}
 }

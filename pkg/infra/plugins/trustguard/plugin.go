@@ -546,8 +546,13 @@ func (p *Plugin) llmInspectionPayload(
 	if !responseHasInspectableContent(response) && len(tools) == 0 {
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
 	}
-	if strings.TrimSpace(response.Content) != "" {
+	// The arguments of a tool call travel only in the messages echo, so with
+	// calls present a text-only fallback would forward them unmasked.
+	if strings.TrimSpace(response.Content) != "" && len(response.ToolCalls) == 0 {
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteResponse(p.registry, format, response, masked) }
+	}
+	tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+		return rewriteResponseFromPayload(p.registry, format, response, payload)
 	}
 	payload, payloadErr := llmResponsePayload(response, tools)
 	if payloadErr != nil {
