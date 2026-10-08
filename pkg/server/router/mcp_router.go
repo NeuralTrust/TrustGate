@@ -103,6 +103,7 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Put(oauthhttp.RegisterClientPath, r.registerHandler.Update)
 	app.Delete(oauthhttp.RegisterClientPath, r.registerHandler.Delete)
 	app.Get(oauthhttp.AuthorizePath, r.authorizeHandler.Handle)
+	app.Post(oauthhttp.AuthorizePath, r.authorizeHandler.Decide)
 	app.Get(appoauth.CallbackPath, r.callbackHandler.Handle)
 	app.Post(oauthhttp.TokenPath, r.tokenHandler.Handle)
 
