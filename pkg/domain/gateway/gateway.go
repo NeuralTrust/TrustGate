@@ -303,10 +303,6 @@ func NormalizeDomain(domain string) (string, error) {
 	return d, nil
 }
 
-// AlwaysReservedDomain is reserved whatever the deployment's own base domains
-// are: hosts under it are NeuralTrust's.
-const AlwaysReservedDomain = "neuraltrust.ai"
-
 // CheckDomainNotReserved refuses a domain equal to, or under, any of the
 // reserved suffixes. Hosts there are matched to gateways by their slug, so a
 // gateway claiming one as its domain would take that host from the gateway the
@@ -319,7 +315,7 @@ func CheckDomainNotReserved(domain string, reserved []string) error {
 	if net.ParseIP(d) != nil || !strings.Contains(d, ".") {
 		return fmt.Errorf("%w: %q must be a fully qualified hostname, not an address or a single label", ErrReservedDomain, d)
 	}
-	for _, suffix := range append([]string{AlwaysReservedDomain, "localhost", "cluster.local", "svc"}, reserved...) {
+	for _, suffix := range append([]string{"localhost", "cluster.local", "svc"}, reserved...) {
 		s := strings.ToLower(strings.Trim(strings.TrimSpace(suffix), "."))
 		if s != "" && (d == s || strings.HasSuffix(d, "."+s)) {
 			return fmt.Errorf("%w: %q is under %q, which the platform serves gateways on; use a domain you own", ErrReservedDomain, d, s)

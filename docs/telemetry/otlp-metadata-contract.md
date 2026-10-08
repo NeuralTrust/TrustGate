@@ -94,7 +94,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.targets` | `mcp.targets` |
 | `trustgate.mcp.upstream_status` | `mcp.upstream_status` |
 | `trustgate.mcp.upstream_latency_ms` | `mcp.upstream_latency_ms` |
-| `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
+| `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` (an upstream server's error under one of the gateway's own codes, -32001, -32003, -32004 or -32005, is relayed and recorded as -32000; the code it sent travels in the error's `data.upstream_code`) |
 | `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
 | `trustgate.mcp.decision` | `mcp.decision` (call-level outcome; only `failed_open` today, when a plugin stage failed on a non-block error and the call proceeded uninspected. Omitted when nothing at that level failed — a per-plugin decision still lives in `policy_chain[]`) |
 | `trustgate.mcp.tool_risk` | `mcp.tool_risk` (tools/call only: the called tool's risk from the MCP annotations its server declares — `read_only` when `readOnlyHint` is true, else `destructive` unless `destructiveHint` is false (the protocol default), else `additive`. Omitted when the tool declares none of the four hints: unannotated tools are never guessed. Advisory, the server's own claim) |
@@ -322,6 +322,9 @@ could not consult does not refuse the request (RUN-1792). A policy can opt out w
 Under `fail_closed`, `decode_failed` refuses too: a body the guardrail could not read is a body it
 did not inspect. A `config_invalid` failure on settings that could not be parsed at all fails open,
 since `on_error` is one of those settings.
+
+`settings.on_error` is read by data planes on this version or later. A hybrid data plane on an older
+version ignores it and keeps failing open.
 
 Their `extras` carry two keys:
 

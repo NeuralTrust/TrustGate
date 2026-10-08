@@ -28,19 +28,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
 const (
 	fieldLoginClient    = "auths.config.oauth2.client_secret"
 	fieldExchangeClient = "auths.config.oauth2.exchange_client_secret"
-)
-
-var (
-	errNoSealer           = errors.New("auth repository: stored value is encrypted but no field sealer is configured")
-	errEncryptedWritesOff = errors.New("auth repository: encrypted writes are not enabled")
 )
 
 // WithFieldSealer lets the repository read the oauth2 client secrets stored
@@ -54,7 +46,7 @@ func WithFieldSealer(sealer *crypto.FieldSealer, encryptWrites bool) Option {
 	}
 }
 
-func sealedAAD(field string, id ids.AuthID) string { return field + "|" + id.String() }
+func sealedAAD(field string, id ids.AuthID) string { return crypto.FieldAAD(field, id.String()) }
 
 // marshalConfig encodes c for storage, with its client secrets encrypted for
 // the auth id when encrypted writes are on. c is not modified.
@@ -93,7 +85,7 @@ func (r *Repository) openConfig(
 		return nil
 	}
 	open := func(field, stored string) (string, error) {
-		plain, err := r.openField(sealedAAD(field, id), stored)
+		plain, err := r.sealer.OpenField(sealedAAD(field, id), stored)
 		if err == nil {
 			return plain, nil
 		}
@@ -111,9 +103,13 @@ func (r *Repository) openConfig(
 // is returned empty, reported and counted, so the auth keeps working where it
 // can and the secret can be entered again.
 func (r *Repository) openConfigForRead(ctx context.Context, id ids.AuthID, c *domain.Config) {
+	// The callback never fails, so neither does the walk.
 	_ = r.openConfig(id, c, func(field, stored string, err error) error {
-		reportUnreadableField(ctx, id, field, stored, err)
-		if field == fieldExchangeClient {
+		crypto.ReportUnreadableField(ctx, "auths", id.String(), field, stored, err)
+		switch field {
+		case fieldLoginClient:
+			c.OAuth2.ClientSecretUnreadable = true
+		case fieldExchangeClient:
 			c.OAuth2.ExchangeSecretUnreadable = true
 		}
 		return nil
@@ -123,18 +119,16 @@ func (r *Repository) openConfigForRead(ctx context.Context, id ids.AuthID, c *do
 // unopenable reports whether stored is an encrypted value this repository
 // cannot decrypt for aad: another key, another row, or no sealer at all.
 func (r *Repository) unopenable(aad, stored string) bool {
-	if !crypto.IsSealed(stored) {
-		return false
-	}
-	_, err := r.openField(aad, stored)
-	return err != nil
+	return crypto.IsSealed(stored) && !r.sealer.CanOpen(aad, stored)
 }
 
 // encodeConfigForUpdate encodes c for an update of row id. A client secret
-// that comes back empty because it could not be decrypted on read must not
-// overwrite what is stored, so an empty secret whose stored value still cannot
-// be decrypted is kept as it is, as long as its client id is unchanged. The
-// stored row is read under a row lock in tx.
+// that came back empty because it could not be decrypted on read must not
+// overwrite what is stored. An empty secret that c marks as unreadable on
+// read, or whose stored value still cannot be decrypted, is kept as stored,
+// even when another update has since replaced it with one that reads, as long
+// as its client id is unchanged. The stored row is read under a row lock in
+// tx.
 func (r *Repository) encodeConfigForUpdate(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -169,13 +163,15 @@ func (r *Repository) encodeConfigForUpdate(
 		return nil, err
 	}
 	changed := false
-	if out.OAuth2.ClientSecret == "" && sameClient(out.OAuth2.ClientID, stored.OAuth2.ClientID) &&
-		r.unopenable(sealedAAD(fieldLoginClient, id), stored.OAuth2.ClientSecret) {
+	if out.OAuth2.ClientSecret == "" && stored.OAuth2.ClientSecret != "" &&
+		sameClient(out.OAuth2.ClientID, stored.OAuth2.ClientID) &&
+		(c.OAuth2.ClientSecretUnreadable || r.unopenable(sealedAAD(fieldLoginClient, id), stored.OAuth2.ClientSecret)) {
 		out.OAuth2.ClientSecret = stored.OAuth2.ClientSecret
 		changed = true
 	}
-	if out.OAuth2.ExchangeClientSecret == "" && sameClient(out.OAuth2.ExchangeClientID, stored.OAuth2.ExchangeClientID) &&
-		r.unopenable(sealedAAD(fieldExchangeClient, id), stored.OAuth2.ExchangeClientSecret) {
+	if out.OAuth2.ExchangeClientSecret == "" && stored.OAuth2.ExchangeClientSecret != "" &&
+		sameClient(out.OAuth2.ExchangeClientID, stored.OAuth2.ExchangeClientID) &&
+		(c.OAuth2.ExchangeSecretUnreadable || r.unopenable(sealedAAD(fieldExchangeClient, id), stored.OAuth2.ExchangeClientSecret)) {
 		out.OAuth2.ExchangeClientSecret = stored.OAuth2.ExchangeClientSecret
 		changed = true
 	}
@@ -188,33 +184,6 @@ func (r *Repository) encodeConfigForUpdate(
 func sameClient(a, b string) bool {
 	a = strings.TrimSpace(a)
 	return a != "" && a == strings.TrimSpace(b)
-}
-
-func (r *Repository) openField(aad, stored string) (string, error) {
-	if !crypto.IsSealed(stored) {
-		return stored, nil
-	}
-	if r.sealer == nil {
-		return "", errNoSealer
-	}
-	return r.sealer.Open(aad, stored)
-}
-
-func reportUnreadableField(ctx context.Context, id ids.AuthID, field, stored string, err error) {
-	slog.ErrorContext(ctx, "auth repository: stored credential cannot be decrypted; returning it empty",
-		slog.String("component", "auth_repository"),
-		slog.String("auth_id", id.String()),
-		slog.String("field", field),
-		slog.String("key_id", crypto.SealedKeyID(stored)),
-		slog.String("error", err.Error()))
-	counter, cerr := otel.Meter("trustgate/auth_repository").Int64Counter(
-		"trustgate.stored_secrets.unreadable_fields",
-		metric.WithDescription("stored credentials returned empty because they could not be decrypted"),
-	)
-	if cerr != nil {
-		return
-	}
-	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("table", "auths")))
 }
 
 func hasUnsealedSecrets(c domain.Config) bool {
@@ -235,7 +204,7 @@ func isUnsealed(v string) bool { return v != "" && !crypto.IsSealed(v) }
 // encrypted writes enabled.
 func (r *Repository) SealStoredSecrets(ctx context.Context) (sealed, failed int, err error) {
 	if !r.encryptWrites {
-		return 0, 0, errEncryptedWritesOff
+		return 0, 0, crypto.ErrEncryptedWritesOff
 	}
 	const candidates = `SELECT id FROM auths WHERE config::text LIKE '%client_secret%' ORDER BY id`
 	rows, err := r.conn.Pool.Query(ctx, candidates)

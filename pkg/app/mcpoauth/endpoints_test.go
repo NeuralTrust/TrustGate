@@ -49,3 +49,65 @@ func TestUsesProviderEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedClientFor(t *testing.T) {
+	t.Parallel()
+	const (
+		authorize = "https://accounts.google.com/o/oauth2/v2/auth"
+		token     = "https://oauth2.googleapis.com/token"
+	)
+	shared := NewGoogleWorkspace("shared-id", "shared-secret")
+	tests := []struct {
+		name string
+		q    SharedClientQuery
+		want bool
+	}{
+		{"lenient, empty id and endpoints", SharedClientQuery{Code: GmailCode}, true},
+		{"provider stands in for an empty code", SharedClientQuery{Provider: DriveCode, ClientID: "shared-id"}, true},
+		{"lenient, provider endpoints", SharedClientQuery{Code: GmailCode, ClientID: "shared-id", AuthorizeURL: authorize, TokenURL: token}, true},
+		{"other client id", SharedClientQuery{Code: GmailCode, ClientID: "own-id"}, false},
+		{"other token host", SharedClientQuery{Code: GmailCode, TokenURL: "https://idp.example.com/token"}, false},
+		{"code without shared client", SharedClientQuery{Code: "com.example/mcp"}, false},
+		{"strict, complete", SharedClientQuery{Code: GmailCode, ClientID: "shared-id", AuthorizeURL: authorize, TokenURL: token, Strict: true}, true},
+		{"strict, empty token url", SharedClientQuery{Code: GmailCode, ClientID: "shared-id", AuthorizeURL: authorize, Strict: true}, false},
+		{"strict, empty client id", SharedClientQuery{Code: GmailCode, AuthorizeURL: authorize, TokenURL: token, Strict: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			creds, ok := SharedClientFor(shared, tt.q)
+			if ok != tt.want {
+				t.Fatalf("SharedClientFor(%+v) ok = %v, want %v", tt.q, ok, tt.want)
+			}
+			if ok && (creds.ClientID != "shared-id" || creds.ClientSecret != "shared-secret") {
+				t.Fatalf("credentials = %+v", creds)
+			}
+		})
+	}
+	if _, ok := SharedClientFor(nil, SharedClientQuery{Code: GmailCode}); ok {
+		t.Fatal("no provider, no shared client")
+	}
+}
+
+// A platform client the provider serves for another code is bound by id when
+// no endpoints are given, and refused as soon as any are, since only Google's
+// hosts are known.
+func TestSharedClientForOtherProviderCodes(t *testing.T) {
+	t.Parallel()
+	other := ProviderFunc(func(code string) (Credentials, bool) {
+		if code == "com.platform/mcp" {
+			return Credentials{ClientID: "platform-id", ClientSecret: "platform-secret"}, true
+		}
+		return Credentials{}, false
+	})
+
+	if _, ok := SharedClientFor(other, SharedClientQuery{Code: "com.platform/mcp"}); !ok {
+		t.Fatal("lenient, no endpoints: want the platform client")
+	}
+	if _, ok := SharedClientFor(other, SharedClientQuery{Code: "com.platform/mcp", TokenURL: "https://idp.example.com/token"}); ok {
+		t.Fatal("endpoints off the known hosts: want no shared client")
+	}
+	if _, ok := SharedClientFor(other, SharedClientQuery{Code: "com.platform/mcp", ClientID: "platform-id", Strict: true}); ok {
+		t.Fatal("strict without endpoints: want no shared client")
+	}
+}
