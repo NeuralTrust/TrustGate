@@ -421,9 +421,7 @@ func provideWhoAmIHandler(
 	gateways := resolver.NewSubdomainGatewayResolver(
 		finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...,
 	)
-	resolveSource := func(peer, forwardedFor string) string {
-		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
-	}
+	resolveSource := connectSourceResolver(cfg)
 	opts := []mcphttp.WhoAmIOption{
 		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
 	}
@@ -438,9 +436,7 @@ func provideRegisterHandler(
 	cfg *config.Config,
 	limiter appoauth.ConnectAttemptLimiter,
 ) *oauthhttp.RegisterHandler {
-	resolveSource := func(peer, forwardedFor string) string {
-		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
-	}
+	resolveSource := connectSourceResolver(cfg)
 	return oauthhttp.NewRegisterHandler(metadata, oauthhttp.WithRegistrationLimit(limiter, resolveSource))
 }
 
@@ -451,14 +447,12 @@ func provideEndUserConnectionsHandler(
 	limiter appoauth.ConnectAttemptLimiter,
 ) *oauthhttp.EndUserConnectionsHandler {
 	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
-	resolveSource := func(peer, forwardedFor string) string {
-		return ratelimit.ResolveConnectSource(
-			peer,
-			forwardedFor,
-			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
-		)
-	}
+	resolveSource := connectSourceResolver(cfg)
 	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
+}
+
+func connectSourceResolver(cfg *config.Config) func(peer, forwardedFor string) string {
+	return ratelimit.NewConnectSourceResolver(cfg.MCPConnectRateLimit.TrustedProxyCIDRs, cfg.ClientIP)
 }
 
 func utcNow() time.Time {
