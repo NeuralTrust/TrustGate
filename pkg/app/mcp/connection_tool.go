@@ -25,6 +25,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -41,6 +42,11 @@ type ConnectionGateway interface {
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]appoauth.ProviderStatus, error)
 }
 
+// ConnectionTool offers each server still waiting on the caller's account as a
+// trustgate_connect_<provider> tool, on an application's surface. The MCP
+// Store has none: there the install tool is how a server is connected (calling
+// it again for an installed server returns its link), so a Store client sees
+// one way in, not two.
 type ConnectionTool interface {
 	Definitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool
 	Handles(name string) bool
@@ -76,6 +82,9 @@ func (t *connectionTool) Handles(name string) bool {
 
 func (t *connectionTool) Definitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool {
 	if t == nil || t.connect == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if consumerdomain.IsStoreConsumer(rc.Consumer) {
 		return nil
 	}
 	principal := identity.PrincipalFromContext(ctx)
@@ -127,6 +136,10 @@ func (t *connectionTool) Call(
 	}
 	if !t.Handles(name) {
 		return nil, ErrConnectionToolUnavailable
+	}
+	if consumerdomain.IsStoreConsumer(rc.Consumer) {
+		return nil, fmt.Errorf("%w: on the MCP Store, %s with the server's code returns its connect link",
+			ErrConnectionToolUnavailable, StoreInstallToolName)
 	}
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {

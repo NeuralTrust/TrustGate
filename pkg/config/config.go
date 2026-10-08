@@ -330,6 +330,15 @@ type ServerConfig struct {
 	// and do not roll back past that version afterwards.
 	// STORED_SECRETS_ENCRYPTION_ENABLED, default false.
 	StoredSecretsEncryptionEnabled bool
+	// ConsoleEventsURL is where the control plane tells the console about a
+	// personal key the MCP Store's page created, rotated or revoked, so the
+	// console audits it and links the key to its models as it does for the
+	// Portal's (CONSOLE_EVENTS_URL, e.g.
+	// https://app.neuraltrust.ai/api/internal/trustgate/personal-key-events).
+	// Signed with SecretKey, the secret the console already shares. Empty: the
+	// console is not told, and a new key reaches its models on the console's
+	// next reconcile.
+	ConsoleEventsURL string
 }
 
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
@@ -679,6 +688,7 @@ func getServerConfig() ServerConfig {
 		AdminTokenMaxTTL:               min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
 		OAuthInsecureCookies:           getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
 		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", false),
+		ConsoleEventsURL:               strings.TrimSpace(getEnv("CONSOLE_EVENTS_URL", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),

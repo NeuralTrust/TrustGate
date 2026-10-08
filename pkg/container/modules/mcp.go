@@ -128,6 +128,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideConfigureService); err != nil {
 		return err
 	}
+	if err := c.Provide(providePersonalKeyPages); err != nil {
+		return err
+	}
 	if err := c.Provide(provideEndUserConnectionsService); err != nil {
 		return err
 	}
@@ -315,6 +318,10 @@ type rpcGatewayParams struct {
 	// Connect mints the OAuth connect link the install returns for a server that
 	// needs the user's own account (the install's second step).
 	Connect appoauth.ConnectService `optional:"true"`
+	// PersonalKeys mints the link to the personal key page. Nil where no key
+	// can be issued; the Store then offers no personal key tool.
+	PersonalKeys appoauth.PersonalKeyPages `optional:"true"`
+	Cfg          *config.Config
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -353,8 +360,11 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		connect = p.Connect
 	}
 	modes := appstore.NewModeResolver(p.Policies)
-	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, grants, configure, connect,
-		appmcp.WithStoreToolModes(modes))
+	storeOpts := []appmcp.StoreToolOption{appmcp.WithStoreToolModes(modes)}
+	if p.PersonalKeys != nil {
+		storeOpts = append(storeOpts, appmcp.WithStoreToolPersonalKeys(p.PersonalKeys, p.Cfg.Server.GatewayBaseDomain))
+	}
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, grants, configure, connect, storeOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -565,4 +575,28 @@ func storeOfferReader(store appmcp.StoreTool) appmcp.StoreOfferReader {
 		return nil
 	}
 	return reader
+}
+
+type personalKeyPagesParams struct {
+	dig.In
+	Cache   cache.Client
+	Proxy   appoauth.AuthProxy
+	Issuer  appauth.PersonalKeyIssuer `optional:"true"`
+	Limiter appoauth.ConnectAttemptLimiter
+	Logger  *slog.Logger
+}
+
+// providePersonalKeyPages lights up the MCP Store's personal key page where a
+// key can be issued: the control plane's own issuer, or the config-sync
+// client on a data plane with no database. Nil leaves the page and the Store
+// tool that links to it dark.
+func providePersonalKeyPages(p personalKeyPagesParams) (appoauth.PersonalKeyPages, error) {
+	if p.Issuer == nil {
+		return nil, nil
+	}
+	signIn, ok := p.Proxy.(appoauth.BrowserSignIn)
+	if !ok {
+		return nil, nil
+	}
+	return appoauth.NewPersonalKeyPages(infraoauth.NewPersonalKeyPageStore(p.Cache.RedisClient()), signIn, p.Issuer, p.Limiter, p.Logger)
 }
