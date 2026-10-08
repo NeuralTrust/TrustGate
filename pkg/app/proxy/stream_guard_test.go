@@ -2472,3 +2472,39 @@ func TestStreamGuard_AFailedAbortEvaluationStillClosesTheStream(t *testing.T) {
 		})
 	}
 }
+
+// ENG-1738: post_response skips its own full-text pass only when the final
+// block was evaluated in full by every entry. Every way the final block can be
+// less than that must leave the fact false.
+func TestStreamGuard_FinalInspectedOnlyWhenEveryEntrySawTheWholeText(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		runner *scriptedRunner
+		cfg    streamGuardConfig
+		lines  []string
+		want   bool
+	}{
+		{"clean final block", &scriptedRunner{outcome: &appplugins.SegmentOutcome{}}, streamGuardConfig{minChars: 1}, textStreamLines("a1", "b2", "c3"), true},
+		{"an entry with its own smaller window", &scriptedRunner{outcome: &appplugins.SegmentOutcome{WindowedEntries: 1}}, streamGuardConfig{minChars: 1}, textStreamLines("a1", "b2", "c3"), false},
+		{"an entry that failed or was retired", &scriptedRunner{outcome: &appplugins.SegmentOutcome{FailedEntries: 1}}, streamGuardConfig{minChars: 1}, textStreamLines("a1", "b2", "c3"), false},
+		{"a guard accumulation cap", &scriptedRunner{outcome: &appplugins.SegmentOutcome{}}, streamGuardConfig{minChars: 1, maxAccumBytes: 10}, textStreamLines("日本語", "日本語", "日本語", "日本語"), false},
+		{"a call that errors under fail_open", &scriptedRunner{err: errors.New("guard unavailable")}, streamGuardConfig{minChars: 1}, textStreamLines("a1", "b2", "c3"), false},
+		{"a call that errors under fail_closed", &scriptedRunner{err: errors.New("guard unavailable")}, streamGuardConfig{minChars: 1, onError: streamFailClosed}, textStreamLines("a1", "b2", "c3"), false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := loopGuard(t, tc.runner, adapter.NewRegistry(), tc.cfg)
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			if pe != nil {
+				require.False(t, tc.want)
+				require.False(t, g.wasFinalInspected())
+				return
+			}
+			_, _ = collectGuardOutput(t, g, out)
+			require.Equal(t, tc.want, g.wasFinalInspected())
+		})
+	}
+}
