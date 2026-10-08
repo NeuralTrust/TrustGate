@@ -368,16 +368,17 @@ func TestHasS3Source(t *testing.T) {
 	t.Parallel()
 	s3 := `{"s3Location":{"uri":"s3://bucket/key","bucketOwner":"123456789012"}}`
 	for name, body := range map[string]string{
-		"converse document":   `{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}]}`,
-		"converse image":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":` + s3 + `}}]}]}`,
-		"converse video":      `{"messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
-		"nova invoke":         `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
-		"other casing":        `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"S3Location":{"uri":"s3://b/k"}}}}]}]}`,
-		"pegasus mediaSource": `{"inputPrompt":"describe this video","mediaSource":` + s3 + `}`,
-		"marengo mediaSource": `{"inputType":"video","mediaSource":{"s3Location":{"uri":"s3://b/k.mp4","bucketOwner":"123456789012"}}}`,
-		"capital Source":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","Source":` + s3 + `}}]}]}`,
-		"toolResult image":    `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"image":{"format":"png","source":` + s3 + `}}]}}]}]}`,
-		"toolResult document": `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}}]}]}`,
+		"converse document":           `{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}]}`,
+		"converse image":              `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":` + s3 + `}}]}]}`,
+		"converse video":              `{"messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
+		"nova invoke":                 `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
+		"other casing":                `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"S3Location":{"uri":"s3://b/k"}}}}]}]}`,
+		"pegasus mediaSource":         `{"inputPrompt":"describe this video","mediaSource":` + s3 + `}`,
+		"marengo mediaSource":         `{"inputType":"video","mediaSource":{"s3Location":{"uri":"s3://b/k.mp4","bucketOwner":"123456789012"}}}`,
+		"capital Source":              `{"messages":[{"role":"user","content":[{"image":{"format":"png","Source":` + s3 + `}}]}]}`,
+		"toolResult image":            `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"image":{"format":"png","source":` + s3 + `}}]}}]}]}`,
+		"toolResult document":         `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}}]}]}`,
+		"parameters is not tool data": `{"parameters":{"mediaSource":{"s3Location":{"uri":"s3://a/b"}}}}`,
 	} {
 		assert.True(t, HasS3Source([]byte(body)), name)
 	}
@@ -400,6 +401,22 @@ func TestHasS3Source(t *testing.T) {
 		"cohere tool_calls params":   `{"tool_calls":[{"name":"copy","parameters":{"src":{"s3Location":{"uri":"s3://a/b"}}}}]}`,
 		"server_tool_use input":      `{"messages":[{"role":"assistant","content":[{"type":"server_tool_use","id":"t1","name":"web","input":{"q":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
 		"toolUseId casing":           `{"messages":[{"role":"assistant","content":[{"ToolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
+		"direct json":                `{"json":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct toolConfig":          `{"toolConfig":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct input_schema":        `{"input_schema":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct inputSchema":         `{"inputSchema":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct arguments":           `{"arguments":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct tool_results":        `{"tool_results":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct toolSpec":            `{"toolSpec":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct tool_use":            `{"tool_use":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct toolUse":             `{"toolUse":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct tools":               `{"tools":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct tool_choice":         `{"tool_choice":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct toolChoice":          `{"toolChoice":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct tool_calls":          `{"tool_calls":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct function":            `{"function":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct function_call":       `{"function_call":{"s3Location":{"uri":"s3://a/b"}}}`,
+		"direct tool use input":      `{"toolUseId":"t1","input":{"s3Location":{"uri":"s3://a/b"}}}`,
 		"tool arg string form":       `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":"s3://a/b"}}}}]}]}`,
 	} {
 		assert.False(t, HasS3Source([]byte(body)), name)

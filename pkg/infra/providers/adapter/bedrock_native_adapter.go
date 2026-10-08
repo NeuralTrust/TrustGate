@@ -350,7 +350,7 @@ func HasS3Source(body []byte) bool {
 // data: JSON tool results, tool schemas and call arguments. A toolResult itself is
 // not one of them: its image, document and video blocks are read by the model.
 var toolDataKeys = map[string]struct{}{
-	"json": {}, "toolconfig": {}, "input_schema": {}, "inputschema": {}, "parameters": {}, "arguments": {},
+	"json": {}, "toolconfig": {}, "input_schema": {}, "inputschema": {}, "arguments": {},
 	"tool_results": {}, // Cohere: the outputs of earlier tool calls
 }
 
