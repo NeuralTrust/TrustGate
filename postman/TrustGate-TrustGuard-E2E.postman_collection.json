@@ -1966,7 +1966,7 @@
 		},
 		{
 			"key": "admin_jwt_secret",
-			"value": "ba88b8eee336e509b49253ebe80fad2b3f47c9dc8139c83af73c4706457168f5",
+			"value": "",
 			"type": "string"
 		},
 		{
