@@ -176,6 +176,9 @@ type WhoAmIKey struct {
 	Name string `json:"name,omitempty"`
 	// ExpiresAt is RFC3339, absent when the key never expires.
 	ExpiresAt string `json:"expires_at,omitempty"`
+	// Personal is set for a person's own key (a personal key): it runs as its
+	// owner, and its consumers are the Store on each plane.
+	Personal bool `json:"personal,omitempty"`
 }
 
 // WhoAmIResponse is everything a client can learn from its own key.
@@ -187,7 +190,7 @@ type WhoAmIResponse struct {
 
 // Handle godoc
 // @Summary      Describe what an API key reaches
-// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.
+// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A personal key (key.personal) is a person's own: it lists the Store, slug "store", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.
 // @Tags         mcp
 // @Produce      json
 // @Success      200  {object}  WhoAmIResponse
@@ -250,7 +253,7 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 }
 
 func whoAmIKey(key appconsumer.KeyInfo) WhoAmIKey {
-	out := WhoAmIKey{Name: key.Name}
+	out := WhoAmIKey{Name: key.Name, Personal: key.Personal}
 	if key.ExpiresAt != nil {
 		out.ExpiresAt = key.ExpiresAt.UTC().Format(time.RFC3339)
 	}
@@ -345,7 +348,8 @@ func (h *WhoAmIHandler) gatewayForKey(c *fiber.Ctx) *gatewaydomain.Gateway {
 		return nil
 	}
 	auth, err := h.byKey.keys.FindByAPIKey(c.UserContext(), key)
-	if err != nil || !auth.IsApplicationKey(h.now().UTC()) {
+	now := h.now().UTC()
+	if err != nil || (!auth.IsApplicationKey(now) && !auth.IsPersonalKey(now)) {
 		return nil
 	}
 	gateway, err := h.byKey.gateways.FindByID(c.UserContext(), auth.GatewayID)

@@ -430,6 +430,29 @@ reads a stored account — and also on a plane that cannot read them, which is w
 a client reads `blocked` rather than counting a length. An unknown, disabled,
 expired or foreign key gets one `401` that says nothing about which.
 
+A **personal key** (the Portal's key, owned by one person) is described the
+same way, marked `"personal": true`. Its consumers are the Store, slug `store`,
+on each plane: the MCP Store, where calls run as the key's owner with what
+Access grants them, and the LLM Store (`/store/v1`) when the gateway has
+personal consumers. No `upstreams`: what the person still has to connect is on
+the Store itself (`trustgate_list_tools`, `trustgate_connect_*`).
+
+```jsonc
+{
+  "gateway": "acme",
+  "key": { "name": "personal", "expires_at": "2027-01-06T09:30:00Z", "personal": true },
+  "consumers": [
+    { "slug": "store", "name": "MCP Store", "type": "MCP", "active": true,
+      "url": "https://<mcp-host>/store/mcp" },
+    { "slug": "store", "name": "LLM Store", "type": "LLM", "active": true,
+      "url": "https://<proxy-host>/store/v1" }
+  ]
+}
+```
+
+The SDK opens the Store for such a key as it does for a signed-in person, and
+never calls `/{slug}/connections` with it: that API is an application's.
+
 ### The account an MCP server's instance holds — not an SDK call
 
 Not a JSON API and not something the SDK calls. Whose account a server uses is a

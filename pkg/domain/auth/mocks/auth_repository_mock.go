@@ -745,6 +745,65 @@ func (_c *Repository_UpdateBudget_Call) RunAndReturn(run func(context.Context, *
 	return _c
 }
 
+// UpdateOwnerGroups provides a mock function with given fields: ctx, a
+func (_m *Repository) UpdateOwnerGroups(ctx context.Context, a *auth.Auth) (*auth.Auth, error) {
+	ret := _m.Called(ctx, a)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateOwnerGroups")
+	}
+
+	var r0 *auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *auth.Auth) (*auth.Auth, error)); ok {
+		return rf(ctx, a)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *auth.Auth) *auth.Auth); ok {
+		r0 = rf(ctx, a)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *auth.Auth) error); ok {
+		r1 = rf(ctx, a)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_UpdateOwnerGroups_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateOwnerGroups'
+type Repository_UpdateOwnerGroups_Call struct {
+	*mock.Call
+}
+
+// UpdateOwnerGroups is a helper method to define mock.On call
+//   - ctx context.Context
+//   - a *auth.Auth
+func (_e *Repository_Expecter) UpdateOwnerGroups(ctx interface{}, a interface{}) *Repository_UpdateOwnerGroups_Call {
+	return &Repository_UpdateOwnerGroups_Call{Call: _e.mock.On("UpdateOwnerGroups", ctx, a)}
+}
+
+func (_c *Repository_UpdateOwnerGroups_Call) Run(run func(ctx context.Context, a *auth.Auth)) *Repository_UpdateOwnerGroups_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*auth.Auth))
+	})
+	return _c
+}
+
+func (_c *Repository_UpdateOwnerGroups_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_UpdateOwnerGroups_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_UpdateOwnerGroups_Call) RunAndReturn(run func(context.Context, *auth.Auth) (*auth.Auth, error)) *Repository_UpdateOwnerGroups_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewRepository creates a new instance of Repository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewRepository(t interface {

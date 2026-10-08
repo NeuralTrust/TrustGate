@@ -34,6 +34,11 @@ const (
 	MethodOAuth         Method = "oauth"
 	MethodIntrospection Method = "introspection"
 	MethodMTLS          Method = "mtls"
+	// MethodPersonalKey is a person's own api key (a personal key) on the MCP
+	// Store. Unlike MethodAPIKey it proves a person, not an application: the
+	// principal is the key's owner, with the groups the platform recorded on
+	// the key, and nothing renames it to an application subject.
+	MethodPersonalKey Method = "personal_key"
 )
 
 // IsBearerToken reports whether the method identifies a principal established

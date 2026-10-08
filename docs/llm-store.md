@@ -16,7 +16,7 @@ granted consumers. A key attached to a consumer *is* the authorisation.
 | Concept | What it is |
 |---|---|
 | Personal consumer | An LLM consumer created with `"audience": "personal"`. It is configured like any LLM consumer, but it is never reachable at `/<slug>/v1`, it takes no bulk `auths`, and it needs a concrete (non-glob) default model on at least one primary registry. The audience is set at create and never changes. |
-| Personal key | An `api_key` auth with an `owner_id` (the platform user id). One per user per gateway, valid for at most 90 days. It works only on `/store/v1`. `GET /auths` hides it. |
+| Personal key | An `api_key` auth with an `owner_id` (the platform user id). One per user per gateway, valid for at most 90 days. It works on `/store/v1` and on the MCP Store (`/store/mcp`, see The MCP Store), nowhere else. `GET /auths` hides it. |
 | Link | The attachment of a personal key to a personal consumer, with three attributes: `level` (`user`, `group` or `all`), `priority` (an integer, lower first, default 1) and `granted_at` (when the grant was made, the stable tie-break). A key has N ≥ 0 links. |
 
 ## Admin setup
@@ -83,6 +83,22 @@ These calls answer 422:
 
 Deleting a personal consumer removes its links and keeps the keys. Admin
 `DELETE /auths/{auth_id}` revokes a key and all of its links.
+
+Record the owner's directory groups on their key, so the MCP Store applies
+grants and policies made to a group (The MCP Store, below). Send the whole
+membership again whenever it changes; an empty list clears it:
+
+```json
+PUT /v1/gateways/{gateway_id}/auths/{auth_id}/groups
+{"groups": ["engineering", "sre"]}
+```
+
+The answer is 200 with the auth, `owner_groups` included. Names are trimmed,
+deduplicated and sorted; at most 512 groups of at most 256 characters each
+(422 `validation_failed`). An application key answers 422 `application_key`, an
+unknown key or one of another gateway 404. The secret, the expiry, the budget
+and the links never change, and a rotation keeps the groups. The change reaches
+the proxies as a budget change does.
 
 ## Key lifecycle
 
@@ -185,6 +201,29 @@ A's own route would: a fallback registry without an allow-list is skipped for a
 short model its provider's catalog does not list. `deepseek-chat` is still
 refused, because a fallback never admits. A's open OpenAI registry now lists
 the OpenAI catalog, so `/store/v1/models` gains it.
+
+## The MCP Store
+
+The same key opens its owner's MCP Store, `https://<gateway>.<MCP_BASE_DOMAIN>/store/mcp`,
+sent in any of the key headers above. It is the Store a signed-in session gets:
+what the owner installed, narrowed by the Store grants and access policies that
+name them or one of their groups, with the `trustgate_store_*`,
+`trustgate_list_tools` and `trustgate_connect_*` tools, and every call made
+with the owner's own upstream accounts.
+
+- The principal is the key's owner (`subject` = `owner_id`), method
+  `personal_key`, with the groups recorded by `PUT …/auths/{auth_id}/groups` as
+  its `groups` claim. Unlike an application key's, nothing renames it to an
+  application subject, and MCP policies scoped to groups apply to it.
+- A personal key on any other MCP path, or an application key on
+  `/store/mcp`, answers 401 like an unknown key. A disabled or expired key, a key
+  whose owner spells a subject only the gateway mints (`app:…`, `instance:…`),
+  and a key sent to another gateway's host answer the same.
+- A connect link the Store hands out (a consent error, `trustgate_connect_*`)
+  connects the owner's account, as it does for a session.
+- `GET /whoami` describes a personal key with `"key": {"personal": true, …}`
+  and the Store on each plane, slug `store`: the MCP Store, and `/store/v1` when
+  the gateway has an active personal consumer.
 
 ## Errors
 
@@ -289,7 +328,8 @@ columns can stay.
 
 - Hybrid gateways: `/store/v1` answers 404 and personal consumers are refused.
 - The Files API on `/store/v1` (404, see Request routing).
-- Personal keys on MCP and on `/<slug>/v1`: they answer as unknown keys.
+- Personal keys on `/<slug>/v1` and on MCP paths other than `/store/mcp`: they
+  answer as unknown keys.
 - Traffic labeling of `/store/v1` requests, and the playground on personal
   consumers.
 - The grants, the reconcile and the UI, which live in the app.
@@ -308,7 +348,7 @@ the first personal consumer exists.
 | b | `InvalidateGatewayDataEvent` clears the whole `auth_key` cache and the new unknown-key cache (30 s) on every full-plane replica, so a rotation or a revocation stops the old secret on every replica at once. | Other replicas kept resolving the old secret for up to 5 minutes. |
 | c | Usage events carry `auth_id`, and OTLP records `trustgate.auth.id`, on LLM proxy requests authenticated by an API key. | No auth id. |
 | d | Admin consumer responses always carry `audience` (`application` for every existing consumer). | No `audience` field. |
-| e | `whoami` on the fixed host resolves a gateway only from an enabled, unexpired application key. A disabled, expired or personal key answers like an unknown key. | Any key the key finder returned resolved its gateway, including a disabled one still in its cache. |
+| e | `whoami` on the fixed host resolves a gateway only from an enabled, unexpired application or personal key. A disabled or expired key answers like an unknown key. | Any key the key finder returned resolved its gateway, including a disabled one still in its cache. |
 | f | `POST /v1/gateways/{gateway_id}/consumers/{consumer_id}/auths/{auth_id}` parses a non-empty body as link attributes: malformed JSON answers 422, and link attributes on an application consumer answer 422. No body behaves as before. | The body was ignored. |
 | g | Deleting a registry that holds a personal consumer's last primary default model answers 422 `validation_failed`, like detaching it. | Personal consumers are new; an earlier build of this change answered 409 `has_dependents`. |
 | h | The MCP connect ticket re-check refuses an expired or personal key. | Only enabled, type and gateway were checked. |
@@ -316,6 +356,7 @@ the first personal consumer exists.
 | j | `GET /v1/gateways/{gateway_id}/auths` reads `owned`: `true` lists personal keys only, `owned` together with `owner_id` answers 422 `invalid_filter`, and a value that is not a boolean answers 422 `invalid_filter`. Admin auth responses carry `budget` on a personal key that has one. `PUT …/auths/{auth_id}/budget` is new, and `auths` gains a nullable `budget` column. `token_rate_limiter` gains `key_budgets` (needs `partition: key`): such a policy holds each key to its budget and may have no `aggregate`, `rules`, `window` or `cost_cap`; every other policy still needs one, and no other policy reads key budgets. | `owned` was ignored, and a policy had no way to read a key's budget. |
 | k | `POST …/auths/{auth_id}/rotate` writes the new secret only while the stored one is the secret it read: of two rotations of the same key racing each other, the second answers 409 `conflict` and changes nothing. | Both answered 200; the secret the first one returned was already dead. |
 | l | The LLM Store migrations wait at most 5 s for a table lock (`lock_timeout`); one that cannot get it fails and the rollout retries it, instead of queueing every later read and write on `consumers`, `auths` or `consumer_auth` behind it. | — |
+| m | `auths` gains a nullable `owner_groups` column and `PUT …/auths/{auth_id}/groups` is new. A personal key is accepted on `/store/mcp` as its owner, and `whoami` describes one (`key.personal`) instead of refusing it. Application keys and every other MCP path are unchanged. | A personal key answered 401 on every MCP path and on `whoami`. |
 
 Roll back (a) by reverting it; the rest needs no action.
 
