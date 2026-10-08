@@ -76,7 +76,7 @@ func executeToolResponse(t *testing.T, req *infracontext.RequestContext, body []
 	require.True(t, ok)
 	assert.Equal(t, decisionTransformed, extras.Decision)
 	assert.False(t, extras.FailedOpen)
-	assert.False(t, extras.Degraded, "a transform that cannot be written back is recorded as degraded")
+	assert.False(t, extras.Degraded, "a transform that was written back is not recorded as degraded")
 	return res.Body, res.StopUpstream
 }
 
@@ -154,4 +154,38 @@ func TestResponseToolCallEchoOfAnotherLengthIsNotApplied(t *testing.T) {
 	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
 	require.True(t, ok)
 	assert.True(t, extras.FailedOpen)
+}
+
+func TestResponseToolCallsWithLegacyInputEchoAreNotApplied(t *testing.T) {
+	t.Parallel()
+	legacy := map[string]any{"input": "Writing to " + toolResponseMask}
+	openai := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"Writing to ` + toolResponseEmail + `","tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_email","arguments":"{\"to\":\"` + toolResponseEmail + `\"}"}}]},"finish_reason":"tool_calls"}]}`)
+	converse := []byte(`{"output":{"message":{"role":"assistant","content":[{"text":"Writing to ` + toolResponseEmail + `"},{"toolUse":{"toolUseId":"tooluse_1","name":"send_email","input":{"to":"` + toolResponseEmail + `"}}}]}},"stopReason":"tool_use","usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}`)
+
+	cases := []struct {
+		name string
+		req  *infracontext.RequestContext
+		body []byte
+	}{
+		{"openai text and tool_calls", requestContext(), openai},
+		{"native converse text and toolUse", nativeToolRequest("converse", `{"messages":[{"role":"user","content":[{"text":"email jane"}]}]}`), converse},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: statusTransform, TransformedPayload: legacy}}
+			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+			event, span := newEvent()
+			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), tc.req, &infracontext.ResponseContext{StatusCode: 200, Body: tc.body}, event))
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			assert.Nil(t, res.Body, "a body that keeps the raw argument must not be returned as a transform")
+			assert.False(t, res.StopUpstream)
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.Equal(t, decisionFailedOpen, extras.Decision)
+			assert.True(t, extras.FailedOpen)
+			assert.True(t, extras.Degraded)
+		})
+	}
 }
