@@ -15,8 +15,6 @@
 package middleware_test
 
 import (
-	"bytes"
-	"compress/gzip"
 	"io"
 	"log/slog"
 	"net/http"
@@ -363,17 +361,6 @@ func TestSession_FromBody(t *testing.T) {
 	doRequest(t, app, `{"session_id":"sess-body"}`, nil)
 	require.Equal(t, "sess-body", capt.effective)
 	require.Equal(t, infracontext.SessionSourceBodyField, capt.session.Source)
-}
-
-func TestSession_FromGzipBody(t *testing.T) {
-	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), BodyParamName: "session_id"}))
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	_, err := zw.Write([]byte(`{"session_id":"sess-gzip"}`))
-	require.NoError(t, err)
-	require.NoError(t, zw.Close())
-	doRequest(t, app, buf.String(), map[string]string{"Content-Encoding": "gzip"})
-	require.Equal(t, "sess-gzip", capt.effective)
 }
 
 func TestSession_BodyFieldRejectsControlCharacters(t *testing.T) {

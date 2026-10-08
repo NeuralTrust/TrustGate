@@ -233,12 +233,6 @@ func (m *SessionMiddleware) bodyFields(c *fiber.Ctx) map[string]json.RawMessage 
 	if len(body) > maxSessionLookupBodyBytes {
 		return nil
 	}
-	if len(c.Request().Header.ContentEncoding()) > 0 {
-		body = c.Body()
-		if len(body) > maxSessionLookupBodyBytes {
-			return nil
-		}
-	}
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 || body[0] != '{' {
 		return nil

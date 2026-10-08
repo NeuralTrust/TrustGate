@@ -19,14 +19,17 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
@@ -113,17 +116,17 @@ func TestDecodeRequestBody(t *testing.T) {
 		{name: "gzip mixed case", body: gzipBytes(t, payload), encodings: []string{"GZip"}, wantStatus: fiber.StatusOK, wantBody: "alice"},
 		{name: "x-gzip", body: gzipBytes(t, payload), encodings: []string{"x-gzip"}, wantStatus: fiber.StatusOK, wantBody: "alice"},
 		{name: "deflate", body: deflateBytes(t, payload), encodings: []string{"deflate"}, wantStatus: fiber.StatusOK, wantBody: "alice"},
-		{name: "brotli", body: fasthttp.AppendBrotliBytes(nil, payload), encodings: []string{"br"}, wantStatus: fiber.StatusOK, wantBody: "alice"},
+		{name: "empty body with a coding", body: nil, encodings: []string{"gzip"}, wantStatus: fiber.StatusUnprocessableEntity},
 		{name: "identity on separate line", body: gzipBytes(t, payload), encodings: []string{"gzip", "identity"}, wantStatus: fiber.StatusOK, wantBody: "alice"},
 		{name: "gzip with identity", body: gzipBytes(t, payload), encodings: []string{"identity, gzip"}, wantStatus: fiber.StatusOK, wantBody: "alice"},
 		{name: "chained in one header", body: gzipBytes(t, gzipBytes(t, payload)), encodings: []string{"gzip, gzip"}, wantStatus: fiber.StatusUnsupportedMediaType},
 		{name: "chained across headers", body: gzipBytes(t, gzipBytes(t, payload)), encodings: []string{"gzip", "gzip"}, wantStatus: fiber.StatusUnsupportedMediaType},
 		{name: "unknown coding", body: payload, encodings: []string{"compress"}, wantStatus: fiber.StatusUnsupportedMediaType},
 		{name: "zstd rejected", body: fasthttp.AppendZstdBytes(nil, payload), encodings: []string{"zstd"}, wantStatus: fiber.StatusUnsupportedMediaType},
+		{name: "brotli rejected", body: fasthttp.AppendBrotliBytes(nil, payload), encodings: []string{"br"}, wantStatus: fiber.StatusUnsupportedMediaType},
 		{name: "corrupt gzip", body: []byte("not gzip"), encodings: []string{"gzip"}, wantStatus: fiber.StatusBadRequest},
 		{name: "gzip past body limit", body: gzipBytes(t, oversized), encodings: []string{"gzip"}, wantStatus: fiber.StatusRequestEntityTooLarge},
 		{name: "deflate past body limit", body: deflateBytes(t, oversized), encodings: []string{"deflate"}, wantStatus: fiber.StatusRequestEntityTooLarge},
-		{name: "brotli past body limit", body: fasthttp.AppendBrotliBytes(nil, oversized), encodings: []string{"br"}, wantStatus: fiber.StatusRequestEntityTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,12 +150,12 @@ func TestDecodeRequestBody(t *testing.T) {
 
 func TestDecodeRequestBody_RunsBeforeEveryRoute(t *testing.T) {
 	t.Parallel()
-	bomb := gzipBytes(t, gzipBytes(t, []byte(`{"name":"alice"}`)))
+	chained := gzipBytes(t, gzipBytes(t, []byte(`{"name":"alice"}`)))
 
 	for _, path := range []string{"/g/x", "/does-not-exist"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			resp := doEncodedPath(t, newEncodingTestApp(t), path, bomb, "gzip, gzip")
+			resp := doEncodedPath(t, newEncodingTestApp(t), path, chained, "gzip, gzip")
 			defer func() { _ = resp.Body.Close() }()
 			require.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
 		})
@@ -187,4 +190,40 @@ func TestDecodeRequestBody_Chunked(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	require.Equal(t, strconv.Itoa(len(payload)), resp.Header.Get("X-Content-Length"))
 	require.Empty(t, resp.Header.Get("X-Transfer-Encoding"))
+}
+
+func TestDecodeRequestBody_RejectsWhenDecoderSlotsAreTaken(t *testing.T) {
+	t.Parallel()
+	app := fiber.New()
+	app.Use(decodeRequestBodyWith(bodyLimit, 0, slog.New(slog.DiscardHandler)))
+	app.Post("/echo", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	resp := doEncoded(t, app, gzipBytes(t, []byte(`{"name":"alice"}`)), "gzip")
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, fiber.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, "1", resp.Header.Get(fiber.HeaderRetryAfter))
+}
+
+func TestDecodeRequestBody_ErrorBodyCarriesACode(t *testing.T) {
+	t.Parallel()
+	resp := doEncoded(t, newEncodingTestApp(t), []byte(`{"name":"alice"}`), "compress")
+	defer func() { _ = resp.Body.Close() }()
+	var body httpio.ErrorBody
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "unsupported_content_encoding", body.Error)
+	require.NotEmpty(t, body.Message)
+}
+
+func TestDecodeBody_HoldsAtMostTheLimit(t *testing.T) {
+	const limit = 1 << 20
+	raw := gzipBytes(t, bytes.Repeat([]byte("a"), 64<<20))
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := decodeBody(raw, decoders["gzip"], limit)
+	runtime.ReadMemStats(&after)
+
+	require.ErrorIs(t, err, errDecodedTooLarge)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*limit), "decoding must stop near the limit, not inflate the whole input")
 }
