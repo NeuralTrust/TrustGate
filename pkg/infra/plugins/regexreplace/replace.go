@@ -165,6 +165,8 @@ func applyRulesToArguments(rules []compiledRule, args string) (string, bool) {
 	return strings.TrimSuffix(buf.String(), "\n"), true
 }
 
+// applyRulesToJSON masks string values only; object keys are not rewritten
+// because they carry the structure the receiver parses.
 func applyRulesToJSON(rules []compiledRule, v any) (any, bool) {
 	switch t := v.(type) {
 	case string:

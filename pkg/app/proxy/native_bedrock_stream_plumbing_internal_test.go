@@ -85,9 +85,9 @@ func textDeltas(t *testing.T, frames [][]byte) string {
 	return out.String()
 }
 
-// The service tier in message_start is a label, not text, and used to be read
-// as text and glued to the first delta, so a regex match took it in and the
-// whole mask landed in message_start while every delta was emptied.
+// The service tier in message_start is a label, not text: it must not be glued
+// to the first delta, or a regex match would take it in and the whole mask would
+// land in message_start while every delta was emptied.
 func TestNativeStream_AnthropicInvokeMaskLandsInTheDeltasNotInMessageStart(t *testing.T) {
 	t.Parallel()
 	for name, pieces := range map[string][]string{
@@ -117,6 +117,8 @@ func TestNativeStream_AnthropicInvokeMaskLandsInTheDeltasNotInMessageStart(t *te
 // rather than empty the deltas.
 func TestNativeStream_MaskSpanningPlumbingTextFailsOpen(t *testing.T) {
 	t.Parallel()
+	// The "note" field is synthetic: real plumbing no longer reaches the guard,
+	// so the guard is pinned with a constructed spanning case.
 	frames := anthropicInvokeTextStream(t, `,"note":"standard"`, "jane", ".doe", "@example", ".com")
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
 	require.Nil(t, pe)
