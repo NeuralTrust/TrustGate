@@ -432,6 +432,12 @@ func TestValidatePublicURLRejectsLiteralReservedDestination(t *testing.T) {
 	require.Contains(t, err.Error(), "blocked address")
 }
 
+func TestValidatePublicURLBlockedHostMessage(t *testing.T) {
+	t.Parallel()
+	err := validatePublicURL(context.Background(), "http://localhost:8080/api")
+	require.EqualError(t, err, "host resolves to a blocked address")
+}
+
 func TestCompileOperationsFoldsMissingOperationIDsIntoOneWarning(t *testing.T) {
 	t.Parallel()
 	paths := openapi3.NewPathsWithCapacity(3)

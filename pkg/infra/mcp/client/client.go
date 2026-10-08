@@ -50,17 +50,18 @@ var legacyProtocolVersions = []string{
 // upstreamTransport serves fixed registry URLs. They are set by a tenant admin,
 // so they go through the shared outbound guard and reach private addresses only
 // where OUTBOUND_ALLOW_PRIVATE_NETWORKS allows it.
-var upstreamTransport = newUpstreamTransport(netguard.Shared().DialContext)
+var upstreamTransport = newUpstreamTransport(netguard.Shared().DialContext, false)
 
 // restrictedUpstreamTransport serves targets whose URL came out of per-user
 // variable substitution (Target.RestrictPrivateNetwork). Its dialer resolves the
 // host itself and refuses every non-public address, then connects to the very
 // address it checked — so neither an IP literal that slipped past validation
 // nor a hostname that rebinds to 10.0.0.5 between check and dial can reach the
-// gateway's network.
-var restrictedUpstreamTransport = newUpstreamTransport(dialPublicOnly)
+// gateway's network. Restricted targets always dial directly, never through an
+// environment proxy.
+var restrictedUpstreamTransport = newUpstreamTransport(dialPublicOnly, true)
 
-func newUpstreamTransport(dial func(context.Context, string, string) (net.Conn, error)) http.RoundTripper {
+func newUpstreamTransport(dial func(context.Context, string, string) (net.Conn, error), direct bool) http.RoundTripper {
 	t, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		return http.DefaultTransport
@@ -69,6 +70,9 @@ func newUpstreamTransport(dial func(context.Context, string, string) (net.Conn, 
 	cloned.ResponseHeaderTimeout = responseHeaderTimeout
 	if dial != nil {
 		cloned.DialContext = dial
+	}
+	if direct {
+		cloned.Proxy = nil
 	}
 	return cloned
 }
