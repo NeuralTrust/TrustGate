@@ -121,7 +121,7 @@ func TestSR1HTTPRejectsNonBooleanPreference(t *testing.T) {
 	}
 }
 
-func TestSR1HTTPDisabledExplicitWritesRequireCanonicalConfig(t *testing.T) {
+func TestSR1HTTPDisabledExplicitWritesRequireValidShape(t *testing.T) {
 	id := ids.New[ids.RegistryKind]().String()
 	other := ids.New[ids.RegistryKind]().String()
 	for _, tc := range []struct {
@@ -130,7 +130,7 @@ func TestSR1HTTPDisabledExplicitWritesRequireCanonicalConfig(t *testing.T) {
 	}{
 		{"canonical", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, id, id), `"sr1":{"cache_ttl_seconds":30},`, false},
 		{"one rung", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"}]`, id), "", true},
-		{"custom cuts", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.8,"registry_id":%q,"model":"high"}]`, id, id), "", true},
+		{"custom cuts cannot mint compatibility", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.8,"registry_id":%q,"model":"high"}]`, id, id), `"legacy_thresholds":true,`, false},
 		{"pattern pin", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"model-*"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, id, id), "", true},
 		{"nonmember registry", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, other, id), "", true},
 		{"invalid lifetime", fmt.Sprintf(`[{"min_score":0,"registry_id":%q,"model":"low"},{"min_score":0.45,"registry_id":%q,"model":"high"}]`, id, id), `"sr1":{"cache_ttl_seconds":0},`, true},
@@ -152,6 +152,9 @@ func TestSR1HTTPDisabledExplicitWritesRequireCanonicalConfig(t *testing.T) {
 				}
 				if err == nil && (got.Enabled || wire.Enabled) {
 					t.Fatal("ingress validation enabled a disabled pool")
+				}
+				if err == nil && got.SmartRouting.LegacyThresholds {
+					t.Fatal("public DTO minted the internal migration marker")
 				}
 			}
 		})

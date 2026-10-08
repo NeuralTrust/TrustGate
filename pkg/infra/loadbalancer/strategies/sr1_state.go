@@ -102,7 +102,7 @@ func (s *RedisSR1Store) run(ctx context.Context, key, turnID string, desired, ru
 		return SR1StateDecision{}, errors.New("SR-1 state store is unavailable")
 	}
 	nonCommit := operation == "probe" || operation == "read"
-	if rungs < 2 || rungs > 3 || desired >= rungs || (desired < 0 && !nonCommit) || ttl.Milliseconds() < 1 || (turnID == "" && operation != "read") || key == "" {
+	if rungs < 2 || desired >= rungs || (desired < 0 && !nonCommit) || ttl.Milliseconds() < 1 || (turnID == "" && operation != "read") || key == "" {
 		return SR1StateDecision{}, errors.New("invalid SR-1 state request")
 	}
 	user := "0"

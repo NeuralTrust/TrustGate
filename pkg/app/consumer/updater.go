@@ -119,6 +119,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.AuthBinding = *in.AuthBinding
 	}
 	if in.LBConfig != nil {
+		if err := validateLegacyRoutingWrite(in.LBConfig, existing.LBConfig); err != nil {
+			return nil, err
+		}
 		resolveLBConfigSecrets(in.LBConfig, existing.LBConfig)
 		existing.LBConfig = in.LBConfig
 	}

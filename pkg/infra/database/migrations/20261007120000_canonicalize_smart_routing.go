@@ -50,6 +50,10 @@ type smartRoutingMigrationRow struct {
 }
 
 func upCanonicalizeSmartRouting(ctx context.Context, tx pgx.Tx) error {
+	return upSmartRoutingMigration(ctx, tx, "sr1_routing_migration_backup")
+}
+
+func upSmartRoutingMigration(ctx context.Context, tx pgx.Tx, backupTable string) error {
 	if _, err := tx.Exec(ctx, `LOCK TABLE consumers, consumer_registry, registries IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return fmt.Errorf("lock smart-routing preflight: %w", err)
 	}
@@ -103,21 +107,22 @@ func upCanonicalizeSmartRouting(ctx context.Context, tx pgx.Tx) error {
 	if len(problems) != 0 {
 		return fmt.Errorf("smart-routing preflight rejected %d consumers; no configurations written: %s", len(problems), strings.Join(problems, "; "))
 	}
-	if _, err := tx.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS sr1_routing_migration_backup (
+	backup := pgx.Identifier{backupTable}.Sanitize()
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
 			consumer_id UUID PRIMARY KEY,
 			lb_config_before JSONB NOT NULL,
 			lb_config_after JSONB NOT NULL,
 			updated_at_before TIMESTAMPTZ NOT NULL,
 			updated_at_after TIMESTAMPTZ NOT NULL
-		)`); err != nil {
+		)`, backup)); err != nil {
 		return fmt.Errorf("create smart-routing backup: %w", err)
 	}
 	for _, plan := range plans {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO sr1_routing_migration_backup
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s
 			    (consumer_id, lb_config_before, lb_config_after, updated_at_before, updated_at_after)
-			VALUES ($1::uuid, $2::jsonb, $3::jsonb, $4, NOW())`, plan.id, plan.before, plan.after, plan.updatedAt); err != nil {
+			VALUES ($1::uuid, $2::jsonb, $3::jsonb, $4, NOW())`, backup), plan.id, plan.before, plan.after, plan.updatedAt); err != nil {
 			return fmt.Errorf("back up consumer %s: %w", plan.id, err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE consumers SET lb_config = $2::jsonb, updated_at = NOW() WHERE id = $1::uuid`, plan.id, plan.after); err != nil {
@@ -128,31 +133,36 @@ func upCanonicalizeSmartRouting(ctx context.Context, tx pgx.Tx) error {
 }
 
 func downCanonicalizeSmartRouting(ctx context.Context, tx pgx.Tx) error {
+	return downSmartRoutingMigration(ctx, tx, "sr1_routing_migration_backup")
+}
+
+func downSmartRoutingMigration(ctx context.Context, tx pgx.Tx, backupTable string) error {
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT to_regclass('sr1_routing_migration_backup') IS NOT NULL`).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, backupTable).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `LOCK TABLE consumers, sr1_routing_migration_backup IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	backup := pgx.Identifier{backupTable}.Sanitize()
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`LOCK TABLE consumers, %s IN SHARE ROW EXCLUSIVE MODE`, backup)); err != nil {
 		return err
 	}
 	var conflicts int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM sr1_routing_migration_backup b
+	if err := tx.QueryRow(ctx, fmt.Sprintf(`
+		SELECT count(*) FROM %s b
 		LEFT JOIN consumers c ON c.id = b.consumer_id
 		WHERE c.id IS NULL OR c.lb_config IS DISTINCT FROM b.lb_config_after
-		   OR c.updated_at IS DISTINCT FROM b.updated_at_after`).Scan(&conflicts); err != nil {
+		   OR c.updated_at IS DISTINCT FROM b.updated_at_after`, backup)).Scan(&conflicts); err != nil {
 		return err
 	}
 	if conflicts != 0 {
 		return fmt.Errorf("cannot restore smart-routing backup: %d consumers changed or were deleted", conflicts)
 	}
-	_, err := tx.Exec(ctx, `
+	_, err := tx.Exec(ctx, fmt.Sprintf(`
 		UPDATE consumers c SET lb_config = b.lb_config_before, updated_at = b.updated_at_before
-		FROM sr1_routing_migration_backup b WHERE c.id = b.consumer_id;
-		DROP TABLE sr1_routing_migration_backup`)
+		FROM %s b WHERE c.id = b.consumer_id;
+		DROP TABLE %s`, backup, backup))
 	return err
 }
 
@@ -175,10 +185,16 @@ func canonicalSmartRoutingJSON(raw, policiesRaw []byte, known map[ids.RegistryID
 		return nil, err
 	}
 	tiers := config.SmartRouting.Tiers
-	if len(tiers) != 2 && len(tiers) != 3 {
-		return nil, fmt.Errorf("requires two or three tiers, got %d", len(tiers))
+	if len(tiers) == 0 {
+		return nil, fmt.Errorf("requires at least one tier")
 	}
 	legacy := config.SmartRouting.SR1 == nil
+	if len(tiers) == 1 && !legacy {
+		return nil, fmt.Errorf("a single committed rung is not a valid stored ladder")
+	}
+	if legacy {
+		config.SmartRouting.LegacyThresholds = len(tiers) > 3
+	}
 	scores := make([]float64, len(tiers))
 	for i, tier := range tiers {
 		if math.IsNaN(tier.MinScore) || math.IsInf(tier.MinScore, 0) || tier.MinScore < 0 || tier.MinScore > 1 {
@@ -218,13 +234,16 @@ func canonicalSmartRoutingJSON(raw, policiesRaw []byte, known map[ids.RegistryID
 				config.Members[j].Model = config.SmartRouting.Tiers[i].Model
 			}
 		}
-		if legacy {
+		if legacy && (len(tiers) == 2 || len(tiers) == 3) && !config.SmartRouting.LegacyThresholds {
 			cuts := []float64{0, .45}
 			if len(tiers) == 3 {
 				cuts = []float64{0, .187, .45}
 			}
 			config.SmartRouting.Tiers[i].MinScore = cuts[sort.SearchFloat64s(scores, tier.MinScore)]
 		}
+	}
+	if len(tiers) == 1 {
+		return canonicalSingleRoutingJSON(raw, config, policies, known)
 	}
 	var lbFields, smartFields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &lbFields); err != nil {
@@ -234,6 +253,11 @@ func canonicalSmartRoutingJSON(raw, policiesRaw []byte, known map[ids.RegistryID
 		return nil, err
 	}
 	if legacy {
+		for name := range smartFields {
+			if strings.EqualFold(name, "legacy_thresholds") {
+				delete(smartFields, name)
+			}
+		}
 		config.SmartRouting.SR1 = &registry.SR1Config{CacheTTLSeconds: 300}
 	} else {
 		var fields map[string]json.RawMessage
@@ -300,6 +324,9 @@ func canonicalSmartRoutingJSON(raw, policiesRaw []byte, known map[ids.RegistryID
 		value  any
 	}
 	updates := []update{{sr1Fields, "cache_ttl_seconds", config.SmartRouting.SR1.CacheTTLSeconds}, {sr1Fields, "escape_hatch_enabled", config.SmartRouting.SR1.EscapeHatchEnabled}}
+	if config.SmartRouting.LegacyThresholds {
+		updates = append(updates, update{smartFields, "legacy_thresholds", true})
+	}
 	for i, tier := range config.SmartRouting.Tiers {
 		updates = append(updates, update{tierFields[i], "min_score", tier.MinScore}, update{tierFields[i], "model", tier.Model})
 	}
