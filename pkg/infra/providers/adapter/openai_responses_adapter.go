@@ -529,12 +529,18 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 
 	switch event.Type {
 	case "response.created", "response.in_progress":
+		if len(event.Response) == 0 {
+			return nil, nil
+		}
 		var response struct {
 			ID    string `json:"id"`
 			Model string `json:"model"`
 		}
 		if _, valid := streamJSONFields(event.Response); !valid || json.Unmarshal(event.Response, &response) != nil {
 			return invalidStreamEvent("Responses"), nil
+		}
+		if response.ID == "" && response.Model == "" {
+			return nil, nil
 		}
 		return &CanonicalStreamChunk{ID: response.ID, Model: response.Model}, nil
 

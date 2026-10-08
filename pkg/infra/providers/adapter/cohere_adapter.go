@@ -499,10 +499,10 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		return &CanonicalStreamChunk{Delta: delta.Message.Content.Text}, nil
 	case "tool-plan-delta":
 		var delta cohereToolPlanDelta
-		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil {
+		if err := json.Unmarshal(event.Delta, &delta); err != nil {
 			return invalidStreamEvent("Cohere"), nil
 		}
-		if delta.Message.ToolPlan == "" {
+		if delta.Message == nil || delta.Message.ToolPlan == "" {
 			return nil, nil
 		}
 		return &CanonicalStreamChunk{Delta: delta.Message.ToolPlan}, nil
@@ -550,7 +550,10 @@ func validCohereStreamDelta(fields map[string]json.RawMessage, kind string) bool
 	if !valid {
 		return false
 	}
-	message, valid := streamJSONObject(delta, "message")
+	message, valid := streamNullableJSONObject(delta, "message")
+	if kind != "tool-plan-delta" {
+		message, valid = streamJSONObject(delta, "message")
+	}
 	if !valid {
 		return false
 	}
