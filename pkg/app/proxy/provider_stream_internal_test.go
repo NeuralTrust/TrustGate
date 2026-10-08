@@ -597,8 +597,12 @@ func TestAdaptStream_DeferredUsageNotFlushedWithoutFinish(t *testing.T) {
 		assert.Nil(t, ev.MessageStop)
 	}
 
-	types, _ := typedEvents(t, collectLines(t, adaptStream(upstream(), adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatAnthropic, slog.Default(), nil)))
+	lines, err := collectLinesAndError(adaptStream(upstream(), adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatAnthropic, slog.Default(), nil))
+	_, notified := errors.AsType[*ClientNotifiedStreamError](err)
+	assert.True(t, notified)
+	types, _ := typedEvents(t, lines)
 	assert.NotContains(t, types, "response.completed")
+	assert.Contains(t, types, "response.failed")
 }
 
 type countedLine struct {

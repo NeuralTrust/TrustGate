@@ -268,6 +268,8 @@ type CanonicalStreamChunk struct {
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers
 	ProviderExtensions map[string]json.RawMessage `json:"provider_extensions,omitempty"`
+	// StreamEnd reports an explicit terminal event decoded from the upstream wire.
+	StreamEnd bool `json:"-"`
 	// UpstreamError is the error object the upstream sent in this chunk's
 	// payload, if any.
 	UpstreamError *UpstreamStreamError `json:"-"`
@@ -305,6 +307,15 @@ type CanonicalStreamChunk struct {
 	// stream being written, and only the caller synthesising a terminator
 	// knows which item the wire still has open.
 	OpenItem *StreamOpenItem `json:"open_item,omitempty"`
+}
+
+// SignalOnly reports whether c carries only the stream identity or the
+// explicit end marker: nothing a stateless re-encode can put on the wire.
+func (c *CanonicalStreamChunk) SignalOnly() bool {
+	return c != nil && (c.StreamEnd || c.ID != "" || c.Model != "") && c.Role == "" &&
+		c.Delta == "" && c.ReasoningDelta == "" && c.FinishReason == "" &&
+		len(c.ToolCallDeltas) == 0 && c.Usage == nil && len(c.ProviderExtensions) == 0 &&
+		c.UpstreamError == nil && c.OpenItem == nil
 }
 
 // StreamOpenItem is one output item a synthesised terminator has to close. It
