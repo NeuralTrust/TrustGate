@@ -261,7 +261,9 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 		}
 		registryID = parsed
 	}
-	link, err := h.linker.LinkFor(c.UserContext(), appstore.PrincipalConnectRequest{
+	// The link is the caller's own, so its page names them by their email.
+	ctx := appoauth.WithTicketOwnerEmail(c.UserContext(), callerEmail(c))
+	link, err := h.linker.LinkFor(ctx, appstore.PrincipalConnectRequest{
 		GatewayID:    gatewayID,
 		PrincipalSub: principalSub,
 		Code:         strings.TrimSpace(req.Code),
