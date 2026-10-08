@@ -303,8 +303,8 @@ func selfServiceDefaultCtx(sub string) context.Context {
 // self-service gateway, trustgate_store_install {code} for an OAuth catalog
 // server (DCR auto, or a platform-held client) with no required URL variables
 // materialises the registry, records the install and returns requires_auth with
-// a connect link pinned to the new instance — with no admin configuration at
-// all, since an unstamped Store defaults to open.
+// a connect link scoped to the code — with no admin configuration at all, since
+// an unstamped Store defaults to open.
 func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -363,8 +363,11 @@ func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 			if !strings.Contains(connectURL, "ticket=ticket-1") || !strings.Contains(connectURL, appconsumer.MCPPath(h.rc.Consumer.Slug)) {
 				t.Fatalf("result must carry the connect link, got %q", connectURL)
 			}
-			if h.connect.calls != 1 || h.connect.code != tc.server.Code || h.connect.instanceID != inst.ID.String() {
-				t.Fatalf("connect ticket must be scoped to the code and pinned to the instance, got %+v", h.connect)
+			// The code's only instance: the code names the server. The installation
+			// row's id names no server, and a link pinned to it opened a connect
+			// page that waited forever for the server to appear.
+			if h.connect.calls != 1 || h.connect.code != tc.server.Code || h.connect.instanceID != "" {
+				t.Fatalf("connect ticket must be scoped to the code alone, got %+v", h.connect)
 			}
 			if text := decodeText(t, raw); !strings.Contains(text, "Installed "+tc.server.DisplayName) || !strings.Contains(text, connectURL) {
 				t.Fatalf("text must announce the install and present the connect link, got %q", text)
@@ -384,6 +387,39 @@ func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 				t.Fatal("a re-install must still offer the connect link")
 			}
 		})
+	}
+}
+
+// TestStoreInstall_ConnectLinkPinsTheChosenServer: with two instances of a code
+// (a production and a sandbox Notion, two accounts), installing one hands back a
+// connect link pinned to that server — its registry, which is what the connect
+// page resolves — and not to the installation row the install recorded.
+func TestStoreInstall_ConnectLinkPinsTheChosenServer(t *testing.T) {
+	h := newE2EHarness(t, notionLike())
+	ctx := selfServiceDefaultCtx("ana")
+	if _, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"com.notion/mcp"}`)); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	sandbox := *h.regs.items[0]
+	sandbox.ID = ids.New[ids.RegistryKind]()
+	sandbox.Name = "Notion (sandbox)"
+	h.regs.items = append(h.regs.items, &sandbox)
+
+	raw, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"com.notion/mcp","instance":"`+sandbox.ID.String()+`"}`))
+	if err != nil {
+		t.Fatalf("install the sandbox: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if _, ok := sc["connect_url"]; !ok {
+		t.Fatalf("installing an unconnected server must offer the connect link, got %+v", sc)
+	}
+	if h.connect.calls != 2 || h.connect.instanceID != sandbox.ID.String() {
+		t.Fatalf("connect ticket must be pinned to the sandbox server %s, got %+v", sandbox.ID, h.connect)
+	}
+	if sc["instance"] == sandbox.ID.String() || sc["instance"] == h.connect.instanceID {
+		t.Fatalf("the result's instance is the installation row, not the server, got %+v", sc)
 	}
 }
 
