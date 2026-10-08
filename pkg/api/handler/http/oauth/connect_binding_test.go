@@ -181,6 +181,23 @@ func TestConnectPages_ShowWhoAccountsAreLinkedTo(t *testing.T) {
 	}
 }
 
+// A person's own link names them by their email, not by their user id.
+func TestConnectPages_NameAPersonByTheirEmail(t *testing.T) {
+	t.Parallel()
+	page := &appoauth.ConnectPage{
+		ConsumerPath: "/store/mcp",
+		Code:         "app.linear/mcp",
+		Principal:    appoauth.ConnectPrincipal{Subject: "fff9c76a-52e8-416f-8b6a-489fc6f35f8e", Email: "alice@acme.test"},
+		Providers:    []appoauth.ProviderStatus{{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear", Instance: "inst"}},
+	}
+	h := newTestConnectHandler(&stubConnectService{page: page}, nil, "")
+	h.holdFor = 0
+	_, body := send(t, connectFlowApp(h), httptest.NewRequest(fiber.MethodGet, "/store/mcp/connect?ticket=abc", nil))
+	if !strings.Contains(body, "alice@acme.test") || strings.Contains(body, "fff9c76a-52e8") {
+		t.Fatalf("page does not name the person by their email: %s", body)
+	}
+}
+
 func TestConnectStart_OnlyFromAPageOfThisGateway(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

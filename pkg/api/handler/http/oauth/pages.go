@@ -72,6 +72,8 @@ func ownerOf(p appoauth.ConnectPrincipal) ownerView {
 		return ownerView{Name: p.EndUser, Detail: "end-user id named by the application"}
 	case p.Application != "":
 		return ownerView{Name: p.Application, Detail: "application"}
+	case p.Email != "":
+		return ownerView{Name: p.Email}
 	default:
 		return ownerView{Name: p.Subject}
 	}
