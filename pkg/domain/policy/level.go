@@ -252,7 +252,7 @@ func expandConsumers(in []Level, consumerIDs []ids.ConsumerID) []Level {
 	if len(consumerIDs) == 0 {
 		return in
 	}
-	out := make([]Level, 0, len(in)*len(consumerIDs))
+	out := make([]Level, 0)
 	for _, l := range in {
 		for _, id := range consumerIDs {
 			out = append(out, l.WithConsumer(id))
@@ -265,7 +265,7 @@ func expandGroups(in []Level, groups []string) []Level {
 	if len(groups) == 0 {
 		return in
 	}
-	out := make([]Level, 0, len(in)*len(groups))
+	out := make([]Level, 0)
 	for _, l := range in {
 		for _, g := range groups {
 			out = append(out, l.WithGroup(g))
@@ -278,7 +278,7 @@ func expandDestinations(in []Level, s *MCPScope) []Level {
 	if !s.HasDestination() {
 		return in
 	}
-	out := make([]Level, 0, len(in)*(len(s.RegistryIDs)+len(s.Tools)))
+	out := make([]Level, 0)
 	for _, l := range in {
 		for _, id := range s.RegistryIDs {
 			out = append(out, l.WithRegistry(id))

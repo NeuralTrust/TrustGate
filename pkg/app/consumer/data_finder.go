@@ -197,7 +197,7 @@ func (f *dataFinder) inertPolicies(c *domain.Consumer, unscoped, crossing []*pol
 	if len(inert) == 0 {
 		return unscoped
 	}
-	out := make([]*policydomain.Policy, 0, len(unscoped)+len(inert))
+	out := make([]*policydomain.Policy, 0)
 	out = append(out, unscoped...)
 	return append(out, inert...)
 }
@@ -472,8 +472,8 @@ func mergeScoped(attached, gatewayWideScoped []*policydomain.Policy) []*policydo
 	if len(attached)+len(gatewayWideScoped) == 0 {
 		return nil
 	}
-	out := make([]*policydomain.Policy, 0, len(attached)+len(gatewayWideScoped))
-	seenIDs := make(map[ids.PolicyID]struct{}, len(attached)+len(gatewayWideScoped))
+	out := make([]*policydomain.Policy, 0)
+	seenIDs := make(map[ids.PolicyID]struct{})
 	for _, list := range [][]*policydomain.Policy{attached, gatewayWideScoped} {
 		for _, p := range list {
 			if _, dup := seenIDs[p.ID]; dup {
@@ -487,9 +487,9 @@ func mergeScoped(attached, gatewayWideScoped []*policydomain.Policy) []*policydo
 }
 
 func composePolicies(gatewayWide, attached []*policydomain.Policy) []*policydomain.Policy {
-	out := make([]*policydomain.Policy, 0, len(gatewayWide)+len(attached))
+	out := make([]*policydomain.Policy, 0)
 	overriddenSlugs := make(map[string]struct{}, len(attached))
-	seenIDs := make(map[ids.PolicyID]struct{}, len(gatewayWide)+len(attached))
+	seenIDs := make(map[ids.PolicyID]struct{})
 	for _, p := range attached {
 		if _, dup := seenIDs[p.ID]; dup {
 			continue

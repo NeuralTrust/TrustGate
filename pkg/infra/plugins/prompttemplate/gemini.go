@@ -107,7 +107,7 @@ func (rb *requestBody) injectGemini(mode onExistingSystem, role, content string)
 	if err != nil {
 		return false, reasonEncodeFailed
 	}
-	next := make([]json.RawMessage, 0, len(contents)+1)
+	next := make([]json.RawMessage, 0)
 	next = append(next, turn)
 	next = append(next, contents...)
 	if err := rb.setGeminiContents(next); err != nil {
@@ -134,7 +134,7 @@ func (rb *requestBody) injectGeminiSystem(mode onExistingSystem, content string)
 	if mode == onExistingReplace {
 		parts = []json.RawMessage{part}
 	} else {
-		next := make([]json.RawMessage, 0, len(parts)+1)
+		next := make([]json.RawMessage, 0)
 		next = append(next, parts...)
 		parts = append(next, part)
 	}
