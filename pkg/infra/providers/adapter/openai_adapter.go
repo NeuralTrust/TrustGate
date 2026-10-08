@@ -159,36 +159,64 @@ func encodeOpenAIToolChoice(tc *CanonicalToolChoice) json.RawMessage {
 // contentToString extracts text from a JSON content field that may be a plain
 // string or an array of content-part objects.
 func contentToString(raw json.RawMessage) string {
-	text, _ := decodeOpenAIContent(raw)
-	return text
+	return decodeOpenAIContent(raw).Content
 }
 
-func decodeOpenAIContent(raw json.RawMessage) (string, []CanonicalImage) {
+// decodeOpenAIContent returns the text, images and documents of a content
+// field in a CanonicalMessage with only those fields set.
+func decodeOpenAIContent(raw json.RawMessage) CanonicalMessage {
 	if raw == nil {
-		return "", nil
+		return CanonicalMessage{}
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s, nil
+		return CanonicalMessage{Content: s}
 	}
 	var parts []openaiContentPart
 	if json.Unmarshal(raw, &parts) != nil {
-		return string(raw), nil
+		return CanonicalMessage{Content: string(raw)}
 	}
 	var texts []string
 	var images []CanonicalImage
+	var documents []CanonicalDocument
+	documentsFirst := false
 	for _, p := range parts {
 		if p.Text != "" {
 			texts = append(texts, p.Text)
 		}
-		if p.Type != "image_url" {
-			continue
-		}
-		if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
-			images = append(images, img)
+		switch p.Type {
+		case "image_url":
+			if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
+				images = append(images, img)
+			}
+		case "file":
+			if doc, ok := decodeOpenAIFile(p.File); ok {
+				documentsFirst = documentsFirst || (len(documents) == 0 && len(texts) == 0)
+				documents = append(documents, doc)
+			}
 		}
 	}
-	return strings.Join(texts, "\n"), images
+	return CanonicalMessage{
+		Content:        strings.Join(texts, "\n"),
+		Images:         images,
+		Documents:      documents,
+		DocumentsFirst: documentsFirst,
+	}
+}
+
+func decodeOpenAIFile(raw json.RawMessage) (CanonicalDocument, bool) {
+	var f openaiFile
+	if len(raw) == 0 || json.Unmarshal(raw, &f) != nil {
+		return CanonicalDocument{}, false
+	}
+	switch {
+	case strings.TrimSpace(f.FileData) != "":
+		return parseDocumentData(f.FileData, "", f.Filename), true
+	case f.FileID != "":
+		return CanonicalDocument{FileID: f.FileID, FileOwner: FormatOpenAI, MediaType: inferDocumentMediaType("", f.Filename), Name: f.Filename}, true
+	default:
+		return CanonicalDocument{}, false
+	}
 }
 
 func decodeOpenAIImageURL(raw json.RawMessage) (CanonicalImage, bool) {

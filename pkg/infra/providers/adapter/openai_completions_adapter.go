@@ -51,6 +51,13 @@ type openaiContentPart struct {
 	Type     string          `json:"type"`
 	Text     string          `json:"text,omitempty"`
 	ImageURL json.RawMessage `json:"image_url,omitempty"`
+	File     json.RawMessage `json:"file,omitempty"`
+}
+
+type openaiFile struct {
+	FileData string `json:"file_data,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	Filename string `json:"filename,omitempty"`
 }
 
 type openaiImageURL struct {
@@ -275,7 +282,8 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	for _, m := range req.Messages {
-		content, images := decodeOpenAIContent(m.Content)
+		decoded := decodeOpenAIContent(m.Content)
+		content := decoded.Content
 
 		cm := CanonicalMessage{
 			Role:       m.Role,
@@ -283,7 +291,9 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 			ToolCallID: m.ToolCallID,
 		}
 		if m.Role == "user" {
-			cm.Images = images
+			cm.Images = decoded.Images
+			cm.Documents = decoded.Documents
+			cm.DocumentsFirst = decoded.DocumentsFirst
 		}
 		for _, tc := range m.ToolCalls {
 			cm.ToolCalls = append(cm.ToolCalls, decodeOpenAIToolCall(tc))
@@ -326,20 +336,45 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 // Request: Encode (Canonical → Chat Completions)
 // ---------------------------------------------------------------------------
 
-func encodeOpenAIContent(m CanonicalMessage) json.RawMessage {
-	if len(m.Images) == 0 {
-		return stringToContent(m.Content)
+func encodeOpenAIContent(m CanonicalMessage) (json.RawMessage, error) {
+	if len(m.Images) == 0 && len(m.Documents) == 0 {
+		return stringToContent(m.Content), nil
 	}
-	parts := make([]openaiContentPart, 0, len(m.Images)+1)
+	parts := make([]openaiContentPart, 0, len(m.Images)+len(m.Documents)+1)
 	for _, img := range m.Images {
 		imageURL, _ := json.Marshal(openaiImageURL{URL: img.dataURI(), Detail: img.Detail})
 		parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: imageURL})
 	}
-	if m.Content != "" {
-		parts = append(parts, openaiContentPart{Type: "text", Text: m.Content})
+	files := make([]openaiContentPart, 0, len(m.Documents))
+	for _, doc := range m.Documents {
+		file, err := openaiFileFromCanonical(doc)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(file)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, openaiContentPart{Type: "file", File: raw})
 	}
-	b, _ := json.Marshal(parts)
-	return b
+	var text []openaiContentPart
+	if m.Content != "" {
+		text = append(text, openaiContentPart{Type: "text", Text: m.Content})
+	}
+	return json.Marshal(append(parts, inClientOrder(m.DocumentsFirst, files, text)...))
+}
+
+func openaiFileFromCanonical(doc CanonicalDocument) (openaiFile, error) {
+	switch {
+	case doc.Data != "":
+		return openaiFile{FileData: doc.dataURI(), Filename: documentFilename(doc)}, nil
+	case doc.FileID != "" && doc.FileOwner == FormatOpenAI:
+		return openaiFile{FileID: doc.FileID, Filename: doc.Name}, nil
+	case doc.FileID != "":
+		return openaiFile{}, &UnsupportedContentError{Reason: "file references are not supported by the target; send inline base64 file data"}
+	default:
+		return openaiFile{}, &UnsupportedContentError{Reason: "document URLs are not supported by the target; send inline base64 file data"}
+	}
 }
 
 func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
@@ -374,7 +409,10 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	for _, m := range req.Messages {
 		content := stringToContent(m.Content)
 		if m.Role == "user" {
-			content = encodeOpenAIContent(m)
+			var err error
+			if content, err = encodeOpenAIContent(m); err != nil {
+				return nil, err
+			}
 		}
 		msg := openaiMessage{
 			Role:       m.Role,
