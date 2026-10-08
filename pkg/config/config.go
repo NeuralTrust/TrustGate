@@ -43,6 +43,9 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+	// defaultStoredSecretsEncryptionEnabled stores MCP and auth credentials
+	// encrypted from the first boot of this version.
+	defaultStoredSecretsEncryptionEnabled = true
 	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
 	// org/groups/store_access claims are a login-time snapshot re-minted on
 	// refresh, so the snapshot must expire and force a fresh platform login.
@@ -325,10 +328,10 @@ type ServerConfig struct {
 	// StoredSecretsEncryptionEnabled makes the registry and auth repositories
 	// store credentials encrypted (enc:v1) and runs the startup backfill that
 	// encrypts rows written before, on the admin and run planes. Every read
-	// path decrypts enc:v1 values whatever its value. Turn it on only once
-	// every plane (admin, proxy, mcp, worker) runs a version that reads enc:v1,
-	// and do not roll back past that version afterwards.
-	// STORED_SECRETS_ENCRYPTION_ENABLED, default false.
+	// path decrypts enc:v1 values whatever its value. A version older than the
+	// one that introduced it cannot read those values, so upgrade every plane
+	// in one deploy and do not roll back past it.
+	// STORED_SECRETS_ENCRYPTION_ENABLED, default true.
 	StoredSecretsEncryptionEnabled bool
 }
 
@@ -678,7 +681,7 @@ func getServerConfig() ServerConfig {
 		ServeHybridGateways:            getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
 		AdminTokenMaxTTL:               min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
 		OAuthInsecureCookies:           getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
-		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", false),
+		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", defaultStoredSecretsEncryptionEnabled),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
