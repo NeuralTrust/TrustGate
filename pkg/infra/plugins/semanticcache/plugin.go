@@ -59,6 +59,7 @@ const (
 	skipReasonTools     = "tools_present"
 	skipReasonStreaming = "streaming"
 	skipReasonImages    = "images_present"
+	skipReasonDocuments = "documents_present"
 )
 
 const (
@@ -272,10 +273,10 @@ func (p *Plugin) preRequest(
 		return missResult(), nil
 	}
 
-	text, hasImages := p.extractUserInput(in.Request)
-	if hasImages {
+	text, skipReason := p.extractUserInput(in.Request)
+	if skipReason != "" {
 		markStatus(in.Response, cacheStatusMiss)
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonImages})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReason})
 		return missResult(), nil
 	}
 	if text == "" {
@@ -424,9 +425,9 @@ func (p *Plugin) postResponse(
 		return passThrough(), nil
 	}
 
-	text, hasImages := p.extractUserInput(in.Request)
-	if hasImages {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonImages})
+	text, skipReason := p.extractUserInput(in.Request)
+	if skipReason != "" {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReason})
 		return passThrough(), nil
 	}
 	if text == "" {
@@ -506,12 +507,13 @@ func setCacheExtras(event *metrics.EventContext, data SemanticCacheData) {
 	event.SetExtras(data)
 }
 
-// extractUserInput returns the text of the last user turn, the cache key. It
-// also reports whether that turn carries images: the key cannot see them, so
-// two requests with the same text and different images would share an answer.
-func (p *Plugin) extractUserInput(req *infracontext.RequestContext) (string, bool) {
+// extractUserInput returns the text of the last user turn, the cache key, or
+// the reason to skip the cache when that turn carries images or documents: the
+// key cannot see them, so two requests with the same text and different
+// attachments would share an answer.
+func (p *Plugin) extractUserInput(req *infracontext.RequestContext) (string, string) {
 	if req == nil {
-		return "", false
+		return "", ""
 	}
 	if req.Provider != "" && p.registry != nil {
 		canonical, err := p.registry.DecodeRequestFor(req.Body, adapter.Format(req.Provider))
@@ -522,16 +524,19 @@ func (p *Plugin) extractUserInput(req *infracontext.RequestContext) (string, boo
 					continue
 				}
 				if len(m.Images) > 0 {
-					return "", true
+					return "", skipReasonImages
+				}
+				if len(m.Documents) > 0 {
+					return "", skipReasonDocuments
 				}
 				if m.Content != "" {
-					return m.Content, false
+					return m.Content, ""
 				}
 			}
-			return "", false
+			return "", ""
 		}
 	}
-	return adapter.ExtractUserInputGeneric(req.Body), false
+	return adapter.ExtractUserInputGeneric(req.Body), ""
 }
 
 func partitionKey(cfg *config, scope appplugins.RuntimeScope, req *infracontext.RequestContext) (string, bool) {

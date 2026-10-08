@@ -856,7 +856,7 @@ func TestPlugin_BothMode(t *testing.T) {
 	})
 }
 
-func TestPlugin_ImagesBypassCache(t *testing.T) {
+func TestPlugin_AttachmentsBypassCache(t *testing.T) {
 	t.Parallel()
 
 	const partition = "b1|c:c-1"
@@ -874,6 +874,10 @@ func TestPlugin_ImagesBypassCache(t *testing.T) {
 			name: "image-only turn after a cached text turn",
 			body: `{"model":"gpt","messages":[{"role":"user","content":"hello world"},{"role":"assistant","content":"hi"},{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`,
 		},
+		{
+			name: "text with document",
+			body: `{"model":"gpt","messages":[{"role":"user","content":[{"type":"text","text":"hello world"},{"type":"file","file":{"filename":"a.pdf","file_data":"data:application/pdf;base64,JVBERi0xLjQK"}}]}]}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -890,13 +894,13 @@ func TestPlugin_ImagesBypassCache(t *testing.T) {
 
 			res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, bothSettings, req, &infracontext.ResponseContext{}, defaultScope()))
 			require.NoError(t, err)
-			assert.False(t, res.StopUpstream, "a turn with images must never be served from cache")
+			assert.False(t, res.StopUpstream, "a turn with images or documents must never be served from cache")
 			assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
 
 			resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
 			_, err = p.Execute(context.Background(), scopedInput(policy.StagePostResponse, bothSettings, req, resp, defaultScope()))
 			require.NoError(t, err)
-			assert.Empty(t, store.stored, "a turn with images must not be stored semantically")
+			assert.Empty(t, store.stored, "a turn with images or documents must not be stored semantically")
 			assert.Len(t, store.exact, 1, "only the pre-seeded exact entry remains")
 			assert.Equal(t, 0, creator.calls)
 		})
