@@ -359,3 +359,36 @@ func TestEventToRecord_PrincipalMethodPassesThroughVerbatim(t *testing.T) {
 		})
 	}
 }
+
+// RUN-1710: a streamed external guardrail entry carries failure_reason and
+// failure_detail inside the policy-chain JSON, next to a failed_closed or
+// failed_open decision. The keys are not new attributes: they ride in the
+// existing trustgate.policy_chain string, so the mapping must pass them through
+// untouched (and the extras sanitizer must not mistake them for credentials).
+func TestEventToRecord_StreamedFailureReasonTravelsInThePolicyChain(t *testing.T) {
+	t.Parallel()
+	for _, decision := range []string{"failed_closed", "failed_open"} {
+		t.Run(decision, func(t *testing.T) {
+			t.Parallel()
+			ev := fullEvent()
+			ev.PolicyChain = []events.PolicyEntry{{
+				Name:     "bedrock_guardrail",
+				Stage:    "pre_response",
+				Decision: decision,
+				Extras: events.SanitizeExtras(map[string]any{
+					"decision":       decision,
+					"failure_reason": "transport",
+					"failure_detail": "throttled",
+					"streaming":      map[string]any{"enabled": true, "evals_total": 3},
+				}),
+			}}
+
+			attrs := attrsOf(eventToRecord(ev))
+
+			chain := attrs["trustgate.policy_chain"].AsString()
+			assert.Contains(t, chain, `"decision":"`+decision+`"`)
+			assert.Contains(t, chain, `"failure_reason":"transport"`)
+			assert.Contains(t, chain, `"failure_detail":"throttled"`)
+		})
+	}
+}

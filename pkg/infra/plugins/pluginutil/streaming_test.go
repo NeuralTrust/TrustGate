@@ -560,3 +560,28 @@ func TestStreamFailedOpen(t *testing.T) {
 		})
 	}
 }
+
+// An unclaimed fail_closed cut (the guard's tool-inspection failure names no
+// entry) leaves CutOnFailure on every blocking entry; only the one whose own
+// call failed is failed_closed.
+func TestStreamFailedClosedRequiresTheEntrysOwnFailure(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		report appplugins.StreamReport
+		want   bool
+	}{
+		{"the author: cut on failure and its own call failed", appplugins.StreamReport{CutAtEval: 1, CutOnFailure: true, FailedEvals: 1}, true},
+		{"unclaimed cut, this entry never failed", appplugins.StreamReport{CutAtEval: 1, CutOnFailure: true}, false},
+		{"a block verdict", appplugins.StreamReport{CutAtEval: 1, FailedEvals: 1}, false},
+		{"no cut", appplugins.StreamReport{CutOnFailure: true, FailedEvals: 1}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StreamFailedClosed(tc.report); got != tc.want {
+				t.Errorf("StreamFailedClosed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

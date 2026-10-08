@@ -319,6 +319,13 @@ func (s *Span) HasDecision() bool {
 	return s.Plugin != nil && s.Plugin.Decision != ""
 }
 
+// HasExtras reports whether a plugin already wrote its metadata on the span.
+func (s *Span) HasExtras() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Plugin != nil && s.Plugin.Extras != nil
+}
+
 // SetExtras records a plugin's own metadata on the span, taking ownership of it.
 //
 // The copy is the point. What arrives here is the very struct or map the plugin

@@ -49,8 +49,10 @@ type ModerationData struct {
 	FlaggedByOpenAI   bool               `json:"flagged_by_openai"`
 	FlaggedCategories []violation        `json:"flagged_categories,omitempty"`
 	Decision          string             `json:"decision,omitempty"`
-	// FailureReason and FailureDetail are set only on a failed_open
-	// decision: FailureReason is one of appplugins.FailureReason (transport,
+	// FailureReason and FailureDetail are set on a failed_open (or
+	// failed_closed) decision, and on a streamed leg also whenever a block
+	// failed, whatever the final decision: FailureReason is one of
+	// appplugins.FailureReason (transport,
 	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
 	// the thresholded category missing from the response on a
 	// verdict_incomplete.
