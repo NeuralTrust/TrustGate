@@ -1020,7 +1020,7 @@ func emitDeferred(
 		}
 		// Only a Chat Completions client fails its stream on an unreadable
 		// event; the other clients skip it, as they skip a decode error.
-		if canonical.UpstreamError.Type == adapter.InvalidStreamEventType {
+		if canonical.UpstreamError.DecoderFailure() {
 			logger.Warn("stream decode chunk failed", slog.String("error", canonical.UpstreamError.Message))
 			return true, nil
 		}

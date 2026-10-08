@@ -63,13 +63,12 @@ func streamFieldsNonNull(fields map[string]json.RawMessage, keys ...string) bool
 	return true
 }
 
-// InvalidStreamEventType is the UpstreamStreamError type a decoder reports for
-// a known upstream event it cannot read, as opposed to an error the upstream sent.
+// InvalidStreamEventType is the type used for decoder-generated unreadable upstream events.
 const InvalidStreamEventType = "invalid_stream_event"
 
 func invalidStreamEvent(provider string) *CanonicalStreamChunk {
 	return &CanonicalStreamChunk{UpstreamError: &UpstreamStreamError{
-		Type: InvalidStreamEventType, Message: "invalid upstream " + provider + " stream event",
+		Type: InvalidStreamEventType, Message: "invalid upstream " + provider + " stream event", decoderFailure: true,
 	}}
 }
 
