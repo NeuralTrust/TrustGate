@@ -15,6 +15,7 @@
 package modules
 
 import (
+	"context"
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
@@ -25,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
@@ -50,7 +52,21 @@ import (
 
 type healthParams struct {
 	dig.In
-	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Store                  configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	AdminSnapshotReadiness adminSnapshotReadiness                      `optional:"true"`
+}
+
+type adminSnapshotReadiness func(context.Context) error
+
+func adminReadiness(plane string) container.Module {
+	return func(c *container.Container) error {
+		if plane != "admin" && plane != "run" {
+			return nil
+		}
+		return c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
+			return d.Readiness
+		})
+	}
 }
 
 type playgroundVerifierParams struct {
@@ -90,6 +106,9 @@ func API(c *container.Container) error {
 		var checks []apihandler.ReadinessCheck
 		if p.Store != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "snapshot", Ping: configsync.ReadinessCheck(p.Store)})
+		}
+		if p.AdminSnapshotReadiness != nil {
+			checks = append(checks, apihandler.ReadinessCheck{Name: "compiled_snapshot", Ping: p.AdminSnapshotReadiness})
 		}
 		return apihandler.NewHealthHandler(checks...)
 	}); err != nil {

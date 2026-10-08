@@ -75,6 +75,7 @@ type LBConfigResponse struct {
 }
 
 type SmartRoutingConfigResponse struct {
+	SR1   *SR1ConfigResponse         `json:"sr1,omitempty"`
 	Tiers []SmartRoutingTierResponse `json:"tiers"`
 }
 
@@ -214,7 +215,11 @@ func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingCo
 			Model:      tier.Model,
 		})
 	}
-	return &SmartRoutingConfigResponse{Tiers: tiers}
+	var sr1 *SR1ConfigResponse
+	if config.SR1 != nil {
+		sr1 = &SR1ConfigResponse{CacheTTLSeconds: config.SR1.CacheTTLSeconds, EscapeHatchEnabled: config.SR1.EscapeEnabled()}
+	}
+	return &SmartRoutingConfigResponse{Tiers: tiers, SR1: sr1}
 }
 
 func fromToolkit(t domain.Toolkit) []ToolkitEntryResponse {

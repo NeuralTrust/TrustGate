@@ -124,6 +124,9 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	const insertConsumerRole = `
 		INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if err := database.LockGatewayRouting(ctx, tx, c.GatewayID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
@@ -186,6 +189,9 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 	// routing-mode DB guard rejects registry rows on a role_based consumer: a
 	// role_based → inline switch has to land the new mode first.
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if err := database.LockGatewayRouting(ctx, tx, c.GatewayID); err != nil {
+			return err
+		}
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
 			return err
 		}

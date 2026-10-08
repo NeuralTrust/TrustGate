@@ -154,8 +154,13 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) error {
 	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-
+		if err := database.LockGatewayRouting(ctx, tx, gatewayID); err != nil {
+			return err
+		}
 		if err := ensureNotInFallbackChain(ctx, tx, gatewayID, id); err != nil {
+			return err
+		}
+		if err := pruneSmartRouting(ctx, tx, gatewayID, id); err != nil {
 			return err
 		}
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)

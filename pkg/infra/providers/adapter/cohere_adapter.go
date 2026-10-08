@@ -22,27 +22,27 @@ import (
 type CohereAdapter struct{}
 
 type cohereRequest struct {
-	Model       string                 `json:"model,omitempty"`
-	Messages    []cohereMessage        `json:"messages"`
-	MaxTokens   *int                   `json:"max_tokens,omitempty"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	TopP        *float64               `json:"p,omitempty"`
-	Stream      *bool                  `json:"stream,omitempty"`
-	Tools       []cohereTool           `json:"tools,omitempty"`
-	ToolChoice  *cohereToolChoice      `json:"tool_choice,omitempty"`
-	StopSeqs    []string               `json:"stop_sequences,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Messages    []cohereMessage   `json:"messages"`
+	MaxTokens   *int              `json:"max_tokens,omitempty"`
+	Temperature *float64          `json:"temperature,omitempty"`
+	TopP        *float64          `json:"p,omitempty"`
+	Stream      *bool             `json:"stream,omitempty"`
+	Tools       []cohereTool      `json:"tools,omitempty"`
+	ToolChoice  *cohereToolChoice `json:"tool_choice,omitempty"`
+	StopSeqs    []string          `json:"stop_sequences,omitempty"`
 }
 
 type cohereMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"`
 	ToolCalls  []cohereToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type cohereTool struct {
-	Type     string              `json:"type"`
-	Function cohereToolFunction  `json:"function"`
+	Type     string             `json:"type"`
+	Function cohereToolFunction `json:"function"`
 }
 
 type cohereToolFunction struct {
@@ -75,9 +75,9 @@ type cohereResponse struct {
 }
 
 type cohereAssistantMessage struct {
-	Role      string                  `json:"role"`
-	Content   []cohereContentBlock    `json:"content,omitempty"`
-	ToolCalls []cohereToolCall        `json:"tool_calls,omitempty"`
+	Role      string               `json:"role"`
+	Content   []cohereContentBlock `json:"content,omitempty"`
+	ToolCalls []cohereToolCall     `json:"tool_calls,omitempty"`
 }
 
 type cohereContentBlock struct {
@@ -86,7 +86,8 @@ type cohereContentBlock struct {
 }
 
 type cohereUsage struct {
-	Tokens *cohereUsageTokens `json:"tokens,omitempty"`
+	CachedTokens int                `json:"cached_tokens,omitempty"`
+	Tokens       *cohereUsageTokens `json:"tokens,omitempty"`
 }
 
 type cohereUsageTokens struct {
@@ -95,6 +96,7 @@ type cohereUsageTokens struct {
 }
 
 type cohereStreamEvent struct {
+	ID    string          `json:"id,omitempty"`
 	Type  string          `json:"type"`
 	Index int             `json:"index,omitempty"`
 	Delta json.RawMessage `json:"delta,omitempty"`
@@ -109,12 +111,13 @@ type cohereContentDeltaMessage struct {
 }
 
 type cohereMessageEndDelta struct {
+	Error        string       `json:"error,omitempty"`
 	FinishReason string       `json:"finish_reason,omitempty"`
 	Usage        *cohereUsage `json:"usage,omitempty"`
 }
 
 type cohereToolCallDelta struct {
-	ID       string                 `json:"id,omitempty"`
+	ID       string                  `json:"id,omitempty"`
 	Function *cohereToolCallFunction `json:"function,omitempty"`
 }
 
@@ -122,7 +125,11 @@ func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
 	if u == nil || u.Tokens == nil {
 		return nil
 	}
-	return newCanonicalUsage(u.Tokens.InputTokens, u.Tokens.OutputTokens, 0)
+	cu := newCanonicalUsage(u.Tokens.InputTokens, u.Tokens.OutputTokens, 0)
+	if cu != nil {
+		cu.CachedInputTokens = u.CachedTokens
+	}
+	return cu
 }
 
 func cohereFinishToCanonical(reason string) string {
@@ -375,15 +382,36 @@ func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 }
 
 func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
-	var event cohereStreamEvent
-	if err := json.Unmarshal(chunk, &event); err != nil {
+	fields, valid := streamJSONFields(chunk)
+	if !valid || len(fields) == 0 {
+		return invalidStreamEvent("Cohere"), nil
+	}
+	if decodeStreamError(fields["error"]) != nil {
+		return failedStreamEvent("Cohere"), nil
+	}
+	var kind string
+	if json.Unmarshal(fields["type"], &kind) != nil || kind == "" {
+		return invalidStreamEvent("Cohere"), nil
+	}
+	switch kind {
+	case "message-start", "content-start", "content-delta", "content-end", "tool-plan-delta", "tool-call-start", "tool-call-delta", "tool-call-end", "message-end":
+	default:
 		return nil, nil
 	}
+	if !validCohereStreamDelta(fields, kind) {
+		return invalidStreamEvent("Cohere"), nil
+	}
+	var event cohereStreamEvent
+	if err := json.Unmarshal(chunk, &event); err != nil {
+		return invalidStreamEvent("Cohere"), nil
+	}
 	switch event.Type {
+	case "message-start":
+		return &CanonicalStreamChunk{ID: event.ID, Role: "assistant"}, nil
 	case "content-delta":
 		var delta cohereContentDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.Content == nil {
-			return nil, nil
+			return invalidStreamEvent("Cohere"), nil
 		}
 		if delta.Message.Content.Type != "" && delta.Message.Content.Type != "text" {
 			return nil, nil
@@ -392,35 +420,60 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 			return nil, nil
 		}
 		return &CanonicalStreamChunk{Delta: delta.Message.Content.Text}, nil
-	case "tool-call-delta":
-		var delta cohereToolCallDelta
+	case "tool-plan-delta":
+		var delta cohereToolPlanDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
+			return invalidStreamEvent("Cohere"), nil
+		}
+		if delta.Message == nil || delta.Message.ToolPlan == "" {
 			return nil, nil
 		}
-		args := ""
-		if delta.Function != nil {
-			args = delta.Function.Arguments
+		return &CanonicalStreamChunk{Delta: delta.Message.ToolPlan}, nil
+	case "tool-call-start", "tool-call-delta":
+		var delta cohereToolCallsDelta
+		if err := json.Unmarshal(event.Delta, &delta); err != nil {
+			return invalidStreamEvent("Cohere"), nil
 		}
-		return &CanonicalStreamChunk{
-			ToolCallDeltas: []StreamToolCallDelta{{
-				Index:          event.Index,
-				ID:             delta.ID,
-				Name:           deltaFunctionName(delta.Function),
-				ArgumentsDelta: args,
-			}},
-		}, nil
+		var call *cohereToolCallDelta
+		if delta.Message != nil {
+			call = delta.Message.ToolCalls
+		} else {
+			var flat cohereToolCallDelta
+			if err := json.Unmarshal(event.Delta, &flat); err != nil {
+				return invalidStreamEvent("Cohere"), nil
+			}
+			call = &flat
+		}
+		if call == nil {
+			return invalidStreamEvent("Cohere"), nil
+		}
+		tc := StreamToolCallDelta{Index: event.Index, ID: call.ID}
+		if fn := call.Function; fn != nil {
+			tc.Name, tc.ArgumentsDelta = fn.Name, fn.Arguments
+		}
+		if tc.ID == "" && tc.Name == "" && tc.ArgumentsDelta == "" {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{tc}}, nil
 	case "message-end":
+		deltaFields, valid := streamJSONFields(event.Delta)
+		if !valid {
+			return invalidStreamEvent("Cohere"), nil
+		}
+		if _, valid := streamNullableJSONObject(deltaFields, "usage"); !valid {
+			return invalidStreamEvent("Cohere"), nil
+		}
 		var delta cohereMessageEndDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
-			return nil, nil
+			return invalidStreamEvent("Cohere"), nil
 		}
-		sc := &CanonicalStreamChunk{}
+		sc := &CanonicalStreamChunk{StreamEnd: true}
 		if delta.FinishReason != "" {
 			sc.FinishReason = cohereFinishToCanonical(delta.FinishReason)
 		}
 		sc.Usage = cohereUsageToCanonical(delta.Usage)
-		if sc.FinishReason == "" && sc.Usage == nil {
-			return nil, nil
+		if delta.Error != "" || sc.FinishReason == "error" {
+			sc.UpstreamError = failedStreamEvent("Cohere").UpstreamError
 		}
 		return sc, nil
 	default:
@@ -428,11 +481,41 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 	}
 }
 
-func deltaFunctionName(fn *cohereToolCallFunction) string {
-	if fn == nil {
-		return ""
+func validCohereStreamDelta(fields map[string]json.RawMessage, kind string) bool {
+	delta, valid := streamJSONObject(fields, "delta")
+	if !valid {
+		return false
 	}
-	return fn.Name
+	if (kind == "tool-call-start" || kind == "tool-call-delta") && delta["message"] == nil {
+		if delta["id"] == nil && delta["function"] == nil {
+			return false
+		}
+		_, valid := streamNullableJSONObject(delta, "function")
+		return valid
+	}
+	message, valid := streamNullableJSONObject(delta, "message")
+	if kind != "tool-plan-delta" {
+		message, valid = streamJSONObject(delta, "message")
+	}
+	if !valid {
+		return false
+	}
+	switch kind {
+	case "content-delta":
+		content, valid := streamJSONObject(message, "content")
+		return valid && streamFieldsNonNull(content, "type", "text")
+	case "tool-plan-delta":
+		return true
+	case "tool-call-start", "tool-call-delta":
+		call, valid := streamJSONObject(message, "tool_calls")
+		if !valid {
+			return false
+		}
+		_, valid = streamNullableJSONObject(call, "function")
+		return valid
+	default:
+		return true
+	}
 }
 
 func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
@@ -492,4 +575,16 @@ func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 func mustMarshal(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// Cohere v2 carries tool deltas inside delta.message.tool_calls.
+type cohereToolCallsDelta struct {
+	Message *struct {
+		ToolCalls *cohereToolCallDelta `json:"tool_calls,omitempty"`
+	} `json:"message,omitempty"`
+}
+type cohereToolPlanDelta struct {
+	Message *struct {
+		ToolPlan string `json:"tool_plan,omitempty"`
+	} `json:"message,omitempty"`
 }

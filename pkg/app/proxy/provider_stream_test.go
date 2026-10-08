@@ -160,7 +160,7 @@ func TestInvokeStream_CrossFormatAdapt(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
 		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
-		Return(seqOf(anthropicChunk), nil).
+		Return(seqOf([]byte(anthropicChatStart), anthropicChunk, []byte(anthropicChatFinish), []byte(anthropicChatStop)), nil).
 		Once()
 
 	inv := newStreamInvoker(t, "anthropic", client)

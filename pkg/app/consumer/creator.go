@@ -85,6 +85,9 @@ func NewCreator(
 const maxSlugCollisionRetries = 3
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
+	if err := validateLegacyRoutingWrite(in.LBConfig, nil); err != nil {
+		return nil, err
+	}
 	cons, err := domain.New(domain.CreateParams{
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,
@@ -104,6 +107,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		return nil, err
 	}
 	if err := validateRegistryRefsAssociated(cons); err != nil {
+		return nil, err
+	}
+	if err := validateSmartRoutingWrite(cons); err != nil {
 		return nil, err
 	}
 	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {

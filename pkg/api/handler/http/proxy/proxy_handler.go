@@ -191,6 +191,10 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 		}
 		for line, err := range result.Stream {
 			if err != nil {
+				var notified *appproxy.ClientNotifiedStreamError
+				if errors.As(err, &notified) {
+					return
+				}
 				// The response is already a 200 SSE stream, so a mid-stream
 				// failure cannot change the status code. Emit an explicit error
 				// event (instead of a silent truncation that looks like a clean

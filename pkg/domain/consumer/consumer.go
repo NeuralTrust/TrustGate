@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 )
 
 type Type string
@@ -157,6 +158,12 @@ func New(params CreateParams) (*Consumer, error) {
 	if params.Active != nil {
 		active = *params.Active
 	}
+	lbConfig := params.LBConfig
+	if lbConfig != nil && lbConfig.Enabled && lbConfig.Algorithm == "" {
+		copy := *lbConfig
+		copy.Algorithm = algorithm.RoundRobin
+		lbConfig = &copy
+	}
 	c := &Consumer{
 		ID:              id,
 		GatewayID:       params.GatewayID,
@@ -164,7 +171,7 @@ func New(params CreateParams) (*Consumer, error) {
 		Type:            params.Type,
 		Slug:            slug,
 		RoutingMode:     params.RoutingMode,
-		LBConfig:        params.LBConfig,
+		LBConfig:        lbConfig,
 		Headers:         params.Headers,
 		Active:          active,
 		RegistryIDs:     params.RegistryIDs,
@@ -268,6 +275,9 @@ func (c *Consumer) Validate() error {
 		return err
 	}
 	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+		return err
+	}
+	if err := c.LBConfig.ValidateTierRegistries(c.knownRegistryIDs()); err != nil {
 		return err
 	}
 	if len(c.RoleIDs) > 0 {

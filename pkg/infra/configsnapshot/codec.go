@@ -74,6 +74,10 @@ func (Codec) Version(raw []byte) string {
 
 func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	msg := &snapshotpb.Snapshot{Version: data.Version}
+	owners := registryOwners(data.Registries)
+	consumers := admitConsumers(data.Consumers, admissionEncode, func(i int) error {
+		return validateConsumerSmartRouting(&data.Consumers[i], owners)
+	})
 
 	for i := range data.Gateways {
 		blob, err := json.Marshal(&data.Gateways[i])
@@ -83,8 +87,8 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		msg.Gateways = append(msg.Gateways, &snapshotpb.Gateway{Json: blob})
 	}
 
-	for i := range data.Consumers {
-		blob, err := json.Marshal(&data.Consumers[i])
+	for i := range consumers {
+		blob, err := json.Marshal(&consumers[i])
 		if err != nil {
 			return nil, fmt.Errorf("configsnapshot: marshal consumer: %w", err)
 		}
@@ -181,6 +185,11 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		}
 		data.Registries = append(data.Registries, r)
 	}
+
+	owners := registryOwners(data.Registries)
+	data.Consumers = admitConsumers(data.Consumers, admissionDecode, func(i int) error {
+		return validateConsumerSmartRoutingJSON(msg.GetConsumers()[i].GetJson(), &data.Consumers[i], owners)
+	})
 
 	for _, m := range msg.GetPolicies() {
 		var p policydomain.Policy

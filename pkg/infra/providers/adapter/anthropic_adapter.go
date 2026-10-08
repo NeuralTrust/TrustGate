@@ -663,16 +663,28 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 // Stream: Decode (Anthropic SSE event → Canonical)
 
 func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(chunk, &kind) != nil || kind.Type == "" {
+		return invalidStreamEvent("Anthropic"), nil
+	}
+	if !anthropicKnownStreamEvent(kind.Type) {
+		return nil, nil
+	}
+	if ValidateAnthropicStreamEvent(chunk) != nil {
+		return invalidStreamEvent("Anthropic"), nil
+	}
 	var event anthropicStreamEvent
 	if err := json.Unmarshal(chunk, &event); err != nil {
-		return nil, nil // skip non-JSON
+		return invalidStreamEvent("Anthropic"), nil
 	}
 
 	switch event.Type {
 	case "content_block_delta":
 		var delta anthropicDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
-			return nil, nil
+			return invalidStreamEvent("Anthropic"), nil
 		}
 		if delta.Type == "text_delta" && delta.Text != "" {
 			return &CanonicalStreamChunk{Delta: delta.Text}, nil
@@ -697,7 +709,7 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		}
 		var cb anthropicContentBlock
 		if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
-			return nil, nil
+			return invalidStreamEvent("Anthropic"), nil
 		}
 		if cb.Type == "tool_use" {
 			inputStr := strings.TrimSpace(string(cb.Input))
@@ -720,7 +732,7 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 	case "message_start":
 		var msg anthropicMessageStart
 		if err := json.Unmarshal(event.Message, &msg); err != nil {
-			return nil, nil
+			return invalidStreamEvent("Anthropic"), nil
 		}
 		sc := &CanonicalStreamChunk{
 			ID:    msg.ID,
@@ -735,7 +747,7 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 	case "message_delta":
 		var delta anthropicDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
-			return nil, nil
+			return invalidStreamEvent("Anthropic"), nil
 		}
 		sc := &CanonicalStreamChunk{}
 		if delta.StopReason != "" {
@@ -758,8 +770,12 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		}
 		return sc, nil
 
+	case "message_stop":
+		return &CanonicalStreamChunk{StreamEnd: true}, nil
+	case "error":
+		return failedStreamEvent("Anthropic"), nil
 	default:
-		return nil, nil // skip ping, message_stop, content_block_start, etc.
+		return nil, nil
 	}
 }
 

@@ -496,8 +496,19 @@ definitions:
       default:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SR1ConfigRequest:
+    properties:
+      cache_ttl_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
+      escape_hatch_enabled:
+        type: boolean
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest:
     properties:
+      sr1:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SR1ConfigRequest'
       tiers:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest'
@@ -728,8 +739,17 @@ definitions:
       weight:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SR1ConfigResponse:
+    properties:
+      cache_ttl_seconds:
+        type: integer
+      escape_hatch_enabled:
+        type: boolean
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse:
     properties:
+      sr1:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SR1ConfigResponse'
       tiers:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse'

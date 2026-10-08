@@ -170,13 +170,14 @@ func TestLBStrategy_SmartRoutingPicksTheTierMember(t *testing.T) {
 			"enabled":   true,
 			"algorithm": "smart-routing",
 			"members": []map[string]any{
-				{"registry_id": firstID},
-				{"registry_id": secondID},
+				{"registry_id": firstID, "model": firstPoolModel},
+				{"registry_id": secondID, "model": secondPoolModel},
 			},
 			"smart_routing": map[string]any{
+				"sr1": map[string]any{"cache_ttl_seconds": 300, "escape_hatch_enabled": false},
 				"tiers": []map[string]any{
-					{"min_score": 0.0, "registry_id": firstID},
-					{"min_score": 0.5, "registry_id": secondID},
+					{"min_score": 0.0, "registry_id": firstID, "model": firstPoolModel},
+					{"min_score": 0.45, "registry_id": secondID, "model": secondPoolModel},
 				},
 			},
 		},
@@ -189,4 +190,5 @@ func TestLBStrategy_SmartRoutingPicksTheTierMember(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, 1, second.Hits(), "a high score must select the upper tier")
 	assert.Equal(t, 0, first.Hits())
+	assert.Contains(t, string(second.LastBody()), `"model":"`+secondPoolModel+`"`)
 }

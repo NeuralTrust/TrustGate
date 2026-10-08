@@ -98,7 +98,11 @@ func setupRouteAwarePool(t *testing.T, spy *modelSpy, algorithm string, members,
 			}
 			withRegistry = append(withRegistry, copied)
 		}
-		lb["smart_routing"] = map[string]any{"tiers": withRegistry}
+		smartRouting := map[string]any{"tiers": withRegistry}
+		if algorithm == "smart-routing" {
+			smartRouting["sr1"] = map[string]any{"cache_ttl_seconds": 300, "escape_hatch_enabled": false}
+		}
+		lb["smart_routing"] = smartRouting
 	}
 
 	coID := CreateConsumer(t, gatewayID, map[string]any{
@@ -168,7 +172,7 @@ func TestRouteAwareLB_SmartRoutingPicksTheTierModelOfOneRegistry(t *testing.T) {
 	members := []map[string]any{{"model": cheap}, {"model": premium}}
 	tiers := []map[string]any{
 		{"min_score": 0.0, "model": cheap},
-		{"min_score": 0.5, "model": premium},
+		{"min_score": 0.45, "model": premium},
 	}
 
 	t.Run("a low score takes the cheap route", func(t *testing.T) {

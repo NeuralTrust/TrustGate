@@ -17,6 +17,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"iter"
 	"log/slog"
 	"sort"
@@ -154,7 +155,15 @@ func adaptStream(
 	source, target adapter.Format,
 	logger *slog.Logger,
 	onChunk func(*adapter.CanonicalStreamChunk),
+	options ...chatStreamOptions,
 ) iter.Seq2[[]byte, error] {
+	if (source == adapter.FormatOpenAI || source == adapter.FormatAzure) && !adapter.IsSameWireFormat(target, adapter.FormatOpenAI) && target != adapter.FormatMistral {
+		var settings chatStreamOptions
+		if len(options) > 0 {
+			settings = options[0]
+		}
+		return adaptChatStream(raw, registry, target, onChunk, settings)
+	}
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
 	// On the cross-format path the adapter re-encodes payload chunks but never
@@ -201,7 +210,20 @@ func adaptStream(
 			if !ok {
 				continue
 			}
-			observeChunk(registry, payload, target, onChunk)
+			canonical, decodeErr := registry.DecodeStreamChunkFor(payload, target)
+			if decodeErr == nil && canonical != nil {
+				if onChunk != nil {
+					onChunk(canonical)
+				}
+				if canonical.UpstreamError != nil && !canonical.UpstreamError.DecoderFailure() {
+					yield(nil, canonical.UpstreamError)
+					return
+				}
+				if message, failed := adapter.FinishFailure(canonical.FinishReason); failed {
+					yield(nil, errors.New(message))
+					return
+				}
+			}
 
 			if geminiToolCalls {
 				if !emitGeminiToolCalls(emit, registry, payload, source, target, &acc, logger) {
