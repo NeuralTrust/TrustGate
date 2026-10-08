@@ -27,9 +27,9 @@ func (_m *PersonalKeys) EXPECT() *PersonalKeys_Expecter {
 	return &PersonalKeys_Expecter{mock: &_m.Mock}
 }
 
-// Create provides a mock function with given fields: ctx, gatewayID, ownerID, expiresAt
-func (_m *PersonalKeys) Create(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, expiresAt time.Time) (*auth.PersonalKey, error) {
-	ret := _m.Called(ctx, gatewayID, ownerID, expiresAt)
+// Create provides a mock function with given fields: ctx, gatewayID, owner, expiresAt
+func (_m *PersonalKeys) Create(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], owner auth.PersonalKeyOwner, expiresAt time.Time) (*auth.PersonalKey, error) {
+	ret := _m.Called(ctx, gatewayID, owner, expiresAt)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Create")
@@ -37,19 +37,19 @@ func (_m *PersonalKeys) Create(ctx context.Context, gatewayID ids.ID[ids.Gateway
 
 	var r0 *auth.PersonalKey
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, time.Time) (*auth.PersonalKey, error)); ok {
-		return rf(ctx, gatewayID, ownerID, expiresAt)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) (*auth.PersonalKey, error)); ok {
+		return rf(ctx, gatewayID, owner, expiresAt)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, time.Time) *auth.PersonalKey); ok {
-		r0 = rf(ctx, gatewayID, ownerID, expiresAt)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) *auth.PersonalKey); ok {
+		r0 = rf(ctx, gatewayID, owner, expiresAt)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*auth.PersonalKey)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, time.Time) error); ok {
-		r1 = rf(ctx, gatewayID, ownerID, expiresAt)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) error); ok {
+		r1 = rf(ctx, gatewayID, owner, expiresAt)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -65,15 +65,15 @@ type PersonalKeys_Create_Call struct {
 // Create is a helper method to define mock.On call
 //   - ctx context.Context
 //   - gatewayID ids.ID[ids.GatewayKind]
-//   - ownerID string
+//   - owner auth.PersonalKeyOwner
 //   - expiresAt time.Time
-func (_e *PersonalKeys_Expecter) Create(ctx interface{}, gatewayID interface{}, ownerID interface{}, expiresAt interface{}) *PersonalKeys_Create_Call {
-	return &PersonalKeys_Create_Call{Call: _e.mock.On("Create", ctx, gatewayID, ownerID, expiresAt)}
+func (_e *PersonalKeys_Expecter) Create(ctx interface{}, gatewayID interface{}, owner interface{}, expiresAt interface{}) *PersonalKeys_Create_Call {
+	return &PersonalKeys_Create_Call{Call: _e.mock.On("Create", ctx, gatewayID, owner, expiresAt)}
 }
 
-func (_c *PersonalKeys_Create_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, expiresAt time.Time)) *PersonalKeys_Create_Call {
+func (_c *PersonalKeys_Create_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], owner auth.PersonalKeyOwner, expiresAt time.Time)) *PersonalKeys_Create_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(time.Time))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(auth.PersonalKeyOwner), args[3].(time.Time))
 	})
 	return _c
 }
@@ -83,7 +83,7 @@ func (_c *PersonalKeys_Create_Call) Return(_a0 *auth.PersonalKey, _a1 error) *Pe
 	return _c
 }
 
-func (_c *PersonalKeys_Create_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, time.Time) (*auth.PersonalKey, error)) *PersonalKeys_Create_Call {
+func (_c *PersonalKeys_Create_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) (*auth.PersonalKey, error)) *PersonalKeys_Create_Call {
 	_c.Call.Return(run)
 	return _c
 }

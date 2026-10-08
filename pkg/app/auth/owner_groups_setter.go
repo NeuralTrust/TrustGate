@@ -32,13 +32,17 @@ type SetOwnerGroupsInput struct {
 	GatewayID ids.GatewayID
 	// Groups replaces the owner's groups; empty clears them.
 	Groups []string
+	// Email, when set, replaces the owner's email; empty clears it. Nil
+	// leaves it as it is.
+	Email *string
 }
 
 //go:generate mockery --name=OwnerGroupsSetter --dir=. --output=./mocks --filename=auth_owner_groups_setter_mock.go --case=underscore --with-expecter
 
 // OwnerGroupsSetter records the directory groups of a personal key's owner,
-// which the MCP Store reads in place of a session's groups claim. The secret,
-// the expiry, the budget and the links of the key stay as they are.
+// which the MCP Store reads in place of a session's groups claim, and their
+// email, which the key's calls are shown under. The secret, the expiry, the
+// budget and the links of the key stay as they are.
 type OwnerGroupsSetter interface {
 	SetOwnerGroups(ctx context.Context, in SetOwnerGroupsInput) (*domain.Auth, error)
 }
@@ -84,10 +88,16 @@ func (s *ownerGroupsSetter) SetOwnerGroups(ctx context.Context, in SetOwnerGroup
 	if existing.GatewayID != in.GatewayID {
 		return nil, domain.ErrNotFound
 	}
-	if err := existing.SetOwnerGroups(in.Groups, s.now()); err != nil {
+	now := s.now()
+	if err := existing.SetOwnerGroups(in.Groups, now); err != nil {
 		return nil, err
 	}
-	stored, err := s.repo.UpdateOwnerGroups(ctx, existing)
+	if in.Email != nil {
+		if err := existing.SetOwnerEmail(*in.Email, now); err != nil {
+			return nil, err
+		}
+	}
+	stored, err := s.repo.UpdateOwner(ctx, existing)
 	if err != nil {
 		return nil, err
 	}

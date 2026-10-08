@@ -68,7 +68,7 @@ func TestUpdateAuthOwnerGroups_RecordsAndClearsTheGroupsOfAnOwnedKey(t *testing.
 			hash, expiry := owned.KeyHash, owned.ExpiresAt
 			repo := repomocks.NewRepository(t)
 			repo.EXPECT().FindByID(mock.Anything, owned.ID).Return(owned, nil).Once()
-			repo.EXPECT().UpdateOwnerGroups(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+			repo.EXPECT().UpdateOwner(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 				return a.ID == owned.ID && a.KeyHash == hash && a.ExpiresAt == expiry && a.Budget != nil &&
 					slices.Equal(a.OwnerGroups, tc.want)
 			})).RunAndReturn(func(_ context.Context, a *domain.Auth) (*domain.Auth, error) { return a, nil }).Once()
@@ -86,6 +86,44 @@ func TestUpdateAuthOwnerGroups_RecordsAndClearsTheGroupsOfAnOwnedKey(t *testing.
 				require.Contains(t, raw, tc.wantInBody)
 			}
 			require.Equal(t, 1, signaler.Count())
+		})
+	}
+}
+
+// The platform sends the owner's email with their groups; a body without one
+// leaves the email the key has, so a console that does not send it yet clears
+// nothing.
+func TestUpdateAuthOwnerGroups_RecordsTheOwnersEmailWhenSent(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		body       string
+		want       string
+		wantInBody string
+	}{
+		"set, trimmed": {body: `{"groups":["eng"],"email":" alice@acme.test "}`, want: "alice@acme.test", wantInBody: `"owner_email":"alice@acme.test"`},
+		"kept":         {body: `{"groups":["eng"]}`, want: "old@acme.test", wantInBody: `"owner_email":"old@acme.test"`},
+		"cleared":      {body: `{"groups":["eng"],"email":""}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			owned := testAPIKeyAuth(t, gwID, "personal-alice", "alice")
+			owned.OwnerEmail = "old@acme.test"
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, owned.ID).Return(owned, nil).Once()
+			repo.EXPECT().UpdateOwner(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+				return a.ID == owned.ID && a.OwnerEmail == tc.want && slices.Equal(a.OwnerGroups, []string{"eng"})
+			})).RunAndReturn(func(_ context.Context, a *domain.Auth) (*domain.Auth, error) { return a, nil }).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+
+			status, raw := doJSON(t, ownerGroupsApp(repo, publisher, &configsynctest.FakeSignaler{}), http.MethodPut, ownerGroupsURL(gwID, owned.ID.String()), tc.body)
+			require.Equal(t, http.StatusOK, status, raw)
+			if tc.wantInBody == "" {
+				require.NotContains(t, raw, `"owner_email"`)
+			} else {
+				require.Contains(t, raw, tc.wantInBody)
+			}
 		})
 	}
 }
@@ -108,6 +146,7 @@ func TestUpdateAuthOwnerGroups_RefusesWithoutWriting(t *testing.T) {
 		}, wantStatus: http.StatusNotFound, wantCode: "not_found"},
 		"a group name too long": {body: tooLong, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
 		"groups as a string":    {body: `{"groups":"engineering"}`, wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
+		"not an email":          {body: `{"groups":["engineering"],"email":"alice at acme"}`, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

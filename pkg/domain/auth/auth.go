@@ -124,9 +124,14 @@ type Auth struct {
 	// platform last reported them. The MCP Store reads them where a signed-in
 	// session reads its groups claim, so a grant to a group reaches the owner
 	// through the key too.
-	OwnerGroups []string  `json:"owner_groups,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	OwnerGroups []string `json:"owner_groups,omitempty"`
+	// OwnerEmail is a personal key's owner's email, as the platform last
+	// reported it. Calls made with the key carry it as the principal's email,
+	// as a signed-in session's do, so traffic is attributed to a person rather
+	// than an id.
+	OwnerEmail string    `json:"owner_email,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // IsOwned reports whether a is a personal key, held by one user.

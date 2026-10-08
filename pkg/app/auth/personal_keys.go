@@ -33,6 +33,14 @@ type PersonalKey struct {
 	ConsumerIDs []ids.ConsumerID
 }
 
+// PersonalKeyOwner is the user a personal key is issued to: their platform
+// user id, and the email every call the key makes is shown under. Email may be
+// empty; it is then recorded later, when the console reconciles the key.
+type PersonalKeyOwner struct {
+	ID    string
+	Email string
+}
+
 // PersonalKeys is the self-service lifecycle of the one personal key a user
 // holds on a gateway: read, create, rotate and revoke, each scoped to the
 // caller as owner.
@@ -40,7 +48,7 @@ type PersonalKey struct {
 //go:generate mockery --name=PersonalKeys --dir=. --output=./mocks --filename=auth_personal_keys_mock.go --case=underscore --with-expecter
 type PersonalKeys interface {
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
-	Create(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt time.Time) (*PersonalKey, error)
+	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, expiresAt time.Time) (*PersonalKey, error)
 	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error)
 	Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error
 }
@@ -94,9 +102,13 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	return &PersonalKey{Auth: a, ConsumerIDs: consumerIDs}, nil
 }
 
-func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt time.Time) (*PersonalKey, error) {
+func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, expiresAt time.Time) (*PersonalKey, error) {
+	ownerID := owner.ID
 	a, err := domain.NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, p.now())
 	if err != nil {
+		return nil, err
+	}
+	if err := a.SetOwnerEmail(owner.Email, a.CreatedAt); err != nil {
 		return nil, err
 	}
 	if err := p.ensureNotHybrid(ctx, gatewayID); err != nil {

@@ -283,7 +283,7 @@ func (p *personalKeyPages) Act(ctx context.Context, ticketID, sessionID, csrf, a
 	var issued *appauth.PersonalKey
 	switch action {
 	case PersonalKeyActionCreate:
-		issued, err = p.issuer.Create(ctx, gatewayID, ticket.PrincipalSub, session.Groups)
+		issued, err = p.issuer.Create(ctx, gatewayID, appauth.PersonalKeyOwner{ID: ticket.PrincipalSub, Email: session.Email}, session.Groups)
 		if errors.Is(err, authdomain.ErrOwnedKeyExists) {
 			// Another tab, or the Portal, got there first: show the key there is.
 			view.Notice = "You already have a personal key on this gateway. Rotate it to get a new secret."
