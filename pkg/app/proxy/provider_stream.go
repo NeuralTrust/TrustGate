@@ -17,10 +17,10 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"iter"
 	"log/slog"
 	"sort"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -212,7 +212,7 @@ func adaptStream(
 	var deferred *finishDeferral
 	var geminiCalls *adapter.GeminiCallIndexer
 	if crossFormat {
-		deferred = newFinishDeferral(source, target, options.now)
+		deferred = newFinishDeferral(source, target, options)
 		if adapter.IsSameWireFormat(target, adapter.FormatGemini) {
 			geminiCalls = &adapter.GeminiCallIndexer{}
 		}
@@ -226,6 +226,9 @@ func adaptStream(
 	// (openai, azure) rely on it to detect end-of-stream, so re-emit it when the
 	// source they speak expects it. Other source formats use their own terminator.
 	forwardDone := crossFormat && adapter.IsSameWireFormat(source, adapter.FormatOpenAI)
+	if deferred != nil && deferred.chat != nil {
+		forwardDone = false
+	}
 
 	stream := func(yield func([]byte, error) bool) {
 		defer options.cancel()
@@ -269,6 +272,12 @@ func adaptStream(
 				if deferred != nil && !deferred.done(emit, registry, source, logger) {
 					return false
 				}
+				if deferred != nil && deferred.chat != nil {
+					if deferred.clientAborted() {
+						yield(nil, &ClientNotifiedStreamError{Err: errors.New("upstream stream ended without its terminal event")})
+					}
+					return false
+				}
 				if usage != nil && !usage.flush(emit) {
 					return false
 				}
@@ -292,6 +301,12 @@ func adaptStream(
 				if upstreamErr != nil {
 					if ok, streamErr := deferred.fail(emit, registry, source, logger, upstreamErr, upstreamErr); ok {
 						yield(nil, streamErr)
+					}
+					return false
+				}
+				if deferred.chat != nil && deferred.flushed {
+					if deferred.clientAborted() {
+						yield(nil, &ClientNotifiedStreamError{Err: errors.New("upstream stream could not be completed")})
 					}
 					return false
 				}
@@ -329,7 +344,13 @@ func adaptStream(
 			}
 		}
 		if deferred != nil {
-			deferred.end(emit, registry, source, logger)
+			if !deferred.end(emit, registry, source, logger) {
+				return
+			}
+			if deferred.chat != nil && deferred.clientAborted() {
+				yield(nil, &ClientNotifiedStreamError{Err: errors.New("upstream stream ended before the message finished")})
+				return
+			}
 		}
 		if usage != nil {
 			usage.flush(emit)
@@ -428,11 +449,13 @@ type finishDeferral struct {
 	reason        string
 	id            string
 	model         string
+	fallbackModel string
 	usage         *adapter.CanonicalUsage
 	anthropic     *adapter.AnthropicStreamEncoder
 	cohere        *adapter.CohereStreamEncoder
 	responses     *adapter.ResponsesStreamEncoder
 	gemini        *adapter.GeminiStreamEncoder
+	chat          *adapter.OpenAIChatStreamEncoder
 	geminiCalls   *adapter.GeminiCallIndexer
 }
 
@@ -457,14 +480,20 @@ func emitGeminiUpstream(
 	return encodeAndEmit(emit, registry, canonical, source, logger)
 }
 
-func newFinishDeferral(source, target adapter.Format, now func() time.Time) *finishDeferral {
+func newFinishDeferral(source, target adapter.Format, options streamOptions) *finishDeferral {
 	switch source {
+	case adapter.FormatOpenAI, adapter.FormatAzure:
+		if adapter.IsSameWireFormat(target, adapter.FormatOpenAI) || target == adapter.FormatMistral {
+			return nil
+		}
+		return &finishDeferral{target: target, holdFinish: true, fallbackModel: options.model,
+			chat: adapter.NewOpenAIChatStreamEncoder(options.includeUsage)}
 	case adapter.FormatBedrock:
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatAnthropic:
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: adapter.NewAnthropicStreamEncoder(target)}
 	case adapter.FormatOpenAIResponses:
-		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder(adapter.WithResponsesClock(now))}
+		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder(adapter.WithResponsesClock(options.now))}
 	case adapter.FormatGemini:
 		return &finishDeferral{target: target, holdFinish: true, gemini: adapter.NewGeminiStreamEncoder()}
 	case adapter.FormatCohere:
@@ -488,6 +517,9 @@ func (d *finishDeferral) record(chunk *adapter.CanonicalStreamChunk) bool {
 	if chunk.FinishReason != "" && !d.finished {
 		d.finished = true
 		d.reason = chunk.FinishReason
+	}
+	if d.chat != nil {
+		return d.finished && chunk.StreamEnd
 	}
 	return d.finished && finalUsageEvent(d.target, chunk)
 }
@@ -532,6 +564,10 @@ func (d *finishDeferral) dropAfterFlush(
 ) bool {
 	if !d.flushed {
 		return false
+	}
+	if chunk.StreamEnd && chunk.Role == "" && chunk.Delta == "" && chunk.ReasoningDelta == "" &&
+		len(chunk.ToolCallDeltas) == 0 && chunk.Usage == nil && chunk.FinishReason == "" {
+		return true
 	}
 	if !d.dropLogged {
 		d.dropLogged = true
@@ -578,6 +614,17 @@ func (d *finishDeferral) end(
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
+	if d.chat != nil {
+		if d.flushed {
+			return true
+		}
+		// Gemini has no separate terminal event. Its finish is valid only after
+		// a clean EOF; other upstreams must explicitly close their message.
+		if adapter.IsSameWireFormat(d.target, adapter.FormatGemini) && d.finished {
+			return d.flush(emit, registry, source, logger)
+		}
+		return d.abort(emit, "upstream stream ended before the message finished", source, logger)
+	}
 	if d.finished {
 		return d.flush(emit, registry, source, logger)
 	}
@@ -608,6 +655,9 @@ func (d *finishDeferral) done(
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
+	if d.chat != nil {
+		return d.abort(emit, "upstream stream ended without its terminal event", source, logger)
+	}
 	if d.finished {
 		return d.flush(emit, registry, source, logger)
 	}
@@ -630,6 +680,7 @@ func (d *finishDeferral) done(
 // client response.failed, or a Gemini client an error object.
 func (d *finishDeferral) clientAborted() bool {
 	return (d.anthropic != nil && d.anthropic.Aborted()) ||
+		(d.chat != nil && d.chat.Aborted()) ||
 		(d.cohere != nil && d.cohere.Aborted()) ||
 		(d.responses != nil && d.responses.Aborted()) ||
 		(d.gemini != nil && d.gemini.Failed())
@@ -653,6 +704,8 @@ func (d *finishDeferral) fail(
 	terminated := d.flushed
 	var ok bool
 	switch {
+	case d.chat != nil:
+		ok = d.abort(emit, "upstream stream failed", source, logger)
 	case d.gemini != nil && !d.finished:
 		ok = d.failGemini(emit, "upstream stream failed", source, logger)
 	case d.cohere == nil, upstreamErr == nil && d.finished:
@@ -665,7 +718,7 @@ func (d *finishDeferral) fail(
 	if !ok {
 		return false, nil
 	}
-	notify := d.anthropic != nil || d.gemini != nil ||
+	notify := d.chat != nil || d.anthropic != nil || d.gemini != nil ||
 		(d.cohere != nil && (d.flushed || d.finished || d.cohere.Started())) ||
 		(d.responses != nil && d.responses.Started())
 	if !notify {
@@ -741,6 +794,9 @@ func (d *finishDeferral) abort(
 		return true
 	}
 	switch {
+	case d.chat != nil:
+		d.flushed = true
+		return emit(d.chat.Abort(message))
 	case d.anthropic != nil:
 		d.flushed = true
 		return emit(d.anthropic.Abort(message))
@@ -792,11 +848,17 @@ func (d *finishDeferral) flush(
 	}
 	d.flushed = true
 	chunk := &adapter.CanonicalStreamChunk{ID: d.id, Model: d.model, Usage: d.usage}
+	if chunk.Model == "" && d.chat != nil {
+		chunk.Model = d.fallbackModel
+	}
 	if d.holdFinish {
 		chunk.FinishReason = d.reason
 	}
 	if chunk.FinishReason == "" && chunk.Usage == nil {
 		return true
+	}
+	if d.chat != nil {
+		return emit(d.chat.Finish(chunk))
 	}
 	if d.anthropic != nil {
 		lines := d.anthropic.Finish(chunk)
@@ -898,6 +960,18 @@ func (d *finishDeferral) encode(
 ) bool {
 	var lines [][]byte
 	switch {
+	case d.chat != nil:
+		content := *chunk
+		if content.ID == "" {
+			content.ID = d.id
+		}
+		if content.Model == "" {
+			content.Model = d.model
+			if content.Model == "" {
+				content.Model = d.fallbackModel
+			}
+		}
+		lines = d.chat.Content(&content)
 	case d.anthropic != nil:
 		lines = d.anthropic.Content(chunk)
 	case d.cohere != nil:
@@ -931,6 +1005,9 @@ func emitDeferred(
 	canonical, err := registry.DecodeStreamChunkFor(payload, target)
 	if err != nil {
 		logger.Warn("stream decode chunk failed", slog.String("error", err.Error()))
+		if deferred.chat != nil {
+			return true, &adapter.UpstreamStreamError{Message: "upstream stream could not be decoded"}
+		}
 		return true, nil
 	}
 	if canonical == nil {
@@ -938,6 +1015,15 @@ func emitDeferred(
 	}
 	deferred.geminiCalls.Renumber(canonical.ToolCallDeltas)
 	if canonical.UpstreamError != nil {
+		if deferred.chat != nil {
+			return true, canonical.UpstreamError
+		}
+		// Only a Chat Completions client fails its stream on an unreadable
+		// event; the other clients skip it, as they skip a decode error.
+		if canonical.UpstreamError.Type == adapter.InvalidStreamEventType {
+			logger.Warn("stream decode chunk failed", slog.String("error", canonical.UpstreamError.Message))
+			return true, nil
+		}
 		if deferred.anthropic != nil || deferred.cohere != nil || deferred.responses != nil || deferred.gemini != nil {
 			deferred.recordUsage(canonical)
 			content := adapter.CanonicalStreamChunk{
@@ -960,6 +1046,14 @@ func emitDeferred(
 		return true, nil
 	}
 	terminal := deferred.record(canonical)
+	if deferred.chat != nil {
+		if target == adapter.FormatAnthropic && (deferred.id == "" || deferred.model == "") {
+			return true, &adapter.UpstreamStreamError{Message: "upstream stream omitted its message identity"}
+		}
+		if canonical.StreamEnd && !deferred.finished {
+			return true, &adapter.UpstreamStreamError{Message: "upstream stream ended without a finish reason"}
+		}
+	}
 	chunk := *canonical
 	chunk.ProviderExtensions = nil
 	if !deferred.keepRoleUsage || chunk.Role == "" {

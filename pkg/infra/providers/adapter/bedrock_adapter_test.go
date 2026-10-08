@@ -749,7 +749,7 @@ func TestBedrock_DecodeStreamChunk(t *testing.T) {
 		{
 			name:  "metadata carries usage",
 			chunk: `{"metadata":{"usage":{"inputTokens":5,"outputTokens":9,"totalTokens":14},"metrics":{"latencyMs":100}}}`,
-			want:  &CanonicalStreamChunk{Usage: &CanonicalUsage{InputTokens: 5, OutputTokens: 9, TotalTokens: 14}},
+			want:  &CanonicalStreamChunk{Usage: &CanonicalUsage{InputTokens: 5, OutputTokens: 9, TotalTokens: 14}, StreamEnd: true},
 		},
 		{
 			name:  "unknown event is skipped",
@@ -757,9 +757,9 @@ func TestBedrock_DecodeStreamChunk(t *testing.T) {
 			want:  nil,
 		},
 		{
-			name:  "non-JSON is skipped",
+			name:  "non-JSON fails the stream",
 			chunk: `not json`,
-			want:  nil,
+			want:  invalidStreamEvent("Bedrock"),
 		},
 	}
 
