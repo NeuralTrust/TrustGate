@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"unsafe"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -254,6 +255,7 @@ func TestProxyCapabilities_OnlyChatIsAChatRequest(t *testing.T) {
 		want       bool
 	}{
 		{capability: CapabilityChat, want: true},
+		{capability: CapabilityBedrockNative, want: true},
 		{capability: CapabilityEmbeddings},
 		{capability: CapabilityRerank},
 		{capability: CapabilityFiles},
@@ -269,5 +271,111 @@ func TestProxyCapabilities_OnlyChatIsAChatRequest(t *testing.T) {
 				t.Errorf("IsChatRequest(%q, %s) = %v, want %v", tc.capability, f, got, tc.want)
 			}
 		}
+	}
+}
+
+func TestResolveProxyPath_NativeBedrock(t *testing.T) {
+	t.Parallel()
+	const arn = "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2Fus.anthropic.claude-3-5-sonnet-20241022-v2%3A0"
+	cases := []struct {
+		path    string
+		wantOp  adapter.BedrockNativeOp
+		wantRaw string
+		wantID  string
+	}{
+		{"/acme/model/amazon.nova-lite-v1:0/converse", adapter.BedrockOpConverse,
+			"amazon.nova-lite-v1:0", "amazon.nova-lite-v1:0"},
+		{"/acme/model/amazon.nova-lite-v1:0/converse-stream/", adapter.BedrockOpConverseStream,
+			"amazon.nova-lite-v1:0", "amazon.nova-lite-v1:0"},
+		{"/acme/model/amazon.titan-text-express-v1/invoke", adapter.BedrockOpInvoke,
+			"amazon.titan-text-express-v1", "amazon.titan-text-express-v1"},
+		{"/acme/model/anthropic.claude-v2/invoke-with-response-stream", adapter.BedrockOpInvokeStream,
+			"anthropic.claude-v2", "anthropic.claude-v2"},
+		{"/acme/model/" + arn + "/converse", adapter.BedrockOpConverse, arn,
+			"arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-3-5-sonnet-20241022-v2:0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			route, err := ResolveProxyPath(tc.path)
+			if err != nil {
+				t.Fatalf("ResolveProxyPath: %v", err)
+			}
+			if route.ConsumerSlug != "acme" || route.SourceFormat != adapter.FormatBedrock ||
+				route.Capability != CapabilityBedrockNative {
+				t.Fatalf("route = %+v", route)
+			}
+			if route.Bedrock == nil || route.Bedrock.Op != tc.wantOp ||
+				route.Bedrock.RawModelID != tc.wantRaw || route.Bedrock.ModelID != tc.wantID {
+				t.Fatalf("Bedrock = %+v", route.Bedrock)
+			}
+			if !route.AllowsMethod(http.MethodPost) || route.AllowsMethod(http.MethodGet) {
+				t.Fatalf("AllowedMethods = %v", route.AllowedMethods())
+			}
+		})
+	}
+}
+
+func TestResolveProxyPath_NativeBedrockRejectsBadModelIDs(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/acme/model/%2e%2e/converse",
+		"/acme/model/a%2Fb/invoke",
+		"/acme/model/a%3Fb/converse",
+	} {
+		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrInvalidBedrockModelID) {
+			t.Fatalf("ResolveProxyPath(%q) error = %v, want ErrInvalidBedrockModelID", path, err)
+		}
+	}
+	for _, path := range []string{"/acme/model/x/count-tokens", "/acme/model/x"} {
+		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
+			t.Fatalf("ResolveProxyPath(%q) error = %v, want ErrUnknownProxyPath", path, err)
+		}
+	}
+}
+
+// The store slug serves the OpenAI-shaped routes only: a native Bedrock path
+// under it is an unknown route, and so is one whose model identifier would be
+// refused, which is not a 400 there.
+func TestResolveProxyPath_NativeBedrockIsNeverAStorePath(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/store/model/amazon.nova-lite-v1:0/converse",
+		"/store/model/amazon.nova-lite-v1:0/invoke-with-response-stream",
+		"/store/model/%2e%2e/converse",
+		"/store/model/a%2Fb/invoke",
+	} {
+		_, err := ResolveProxyPath(path)
+		if !errors.Is(err, ErrUnknownProxyPath) {
+			t.Fatalf("ResolveProxyPath(%q) error = %v, want ErrUnknownProxyPath", path, err)
+		}
+	}
+	route, err := ResolveProxyPath("/store/v1/chat/completions")
+	if err != nil || route.Bedrock != nil || route.Capability != CapabilityChat || route.ConsumerSlug != "store" {
+		t.Fatalf("store chat route = %+v, %v", route, err)
+	}
+	// The same paths under an application slug are still native.
+	if route, err := ResolveProxyPath("/acme/model/amazon.nova-lite-v1:0/converse"); err != nil || route.Bedrock == nil {
+		t.Fatalf("application native route = %+v, %v", route, err)
+	}
+}
+
+// fiber hands out the request path as a string over a buffer it reuses for the
+// next request. The ids of a native route are read after the handler has returned
+// (a stream, the budget, the metrics, the ARN lookup), so they must own their bytes.
+func TestResolveProxyPath_NativeIDsDoNotAliasThePathBuffer(t *testing.T) {
+	t.Parallel()
+	buf := []byte("/acme/model/amazon.nova-lite-v1:0/converse")
+	path := unsafe.String(&buf[0], len(buf)) //nolint:gosec // a view of the buffer, as fiber's Path() is
+	route, err := ResolveProxyPath(path)
+	if err != nil {
+		t.Fatalf("ResolveProxyPath: %v", err)
+	}
+	copy(buf, "/zzzz/v1/chat/completionsxpress-v1:0/xxxxxxx") // the next request reuses the buffer
+	if route.Bedrock == nil || route.Bedrock.ModelID != "amazon.nova-lite-v1:0" || route.Bedrock.RawModelID != "amazon.nova-lite-v1:0" {
+		t.Fatalf("ids = %+v, corrupted by the buffer reuse", route.Bedrock)
+	}
+	if route.ConsumerSlug != "acme" || route.Rest != "/model/amazon.nova-lite-v1:0/converse" {
+		t.Fatalf("route = %+v, corrupted by the buffer reuse", route)
 	}
 }

@@ -99,6 +99,18 @@ func TestMetricsMiddleware_StampsRequestedModelOnRejectedRequests(t *testing.T) 
 			wantSourceFormat: adapter.FormatGemini,
 		},
 		{
+			// The model rides in the path and the body has none, so only the
+			// route's native target can name it.
+			name:             "native bedrock model encoded in the path",
+			path:             "/support/model/amazon.nova-lite-v1%3A0/converse",
+			body:             `{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`,
+			contentType:      fiber.MIMEApplicationJSON,
+			status:           fiber.StatusForbidden,
+			errorCode:        "model_not_allowed",
+			wantModel:        "amazon.nova-lite-v1:0",
+			wantSourceFormat: adapter.FormatBedrockNative,
+		},
+		{
 			name:             "multipart audio transcription body",
 			path:             "/support/v1/audio/transcriptions",
 			body:             multipartAudioBody,

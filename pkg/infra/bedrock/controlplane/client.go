@@ -48,6 +48,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -58,6 +60,8 @@ import (
 )
 
 const (
+	provisionedModelsPath = "/provisioned-model-throughput/"
+
 	// signingService is the SigV4 service name of the Bedrock control plane.
 	signingService = "bedrock"
 	// emptyPayloadHash is sha256(""), the payload hash of a body-less GET.
@@ -146,6 +150,13 @@ type Client interface {
 	// so the per-model entitlement calls stay proportional to what the caller
 	// would actually offer.
 	ListInvocableModelIDs(ctx context.Context, creds Credentials, candidates []string) (Availability, error)
+
+	// ResolveModelARN returns the model ARN behind an application inference
+	// profile or a Provisioned Throughput ARN, with the credentials' own
+	// permissions: bedrock:GetInferenceProfile or
+	// bedrock:GetProvisionedModelThroughput. The region of the ARN is queried,
+	// which is where the resource lives.
+	ResolveModelARN(ctx context.Context, creds Credentials, arn string) (string, error)
 }
 
 var _ Client = (*client)(nil)
@@ -424,9 +435,9 @@ func (c *client) get(
 	query url.Values,
 	out any,
 ) error {
-	endpoint := c.baseURL(region) + path
-	if encoded := query.Encode(); encoded != "" {
-		endpoint += "?" + encoded
+	endpoint, err := c.requestURL(region, path, query)
+	if err != nil {
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -457,6 +468,58 @@ func (c *client) get(
 		return fmt.Errorf("bedrock controlplane: decode %s: %w", path, err)
 	}
 	return nil
+}
+
+// singleSegment reports a resource that is one path segment of plain characters
+// once decoded: it is written into the path of a signed request, so an empty, dot or
+// dot-dot resource, a slash or any character that is not part of an identifier is
+// refused here whatever the caller already checked.
+func singleSegment(resource string) bool {
+	decoded, err := url.PathUnescape(resource)
+	if err != nil || decoded == "" || decoded == "." || decoded == ".." {
+		return false
+	}
+	for i := range len(decoded) {
+		c := decoded[i]
+		plain := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == ':'
+		if !plain {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidRegion reports a well-formed AWS region name. A region is written into a
+// host name that signed requests are sent to, so nothing else may pass.
+func ValidRegion(region string) bool { return provider.ValidAWSRegion(region) }
+
+// requestURL builds the URL of a control plane call. The region must be a region
+// name, the host is parsed back out of the URL and must be an AWS host (unless the
+// operator set the endpoint override, which is trusted), and the path and query
+// are set on a url.URL, never concatenated: a signed request must not be
+// redirectable to another host by anything that reaches here.
+func (c *client) requestURL(region, path string, query url.Values) (string, error) {
+	if !ValidRegion(region) {
+		return "", ErrRegionRequired
+	}
+	u, err := url.Parse(c.baseURL(region))
+	if err != nil {
+		return "", fmt.Errorf("bedrock controlplane: build endpoint: %w", err)
+	}
+	if c.endpoint == "" && !awsHost(u.Hostname()) {
+		return "", fmt.Errorf("bedrock controlplane: %w", ErrUnsupportedHost)
+	}
+	unescaped, err := url.PathUnescape(path)
+	if err != nil {
+		return "", fmt.Errorf("bedrock controlplane: path %q: %w", path, err)
+	}
+	u.Path, u.RawPath = unescaped, path
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
+func awsHost(host string) bool {
+	return strings.HasSuffix(host, ".amazonaws.com") || strings.HasSuffix(host, ".amazonaws.com.cn")
 }
 
 // baseURL resolves the regional control plane host. Only the commercial and
@@ -491,4 +554,88 @@ func loadAwsConfig(ctx context.Context, creds Credentials) (aws.Config, error) {
 		cfg.Credentials = aws.NewCredentialsCache(provider)
 	}
 	return cfg, nil
+}
+
+// ErrUnsupportedARN is returned for an ARN the control plane cannot resolve to a
+// model: neither an application inference profile nor provisioned throughput.
+var ErrUnsupportedARN = errors.New("bedrock controlplane: arn is not an application inference profile or provisioned model")
+
+// ErrARNRegionMismatch is returned for an ARN of a region other than the
+// registry's: it is not resolved, the model stays unpriced.
+var ErrARNRegionMismatch = errors.New("bedrock controlplane: arn belongs to another region than the registry")
+
+// ErrUnsupportedHost is returned when the endpoint a request would go to is not an
+// AWS host.
+var ErrUnsupportedHost = errors.New("endpoint is not an AWS host")
+
+type inferenceProfileResponse struct {
+	Models []struct {
+		ModelARN string `json:"modelArn"`
+	} `json:"models"`
+}
+
+type provisionedModelResponse struct {
+	ModelARN           string `json:"modelArn"`
+	FoundationModelARN string `json:"foundationModelArn"`
+}
+
+func (c *client) ResolveModelARN(ctx context.Context, creds Credentials, arn string) (string, error) {
+	parsed, ok := bedrocknative.SplitBedrockARN(arn)
+	if !ok {
+		return "", ErrUnsupportedARN
+	}
+	kind, resource := parsed.Kind, parsed.Resource
+	if !singleSegment(resource) {
+		return "", ErrUnsupportedARN
+	}
+	// The control plane is always asked in the registry's region: the ARN is the
+	// caller's, and its region never picks a host. An ARN of another region is
+	// not this registry's to resolve.
+	region := creds.Region
+	if region == "" {
+		return "", ErrRegionRequired
+	}
+	if !ValidRegion(region) {
+		return "", ErrRegionRequired
+	}
+	if parsed.Region != region {
+		return "", ErrARNRegionMismatch
+	}
+	if !provider.ValidAWSAccount(parsed.Account) {
+		return "", ErrUnsupportedARN
+	}
+	cfg, err := c.loadConfig(ctx, creds)
+	if err != nil {
+		return "", fmt.Errorf("bedrock controlplane: load aws config: %w", err)
+	}
+	awsCreds, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return "", fmt.Errorf("bedrock controlplane: retrieve aws credentials: %w", err)
+	}
+	switch kind {
+	case bedrocknative.KindApplicationProfile:
+		var payload inferenceProfileResponse
+		if err := c.get(ctx, awsCreds, region, inferenceProfilesPath+"/"+url.PathEscape(resource), nil, &payload); err != nil {
+			return "", err
+		}
+		for _, m := range payload.Models {
+			if m.ModelARN != "" {
+				return m.ModelARN, nil
+			}
+		}
+	case bedrocknative.KindProvisionedModel:
+		var payload provisionedModelResponse
+		if err := c.get(ctx, awsCreds, region, provisionedModelsPath+url.PathEscape(resource), nil, &payload); err != nil {
+			return "", err
+		}
+		if payload.FoundationModelARN != "" {
+			return payload.FoundationModelARN, nil
+		}
+		if payload.ModelARN != "" {
+			return payload.ModelARN, nil
+		}
+	default:
+		return "", ErrUnsupportedARN
+	}
+	return "", fmt.Errorf("bedrock controlplane: %s names no model", arn)
 }

@@ -33,6 +33,11 @@ func DetectStream(req *infracontext.RequestContext) bool {
 	if req == nil {
 		return false
 	}
+	// A native Bedrock request names its streaming in the operation, and the
+	// body carries no flag.
+	if req.IsBedrockNative() {
+		return req.BedrockNative.IsStream()
+	}
 	switch req.ProxyCapability {
 	case capabilityFiles, capabilityImages, capabilityAudioSpeech, capabilityAudioTranscription:
 		return false

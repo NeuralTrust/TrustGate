@@ -116,6 +116,12 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// NativeBedrock declares what the plugin does on a native Amazon Bedrock Runtime
+// call (see appplugins.BedrockNativeAware).
+func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeMasks
+}
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }

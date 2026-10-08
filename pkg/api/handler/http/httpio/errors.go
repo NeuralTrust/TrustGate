@@ -15,6 +15,7 @@
 package httpio
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -31,6 +33,32 @@ import (
 type ErrorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message,omitempty"`
+}
+
+// BedrockErrorBody is the error body of a native Amazon Bedrock Runtime route.
+// The gateway merges __type and message into its own error object, so the
+// fields of ErrorBody stay readable beside them, and the x-amzn-ErrorType header
+// carries the same exception name for an AWS SDK.
+type BedrockErrorBody struct {
+	Type    string `json:"__type" example:"AccessDeniedException"`
+	Message string `json:"message"`
+}
+
+// WriteBedrockError answers a native Amazon Bedrock Runtime route with the AWS
+// envelope: the gateway's error body with __type and message merged in, and the
+// x-amzn-ErrorType header an AWS SDK classifies the exception by.
+func WriteBedrockError(c *fiber.Ctx, status int, body any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		raw = nil
+	}
+	headers, out := adapter.BedrockErrorEnvelope(status, raw)
+	for name, values := range headers {
+		for _, v := range values {
+			c.Set(name, v)
+		}
+	}
+	return c.Status(status).Send(out)
 }
 
 // NotFoundBody returns the canonical client-safe not-found response body.
