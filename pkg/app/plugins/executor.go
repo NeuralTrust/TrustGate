@@ -90,10 +90,7 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 		if err != nil {
 			// The one place a plugin's denial learns which leg it ended, so no
 			// plugin has to say so itself.
-			if pe, ok := AsPluginError(err); ok {
-				return nil, WithBlockDirection(pe, BlockDirectionForStage(in.Stage))
-			}
-			return nil, err
+			return nil, stampBlockDirection(err, BlockDirectionForStage(in.Stage))
 		}
 		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) && !handsOnResponse(in, outcome) {
 			return outcome, nil

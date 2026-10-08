@@ -17,6 +17,7 @@ package tokenratelimit
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -238,4 +239,14 @@ func TestPlugin_CostCap_ObserveDoesNotReject(t *testing.T) {
 	require.NoError(t, err, "observe must not reject an over-priced model")
 	require.NotNil(t, res)
 	assert.Equal(t, 200, res.StatusCode)
+}
+
+// An unpriced model is a pricing gap, not a verdict on the content, so its 403
+// opts out of the block-direction header.
+func TestModelUnpricedErrorIsNotAVerdict(t *testing.T) {
+	t.Parallel()
+	pe := modelUnpricedError("some-model")
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.True(t, pe.NotAVerdict)
+	assert.NotContains(t, appplugins.WithBlockDirection(pe, appplugins.BlockDirectionInput).Headers, appplugins.BlockDirectionHeader)
 }
