@@ -139,6 +139,7 @@ func (m *AdminAuthzMiddleware) logDenial(c *fiber.Ctx, identity AdminIdentity, r
 	m.logger.LogAttrs(c.UserContext(), slog.LevelWarn, "admin authorization denied",
 		slog.String("reason", reason),
 		slog.String("identity_kind", string(identity.Kind)),
+		slog.String("token_issuer", identity.Issuer),
 		slog.String("principal_ref", logref.Opaque(identity.Subject)),
 		slog.String("tenant_id", identity.TenantID),
 		slog.String("gateway_id", c.Params("gateway_id")),
