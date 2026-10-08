@@ -354,7 +354,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
 	if data.Decision == decisionBlocked {
 		recordGuardOutcome(in.Event, data)
-		return nil, blockError(resp)
+		return nil, blockError(resp, direction)
 	}
 	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
@@ -704,7 +704,7 @@ func (p *Plugin) transformDegraded(
 		data.Decision = decisionBlocked
 		data.FailureReason = ""
 		recordGuardOutcome(in.Event, data)
-		return nil, blockError(resp)
+		return nil, blockError(resp, data.Direction)
 	}
 	p.warn(ctx, "trustguard transform could not be applied, forwarding unmasked", attrs...)
 	data.Decision = decisionFailedOpen
