@@ -109,6 +109,7 @@ func (m *AdminAuthMiddleware) resolveServiceIdentity(tokenString string) (AdminI
 		GatewayID: claims.GatewayID,
 		Subject:   claims.Subject,
 		Scopes:    claims.Scopes,
+		Issuer:    claims.Issuer,
 	}, nil
 }
 
@@ -139,6 +140,7 @@ func (m *AdminAuthMiddleware) resolveConsoleIdentity(tokenString string) (AdminI
 		TenantID: claims.TenantID,
 		Subject:  claims.UserID,
 		Email:    claims.UserEmail,
+		Issuer:   claims.Issuer,
 	}
 	if claims.TenantID != "" {
 		return identity, nil

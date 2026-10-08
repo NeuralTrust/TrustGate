@@ -43,6 +43,9 @@ type AdminIdentity struct {
 	Subject   string
 	Email     string
 	Scopes    []string
+	// Issuer is the token's iss claim. It attributes the call to the service
+	// that minted the token and is never used for authorization.
+	Issuer string
 }
 
 // IsService reports whether the caller is a machine-to-machine credential.
