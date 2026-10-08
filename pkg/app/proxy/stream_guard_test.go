@@ -2322,7 +2322,7 @@ func TestStreamGuard_ANormalCompletionKeepsItsSingleFinal(t *testing.T) {
 
 	// The same stream with the client leaving at the very last line.
 	runner = &scriptedRunner{}
-	g = abortedGuard(t, runner, openAIStreamLines(), len(openAIStreamLines())*2)
+	abortedGuard(t, runner, openAIStreamLines(), len(openAIStreamLines())*2)
 	finals = 0
 	for _, seg := range runner.segments {
 		if seg.Final {
