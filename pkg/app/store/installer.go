@@ -81,6 +81,11 @@ type InstallResult struct {
 	// this exact instance rather than "whichever row has this code". Empty when no
 	// row was recorded (RequiresConfig / RequiresAdminSetup).
 	InstanceID string
+	// RegistryID is the configured instance (registry) the install is bound to,
+	// which is what a connect link pins: the account belongs to the server, not
+	// to the installation row. Nil when the binding is implicit (the code's only
+	// instance), where the code alone names the server.
+	RegistryID ids.RegistryID
 	// Pending is true when the install was recorded as a request awaiting
 	// approval (server needs approval, or is not on the shelf yet).
 	Pending          bool
@@ -309,6 +314,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		Name:             displayName(entry, code),
 		Status:           decision.status,
 		InstanceID:       record.ID.String(),
+		RegistryID:       decision.registryID,
 		Pending:          decision.status == installationdomain.StatusPendingApproval,
 		RequiresAuth:     requiresUserAuth(entry, decision.bound),
 		AlreadyInstalled: alreadyInstalled,

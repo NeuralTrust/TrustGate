@@ -70,8 +70,9 @@ type ConfigureGateway interface {
 
 // ServerConnectGateway mints a connect ticket scoped to one catalog server, so
 // the install's OAuth connect link opens the focused single-server connect page.
-// appoauth.ConnectService satisfies it. instanceID pins the ticket to the exact
-// installation instance the install recorded ("" when none was).
+// appoauth.ConnectService satisfies it. instanceID pins the ticket to the
+// configured instance (registry id) the install is bound to ("" when the code
+// alone names it).
 type ServerConnectGateway interface {
 	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
 }
@@ -276,10 +277,17 @@ func (t *storeTool) install(
 	// have to hunt for it in their client. Offered even when the server was already
 	// installed: "installed" is not "connected", so a re-install of an unconnected
 	// server must still surface the link. Not offered when nothing was installed
-	// (an admin must connect the server first).
+	// (an admin must connect the server first). The link pins the server the
+	// install is bound to, never the installation row: the connect page resolves
+	// its pin against the gateway's servers, and a row id matches none of them,
+	// which left the page waiting for a server that was already there.
 	connectURL := ""
 	if res.RequiresAuth && !res.RequiresAdminSetup {
-		connectURL, err = t.connectLink(ctx, rc, baseURL, res.Code, res.InstanceID)
+		registryID := ""
+		if !res.RegistryID.IsNil() {
+			registryID = res.RegistryID.String()
+		}
+		connectURL, err = t.connectLink(ctx, rc, baseURL, res.Code, registryID)
 		if err != nil {
 			return nil, err
 		}
@@ -318,7 +326,7 @@ func linkMarkdown(label, url string) string {
 func (t *storeTool) connectLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code, instanceID string,
+	baseURL, code, registryID string,
 ) (string, error) {
 	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
 		return "", nil
@@ -328,7 +336,7 @@ func (t *storeTool) connectLink(
 		return "", ErrNoPrincipal
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code, instanceID)
+	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code, registryID)
 	if err != nil {
 		return "", fmt.Errorf("%w: create connection ticket: %w", ErrStoreToolUnavailable, err)
 	}
