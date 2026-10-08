@@ -9393,6 +9393,10 @@ const docTemplate = `{
                 },
                 "registry_id": {
                     "type": "string"
+                },
+                "shared": {
+                    "description": "Shared is an instance with one account for everyone, which only an\nadministrator connects and disconnects.",
+                    "type": "boolean"
                 }
             }
         },

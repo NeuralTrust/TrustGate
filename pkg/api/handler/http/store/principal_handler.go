@@ -140,6 +140,7 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 			Code:           conn.Code,
 			RegistryID:     conn.RegistryID.String(),
 			Registry:       conn.Registry,
+			Shared:         conn.Shared,
 			Linked:         conn.Linked,
 			AccountRef:     conn.AccountRef,
 			NeedsReconnect: conn.NeedsReconnect,

@@ -81,10 +81,13 @@ type PrincipalInstall struct {
 }
 
 type PrincipalConnection struct {
-	Provider       string     `json:"provider"`
-	Code           string     `json:"code,omitempty"`
-	RegistryID     string     `json:"registry_id"`
-	Registry       string     `json:"registry"`
+	Provider   string `json:"provider"`
+	Code       string `json:"code,omitempty"`
+	RegistryID string `json:"registry_id"`
+	Registry   string `json:"registry"`
+	// Shared is an instance with one account for everyone, which only an
+	// administrator connects and disconnects.
+	Shared         bool       `json:"shared"`
 	Linked         bool       `json:"linked"`
 	AccountRef     string     `json:"account_ref,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
