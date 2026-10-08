@@ -44,6 +44,13 @@ type PluginError struct {
 	Message    string
 	Headers    map[string][]string
 	Body       []byte
+
+	// NotAVerdict marks a 403 that is not a policy stopping a leg of the
+	// exchange: a configuration or guard failure that happens to answer 403.
+	// WithBlockDirection leaves it without the direction header. It is an
+	// explicit field rather than a match on Type because some of these errors
+	// carry no Type, and a Type list would have to be kept in step by hand.
+	NotAVerdict bool
 }
 
 func (e *PluginError) Error() string {
@@ -96,15 +103,16 @@ func BlockDirectionForStage(stage policy.Stage) string {
 // WithBlockDirection returns pe with BlockDirectionHeader set to direction when
 // pe is a policy block, and pe untouched otherwise.
 //
-// A policy block is a 403. Every plugin that denies a request on its own
-// judgement answers 403 (the guardrails, the allowlists, the cost cap), while
-// the failures that are not a verdict on the content use another status: 429
-// for a rate limit, 400 for an undecodable body, 502/503/504 for a guard that
-// could not be consulted. Keying on the status keeps those out without asking
-// every plugin to opt in, and a plugin that already set the header keeps its
-// own value. The receiver is never mutated: plugins may return shared errors.
+// A policy block is a 403 by which a policy stopped the request or response
+// leg; guard failures and configuration failures do not carry it. Every plugin
+// that denies on its own judgement answers 403 (the guardrails, the allowlists,
+// the cost cap), while failures that are not a verdict on the content use
+// another status: 429 for a rate limit, 400 for an undecodable body, 502/503/504
+// for a guard that could not be consulted. The few failures that answer 403
+// anyway set NotAVerdict. A plugin that already set the header keeps its own
+// value. The receiver is never mutated: plugins may return shared errors.
 func WithBlockDirection(pe *PluginError, direction string) *PluginError {
-	if pe == nil || pe.StatusCode != http.StatusForbidden || direction == "" {
+	if pe == nil || pe.StatusCode != http.StatusForbidden || pe.NotAVerdict || direction == "" {
 		return pe
 	}
 	want := textproto.CanonicalMIMEHeaderKey(BlockDirectionHeader)
@@ -119,4 +127,41 @@ func WithBlockDirection(pe *PluginError, direction string) *PluginError {
 	out := *pe
 	out.Headers = headers
 	return &out
+}
+
+// stampedError keeps the chain a plugin wrapped its *PluginError in while
+// making errors.As hand out the stamped copy instead of the original, so a
+// caller's AsPluginError sees the header and errors.Is/As on the rest of the
+// chain still match.
+type stampedError struct {
+	err     error
+	stamped *PluginError
+}
+
+func (e *stampedError) Error() string { return e.err.Error() }
+func (e *stampedError) Unwrap() error { return e.err }
+
+func (e *stampedError) As(target any) bool {
+	if t, ok := target.(**PluginError); ok {
+		*t = e.stamped
+		return true
+	}
+	return false
+}
+
+// stampBlockDirection returns err itself unless it is, or wraps, a 403
+// *PluginError that WithBlockDirection actually changed.
+func stampBlockDirection(err error, direction string) error {
+	pe, ok := AsPluginError(err)
+	if !ok {
+		return err
+	}
+	stamped := WithBlockDirection(pe, direction)
+	if stamped == pe {
+		return err
+	}
+	if err == error(pe) {
+		return stamped
+	}
+	return &stampedError{err: err, stamped: stamped}
 }

@@ -16,6 +16,8 @@ package plugins
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -127,4 +129,35 @@ func TestExecutor_RunStage_StopUpstreamMaskGetsNoDirectionHeader(t *testing.T) {
 	require.True(t, out.ShortCircuit)
 	assert.NotContains(t, out.Headers, BlockDirectionHeader)
 	assert.NotContains(t, resp.Headers, BlockDirectionHeader)
+}
+
+func TestExecutor_RunStage_WrappedNonBlockComesBackUnchanged(t *testing.T) {
+	sentinel := errors.New("sentinel")
+	wrapped := fmt.Errorf("plugin: %w", errors.Join(sentinel, &PluginError{StatusCode: http.StatusTooManyRequests, Message: "slow"}))
+	_, _, err := runDenied(t, policy.StagePreRequest, &fakePlugin{name: "guard", err: wrapped})
+	require.Error(t, err)
+	assert.Same(t, wrapped, err, "an error that is not stamped is returned as it came")
+	assert.ErrorIs(t, err, sentinel)
+}
+
+func TestExecutor_RunStage_WrappedBlockKeepsTheChainAndIsStamped(t *testing.T) {
+	sentinel := errors.New("sentinel")
+	wrapped := fmt.Errorf("plugin: %w", errors.Join(sentinel, &PluginError{StatusCode: http.StatusForbidden, Message: "no"}))
+	_, _, err := runDenied(t, policy.StagePreResponse, &fakePlugin{name: "guard", err: wrapped})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sentinel)
+	assert.Equal(t, wrapped.Error(), err.Error())
+	pe, ok := AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, []string{BlockDirectionOutput}, pe.Headers[BlockDirectionHeader])
+}
+
+func TestExecutor_RunStage_NotAVerdictForbiddenGetsNoDirectionHeader(t *testing.T) {
+	_, _, err := runDenied(t, policy.StagePreRequest, &fakePlugin{
+		name: "guard",
+		err:  &PluginError{StatusCode: http.StatusForbidden, Message: "config", NotAVerdict: true},
+	})
+	pe, ok := AsPluginError(err)
+	require.True(t, ok)
+	assert.NotContains(t, pe.Headers, BlockDirectionHeader)
 }
