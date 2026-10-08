@@ -132,11 +132,9 @@ const (
 )
 
 const (
-	codeConsentRequired  = -32003
+	codeConsentRequired  = int(appmcp.CodeConsentRequired)
 	codeResourceNotFound = -32002
-	// codePolicyBlocked mirrors the app-layer policy-denial code, so a toolkit
-	// denial is classified alongside plugin blocks.
-	codePolicyBlocked = -32001
+	codePolicyBlocked    = int(appmcp.CodePolicyBlocked)
 )
 
 // reasonApplicationNotConnected tells a -32003 that carries no connect link

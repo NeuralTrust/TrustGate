@@ -40,8 +40,10 @@ const (
 
 type ConnectHandler struct {
 	connect            ConnectFlow
+	handoff            appoauth.ConnectHandoff
 	catalog            appcatalog.MCPServerCatalog
 	oauthPublicBaseURL string
+	cookies            FlowCookies
 	// holdFor and holdEvery bound how long one request waits, before it
 	// answers, for a server its ticket names to reach this plane (see
 	// awaitServer). Fields rather than constants so tests need not sleep.
@@ -61,10 +63,7 @@ const (
 // ConnectFlow is the connect service as the connect pages use it.
 type ConnectFlow interface {
 	Page(ctx context.Context, ticketID string) (*appoauth.ConnectPage, error)
-	StartOrigin(ctx context.Context, callbackOrigin, origin, ticketID string) (string, error)
 	Start(ctx context.Context, baseURL, startOrigin, ticketID, provider, instanceID string) (*appoauth.ConnectStart, error)
-	ReceiveCallback(ctx context.Context, provider, state, code, errCode, errDesc string) (string, error)
-	TakeFinish(ctx context.Context, token string) (*appoauth.ConnectFinish, error)
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider, instanceID string) error
 }
@@ -73,14 +72,20 @@ type ConnectFlow interface {
 // oauthPublicBaseURL, when non-empty, is used as the redirect_uri origin for
 // authorize and code exchange instead of the request Host (see
 // MCP_OAUTH_PUBLIC_BASE_URL). Empty keeps per-request BaseURL behavior.
+// handoff carries the provider's answer back to where the flow started, and
+// cookies decides the flow cookie's form as it does for the MCP sign-in.
 func NewConnectHandler(
 	connect ConnectFlow,
+	handoff appoauth.ConnectHandoff,
 	catalog appcatalog.MCPServerCatalog,
 	oauthPublicBaseURL string,
+	cookies FlowCookies,
 ) *ConnectHandler {
 	return &ConnectHandler{
 		connect:            connect,
+		handoff:            handoff,
 		catalog:            catalog,
+		cookies:            cookies,
 		oauthPublicBaseURL: strings.TrimRight(strings.TrimSpace(oauthPublicBaseURL), "/"),
 		holdFor:            connectPageHoldFor,
 		holdEvery:          connectPageHoldEvery,
@@ -104,10 +109,10 @@ func (h *ConnectHandler) Page(c *fiber.Ctx) error {
 // reports whether it did; any error has already been answered.
 func (h *ConnectHandler) toCallbackOrigin(c *fiber.Ctx, ticket string) (bool, error) {
 	callback := h.connectBaseURL(c)
-	if strings.EqualFold(callback, c.BaseURL()) {
+	if sameHost(callback, c) {
 		return false, nil
 	}
-	_, err := h.connect.StartOrigin(c.UserContext(), callback, c.BaseURL(), ticket)
+	_, err := h.handoff.StartOrigin(c.UserContext(), callback, c.BaseURL(), ticket)
 	switch {
 	case err == nil:
 		return false, nil
@@ -158,16 +163,13 @@ func (h *ConnectHandler) Start(c *fiber.Ctx) error {
 	if !sentFromOwnPage(c) {
 		return h.pageError(c, errConnectNotFromPage)
 	}
-	if !cookieTransportAllowed(c, h.connectBaseURL(c)) {
-		return h.pageError(c, errConnectNeedsHTTPS)
-	}
 	started, err := h.connect.Start(
 		c.UserContext(), h.connectBaseURL(c), c.BaseURL(), c.Query("ticket"), providerParam(c), c.Query("instance"),
 	)
 	if err != nil {
 		return h.pageError(c, err)
 	}
-	setConnectCookie(c, started.State)
+	h.setConnectCookie(c, started.State)
 	// Never cache or prefetch the start: each one mints a new state upstream.
 	c.Set(fiber.HeaderCacheControl, "no-store")
 	return c.Redirect(started.Location, fiber.StatusFound)
@@ -177,15 +179,17 @@ func (h *ConnectHandler) Start(c *fiber.Ctx) error {
 // not complete the connection: it hands the result to the origin the flow was
 // started from, whose cookie decides whether this browser may finish it.
 func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
-	location, err := h.connect.ReceiveCallback(
-		c.UserContext(), providerParam(c),
-		c.Query("state"), c.Query("code"), c.Query("error"), c.Query("error_description"),
-	)
+	provider, state := providerParam(c), c.Query("state")
+	code, errCode, errDesc := c.Query("code"), c.Query("error"), c.Query("error_description")
+	receipt, err := h.handoff.ReceiveCallback(c.UserContext(), provider, state, code, errCode, errDesc)
 	if err != nil {
 		return h.pageError(c, err)
 	}
 	c.Set(fiber.HeaderCacheControl, "no-store")
-	return c.Redirect(location, fiber.StatusFound)
+	if receipt.Direct {
+		return h.complete(c, provider, state, code, errCode, errDesc)
+	}
+	return c.Redirect(receipt.FinishURL, fiber.StatusFound)
 }
 
 // Finish completes a connection on the origin it was started from, in the
@@ -193,20 +197,22 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 // started authorization is left as it was.
 func (h *ConnectHandler) Finish(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderCacheControl, "no-store")
-	if !cookieTransportAllowed(c, h.connectBaseURL(c)) {
-		return h.pageError(c, errConnectNeedsHTTPS)
-	}
-	finish, err := h.connect.TakeFinish(c.UserContext(), c.Query("f"))
+	finish, err := h.handoff.TakeFinish(c.UserContext(), c.Query("f"))
 	if err != nil {
 		return h.pageError(c, err)
 	}
-	if !connectBoundTo(c, finish.State) {
+	if !h.connectBoundTo(c, finish.State) {
 		return h.pageError(c, errConnectStartedElsewhere)
 	}
-	clearConnectCookie(c, finish.State)
+	h.clearConnectCookie(c, finish.State)
+	return h.complete(c, finish.Provider, finish.State, finish.Code, finish.ErrCode, finish.ErrDesc)
+}
+
+// complete redeems the provider's answer and shows the page the connection
+// lands on.
+func (h *ConnectHandler) complete(c *fiber.Ctx, provider, state, code, errCode, errDesc string) error {
 	ticketID, err := h.connect.Callback(
-		c.UserContext(), h.connectBaseURL(c), finish.Provider,
-		finish.State, finish.Code, finish.ErrCode, finish.ErrDesc,
+		c.UserContext(), h.connectBaseURL(c), provider, state, code, errCode, errDesc,
 	)
 	if err != nil {
 		if ticketID == "" {

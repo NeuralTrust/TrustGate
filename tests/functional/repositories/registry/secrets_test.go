@@ -358,3 +358,37 @@ func TestRepository_UpdateDropsCredentialWhenAuthModeChanges(t *testing.T) {
 	_, stored := storedMCPTarget(t, conn, reg.ID)
 	require.Empty(t, stored.Auth.Value)
 }
+
+func TestRepository_StaleUnreadableReadDoesNotBlankAReEnteredCredential(t *testing.T) {
+	keyA, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "race")
+	keyB := setupRepoWithKey(t, conn, "another-functional-secret-0123456789", true)
+
+	reg := staticMCPRegistry(t, gwID, "static")
+	require.NoError(t, keyA.Save(ctx, reg))
+
+	stale, err := keyB.FindByID(ctx, reg.ID)
+	require.NoError(t, err)
+	require.True(t, stale.MCPTarget.Auth.SecretUnreadable)
+	require.Equal(t, []string{"X-Api-Key"}, stale.MCPTarget.UnreadableHeaders)
+
+	reentry, err := keyB.FindByID(ctx, reg.ID)
+	require.NoError(t, err)
+	reentry.MCPTarget.Auth.Value = "Bearer re-entered"
+	reentry.MCPTarget.Auth.SecretUnreadable = false
+	reentry.MCPTarget.Headers["X-Api-Key"] = "re-entered-header"
+	reentry.MCPTarget.UnreadableHeaders = nil
+	require.NoError(t, keyB.Update(ctx, reentry))
+
+	stale.Name = "renamed-from-a-stale-read"
+	require.NoError(t, stale.Validate())
+	require.NoError(t, keyB.Update(ctx, stale))
+
+	got, err := keyB.FindByID(ctx, reg.ID)
+	require.NoError(t, err)
+	require.Equal(t, "renamed-from-a-stale-read", got.Name)
+	require.Equal(t, "Bearer re-entered", got.MCPTarget.Auth.Value, "the re-entered value survives the stale update")
+	require.Equal(t, "re-entered-header", got.MCPTarget.Headers["X-Api-Key"])
+	require.False(t, got.MCPTarget.Auth.SecretUnreadable)
+}

@@ -70,7 +70,7 @@ func updateWithRegistry(t *testing.T, mutate func(id ids.GatewayID, reg *registr
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Maybe()
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	updater := appgateway.NewUpdater(repo, registries, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+	updater := appgateway.NewUpdater(repo, registries, newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
 	return updater.Update(context.Background(), appgateway.UpdateInput{ID: id, TrafficLabeling: labelingFor(reg)})
 }
 
@@ -142,7 +142,7 @@ func TestUpdater_Update_TrafficLabeling_DisabledSkipsTheRegistry(t *testing.T) {
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+	updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:              id,
 		TrafficLabeling: &trafficlabel.Config{Enabled: false, RegistryID: ids.New[ids.RegistryKind]().String(), Model: "m"},
@@ -169,7 +169,7 @@ func TestUpdater_Update_TrafficLabeling_KeepsAndClears(t *testing.T) {
 		publisher := cachemocks.NewEventPublisher(t)
 		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 
-		updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+		updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
 		_, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, Slug: ptr("renamed")})
 		require.NoError(t, err)
 	})
@@ -189,7 +189,7 @@ func TestUpdater_Update_TrafficLabeling_KeepsAndClears(t *testing.T) {
 		publisher := cachemocks.NewEventPublisher(t)
 		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 
-		updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+		updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
 		got, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, ClearTrafficLabeling: true})
 		require.NoError(t, err)
 		assert.Nil(t, got.TrafficLabeling)
@@ -203,7 +203,7 @@ func TestUpdater_Update_TrafficLabeling_KeepsAndClears(t *testing.T) {
 		existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
 		repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 
-		updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), cachemocks.NewEventPublisher(t), nil, newTestLogger(), nil, false)
+		updater := appgateway.NewUpdater(repo, registrymocks.NewRepository(t), newCacheManager(), cachemocks.NewEventPublisher(t), nil, newTestLogger(), nil, false, nil)
 		_, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, TrafficLabeling: &trafficlabel.Config{Enabled: true}})
 		require.ErrorIs(t, err, commonerrors.ErrValidation)
 	})
@@ -225,7 +225,7 @@ func TestCreator_Create_TrafficLabeling(t *testing.T) {
 			Once()
 
 		in := &trafficlabel.Config{Enabled: false, Model: " gpt-4o-mini "}
-		creator := appgateway.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), nil, newTestLogger(), nil, true)
+		creator := appgateway.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), nil, newTestLogger(), nil, true, nil)
 		_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod", TenantID: "acme", TrafficLabeling: in})
 		require.NoError(t, err)
 		assert.Equal(t, " gpt-4o-mini ", in.Model, "Create must not mutate the caller's config")
@@ -239,7 +239,7 @@ func TestCreator_Create_TrafficLabeling(t *testing.T) {
 		registries := registrymocks.NewRepository(t)
 		registries.EXPECT().FindByID(mock.Anything, other.ID).Return(other, nil).Once()
 
-		creator := appgateway.NewCreator(repo, registries, newCacheManager(), nil, newTestLogger(), nil, true)
+		creator := appgateway.NewCreator(repo, registries, newCacheManager(), nil, newTestLogger(), nil, true, nil)
 		_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod", TenantID: "acme", TrafficLabeling: labelingFor(other)})
 		require.ErrorIs(t, err, appgateway.ErrInvalidTrafficLabelingRegistry)
 	})

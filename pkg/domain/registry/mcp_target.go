@@ -174,6 +174,11 @@ type MCPTarget struct {
 	// installation lookup, which cannot tell one instance from another. Nil in the
 	// common single-instance case, where the by-code lookup is unambiguous.
 	InstanceConfig map[string]string `json:"-"`
+	// UnreadableHeaders names, in order, the static headers read from storage
+	// whose value could not be decrypted and was returned empty. An update that
+	// sends such a header back empty or masked keeps the stored value (see
+	// ResolveSecretsFrom and the repository's update). Never serialised.
+	UnreadableHeaders []string `json:"-"`
 }
 
 // MCPURLVariable declares one per-user placeholder in an MCPTarget URL template.
@@ -319,7 +324,7 @@ func (t *MCPTarget) Validate() error {
 		return fmt.Errorf("%w: unsupported source %q", ErrInvalidMCPTarget, t.Source)
 	}
 	if name, masked := maskedHeader(t.Headers); masked {
-		return fmt.Errorf("%w: header %q has a masked value but no stored value to keep",
+		return fmt.Errorf("%w: header %q looks masked; send the full value or the masked value unchanged",
 			ErrInvalidMCPTarget, name)
 	}
 	if t.Auth != nil {
@@ -498,12 +503,13 @@ func isHTTPURL(s string) bool {
 
 // ResolveSecretsFrom keeps the stored credentials an update left blank or sent
 // back masked: the auth secret of an unchanged mode and each static header
-// echoed masked (see ResolveHeaders).
+// echoed as it was read (see ResolveHeaders). Headers that could not be
+// decrypted on read stay marked while they come back empty or masked.
 func (t *MCPTarget) ResolveSecretsFrom(prev *MCPTarget) {
 	if t == nil || prev == nil {
 		return
 	}
-	t.Headers = ResolveHeaders(t.Headers, prev.Headers)
+	t.Headers, t.UnreadableHeaders = resolveHeaders(t.Headers, prev.Headers, prev.UnreadableHeaders)
 	if t.Auth == nil || prev.Auth == nil {
 		return
 	}
