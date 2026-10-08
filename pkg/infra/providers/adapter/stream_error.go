@@ -23,9 +23,15 @@ import (
 // payload, as OpenAI-wire providers do when they fail after the response has
 // started. A decoder reports it on CanonicalStreamChunk.UpstreamError.
 type UpstreamStreamError struct {
-	Type    string
-	Code    string
-	Message string
+	Type           string
+	Code           string
+	Message        string
+	decoderFailure bool
+}
+
+// DecoderFailure reports whether the decoder could not read an upstream event.
+func (e *UpstreamStreamError) DecoderFailure() bool {
+	return e != nil && e.decoderFailure
 }
 
 func (e *UpstreamStreamError) Error() string {
