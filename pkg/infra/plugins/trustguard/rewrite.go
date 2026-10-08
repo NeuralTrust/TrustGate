@@ -131,6 +131,55 @@ func rewriteResponse(reg *adapter.Registry, format adapter.Format, cresp *adapte
 	return body, true
 }
 
+// rewriteResponseFromPayload is rewriteResponse for the messages[] payload
+// TrustGuard echoes on a protocol=llm response transform. The text comes from
+// the joined content as before; the tool call arguments are mapped back by
+// position, because a secret in a call's arguments is masked there and nowhere
+// else. An echo that carries a tool_calls list of another length fails rather
+// than forwarding the call with the secret intact.
+func rewriteResponseFromPayload(reg *adapter.Registry, format adapter.Format, cresp *adapter.CanonicalResponse, payload map[string]any) ([]byte, bool) {
+	if reg == nil || cresp == nil {
+		return nil, false
+	}
+	hasText := strings.TrimSpace(cresp.Content) != ""
+	var masked string
+	if hasText {
+		var ok bool
+		if masked, ok = transformedInput(payload); !ok {
+			return nil, false
+		}
+	}
+	var writes []func()
+	if msgs, present := payload["messages"].([]any); present && len(cresp.ToolCalls) > 0 {
+		if len(msgs) != 1 {
+			return nil, false
+		}
+		msg, _ := msgs[0].(map[string]any)
+		var ok bool
+		if writes, ok = transformedCallArguments(cresp.ToolCalls, msg["tool_calls"]); !ok {
+			return nil, false
+		}
+	}
+	if !hasText && len(writes) == 0 {
+		return nil, false
+	}
+	if hasText {
+		cresp.Content = masked
+	}
+	for _, w := range writes {
+		w()
+	}
+	adp, err := reg.GetAdapter(format)
+	if err != nil {
+		return nil, false
+	}
+	body, err := adp.EncodeResponse(cresp)
+	if err != nil {
+		return nil, false
+	}
+	return body, true
+}
+
 // applyMaskedRequest writes the masked text back into the same segments that
 // joinRequestText concatenated, for a guard that answers with the legacy
 // "input" string. It relies on the mask keeping the original line count, which
@@ -220,11 +269,15 @@ func applyTransformedMessages(creq *adapter.CanonicalRequest, payload map[string
 // span says transformed. TrustGuard re-marshals arguments it parses, so an
 // argument is only written back when its JSON value changed, not its bytes.
 func transformedToolArguments(msg *adapter.CanonicalMessage, raw any) ([]func(), bool) {
-	if len(msg.ToolCalls) == 0 {
+	return transformedCallArguments(msg.ToolCalls, raw)
+}
+
+func transformedCallArguments(toolCalls []adapter.CanonicalToolCall, raw any) ([]func(), bool) {
+	if len(toolCalls) == 0 {
 		return nil, raw == nil
 	}
 	calls, ok := raw.([]any)
-	if !ok || len(calls) != len(msg.ToolCalls) {
+	if !ok || len(calls) != len(toolCalls) {
 		return nil, false
 	}
 	var writes []func()
@@ -235,7 +288,7 @@ func transformedToolArguments(msg *adapter.CanonicalMessage, raw any) ([]func(),
 		if !ok {
 			return nil, false
 		}
-		tc := &msg.ToolCalls[j]
+		tc := &toolCalls[j]
 		if !sameJSON(tc.Arguments, args) {
 			writes = append(writes, func() { tc.Arguments = args })
 		}
