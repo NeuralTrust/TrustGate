@@ -176,6 +176,18 @@ var mediaSignatures = map[string][]byte{
 	"zip":  {'P', 'K', 0x03, 0x04, 0x14, 0x00},
 	"ogg":  []byte("OggS\x00\x02"),
 	"mp3":  []byte("ID3\x04\x00"),
+
+	"webm/mkv EBML":   {0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42},
+	"flv":             []byte("FLV\x01\x05"),
+	"asf/wmv":         {0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11},
+	"mpeg-ps":         {0x00, 0x00, 0x01, 0xBA, 0x44},
+	"aac adts FFF1":   {0xFF, 0xF1, 0x50, 0x80},
+	"aac adts FFF9":   {0xFF, 0xF9, 0x50, 0x80},
+	"mpeg audio FFFA": {0xFF, 0xFA, 0x90, 0x00},
+	"mpeg audio FFFB": {0xFF, 0xFB, 0x90, 0x00},
+	"mpeg audio FFF3": {0xFF, 0xF3, 0x90, 0x00},
+	"mpeg audio FFE3": {0xFF, 0xE3, 0x90, 0x00},
+	"ole":             {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1},
 }
 
 // b64 is the base64 of a file of n bytes that starts with a real media signature.
@@ -278,6 +290,21 @@ func TestNativeAdapter_DecodeRequest_OnlyMediaIsDropped(t *testing.T) {
 	}
 }
 
+// TwelveLabs carries the media in mediaSource.base64String next to the prompt: the
+// blob stays out of the view and the prompt stays in.
+func TestNativeAdapter_DecodeRequest_TwelveLabsBase64StringIsMedia(t *testing.T) {
+	for kind := range mediaSignatures {
+		t.Run(kind, func(t *testing.T) {
+			blob := b64(5000, kind)
+			body := `{"inputPrompt":"describe","mediaSource":{"base64String":"` + blob + `"}}`
+			cr, err := (&BedrockNativeAdapter{}).DecodeRequest([]byte(body))
+			require.NoError(t, err)
+			assert.Contains(t, requestText(cr), "describe")
+			assert.NotContains(t, requestText(cr), blob[:100])
+		})
+	}
+}
+
 func TestNativeMasker_MaskRequest_HostileBodyStaysLinear(t *testing.T) {
 	requireLinear(t, 5_000, 5*time.Second, func(n int) {
 		body := hostileBody(t, 7*n, 8*n)
@@ -298,19 +325,28 @@ func TestHasS3Source(t *testing.T) {
 	t.Parallel()
 	s3 := `{"s3Location":{"uri":"s3://bucket/key","bucketOwner":"123456789012"}}`
 	for name, body := range map[string]string{
-		"converse document": `{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}]}`,
-		"converse image":    `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":` + s3 + `}}]}]}`,
-		"converse video":    `{"messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
-		"nova invoke":       `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
-		"other casing":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"S3Location":{"uri":"s3://b/k"}}}}]}]}`,
+		"converse document":   `{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}]}`,
+		"converse image":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":` + s3 + `}}]}]}`,
+		"converse video":      `{"messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
+		"nova invoke":         `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
+		"other casing":        `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"S3Location":{"uri":"s3://b/k"}}}}]}]}`,
+		"pegasus mediaSource": `{"inputPrompt":"describe this video","mediaSource":` + s3 + `}`,
+		"marengo mediaSource": `{"inputType":"video","mediaSource":{"s3Location":{"uri":"s3://b/k.mp4","bucketOwner":"123456789012"}}}`,
+		"capital Source":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","Source":` + s3 + `}}]}]}`,
 	} {
 		assert.True(t, HasS3Source([]byte(body)), name)
 	}
 	for name, body := range map[string]string{
-		"inline bytes": `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"AAAA"}}}]}]}`,
-		"plain text":   `{"messages":[{"role":"user","content":[{"text":"s3Location"}]}]}`,
-		"unrelated":    `{"additionalModelRequestFields":{"s3Location":"x"}}`,
-		"not json":     `nope`,
+		"inline bytes":          `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"AAAA"}}}]}]}`,
+		"plain text":            `{"messages":[{"role":"user","content":[{"text":"s3Location"}]}]}`,
+		"unrelated":             `{"additionalModelRequestFields":{"s3Location":"x"}}`,
+		"not json":              `nope`,
+		"toolUse input history": `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}}]}]}`,
+		"toolResult json":       `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"json":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}}]}]}`,
+		"anthropic tool_use":    `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
+		"anthropic tool schema": `{"tools":[{"name":"copy","input_schema":{"type":"object","properties":{"s3Location":{"uri":"x"}}}}]}`,
+		"converse toolSpec":     `{"toolConfig":{"tools":[{"toolSpec":{"name":"c","inputSchema":{"json":{"s3Location":{"uri":"x"}}}}}]}}`,
+		"tool arg string form":  `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":"s3://a/b"}}}}]}]}`,
 	} {
 		assert.False(t, HasS3Source([]byte(body)), name)
 	}
@@ -335,5 +371,7 @@ func TestSurfacedIndex_ChargesBytesNotComparisons(t *testing.T) {
 		assert.False(t, idx.has(line+"\n"+tail+fmt.Sprintf("%08d", n+i)))
 	}
 	assert.LessOrEqual(t, idx.budget, 0, "n*n candidates of 8 KiB each is more than the budget allows")
-	assert.True(t, idx.has(line+"\n"+tail+fmt.Sprintf("%08d", 0)) || idx.budget <= 0)
+	// Once the budget is spent has() stops comparing and answers false, even for a
+	// line run that is surfaced: the string is kept, which only repeats text.
+	assert.False(t, idx.has(line+"\n"+tail+fmt.Sprintf("%08d", 0)))
 }
