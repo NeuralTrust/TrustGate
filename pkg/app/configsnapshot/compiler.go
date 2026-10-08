@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
@@ -799,10 +798,17 @@ func (c *Compiler) attachSharedOAuth(reg *registrydomain.Registry) {
 	if auth.Mode != registrydomain.MCPAuthModeForwarded || auth.Registration == registrydomain.RegistrationAuto || auth.ClientSecret != "" {
 		return
 	}
-	code := strings.TrimSpace(reg.MCPTarget.Code)
-	creds, ok := c.sharedOAuth.CredentialsFor(code)
-	if !ok || strings.TrimSpace(auth.ClientID) != creds.ClientID ||
-		!mcpoauth.UsesProviderEndpoints(code, auth.AuthorizeURL, auth.TokenURL) {
+	// Strict: a snapshot carries the secret as is, so endpoints a data plane
+	// would discover later never qualify.
+	creds, ok := mcpoauth.SharedClientFor(c.sharedOAuth, mcpoauth.SharedClientQuery{
+		Code:         reg.MCPTarget.Code,
+		Provider:     auth.Provider,
+		ClientID:     auth.ClientID,
+		AuthorizeURL: auth.AuthorizeURL,
+		TokenURL:     auth.TokenURL,
+		Strict:       true,
+	})
+	if !ok {
 		return
 	}
 	withSecret := *auth

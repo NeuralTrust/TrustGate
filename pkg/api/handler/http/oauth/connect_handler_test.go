@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -42,6 +43,7 @@ type stubConnectService struct {
 	callbacks   int
 	gotOrigin   string
 	originErr   error
+	direct      bool
 	finishes    map[string]*appoauth.ConnectFinish
 	callbackArg []string
 }
@@ -93,9 +95,12 @@ func (s *stubConnectService) StartOrigin(_ context.Context, _, origin, _ string)
 	return origin, nil
 }
 
-func (s *stubConnectService) ReceiveCallback(_ context.Context, provider, state, code, errCode, errDesc string) (string, error) {
+func (s *stubConnectService) ReceiveCallback(_ context.Context, provider, state, code, errCode, errDesc string) (*appoauth.CallbackReceipt, error) {
 	if state != "the-state" {
-		return "", &appoauth.OAuthError{Code: "invalid_request", Description: "unknown or expired state"}
+		return nil, &appoauth.OAuthError{Code: "invalid_request", Description: "unknown or expired state"}
+	}
+	if s.direct {
+		return &appoauth.CallbackReceipt{Direct: true}, nil
 	}
 	if s.finishes == nil {
 		s.finishes = map[string]*appoauth.ConnectFinish{}
@@ -106,7 +111,18 @@ func (s *stubConnectService) ReceiveCallback(_ context.Context, provider, state,
 		Provider: strings.Clone(provider), State: strings.Clone(state), Code: strings.Clone(code),
 		ErrCode: strings.Clone(errCode), ErrDesc: strings.Clone(errDesc),
 	}
-	return "https://start.example" + appoauth.ConnectFinishPath + "?f=fin", nil
+	return &appoauth.CallbackReceipt{FinishURL: "https://start.example" + appoauth.ConnectFinishPath + "?f=fin"}, nil
+}
+
+// testConnectFlow is a stub that serves as both the connect service and its
+// handoff.
+type testConnectFlow interface {
+	ConnectFlow
+	appoauth.ConnectHandoff
+}
+
+func newTestConnectHandler(flow testConnectFlow, catalog appcatalog.MCPServerCatalog, publicBase string) *ConnectHandler {
+	return NewConnectHandler(flow, flow, catalog, publicBase, FlowCookies{})
 }
 
 func (s *stubConnectService) TakeFinish(_ context.Context, token string) (*appoauth.ConnectFinish, error) {
@@ -163,7 +179,7 @@ func (s *stubConnectService) ChainURL(context.Context, string, ids.GatewayID, st
 
 func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
+	h := newTestConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
 		ConsumerPath: "/v1/mcp/dev",
 		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "github-mcp"}},
 	}}, nil, "")
@@ -187,7 +203,7 @@ func TestConnectPage_ScopedToOneServerRendersSingleCard(t *testing.T) {
 	t.Parallel()
 	// A ticket scoped to a catalog code (Code set) renders the focused
 	// single-server connect page, not the full provider grid.
-	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
+	h := newTestConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
 		ConsumerPath: "/dev",
 		Code:         "com.notion/mcp",
 		Providers: []appoauth.ProviderStatus{
@@ -215,7 +231,7 @@ func TestConnectPage_ScopedToOneServerRendersSingleCard(t *testing.T) {
 
 func TestConnectPage_MissingTicketIs401(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{}, nil, "")
+	h := newTestConnectHandler(&stubConnectService{}, nil, "")
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 	res, err := app.Test(httptest.NewRequest("GET", "/v1/mcp/dev/connect", nil))
@@ -229,7 +245,7 @@ func TestConnectPage_MissingTicketIs401(t *testing.T) {
 
 func TestConnectPage_ExpiredTicketIs401(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{err: appoauth.ErrTicketNotFound}, nil, "")
+	h := newTestConnectHandler(&stubConnectService{err: appoauth.ErrTicketNotFound}, nil, "")
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 	res, err := app.Test(httptest.NewRequest("GET", "/x/connect?ticket=stale", nil))
@@ -243,7 +259,7 @@ func TestConnectPage_ExpiredTicketIs401(t *testing.T) {
 
 func TestConnectStart_RedirectsToTheProvider(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{}, nil, "")
+	h := newTestConnectHandler(&stubConnectService{}, nil, "")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
 	res, err := app.Test(ownPagePost("/oauth/connect/github?ticket=abc"))
@@ -264,7 +280,7 @@ func TestConnectStart_RedirectsToTheProvider(t *testing.T) {
 func TestConnectStart_ProviderWithSlash(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
 	res, err := app.Test(ownPagePost("/oauth/connect/app.linear/mcp?ticket=abc"))
@@ -286,7 +302,7 @@ func TestConnectStart_ProviderWithSlash(t *testing.T) {
 func TestConnectStart_ProviderWithEscapedSlash(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
 	res, err := app.Test(ownPagePost("/oauth/connect/app.linear%2Fmcp?ticket=abc"))
@@ -304,7 +320,7 @@ func TestConnectStart_ProviderWithEscapedSlash(t *testing.T) {
 func TestConnectStart_UsesConfiguredPublicBaseURL(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	h := NewConnectHandler(stub, nil, "https://oauth.mcp.example.com/")
+	h := newTestConnectHandler(stub, nil, "https://oauth.mcp.example.com/")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
 	req := ownPagePost("/oauth/connect/com.google.workspace/calendar?ticket=abc")
@@ -331,7 +347,7 @@ func TestConnectFinish_UsesConfiguredPublicBaseURL(t *testing.T) {
 		ConsumerPath: "/tools/mcp",
 		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "g", Linked: true}},
 	}}
-	h := NewConnectHandler(stub, nil, "https://oauth.mcp.example.com")
+	h := newTestConnectHandler(stub, nil, "https://oauth.mcp.example.com")
 	app := fiber.New()
 	app.Get(ConnectFinishPath, h.Finish)
 	req := boundFinish(stub, "github", "state=s&code=c")
@@ -353,7 +369,7 @@ func TestConnectFinish_UsesConfiguredPublicBaseURL(t *testing.T) {
 func TestConnectStart_FallsBackToRequestBaseURL(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
 	req := ownPagePost("/oauth/connect/github?ticket=abc")
@@ -412,7 +428,7 @@ var (
 func TestConnectPage_HoldsForAServerThatIsArriving(t *testing.T) {
 	t.Parallel()
 	flow := &sequencedConnectFlow{pages: []*appoauth.ConnectPage{linearNotHereYet, linearNotHereYet, linearArrived}}
-	h := NewConnectHandler(flow, nil, "")
+	h := newTestConnectHandler(flow, nil, "")
 	h.holdFor, h.holdEvery = time.Second, time.Millisecond
 
 	body := connectPageBody(t, h, "/store/mcp/connect?ticket=tk")
@@ -431,7 +447,7 @@ func TestConnectPage_HoldsForAServerThatIsArriving(t *testing.T) {
 // page, with its own logo rather than the generic MCP mark.
 func TestConnectPage_FallsBackToGettingReadyAfterTheHold(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&sequencedConnectFlow{pages: []*appoauth.ConnectPage{linearNotHereYet}}, nil, "")
+	h := newTestConnectHandler(&sequencedConnectFlow{pages: []*appoauth.ConnectPage{linearNotHereYet}}, nil, "")
 	h.holdFor, h.holdEvery = 20*time.Millisecond, time.Millisecond
 
 	body := connectPageBody(t, h, "/store/mcp/connect?ticket=tk")
@@ -456,7 +472,7 @@ func TestConnectPage_DoesNotHoldWhenThereIsNothingToWaitFor(t *testing.T) {
 		{"last attempt spent", linearNotHereYet, "/store/mcp/connect?ticket=tk&wait=4"},
 	} {
 		flow := &sequencedConnectFlow{pages: []*appoauth.ConnectPage{tc.page}}
-		h := NewConnectHandler(flow, nil, "")
+		h := newTestConnectHandler(flow, nil, "")
 		h.holdFor, h.holdEvery = time.Minute, time.Millisecond
 		_ = connectPageBody(t, h, tc.target)
 		if flow.calls != 1 {
@@ -473,7 +489,7 @@ func TestConnectStart_RejectedRegistrationIsBadGateway(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{startErr: fmt.Errorf("%w (status 400, invalid_client_metadata)",
 		appoauth.ErrUpstreamRegistrationRejected)}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
 	res, err := app.Test(ownPagePost("/oauth/connect/com.calendly/mcp?ticket=abc"))
@@ -504,7 +520,7 @@ func TestConnectFinish_UpstreamErrorRendersActionableFlash(t *testing.T) {
 		},
 		callbackErr: &appoauth.OAuthError{Code: "invalid_target"},
 	}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Get(ConnectFinishPath, h.Finish)
 	res, err := app.Test(boundFinish(stub, "co.axiom/mcp", "state=s&error=invalid_target"))
@@ -559,7 +575,7 @@ func TestConnectFinish_ReturnsToTheResumeURLOnceConnected(t *testing.T) {
 		ResumeURL:    portal,
 		Providers:    []appoauth.ProviderStatus{{Provider: "com.notion/mcp", Code: "com.notion/mcp", Registry: "Notion", Linked: true}},
 	}}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Get(ConnectFinishPath, h.Finish)
 	app.Get("/+/connect", h.Page)
@@ -604,7 +620,7 @@ func TestConnectFinish_DoesNotReturnAfterAFailedConnect(t *testing.T) {
 		},
 		callbackErr: &appoauth.OAuthError{Code: "access_denied"},
 	}
-	h := NewConnectHandler(stub, nil, "")
+	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Get(ConnectFinishPath, h.Finish)
 	res, err := app.Test(boundFinish(stub, "com.notion/mcp", "state=s&error=access_denied"))

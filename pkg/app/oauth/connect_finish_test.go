@@ -35,13 +35,17 @@ import (
 
 type finishFixture struct {
 	svc      oauth.ConnectService
+	handoff  oauth.ConnectHandoff
 	store    *memConnectStore
 	vault    *memVaultRepo
 	gateway  ids.GatewayID
 	consumer *consumerdomain.Consumer
 }
 
-func newFinishFixture(t *testing.T, opts ...oauth.ConnectOption) finishFixture {
+// newFinishFixture builds the connect service and its handoff over one store.
+// gateways and baseDomains decide the accepted start origins besides the
+// callback origin; a nil gateways accepts only the callback origin.
+func newFinishFixture(t *testing.T, gateways oauth.ConnectGatewayFinder, baseDomains ...string) finishFixture {
 	t.Helper()
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "gh-access", "expires_in": 3600})
@@ -71,6 +75,7 @@ func newFinishFixture(t *testing.T, opts ...oauth.ConnectOption) finishFixture {
 	}})
 	store := newMemConnectStore()
 	vault := &memVaultRepo{}
+	handoff := oauth.NewConnectHandoff(store, gateways, baseDomains...)
 	svc := oauth.NewConnectService(
 		store,
 		vault,
@@ -79,15 +84,15 @@ func newFinishFixture(t *testing.T, opts ...oauth.ConnectOption) finishFixture {
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 		nil, nil, nil, nil,
-		opts...,
+		oauth.WithConnectHandoff(handoff),
 	)
-	return finishFixture{svc: svc, store: store, vault: vault, gateway: gw, consumer: consumer}
+	return finishFixture{svc: svc, handoff: handoff, store: store, vault: vault, gateway: gw, consumer: consumer}
 }
 
 func TestConnectService_CallbackIsHandedBackToTheStartOrigin(t *testing.T) {
 	t.Parallel()
 	gateways := stubGatewayFinder{}
-	fx := newFinishFixture(t, oauth.WithConnectStartOrigins(gateways, "gateway.example"))
+	fx := newFinishFixture(t, gateways, "gateway.example")
 	gateways[fx.gateway] = &gatewaydomain.Gateway{ID: fx.gateway, Slug: "tenant"}
 	ctx := context.Background()
 	ticket, err := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
@@ -107,10 +112,11 @@ func TestConnectService_CallbackIsHandedBackToTheStartOrigin(t *testing.T) {
 		t.Fatalf("redirect_uri = %q", got)
 	}
 
-	location, err := fx.svc.ReceiveCallback(ctx, "github", started.State, "the-code", "", "")
+	receipt, err := fx.handoff.ReceiveCallback(ctx, "github", started.State, "the-code", "", "")
 	if err != nil {
 		t.Fatalf("ReceiveCallback: %v", err)
 	}
+	location := receipt.FinishURL
 	if !strings.HasPrefix(location, "https://tenant.gateway.example"+oauth.ConnectFinishPath+"?f=") {
 		t.Fatalf("location = %q, want the finish path on the start origin", location)
 	}
@@ -123,7 +129,7 @@ func TestConnectService_CallbackIsHandedBackToTheStartOrigin(t *testing.T) {
 
 	u, _ := url.Parse(location)
 	token := u.Query().Get("f")
-	finish, err := fx.svc.TakeFinish(ctx, token)
+	finish, err := fx.handoff.TakeFinish(ctx, token)
 	if err != nil {
 		t.Fatalf("TakeFinish: %v", err)
 	}
@@ -131,7 +137,7 @@ func TestConnectService_CallbackIsHandedBackToTheStartOrigin(t *testing.T) {
 	if *finish != want {
 		t.Fatalf("finish = %+v, want %+v", *finish, want)
 	}
-	if _, err := fx.svc.TakeFinish(ctx, token); !errors.Is(err, oauth.ErrConnectFinishNotFound) {
+	if _, err := fx.handoff.TakeFinish(ctx, token); !errors.Is(err, oauth.ErrConnectFinishNotFound) {
 		t.Fatalf("second TakeFinish err = %v, want ErrConnectFinishNotFound", err)
 	}
 
@@ -145,19 +151,20 @@ func TestConnectService_CallbackIsHandedBackToTheStartOrigin(t *testing.T) {
 
 func TestConnectService_ProviderErrorsAreHandedBackToo(t *testing.T) {
 	t.Parallel()
-	fx := newFinishFixture(t)
+	fx := newFinishFixture(t, nil)
 	ctx := context.Background()
 	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
 	started, err := fx.svc.Start(ctx, "https://gw.example", "https://gw.example", ticket, "github", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	location, err := fx.svc.ReceiveCallback(ctx, "github", started.State, "", "access_denied", "no")
+	receipt, err := fx.handoff.ReceiveCallback(ctx, "github", started.State, "", "access_denied", "no")
 	if err != nil {
 		t.Fatalf("ReceiveCallback: %v", err)
 	}
+	location := receipt.FinishURL
 	u, _ := url.Parse(location)
-	finish, err := fx.svc.TakeFinish(ctx, u.Query().Get("f"))
+	finish, err := fx.handoff.TakeFinish(ctx, u.Query().Get("f"))
 	if err != nil {
 		t.Fatalf("TakeFinish: %v", err)
 	}
@@ -168,7 +175,7 @@ func TestConnectService_ProviderErrorsAreHandedBackToo(t *testing.T) {
 
 func TestConnectService_ReceiveCallbackRefusesAnUnknownState(t *testing.T) {
 	t.Parallel()
-	fx := newFinishFixture(t)
+	fx := newFinishFixture(t, nil)
 	ctx := context.Background()
 	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
 	started, err := fx.svc.Start(ctx, "https://gw.example", "https://gw.example", ticket, "github", "")
@@ -180,7 +187,7 @@ func TestConnectService_ReceiveCallbackRefusesAnUnknownState(t *testing.T) {
 		"empty state":    {"github", ""},
 		"other provider": {"linear", started.State},
 	} {
-		if _, err := fx.svc.ReceiveCallback(ctx, tc.provider, tc.state, "c", "", ""); err == nil {
+		if _, err := fx.handoff.ReceiveCallback(ctx, tc.provider, tc.state, "c", "", ""); err == nil {
 			t.Fatalf("%s: ReceiveCallback accepted it", name)
 		}
 	}
@@ -190,14 +197,14 @@ func TestConnectService_ReceiveCallbackRefusesAnUnknownState(t *testing.T) {
 	if _, err := fx.svc.Start(ctx, "https://gw.example", "", ticket, "github", ""); err == nil {
 		t.Fatal("Start must refuse an empty start origin")
 	}
-	if _, err := fx.svc.TakeFinish(ctx, ""); !errors.Is(err, oauth.ErrConnectFinishNotFound) {
+	if _, err := fx.handoff.TakeFinish(ctx, ""); !errors.Is(err, oauth.ErrConnectFinishNotFound) {
 		t.Fatalf("empty finish token err = %v", err)
 	}
 }
 
 func TestConnectService_PageNamesWhoAccountsAreLinkedTo(t *testing.T) {
 	t.Parallel()
-	fx := newFinishFixture(t)
+	fx := newFinishFixture(t, nil)
 	ctx := context.Background()
 	endUser := consumerdomain.EndUserSubject(fx.consumer.ID, "user-42")
 	app := consumerdomain.AppSubject(fx.consumer.ID)
@@ -225,7 +232,7 @@ func TestConnectService_PageNamesWhoAccountsAreLinkedTo(t *testing.T) {
 
 func TestConnectService_RepeatedCallbacksKeepOnePendingFinish(t *testing.T) {
 	t.Parallel()
-	fx := newFinishFixture(t)
+	fx := newFinishFixture(t, nil)
 	ctx := context.Background()
 	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
 	started, err := fx.svc.Start(ctx, "https://gw.example", "https://gw.example", ticket, "github", "")
@@ -234,15 +241,50 @@ func TestConnectService_RepeatedCallbacksKeepOnePendingFinish(t *testing.T) {
 	}
 	var last string
 	for range 5 {
-		if last, err = fx.svc.ReceiveCallback(ctx, "github", started.State, "the-code", "", ""); err != nil {
+		receipt, err := fx.handoff.ReceiveCallback(ctx, "github", started.State, "the-code", "", "")
+		if err != nil {
 			t.Fatalf("ReceiveCallback: %v", err)
 		}
+		last = receipt.FinishURL
 	}
 	if len(fx.store.finishes) != 1 {
 		t.Fatalf("pending finishes = %d, want 1", len(fx.store.finishes))
 	}
 	u, _ := url.Parse(last)
-	if _, err := fx.svc.TakeFinish(ctx, u.Query().Get("f")); err != nil {
+	if _, err := fx.handoff.TakeFinish(ctx, u.Query().Get("f")); err != nil {
 		t.Fatalf("the latest finish must be the one kept: %v", err)
+	}
+}
+
+// An authorization saved by the version before start origins were recorded
+// has none; its callback completes on the callback itself, as it did then.
+func TestConnectService_StatesWithoutAStartOriginCompleteOnTheCallback(t *testing.T) {
+	t.Parallel()
+	fx := newFinishFixture(t, nil)
+	ctx := context.Background()
+	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
+	started, err := fx.svc.Start(ctx, "https://gw.example", "https://gw.example", ticket, "github", "")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	legacy := fx.store.connects[started.State]
+	legacy.StartOrigin = ""
+	fx.store.connects[started.State] = legacy
+
+	receipt, err := fx.handoff.ReceiveCallback(ctx, "github", started.State, "the-code", "", "")
+	if err != nil {
+		t.Fatalf("ReceiveCallback: %v", err)
+	}
+	if !receipt.Direct || receipt.FinishURL != "" || len(fx.store.finishes) != 0 {
+		t.Fatalf("receipt = %+v, finishes = %d; want a direct completion and no finish record", receipt, len(fx.store.finishes))
+	}
+	if _, ok := fx.store.connects[started.State]; !ok {
+		t.Fatal("receiving the callback must leave the state for Callback to use")
+	}
+	if _, err := fx.svc.Callback(ctx, "https://gw.example", "github", started.State, "the-code", "", ""); err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+	if _, err := fx.vault.Find(ctx, fx.gateway, "alice", vaultKey(t, "github", "https://up.example.com/mcp")); err != nil {
+		t.Fatalf("credential not stored: %v", err)
 	}
 }

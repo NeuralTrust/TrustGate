@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -56,11 +55,9 @@ type connectService struct {
 	catalog     authCatalog
 	registries  RegistryLister
 	urlValues   URLValueSource
-	// gateways and startDomains decide where a connection may be started
-	// from (see WithConnectStartOrigins).
-	gateways     ConnectGatewayFinder
-	startDomains []string
-	now          func() time.Time
+	// handoff decides where a connection may be started from.
+	handoff ConnectHandoff
+	now     func() time.Time
 }
 
 // URLValueSource returns a principal's values for a registry's URL
@@ -79,6 +76,13 @@ type ConnectOption func(*connectService)
 // resolves; any other templated one fails with ErrUpstreamSetupRequired.
 func WithConnectURLValues(v URLValueSource) ConnectOption {
 	return func(s *connectService) { s.urlValues = v }
+}
+
+// WithConnectHandoff sets the policy that decides where a connection may be
+// started from. Without it a connection is only started on the callback
+// origin.
+func WithConnectHandoff(h ConnectHandoff) ConnectOption {
+	return func(s *connectService) { s.handoff = h }
 }
 
 type authCatalog interface {
@@ -115,6 +119,9 @@ func NewConnectService(
 		if opt != nil {
 			opt(s)
 		}
+	}
+	if s.handoff == nil {
+		s.handoff = NewConnectHandoff(store, nil)
 	}
 	return s
 }
@@ -270,9 +277,9 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 // pinnedPageCode is the catalog code a provider-pinned ticket's page is focused
 // on, or empty when there is not exactly one.
 //
-// The pin is by provider and the page focuses by code, which are the same thing
-// for a server whose provider is its code and not in general — so this asks the
-// rows rather than assuming, and stands down when they disagree.
+// The pin is by provider and the page focuses by code, which are the same
+// thing when a server's provider is its code and not in general — so this asks
+// the rows rather than assuming, and stands down when they disagree.
 func pinnedPageCode(ticket *ConnectTicket, providers []ProviderStatus) string {
 	if strings.TrimSpace(ticket.Provider) == "" {
 		return ""
@@ -376,7 +383,7 @@ func (s *connectService) Start(
 	if err != nil {
 		return nil, err
 	}
-	startOrigin, err = s.startOrigin(ctx, baseURL, startOrigin, gatewayID)
+	startOrigin, err = s.handoff.StartOrigin(ctx, baseURL, startOrigin, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -420,47 +427,6 @@ func (s *connectService) Start(
 		Location: s.provider.AuthorizeURL(cfg, connectCallbackURL(baseURL, provider), state, s256(verifier)),
 		State:    state,
 	}, nil
-}
-
-func (s *connectService) ReceiveCallback(ctx context.Context, provider, state, code, errCode, errDesc string) (string, error) {
-	if state == "" {
-		return "", oauthErr("invalid_request", "unknown or expired state")
-	}
-	st, err := s.store.PeekConnect(ctx, state)
-	if err != nil {
-		return "", err
-	}
-	if st == nil || st.Provider != provider || st.StartOrigin == "" {
-		return "", oauthErr("invalid_request", "unknown or expired state")
-	}
-	token, err := randomToken()
-	if err != nil {
-		return "", err
-	}
-	if err := s.store.SaveFinish(ctx, token, ConnectFinish{
-		Provider: provider,
-		State:    state,
-		Code:     code,
-		ErrCode:  errCode,
-		ErrDesc:  errDesc,
-	}); err != nil {
-		return "", err
-	}
-	return st.StartOrigin + ConnectFinishPath + "?" + url.Values{"f": {token}}.Encode(), nil
-}
-
-func (s *connectService) TakeFinish(ctx context.Context, token string) (*ConnectFinish, error) {
-	if token == "" {
-		return nil, ErrConnectFinishNotFound
-	}
-	f, err := s.store.TakeFinish(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	if f == nil {
-		return nil, ErrConnectFinishNotFound
-	}
-	return f, nil
 }
 
 // connectPrincipal describes the ticket's principal for the page that asks

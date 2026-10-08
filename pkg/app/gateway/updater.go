@@ -81,7 +81,7 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
-	reservedDomains ...string,
+	reservedDomains []string,
 ) Updater {
 	return &updater{
 		reservedDomains:  reservedDomains,

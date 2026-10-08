@@ -89,6 +89,10 @@ type OAuth2Config struct {
 	// repository keeps the stored value when it comes back empty. Never
 	// serialised.
 	ExchangeSecretUnreadable bool `json:"-"`
+	// ClientSecretUnreadable is ExchangeSecretUnreadable for the login client
+	// secret. Validate never requires that secret; the mark only tells the
+	// repository to keep the stored value. Never serialised.
+	ClientSecretUnreadable bool `json:"-"`
 
 	// Trusted marks an identity provider the operator configured through the
 	// environment (the built-in default IdP): its endpoints may be on a private
@@ -100,12 +104,18 @@ type OAuth2Config struct {
 
 // ExchangeCredentials returns the client token exchanges are signed with: the
 // dedicated exchange client, or the login client of a provider configured
-// before the exchange client existed.
+// before the exchange client existed. A configured exchange client without a
+// usable secret (missing, or stored but unreadable) yields ok=false rather than
+// the login client, so an exchange is never signed by a client the operator
+// did not choose for it.
 func (c *OAuth2Config) ExchangeCredentials() (clientID, clientSecret string, ok bool) {
 	if c == nil {
 		return "", "", false
 	}
-	if c.ExchangeClientID != "" && c.ExchangeClientSecret != "" {
+	if strings.TrimSpace(c.ExchangeClientID) != "" {
+		if c.ExchangeClientSecret == "" || c.ExchangeSecretUnreadable {
+			return "", "", false
+		}
 		return c.ExchangeClientID, c.ExchangeClientSecret, true
 	}
 	if c.ClientID != "" && c.ClientSecret != "" {
@@ -129,13 +139,21 @@ func (c *Config) ResolveSecretsFrom(prev Config) {
 	exchange := storedClient{id: prev.OAuth2.ExchangeClientID, secret: prev.OAuth2.ExchangeClientSecret}
 	c.OAuth2.ClientSecret = carrySecret(c.OAuth2.ClientID, c.OAuth2.ClientSecret, login, exchange)
 	c.OAuth2.ExchangeClientSecret = carrySecret(c.OAuth2.ExchangeClientID, c.OAuth2.ExchangeClientSecret, exchange, login)
-	c.OAuth2.ExchangeSecretUnreadable = false
-	exchangeID := strings.TrimSpace(c.OAuth2.ExchangeClientID)
-	if prev.OAuth2.ExchangeSecretUnreadable && exchangeID != "" && exchangeID == strings.TrimSpace(prev.OAuth2.ExchangeClientID) &&
-		(c.OAuth2.ExchangeClientSecret == "" || secret.IsMasked(c.OAuth2.ExchangeClientSecret)) {
-		c.OAuth2.ExchangeClientSecret = ""
-		c.OAuth2.ExchangeSecretUnreadable = true
+	c.OAuth2.ClientSecret, c.OAuth2.ClientSecretUnreadable = carryUnreadable(
+		c.OAuth2.ClientID, c.OAuth2.ClientSecret, prev.OAuth2.ClientID, prev.OAuth2.ClientSecretUnreadable)
+	c.OAuth2.ExchangeClientSecret, c.OAuth2.ExchangeSecretUnreadable = carryUnreadable(
+		c.OAuth2.ExchangeClientID, c.OAuth2.ExchangeClientSecret, prev.OAuth2.ExchangeClientID, prev.OAuth2.ExchangeSecretUnreadable)
+}
+
+// carryUnreadable keeps the mark of a stored secret that could not be
+// decrypted while the same client sends it back empty or masked; the secret
+// then stays empty, so the repository keeps the stored value.
+func carryUnreadable(id, incoming, prevID string, prevUnreadable bool) (string, bool) {
+	id = strings.TrimSpace(id)
+	if prevUnreadable && id != "" && id == strings.TrimSpace(prevID) && (incoming == "" || secret.IsMasked(incoming)) {
+		return "", true
 	}
+	return incoming, false
 }
 
 type storedClient struct{ id, secret string }

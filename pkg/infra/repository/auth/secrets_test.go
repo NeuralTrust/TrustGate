@@ -126,3 +126,17 @@ func TestOpenConfigForRead_LegacyAndUnreadableValues(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenConfigForRead_MarksWhatDidNotOpen(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.AuthKind]()
+	raw, err := sealingRepo(t, unitTestSecret, true).marshalConfig(id, oauth2Config())
+	if err != nil {
+		t.Fatalf("marshalConfig: %v", err)
+	}
+	stored := decode(t, raw)
+	(&Repository{}).openConfigForRead(context.Background(), id, &stored)
+	if !stored.OAuth2.ClientSecretUnreadable || !stored.OAuth2.ExchangeSecretUnreadable {
+		t.Fatalf("unreadable secrets not marked: %+v", stored.OAuth2)
+	}
+}

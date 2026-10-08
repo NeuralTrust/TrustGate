@@ -17,6 +17,8 @@ package configsync
 import (
 	"context"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -27,7 +29,7 @@ import (
 // ConnectionLister reads persisted data-plane connection state, optionally
 // filtered by opaque scope.
 type ConnectionLister interface {
-	List(ctx context.Context, scope string, page configsyncconn.Page) ([]configsyncconn.Connection, error)
+	List(ctx context.Context, scope string, page *listing.Page) ([]configsyncconn.Connection, error)
 }
 
 type ListConnectionsHandler struct {
@@ -74,17 +76,13 @@ func (h *ListConnectionsHandler) Handle(c *fiber.Ctx) error {
 
 // parsePage reads page and size only when the caller asks for them, so a
 // listing without either keeps returning every match.
-func parsePage(c *fiber.Ctx) (configsyncconn.Page, error) {
+func parsePage(c *fiber.Ctx) (*listing.Page, error) {
 	if c.Query("page") == "" && c.Query("size") == "" {
-		return configsyncconn.Page{}, nil
+		return nil, nil
 	}
-	page, err := httpio.ParsePage(c)
+	page, err := httpio.ParseListingPage(c)
 	if err != nil {
-		return configsyncconn.Page{}, err
+		return nil, err
 	}
-	size, err := httpio.ParseSize(c)
-	if err != nil {
-		return configsyncconn.Page{}, err
-	}
-	return configsyncconn.Page{Limit: size, Offset: (page - 1) * size}, nil
+	return &page, nil
 }
