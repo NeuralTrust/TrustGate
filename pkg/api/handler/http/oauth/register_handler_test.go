@@ -202,8 +202,8 @@ func (l *countingLimiter) Check(_ context.Context, scope appoauth.ConnectAttempt
 
 func TestRegisterHandlerLimitsRegistrationsPerSource(t *testing.T) {
 	t.Parallel()
-	register := func(limiter appoauth.ConnectAttemptLimiter) *http.Response {
-		svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{oauth2Auth("https://idp.example.com", "upstream-client")}}, nil, nil, newMemFlowStore())
+	register := func(limiter appoauth.ConnectAttemptLimiter, store *memFlowStore) *http.Response {
+		svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{oauth2Auth("https://idp.example.com", "upstream-client")}}, nil, nil, store)
 		app := fiber.New()
 		app.Post(RegisterPath, NewRegisterHandler(svc, WithRegistrationLimit(limiter, func(peer, _ string) string { return peer })).Handle)
 		req := httptest.NewRequest(fiber.MethodPost, RegisterPath, strings.NewReader(`{"redirect_uris":["https://client.example.com/cb"]}`))
@@ -218,9 +218,13 @@ func TestRegisterHandlerLimitsRegistrationsPerSource(t *testing.T) {
 	t.Run("within the limit", func(t *testing.T) {
 		t.Parallel()
 		limiter := &countingLimiter{allowed: 1}
-		res := register(limiter)
+		store := newMemFlowStore()
+		res := register(limiter, store)
 		if res.StatusCode != fiber.StatusCreated {
 			t.Fatalf("expected 201, got %d", res.StatusCode)
+		}
+		if len(store.clients) != 1 {
+			t.Fatalf("expected one registered client, got %d", len(store.clients))
 		}
 		if len(limiter.scopes) != 1 || limiter.scopes[0] != appoauth.ConnectAttemptScopeRegistration {
 			t.Fatalf("registration must be counted in its own bucket, got %v", limiter.scopes)
@@ -229,17 +233,25 @@ func TestRegisterHandlerLimitsRegistrationsPerSource(t *testing.T) {
 
 	t.Run("over the limit", func(t *testing.T) {
 		t.Parallel()
-		res := register(&countingLimiter{allowed: 0})
+		store := newMemFlowStore()
+		res := register(&countingLimiter{allowed: 0}, store)
 		if res.StatusCode != fiber.StatusTooManyRequests || res.Header.Get(fiber.HeaderRetryAfter) != "30" {
 			t.Fatalf("expected 429 with Retry-After 30, got %d %q", res.StatusCode, res.Header.Get(fiber.HeaderRetryAfter))
+		}
+		if len(store.clients) != 0 {
+			t.Fatalf("a refused registration must not create a client, got %d", len(store.clients))
 		}
 	})
 
 	t.Run("limiter unavailable", func(t *testing.T) {
 		t.Parallel()
-		res := register(&countingLimiter{err: appoauth.ErrConnectRateLimitUnavailable})
+		store := newMemFlowStore()
+		res := register(&countingLimiter{err: appoauth.ErrConnectRateLimitUnavailable}, store)
 		if res.StatusCode != fiber.StatusServiceUnavailable {
 			t.Fatalf("expected 503, got %d", res.StatusCode)
+		}
+		if len(store.clients) != 0 {
+			t.Fatalf("a registration the limiter could not count must not create a client, got %d", len(store.clients))
 		}
 	})
 }

@@ -18,7 +18,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -54,21 +54,36 @@ func connectBinding(state string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func connectCookieName(c *fiber.Ctx, state string) string {
-	suffix := connectBinding(state)[:connectCookieNameHexLen]
+// cookieSecure reports whether the flow cookie takes the Secure, __Host-
+// form. It follows the MCP sign-in cookies (FlowCookies), so a proxy that ends
+// TLS without forwarding the scheme still gets the __Host- form; a plane whose
+// configured callback origin is plain http uses the plain form.
+func (h *ConnectHandler) cookieSecure(c *fiber.Ctx) bool {
 	if c.Secure() {
+		return true
+	}
+	if strings.HasPrefix(strings.ToLower(h.oauthPublicBaseURL), "http://") {
+		return false
+	}
+	return h.cookies.secure(c)
+}
+
+func (h *ConnectHandler) connectCookieName(c *fiber.Ctx, state string) string {
+	suffix := connectBinding(state)[:connectCookieNameHexLen]
+	if h.cookieSecure(c) {
 		return connectCookieSecurePrefix + suffix
 	}
 	return connectCookiePlainPrefix + suffix
 }
 
-func setConnectCookie(c *fiber.Ctx, state string) {
+func (h *ConnectHandler) setConnectCookie(c *fiber.Ctx, state string) {
+	secure := h.cookieSecure(c)
 	c.Cookie(&fiber.Cookie{
-		Name:     connectCookieName(c, state),
+		Name:     h.connectCookieName(c, state),
 		Value:    connectBinding(state),
 		Path:     "/",
 		MaxAge:   int(connectCookieMaxAge / time.Second),
-		Secure:   c.Secure(),
+		Secure:   secure,
 		HTTPOnly: true,
 		SameSite: fiber.CookieSameSiteLaxMode,
 	})
@@ -76,14 +91,14 @@ func setConnectCookie(c *fiber.Ctx, state string) {
 
 // clearConnectCookie expires a flow's cookie once it has finished. The
 // attributes mirror setConnectCookie, or a browser keeps the __Host- cookie.
-func clearConnectCookie(c *fiber.Ctx, state string) {
+func (h *ConnectHandler) clearConnectCookie(c *fiber.Ctx, state string) {
 	c.Cookie(&fiber.Cookie{
-		Name:     connectCookieName(c, state),
+		Name:     h.connectCookieName(c, state),
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
-		Secure:   c.Secure(),
+		Secure:   h.cookieSecure(c),
 		HTTPOnly: true,
 		SameSite: fiber.CookieSameSiteLaxMode,
 	})
@@ -91,15 +106,30 @@ func clearConnectCookie(c *fiber.Ctx, state string) {
 
 // connectBoundTo reports whether this browser holds the cookie set when the
 // flow for state was started.
-func connectBoundTo(c *fiber.Ctx, state string) bool {
+func (h *ConnectHandler) connectBoundTo(c *fiber.Ctx, state string) bool {
 	if state == "" {
 		return false
 	}
-	cookie := c.Cookies(connectCookieName(c, state))
+	cookie := c.Cookies(h.connectCookieName(c, state))
 	if cookie == "" {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(cookie), []byte(connectBinding(state))) == 1
+}
+
+// sameHost reports whether origin names the host and port this request was
+// made to, whatever its scheme: behind a proxy that ends TLS without
+// forwarding it, the request reads as http while the browser is on https.
+func sameHost(origin string, c *fiber.Ctx) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	if (u.Scheme == "https" && u.Port() == "443") || (u.Scheme == "http" && u.Port() == "80") {
+		host = strings.ToLower(u.Hostname())
+	}
+	return host == strings.ToLower(c.Hostname())
 }
 
 // sentFromOwnPage reports whether a browser submitted this request from a page
@@ -112,28 +142,10 @@ func sentFromOwnPage(c *fiber.Ctx) bool {
 		return true
 	case "":
 		origin := c.Get(fiber.HeaderOrigin)
-		return origin != "" && strings.EqualFold(origin, c.BaseURL())
+		return origin != "" && origin != "null" && sameHost(origin, c)
 	default:
 		return false
 	}
-}
-
-// cookieTransportAllowed reports whether the flow's cookie can be trusted on
-// this request. Over https it is a __Host- cookie, which no other host can
-// set. A plain-http request is accepted where the whole plane runs on http
-// (callbackOrigin is http) and on a loopback host; on an https deployment it is
-// refused, since a cookie without the __Host- prefix can be set by a sibling
-// host.
-func cookieTransportAllowed(c *fiber.Ctx, callbackOrigin string) bool {
-	if c.Secure() || !strings.HasPrefix(strings.ToLower(callbackOrigin), "https://") {
-		return true
-	}
-	host := c.Hostname()
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.Trim(strings.ToLower(host), "[]")
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 var (
@@ -143,8 +155,6 @@ var (
 		"Open the link you were given and continue from the page it shows.")
 	errConnectFinishGone = fiber.NewError(fiber.StatusBadRequest,
 		"This sign-in link was already used or has expired. Start again from the link you were given.")
-	errConnectNeedsHTTPS = fiber.NewError(fiber.StatusBadRequest,
-		"Connections need a secure (https) address. Open the link you were given.")
 	errConnectStartHost = fiber.NewError(fiber.StatusBadRequest,
 		"Connections cannot be started from this address. Open the link you were given.")
 )

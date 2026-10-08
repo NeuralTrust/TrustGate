@@ -35,7 +35,12 @@ func sharedClientRegistry(gatewayID ids.GatewayID, clientID string) *registrydom
 		Type:      registrydomain.TypeMCP,
 		MCPTarget: &registrydomain.MCPTarget{
 			Code: mcpoauth.GmailCode,
-			Auth: &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeForwarded, ClientID: clientID},
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				ClientID:     clientID,
+				AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+				TokenURL:     "https://oauth2.googleapis.com/token",
+			},
 		},
 	}
 }

@@ -89,6 +89,14 @@ func (e *EventContext) SetScore(score float64, label string) {
 	e.span.SetScore(score, label)
 }
 
+// HasExtras reports whether the span already carries the plugin's extras.
+func (e *EventContext) HasExtras() bool {
+	if e == nil || e.span == nil {
+		return false
+	}
+	return e.span.HasExtras()
+}
+
 func (e *EventContext) HasDecision() bool {
 	if e == nil || e.span == nil {
 		return false

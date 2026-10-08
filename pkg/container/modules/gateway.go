@@ -68,12 +68,12 @@ func provideGatewayRepository(c *container.Container) error {
 
 func provideGatewayServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
-		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg)...)
+		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg))
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
-		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg)...)
+		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg))
 	}); err != nil {
 		return err
 	}
@@ -142,5 +142,6 @@ func reservedGatewayDomains(cfg *config.Config) []string {
 	if u, err := url.Parse(cfg.Server.MCPOAuthPublicBaseURL); err == nil && u.Hostname() != "" {
 		reserved = append(reserved, u.Hostname())
 	}
-	return append(reserved, cfg.Server.MCPExtraBaseDomains...)
+	reserved = append(reserved, cfg.Server.MCPExtraBaseDomains...)
+	return append(reserved, cfg.Server.ReservedGatewayDomains...)
 }

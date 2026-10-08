@@ -22,10 +22,12 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/redis/go-redis/v9"
 )
@@ -176,6 +178,26 @@ func (l *connectAttemptLimiter) bucketKey(domain, subject string) (string, error
 		return "", fmt.Errorf("build connect rate limit key: %w", appoauth.ErrConnectRateLimitUnavailable)
 	}
 	return connectBucketPrefix + ":" + domain + ":" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+// NewConnectSourceResolver returns how connect requests are told apart by
+// source. MCP_CONNECT_TRUSTED_PROXY_CIDRS, when set, keeps its own reading of
+// the forwarding chain; otherwise the plane's client IP setting decides. Behind
+// a GCP load balancer the socket peer is one of several managed proxies that
+// take turns, so counting by peer spreads one caller over several buckets, and
+// walking the chain from the right stops at the forwarding rule's address,
+// which every caller shares.
+func NewConnectSourceResolver(
+	connectProxyCIDRs []netip.Prefix,
+	clientIP config.ClientIPConfig,
+) func(peer, forwardedFor string) string {
+	if len(connectProxyCIDRs) > 0 {
+		trusted := slices.Clone(connectProxyCIDRs)
+		return func(peer, forwardedFor string) string {
+			return ResolveConnectSource(peer, forwardedFor, trusted)
+		}
+	}
+	return requestmeta.NewIPResolver(clientIP.Mode, clientIP.TrustedProxyCIDRs)
 }
 
 func ResolveConnectSource(peer, forwardedFor string, trustedProxyCIDRs []netip.Prefix) string {

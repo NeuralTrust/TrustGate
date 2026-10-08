@@ -418,6 +418,45 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 	}
 }
 
+// Installing is off for the person, but installing again is also how a server
+// they already have gets its connect link: that still answers, without
+// running the installer. Only something new is refused, with a reason they
+// can read.
+func TestStoreInstallPrincipalNoneStillConnectsAServerTheyHave(t *testing.T) {
+	sandbox := ids.New[ids.RegistryKind]()
+	inst := &fakeInstaller{held: &appstore.InstallResult{
+		Code: "github", Name: "GitHub", Status: "installed", InstanceID: "row-1",
+		RegistryID: sandbox, RequiresAuth: true, AlreadyInstalled: true,
+	}}
+	connect := &e2eConnect{}
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), inst, nil, nil, nil, connect)
+	if err != nil {
+		t.Fatalf("NewStoreToolWithInstaller: %v", err)
+	}
+	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
+
+	raw, err := tool.Call(ctx, storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+
+	if err != nil {
+		t.Fatalf("connecting a server they have must answer, got %v", err)
+	}
+	if len(inst.installed) != 0 || inst.installedCall != 1 {
+		t.Fatalf("the installer must not run; installed=%v installedCall=%d", inst.installed, inst.installedCall)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["already_installed"] != true || sc["connect_url"] == nil {
+		t.Fatalf("result must carry the connect link, got %+v", sc)
+	}
+	if connect.code != "github" || connect.instanceID != sandbox.String() {
+		t.Fatalf("the link must be pinned to the held instance's server, got %+v", connect)
+	}
+
+	_, err = storeToolWithInstaller(t, &fakeInstaller{}).Call(ctx, storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+	if !errors.Is(err, ErrStoreInstallDisabled) {
+		t.Fatalf("a server they do not have is refused as disabled, got %v", err)
+	}
+}
+
 // TestStoreSearchCuratedModeShowsNonShelfAsRequest: Selected browses the whole
 // catalog so a user can discover what to ask for; a non-shelf server is tagged
 // "request" (installing it files an approval request) while a granted shelf
@@ -454,6 +493,18 @@ type fakeInstaller struct {
 	lastReason   string
 	installErr   error
 	result       *appstore.InstallResult
+	// held answers Installed: the instance the principal already has.
+	held          *appstore.InstallResult
+	installedCall int
+}
+
+func (f *fakeInstaller) Installed(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
+	f.installedCall++
+	f.lastRegistry = in.RegistryID
+	if f.held == nil {
+		return nil, appstore.ErrNotInstalled
+	}
+	return f.held, nil
 }
 
 type failingConnect struct{ err error }

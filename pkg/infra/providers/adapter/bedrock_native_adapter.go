@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -59,7 +60,15 @@ var nonTextKeys = map[string]struct{}{
 	"images": {}, "image": {}, "conditionimage": {}, "maskimage": {}, "inputimage": {}, "base64": {}, "init_image": {},
 	"signature": {}, "tooluseid": {}, "ttl": {}, "status": {}, "event_type": {}, "guardrailidentifier": {},
 	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {},
+	"service_tier": {}, "stop_sequence": {},
 }
+
+// streamPlumbingKeys are the subtrees of a stream chunk that report usage and
+// latency, whatever depth they sit at: Anthropic nests usage in message_start,
+// and Bedrock appends its invocation metrics to the last chunk. A string in one
+// is a label such as a service tier, or the stop sequence a model ended on,
+// never text the model wrote.
+var streamPlumbingKeys = []string{"usage", invocationMetricsKey, "stop_sequence", "stop_reason", "stopReason"}
 
 var toolKeys = map[string]struct{}{
 	"toolspec": {}, "tool_use": {}, "tooluse": {}, "tools": {}, "tool_choice": {}, "toolchoice": {},
@@ -85,6 +94,12 @@ func isNonTextKey(key string) bool {
 // reappear as the text around it was masked. skipTop names top-level keys that repeat text already
 // surfaced.
 func leftoverText(raw []byte, known []string, skipTop ...string) string {
+	return leftoverTextWithout(raw, known, skipTop, nil)
+}
+
+// leftoverTextWithout is leftoverText that also leaves out every key in
+// skipDeep, at any depth.
+func leftoverTextWithout(raw []byte, known []string, skipTop, skipDeep []string) string {
 	var doc any
 	if json.Unmarshal(raw, &doc) != nil {
 		return ""
@@ -93,6 +108,9 @@ func leftoverText(raw []byte, known []string, skipTop ...string) string {
 		for _, k := range skipTop {
 			delete(m, k)
 		}
+	}
+	if len(skipDeep) > 0 {
+		dropKeys(doc, skipDeep)
 	}
 	var found []string
 	collectStrings(doc, false, &found)
@@ -110,6 +128,23 @@ func leftoverText(raw []byte, known []string, skipTop ...string) string {
 		extra = append(extra, s)
 	}
 	return strings.Join(extra, "\n")
+}
+
+func dropKeys(v any, keys []string) {
+	switch t := v.(type) {
+	case []any:
+		for _, item := range t {
+			dropKeys(item, keys)
+		}
+	case map[string]any:
+		for k, child := range t {
+			if slices.Contains(keys, k) {
+				delete(t, k)
+				continue
+			}
+			dropKeys(child, keys)
+		}
+	}
 }
 
 // The bytes one decode may compare while deduping multi-line leftovers are bounded
@@ -598,7 +633,29 @@ func (a *BedrockNativeAdapter) modelledRequest(body []byte) (*CanonicalRequest, 
 	case hasField(fields, converseRequestKeys...):
 		add(a.converse.DecodeRequest(body))
 	}
-	return mergeRequests(parts), nil
+	cr := mergeRequests(parts)
+	for i := range cr.Messages {
+		normalizeToolArguments(cr.Messages[i].ToolCalls)
+	}
+	return cr, nil
+}
+
+// normalizeToolArguments puts each call's arguments in the one spelling the
+// encoders emit for a tool input (compact, with <, > and & escaped). A mask is
+// carried onto a native body by diffing the text decoded before and after the
+// rewrite, so arguments that an encoder would respell must already be spelled
+// that way when decoded, or the diff sees whitespace where only a value changed.
+// Arguments that are not a JSON document are left alone.
+func normalizeToolArguments(calls []CanonicalToolCall) {
+	for i := range calls {
+		raw := json.RawMessage(strings.TrimSpace(calls[i].Arguments))
+		if len(raw) == 0 || !json.Valid(raw) {
+			continue
+		}
+		if b, err := json.Marshal(raw); err == nil {
+			calls[i].Arguments = string(b)
+		}
+	}
 }
 
 func mergeRequests(parts []*CanonicalRequest) *CanonicalRequest {
@@ -640,6 +697,7 @@ func requestParts(cr *CanonicalRequest) []string {
 		parts = append(parts, m.Content)
 		for _, tc := range m.ToolCalls {
 			parts = append(parts, tc.Arguments)
+			parts = append(parts, argumentStrings(tc.Arguments)...)
 		}
 	}
 	return parts
@@ -649,8 +707,38 @@ func responseParts(cr *CanonicalResponse) []string {
 	parts := []string{cr.Content}
 	for _, tc := range cr.ToolCalls {
 		parts = append(parts, tc.Arguments)
+		parts = append(parts, argumentStrings(tc.Arguments)...)
 	}
 	return parts
+}
+
+// argumentStrings are the string values inside a tool call's JSON arguments. They
+// are surfaced with the call, so the same strings found in the raw body are not
+// a leftover: a leftover is rebuilt from the body after a mask, where values that
+// were different before can read the same and be listed once.
+func argumentStrings(arguments string) []string {
+	var doc any
+	if json.Unmarshal([]byte(arguments), &doc) != nil {
+		return nil
+	}
+	var out []string
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			out = append(out, t)
+		case []any:
+			for _, item := range t {
+				walk(item)
+			}
+		case map[string]any:
+			for _, item := range t {
+				walk(item)
+			}
+		}
+	}
+	walk(doc)
+	return out
 }
 
 func requestText(cr *CanonicalRequest) string {
@@ -663,6 +751,16 @@ func requestText(cr *CanonicalRequest) string {
 			sb.WriteByte('\n')
 			sb.WriteString(tc.Arguments)
 		}
+	}
+	return sb.String()
+}
+
+func responseText(cr *CanonicalResponse) string {
+	var sb strings.Builder
+	sb.WriteString(cr.Content)
+	for _, tc := range cr.ToolCalls {
+		sb.WriteByte('\n')
+		sb.WriteString(tc.Arguments)
 	}
 	return sb.String()
 }
@@ -738,6 +836,7 @@ func (a *BedrockNativeAdapter) modelledResponse(body []byte) (*CanonicalResponse
 			out.Model = p.Model
 		}
 	}
+	normalizeToolArguments(out.ToolCalls)
 	return out, nil
 }
 
@@ -746,6 +845,12 @@ func (a *BedrockNativeAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, 
 }
 
 func (a *BedrockNativeAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	return a.decodeStreamChunk(chunk, true)
+}
+
+// decodeStreamChunk decodes a chunk with the family decoders and, when leftover
+// is set, adds every other text-bearing string the way the view does.
+func (a *BedrockNativeAdapter) decodeStreamChunk(chunk []byte, leftover bool) (*CanonicalStreamChunk, error) {
 	fields, ok := jsonFields(chunk)
 	if !ok {
 		return nil, nil
@@ -811,14 +916,17 @@ func (a *BedrockNativeAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStream
 	if stringField(fields, "event_type") == "stream-end" {
 		skip = append(skip, "response")
 	}
-	if extra := leftoverText(chunk, known, skip...); extra != "" {
+	if !leftover {
+		return out, nil
+	}
+	if extra := leftoverTextWithout(chunk, known, skip, streamPlumbingKeys); extra != "" {
 		if out == nil {
 			out = &CanonicalStreamChunk{}
 		}
-		if out.Delta != "" {
-			out.Delta += "\n"
-		}
-		out.Delta += extra
+		// The view joins frames' texts with nothing between them, so a frame that
+		// carries text no delta wrote is fenced with line breaks on both sides: a
+		// match on the model's text cannot run into it, or out of it.
+		out.Delta += "\n" + extra + "\n"
 	}
 	return out, nil
 }

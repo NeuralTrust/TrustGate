@@ -634,7 +634,11 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, parsed.Hostname())
 	if err != nil {
-		return fmt.Errorf("resolve host: %w", err)
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return errors.New("host not found")
+		}
+		return errors.New("could not resolve host")
 	}
 	if len(addresses) == 0 {
 		return errors.New("host has no addresses")
@@ -642,7 +646,7 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 	host := parsed.Hostname()
 	for _, address := range addresses {
 		if blockedDestination(host, address.IP, netguard.AllowPrivate()) {
-			return fmt.Errorf("host resolves to a blocked address %s", address.IP)
+			return errors.New("host resolves to a blocked address")
 		}
 	}
 	return nil

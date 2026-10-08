@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -209,15 +210,23 @@ func bindSharedOAuth(target *domain.MCPTarget, catalog MCPAuthCatalog) bool {
 	if target.Auth.Registration == domain.RegistrationAuto {
 		return false
 	}
-	clientID, _, ok := catalog.SharedOAuthCredentials(target.Code)
+	creds, ok := mcpoauth.SharedClientFor(sharedOAuthProvider(catalog), mcpoauth.SharedClientQuery{
+		Code:     target.Code,
+		Provider: target.Auth.Provider,
+		ClientID: target.Auth.ClientID,
+	})
 	if !ok {
 		return false
 	}
-	if id := strings.TrimSpace(target.Auth.ClientID); id != "" && id != clientID {
-		return false
-	}
-	changed := target.Auth.ClientID != clientID || target.Auth.ClientSecret != ""
-	target.Auth.ClientID = clientID
+	changed := target.Auth.ClientID != creds.ClientID || target.Auth.ClientSecret != ""
+	target.Auth.ClientID = creds.ClientID
 	target.Auth.ClientSecret = ""
 	return changed
+}
+
+func sharedOAuthProvider(catalog MCPAuthCatalog) mcpoauth.Provider {
+	return mcpoauth.ProviderFunc(func(code string) (mcpoauth.Credentials, bool) {
+		id, secret, ok := catalog.SharedOAuthCredentials(code)
+		return mcpoauth.Credentials{ClientID: id, ClientSecret: secret}, ok
+	})
 }

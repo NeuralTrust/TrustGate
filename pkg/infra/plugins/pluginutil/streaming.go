@@ -396,3 +396,23 @@ func (s StreamingSettings) Options() appplugins.StreamOptions {
 func StreamFailedOpen(r appplugins.StreamReport) bool {
 	return r.CutAtEval == 0 && r.FailedEvals > 0
 }
+
+// StreamFailedClosed reports whether the stream was cut because THIS entry's
+// own call failed and the guard resolved that failure as fail_closed. The
+// executor narrows CutOnFailure per entry for a claimed cut, but an UNCLAIMED
+// one (the guard's tool-inspection failure names no entry) leaves it on every
+// blocking entry, so it also requires that this entry's own call failed
+// (FailedEvals, counted by the executor when the error is handed back). The
+// closing decision is then failed_closed, not blocked, because the guardrail
+// never gave a verdict; an entry whose calls all returned keeps reading blocked.
+// It outranks every other outcome, as a cut outranks the rest.
+func StreamFailedClosed(r appplugins.StreamReport) bool {
+	return r.CutOnFailure && r.CutAtEval > 0 && r.FailedEvals > 0
+}
+
+// StreamFailure is the reason and detail of the entry's first failed block, for
+// the plugin to write on its Data in the one closing write. They are present
+// whenever the entry failed during the stream, whatever the final decision.
+func StreamFailure(r appplugins.StreamReport) (reason, detail string) {
+	return string(r.FailureReason), r.FailureDetail
+}

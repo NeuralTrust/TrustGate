@@ -389,3 +389,44 @@ func TestViolationFingerprintsDedupeAndSkipBlockingModes(t *testing.T) {
 	assert.Nil(t, violationFingerprints(policy.ModeEnforce, dupes),
 		"a blocking mode stops the stream, so nothing comes back to deduplicate")
 }
+
+// RUN-1710: the closing write carries the first failed block's reason whatever
+// the decision settled on, and a cut that resolved this entry's failed call as
+// fail_closed is failed_closed, not blocked.
+func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
+	t.Parallel()
+	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
+		r.FailedEvals = 1
+		r.FailureReason = appplugins.FailureTransport
+		return r
+	}
+	cases := []struct {
+		name         string
+		report       appplugins.StreamReport
+		wantDecision string
+		wantReason   string
+	}{
+		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport"},
+		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "transport"},
+		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlock, "transport"},
+		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
+			event, span := newEvent()
+
+			_, err := p.InspectSegment(context.Background(),
+				execInput(policy.StagePreResponse, policy.ModeEnforce, streamSettings(nil),
+					requestContext(), nil, event),
+				appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: tc.report})
+
+			require.NoError(t, err)
+			data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantDecision, data.Decision)
+			assert.Equal(t, tc.wantReason, data.FailureReason)
+		})
+	}
+}

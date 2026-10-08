@@ -16,6 +16,8 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,7 +105,8 @@ func (s *Store) DeleteGatewayClient(ctx context.Context, clientID string) error 
 // proxy fixed at login. Re-saving a rotated record therefore shortens the TTL
 // rather than resetting it: the session cannot be kept alive indefinitely by
 // refreshing, and a revoked or changed platform decision is re-derived at the
-// next login. A record with no deadline keeps the legacy TTL.
+// next login. A record with no deadline keeps the legacy TTL. The record is
+// keyed by a digest of the refresh token, never by the token itself.
 func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord) error {
 	ttl := sessionTTL
 	if !rec.ExpiresAt.IsZero() {
@@ -112,11 +115,11 @@ func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoau
 			return errors.New("oauth flow store: session already expired")
 		}
 	}
-	return s.save(ctx, sessionPrefix+refreshToken, rec, ttl)
+	return s.save(ctx, sessionKey(refreshToken), rec, ttl)
 }
 
 func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
-	raw, err := s.rdb.Get(ctx, sessionPrefix+refreshToken).Bytes()
+	raw, err := s.rdb.Get(ctx, sessionKey(refreshToken)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
@@ -133,10 +136,15 @@ func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.
 func (s *Store) RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error {
 	// EXPIRE LT only ever shortens the remaining TTL: replaying an already
 	// retired token cannot push its expiry out again.
-	if err := s.rdb.ExpireLT(ctx, sessionPrefix+refreshToken, grace).Err(); err != nil {
+	if err := s.rdb.ExpireLT(ctx, sessionKey(refreshToken), grace).Err(); err != nil {
 		return fmt.Errorf("oauth flow store: retire session: %w", err)
 	}
 	return nil
+}
+
+func sessionKey(refreshToken string) string {
+	sum := sha256.Sum256([]byte(refreshToken))
+	return sessionPrefix + hex.EncodeToString(sum[:])
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {

@@ -139,6 +139,10 @@ func (p *Plugin) recordStreamOutcome(
 
 	data := ModerationData{Model: cfg.Model, Streaming: stream}
 	switch {
+	// A cut that resolved this entry's own failed call as fail_closed is a
+	// failure, not a block: the guardrail gave no verdict.
+	case pluginutil.StreamFailedClosed(seg.Report):
+		data.Decision = appplugins.DecisionFailedClosed
 	case seg.Report.CutAtEval > 0:
 		data.Decision = decisionBlock
 	case len(stream.Findings) > 0:
@@ -150,6 +154,12 @@ func (p *Plugin) recordStreamOutcome(
 	default:
 		data.Decision = decisionAllowed
 	}
+
+	// The first failed block's reason travels whatever the decision above
+	// settled on: a later finding, mask or cut does not erase that an earlier
+	// block went uninspected. Extras are replaced, so this one write is the
+	// only place it can land.
+	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
 
 	// A stream span's wall clock is the whole drain, provider generation
 	// included, and the fold in pkg/app/metrics counts a pre_response span as

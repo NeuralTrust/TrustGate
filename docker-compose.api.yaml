@@ -11,8 +11,6 @@ x-server-common: &server-common
   image: agentgateway:local
   build:
     context: .
-    args:
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   env_file:
     - .env
   # Override localhost defaults so containers reach the compose services.

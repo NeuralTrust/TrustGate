@@ -218,3 +218,34 @@ func TestRepository_UpdateKeepsClientSecretsItCannotDecrypt(t *testing.T) {
 		require.Empty(t, after.OAuth2.ClientSecret)
 	})
 }
+
+func TestRepository_StaleUnreadableReadDoesNotBlankAReEnteredSecret(t *testing.T) {
+	keyA, gw, conn := setupRepoConn(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "race")
+	keyB := repoWithKey(t, conn, "another-functional-secret-0123456789", true)
+
+	a := oauth2AuthWithSecrets(t, gwID, "idp")
+	require.NoError(t, keyA.Save(ctx, a))
+
+	stale, err := keyB.FindByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.True(t, stale.Config.OAuth2.ClientSecretUnreadable)
+	require.True(t, stale.Config.OAuth2.ExchangeSecretUnreadable)
+
+	reentry, err := keyB.FindByID(ctx, a.ID)
+	require.NoError(t, err)
+	reentry.Config.OAuth2.ClientSecret = "re-entered-login"
+	reentry.Config.OAuth2.ExchangeClientSecret = "re-entered-exchange"
+	reentry.Config.OAuth2.ClientSecretUnreadable = false
+	reentry.Config.OAuth2.ExchangeSecretUnreadable = false
+	require.NoError(t, keyB.Update(ctx, reentry))
+
+	stale.Name = "renamed-from-a-stale-read"
+	require.NoError(t, keyB.Update(ctx, stale))
+
+	got, err := keyB.FindByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, "re-entered-login", got.Config.OAuth2.ClientSecret)
+	require.Equal(t, "re-entered-exchange", got.Config.OAuth2.ExchangeClientSecret)
+}

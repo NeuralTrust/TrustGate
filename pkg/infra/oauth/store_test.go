@@ -16,6 +16,9 @@ package oauth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -31,6 +34,25 @@ func newSessionStore(t *testing.T) (*infraoauth.Store, *miniredis.Miniredis) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	return infraoauth.NewStore(rdb), mr
+}
+
+func digestSessionKey(refreshToken string) string {
+	sum := sha256.Sum256([]byte(refreshToken))
+	return "oauth:session:" + hex.EncodeToString(sum[:])
+}
+
+func seedLegacySession(t *testing.T, mr *miniredis.Miniredis, refreshToken string, rec appoauth.SessionRecord, ttl time.Duration) string {
+	t.Helper()
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("encode legacy record: %v", err)
+	}
+	key := "oauth:session:" + refreshToken
+	if err := mr.Set(key, string(raw)); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+	mr.SetTTL(key, ttl)
+	return key
 }
 
 func TestStoreSessionRoundTrip(t *testing.T) {
@@ -164,7 +186,7 @@ func TestStoreSessionTTLIsAbsoluteNotSliding(t *testing.T) {
 	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	first := mr.TTL("oauth:session:refresh-1")
+	first := mr.TTL(digestSessionKey("refresh-1"))
 	if first > time.Hour || first < 59*time.Minute {
 		t.Fatalf("TTL must end at ExpiresAt (~1h), not the legacy 30d, got %v", first)
 	}
@@ -176,7 +198,7 @@ func TestStoreSessionTTLIsAbsoluteNotSliding(t *testing.T) {
 	if err := store.SaveSession(ctx, "refresh-2", rotated); err != nil {
 		t.Fatalf("save rotated session: %v", err)
 	}
-	second := mr.TTL("oauth:session:refresh-2")
+	second := mr.TTL(digestSessionKey("refresh-2"))
 	if second > 40*time.Minute || second < 39*time.Minute {
 		t.Fatalf("rotated TTL must be the remaining lifetime (~40m), got %v", second)
 	}
@@ -199,7 +221,7 @@ func TestStoreSaveSessionRefusesExpiredRecord(t *testing.T) {
 	if err == nil {
 		t.Fatal("saving a record past its deadline must fail rather than persist it")
 	}
-	if mr.Exists("oauth:session:refresh-1") {
+	if mr.Exists(digestSessionKey("refresh-1")) {
 		t.Fatal("an expired record must not be written")
 	}
 }
@@ -350,5 +372,46 @@ func TestStoreGatewayClientManagementKeepsTheTTLSensible(t *testing.T) {
 	// DELETE must not see a failure.
 	if err := store.DeleteGatewayClient(ctx, "agw-managed"); err != nil {
 		t.Fatalf("delete is idempotent: %v", err)
+	}
+}
+
+func TestStoreSaveSessionKeysRecordByTokenDigest(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	rec := appoauth.SessionRecord{Subject: "user-42", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := store.SaveSession(ctx, "gwrt_refresh-token-value", rec); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	keys := mr.Keys()
+	if len(keys) != 1 || keys[0] != digestSessionKey("gwrt_refresh-token-value") {
+		t.Fatalf("session must be stored under its digest key only, got %v", keys)
+	}
+	if ttl := mr.TTL(keys[0]); ttl <= 0 || ttl > time.Hour {
+		t.Fatalf("session must expire at its deadline, got %v", ttl)
+	}
+}
+
+func TestStoreSessionsUnderThePlainTokenKeyAreNotRead(t *testing.T) {
+	store, mr := newSessionStore(t)
+	seedLegacySession(t, mr, "legacy-refresh", appoauth.SessionRecord{Subject: "user-7"}, time.Hour)
+
+	got, err := store.GetSession(context.Background(), "legacy-refresh")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("a record stored under the plain token key must not resolve, got %+v", got)
+	}
+}
+
+func TestStoreRetireSessionUnknownTokenIsNoop(t *testing.T) {
+	store, mr := newSessionStore(t)
+	if err := store.RetireSession(context.Background(), "absent", time.Minute); err != nil {
+		t.Fatalf("retiring an unknown token must not fail: %v", err)
+	}
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Fatalf("retiring an unknown token must not create keys, got %v", keys)
 	}
 }

@@ -88,7 +88,9 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 	for _, batch := range batches {
 		results, err := e.runBatch(ctx, in.Stage, in.Request, in.Response, batch)
 		if err != nil {
-			return nil, err
+			// The one place a plugin's denial learns which leg it ended, so no
+			// plugin has to say so itself.
+			return nil, stampBlockDirection(err, BlockDirectionForStage(in.Stage))
 		}
 		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) && !handsOnResponse(in, outcome) {
 			return outcome, nil
@@ -205,13 +207,19 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		}
 		if err != nil {
 			event.SetError(err)
-			if seg.Closing {
-				continue
-			}
 			// The caller's own cancellation (a client that left, a deadline
 			// unwinding the stream) is not this entry failing, as on the
 			// buffered path: it is neither counted nor labelled failed_open.
 			cancelled := ctx.Err() != nil
+			if seg.Closing {
+				if !cancelled {
+					spans.closingFailure(event, spanKey(seg, entry), err, call.Report, !Blocks(entry.mode) || entryFailsOpen(inspector, entry))
+				}
+				continue
+			}
+			if !cancelled {
+				spans.noteFailure(spanKey(seg, entry), err)
+			}
 			// Observe never blocks, and streaming.on_error is the stream's
 			// answer for entries that can: an observe entry that could not
 			// inspect a segment records that it failed open and lets the
@@ -715,6 +723,22 @@ func (e *executor) applyResults(
 			outcome.Headers = cloneHeaders(resp.Headers)
 		} else {
 			outcome.Headers = cloneHeaders(res.Headers)
+		}
+		if res.StatusCode == http.StatusForbidden {
+			// A denial returned as a result rather than as an error (the
+			// allowlists do): same header, on both the outcome and, for the
+			// buffered leg that renders from it, the response.
+			direction := BlockDirectionForStage(stage)
+			if outcome.Headers == nil {
+				outcome.Headers = map[string][]string{}
+			}
+			outcome.Headers[BlockDirectionHeader] = []string{direction}
+			if resp != nil {
+				if resp.Headers == nil {
+					resp.Headers = map[string][]string{}
+				}
+				resp.Headers[BlockDirectionHeader] = []string{direction}
+			}
 		}
 	}
 	return stopApplied

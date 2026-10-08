@@ -27,7 +27,12 @@ func (m *SecurityHeadersMiddleware) Middleware() fiber.Handler {
 		err := c.Next()
 		c.Set("X-Content-Type-Options", "nosniff")
 		c.Set("X-Frame-Options", "DENY")
-		c.Set("Referrer-Policy", "no-referrer")
+		// A handler that needs a different referrer policy sets its own and
+		// keeps it: the connect pages use same-origin, which is what lets a
+		// browser send the page's Origin on the form they submit.
+		if len(c.Response().Header.Peek(fiber.HeaderReferrerPolicy)) == 0 {
+			c.Set(fiber.HeaderReferrerPolicy, "no-referrer")
+		}
 		c.Set("Cross-Origin-Opener-Policy", "same-origin")
 		c.Set("Cross-Origin-Resource-Policy", "same-site")
 		if c.Protocol() == "https" {
