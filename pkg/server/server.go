@@ -36,13 +36,15 @@ type BaseServer struct {
 	logger *slog.Logger
 }
 
+const bodyLimit = 8 * 1024 * 1024
+
 func NewBaseServer(name, addr string, cfg config.ServerConfig, logger *slog.Logger) *BaseServer {
 	r := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ReduceMemoryUsage:     true,
 		Network:               fiber.NetworkTCP,
 		EnablePrintRoutes:     false,
-		BodyLimit:             8 * 1024 * 1024,
+		BodyLimit:             bodyLimit,
 		ReadTimeout:           cfg.ReadTimeout,
 		WriteTimeout:          cfg.WriteTimeout,
 		IdleTimeout:           cfg.IdleTimeout,
@@ -62,6 +64,7 @@ func NewBaseServer(name, addr string, cfg config.ServerConfig, logger *slog.Logg
 	r.Server().NoDefaultServerHeader = true
 	r.Server().NoDefaultDate = true
 	r.Server().NoDefaultContentType = true
+	r.Use(decodeRequestBody(bodyLimit))
 
 	return &BaseServer{Name: name, Addr: addr, Router: r, logger: logger}
 }
