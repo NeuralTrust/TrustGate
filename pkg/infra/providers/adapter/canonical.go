@@ -255,4 +255,13 @@ type CanonicalStreamChunk struct {
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers
 	ProviderExtensions map[string]json.RawMessage `json:"provider_extensions,omitempty"`
+	StreamEnd          bool                       `json:"-"`
+	UpstreamError      *UpstreamStreamError       `json:"-"`
+}
+
+// SignalOnly reports a decoded identity or terminal marker with no encodable payload.
+func (c *CanonicalStreamChunk) SignalOnly() bool {
+	return c != nil && (c.StreamEnd || c.ID != "" || c.Model != "") && c.Role == "" &&
+		c.Delta == "" && c.ReasoningDelta == "" && c.FinishReason == "" &&
+		len(c.ToolCallDeltas) == 0 && c.Usage == nil && len(c.ProviderExtensions) == 0 && c.UpstreamError == nil
 }

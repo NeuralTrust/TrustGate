@@ -466,12 +466,22 @@ func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 // ---------------------------------------------------------------------------
 
 func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	fields, valid := streamJSONFields(chunk)
+	if !valid || len(fields) == 0 {
+		return invalidStreamEvent("Gemini"), nil
+	}
+	if decodeStreamError(fields["error"]) != nil {
+		return failedStreamEvent("Gemini"), nil
+	}
+	if !validGeminiStreamFields(fields) {
+		return invalidStreamEvent("Gemini"), nil
+	}
 	var resp geminiResponse
 	if err := json.Unmarshal(chunk, &resp); err != nil {
-		return nil, nil
+		return invalidStreamEvent("Gemini"), nil
 	}
 
-	sc := &CanonicalStreamChunk{}
+	sc := &CanonicalStreamChunk{ID: resp.ResponseID, Model: resp.ModelVersion}
 
 	if len(resp.Candidates) > 0 {
 		cand := resp.Candidates[0]
@@ -518,16 +528,49 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		sc.Usage = geminiUsageToCanonical(*u)
 	}
 
-	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 && sc.Usage == nil {
+	if sc.ID == "" && sc.Model == "" && sc.Delta == "" && sc.ReasoningDelta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 && sc.Usage == nil {
 		return nil, nil
 	}
 
 	return sc, nil
 }
 
-// ---------------------------------------------------------------------------
-// Stream: Encode (Canonical → Gemini SSE chunk)
-// ---------------------------------------------------------------------------
+func validGeminiStreamFields(fields map[string]json.RawMessage) bool {
+	if !streamFieldsNonNull(fields, "responseId", "modelVersion") {
+		return false
+	}
+	if _, valid := streamJSONObject(fields, "usageMetadata"); !valid {
+		return false
+	}
+	candidates, valid := streamJSONArray(fields, "candidates")
+	if !valid {
+		return false
+	}
+	for _, raw := range candidates {
+		candidate, valid := streamJSONFields(raw)
+		if !valid || !streamFieldsNonNull(candidate, "finishReason", "index") {
+			return false
+		}
+		content, valid := streamJSONObject(candidate, "content")
+		if !valid || !streamFieldsNonNull(content, "role") {
+			return false
+		}
+		parts, valid := streamJSONArray(content, "parts")
+		if !valid {
+			return false
+		}
+		for _, raw := range parts {
+			part, valid := streamJSONFields(raw)
+			if !valid || !streamFieldsNonNull(part, "text", "thought") {
+				return false
+			}
+			if _, valid := streamJSONObject(part, "functionCall"); !valid {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	// Emit for Role (assistant start), Delta (text), ToolCallDeltas (complete tool calls), or FinishReason.

@@ -20,9 +20,15 @@ import (
 	"strings"
 )
 
-// ---------------------------------------------------------------------------
-// Chat Completions API typed structs
-// ---------------------------------------------------------------------------
+// OpenAIChatIncludesUsage reports whether the Chat request explicitly asks for stream usage.
+func OpenAIChatIncludesUsage(body []byte) bool {
+	var request struct {
+		StreamOptions struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	return json.Unmarshal(body, &request) == nil && request.StreamOptions.IncludeUsage
+}
 
 type openaiRequest struct {
 	Model               string            `json:"model,omitempty"`
@@ -164,7 +170,8 @@ type openaiUsage struct {
 }
 
 type openaiPromptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type openaiCompletionTokensDetails struct {
@@ -186,6 +193,7 @@ func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
 }
 
 type openaiStreamChunk struct {
+	Error   json.RawMessage      `json:"error,omitempty"`
 	ID      string               `json:"id,omitempty"`
 	Object  string               `json:"object"`
 	Model   string               `json:"model,omitempty"`
@@ -559,6 +567,11 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		Model: raw.Model,
 	}
 
+	if failure := decodeStreamError(raw.Error); failure != nil {
+		sc.UpstreamError = failure
+		return sc, nil
+	}
+
 	if len(raw.Choices) > 0 {
 		choice := raw.Choices[0]
 		delta := choice.Delta
@@ -610,6 +623,10 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 // ---------------------------------------------------------------------------
 
 func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
+	return encodeChatStreamChunk(chunk, false)
+}
+
+func encodeChatStreamChunk(chunk *CanonicalStreamChunk, usageOnly bool) ([][]byte, error) {
 	delta := openaiStreamDelta{
 		Role:             chunk.Role,
 		Content:          chunk.Delta,
@@ -652,6 +669,9 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		Choices: []openaiStreamChoice{choice},
 	}
 
+	if usageOnly && chunk.Usage != nil && chunk.Role == "" && chunk.Delta == "" && chunk.ReasoningDelta == "" && chunk.FinishReason == "" && len(chunk.ToolCallDeltas) == 0 {
+		out.Choices = []openaiStreamChoice{}
+	}
 	if chunk.Usage != nil {
 		out.Usage = &openaiUsage{
 			PromptTokens:     chunk.Usage.InputTokens,
@@ -660,6 +680,14 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		}
 	}
 
+	if usageOnly && out.Usage != nil {
+		if chunk.Usage.CachedInputTokens != 0 || chunk.Usage.CacheWriteInputTokens != 0 {
+			out.Usage.PromptTokensDetails = &openaiPromptTokensDetails{CachedTokens: chunk.Usage.CachedInputTokens, CacheWriteTokens: chunk.Usage.CacheWriteInputTokens}
+		}
+		if chunk.Usage.ReasoningOutputTokens != 0 {
+			out.Usage.CompletionTokensDetails = &openaiCompletionTokensDetails{ReasoningTokens: chunk.Usage.ReasoningOutputTokens}
+		}
+	}
 	if raw, ok := chunk.ProviderExtensions["x_groq"]; ok && len(raw) > 0 {
 		out.XGroq = raw
 	}

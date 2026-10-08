@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,18 +47,19 @@ type Pool struct {
 }
 
 type LoadBalancer struct {
-	strategy   Strategy
-	logger     *slog.Logger
-	cache      RedisProvider
-	poolID     string
-	poolSize   int
-	routes     []routingdomain.Route
-	backendIDs []string
-	smart      *registry.SmartRoutingConfig
-	successCh  chan *registry.Registry
-	factory    Factory
-	done       chan struct{}
-	closeOnce  sync.Once
+	strategy         Strategy
+	logger           *slog.Logger
+	cache            RedisProvider
+	poolID           string
+	poolSize         int
+	routes           []routingdomain.Route
+	backendIDs       []string
+	healthRetryAfter []time.Duration
+	smart            *registry.SmartRoutingConfig
+	successCh        chan *registry.Registry
+	factory          Factory
+	done             chan struct{}
+	closeOnce        sync.Once
 }
 
 func NewLoadBalancer(
@@ -88,22 +90,32 @@ func NewLoadBalancer(
 	}
 
 	backendIDs := make([]string, 0, len(poolRegistries))
+	healthRetryAfter := make([]time.Duration, 0, len(poolRegistries))
 	for _, b := range poolRegistries {
 		backendIDs = append(backendIDs, b.ID.String())
+		retryAfter := time.Duration(0)
+		if pool.Algorithm == algorithm.SmartRouting {
+			retryAfter = defaultSmartHealthRetryInterval
+			if checks := b.HealthChecks(); checks != nil && checks.Interval > 0 {
+				retryAfter = time.Duration(checks.Interval) * time.Second
+			}
+		}
+		healthRetryAfter = append(healthRetryAfter, retryAfter)
 	}
 
 	lb := &LoadBalancer{
-		strategy:   strategy,
-		logger:     logger,
-		cache:      cacheClient,
-		poolID:     pool.ID,
-		poolSize:   len(pool.Routes),
-		routes:     pool.Routes,
-		backendIDs: backendIDs,
-		smart:      pool.SmartRoutingConfig,
-		successCh:  make(chan *registry.Registry, 1000),
-		factory:    factory,
-		done:       make(chan struct{}),
+		strategy:         strategy,
+		logger:           logger,
+		cache:            cacheClient,
+		poolID:           pool.ID,
+		poolSize:         len(pool.Routes),
+		routes:           pool.Routes,
+		backendIDs:       backendIDs,
+		healthRetryAfter: healthRetryAfter,
+		smart:            pool.SmartRoutingConfig,
+		successCh:        make(chan *registry.Registry, 1000),
+		factory:          factory,
+		done:             make(chan struct{}),
 	}
 	go lb.processSuccessReports()
 	return lb, nil
@@ -213,6 +225,22 @@ func (lb *LoadBalancer) NextRoute(
 		attempts = 1
 	}
 	health := lb.healthMap(ctx)
+	if lb.Algorithm() == algorithm.SmartRouting {
+		filtered := make(map[routingdomain.RouteKey]struct{}, len(exclude)+len(lb.routes))
+		for key := range exclude {
+			filtered[key] = struct{}{}
+		}
+		for _, route := range lb.routes {
+			if route.Registry == nil || !isHealthy(health, route.Registry.ID.String()) {
+				filtered[route.Key()] = struct{}{}
+			}
+		}
+		route := lb.strategy.Next(ctx, req, filtered)
+		if route == nil {
+			return nil, routingdomain.ErrSR1PolicyExhausted
+		}
+		return route, nil
+	}
 	var last *routingdomain.Route
 	for i := 0; i < attempts; i++ {
 		route := lb.strategy.Next(ctx, req, exclude)
@@ -252,22 +280,32 @@ func (lb *LoadBalancer) healthMap(ctx context.Context) map[string]bool {
 		return nil
 	}
 	health := make(map[string]bool, len(lb.backendIDs))
+	now := time.Now()
 	for i, v := range vals {
-		health[lb.backendIDs[i]] = parseHealthy(v)
+		health[lb.backendIDs[i]] = parseHealthForSelection(v, lb.healthRetryAfter[i], now)
 	}
 	return health
 }
 
+const defaultSmartHealthRetryInterval = 30 * time.Second
+
 func parseHealthy(v any) bool {
+	return parseHealthForSelection(v, 0, time.Time{})
+}
+
+func parseHealthForSelection(v any, retryAfter time.Duration, now time.Time) bool {
 	raw, ok := v.(string)
 	if !ok {
 		return true
 	}
-	var status HealthStatus
+	var status struct {
+		Healthy   bool
+		LastCheck time.Time
+	}
 	if err := json.Unmarshal([]byte(raw), &status); err != nil {
 		return true
 	}
-	return status.Healthy
+	return status.Healthy || (retryAfter > 0 && !now.Before(status.LastCheck.Add(retryAfter)))
 }
 
 func isHealthy(health map[string]bool, backendID string) bool {

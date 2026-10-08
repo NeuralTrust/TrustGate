@@ -301,12 +301,42 @@ func decodeResponsesResponse(body []byte) (*CanonicalResponse, error) {
 // ---------------------------------------------------------------------------
 
 func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(chunk, &kind) != nil || kind.Type == "" {
+		return invalidStreamEvent("Responses"), nil
+	}
+	switch kind.Type {
+	case "response.created", "response.in_progress", "response.output_text.delta", "response.function_call_arguments.delta", "response.output_item.added", "response.function_call_arguments.done", "response.completed", "response.incomplete", "error", "response.failed":
+	default:
+		return nil, nil
+	}
 	var event openaiResponsesStreamEvent
 	if err := json.Unmarshal(chunk, &event); err != nil {
-		return nil, nil
+		return invalidStreamEvent("Responses"), nil
 	}
 
 	switch event.Type {
+	case "response.created", "response.in_progress":
+		if len(event.Response) == 0 {
+			return nil, nil
+		}
+		var response struct {
+			ID    string `json:"id"`
+			Model string `json:"model"`
+		}
+		if _, valid := streamJSONFields(event.Response); !valid || json.Unmarshal(event.Response, &response) != nil {
+			return invalidStreamEvent("Responses"), nil
+		}
+		if response.ID == "" && response.Model == "" {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{ID: response.ID, Model: response.Model}, nil
+
+	case "error", "response.failed":
+		return &CanonicalStreamChunk{UpstreamError: &UpstreamStreamError{Message: "upstream Responses stream failed"}}, nil
+
 	case "response.output_text.delta":
 		if event.Delta == "" {
 			return nil, nil
@@ -357,8 +387,12 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		}, nil
 
 	case "response.completed":
+		if _, valid := streamJSONFields(event.Response); !valid {
+			return invalidStreamEvent("Responses"), nil
+		}
 		sc := &CanonicalStreamChunk{
 			FinishReason: "stop",
+			StreamEnd:    true,
 		}
 		if event.Response != nil {
 			var completed struct {
@@ -372,6 +406,40 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 				if completed.Usage != nil {
 					sc.Usage = openaiResponsesUsageToCanonical(*completed.Usage)
 				}
+			} else {
+				return invalidStreamEvent("Responses"), nil
+			}
+		}
+		return sc, nil
+
+	case "response.incomplete":
+		if _, valid := streamJSONFields(event.Response); !valid {
+			return invalidStreamEvent("Responses"), nil
+		}
+		sc := &CanonicalStreamChunk{
+			FinishReason: "length",
+			StreamEnd:    true,
+		}
+		if event.Response != nil {
+			var incomplete struct {
+				ID                string                `json:"id"`
+				Model             string                `json:"model"`
+				Usage             *openaiResponsesUsage `json:"usage"`
+				IncompleteDetails *struct {
+					Reason string `json:"reason"`
+				} `json:"incomplete_details"`
+			}
+			if json.Unmarshal(event.Response, &incomplete) == nil {
+				sc.ID = incomplete.ID
+				sc.Model = incomplete.Model
+				if incomplete.Usage != nil {
+					sc.Usage = openaiResponsesUsageToCanonical(*incomplete.Usage)
+				}
+				if incomplete.IncompleteDetails != nil && incomplete.IncompleteDetails.Reason == "content_filter" {
+					sc.FinishReason = "content_filter"
+				}
+			} else {
+				return invalidStreamEvent("Responses"), nil
 			}
 		}
 		return sc, nil

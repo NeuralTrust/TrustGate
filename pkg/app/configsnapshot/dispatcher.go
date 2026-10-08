@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
@@ -76,10 +77,19 @@ type Dispatcher struct {
 	retention   time.Duration
 	maxRows     int
 	trigger     chan struct{}
+	compiled    atomic.Bool
 
 	mu              sync.Mutex
 	publishedGlobal string
 	publishedScoped map[string]string
+}
+
+// Readiness reports whether this process has published a compiled snapshot.
+func (d *Dispatcher) Readiness(context.Context) error {
+	if d.compiled.Load() {
+		return nil
+	}
+	return configsync.ErrNotReady
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
@@ -112,15 +122,15 @@ func NewDispatcher(
 		maxRows = defaultMaxRows
 	}
 	return &Dispatcher{
-		compiler:    compiler,
-		codec:       codec,
-		holder:      holder,
-		broadcaster: broadcaster,
-		outbox:      outbox,
-		logger:      logger,
-		debounce:    debounce,
-		backstop:    backstop,
-		retention:   retention,
+		compiler:        compiler,
+		codec:           codec,
+		holder:          holder,
+		broadcaster:     broadcaster,
+		outbox:          outbox,
+		logger:          logger,
+		debounce:        debounce,
+		backstop:        backstop,
+		retention:       retention,
 		maxRows:         maxRows,
 		trigger:         make(chan struct{}, 1),
 		publishedScoped: make(map[string]string),
@@ -269,6 +279,7 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 			slog.Int("bytes", len(raw)))
 	}
 	d.mu.Unlock()
+	d.compiled.Store(true)
 
 	if len(pending) > 0 {
 		if _, err := d.outbox.DeleteSeqs(ctx, pending); err != nil && ctx.Err() == nil {

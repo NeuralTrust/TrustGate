@@ -647,12 +647,30 @@ func (a *BedrockAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error)
 }
 
 func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	fields, valid := streamJSONFields(chunk)
+	if !valid || len(fields) == 0 {
+		return invalidStreamEvent("Bedrock"), nil
+	}
+	if decodeStreamError(fields["error"]) != nil {
+		return failedStreamEvent("Bedrock"), nil
+	}
+	for _, key := range []string{"internalServerException", "modelStreamErrorException", "validationException", "throttlingException", "serviceUnavailableException", "modelTimeoutException"} {
+		if _, exists := fields[key]; exists {
+			return failedStreamEvent("Bedrock"), nil
+		}
+	}
+	if !validBedrockStreamFields(fields) {
+		return invalidStreamEvent("Bedrock"), nil
+	}
 	var ev ConverseStreamEvent
 	if err := json.Unmarshal(chunk, &ev); err != nil {
-		return nil, nil
+		return invalidStreamEvent("Bedrock"), nil
 	}
 	switch {
 	case ev.MessageStart != nil:
+		if ev.MessageStart.Role != converseRoleAssistant {
+			return invalidStreamEvent("Bedrock"), nil
+		}
 		return &CanonicalStreamChunk{Role: converseRoleAssistant}, nil
 	case ev.ContentBlockStart != nil:
 		start := ev.ContentBlockStart
@@ -667,16 +685,54 @@ func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 	case ev.ContentBlockDelta != nil:
 		return converseDeltaToCanonical(ev.ContentBlockDelta), nil
 	case ev.MessageStop != nil:
+		if ev.MessageStop.StopReason == "" {
+			return invalidStreamEvent("Bedrock"), nil
+		}
 		return &CanonicalStreamChunk{FinishReason: converseFinishReason(ev.MessageStop.StopReason)}, nil
 	case ev.Metadata != nil:
 		usage := converseUsageToCanonical(ev.Metadata.Usage)
-		if usage == nil {
-			return nil, nil
-		}
-		return &CanonicalStreamChunk{Usage: usage}, nil
+		return &CanonicalStreamChunk{Usage: usage, StreamEnd: true}, nil
 	default:
 		return nil, nil
 	}
+}
+
+func validBedrockStreamFields(fields map[string]json.RawMessage) bool {
+	known := 0
+	for _, key := range []string{"messageStart", "contentBlockStart", "contentBlockDelta", "contentBlockStop", "messageStop", "metadata"} {
+		if _, exists := fields[key]; !exists {
+			continue
+		}
+		known++
+		event, valid := streamJSONObject(fields, key)
+		if !valid || !streamFieldsNonNull(event, "role", "stopReason", "contentBlockIndex") {
+			return false
+		}
+		switch key {
+		case "contentBlockStart", "contentBlockDelta":
+			childKey := "start"
+			if key == "contentBlockDelta" {
+				childKey = "delta"
+			}
+			content, valid := streamJSONObject(event, childKey)
+			if !valid || content == nil || !streamFieldsNonNull(content, "text") {
+				return false
+			}
+			for _, child := range []string{"toolUse", "reasoningContent"} {
+				if _, valid := streamJSONObject(content, child); !valid {
+					return false
+				}
+			}
+		case "metadata":
+			if _, valid := streamJSONObject(event, "usage"); !valid {
+				return false
+			}
+			if _, valid := streamJSONObject(event, "metrics"); !valid {
+				return false
+			}
+		}
+	}
+	return known <= 1
 }
 
 func converseDeltaToCanonical(d *ConverseContentBlockDelta) *CanonicalStreamChunk {

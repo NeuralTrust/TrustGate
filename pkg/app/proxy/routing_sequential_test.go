@@ -60,7 +60,7 @@ func newSequentialForwarder(
 	t.Helper()
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, nil,
 		approuting.NewResolver(), listing, nil, nil, newTestLogger(),
 	)

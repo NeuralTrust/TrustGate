@@ -23,6 +23,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 )
 
 type CreateConsumerRequest struct {
@@ -109,6 +110,7 @@ type LBConfigRequest struct {
 }
 
 type SmartRoutingConfigRequest struct {
+	SR1   *SR1ConfigRequest         `json:"sr1,omitempty"`
 	Tiers []SmartRoutingTierRequest `json:"tiers"`
 }
 
@@ -187,7 +189,12 @@ func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConf
 			Model:      tier.Model,
 		})
 	}
-	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil
+	sr1 := &registrydomain.SR1Config{CacheTTLSeconds: 300}
+	if s.SR1 != nil {
+		sr1.CacheTTLSeconds = s.SR1.CacheTTLSeconds
+		sr1.EscapeHatchEnabled = s.SR1.EscapeHatchEnabled
+	}
+	return &registrydomain.SmartRoutingConfig{Tiers: tiers, SR1: sr1}, nil
 }
 
 func (e *EmbeddingConfigRequest) ToDomain() *registrydomain.EmbeddingConfig {
@@ -355,14 +362,44 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &domain.LBConfig{
+	config := &domain.LBConfig{
 		Enabled:         r.Enabled,
 		Algorithm:       r.Algorithm,
 		PoolAlias:       r.PoolAlias,
 		Members:         members,
 		EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
 		SmartRouting:    smartRouting,
-	}, nil
+	}
+	if config.Enabled && config.Algorithm == "" {
+		config.Algorithm = algorithm.RoundRobin
+	}
+	if smartRouting != nil || r.Algorithm == algorithm.SmartRouting {
+		policies := make(domain.ModelPolicies, len(members))
+		known := make(map[ids.RegistryID]struct{}, len(members))
+		for _, member := range members {
+			known[member.RegistryID] = struct{}{}
+			policy := policies[member.RegistryID]
+			policy.Allowed = append(policy.Allowed, member.Models...)
+			if model := member.RouteModel(); model != "" {
+				policy.Allowed = append(policy.Allowed, model)
+			}
+			policies[member.RegistryID] = policy
+		}
+		validation := *config
+		if smartRouting != nil {
+			shape := *smartRouting
+			shape.LegacyThresholds = true
+			validation.SmartRouting = &shape
+		}
+		validation.Enabled = true
+		if err := validation.ValidateTierRegistries(known); err != nil {
+			return nil, fmt.Errorf("lb_config: %w: %w", commonerrors.ErrValidation, err)
+		}
+		if err := validation.Validate(policies); err != nil {
+			return nil, fmt.Errorf("lb_config: %w: %w", commonerrors.ErrValidation, err)
+		}
+	}
+	return config, nil
 }
 
 func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {
