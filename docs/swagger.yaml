@@ -2438,6 +2438,11 @@ definitions:
         type: string
       registry_id:
         type: string
+      shared:
+        description: |-
+          Shared is an instance with one account for everyone, which only an
+          administrator connects and disconnects.
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalInstall:
     properties:
@@ -7004,6 +7009,61 @@ paths:
       security:
       - BearerAuth: []
       summary: Link a user's own account to a Store server
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/principal/connections/{registry_id}:
+    delete:
+      description: 'Revokes the account the caller linked to one Store server: the
+        instance''s registry_id, as the principal preview lists it under connections.
+        The credential is deleted from the gateway vault, and the next call to that
+        server asks the caller to connect again; the install stays. Acts on the signed-in
+        user only; a service credential or a platform token answers 403. An instance
+        that reads one account shared by everyone answers 409: an administrator disconnects
+        it in Registry. An account that is not linked answers 204, as one just revoked
+        does.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Instance (registry) id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: Not a signed-in tenant user
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: No such instance on the gateway, or one that needs no account
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The instance uses one shared account
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Disconnect your account from a Store server
       tags:
       - store
   /v1/gateways/{gateway_id}/store/principal/installs:

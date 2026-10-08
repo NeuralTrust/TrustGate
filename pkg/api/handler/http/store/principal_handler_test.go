@@ -257,7 +257,7 @@ func TestPrincipalHandler_ShapesStateWithoutSecrets(t *testing.T) {
 		t.Fatalf("connections: %v", conns)
 	}
 	linked := conns[0].(map[string]any)
-	if linked["linked"] != true || linked["account_ref"] != "ana@corp" || linked["expires_at"] != "2026-09-07T12:00:00Z" || linked["needs_reconnect"] != false {
+	if linked["linked"] != true || linked["account_ref"] != "ana@corp" || linked["expires_at"] != "2026-09-07T12:00:00Z" || linked["needs_reconnect"] != false || linked["shared"] != false {
 		t.Fatalf("linked connection: %v", linked)
 	}
 	for _, k := range []string{"access_token", "refresh_token", "scopes"} {

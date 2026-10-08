@@ -57,7 +57,11 @@ func personalKeyStoreTool(t *testing.T, links PersonalKeyLinks) (StoreTool, *app
 }
 
 func personalKeyCtx(gw *gatewaydomain.Gateway, data *appconsumer.Data) context.Context {
-	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	return personalKeyCtxAs(gw, data, "alice")
+}
+
+func personalKeyCtxAs(gw *gatewaydomain.Gateway, data *appconsumer.Data, subject string) context.Context {
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: subject})
 	ctx = appgateway.WithGateway(ctx, gw)
 	if data != nil {
 		ctx = appconsumer.WithData(ctx, data)

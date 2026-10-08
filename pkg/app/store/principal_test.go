@@ -141,6 +141,8 @@ func TestPrincipalPreview_ConnectionsPerForwardedSource(t *testing.T) {
 	jira := forwardedRegistry("jira", "Jira", "jira")
 	stale := forwardedRegistry("slack", "Slack", "slack")
 	static := shelfRegistry("linear") // admin credential: not a connection
+	figma := forwardedRegistry("figma", "Figma", "figma")
+	figma.MCPTarget.Auth.Account = registrydomain.MCPAccountShared
 	vault := &fakeVault{
 		creds: map[string]*vaultdomain.Credential{
 			"github": {Provider: "github", AccountRef: "ana@corp", RefreshToken: "r", ExpiresAt: time.Now().Add(-time.Hour)},
@@ -148,12 +150,12 @@ func TestPrincipalPreview_ConnectionsPerForwardedSource(t *testing.T) {
 		},
 		undecryptable: map[string]bool{"jira": true},
 	}
-	p := newPreviewT(t, &fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{github, notion, jira, stale, static}}, vault)
+	p := newPreviewT(t, &fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{github, notion, jira, stale, static, figma}}, vault)
 	state, err := p.Preview(context.Background(), gw, "ana")
 	if err != nil {
 		t.Fatalf("Preview: %v", err)
 	}
-	if len(state.Connections) != 4 {
+	if len(state.Connections) != 5 {
 		t.Fatalf("want one connection per forwarded registry, got %+v", state.Connections)
 	}
 	byProvider := map[string]PrincipalConnection{}
@@ -171,6 +173,14 @@ func TestPrincipalPreview_ConnectionsPerForwardedSource(t *testing.T) {
 	}
 	if c := byProvider["slack"]; !c.Linked || !c.NeedsReconnect {
 		t.Fatalf("expired token without refresh → needs reconnect: %+v", c)
+	}
+	// One account for everyone is the administrator's: the Portal must not
+	// offer its user a Disconnect for it.
+	if c := byProvider["figma"]; !c.Shared {
+		t.Fatalf("a shared instance must say so: %+v", c)
+	}
+	if c := byProvider["github"]; c.Shared {
+		t.Fatalf("a personal account is not shared: %+v", c)
 	}
 }
 

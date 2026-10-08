@@ -40,6 +40,17 @@ type PrincipalHandler struct {
 	// configurer mints the hosted form where a user enters a server's per-user
 	// values. Nil on planes without the configure service.
 	configurer appstore.PrincipalConfigureLinker
+	// disconnector revokes an account a user linked. Nil on planes without a
+	// credential store, and the endpoint then reports itself unavailable.
+	disconnector appstore.PrincipalDisconnector
+}
+
+// PrincipalHandlerOption configures NewPrincipalHandler.
+type PrincipalHandlerOption func(*PrincipalHandler)
+
+// WithPrincipalDisconnector serves the revoke of a user's own linked account.
+func WithPrincipalDisconnector(d appstore.PrincipalDisconnector) PrincipalHandlerOption {
+	return func(h *PrincipalHandler) { h.disconnector = d }
 }
 
 func NewPrincipalHandler(
@@ -47,8 +58,15 @@ func NewPrincipalHandler(
 	installer appstore.PrincipalInstaller,
 	linker appstore.PrincipalConnectLinker,
 	configurer appstore.PrincipalConfigureLinker,
+	opts ...PrincipalHandlerOption,
 ) *PrincipalHandler {
-	return &PrincipalHandler{preview: preview, installer: installer, linker: linker, configurer: configurer}
+	h := &PrincipalHandler{preview: preview, installer: installer, linker: linker, configurer: configurer}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
 }
 
 func validateInstall(r storerequest.Install) error {
@@ -122,6 +140,7 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 			Code:           conn.Code,
 			RegistryID:     conn.RegistryID.String(),
 			Registry:       conn.Registry,
+			Shared:         conn.Shared,
 			Linked:         conn.Linked,
 			AccountRef:     conn.AccountRef,
 			NeedsReconnect: conn.NeedsReconnect,
@@ -133,6 +152,43 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 		out.Connections = append(out.Connections, row)
 	}
 	return httpio.WriteOK(c, out)
+}
+
+// Disconnect godoc
+// @Summary      Disconnect your account from a Store server
+// @Description  Revokes the account the caller linked to one Store server: the instance's registry_id, as the principal preview lists it under connections. The credential is deleted from the gateway vault, and the next call to that server asks the caller to connect again; the install stays. Acts on the signed-in user only; a service credential or a platform token answers 403. An instance that reads one account shared by everyone answers 409: an administrator disconnects it in Registry. An account that is not linked answers 204, as one just revoked does.
+// @Tags         store
+// @Security     BearerAuth
+// @Param        gateway_id   path  string  true  "Gateway id"            format(uuid)
+// @Param        registry_id  path  string  true  "Instance (registry) id"  format(uuid)
+// @Success      204
+// @Failure      400  {object}  httpio.ErrorBody
+// @Failure      401  {object}  httpio.ErrorBody
+// @Failure      403  {object}  httpio.ErrorBody  "Not a signed-in tenant user"
+// @Failure      404  {object}  httpio.ErrorBody  "No such instance on the gateway, or one that needs no account"
+// @Failure      409  {object}  httpio.ErrorBody  "The instance uses one shared account"
+// @Failure      422  {object}  httpio.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/store/principal/connections/{registry_id} [delete]
+func (h *PrincipalHandler) Disconnect(c *fiber.Ctx) error {
+	if h.disconnector == nil {
+		return httpio.WriteError(c, fmt.Errorf("store disconnect: %w", commonerrors.ErrNotFound))
+	}
+	gatewayID, owner, err := selfScope(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	registryID, err := ids.Parse[ids.RegistryKind](strings.TrimSpace(c.Params("registry_id")))
+	if err != nil {
+		return httpio.WriteError(c, fmt.Errorf("invalid registry_id: %w", commonerrors.ErrValidation))
+	}
+	if err := h.disconnector.Disconnect(c.UserContext(), appstore.PrincipalDisconnectRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: owner,
+		RegistryID:   registryID,
+	}); err != nil {
+		return httpio.WriteError(c, err)
+	}
+	return httpio.WriteNoContent(c)
 }
 
 // Install godoc

@@ -229,9 +229,25 @@ upstream accounts.
   connected) connects the owner's account, as it does for a session. The Store
   lists no `trustgate_connect_*` tool: installing is its one way in, and
   `trustgate_list_tools` names it (`connect_tool`) with the server's `code`.
+- A person revokes an account they linked from the Portal:
+  `DELETE /v1/gateways/{gateway_id}/store/principal/connections/{registry_id}`
+  (the instance's `registry_id`, as `GET …/store/principal` lists it under
+  `connections`). It acts on the signed-in user only (403 for a service
+  credential), deletes their credential from the vault and answers 204, also
+  when nothing was linked. An instance with one shared account answers 409: an
+  administrator disconnects it in Registry. The install stays; the next call to
+  the server is refused with the link to connect again, and that refusal drops
+  the server's cached tool list, so `trustgate_list_tools` reports it as
+  `needs_connect` from then on.
 - `GET /whoami` describes a personal key with `"key": {"personal": true, …}`
   and the Store on each plane, slug `store`: the MCP Store, and `/store/v1` when
   the gateway has an active personal consumer.
+- `trustgate_store_models` lists what the caller's personal key reaches,
+  grouped by provider, with the key's `base_url` (`…/store/v1`): the same list
+  the key's own `GET /store/v1/models` answers, found by owner, so a signed-in
+  session gets it too. No key, an expired one, or one with no links says so
+  (and names `trustgate_store_personal_key`); the key itself is never in the
+  answer.
 
 ### The personal key page
 
@@ -402,6 +418,8 @@ the first personal consumer exists.
 | m | `auths` gains a nullable `owner_groups` column and `PUT …/auths/{auth_id}/groups` is new. A personal key is accepted on `/store/mcp` as its owner, and `whoami` describes one (`key.personal`) instead of refusing it. Application keys and every other MCP path are unchanged. | A personal key answered 401 on every MCP path and on `whoami`. |
 | n | The MCP Store offers `trustgate_store_personal_key` and serves `/store/mcp/personal-key` (and `/return`) where a key can be issued. The config-sync listener gains the `PersonalKeys` service; `CONSOLE_EVENTS_URL` is new and optional. Deploy the control plane first: against an older one a DB-less data plane's page answers 500, since the control plane does not know the `PersonalKeys` service yet. | — |
 | o | `auths` gains a nullable `owner_email` column. A personal key records its owner's email when the Portal or the Store's personal key page creates it, and `PUT …/auths/{auth_id}/groups` takes an optional `email`; admin auth responses carry `owner_email`. Requests made with the key carry it as the principal's email. `CreatePersonalKeyRequest` gains `email` (config sync), which an older control plane ignores. | A personal key's requests showed its owner's user id. |
+| p | `DELETE …/store/principal/connections/{registry_id}` is new. A tool call refused because the caller's account is missing drops that server's cached tools, prompts and resources lists for the caller. | A revoked account's server kept being listed as ready, its tools refused, until the 5-minute discovery cache expired. |
+| q | The MCP Store offers `trustgate_store_models`. The personal key page's "Use it" is one code card (tabs, Copy, numbered and coloured lines), and its MCP config no longer escapes `<your-api-key>`. | The snippets were three `<details>` whose lines each drew their own box. |
 
 Roll back (a) by reverting it; the rest needs no action.
 

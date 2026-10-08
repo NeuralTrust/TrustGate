@@ -153,9 +153,13 @@ func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	if span := trace.SpanFromContext(ctx); span != nil {
 		span.SetMCPToolRisk(target.Tool.Risk())
 	}
-	return invokeUpstream(c, ctx, rc, target.Registry, func(up Upstream) (json.RawMessage, error) {
+	out, err := invokeUpstream(c, ctx, rc, target.Registry, func(up Upstream) (json.RawMessage, error) {
 		return up.CallTool(ctx, target.Tool.Name, arguments)
 	})
+	if fixableByConnecting(err) {
+		c.forgetDiscovery(ctx, target.Registry)
+	}
+	return out, err
 }
 
 // annotateUpstream records the resolved upstream registry on the active MCP
