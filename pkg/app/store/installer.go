@@ -194,7 +194,10 @@ func NewInstaller(
 
 func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
 	code := strings.TrimSpace(in.Code)
-	entry, ok := i.catalog.GetByCode(code)
+	entry, ok, err := storeEntry(ctx, i.catalog, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
