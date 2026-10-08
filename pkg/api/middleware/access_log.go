@@ -63,6 +63,12 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 			slog.String("ip", c.IP()),
 			slog.Int("bytes_out", bytesOut),
 		}
+		if identity := AdminIdentityFromContext(c); identity.Kind != "" {
+			attrs = append(attrs,
+				slog.String("identity_kind", string(identity.Kind)),
+				slog.String("token_issuer", identity.Issuer),
+			)
+		}
 		if err != nil {
 			status = fiber.StatusInternalServerError
 			var fe *fiber.Error
