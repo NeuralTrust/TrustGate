@@ -1061,6 +1061,105 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/auths/{id}/groups": {
+            "put": {
+                "description": "Records the directory groups of a personal (owned) key's owner. The body is {\"groups\": [\"<group>\", ...]}; an empty list clears them. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Set the owner groups of a personal key",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest"
+                            }
+                        }
+                    },
+                    "description": "The owner's groups",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "An application key (application_key), or invalid groups (validation_failed)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/auths/{id}/rotate": {
             "post": {
                 "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
@@ -6325,7 +6424,7 @@
         },
         "/whoami": {
             "get": {
-                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.",
+                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A personal key (key.personal) is a person's own: it lists the Store, slug \"store\", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.",
                 "tags": [
                     "mcp"
                 ],
@@ -6877,6 +6976,21 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest": {
+                "type": "object",
+                "properties": {
+                    "groups": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "example": [
+                            "engineering",
+                            "sre"
+                        ]
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
                 "type": "object",
                 "properties": {
@@ -6965,6 +7079,13 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "owner_groups": {
+                        "description": "OwnerGroups are the directory groups of a personal key's owner, as the\nplatform last reported them. Absent means none were reported.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     },
                     "owner_id": {
                         "type": "string"
@@ -11422,6 +11543,10 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "personal": {
+                        "description": "Personal is set for a person's own key (a personal key): it runs as its\nowner, and its consumers are the Store on each plane.",
+                        "type": "boolean"
                     }
                 }
             },

@@ -120,8 +120,13 @@ type Auth struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	OwnerID   string     `json:"owner_id,omitempty"`
 	Budget    *KeyBudget `json:"budget,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	// OwnerGroups are the directory groups of a personal key's owner, as the
+	// platform last reported them. The MCP Store reads them where a signed-in
+	// session reads its groups claim, so a grant to a group reaches the owner
+	// through the key too.
+	OwnerGroups []string  `json:"owner_groups,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // IsOwned reports whether a is a personal key, held by one user.
@@ -158,6 +163,12 @@ func (a *Auth) AcceptsAPIKey(hash string, now time.Time) bool {
 // an enabled, unexpired api key that no user owns.
 func (a *Auth) IsApplicationKey(now time.Time) bool {
 	return a != nil && a.Enabled && a.Type == TypeAPIKey && !a.IsOwned() && !a.IsExpired(now)
+}
+
+// IsPersonalKey reports whether a authenticates its owner at now: an enabled,
+// unexpired api key that a user owns.
+func (a *Auth) IsPersonalKey(now time.Time) bool {
+	return a != nil && a.Enabled && a.Type == TypeAPIKey && a.IsOwned() && !a.IsExpired(now)
 }
 
 // AcceptsApplicationKey reports whether a authenticates as an application on

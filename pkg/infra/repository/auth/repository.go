@@ -36,7 +36,7 @@ const (
 
 	ownerUniqueIndex = "auths_gateway_owner_uniq"
 
-	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, budget, created_at, updated_at`
+	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, budget, owner_groups, created_at, updated_at`
 )
 
 var _ domain.Repository = (*Repository)(nil)
@@ -76,14 +76,18 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	if err != nil {
 		return err
 	}
+	ownerGroups, err := ownerGroupsParam(a.OwnerGroups)
+	if err != nil {
+		return err
+	}
 	const query = `
 		INSERT INTO auths (` + authColumns + `)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
 			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
-			nullableString(a.OwnerID), budget, a.CreatedAt, a.UpdatedAt,
+			nullableString(a.OwnerID), budget, ownerGroups, a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -150,6 +154,38 @@ func (r *Repository) UpdateBudget(ctx context.Context, a *domain.Auth) (*domain.
 		}
 		if scanErr != nil {
 			return fmt.Errorf("auth repository: update budget: %w", scanErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+func (r *Repository) UpdateOwnerGroups(ctx context.Context, a *domain.Auth) (*domain.Auth, error) {
+	if a == nil {
+		return nil, errors.New("auth repository: nil auth")
+	}
+	ownerGroups, err := ownerGroupsParam(a.OwnerGroups)
+	if err != nil {
+		return nil, err
+	}
+	const query = `
+		UPDATE auths
+		   SET owner_groups = $3,
+		       updated_at   = $4
+		 WHERE id = $1 AND gateway_id = $2
+		RETURNING ` + authColumns
+	var stored *domain.Auth
+	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var scanErr error
+		stored, scanErr = scanAuth(tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt))
+		if errors.Is(scanErr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if scanErr != nil {
+			return fmt.Errorf("auth repository: update owner groups: %w", scanErr)
 		}
 		return nil
 	})
@@ -453,11 +489,12 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 		keySuffix *string
 		ownerID   *string
 		budgetRaw []byte
+		groupsRaw []byte
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
 		&configRaw, &keyHash, &keyPrefix, &keySuffix, &a.ExpiresAt,
-		&ownerID, &budgetRaw, &a.CreatedAt, &a.UpdatedAt,
+		&ownerID, &budgetRaw, &groupsRaw, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -484,7 +521,23 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 			return nil, fmt.Errorf("scan budget: %w", err)
 		}
 	}
+	if len(groupsRaw) > 0 {
+		if err := json.Unmarshal(groupsRaw, &a.OwnerGroups); err != nil {
+			return nil, fmt.Errorf("scan owner groups: %w", err)
+		}
+	}
 	return a, nil
+}
+
+func ownerGroupsParam(groups []string) (any, error) {
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(groups)
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: marshal owner groups: %w", err)
+	}
+	return raw, nil
 }
 
 func budgetParam(b *domain.KeyBudget) (any, error) {

@@ -41,6 +41,9 @@ type AuthResponse struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 	// Budget is the spending limit of a personal key. Absent means it has none.
 	Budget *KeyBudgetResponse `json:"budget,omitempty"`
+	// OwnerGroups are the directory groups of a personal key's owner, as the
+	// platform last reported them. Absent means none were reported.
+	OwnerGroups []string `json:"owner_groups,omitempty"`
 	// Consumers are the consumers this auth reaches, which is what a caller
 	// needs before revoking one: a key can be attached to several, so
 	// disabling it stops more than the endpoint the reader was looking at.
@@ -115,20 +118,21 @@ func FromAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) Auth
 
 func FromAuth(a *domain.Auth) AuthResponse {
 	return AuthResponse{
-		Consumers: []AuthConsumerResponse{},
-		ID:        a.ID,
-		GatewayID: a.GatewayID,
-		Name:      a.Name,
-		Type:      string(a.Type),
-		Enabled:   a.Enabled,
-		Config:    fromConfig(a.Config),
-		KeyPrefix: a.KeyPrefix,
-		KeySuffix: a.KeySuffix,
-		ExpiresAt: a.ExpiresAt,
-		OwnerID:   a.OwnerID,
-		Budget:    fromBudget(a.Budget),
-		CreatedAt: a.CreatedAt,
-		UpdatedAt: a.UpdatedAt,
+		Consumers:   []AuthConsumerResponse{},
+		ID:          a.ID,
+		GatewayID:   a.GatewayID,
+		Name:        a.Name,
+		Type:        string(a.Type),
+		Enabled:     a.Enabled,
+		Config:      fromConfig(a.Config),
+		KeyPrefix:   a.KeyPrefix,
+		KeySuffix:   a.KeySuffix,
+		ExpiresAt:   a.ExpiresAt,
+		OwnerID:     a.OwnerID,
+		Budget:      fromBudget(a.Budget),
+		OwnerGroups: a.OwnerGroups,
+		CreatedAt:   a.CreatedAt,
+		UpdatedAt:   a.UpdatedAt,
 	}
 }
 
