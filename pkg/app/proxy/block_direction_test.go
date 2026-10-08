@@ -69,7 +69,7 @@ func TestNativeShortCircuit_CarriesTheDirectionOfItsStage(t *testing.T) {
 	}
 }
 
-type modifyingExecutor struct{ plainExecutor }
+type modifyingExecutor struct{}
 
 func (*modifyingExecutor) RunStage(_ context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
 	in.Response.StatusCode = http.StatusAccepted
