@@ -57,6 +57,9 @@ func TestNonOpenAIStreamDecodersRejectMalformedKnownEvents(t *testing.T) {
 				`{"type":42}`, `{"type":"content-delta","delta":42}`,
 				`{"type":"content-delta","delta":{"message":{"content":null}}}`,
 				`{"type":"content-delta","delta":{"message":{"content":{"text":42}}}}`,
+				`{"type":"tool-plan-delta","delta":42}`,
+				`{"type":"tool-plan-delta","delta":{"message":42}}`,
+				`{"type":"tool-plan-delta","delta":{"message":{"tool_plan":42}}}`,
 				`{"type":"tool-call-delta","delta":{"message":{"tool_calls":null}}}`,
 				`{"type":"tool-call-delta","delta":{"message":{"tool_calls":{"function":{"arguments":42}}}}}`,
 				`{"type":"message-end","delta":{"finish_reason":42}}`,
@@ -76,6 +79,22 @@ func TestNonOpenAIStreamDecodersRejectMalformedKnownEvents(t *testing.T) {
 				})
 			}
 			chunk, err := provider.decoder.DecodeStreamChunk([]byte(provider.future))
+			require.NoError(t, err)
+			assert.Nil(t, chunk)
+		})
+	}
+}
+
+func TestCohereStreamDecoderSkipsEmptyToolPlans(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"tool-plan-delta","delta":{}}`,
+		`{"type":"tool-plan-delta","delta":{"message":null}}`,
+		`{"type":"tool-plan-delta","delta":{"message":{}}}`,
+		`{"type":"tool-plan-delta","delta":{"message":{"tool_plan":""}}}`,
+		`{"type":"tool-plan-delta","delta":{"message":{"tool_plan":null}}}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			chunk, err := (&CohereAdapter{}).DecodeStreamChunk([]byte(raw))
 			require.NoError(t, err)
 			assert.Nil(t, chunk)
 		})

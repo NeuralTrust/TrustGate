@@ -565,6 +565,10 @@ func (d *finishDeferral) dropAfterFlush(
 	if !d.flushed {
 		return false
 	}
+	if chunk.StreamEnd && chunk.Role == "" && chunk.Delta == "" && chunk.ReasoningDelta == "" &&
+		len(chunk.ToolCallDeltas) == 0 && chunk.Usage == nil && chunk.FinishReason == "" {
+		return true
+	}
 	if !d.dropLogged {
 		d.dropLogged = true
 		logger.Warn("stream chunk after the flushed finish dropped",

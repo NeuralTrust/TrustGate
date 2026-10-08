@@ -309,6 +309,14 @@ type CanonicalStreamChunk struct {
 	OpenItem *StreamOpenItem `json:"open_item,omitempty"`
 }
 
+// StreamEndOnly reports an explicit terminal with no content, identity, finish or usage.
+func (c *CanonicalStreamChunk) StreamEndOnly() bool {
+	return c != nil && c.StreamEnd && c.ID == "" && c.Model == "" && c.Role == "" &&
+		c.Delta == "" && c.ReasoningDelta == "" && c.FinishReason == "" &&
+		len(c.ToolCallDeltas) == 0 && c.Usage == nil && len(c.ProviderExtensions) == 0 &&
+		c.UpstreamError == nil && c.OpenItem == nil
+}
+
 // StreamOpenItem is one output item a synthesised terminator has to close. It
 // carries the identity fields as well as the index, because the SDK types a
 // close event decodes into are strict: ResponseOutputMessage requires an id and
