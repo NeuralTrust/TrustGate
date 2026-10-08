@@ -148,6 +148,8 @@ func (l *connectAttemptLimiter) scopeConfig(scope appoauth.ConnectAttemptScope) 
 		return "source", l.sourceLimit, true
 	case appoauth.ConnectAttemptScopeConsumer:
 		return "consumer", l.consumerLimit, true
+	case appoauth.ConnectAttemptScopeRegistration:
+		return "register", l.sourceLimit, true
 	default:
 		return "", 0, false
 	}
