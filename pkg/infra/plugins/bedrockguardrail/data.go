@@ -33,8 +33,10 @@ type Data struct {
 	LatencyMS      int64  `json:"latency_ms,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
-	// FailureReason and FailureDetail are set only on a failed_open
-	// decision: FailureReason is one of appplugins.FailureReason (transport,
+	// FailureReason and FailureDetail are set on a failed_open (or
+	// failed_closed) decision, and on a streamed leg also whenever a block
+	// failed, whatever the final decision: FailureReason is one of
+	// appplugins.FailureReason (transport,
 	// verdict_incomplete, config_invalid, decode_failed). On verdict_incomplete
 	// FailureDetail names the policy assessments AWS returned that this plugin
 	// does not read (e.g. automated_reasoning_policy); it is empty when AWS

@@ -356,18 +356,35 @@ cadence (the first participant that owns them), but two options are merged acros
 a failing policy that resolved `fail_open` is recorded `failed_open` and the chain carries on
 with the next policy on the same block, so another policy's `fail_closed` neither cuts the
 stream on its behalf nor stops the policies behind it from inspecting. A `fail_closed` cut is
-labelled `blocked` on the failing policy, at the head (HTTP 403) and after it.
+labelled `failed_closed` on the failing policy (RUN-1710; it used to read `blocked`), at the
+head (HTTP 403) and after it. Only the policy whose own call failed carries it: the other
+policies on the stream do not, and a cut that is a block verdict, or a mask that could not be
+applied, stays `blocked`.
 
 When a policy's own provider call failed on at least one block and the stream was not cut,
 its `decision` is `failed_open`, in enforce and in observe alike. The count is per policy:
 two policies of one plugin on the same stream, one with a bad key, label only the bad one.
 Cancellation (a client that left) is not a failure. The `decision` of a stream leg is, in
-order of precedence: a cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
+order of precedence: a cut that resolved this policy's own failed call as fail_closed
+(`failed_closed`), any other cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
 failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
 a missing inspection. `streaming.degraded_reason` is a different, chain-wide signal and is
 not what the decision is read from: it is one value for the whole stream, overwritten by a
 later size degrade, and the failure of an observe policy, or of an enforcing policy that
 resolved `fail_open`, never reaches it (the chain absorbs it per policy).
+
+**Streamed failures carry their reason (RUN-1710).** `bedrock_guardrail`, `google_model_armor`
+and `openai_moderation` write `failure_reason` and `failure_detail` (the same vocabulary and keys
+as the buffered leg, above) on the stream entry's `extras`, once, when the stream closes. They
+are present whenever the policy's own call failed on at least one block, whatever the final
+`decision`: a stream whose first block failed and which was later cut by a finding still says
+`decision: blocked` with the failure's `failure_reason`. With several failed blocks the **first
+failure that carries a reason** is kept; later failures, which are usually the same outage
+repeating, do not overwrite it. A failure of a plugin that does not use the shared vocabulary
+carries no reason and is not tracked, so a later one that does carry a reason is the first kept. If the closing call itself fails, the entry still gets a decision (`failed_open`, or
+`failed_closed` when the guard's fail_closed cut was on that policy's failed call) and, when a
+reason is known, a minimal `extras` of `decision`, `failure_reason` and `failure_detail`. The
+keys are additive: nothing that shipped is renamed or retyped.
 
 A policy absorbed this way whose provider fails on three blocks in a row is not called again
 for the rest of that stream: its span keeps `failed_open` and carries

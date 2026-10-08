@@ -69,10 +69,13 @@ const (
 // leg share it.
 const DecisionFailedOpen = "failed_open"
 
-const (
-	decisionFailedClosed     = "failed_closed"
-	typeGuardrailUnavailable = "guardrail_unavailable"
-)
+// DecisionFailedClosed is the decision recorded when a guardrail could not give
+// a verdict and the traffic was refused. The buffered legs and the stream leg
+// share it: on the stream it labels the entry whose failed call the guard
+// resolved as fail_closed, which is a cut but not a verdict of the guardrail.
+const DecisionFailedClosed = "failed_closed"
+
+const typeGuardrailUnavailable = "guardrail_unavailable"
 
 // ExternalFailure is one third-party guardrail call's failure, ready to be
 // turned into a plugin outcome by HandleExternalFailure.
@@ -135,7 +138,7 @@ func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
 		Result:   &Result{StatusCode: http.StatusOK},
 	}
 	if f.FailClosed && Blocks(f.Mode) {
-		outcome = ExternalFailureOutcome{Decision: decisionFailedClosed, Err: unavailableError()}
+		outcome = ExternalFailureOutcome{Decision: DecisionFailedClosed, Err: unavailableError()}
 	}
 	SetDecisionFromOutcome(f.Event, outcome.Decision)
 	logExternalFailure(f, outcome.Decision)
@@ -207,9 +210,31 @@ func unavailableBody() []byte {
 // error itself (headFailure/blockFailure), so this does not log again: doing
 // so would print the same failure twice for one segment. It only gives that
 // one log line the same reason vocabulary HandleExternalFailure uses.
+//
+// The error is typed (*ExternalStreamFailure) so the executor can read the
+// reason and detail off it with errors.As and carry them to the closing
+// segment, where the entry's span is written once. Its text is unchanged.
 func WrapExternalStreamFailure(pluginName string, reason FailureReason, detail string, err error) error {
-	if detail == "" {
-		return fmt.Errorf("%s: %s: %w", pluginName, reason, err)
-	}
-	return fmt.Errorf("%s: %s (%s): %w", pluginName, reason, detail, err)
+	return &ExternalStreamFailure{Plugin: pluginName, Reason: reason, Detail: detail, Err: err}
 }
+
+// ExternalStreamFailure is one external guardrail's failure on a streamed
+// block, as WrapExternalStreamFailure builds it. Reason and Detail are the
+// same vocabulary HandleExternalFailure records on the buffered leg.
+type ExternalStreamFailure struct {
+	Plugin string
+	Reason FailureReason
+	Detail string
+	Err    error
+}
+
+// Error keeps the text the stream guard has always logged: plugin, reason,
+// the detail in parentheses when there is one, then the underlying error.
+func (f *ExternalStreamFailure) Error() string {
+	if f.Detail == "" {
+		return fmt.Sprintf("%s: %s: %v", f.Plugin, f.Reason, f.Err)
+	}
+	return fmt.Sprintf("%s: %s (%s): %v", f.Plugin, f.Reason, f.Detail, f.Err)
+}
+
+func (f *ExternalStreamFailure) Unwrap() error { return f.Err }

@@ -593,3 +593,51 @@ func TestFindingFingerprintsSkipBlockingModesAndNilFindings(t *testing.T) {
 		t.Errorf("findingFingerprints(nil) = %v, want nil", got)
 	}
 }
+
+// RUN-1710: the closing write carries the first failed block's reason whatever
+// the decision settled on, and a cut that resolved this entry's failed call as
+// fail_closed is failed_closed, not blocked.
+func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
+	t.Parallel()
+	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
+		r.FailedEvals = 1
+		r.FailureReason = appplugins.FailureVerdictIncomplete
+		r.FailureDetail = "filter_not_executed"
+		return r
+	}
+	cases := []struct {
+		name         string
+		report       appplugins.StreamReport
+		wantDecision string
+		wantReason   string
+		wantDetail   string
+	}{
+		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "verdict_incomplete", "filter_not_executed"},
+		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "verdict_incomplete", "filter_not_executed"},
+		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "verdict_incomplete", "filter_not_executed"},
+		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+			event, span := newStreamEvent()
+
+			if _, err := p.InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), event),
+				appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: tc.report}); err != nil {
+				t.Fatalf("InspectSegment: %v", err)
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok {
+				t.Fatalf("extras = %T", span.PluginAttrsCopy().Extras)
+			}
+			if data.Decision != tc.wantDecision {
+				t.Errorf("Decision = %q, want %q", data.Decision, tc.wantDecision)
+			}
+			if data.FailureReason != tc.wantReason || data.FailureDetail != tc.wantDetail {
+				t.Errorf("failure = %q/%q, want %q/%q", data.FailureReason, data.FailureDetail, tc.wantReason, tc.wantDetail)
+			}
+		})
+	}
+}
