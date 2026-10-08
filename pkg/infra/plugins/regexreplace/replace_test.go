@@ -202,3 +202,17 @@ func TestApplyRulesFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyRulesToJSONLeavesObjectKeysUnchanged(t *testing.T) {
+	t.Parallel()
+	rules := mustCompile(t, Rule{Pattern: `secret`, Replacement: "[MASKED]"})
+	doc := map[string]any{"secret": "a secret value", "nested": map[string]any{"secret": "secret"}}
+
+	out, changed := applyRulesToJSON(rules, doc)
+
+	require.True(t, changed)
+	assert.Equal(t, map[string]any{
+		"secret": "a [MASKED] value",
+		"nested": map[string]any{"secret": "[MASKED]"},
+	}, out)
+}

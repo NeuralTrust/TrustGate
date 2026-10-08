@@ -1653,8 +1653,7 @@ func (g *streamGuard) remaskNative(masked string) bool {
 // The held text is the frames' texts joined with nothing between them, so a
 // match that starts in such a frame can run into the next one's text with no
 // edge to show it. DistributeHunks would put the whole replacement in the first
-// frame it touches and empty the rest, which is how a mask once ended up in a
-// message_start and left every delta blank.
+// frame it touches and empty the rest, so such a hunk is refused.
 func (g *streamGuard) hunkReachesPlumbing(at []int, texts []string, hunks []adapter.TextHunk) bool {
 	plumbing := make([]bool, len(at))
 	for k, i := range at {
