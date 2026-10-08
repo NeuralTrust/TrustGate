@@ -70,10 +70,12 @@ type ConnectTicket struct {
 	// Code scopes a configure ticket to one catalog server whose per-user URL
 	// variables the hosted form collects. Empty for OAuth/api-key connect tickets.
 	Code string `json:"code,omitempty"`
-	// InstanceID pins a Store-scoped ticket (configure or single-server connect)
-	// to one exact installation instance of Code, so the form writes to that
-	// instance rather than to "whichever row has this code" when the principal
-	// holds several. Empty when the install recorded no row yet.
+	// InstanceID pins a Store-scoped ticket to one exact instance of Code, so it
+	// targets that instance rather than "whichever row has this code" when there
+	// are several. What it names depends on the ticket: a configure ticket's is
+	// the installation row the form writes to; a connect ticket's is the
+	// configured instance (registry) whose account is connected. Empty when
+	// nothing pins it.
 	InstanceID string `json:"instance_id,omitempty"`
 	// Groups snapshots the principal's IdP groups at mint time so a form-driven
 	// install (configure before install) applies the same group gate the install
@@ -210,8 +212,8 @@ type ConnectService interface {
 	) (string, error)
 	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
 	// the connect page opens focused on that server (e.g. from a Store install).
-	// instanceID optionally pins the ticket to the exact installation instance
-	// the install recorded; empty when none was.
+	// instanceID optionally pins the ticket to one configured instance
+	// (registry id) of the code; empty when the code alone names the server.
 	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
 	// CreateResumableServerTicket is CreateServerTicket for a page the user
 	// opened from somewhere they should go back to: once the account is

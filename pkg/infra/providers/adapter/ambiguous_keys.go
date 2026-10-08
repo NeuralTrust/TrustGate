@@ -45,6 +45,13 @@ func HasAmbiguousKeys(f Format, b []byte) bool {
 	return !decodableBody(b) || ambiguousKeys(b, keyShapeFor(f, b))
 }
 
+// HasAmbiguousInvokeKeys is HasAmbiguousKeys for an InvokeModel body. The
+// precise shape of the family the body is in decides which objects hold
+// fields; only a body of no known family has every object checked as one.
+func HasAmbiguousInvokeKeys(b []byte) bool {
+	return !decodableBody(b) || ambiguousKeys(b, nativeKeyShape(b))
+}
+
 func decodableBody(b []byte) bool {
 	return !bytes.HasPrefix(b, utf8BOM) && json.Valid(b)
 }

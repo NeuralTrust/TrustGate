@@ -62,6 +62,12 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// NativeBedrock declares what the plugin does on a native Amazon Bedrock Runtime
+// call (see appplugins.BedrockNativeAware).
+func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeMasks
+}
+
 // RewritesLocally opts into running ahead of the same-priority rewriters that
 // send content to a third party: what this plugin rewrites never leaves the
 // gateway (RUN-1745).

@@ -27,9 +27,18 @@ import (
 	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
+
+// nativeStreamBlockedException is the exception frame a blocked native Bedrock
+// stream ends on. AccessDeniedException is not a member of the output stream of
+// ConverseStream or InvokeModelWithResponseStream, so an SDK could not raise it
+// as a typed error. validationException is: it is the client-error member, which
+// SDKs do not retry, unlike internalServerException, throttlingException and
+// serviceUnavailableException, and a policy refusal is not worth retrying.
+const nativeStreamBlockedException = "validationException"
 
 // segmentRunner is the executor's per-segment leg. It is declared here, at its
 // only consumer, so RunStreamSegment stays off the exported Executor interface
@@ -129,6 +138,7 @@ const (
 	degradeAccumulationCap      = appplugins.StreamDegradeAccumulationCap
 	degradeGuardTimeout         = appplugins.StreamDegradeGuardTimeout
 	degradeGuardError           = appplugins.StreamDegradeGuardError
+	degradeToolInputUninspected = appplugins.StreamDegradeToolInputUninspected
 	fallbackSegmentationUnavail = appplugins.StreamFallbackSegmentationUnavail
 	fallbackClientDisconnected  = appplugins.StreamFallbackClientDisconnected
 )
@@ -139,6 +149,10 @@ type streamGuardConfig struct {
 	minChars      int
 	maxHold       time.Duration
 	maxAccumBytes int
+	// nativeToolHold is how long a native tool call may be held, from its start
+	// frame, before its frames are released as they are. It does not depend on
+	// maxHold: a short block hold must not turn tool inspection off.
+	nativeToolHold time.Duration
 }
 
 func (c streamGuardConfig) withDefaults() streamGuardConfig {
@@ -156,6 +170,9 @@ func (c streamGuardConfig) withDefaults() streamGuardConfig {
 	}
 	if c.maxAccumBytes <= 0 {
 		c.maxAccumBytes = defaultMaxAccumulatedBytes
+	}
+	if c.nativeToolHold <= 0 {
+		c.nativeToolHold = config.DefaultBedrockNative().ToolHold
 	}
 	if c.maxAccumBytes > maxAccumulatedCeiling {
 		c.maxAccumBytes = maxAccumulatedCeiling
@@ -214,16 +231,29 @@ type streamGuard struct {
 	// not always the whole of it: past the accumulation cap a call carries a
 	// tail window, and the bytes in front of that window are text no verdict of
 	// that block speaks for.
-	inspected      string
-	sentChars      int
-	finalSent      bool
-	failures       int
-	silenced       bool
-	stopped        bool
-	handedOff      bool
-	cutMessage     string
-	degradedReason string
-	fallbackReason string
+	inspected  string
+	sentChars  int
+	finalSent  bool
+	failures   int
+	silenced   bool
+	stopped    bool
+	handedOff  bool
+	cutMessage string
+	// native marks a Bedrock eventstream: the items are whole frames, and a mask
+	// is patched into them in place.
+	native bool
+	// maskCause is why the last mask could not be applied, and maskFailed the
+	// causes already recorded on this stream: each kind is recorded once.
+	maskCause             adapter.MaskCause
+	maskFailed            map[adapter.MaskCause]struct{}
+	toolOpen              bool
+	toolOpenIdx           int
+	toolSince             time.Time
+	unhandledTools        toolCallDigest
+	toolEvents            map[int][]*streamEvent
+	toolUninspectedLogged bool
+	degradedReason        string
+	fallbackReason        string
 
 	// What the stream cost, handed to the chain once on the closing segment.
 	// holdStart is the moment the oldest unreleased event arrived, so the added
@@ -331,7 +361,7 @@ func streamCorrelationID(ctx context.Context) string {
 // is at the end of the source: lines already pulled but not yet framed live in
 // the segmenter, and the remainder yields only what comes after them.
 func (g *streamGuard) head(ctx context.Context) *appplugins.PluginError {
-	for g.chars < g.cfg.headChars && g.held < maxHeadHeldBytes {
+	for (g.chars < g.cfg.headChars || g.holdsTool()) && g.held < maxHeadHeldBytes {
 		line, err, ok := g.next()
 		if !ok {
 			g.exhausted = true
@@ -374,6 +404,11 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	g.text.WriteString(ev.text)
 	g.reasoning.WriteString(ev.reasoning)
 	g.tools.merge(ev.toolCalls)
+	if g.native {
+		g.unhandledTools.merge(ev.toolCalls)
+		g.trackToolEvent(ev)
+		g.trackTool(ev)
+	}
 	// The prelude fast-path: an opaque event that opens a block carries no
 	// inspectable text, so counting it as cleared lets evaluate skip the guard
 	// call entirely when the whole head is opaque. It is not an early release —
@@ -390,16 +425,34 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 		return ev.unit == unitTerminal
 	}
 	g.gate.admit(ev)
-	return g.gate.shouldClose(ev)
+	closes := g.gate.shouldClose(ev)
+	// An open tool call keeps the block open, the end of the stream aside, so the
+	// call is inspected whole.
+	if closes && ev.unit != unitTerminal && g.holdsTool() {
+		return false
+	}
+	return closes
 }
 
 func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	if g.clearedIdx == len(g.produced) {
 		return nil
 	}
+	if v := g.inspectTools(ctx); v.stop {
+		if v.failed {
+			g.cutOnFailure = g.cutAtEval == 0
+			g.markCut()
+			return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
+		}
+		g.markCut()
+		if v.outcome != nil && v.outcome.Block {
+			return blockedHeadError(g.source, v.outcome)
+		}
+		return g.maskedHeadError()
+	}
 	outcome, err := g.call(ctx, g.nextSegment())
 	if err != nil {
-		return g.headFailure(err, outcome)
+		return g.headFailure(ctx, err, outcome)
 	}
 	if outcome != nil && outcome.Block {
 		g.markCut()
@@ -410,9 +463,9 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	// to the head block as it does to any other. Escalating still costs a status
 	// code rather than a truncated body, which is the one advantage the head
 	// has over every block after it.
-	if outcome != nil && outcome.HasTransform && !g.rewrite(outcome) {
+	if outcome != nil && outcome.HasTransform && !g.applyTransform(ctx, outcome) {
 		g.markCut()
-		return streamError(g.source, streamMaskedType, streamMaskedMessage)
+		return g.maskedHeadError()
 	}
 	g.clearedIdx = len(g.produced)
 	return nil
@@ -422,7 +475,7 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 // failure back as an error precisely so that it is resolved here: only the
 // guard knows that at the head nothing is committed, which is what makes
 // fail_closed a clean status code instead of a truncated body.
-func (g *streamGuard) headFailure(err error, partial *appplugins.SegmentOutcome) *appplugins.PluginError {
+func (g *streamGuard) headFailure(ctx context.Context, err error, partial *appplugins.SegmentOutcome) *appplugins.PluginError {
 	g.failures++
 	if g.logger != nil {
 		g.logger.Warn("stream head inspection failed",
@@ -439,9 +492,9 @@ func (g *streamGuard) headFailure(err error, partial *appplugins.SegmentOutcome)
 	}
 	// fail_open releases the held text, but never the raw text a mask already
 	// covered: apply the mask the earlier entries produced, or cut.
-	if partial != nil && partial.HasTransform && !g.rewrite(partial) {
+	if partial != nil && partial.HasTransform && !g.applyTransform(ctx, partial) {
 		g.markCut()
-		return streamError(g.source, streamMaskedType, streamMaskedMessage)
+		return g.maskedHeadError()
 	}
 	g.clearedIdx = len(g.produced)
 	return nil
@@ -570,13 +623,25 @@ func (g *streamGuard) inspect(ctx context.Context) {
 		g.retire(fallbackClientDisconnected)
 		return
 	}
+	v := g.inspectTools(ctx)
+	if v.stop {
+		if v.failed {
+			g.cutOnFailure = g.cutAtEval == 0
+		}
+		g.stopStream(v.outcome)
+		return
+	}
+	if g.silenced {
+		g.clearedIdx = len(g.produced)
+		return
+	}
 	outcome, err := g.call(ctx, g.nextSegment())
 	if err != nil {
-		g.blockFailure(err, outcome)
+		g.blockFailure(ctx, err, outcome)
 		return
 	}
 	g.failures = 0
-	if outcome != nil && (outcome.Block || (outcome.HasTransform && !g.rewrite(outcome))) {
+	if outcome != nil && (outcome.Block || (outcome.HasTransform && !g.applyTransform(ctx, outcome))) {
 		g.stopStream(outcome)
 		return
 	}
@@ -602,7 +667,7 @@ func (g *streamGuard) inspect(ctx context.Context) {
 func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
 	produced := g.text.String()
 	if g.inspected == "" || !strings.HasSuffix(produced, g.inspected) {
-		return false
+		return g.cannotMask(adapter.MaskCauseNoWindow)
 	}
 	masked := strings.TrimSuffix(produced, g.inspected) + outcome.Transformed
 	// A verdict that left the buffer byte-identical masked something the buffer
@@ -612,11 +677,17 @@ func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
 	// the wrong reading releases exactly the content the policy asked to mask.
 	// Finding offsets on SegmentOutcome are what would separate them (§11).
 	if masked == produced {
-		return false
+		return g.cannotMask(adapter.MaskCauseNotAReplacement)
 	}
 	first, ok := g.rewritableHold()
+	if g.native {
+		// The limits rewritableHold keeps come from re-encoding an event out of
+		// its text, which a native frame never is: it is patched in place and
+		// then read again, and the read-again is what stands behind it.
+		first, ok = 0, true
+	}
 	if !ok || !strings.HasPrefix(masked, g.releasedText()) {
-		return false
+		return g.cannotMask(adapter.MaskCauseReleasedText)
 	}
 	return g.remask(masked, first)
 }
@@ -704,6 +775,9 @@ func (g *streamGuard) releasedText() string {
 // replaces the buffer whole and says nothing about where inside it the mask
 // fell, so a per-event division would be the fragment splicing §2.6 rejected.
 func (g *streamGuard) remask(masked string, first int) bool {
+	if g.native {
+		return g.remaskNative(masked)
+	}
 	held := strings.TrimPrefix(masked, g.releasedText())
 	anchor := g.released
 	for _, ev := range g.produced[g.releasedIdx:first] {
@@ -762,7 +836,11 @@ func (g *streamGuard) maskLines(held string, anchor releasedAnchor) ([][]byte, e
 // block being inspected would otherwise be read by no call at all.
 func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 	produced := g.text.String()
-	accumulated, reasoning, calls, capped := g.budget(produced, g.reasoning.String(), g.tools.calls())
+	pending := g.tools.calls()
+	if g.native {
+		pending = g.unhandledTools.calls()
+	}
+	accumulated, reasoning, calls, capped := g.budget(produced, g.reasoning.String(), pending)
 	if capped {
 		g.degrade(degradeAccumulationCap)
 	}
@@ -979,7 +1057,7 @@ func tailWithin(s string, limit int) (string, bool) {
 // reading. fail_closed can no longer be a clean status code, so it is the same
 // stop a block verdict is; fail_open releases and counts, because a guard that
 // is failing is not a reason to hold text indefinitely.
-func (g *streamGuard) blockFailure(err error, partial *appplugins.SegmentOutcome) {
+func (g *streamGuard) blockFailure(ctx context.Context, err error, partial *appplugins.SegmentOutcome) {
 	g.failures++
 	if g.cfg.onError == streamFailClosed {
 		g.cutOnFailure = g.cutAtEval == 0
@@ -988,7 +1066,7 @@ func (g *streamGuard) blockFailure(err error, partial *appplugins.SegmentOutcome
 	}
 	// Release only what a mask already covers: apply the mask the earlier
 	// entries produced before the block is released, and cut if it cannot land.
-	if partial != nil && partial.HasTransform && !g.rewrite(partial) {
+	if partial != nil && partial.HasTransform && !g.applyTransform(ctx, partial) {
 		g.stopStream(partial)
 		return
 	}
@@ -1034,6 +1112,9 @@ func (g *streamGuard) stopStream(outcome *appplugins.SegmentOutcome) {
 	g.stopped = true
 	g.markCut()
 	g.cutMessage = cutMessage(outcome)
+	if g.native && outcome != nil && outcome.Type != "" {
+		g.cutMessage = outcome.Type + ": " + g.cutMessage
+	}
 	if g.logger == nil {
 		return
 	}
@@ -1105,6 +1186,9 @@ func (g *streamGuard) cut(yield func([]byte, error) bool) {
 // SDK parses every event as a StreamedChatResponseV2. ERROR on message-end
 // carries the whole signal there, which is what canonicalFinishToCohere says.
 func (g *streamGuard) cutLines() [][]byte {
+	if g.native {
+		return [][]byte{adapter.BedrockExceptionFrame(nativeStreamBlockedException, g.cutMessage)}
+	}
 	lines, err := g.codec.EncodeStreamChunkFor(g.terminator(), g.source)
 	if err != nil {
 		// StreamBlockedEvent is documented as never travelling alone, and
@@ -1264,7 +1348,12 @@ func (g *streamGuard) degrade(reason string) {
 	if g.degradedReason == reason {
 		return
 	}
-	g.degradedReason = reason
+	// Input that went uninspected is the one gap a later, milder reason must not
+	// hide: it stays the reason the stream reports, and the later one is logged.
+	keep := g.degradedReason == degradeToolInputUninspected
+	if !keep {
+		g.degradedReason = reason
+	}
 	if g.logger != nil {
 		g.logger.Warn("stream inspection degraded",
 			slog.String("degraded_reason", reason),
@@ -1408,6 +1497,20 @@ func (d *toolCallDigest) merge(deltas []adapter.StreamToolCallDelta) {
 	}
 }
 
+func (d *toolCallDigest) reset(idx int) {
+	if call, ok := d.byIdx[idx]; ok {
+		*call = adapter.CanonicalToolCall{}
+	}
+}
+
+func (d *toolCallDigest) drop(idx int) {
+	if _, ok := d.byIdx[idx]; !ok {
+		return
+	}
+	delete(d.byIdx, idx)
+	d.order = slices.DeleteFunc(d.order, func(i int) bool { return i == idx })
+}
+
 func (d *toolCallDigest) calls() []adapter.CanonicalToolCall {
 	if len(d.order) == 0 {
 		return nil
@@ -1417,4 +1520,173 @@ func (d *toolCallDigest) calls() []adapter.CanonicalToolCall {
 		out = append(out, *d.byIdx[idx])
 	}
 	return out
+}
+
+const nativeMinGlobalCheck = 3
+
+// remaskNative carries a mask onto the held frames of a native Bedrock stream.
+func (g *streamGuard) remaskNative(masked string) bool {
+	held := strings.TrimPrefix(masked, g.releasedText())
+	var (
+		at    []int
+		texts []string
+	)
+	for i := g.releasedIdx; i < len(g.produced); i++ {
+		if ev := g.produced[i]; ev.text != "" {
+			at = append(at, i)
+			texts = append(texts, ev.text)
+		}
+	}
+	// Reasoning arrives as JSON fragments, split anywhere and escaped any way,
+	// that a text mask cannot edit, and so does the input of a tool call the guard
+	// did not hold whole. A window that holds either cannot be masked: the mask fails open, or blocks.
+	// The input of a call that was held and inspected is not in the text the mask
+	// is made of: it was masked, or cleared, on its own.
+	for i := g.releasedIdx; i < len(g.produced); i++ {
+		if ev := g.produced[i]; ev.reasoning != "" {
+			return g.cannotMask(adapter.MaskCauseReasoning)
+		} else if len(ev.toolCalls) > 0 && !ev.toolHandled {
+			return g.cannotMask(adapter.MaskCauseToolCallNotHeld)
+		}
+	}
+	before := strings.Join(texts, "")
+	hunks, ok := adapter.DiffText(before, held)
+	if !ok || len(hunks) == 0 {
+		return g.cannotMask(adapter.MaskCauseNotAReplacement)
+	}
+	// A removed text of three characters or more is looked for everywhere the
+	// window and the stream could still say it. A shorter one, such as "42", is
+	// not: it legitimately appears elsewhere, and what stands behind it is that
+	// the frames the mask rebuilt read, joined, as exactly the text the policy
+	// returned, which is checked below.
+	var removed []string
+	for _, h := range hunks {
+		from := before[h.Start:h.End]
+		if strings.TrimSpace(from) == "" {
+			return g.cannotMask(adapter.MaskCauseNotAReplacement)
+		}
+		if len(from) >= nativeMinGlobalCheck {
+			removed = append(removed, from)
+		}
+	}
+	// What the stream already said in tool input or reasoning is not in the
+	// window, but it is text the policy removed if it holds it: the accumulated,
+	// decoded arguments and reasoning of the whole stream are checked, not one
+	// frame at a time, and a hit means the mask cannot be made whole.
+	reasoning := g.reasoning.String()
+	for _, from := range removed {
+		if adapter.StringHolds(reasoning, from) {
+			return g.cannotMask(adapter.MaskCauseReleasedInput)
+		}
+		for _, call := range g.tools.calls() {
+			if adapter.StringHolds(call.Arguments, from) {
+				return g.cannotMask(adapter.MaskCauseReleasedInput)
+			}
+		}
+	}
+	after := adapter.DistributeHunks(texts, hunks)
+	if strings.Join(after, "") != held {
+		return g.cannotMask(adapter.MaskCauseShape)
+	}
+
+	rebuilt := make(map[int][]byte, len(at))
+	for k, i := range at {
+		if after[k] == texts[k] {
+			continue
+		}
+		frame, ok := adapter.RewriteBedrockFrameText(g.produced[i].lines[0], texts[k], after[k])
+		if !ok {
+			return g.cannotMask(adapter.MaskCausePatch)
+		}
+		rebuilt[i] = frame
+	}
+
+	var read strings.Builder
+	for _, i := range at {
+		frame := g.produced[i].lines[0]
+		if replaced, ok := rebuilt[i]; ok {
+			frame = replaced
+		}
+		read.WriteString(adapter.BedrockFrameText(frame))
+	}
+	if read.String() != held {
+		return g.cannotMask(adapter.MaskCauseShape)
+	}
+
+	var window strings.Builder
+	for i := g.releasedIdx; i < len(g.produced); i++ {
+		frame := g.produced[i].lines[0]
+		if replaced, ok := rebuilt[i]; ok {
+			frame = replaced
+		}
+		window.WriteString(adapter.BedrockFrameText(frame))
+		for _, from := range removed {
+			if adapter.BedrockFrameHolds(frame, from) {
+				return g.cannotMask(adapter.MaskCauseLeak)
+			}
+		}
+	}
+	for _, from := range removed {
+		if strings.Contains(window.String(), from) {
+			return g.cannotMask(adapter.MaskCauseLeak)
+		}
+	}
+
+	for k, i := range at {
+		if frame, ok := rebuilt[i]; ok {
+			g.produced[i].lines[0] = frame
+			g.produced[i].text = after[k]
+		}
+	}
+	g.text.Reset()
+	g.text.WriteString(masked)
+	g.sentChars = g.text.Len()
+	g.inspected = ""
+	return true
+}
+
+func (g *streamGuard) cannotMask(cause adapter.MaskCause) bool {
+	g.maskCause = cause
+	return false
+}
+
+// applyTransform applies a transform verdict. On a native Bedrock stream a mask
+// that cannot be applied never cuts, unless the policy asked for it with
+// on_mask_failure: block: the held frames are released as they came,
+// the stream goes on and later segments are inspected as usual, and the outcome
+// is recorded as a failed-open policy result with its cause. Anywhere else a mask
+// that cannot be applied ends the stream, as it always did.
+func (g *streamGuard) applyTransform(ctx context.Context, outcome *appplugins.SegmentOutcome) bool {
+	g.maskCause = ""
+	if g.rewrite(outcome) {
+		return true
+	}
+	if !g.native || outcome.MaskFailureBlock {
+		// A policy that asked for on_mask_failure: block ends the stream like a
+		// block verdict.
+		return false
+	}
+	g.maskFailedOpen(ctx, g.maskCause)
+	return true
+}
+
+func (g *streamGuard) maskFailedOpen(ctx context.Context, cause adapter.MaskCause) {
+	if cause == "" {
+		cause = adapter.MaskCausePatch
+	}
+	if _, seen := g.maskFailed[cause]; seen {
+		return
+	}
+	if g.maskFailed == nil {
+		g.maskFailed = map[adapter.MaskCause]struct{}{}
+	}
+	g.maskFailed[cause] = struct{}{}
+	appplugins.RecordNativeMaskNotApplied(ctx, g.logger, g.in.Stage, cause, true)
+}
+
+func (g *streamGuard) maskedHeadError() *appplugins.PluginError {
+	if g.native {
+		return streamError(g.source, appplugins.BedrockNativePassthrough, streamMaskedMessage)
+	}
+	return streamError(g.source, streamMaskedType, streamMaskedMessage)
 }

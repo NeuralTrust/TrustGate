@@ -78,6 +78,9 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		}
 		route, err := resolver.ResolveProxyPath(c.Path())
 		if err != nil {
+			if errors.Is(err, resolver.ErrInvalidBedrockModelID) {
+				return invalidModelID(c, err)
+			}
 			return notFound(c)
 		}
 		if consumerdomain.IsStoreSlug(route.ConsumerSlug) {
@@ -198,37 +201,70 @@ func isAuthMappableError(err error) bool {
 }
 
 func unauthenticated(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusUnauthorized).JSON(httpio.ErrorBody{
+	return writeAuthBody(c, fiber.StatusUnauthorized, httpio.ErrorBody{
 		Error:   "unauthenticated",
 		Message: resolver.ErrUnauthenticated.Error(),
 	})
 }
 
 func forbidden(c *fiber.Ctx, err error) error {
-	return c.Status(fiber.StatusForbidden).JSON(httpio.ErrorBody{
+	return writeAuthBody(c, fiber.StatusForbidden, httpio.ErrorBody{
 		Error:   "forbidden",
 		Message: err.Error(),
 	})
 }
 
 func invalidAuthRequest(c *fiber.Ctx, err error) error {
-	return c.Status(fiber.StatusBadRequest).JSON(httpio.ErrorBody{
+	return writeAuthBody(c, fiber.StatusBadRequest, httpio.ErrorBody{
 		Error:   "invalid_auth_request",
 		Message: err.Error(),
 	})
 }
 
+func invalidModelID(c *fiber.Ctx, err error) error {
+	return writeAuthBody(c, fiber.StatusBadRequest, httpio.ErrorBody{
+		Error:   "invalid_model",
+		Message: err.Error(),
+	})
+}
+
 func notFound(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{
+	return writeAuthBody(c, fiber.StatusNotFound, httpio.ErrorBody{
 		Error: "not_found",
 	})
 }
 
 func internalError(c *fiber.Ctx, message string) error {
-	return c.Status(fiber.StatusInternalServerError).JSON(httpio.ErrorBody{
+	return writeAuthBody(c, fiber.StatusInternalServerError, httpio.ErrorBody{
 		Error:   "internal_error",
 		Message: message,
 	})
+}
+
+// writeAuthBody sends the gateway's error body. On a native Bedrock path it
+// carries the AWS envelope as well, with the x-amzn-ErrorType header, because
+// an AWS SDK reads the exception name from there and cannot classify a bare
+// gateway error.
+func writeAuthBody(c *fiber.Ctx, status int, body httpio.ErrorBody) error {
+	if !isBedrockNativePath(c) {
+		return c.Status(status).JSON(body)
+	}
+	return httpio.WriteBedrockError(c, status, body)
+}
+
+// isBedrockNativePath reports whether the request is addressed to a native
+// Bedrock Runtime route, including one whose model identifier was refused. The
+// route may not have been resolved yet when the gateway fails, so it is parsed
+// from the path again.
+func isBedrockNativePath(c *fiber.Ctx) bool {
+	if route, ok := c.Locals(resolver.ProxyRouteLocalsKey).(resolver.ProxyRoute); ok {
+		return route.IsBedrockNative()
+	}
+	route, err := resolver.ResolveProxyPath(c.Path())
+	if err != nil {
+		return errors.Is(err, resolver.ErrInvalidBedrockModelID)
+	}
+	return route.IsBedrockNative()
 }
 
 func (m *AuthMiddleware) attach(

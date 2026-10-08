@@ -80,10 +80,19 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return okResult(), nil
 	}
 
-	model, err := adapter.ExtractModel(in.Request.Body)
-	if err != nil {
-		setExtras(in.Event, ModelAllowlistData{Decision: decisionAllowed, Behavior: string(cfg.Behavior)})
-		return okResult(), nil
+	// A native Bedrock call names its model in the path, not the body, and its
+	// body is relayed as received: it can be checked, but never defaulted or
+	// substituted, because either would rewrite the body.
+	native := in.Request.IsBedrockNative()
+	var model string
+	if native {
+		model = in.Request.BedrockNative.ModelID
+	} else {
+		model, err = adapter.ExtractModel(in.Request.Body)
+		if err != nil {
+			setExtras(in.Event, ModelAllowlistData{Decision: decisionAllowed, Behavior: string(cfg.Behavior)})
+			return okResult(), nil
+		}
 	}
 
 	if model == "" {
@@ -120,7 +129,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return okResult(), nil
 	}
 
-	if cfg.Behavior == behaviorSubstitute {
+	if cfg.Behavior == behaviorSubstitute && !native {
 		body := adapter.OverrideModel(in.Request.Body, cfg.SubstituteWith)
 		setExtras(in.Event, ModelAllowlistData{
 			RequestedModel:  model,

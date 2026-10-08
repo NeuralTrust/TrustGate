@@ -185,6 +185,7 @@ type Config struct {
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
+	BedrockNative       BedrockNativeConfig
 	Outbound            OutboundConfig
 	Catalog             CatalogConfig
 	CORS                CORSConfig
@@ -479,6 +480,32 @@ type ProviderConfig struct {
 	MaxRetries            int
 }
 
+// BedrockNativeConfig tunes the relay of native Bedrock Runtime calls. Every limit
+// bounds work or memory a client can cause: a negative value is refused at load,
+// and a zero one, as in a Config built by hand, means the default.
+type BedrockNativeConfig struct {
+	// LookupWait is how long a call waits for the model behind an application
+	// inference profile ARN to be looked up before it goes on unpriced.
+	LookupWait time.Duration
+	// ToolHold is how long a streamed tool call is held, from its first frame, so
+	// its input can be inspected whole.
+	ToolHold time.Duration
+	// MaxResponseBytes bounds a buffered Bedrock answer.
+	MaxResponseBytes int64
+	// ResolverMaxInFlight is the model lookups in flight across every registry,
+	// ResolverMaxPerRegistry the ones a single registry can have, and
+	// ResolverCacheEntries what is remembered for each registry.
+	ResolverMaxInFlight    int
+	ResolverMaxPerRegistry int
+	ResolverCacheEntries   int
+	// ResolverResolvedTTL and ResolverUnresolvedTTL are how long a model and a
+	// failed lookup are remembered.
+	ResolverResolvedTTL   time.Duration
+	ResolverUnresolvedTTL time.Duration
+	// ResolverControlPlaneTimeout bounds one control plane call.
+	ResolverControlPlaneTimeout time.Duration
+}
+
 // OutboundConfig governs every outbound client whose destination a tenant can
 // steer: provider base_url, OAuth/OIDC/STS/introspection endpoints, telemetry
 // exporters.
@@ -600,6 +627,7 @@ func LoadConfig() (*Config, error) {
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
+		BedrockNative:       getBedrockNativeConfig(),
 		Outbound:            getOutboundConfig(),
 		Catalog:             getCatalogConfig(),
 		CORS:                getCORSConfig(),
@@ -878,6 +906,56 @@ func getProviderConfig() ProviderConfig {
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
 	}
+}
+
+// DefaultBedrockNative is the one place the defaults of the native Bedrock limits
+// are written. Zero values of a hand-built Config fall back to it.
+func DefaultBedrockNative() BedrockNativeConfig {
+	return BedrockNativeConfig{
+		LookupWait:                  1500 * time.Millisecond,
+		ToolHold:                    30 * time.Second,
+		MaxResponseBytes:            32 << 20,
+		ResolverMaxInFlight:         8,
+		ResolverMaxPerRegistry:      2,
+		ResolverCacheEntries:        2048,
+		ResolverResolvedTTL:         6 * time.Hour,
+		ResolverUnresolvedTTL:       5 * time.Minute,
+		ResolverControlPlaneTimeout: 10 * time.Second,
+	}
+}
+
+func getBedrockNativeConfig() BedrockNativeConfig {
+	d := DefaultBedrockNative()
+	return BedrockNativeConfig{
+		LookupWait:                  getEnvDuration("BEDROCK_NATIVE_LOOKUP_WAIT", d.LookupWait),
+		ToolHold:                    getEnvDuration("BEDROCK_NATIVE_TOOL_HOLD", d.ToolHold),
+		MaxResponseBytes:            getEnvInt64("BEDROCK_NATIVE_MAX_RESPONSE_BYTES", d.MaxResponseBytes),
+		ResolverMaxInFlight:         getEnvInt("BEDROCK_MODEL_RESOLVER_MAX_IN_FLIGHT", d.ResolverMaxInFlight),
+		ResolverMaxPerRegistry:      getEnvInt("BEDROCK_MODEL_RESOLVER_MAX_PER_REGISTRY", d.ResolverMaxPerRegistry),
+		ResolverCacheEntries:        getEnvInt("BEDROCK_MODEL_RESOLVER_CACHE_ENTRIES", d.ResolverCacheEntries),
+		ResolverResolvedTTL:         getEnvDuration("BEDROCK_MODEL_RESOLVER_RESOLVED_TTL", d.ResolverResolvedTTL),
+		ResolverUnresolvedTTL:       getEnvDuration("BEDROCK_MODEL_RESOLVER_UNRESOLVED_TTL", d.ResolverUnresolvedTTL),
+		ResolverControlPlaneTimeout: getEnvDuration("BEDROCK_MODEL_RESOLVER_TIMEOUT", d.ResolverControlPlaneTimeout),
+	}
+}
+
+func (c BedrockNativeConfig) validate() error {
+	for name, n := range map[string]int64{
+		"BEDROCK_NATIVE_MAX_RESPONSE_BYTES":       c.MaxResponseBytes,
+		"BEDROCK_MODEL_RESOLVER_MAX_IN_FLIGHT":    int64(c.ResolverMaxInFlight),
+		"BEDROCK_MODEL_RESOLVER_MAX_PER_REGISTRY": int64(c.ResolverMaxPerRegistry),
+		"BEDROCK_MODEL_RESOLVER_CACHE_ENTRIES":    int64(c.ResolverCacheEntries),
+		"BEDROCK_NATIVE_LOOKUP_WAIT":              int64(c.LookupWait),
+		"BEDROCK_NATIVE_TOOL_HOLD":                int64(c.ToolHold),
+		"BEDROCK_MODEL_RESOLVER_RESOLVED_TTL":     int64(c.ResolverResolvedTTL),
+		"BEDROCK_MODEL_RESOLVER_UNRESOLVED_TTL":   int64(c.ResolverUnresolvedTTL),
+		"BEDROCK_MODEL_RESOLVER_TIMEOUT":          int64(c.ResolverControlPlaneTimeout),
+	} {
+		if n < 0 {
+			return fmt.Errorf("%w: %s must not be negative", errors.ErrInvalidConfig, name)
+		}
+	}
+	return nil
 }
 
 func getOutboundConfig() OutboundConfig {
@@ -1269,6 +1347,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
+	}
+	if err := c.BedrockNative.validate(); err != nil {
+		return err
 	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err

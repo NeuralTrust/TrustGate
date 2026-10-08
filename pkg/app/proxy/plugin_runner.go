@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
@@ -30,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -77,6 +79,19 @@ func (f *forwarder) runPreRequest(
 func (f *forwarder) Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error) {
 	if ambiguousChatBody(req) {
 		return nil, ErrAmbiguousRequestBody
+	}
+	if req.IsBedrockNative() && adapter.HasInvalidText(req.Body) {
+		// The view decodes to U+FFFD what a tokenizer given the raw bytes would
+		// read as other text, so a body whose text is not valid is refused.
+		return nil, fmt.Errorf("%w: request body is not valid UTF-8 text", ErrInvalidRequestPayload)
+	}
+	if req.IsBedrockNative() && adapter.HasUninspectableDocument(req.Body) {
+		// A text document the view cannot read would be read by the model and by no
+		// policy: it is refused, not left out.
+		return nil, fmt.Errorf("%w: document could not be inspected", ErrInvalidRequestPayload)
+	}
+	if req.IsBedrockNative() && adapter.HasS3Source(req.Body) {
+		return nil, fmt.Errorf("%w: content referenced from S3 cannot be inspected", ErrInvalidRequestPayload)
 	}
 	return f.checkRateLimit(ctx, gatewayID)
 }
@@ -267,6 +282,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	stream iter.Seq2[[]byte, error],
 	gate func() <-chan struct{},
 	cut func() bool,
+	view func(frame []byte) [][]byte,
 ) iter.Seq2[[]byte, error] {
 	if f.executor == nil || !hasPostResponse(plan) {
 		return stream
@@ -276,12 +292,20 @@ func (f *forwarder) wrapStreamWithPostResponse(
 		completed := true
 		truncated := false
 		for line, err := range stream {
-
-			if err == nil && len(line) > 0 && !truncated {
-				if len(body)+len(line)+1 > maxPostResponseBufferBytes {
+			// view is set when the items are raw eventstream frames: what
+			// post_response reads is their decoded lines, not the frame bytes.
+			lines := [][]byte{line}
+			if view != nil && err == nil {
+				lines = view(line)
+			}
+			for _, l := range lines {
+				if err != nil || len(l) == 0 || truncated {
+					continue
+				}
+				if len(body)+len(l)+1 > maxPostResponseBufferBytes {
 					truncated = true
 				} else {
-					body = append(body, line...)
+					body = append(body, l...)
 					body = append(body, '\n')
 				}
 			}
