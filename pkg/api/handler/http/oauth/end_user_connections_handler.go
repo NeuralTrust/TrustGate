@@ -132,7 +132,7 @@ const (
 func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderCacheControl, "no-store")
 	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
-	if err := h.checkSource(c); err != nil {
+	if allowed, err := h.checkSource(c); !allowed {
 		return err
 	}
 	gateway, err := h.gateways.Resolve(c)
@@ -175,7 +175,7 @@ func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 func (h *EndUserConnectionsHandler) List(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderCacheControl, "no-store")
 	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
-	if err := h.checkSource(c); err != nil {
+	if allowed, err := h.checkSource(c); !allowed {
 		return err
 	}
 	gateway, err := h.gateways.Resolve(c)
@@ -220,15 +220,17 @@ func (h *EndUserConnectionsHandler) List(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(out)
 }
 
-func (h *EndUserConnectionsHandler) checkSource(c *fiber.Ctx) error {
+// checkSource reports whether the request may proceed; when it may not, the
+// rejection has already been written.
+func (h *EndUserConnectionsHandler) checkSource(c *fiber.Ctx) (bool, error) {
 	if h.limiter == nil || h.resolveSource == nil {
-		return nil
+		return true, nil
 	}
 	source := h.resolveSource(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor))
 	if err := h.limiter.Check(c.UserContext(), appoauth.ConnectAttemptScopeSource, source); err != nil {
-		return h.writeServiceError(c, err)
+		return false, h.writeServiceError(c, err)
 	}
-	return nil
+	return true, nil
 }
 
 func (h *EndUserConnectionsHandler) writeServiceError(c *fiber.Ctx, err error) error {
