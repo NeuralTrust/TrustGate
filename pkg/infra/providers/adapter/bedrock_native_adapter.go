@@ -281,9 +281,13 @@ func encodeDocument(text string, raw bool) string {
 	return base64.StdEncoding.EncodeToString([]byte(text))
 }
 
-// HasS3Source reports a document, image or video whose source is an S3 location.
-// Bedrock fetches it with the registry's credentials, so it is in no body a
-// policy can read; the caller refuses the request.
+// HasS3Source reports an S3 location a model service would fetch with the
+// registry's credentials: any object member named s3Location (any casing) whose
+// value is an object carrying a uri. That covers the Converse image, document and
+// video sources and the TwelveLabs mediaSource, wherever they sit. Bedrock reads it
+// out of band, so it is in no body a policy can read; the caller refuses the
+// request. Tool data (tool call arguments, tool results, tool schemas) is arbitrary
+// client data and is not searched.
 func HasS3Source(body []byte) bool {
 	root, ok := parseJSON(body)
 	if !ok {
@@ -299,15 +303,17 @@ func HasS3Source(body []byte) bool {
 				}
 			}
 		case 'o':
+			toolUse := n.strMember("type") == "tool_use" || n.member("toolUseId") != nil
 			for i, k := range n.keys {
-				if k == "source" && n.vals[i].kind == 'o' {
-					for _, sk := range n.vals[i].keys {
-						if strings.EqualFold(sk, "s3Location") {
-							return true
-						}
-					}
+				lk := strings.ToLower(k)
+				v := n.vals[i]
+				if isToolDataKey(lk, toolUse) {
+					continue
 				}
-				if walk(n.vals[i]) {
+				if lk == "s3location" && v.kind == 'o' && hasKeyFold(v, "uri") {
+					return true
+				}
+				if walk(v) {
 					return true
 				}
 			}
@@ -315,6 +321,27 @@ func HasS3Source(body []byte) bool {
 		return false
 	}
 	return walk(root)
+}
+
+// isToolDataKey names the members that hold client-defined tool data: call
+// arguments, JSON tool results and tool schemas.
+func isToolDataKey(lk string, inToolUse bool) bool {
+	switch lk {
+	case "json", "toolspec", "toolconfig", "input_schema", "inputschema":
+		return true
+	case "input":
+		return inToolUse
+	}
+	return false
+}
+
+func hasKeyFold(n *jnode, key string) bool {
+	for _, k := range n.keys {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // HasUninspectableDocument reports a text document in a request that the view

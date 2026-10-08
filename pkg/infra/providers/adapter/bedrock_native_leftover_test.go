@@ -298,19 +298,28 @@ func TestHasS3Source(t *testing.T) {
 	t.Parallel()
 	s3 := `{"s3Location":{"uri":"s3://bucket/key","bucketOwner":"123456789012"}}`
 	for name, body := range map[string]string{
-		"converse document": `{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}]}`,
-		"converse image":    `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":` + s3 + `}}]}]}`,
-		"converse video":    `{"messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
-		"nova invoke":       `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
-		"other casing":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"S3Location":{"uri":"s3://b/k"}}}}]}]}`,
+		"converse document":   `{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}]}`,
+		"converse image":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":` + s3 + `}}]}]}`,
+		"converse video":      `{"messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
+		"nova invoke":         `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"video":{"format":"mp4","source":` + s3 + `}}]}]}`,
+		"other casing":        `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"S3Location":{"uri":"s3://b/k"}}}}]}]}`,
+		"pegasus mediaSource": `{"inputPrompt":"describe this video","mediaSource":` + s3 + `}`,
+		"marengo mediaSource": `{"inputType":"video","mediaSource":{"s3Location":{"uri":"s3://b/k.mp4","bucketOwner":"123456789012"}}}`,
+		"capital Source":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","Source":` + s3 + `}}]}]}`,
 	} {
 		assert.True(t, HasS3Source([]byte(body)), name)
 	}
 	for name, body := range map[string]string{
-		"inline bytes": `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"AAAA"}}}]}]}`,
-		"plain text":   `{"messages":[{"role":"user","content":[{"text":"s3Location"}]}]}`,
-		"unrelated":    `{"additionalModelRequestFields":{"s3Location":"x"}}`,
-		"not json":     `nope`,
+		"inline bytes":          `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"AAAA"}}}]}]}`,
+		"plain text":            `{"messages":[{"role":"user","content":[{"text":"s3Location"}]}]}`,
+		"unrelated":             `{"additionalModelRequestFields":{"s3Location":"x"}}`,
+		"not json":              `nope`,
+		"toolUse input history": `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}}]}]}`,
+		"toolResult json":       `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"json":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}}]}]}`,
+		"anthropic tool_use":    `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
+		"anthropic tool schema": `{"tools":[{"name":"copy","input_schema":{"type":"object","properties":{"s3Location":{"uri":"x"}}}}]}`,
+		"converse toolSpec":     `{"toolConfig":{"tools":[{"toolSpec":{"name":"c","inputSchema":{"json":{"s3Location":{"uri":"x"}}}}}]}}`,
+		"tool arg string form":  `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":"s3://a/b"}}}}]}]}`,
 	} {
 		assert.False(t, HasS3Source([]byte(body)), name)
 	}
