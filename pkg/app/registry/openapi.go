@@ -122,17 +122,20 @@ func (e *fetchFailure) Unwrap() error {
 	return e.cause
 }
 
-// publicCompileError replaces the text of a dial or DNS failure while fetching
-// the document with a generic message and logs the detail instead. Redirect,
-// policy, HTTP status, size and parse failures keep their message.
+// publicCompileError replaces the text of a failure to reach the document with
+// a generic message and logs the detail instead. Every error from the HTTP
+// client counts, since it names the URL and, for a refused destination, the
+// host: dial, DNS, TLS, timeout, redirect and egress refusals alike. HTTP
+// status, size and parse failures keep their message.
 func publicCompileError(ctx context.Context, specURL string, err error) error {
 	var compileErr *appopenapi.CompileError
 	if !errors.As(err, &compileErr) || compileErr.Stage != appopenapi.StageFetch {
 		return err
 	}
+	var urlErr *url.Error
 	var opErr *net.OpError
 	var dnsErr *net.DNSError
-	if !errors.As(compileErr.Err, &opErr) && !errors.As(compileErr.Err, &dnsErr) {
+	if !errors.As(compileErr.Err, &urlErr) && !errors.As(compileErr.Err, &opErr) && !errors.As(compileErr.Err, &dnsErr) {
 		return err
 	}
 	slog.WarnContext(ctx, "openapi document fetch failed",
