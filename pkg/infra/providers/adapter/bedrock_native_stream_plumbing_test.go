@@ -42,7 +42,7 @@ func TestNativeStreamChunk_UnmodelledTextStaysInTheViewButNotInTheModelledText(t
 	chunk := []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"},"note":"standard"}`)
 	view, err := (&BedrockNativeAdapter{}).decodeStreamChunk(chunk, true)
 	require.NoError(t, err)
-	assert.Equal(t, "hello\nstandard", view.Delta)
+	assert.Equal(t, "hello\nstandard\n", view.Delta)
 	modelled, err := (&BedrockNativeAdapter{}).decodeStreamChunk(chunk, false)
 	require.NoError(t, err)
 	assert.Equal(t, "hello", modelled.Delta)

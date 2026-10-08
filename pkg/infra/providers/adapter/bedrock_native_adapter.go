@@ -60,14 +60,15 @@ var nonTextKeys = map[string]struct{}{
 	"images": {}, "image": {}, "conditionimage": {}, "maskimage": {}, "inputimage": {}, "base64": {}, "init_image": {},
 	"signature": {}, "tooluseid": {}, "ttl": {}, "status": {}, "event_type": {}, "guardrailidentifier": {},
 	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {},
-	"service_tier": {},
+	"service_tier": {}, "stop_sequence": {},
 }
 
 // streamPlumbingKeys are the subtrees of a stream chunk that report usage and
 // latency, whatever depth they sit at: Anthropic nests usage in message_start,
 // and Bedrock appends its invocation metrics to the last chunk. A string in one
-// is a label such as a service tier, never text the model wrote.
-var streamPlumbingKeys = []string{"usage", invocationMetricsKey}
+// is a label such as a service tier, or the stop sequence a model ended on,
+// never text the model wrote.
+var streamPlumbingKeys = []string{"usage", invocationMetricsKey, "stop_sequence", "stop_reason", "stopReason"}
 
 var toolKeys = map[string]struct{}{
 	"toolspec": {}, "tool_use": {}, "tooluse": {}, "tools": {}, "tool_choice": {}, "toolchoice": {},
@@ -922,10 +923,10 @@ func (a *BedrockNativeAdapter) decodeStreamChunk(chunk []byte, leftover bool) (*
 		if out == nil {
 			out = &CanonicalStreamChunk{}
 		}
-		if out.Delta != "" {
-			out.Delta += "\n"
-		}
-		out.Delta += extra
+		// The view joins frames' texts with nothing between them, so a frame that
+		// carries text no delta wrote is fenced with line breaks on both sides: a
+		// match on the model's text cannot run into it, or out of it.
+		out.Delta += "\n" + extra + "\n"
 	}
 	return out, nil
 }
