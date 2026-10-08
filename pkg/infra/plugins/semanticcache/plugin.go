@@ -130,7 +130,7 @@ func (p *Plugin) BedrockNativeSkipExtras(settings map[string]any, stage string) 
 	}
 }
 
-// NativeBedrock: a hit would answer a native Bedrock call with a stored body the
+// BedrockNative: a hit would answer a native Bedrock call with a stored body the
 // gateway cannot show to be a valid Bedrock response, and a store would key on a
 // model-native body, so the cache is skipped on a native call (see
 // appplugins.BedrockNativeAware).

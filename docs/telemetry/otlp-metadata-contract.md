@@ -395,7 +395,7 @@ A call to a native Bedrock Runtime route (`/{slug}/model/{modelId}/converse`, `c
 `invoke`, `invoke-with-response-stream`) is relayed as the client sent it, so policies cannot
 rewrite it the way they rewrite a translated one. Three outcomes are recorded in
 `policy_chain[]`, all under the entry name **`native_bedrock_passthrough`** (one constant,
-`appplugins.NativeBedrockPassthrough`):
+`appplugins.BedrockNativePassthrough`):
 
 | Entry | When | `decision` | Extras |
 |-------|------|------------|--------|
