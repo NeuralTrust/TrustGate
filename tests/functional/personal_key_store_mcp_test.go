@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +21,13 @@ import (
 // storeMCP posts one JSON-RPC call to the gateway's MCP Store with apiKey.
 func storeMCP(t *testing.T, gatewayID, apiKey, method string) (int, map[string]any) {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": map[string]any{}})
+	return storeMCPWith(t, gatewayID, apiKey, method, map[string]any{})
+}
+
+// storeMCPWith is storeMCP with the call's params.
+func storeMCPWith(t *testing.T, gatewayID, apiKey, method string, params map[string]any) (int, map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, MCPURL+"/store/mcp", strings.NewReader(string(raw)))
 	require.NoError(t, err)
@@ -101,4 +111,88 @@ func TestPersonalKey_OpensTheMCPStoreAsItsOwner(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, status)
 	status, refused = storeMCP(t, gwID, rawKey, "tools/list")
 	assert.Equal(t, http.StatusUnauthorized, status, "a revoked key opens nothing: %v", refused)
+}
+
+// A person who installed a server that signs in with their own account, and
+// has not connected it, connects it the way every Store client does: by
+// installing it again, which hands back the link to that server's connect
+// page. The Store lists no trustgate_connect_* tool, so there is one way in.
+func TestPersonalKey_StoreConnectsAnInstalledServerThroughInstall(t *testing.T) {
+	defer Track(t, "LLMKey")()
+	idp := newOAuthProviderStub(t)
+	upstream, _ := startCapturingMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("personal-connect")})
+	provider := uniqueName("linear")
+	regID := CreateRegistry(t, gwID, mcpForwardedRegistryPayload(uniqueName("Linear"), upstream.URL, provider, idp))
+	parsed, err := ids.Parse[ids.RegistryKind](regID)
+	require.NoError(t, err)
+	code := registrydomain.CustomStoreCode(parsed)
+	alice := uniqueName("alice")
+
+	status, granted := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/v1/gateways/%s/store/grants", AdminURL, gwID), nil,
+		map[string]any{"catalog_code": code, "users": []string{alice}})
+	require.Equal(t, http.StatusOK, status, "body=%v", granted)
+	status, installed := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/v1/gateways/%s/store/principal/installs", AdminURL, gwID), nil,
+		map[string]any{"principal_sub": alice, "code": code})
+	require.Equal(t, http.StatusOK, status, "body=%v", installed)
+	require.Equal(t, "installed", installed["status"], "body=%v", installed)
+
+	status, issued := CreateLLMKey(t, gwID, alice, llmKeyExpiry(llmKeyDay))
+	require.Equal(t, http.StatusCreated, status, "body=%v", issued)
+	rawKey := fmt.Sprint(issued["api_key"])
+
+	names := storeToolNames(t, gwID, rawKey)
+	assert.Contains(t, names, "trustgate_store_install")
+	for _, name := range names {
+		assert.False(t, strings.HasPrefix(name, "trustgate_connect_"), "the Store lists no connect tool: %v", names)
+	}
+
+	server := storeInventoryServer(t, gwID, rawKey)
+	require.Equal(t, "needs_connect", server["state"], "server=%v", server)
+	require.Equal(t, "trustgate_store_install", server["connect_tool"], "server=%v", server)
+	require.Equal(t, code, server["code"], "server=%v", server)
+
+	status, called := storeMCPWith(t, gwID, rawKey, "tools/call", map[string]any{
+		"name": "trustgate_store_install", "arguments": map[string]any{"code": code},
+	})
+	result := requireRPCSucceeded(t, status, called)
+	structured, _ := result["structuredContent"].(map[string]any)
+	assert.Equal(t, true, structured["already_installed"], "body=%v", called)
+	link, err := url.Parse(fmt.Sprint(structured["connect_url"]))
+	require.NoError(t, err, "body=%v", called)
+	require.Equal(t, "/store/mcp/connect", link.Path, "body=%v", called)
+	ticket := link.Query().Get("ticket")
+	require.NotEmpty(t, ticket)
+
+	// The ticket names the server, so the provider's consent goes through it.
+	driveProviderConsent(t, idp, provider, ticket)
+	assert.Equal(t, "ready", storeInventoryServer(t, gwID, rawKey)["state"], "a connected server serves")
+}
+
+// storeToolNames is what tools/list on the Store offers the key's owner.
+func storeToolNames(t *testing.T, gatewayID, apiKey string) []string {
+	t.Helper()
+	status, listed := storeMCP(t, gatewayID, apiKey, "tools/list")
+	result := requireRPCSucceeded(t, status, listed)
+	tools, _ := result["tools"].([]any)
+	names := make([]string, 0, len(tools))
+	for _, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		names = append(names, fmt.Sprint(tool["name"]))
+	}
+	return names
+}
+
+// storeInventoryServer is the one server trustgate_list_tools reports.
+func storeInventoryServer(t *testing.T, gatewayID, apiKey string) map[string]any {
+	t.Helper()
+	status, called := storeMCPWith(t, gatewayID, apiKey, "tools/call", map[string]any{
+		"name": "trustgate_list_tools", "arguments": map[string]any{},
+	})
+	result := requireRPCSucceeded(t, status, called)
+	structured, _ := result["structuredContent"].(map[string]any)
+	servers, _ := structured["servers"].([]any)
+	require.Len(t, servers, 1, "body=%v", called)
+	server, _ := servers[0].(map[string]any)
+	return server
 }

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -61,7 +62,8 @@ type InventoryServer struct {
 	// qualifies its tools when two servers offer the same tool name.
 	Name string
 	// Code is the catalog code the server was installed from, empty for a
-	// registry an admin wired by hand. It is what the Store meta-tools take.
+	// registry an admin wired by hand. It is what the Store meta-tools take, so
+	// on the Store a custom server carries its Store code (custom:<id>).
 	Code string
 	// Provider names the upstream account a server awaiting consent needs.
 	Provider string
@@ -127,12 +129,17 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 	}
 	resolved := resolveNames(candidates, registries)
 
+	store := rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
 	out := &ToolInventory{Servers: make([]InventoryServer, 0, len(surfaces))}
 	cursor := 0
 	for _, surface := range surfaces {
+		code := registryCatalogCode(surface.registry)
+		if store {
+			code = registrydomain.StoreCode(surface.registry)
+		}
 		server := InventoryServer{
 			Name:   inventoryServerName(surface.registry),
-			Code:   registryCatalogCode(surface.registry),
+			Code:   code,
 			Denied: surface.denied,
 			policy: surface.policy,
 		}

@@ -207,9 +207,9 @@ the OpenAI catalog, so `/store/v1/models` gains it.
 The same key opens its owner's MCP Store, `https://<gateway>.<MCP_BASE_DOMAIN>/store/mcp`,
 sent in any of the key headers above. It is the Store a signed-in session gets:
 what the owner installed, narrowed by the Store grants and access policies that
-name them or one of their groups, with the `trustgate_store_*`,
-`trustgate_list_tools` and `trustgate_connect_*` tools, and every call made
-with the owner's own upstream accounts.
+name them or one of their groups, with the `trustgate_store_*` and
+`trustgate_list_tools` tools, and every call made with the owner's own
+upstream accounts.
 
 - The principal is the key's owner (`subject` = `owner_id`), method
   `personal_key`, with the groups recorded by `PUT …/auths/{auth_id}/groups` as
@@ -219,8 +219,11 @@ with the owner's own upstream accounts.
   `/store/mcp`, answers 401 like an unknown key. A disabled or expired key, a key
   whose owner spells a subject only the gateway mints (`app:…`, `instance:…`),
   and a key sent to another gateway's host answer the same.
-- A connect link the Store hands out (a consent error, `trustgate_connect_*`)
-  connects the owner's account, as it does for a session.
+- A connect link the Store hands out (a consent error, or
+  `trustgate_store_install` called again for an installed server that is not
+  connected) connects the owner's account, as it does for a session. The Store
+  lists no `trustgate_connect_*` tool: installing is its one way in, and
+  `trustgate_list_tools` names it (`connect_tool`) with the server's `code`.
 - `GET /whoami` describes a personal key with `"key": {"personal": true, …}`
   and the Store on each plane, slug `store`: the MCP Store, and `/store/v1` when
   the gateway has an active personal consumer.

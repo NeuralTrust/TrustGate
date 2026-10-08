@@ -164,6 +164,39 @@ func TestInventoryTool_ListsEveryServerAndItsState(t *testing.T) {
 	}
 }
 
+// The Store has no connect tool: the server is connected by installing it
+// again, so that is the tool named, with the code it takes.
+func TestInventoryTool_OnTheStoreNamesTheInstallThatConnects(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: twoServerInventory()}, nil)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	raw, err := tool.Call(
+		context.Background(),
+		routable(consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())),
+		InventoryToolName,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("call %s: %v", InventoryToolName, err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	servers := structuredServers(t, result)
+	if got := servers[1]["connect_tool"]; got != StoreInstallToolName {
+		t.Fatalf("connect_tool = %v, want %q", got, StoreInstallToolName)
+	}
+	if got := servers[1]["code"]; got != "com.notion/mcp" {
+		t.Fatalf("code = %v, want the code the install takes", got)
+	}
+	if text := resultText(t, result); !strings.Contains(text, StoreInstallToolName+` with code "com.notion/mcp" gives them a link`) {
+		t.Fatalf("text must say which call connects it, got %q", text)
+	}
+}
+
 // The text body carries it too: many clients hand only the text to the model.
 func TestInventoryTool_TextBodyNamesWhyAServerIsNotConnected(t *testing.T) {
 	t.Parallel()

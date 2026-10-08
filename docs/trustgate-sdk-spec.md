@@ -435,7 +435,8 @@ same way, marked `"personal": true`. Its consumers are the Store, slug `store`,
 on each plane: the MCP Store, where calls run as the key's owner with what
 Access grants them, and the LLM Store (`/store/v1`) when the gateway has
 personal consumers. No `upstreams`: what the person still has to connect is on
-the Store itself (`trustgate_list_tools`, `trustgate_connect_*`).
+the Store itself: `trustgate_list_tools` reports it `needs_connect`, and
+`trustgate_store_install` with its `code` returns the connect link.
 
 ```jsonc
 {
