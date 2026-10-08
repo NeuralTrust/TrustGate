@@ -428,6 +428,7 @@ tokens:
 | `tool_call_not_held` | A stream window holds a tool call the guard could not hold whole, or of a family whose tool calls are not understood |
 | `already_released_text` | The mask reaches text the client has already read |
 | `already_released_input` | The removed text is in tool input or reasoning that was already released |
+| `glued_plumbing_text` | The removed text runs across stream frames and one of them holds text that no delta of the model wrote, only a field the view adds |
 | `no_inspected_window` | The verdict does not name a window of the held text |
 | `tool_input_not_maskable` | The mask is not a replacement inside a string of the tool input, or the input is not valid JSON or does not read back exactly |
 | `tool_frames_not_rewritable` | The held frames of a tool call cannot be rewritten |

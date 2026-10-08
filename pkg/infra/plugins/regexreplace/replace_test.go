@@ -202,3 +202,13 @@ func TestApplyRulesFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyRulesToArgumentsLeavesObjectKeysUnchanged(t *testing.T) {
+	t.Parallel()
+	rules := mustCompile(t, Rule{Pattern: `secret`, Replacement: "[MASKED]"})
+
+	out, changed := applyRulesToArguments(rules, `{"secret": "a secret value", "nested": {"secret": "secret"}}`)
+
+	require.True(t, changed)
+	assert.Equal(t, `{"secret": "a [MASKED] value", "nested": {"secret": "[MASKED]"}}`, out)
+}
