@@ -30,14 +30,35 @@ const RegisterPath = appoauth.RegisterBasePath
 const RegisterClientPath = RegisterPath + "/:client_id"
 
 type RegisterHandler struct {
-	metadata appoauth.MetadataService
+	metadata      appoauth.MetadataService
+	limiter       appoauth.ConnectAttemptLimiter
+	resolveSource func(peer, forwardedFor string) string
 }
 
-func NewRegisterHandler(metadata appoauth.MetadataService) *RegisterHandler {
-	return &RegisterHandler{metadata: metadata}
+// RegisterHandlerOption configures a RegisterHandler.
+type RegisterHandlerOption func(*RegisterHandler)
+
+// WithRegistrationLimit caps how many clients one source address can register
+// per window.
+func WithRegistrationLimit(limiter appoauth.ConnectAttemptLimiter, resolveSource func(peer, forwardedFor string) string) RegisterHandlerOption {
+	return func(h *RegisterHandler) {
+		h.limiter = limiter
+		h.resolveSource = resolveSource
+	}
+}
+
+func NewRegisterHandler(metadata appoauth.MetadataService, opts ...RegisterHandlerOption) *RegisterHandler {
+	h := &RegisterHandler{metadata: metadata}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 func (h *RegisterHandler) Handle(c *fiber.Ctx) error {
+	if allowed, err := h.checkSource(c); !allowed {
+		return err
+	}
 	var req appoauth.RegisterRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid client registration request")
@@ -47,6 +68,25 @@ func (h *RegisterHandler) Handle(c *fiber.Ctx) error {
 		return h.writeError(c, err)
 	}
 	return httpio.WriteCreated(c, res)
+}
+
+// checkSource reports whether the request may proceed; when it may not, the
+// rejection has already been written.
+func (h *RegisterHandler) checkSource(c *fiber.Ctx) (bool, error) {
+	if h.limiter == nil || h.resolveSource == nil {
+		return true, nil
+	}
+	source := h.resolveSource(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor))
+	err := h.limiter.Check(c.UserContext(), appoauth.ConnectAttemptScopeRegistration, source)
+	var exceeded *appoauth.ConnectRateLimitExceeded
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &exceeded):
+		return false, writeAPIKeyConnectRateLimited(c, exceeded)
+	default:
+		return false, fiber.NewError(fiber.StatusServiceUnavailable, "client registration is temporarily unavailable")
+	}
 }
 
 // Read serves the RFC 7592 read of one registration.

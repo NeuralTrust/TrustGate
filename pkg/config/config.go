@@ -167,6 +167,7 @@ const (
 	defaultAdminM2MAudience           = "trustgate-admin"
 	defaultAdminM2MMaxTokenTTL        = 24 * time.Hour
 	defaultAdminPlatformClaimRequired = false
+	maxAdminTokenMaxTTL               = 24 * time.Hour
 )
 
 type Config struct {
@@ -313,7 +314,18 @@ type ServerConfig struct {
 	// customer boundary through it. PROXY_SERVE_HYBRID_GATEWAYS overrides for
 	// non-dbless customer data planes.
 	ServeHybridGateways bool
+	// AdminTokenMaxTTL is the furthest a console token's exp may sit in the
+	// future. Tokens without exp, or beyond this horizon, are rejected.
+	AdminTokenMaxTTL time.Duration
+	// OAuthInsecureCookies lets the MCP OAuth flow cookies drop the Secure
+	// attribute on plain-http hosts other than loopback (local DNS, on-prem over
+	// http). Leave it off wherever the MCP plane is served over https.
+	OAuthInsecureCookies bool
 }
+
+// DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
+// absent or invalid.
+const DefaultAdminTokenMaxTTL = time.Hour
 
 type MCPDefaultIdPConfig struct {
 	Issuer       string
@@ -628,6 +640,8 @@ func getServerConfig() ServerConfig {
 		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
+		AdminTokenMaxTTL:      min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
+		OAuthInsecureCookies:  getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),

@@ -47,9 +47,10 @@ var legacyProtocolVersions = []string{
 	"2024-11-05",
 }
 
-// upstreamTransport dials any address: a fixed registry URL was configured by
-// an admin and is trusted as much as any other admin-set upstream.
-var upstreamTransport = newUpstreamTransport(nil)
+// upstreamTransport serves fixed registry URLs. They are set by a tenant admin,
+// so they go through the shared outbound guard and reach private addresses only
+// where OUTBOUND_ALLOW_PRIVATE_NETWORKS allows it.
+var upstreamTransport = newUpstreamTransport(netguard.Shared().DialContext)
 
 // restrictedUpstreamTransport serves targets whose URL came out of per-user
 // variable substitution (Target.RestrictPrivateNetwork). Its dialer resolves the

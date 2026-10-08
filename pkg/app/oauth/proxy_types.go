@@ -61,6 +61,10 @@ type PendingAuthorization struct {
 	// which has no owning gateway of its own — can still bind the minted
 	// session to the right gateway at callback time.
 	GatewayID string `json:"gateway_id,omitempty"`
+	// AuthorizeURL is the identity provider redirect released by Approve.
+	AuthorizeURL string `json:"authorize_url,omitempty"`
+	// Approved is set by Approve; Callback redeems nothing that lacks it.
+	Approved bool `json:"approved,omitempty"`
 }
 
 type CodeGrant struct {
@@ -173,8 +177,19 @@ type ConsentChainer interface {
 	ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error)
 }
 
+// AuthorizeResult is where an authorization request goes next. With
+// ConsentState set, the request is parked under that state until Approve or
+// Deny, and Location is the identity provider redirect it waits on; otherwise
+// Location returns to the client.
+type AuthorizeResult struct {
+	Location     string
+	ConsentState string
+}
+
 type AuthProxy interface {
-	Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (string, error)
+	Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (AuthorizeResult, error)
+	Approve(ctx context.Context, state string) (string, error)
+	Deny(ctx context.Context, state string) (string, error)
 	Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc string) (string, error)
 	Exchange(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error)
 }

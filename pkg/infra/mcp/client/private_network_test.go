@@ -24,6 +24,7 @@ import (
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard/netguardtest"
 )
 
 // A target whose URL came from per-user variables (RestrictPrivateNetwork) must
@@ -75,5 +76,26 @@ func TestConnect_RestrictedTargetRefusesLoopbackHostname(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, appmcp.ErrUnreachable) || !strings.Contains(err.Error(), "non-public") {
 		t.Fatalf("error = %v, want ErrUnreachable with the private-network refusal", err)
+	}
+}
+
+// With the outbound guard on (shared gateways), an admin-fixed URL is held to
+// the same rule as every other tenant-steered destination.
+func TestConnect_FixedTargetHonoursOutboundGuard(t *testing.T) {
+	netguardtest.Deny(t)
+	var hits atomic.Int32
+	srv := newUpstream(t, addEchoTool, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if err == nil || !errors.Is(err, appmcp.ErrUnreachable) {
+		t.Fatalf("error = %v, want ErrUnreachable", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("the upstream received %d request(s); the dial must be refused before any bytes are sent", hits.Load())
 	}
 }

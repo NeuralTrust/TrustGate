@@ -15,8 +15,11 @@
 package oauth
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
-	"net/url"
+	"encoding/hex"
+	"net"
+	"strings"
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
@@ -43,21 +46,21 @@ const (
 	stateCookieMaxAge = 10 * time.Minute
 )
 
-func stateCookieName(c *fiber.Ctx) string {
-	if c.Secure() {
+func (f FlowCookies) stateCookieName(c *fiber.Ctx) string {
+	if f.secure(c) {
 		return stateCookieSecureName
 	}
 	return stateCookiePlainName
 }
 
 // setStateCookie remembers the gateway state of the IdP leg in the browser.
-func setStateCookie(c *fiber.Ctx, state string) {
+func (f FlowCookies) setStateCookie(c *fiber.Ctx, state string) {
 	c.Cookie(&fiber.Cookie{
-		Name:     stateCookieName(c),
+		Name:     f.stateCookieName(c),
 		Value:    state,
 		Path:     "/",
 		MaxAge:   int(stateCookieMaxAge / time.Second),
-		Secure:   c.Secure(),
+		Secure:   f.secure(c),
 		HTTPOnly: true,
 		SameSite: fiber.CookieSameSiteLaxMode,
 	})
@@ -66,33 +69,17 @@ func setStateCookie(c *fiber.Ctx, state string) {
 // clearStateCookie expires the binding once the callback has consumed it. The
 // attributes must mirror setStateCookie or a browser will not match the
 // __Host- cookie it is meant to delete.
-func clearStateCookie(c *fiber.Ctx) {
+func (f FlowCookies) clearStateCookie(c *fiber.Ctx) {
 	c.Cookie(&fiber.Cookie{
-		Name:     stateCookieName(c),
+		Name:     f.stateCookieName(c),
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
-		Secure:   c.Secure(),
+		Secure:   f.secure(c),
 		HTTPOnly: true,
 		SameSite: fiber.CookieSameSiteLaxMode,
 	})
-}
-
-// gatewayStateOf extracts the state the proxy minted for the IdP leg from the
-// redirect it produced. A protocol error is redirected back to the client
-// instead, carrying the client's own state; that redirect never returns to the
-// callback, so it gets no cookie.
-func gatewayStateOf(location, clientState string) string {
-	u, err := url.Parse(location)
-	if err != nil {
-		return ""
-	}
-	state := u.Query().Get("state")
-	if state == "" || state == clientState {
-		return ""
-	}
-	return state
 }
 
 // requireStateBinding rejects a callback whose state was not issued to this
@@ -112,4 +99,85 @@ func requireStateBinding(bound, state string) error {
 		}
 	}
 	return nil
+}
+
+const (
+	consentCookieSecureName = "__Host-oauth_consent_"
+	consentCookiePlainName  = "oauth_consent_"
+	consentCookieMaxAge     = 5 * time.Minute
+)
+
+// consentCookieName is per flow, so consent pages open side by side do not
+// displace each other.
+func (f FlowCookies) consentCookieName(c *fiber.Ctx, state string) string {
+	sum := sha256.Sum256([]byte(state))
+	suffix := hex.EncodeToString(sum[:8])
+	if f.secure(c) {
+		return consentCookieSecureName + suffix
+	}
+	return consentCookiePlainName + suffix
+}
+
+// setConsentCookie marks the browser that was shown the consent page for
+// state. SameSite Lax keeps it off form posts from other sites.
+func (f FlowCookies) setConsentCookie(c *fiber.Ctx, state string) {
+	c.Cookie(&fiber.Cookie{
+		Name:     f.consentCookieName(c, state),
+		Value:    state,
+		Path:     "/",
+		MaxAge:   int(consentCookieMaxAge / time.Second),
+		Secure:   f.secure(c),
+		HTTPOnly: true,
+		SameSite: fiber.CookieSameSiteLaxMode,
+	})
+}
+
+func (f FlowCookies) clearConsentCookie(c *fiber.Ctx, state string) {
+	c.Cookie(&fiber.Cookie{
+		Name:     f.consentCookieName(c, state),
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		Secure:   f.secure(c),
+		HTTPOnly: true,
+		SameSite: fiber.CookieSameSiteLaxMode,
+	})
+}
+
+func (f FlowCookies) consentCookieMatches(c *fiber.Ctx, state string) bool {
+	if state == "" {
+		return false
+	}
+	bound := c.Cookies(f.consentCookieName(c, state))
+	return bound != "" && subtle.ConstantTimeCompare([]byte(bound), []byte(state)) == 1
+}
+
+// FlowCookies sets the cookies that tie an authorization flow to one browser.
+type FlowCookies struct {
+	// AllowInsecure lets a plain-http request on a host other than loopback use
+	// cookies without the Secure attribute (local DNS, on-prem over http).
+	AllowInsecure bool
+}
+
+// secure reports whether the flow cookies take the Secure, __Host- form.
+// Loopback hosts are always allowed plain http; any other host needs
+// AllowInsecure for that.
+func (f FlowCookies) secure(c *fiber.Ctx) bool {
+	if c.Secure() {
+		return true
+	}
+	if f.AllowInsecure {
+		return false
+	}
+	host := c.Hostname()
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.Trim(host, "[]"), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
 }

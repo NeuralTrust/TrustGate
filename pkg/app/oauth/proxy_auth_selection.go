@@ -209,24 +209,18 @@ func (p *authProxy) validateClientRedirect(ctx context.Context, clientID, redire
 
 func (p *authProxy) knownClientID(ctx context.Context, clientID string) bool {
 	if clientID == "" {
-		return true
+		return false
 	}
 	auths, err := p.credentials.OAuth2Auths(ctx)
 	if err != nil {
 		return false
 	}
-	configured := false
 	for _, a := range auths {
-		cfg := a.Config.OAuth2
-		if cfg == nil || cfg.ClientID == "" {
-			continue
-		}
-		configured = true
-		if cfg.ClientID == clientID {
+		if cfg := a.Config.OAuth2; cfg != nil && cfg.ClientID != "" && cfg.ClientID == clientID {
 			return true
 		}
 	}
-	return !configured
+	return false
 }
 
 func (p *authProxy) singleOAuth2Auth(ctx context.Context) (*authdomain.Auth, error) {

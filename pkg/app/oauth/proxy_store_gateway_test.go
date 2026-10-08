@@ -53,7 +53,7 @@ func TestAuthorizeDefaultIdPBindsAddressedGatewayIntoPending(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{ID: gw})
 
-	loc, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+	loc, err := authorizeLocation(proxy, ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "trustgate",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -95,7 +95,7 @@ func TestAuthorizeDefaultIdPPassesGatewayTenantAsOrgHint(t *testing.T) {
 	}
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
-	loc, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+	loc, err := authorizeLocation(proxy, ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "trustgate",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -132,7 +132,7 @@ func TestAuthorizeDefaultIdPWithoutGatewayIsRefused(t *testing.T) {
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
 	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil)
 
-	loc, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	loc, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "trustgate",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
