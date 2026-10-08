@@ -442,6 +442,29 @@ func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
 	}
 }
 
+// A person whose Store access is None is told so: an opaque internal error left
+// them, and the SDK, with nothing to act on.
+func TestHandler_ToolsCall_StoreInstallDisabledSaysWhy(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "github-search").
+		Return(nil, appmcp.ErrStoreInstallDisabled).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"github-search"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32001 {
+		t.Fatalf("code = %v, want the policy-blocked code", rpcErr["code"])
+	}
+	if msg, _ := rpcErr["message"].(string); !strings.Contains(msg, "turned off for you") {
+		t.Fatalf("message = %q, want it to say installing is off", msg)
+	}
+}
+
 // serverInfo.version carries a fingerprint of the tool surface, so a client
 // that caches a server's tool list keyed on its reported version re-lists once
 // the consumer gains or loses a registry. A constant "1.0" left a newly

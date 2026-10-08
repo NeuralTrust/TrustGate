@@ -38,6 +38,9 @@ func (r *recordingInstaller) Install(_ context.Context, in InstallRequest) (*Ins
 func (r *recordingInstaller) Instances(context.Context, ids.GatewayID, string, string) ([]*installationdomain.Installation, error) {
 	return nil, nil
 }
+func (r *recordingInstaller) Installed(context.Context, InstallRequest) (*InstallResult, error) {
+	return nil, ErrNotInstalled
+}
 func (r *recordingInstaller) Uninstall(context.Context, ids.GatewayID, string, string, string) error {
 	return nil
 }
