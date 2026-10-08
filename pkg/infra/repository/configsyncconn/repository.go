@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -93,22 +95,21 @@ func (r *Repository) MarkDisconnected(ctx context.Context, scope, instanceID str
 	return nil
 }
 
-// Page bounds a listing. The zero value means every match.
-type Page struct {
-	Limit  int
-	Offset int
-}
-
 // List returns the connections for scope, or all connections when scope is
-// empty, ordered by (scope, instance_id) and bounded by page.
-func (r *Repository) List(ctx context.Context, scope string, page Page) ([]Connection, error) {
+// empty, ordered by (scope, instance_id). A nil page returns every match.
+func (r *Repository) List(ctx context.Context, scope string, page *listing.Page) ([]Connection, error) {
+	limit, offset := 0, 0
+	if page != nil {
+		p := page.Normalize()
+		limit, offset = p.Size, p.Offset()
+	}
 	const stmt = `
 		SELECT scope, instance_id, state, applied_version, first_seen, last_seen
 		FROM config_sync_connections
 		WHERE ($1 = '' OR scope = $1)
 		ORDER BY scope, instance_id
 		LIMIT NULLIF($2, 0) OFFSET $3`
-	rows, err := r.pool.Query(ctx, stmt, scope, page.Limit, page.Offset)
+	rows, err := r.pool.Query(ctx, stmt, scope, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("configsyncconn: list: %w", err)
 	}

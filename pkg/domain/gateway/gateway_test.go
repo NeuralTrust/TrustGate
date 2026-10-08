@@ -326,7 +326,7 @@ func TestValidateTier(t *testing.T) {
 
 func TestCheckDomainNotReserved(t *testing.T) {
 	t.Parallel()
-	reserved := []string{"llm.example.test", "mcp.example.test"}
+	reserved := []string{"llm.example.test", "mcp.example.test", "neuraltrust.ai"}
 
 	for _, d := range []string{
 		"llm.example.test",

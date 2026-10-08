@@ -77,7 +77,7 @@ func NewCreator(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
-	reservedDomains ...string,
+	reservedDomains []string,
 ) Creator {
 	return &creator{
 		reservedDomains:  reservedDomains,

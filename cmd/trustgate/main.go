@@ -105,10 +105,11 @@ func main() {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
-		if err := c.Invoke(modules.StartSecretsBackfill); err != nil {
+		stopBackfill, err := startSecretsBackfill(c)
+		if err != nil {
 			log.Fatalf("failed to start stored secrets backfill: %v", err)
 		}
-		if err := c.Invoke(runAdmin); err != nil {
+		if err := c.Invoke(func(p adminParam, logger *slog.Logger) { runAdmin(p, logger, stopBackfill) }); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
 		return
@@ -135,13 +136,14 @@ func main() {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
-		if err := c.Invoke(modules.StartSecretsBackfill); err != nil {
+		stopBackfill, err := startSecretsBackfill(c)
+		if err != nil {
 			log.Fatalf("failed to start stored secrets backfill: %v", err)
 		}
 		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
 			log.Fatalf("failed to start metrics worker: %v", err)
 		}
-		if err := c.Invoke(runAll); err != nil {
+		if err := c.Invoke(func(p allParam, logger *slog.Logger) { runAll(p, logger, stopBackfill) }); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
 		return
@@ -241,10 +243,19 @@ type allParam struct {
 	OpsSDK         *o11y.SDK
 }
 
-func runAdmin(p adminParam, logger *slog.Logger) {
+// startSecretsBackfill starts the stored-secrets backfill and returns the
+// function that stops it.
+func startSecretsBackfill(c *container.Container) (func(), error) {
+	var stop func()
+	err := c.Invoke(func(p modules.SecretsBackfillParams) { stop = modules.StartSecretsBackfill(p) })
+	return stop, err
+}
+
+func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
+	defer stopBackfill()
 	defer stopDispatcher()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Srv},
@@ -298,10 +309,11 @@ func runLabelWorker(p labelWorkerParam, logger *slog.Logger) {
 	<-quit
 }
 
-func runAll(p allParam, logger *slog.Logger) {
+func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
+	defer stopBackfill()
 	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
 	defer stopDispatcher()
 	defer p.Worker.Shutdown()

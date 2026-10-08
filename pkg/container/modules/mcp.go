@@ -122,6 +122,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appoauth.NewConnectAuditor); err != nil {
 		return err
 	}
+	if err := c.Provide(provideConnectHandoff); err != nil {
+		return err
+	}
 	if err := c.Provide(provideConnectService); err != nil {
 		return err
 	}
@@ -273,8 +276,15 @@ type connectServiceParams struct {
 	// Present where installs are: a templated server's OAuth server is then
 	// discovered at the URL the principal dials, filled in from their install.
 	Installs installationdomain.Repository `optional:"true"`
+	Handoff  appoauth.ConnectHandoff
+}
+
+type connectHandoffParams struct {
+	dig.In
+
+	Store appoauth.ConnectStore
 	// Gateways and Config decide which hosts of a ticket's gateway a
-	// connection may be started from.
+	// connection may be started from; without them only the callback origin.
 	Gateways appgateway.Finder `optional:"true"`
 	Config   *config.Config    `optional:"true"`
 }
@@ -467,6 +477,14 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault, opts...), nil
 }
 
+func provideConnectHandoff(p connectHandoffParams) appoauth.ConnectHandoff {
+	if p.Gateways == nil || p.Config == nil {
+		return appoauth.NewConnectHandoff(p.Store, nil)
+	}
+	domains := append([]string{p.Config.Server.MCPBaseDomain}, p.Config.Server.MCPExtraBaseDomains...)
+	return appoauth.NewConnectHandoff(p.Store, p.Gateways, domains...)
+}
+
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {
 	catalog := p.Catalog
 	if catalog == nil {
@@ -484,10 +502,7 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 	if p.Installs != nil {
 		opts = append(opts, appoauth.WithConnectURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
 	}
-	if p.Gateways != nil && p.Config != nil {
-		domains := append([]string{p.Config.Server.MCPBaseDomain}, p.Config.Server.MCPExtraBaseDomains...)
-		opts = append(opts, appoauth.WithConnectStartOrigins(p.Gateways, domains...))
-	}
+	opts = append(opts, appoauth.WithConnectHandoff(p.Handoff))
 	return appoauth.NewConnectService(
 		p.Store,
 		p.Vault,

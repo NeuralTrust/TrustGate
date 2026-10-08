@@ -37,7 +37,7 @@ func (f stubGatewayFinder) FindByID(_ context.Context, id ids.GatewayID) (*gatew
 func TestConnectService_StartsOnlyFromTheTicketGatewaysOwnHosts(t *testing.T) {
 	t.Parallel()
 	gateways := stubGatewayFinder{}
-	fx := newFinishFixture(t, oauth.WithConnectStartOrigins(gateways, "mcp.example.com", " MCP.Sandbox.example. "))
+	fx := newFinishFixture(t, gateways, "mcp.example.com", " MCP.Sandbox.example. ")
 	gateways[fx.gateway] = &gatewaydomain.Gateway{ID: fx.gateway, Slug: "acme", Domain: "mcp.acme-corp.com"}
 	ctx := context.Background()
 	ticket, err := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
@@ -51,6 +51,8 @@ func TestConnectService_StartsOnlyFromTheTicketGatewaysOwnHosts(t *testing.T) {
 	}{
 		{callback, callback},
 		{"HTTPS://Gateway-MCP.example.com:443", callback},
+		{"http://gateway-mcp.example.com", callback},
+		{"http://gateway-mcp.example.com:8080", ""},
 		{"https://acme.mcp.example.com", "https://acme.mcp.example.com"},
 		{"https://ACME.mcp.example.com", "https://acme.mcp.example.com"},
 		{"https://acme.mcp.example.com:443", "https://acme.mcp.example.com"},
@@ -75,7 +77,7 @@ func TestConnectService_StartsOnlyFromTheTicketGatewaysOwnHosts(t *testing.T) {
 	for _, tc := range cases {
 		before := len(fx.store.connects)
 		_, err := fx.svc.Start(ctx, callback, tc.origin, ticket, "github", "")
-		got, checkErr := fx.svc.StartOrigin(ctx, callback, tc.origin, ticket)
+		got, checkErr := fx.handoff.StartOrigin(ctx, callback, tc.origin, ticket)
 		if tc.want == "" {
 			if !errors.Is(err, oauth.ErrStartOriginNotServed) || !errors.Is(checkErr, oauth.ErrStartOriginNotServed) {
 				t.Fatalf("%q: errs = %v / %v, want ErrStartOriginNotServed", tc.origin, err, checkErr)
@@ -97,7 +99,7 @@ func TestConnectService_StartsOnlyFromTheTicketGatewaysOwnHosts(t *testing.T) {
 			t.Fatalf("state %s stored start origin %q, want the rebuilt origin", state[:4], st.StartOrigin)
 		}
 	}
-	if _, err := fx.svc.StartOrigin(ctx, callback, callback, "unknown-ticket"); !errors.Is(err, oauth.ErrTicketNotFound) {
+	if _, err := fx.handoff.StartOrigin(ctx, callback, callback, "unknown-ticket"); !errors.Is(err, oauth.ErrTicketNotFound) {
 		t.Fatalf("unknown ticket err = %v, want ErrTicketNotFound", err)
 	}
 }
@@ -105,7 +107,7 @@ func TestConnectService_StartsOnlyFromTheTicketGatewaysOwnHosts(t *testing.T) {
 func TestConnectService_HTTPStartOriginsOnlyWhenTheCallbackIsHTTP(t *testing.T) {
 	t.Parallel()
 	gateways := stubGatewayFinder{}
-	fx := newFinishFixture(t, oauth.WithConnectStartOrigins(gateways, "mcp.localhost"))
+	fx := newFinishFixture(t, gateways, "mcp.localhost")
 	gateways[fx.gateway] = &gatewaydomain.Gateway{ID: fx.gateway, Slug: "acme"}
 	ctx := context.Background()
 	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
@@ -115,7 +117,7 @@ func TestConnectService_HTTPStartOriginsOnlyWhenTheCallbackIsHTTP(t *testing.T) 
 		"http://acme.mcp.localhost":      "http://acme.mcp.localhost",
 		"http://acme.mcp.localhost:9000": "",
 	} {
-		got, err := fx.svc.StartOrigin(ctx, callback, origin, ticket)
+		got, err := fx.handoff.StartOrigin(ctx, callback, origin, ticket)
 		if want == "" {
 			if !errors.Is(err, oauth.ErrStartOriginNotServed) {
 				t.Fatalf("%s: err = %v, want ErrStartOriginNotServed", origin, err)
@@ -130,7 +132,7 @@ func TestConnectService_HTTPStartOriginsOnlyWhenTheCallbackIsHTTP(t *testing.T) 
 
 func TestConnectService_StartOriginWithoutGatewayLookup(t *testing.T) {
 	t.Parallel()
-	fx := newFinishFixture(t)
+	fx := newFinishFixture(t, nil)
 	ctx := context.Background()
 	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
 
@@ -144,7 +146,7 @@ func TestConnectService_StartOriginWithoutGatewayLookup(t *testing.T) {
 
 func TestConnectService_StartOriginOfAnUnknownGatewayIsRefused(t *testing.T) {
 	t.Parallel()
-	fx := newFinishFixture(t, oauth.WithConnectStartOrigins(stubGatewayFinder{}, "mcp.example.com"))
+	fx := newFinishFixture(t, stubGatewayFinder{}, "mcp.example.com")
 	ctx := context.Background()
 	ticket, _ := fx.svc.CreateTicket(ctx, fx.gateway, "alice", "/dev/mcp")
 	if _, err := fx.svc.Start(ctx, "https://gateway-mcp.example.com", "https://acme.mcp.example.com", ticket, "github", ""); !errors.Is(err, oauth.ErrStartOriginNotServed) {

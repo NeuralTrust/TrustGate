@@ -375,10 +375,12 @@ func API(c *container.Container) error {
 	}
 	if err := c.Provide(func(
 		connect appoauth.ConnectService,
+		handoff appoauth.ConnectHandoff,
 		catalog appcatalog.MCPServerCatalog,
 		cfg *config.Config,
 	) *oauthhttp.ConnectHandler {
-		return oauthhttp.NewConnectHandler(connect, catalog, cfg.Server.MCPOAuthPublicBaseURL)
+		return oauthhttp.NewConnectHandler(connect, handoff, catalog, cfg.Server.MCPOAuthPublicBaseURL,
+			oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
 	}); err != nil {
 		return err
 	}

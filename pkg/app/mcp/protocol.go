@@ -181,7 +181,7 @@ const CodeConsentRequired int64 = -32003
 // left alone: MCP itself uses it for an unknown resource.
 func IsGatewaySignalCode(code int64) bool {
 	switch code {
-	case codePolicyBlocked, CodeConsentRequired, CodeRateLimited, CodeUnavailable:
+	case CodePolicyBlocked, CodeConsentRequired, CodeRateLimited, CodeUnavailable:
 		return true
 	}
 	return false
@@ -208,7 +208,7 @@ func (e *RPCError) ResolvedHTTPStatus() int {
 		return e.HTTPStatus
 	}
 	switch e.Code {
-	case codePolicyBlocked:
+	case CodePolicyBlocked:
 		return http.StatusForbidden
 	case CodeRateLimited:
 		return http.StatusTooManyRequests

@@ -17,6 +17,8 @@ package registry
 import (
 	"errors"
 	"maps"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
@@ -43,8 +45,18 @@ func TestResolveHeaders(t *testing.T) {
 		},
 		{
 			name:     "header names match case-insensitively",
-			incoming: map[string]string{"x-api-key": secret.Redacted},
+			incoming: map[string]string{"x-api-key": secret.Mask("header-value-aaaa")},
 			want:     map[string]string{"x-api-key": "header-value-aaaa"},
+		},
+		{
+			name:     "an edited masked tail is not taken for the stored value",
+			incoming: map[string]string{"X-Api-Key": secret.Mask("header-value-aaaa") + "5"},
+			want:     map[string]string{"X-Api-Key": secret.Mask("header-value-aaaa") + "5"},
+		},
+		{
+			name:     "a bare marker does not match a long stored value",
+			incoming: map[string]string{"X-Api-Key": secret.Redacted},
+			want:     map[string]string{"X-Api-Key": secret.Redacted},
 		},
 		{
 			name:     "new value replaces, new key is added, absent key is dropped",
@@ -134,5 +146,40 @@ func TestMCPAuth_ValidateAllowsUnreadableStoredSecret(t *testing.T) {
 	fresh.ResolveSecretsFrom(&MCPTarget{Auth: static})
 	if fresh.Auth.SecretUnreadable {
 		t.Fatal("a new value clears the marker")
+	}
+}
+
+func TestMCPTarget_ValidateRefusesAnEditedMaskedHeader(t *testing.T) {
+	t.Parallel()
+	prev := &MCPTarget{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Api-Key": "header-value-aaaa"}}
+	next := &MCPTarget{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Api-Key": "***aaab"}}
+	next.ResolveSecretsFrom(prev)
+	err := next.Validate()
+	if !errors.Is(err, ErrInvalidMCPTarget) || !strings.Contains(err.Error(), "looks masked") {
+		t.Fatalf("Validate err = %v, want the masked-header refusal", err)
+	}
+}
+
+func TestMCPTarget_ResolveSecretsFromCarriesUnreadableHeaders(t *testing.T) {
+	t.Parallel()
+	prev := &MCPTarget{
+		URL:               "https://mcp.example.com/mcp",
+		Headers:           map[string]string{"X-Api-Key": "", "X-Tenant": "acme"},
+		UnreadableHeaders: []string{"X-Api-Key"},
+	}
+	for _, echoed := range []string{"", secret.Redacted, "***abcd"} {
+		next := &MCPTarget{URL: prev.URL, Headers: map[string]string{"x-api-key": echoed, "X-Tenant": "acme"}}
+		next.ResolveSecretsFrom(prev)
+		if next.Headers["x-api-key"] != "" || !slices.Equal(next.UnreadableHeaders, []string{"x-api-key"}) {
+			t.Fatalf("echo %q: headers %v, unreadable %v", echoed, next.Headers, next.UnreadableHeaders)
+		}
+		if err := next.Validate(); err != nil {
+			t.Fatalf("echo %q: Validate: %v", echoed, err)
+		}
+	}
+	replaced := &MCPTarget{URL: prev.URL, Headers: map[string]string{"X-Api-Key": "new-value"}}
+	replaced.ResolveSecretsFrom(prev)
+	if replaced.Headers["X-Api-Key"] != "new-value" || len(replaced.UnreadableHeaders) != 0 {
+		t.Fatalf("a new value clears the mark: %v %v", replaced.Headers, replaced.UnreadableHeaders)
 	}
 }

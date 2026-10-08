@@ -86,7 +86,7 @@ func finishRequest(cookies ...*http.Cookie) *http.Request {
 func TestConnectConfirm_NamesWhoTheAccountIsLinkedToAndAsksForAPost(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{page: endUserPage()}
-	app := connectFlowApp(NewConnectHandler(stub, nil, ""))
+	app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
 
 	res, body := send(t, app, httptest.NewRequest(fiber.MethodGet, "/oauth/connect/app.linear%2Fmcp?ticket=abc&instance=inst-dev", nil))
 	if res.StatusCode != fiber.StatusOK {
@@ -117,7 +117,7 @@ func TestConnectConfirm_ShowsTheAccountItReplaces(t *testing.T) {
 	page := endUserPage()
 	page.Providers[0].Linked = true
 	page.Providers[0].AccountRef = "someone@example.com"
-	app := connectFlowApp(NewConnectHandler(&stubConnectService{page: page}, nil, ""))
+	app := connectFlowApp(newTestConnectHandler(&stubConnectService{page: page}, nil, ""))
 
 	_, body := send(t, app, httptest.NewRequest(fiber.MethodGet, "/oauth/connect/app.linear/mcp?ticket=abc&instance=inst-prod", nil))
 	if !strings.Contains(body, "someone@example.com") || !strings.Contains(body, "Continuing replaces it") {
@@ -141,7 +141,7 @@ func TestConnectConfirm_RefusesWhatTheTicketCannotConnect(t *testing.T) {
 		{"one account for everyone", &stubConnectService{page: shared}, "/oauth/connect/app.linear/mcp?ticket=abc", fiber.StatusConflict},
 	}
 	for _, tc := range cases {
-		app := connectFlowApp(NewConnectHandler(tc.stub, nil, ""))
+		app := connectFlowApp(newTestConnectHandler(tc.stub, nil, ""))
 		res, _ := send(t, app, httptest.NewRequest(fiber.MethodGet, tc.target, nil))
 		if res.StatusCode != tc.want {
 			t.Fatalf("%s: status = %d, want %d", tc.name, res.StatusCode, tc.want)
@@ -172,7 +172,7 @@ func TestConnectPages_ShowWhoAccountsAreLinkedTo(t *testing.T) {
 	single.Code = "app.linear/mcp"
 	single.Instance = "inst-prod"
 	for name, page := range map[string]*appoauth.ConnectPage{"grid": grid, "single server": single} {
-		h := NewConnectHandler(&stubConnectService{page: page}, nil, "")
+		h := newTestConnectHandler(&stubConnectService{page: page}, nil, "")
 		h.holdFor = 0
 		_, body := send(t, connectFlowApp(h), httptest.NewRequest(fiber.MethodGet, "/support/mcp/connect?ticket=abc", nil))
 		if !strings.Contains(body, "user-42") || !strings.Contains(body, "end-user id named by Support Assistant") {
@@ -201,7 +201,7 @@ func TestConnectStart_OnlyFromAPageOfThisGateway(t *testing.T) {
 		{"typed or opened from outside", "none", "", fiber.StatusForbidden},
 	} {
 		stub := &stubConnectService{}
-		app := connectFlowApp(NewConnectHandler(stub, nil, ""))
+		app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
 		req := httptest.NewRequest(fiber.MethodPost, "/oauth/connect/github?ticket=abc", nil)
 		req.Host = "localhost"
 		if tc.site != "" {
@@ -223,7 +223,7 @@ func TestConnectStart_OnlyFromAPageOfThisGateway(t *testing.T) {
 func TestConnectStart_SetsTheFlowCookieOnTheStartHostAndGoesToTheProvider(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	app := connectFlowApp(NewConnectHandler(stub, nil, "https://callback.mcp.example.com"))
+	app := connectFlowApp(newTestConnectHandler(stub, nil, "https://callback.mcp.example.com"))
 	req := ownPagePost("/oauth/connect/github?ticket=abc")
 	req.Host = "tenant.mcp.example.com"
 	req.Header.Set(fiber.HeaderXForwardedProto, "https")
@@ -248,7 +248,7 @@ func TestConnectStart_SetsTheFlowCookieOnTheStartHostAndGoesToTheProvider(t *tes
 
 func TestConnectStart_UsesThePlainCookieOverHTTP(t *testing.T) {
 	t.Parallel()
-	app := connectFlowApp(NewConnectHandler(&stubConnectService{}, nil, ""))
+	app := connectFlowApp(newTestConnectHandler(&stubConnectService{}, nil, ""))
 	res, _ := send(t, app, ownPagePost("/oauth/connect/github?ticket=abc"))
 	cookie := flowCookie(res, plainCookieName("the-state"))
 	if cookie == nil || cookie.Secure || cookie.Value != connectBinding("the-state") {
@@ -259,7 +259,7 @@ func TestConnectStart_UsesThePlainCookieOverHTTP(t *testing.T) {
 func TestConnectStart_RefusesAnAddressTheGatewayIsNotServedOn(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{startErr: appoauth.ErrStartOriginNotServed}
-	app := connectFlowApp(NewConnectHandler(stub, nil, "https://callback.example.com"))
+	app := connectFlowApp(newTestConnectHandler(stub, nil, "https://callback.example.com"))
 	req := ownPagePost("/oauth/connect/github?ticket=abc")
 	req.Host = "elsewhere.example"
 	req.Header.Set(fiber.HeaderXForwardedProto, "https")
@@ -278,7 +278,7 @@ func TestConnectStart_RefusesAnAddressTheGatewayIsNotServedOn(t *testing.T) {
 func TestConnectCallback_HandsTheResultToTheStartOriginWithoutCompletingIt(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	app := connectFlowApp(NewConnectHandler(stub, nil, ""))
+	app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
 
 	res, _ := send(t, app, httptest.NewRequest(fiber.MethodGet, "/oauth/callback/github?state=the-state&code=c", nil))
 	if res.StatusCode != fiber.StatusFound || res.Header.Get(fiber.HeaderLocation) != "https://start.example/oauth/connect/finish?f=fin" {
@@ -310,7 +310,7 @@ func TestConnectFinish_CompletesOnlyInTheBrowserThatStarted(t *testing.T) {
 		"state as the value":     {{Name: plainCookieName("the-state"), Value: "the-state"}},
 	} {
 		stub := &stubConnectService{page: page}
-		app := connectFlowApp(NewConnectHandler(stub, nil, ""))
+		app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
 		if _, err := stub.ReceiveCallback(t.Context(), "github", "the-state", "c", "", ""); err != nil {
 			t.Fatalf("ReceiveCallback: %v", err)
 		}
@@ -327,7 +327,7 @@ func TestConnectFinish_CompletesOnlyInTheBrowserThatStarted(t *testing.T) {
 	}
 
 	stub := &stubConnectService{page: page}
-	app := connectFlowApp(NewConnectHandler(stub, nil, ""))
+	app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
 	if _, err := stub.ReceiveCallback(t.Context(), "github", "the-state", "the-code", "", ""); err != nil {
 		t.Fatalf("ReceiveCallback: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestConnectFlow_SameHostEndToEnd(t *testing.T) {
 		ConsumerPath: "/tools/mcp",
 		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "g", Linked: true}},
 	}}
-	app := connectFlowApp(NewConnectHandler(stub, nil, ""))
+	app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
 
 	started, _ := send(t, app, ownPagePost("/oauth/connect/github?ticket=abc"))
 	cookie := flowCookie(started, plainCookieName("the-state"))
@@ -380,52 +380,145 @@ func TestConnectFlow_SameHostEndToEnd(t *testing.T) {
 	}
 }
 
-func TestConnectStartAndFinish_PlainHTTPOnHTTPSDeploymentsOnlyOnLoopback(t *testing.T) {
+func TestConnectCookie_FormFollowsTheSignInCookies(t *testing.T) {
 	t.Parallel()
+	secureName := connectCookieSecurePrefix + connectBinding("the-state")[:8]
 	cases := []struct {
+		name     string
 		callback string
 		host     string
-		allowed  bool
+		cookies  FlowCookies
+		https    bool
+		secure   bool
 	}{
-		{"https://callback.mcp.example", "localhost", true},
-		{"https://callback.mcp.example", "localhost:8083", true},
-		{"https://callback.mcp.example", "127.0.0.1:8083", true},
-		{"https://callback.mcp.example", "[::1]:8083", true},
-		{"https://callback.mcp.example", "tenant.mcp.example", false},
-		{"https://callback.mcp.example", "10.0.0.5:8083", false},
-		{"https://callback.mcp.example", "localhost.example", false},
-		{"http://mcp.internal.corp:8083", "mcp.internal.corp:8083", true},
-		{"http://mcp.internal.corp:8083", "10.0.0.5:8083", true},
-		{"", "mcp.internal.corp:8083", true},
+		{"https request", "https://callback.mcp.example", "tenant.mcp.example", FlowCookies{}, true, true},
+		{"scheme lost at the proxy", "https://callback.mcp.example", "callback.mcp.example", FlowCookies{}, false, true},
+		{"no callback origin set, non-loopback", "", "mcp.internal.corp:8083", FlowCookies{}, false, true},
+		{"loopback", "", "localhost:8083", FlowCookies{}, false, false},
+		{"plain cookies allowed", "", "mcp.internal.corp:8083", FlowCookies{AllowInsecure: true}, false, false},
+		{"plane configured on plain http", "http://mcp.internal.corp:8083", "mcp.internal.corp:8083", FlowCookies{}, false, false},
 	}
 	for _, tc := range cases {
-		name := tc.callback + " / " + tc.host
 		stub := &stubConnectService{page: &appoauth.ConnectPage{ConsumerPath: "/tools/mcp"}}
-		app := connectFlowApp(NewConnectHandler(stub, nil, tc.callback))
-
+		app := connectFlowApp(NewConnectHandler(stub, stub, nil, tc.callback, tc.cookies))
 		start := ownPagePost("/oauth/connect/github?ticket=abc")
 		start.Host = tc.host
-		start.Header.Set(fiber.HeaderOrigin, "http://"+tc.host)
-		res, body := send(t, app, start)
-		if tc.allowed != (res.StatusCode == fiber.StatusFound) {
-			t.Fatalf("start %s: status = %d body = %s, allowed = %v", name, res.StatusCode, body, tc.allowed)
+		if tc.https {
+			start.Header.Set(fiber.HeaderXForwardedProto, "https")
 		}
-		if !tc.allowed && (stub.gotProvider != "" || len(res.Cookies()) != 0 || !strings.Contains(body, "https")) {
-			t.Fatalf("start %s: a refused start must not start or set a cookie: %s", name, body)
+		res, body := send(t, app, start)
+		if res.StatusCode != fiber.StatusFound {
+			t.Fatalf("%s: start status = %d body = %s", tc.name, res.StatusCode, body)
+		}
+		name := plainCookieName("the-state")
+		if tc.secure {
+			name = secureName
+		}
+		cookie := flowCookie(res, name)
+		if cookie == nil || cookie.Secure != tc.secure {
+			t.Fatalf("%s: cookie = %+v, want %s with Secure=%v", tc.name, cookie, name, tc.secure)
 		}
 
 		if _, err := stub.ReceiveCallback(t.Context(), "github", "the-state", "c", "", ""); err != nil {
 			t.Fatalf("ReceiveCallback: %v", err)
 		}
-		finish := finishRequest(&http.Cookie{Name: plainCookieName("the-state"), Value: connectBinding("the-state")})
+		finish := finishRequest(&http.Cookie{Name: cookie.Name, Value: cookie.Value})
 		finish.Host = tc.host
+		if tc.https {
+			finish.Header.Set(fiber.HeaderXForwardedProto, "https")
+		}
 		res, body = send(t, app, finish)
-		if tc.allowed != (res.StatusCode == fiber.StatusOK) {
-			t.Fatalf("finish %s: status = %d body = %s, allowed = %v", name, res.StatusCode, body, tc.allowed)
+		if res.StatusCode != fiber.StatusOK || stub.callbacks != 1 {
+			t.Fatalf("%s: finish status = %d callbacks = %d body = %s", tc.name, res.StatusCode, stub.callbacks, body)
 		}
-		if !tc.allowed && (stub.callbacks != 0 || stub.finishes["fin"] == nil) {
-			t.Fatalf("finish %s: a refused finish must neither complete nor use up the token", name)
+	}
+}
+
+// Behind a proxy that ends TLS without forwarding the scheme, every request
+// reads as http while the callback origin is https on the same host. The
+// pages must render there rather than redirect to themselves, and the flow
+// must start and finish.
+func TestConnectFlow_BehindAProxyThatDropsTheScheme(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{page: endUserPage(), originErr: appoauth.ErrStartOriginNotServed}
+	h := newTestConnectHandler(stub, nil, "https://gateway-mcp.example.com")
+	h.holdFor = 0
+	app := connectFlowApp(h)
+
+	for _, target := range []string{"/support/mcp/connect?ticket=abc", "/oauth/connect/app.linear/mcp?ticket=abc"} {
+		req := httptest.NewRequest(fiber.MethodGet, target, nil)
+		req.Host = "gateway-mcp.example.com"
+		res, body := send(t, app, req)
+		if res.StatusCode != fiber.StatusOK || !strings.Contains(body, "user-42") {
+			t.Fatalf("%s: status = %d Location = %q, want the page itself", target, res.StatusCode, res.Header.Get(fiber.HeaderLocation))
 		}
+	}
+
+	start := httptest.NewRequest(fiber.MethodPost, "/oauth/connect/app.linear/mcp?ticket=abc", nil)
+	start.Host = "gateway-mcp.example.com"
+	start.Header.Set(fiber.HeaderOrigin, "https://gateway-mcp.example.com")
+	res, body := send(t, app, start)
+	if res.StatusCode != fiber.StatusFound {
+		t.Fatalf("start: status = %d body = %s", res.StatusCode, body)
+	}
+	cookie := flowCookie(res, connectCookieSecurePrefix+connectBinding("the-state")[:8])
+	if cookie == nil || !cookie.Secure {
+		t.Fatalf("start: cookie = %+v, want the __Host- form", cookie)
+	}
+
+	if _, err := stub.ReceiveCallback(t.Context(), "app.linear/mcp", "the-state", "c", "", ""); err != nil {
+		t.Fatalf("ReceiveCallback: %v", err)
+	}
+	finish := finishRequest(&http.Cookie{Name: cookie.Name, Value: cookie.Value})
+	finish.Host = "gateway-mcp.example.com"
+	res, body = send(t, app, finish)
+	if res.StatusCode != fiber.StatusOK || stub.callbacks != 1 {
+		t.Fatalf("finish: status = %d callbacks = %d body = %s", res.StatusCode, stub.callbacks, body)
+	}
+}
+
+func TestConnectPages_UseASameOriginReferrerPolicy(t *testing.T) {
+	t.Parallel()
+	single := endUserPage()
+	single.Code = "app.linear/mcp"
+	for name, page := range map[string]*appoauth.ConnectPage{"grid": endUserPage(), "single server": single} {
+		stub := &stubConnectService{page: page}
+		h := newTestConnectHandler(stub, nil, "")
+		h.holdFor = 0
+		app := connectFlowApp(h)
+		requests := map[string]*http.Request{
+			"page":         httptest.NewRequest(fiber.MethodGet, "/support/mcp/connect?ticket=abc", nil),
+			"confirmation": httptest.NewRequest(fiber.MethodGet, "/oauth/connect/app.linear/mcp?ticket=abc", nil),
+		}
+		if _, err := stub.ReceiveCallback(t.Context(), "app.linear/mcp", "the-state", "c", "", ""); err != nil {
+			t.Fatalf("ReceiveCallback: %v", err)
+		}
+		requests["finish"] = finishRequest(&http.Cookie{Name: plainCookieName("the-state"), Value: connectBinding("the-state")})
+		for kind, req := range requests {
+			res, _ := send(t, app, req)
+			if res.StatusCode != fiber.StatusOK || res.Header.Get(fiber.HeaderReferrerPolicy) != "same-origin" {
+				t.Fatalf("%s %s: status = %d Referrer-Policy = %q, want same-origin",
+					name, kind, res.StatusCode, res.Header.Get(fiber.HeaderReferrerPolicy))
+			}
+		}
+	}
+}
+
+// An authorization started by the previous version carries no start origin;
+// its callback completes on the callback itself, as it did then.
+func TestConnectCallback_CompletesAnAuthorizationWithoutAStartOrigin(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{direct: true, page: &appoauth.ConnectPage{
+		ConsumerPath: "/tools/mcp",
+		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "g", Linked: true}},
+	}}
+	app := connectFlowApp(newTestConnectHandler(stub, nil, ""))
+	res, body := send(t, app, httptest.NewRequest(fiber.MethodGet, "/oauth/callback/github?state=the-state&code=c", nil))
+	if res.StatusCode != fiber.StatusOK || stub.callbacks != 1 {
+		t.Fatalf("status = %d callbacks = %d body = %s, want the connection completed", res.StatusCode, stub.callbacks, body)
+	}
+	if got := strings.Join(stub.callbackArg, ","); got != "github,the-state,c," {
+		t.Fatalf("callback args = %q", got)
 	}
 }
 
@@ -436,7 +529,7 @@ func TestConnectPages_OnAHostConnectionsAreNotStartedFromMoveToTheCallbackOrigin
 		"/oauth/connect/app.linear/mcp?ticket=abc&instance=inst-dev",
 	} {
 		stub := &stubConnectService{page: endUserPage(), originErr: appoauth.ErrStartOriginNotServed}
-		h := NewConnectHandler(stub, nil, "https://callback.mcp.example.com")
+		h := newTestConnectHandler(stub, nil, "https://callback.mcp.example.com")
 		h.holdFor = 0
 		req := httptest.NewRequest(fiber.MethodGet, target, nil)
 		req.Host = "mcp.acme-corp.com"
@@ -448,7 +541,7 @@ func TestConnectPages_OnAHostConnectionsAreNotStartedFromMoveToTheCallbackOrigin
 		}
 
 		served := &stubConnectService{page: endUserPage()}
-		h = NewConnectHandler(served, nil, "https://callback.mcp.example.com")
+		h = newTestConnectHandler(served, nil, "https://callback.mcp.example.com")
 		h.holdFor = 0
 		for _, host := range []string{"acme.mcp.example.com", "callback.mcp.example.com"} {
 			req = httptest.NewRequest(fiber.MethodGet, target, nil)
@@ -465,7 +558,7 @@ func TestConnectPages_OnAHostConnectionsAreNotStartedFromMoveToTheCallbackOrigin
 	req := httptest.NewRequest(fiber.MethodGet, "/support/mcp/connect?ticket=abc", nil)
 	req.Host = "mcp.acme-corp.com"
 	req.Header.Set(fiber.HeaderXForwardedProto, "https")
-	res, _ := send(t, connectFlowApp(NewConnectHandler(expired, nil, "https://callback.mcp.example.com")), req)
+	res, _ := send(t, connectFlowApp(newTestConnectHandler(expired, nil, "https://callback.mcp.example.com")), req)
 	if res.StatusCode != fiber.StatusUnauthorized {
 		t.Fatalf("expired ticket on another host: status = %d, want 401", res.StatusCode)
 	}

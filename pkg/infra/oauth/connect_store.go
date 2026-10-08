@@ -108,8 +108,8 @@ func (s *ConnectStore) PeekConnect(ctx context.Context, state string) (*appoauth
 }
 
 // SaveFinish keeps a provider callback for ConnectFinishTTL until the start
-// origin finishes it. A flow has one pending finish at a time: saving another
-// for the same state removes the one before.
+// origin finishes it. A flow has one pending finish at a time: saving
+// another one with the same state removes the one before.
 func (s *ConnectStore) SaveFinish(ctx context.Context, token string, f appoauth.ConnectFinish) error {
 	if err := s.set(ctx, finishPrefix+token, f, finishTTL); err != nil {
 		return err

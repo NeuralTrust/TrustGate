@@ -36,14 +36,14 @@ func (h *HealthChecks) Validate() error {
 		return fmt.Errorf("%w: health_checks.threshold must be positive", ErrInvalidHealthChecks)
 	}
 	if name, masked := maskedHeader(h.Headers); masked {
-		return fmt.Errorf("%w: health_checks header %q has a masked value but no stored value to keep",
+		return fmt.Errorf("%w: health_checks header %q looks masked; send the full value or the masked value unchanged",
 			ErrInvalidHealthChecks, name)
 	}
 	return nil
 }
 
 // ResolveSecretsFrom keeps each stored header value an update sent back
-// masked (see ResolveHeaders).
+// exactly as it was read (see ResolveHeaders).
 func (h *HealthChecks) ResolveSecretsFrom(prev *HealthChecks) {
 	if h == nil || prev == nil {
 		return
