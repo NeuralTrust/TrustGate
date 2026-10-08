@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestRegistryDeletePrunesSmartRoutingInMainTransaction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, gw, conn := setupRepo(t)
 			ctx := context.Background()
-			gatewayID := seedGateway(t, gw, tc.name)
+			gatewayID := seedGateway(t, gw, strings.ReplaceAll(tc.name, "_", "-"))
 			params := consumer.CreateParams{GatewayID: gatewayID, Name: "router", Type: consumer.TypeLLM,
 				ModelPolicies: consumer.ModelPolicies{}, LBConfig: &consumer.LBConfig{Enabled: true, Algorithm: algorithm.SmartRouting,
 					SmartRouting: &registry.SmartRoutingConfig{LegacyThresholds: tc.legacy, SR1: &registry.SR1Config{CacheTTLSeconds: 123, EscapeHatchEnabled: true}}}}

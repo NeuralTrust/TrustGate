@@ -275,6 +275,7 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 }
 
 func TestSmartRoutingE2E_ColdFailureRecoversWithinSameSession(t *testing.T) {
+	const sessionHeader = "X-Session-Id"
 	defer Track(t, "SmartRoutingE2E")()
 	low := newJSONUpstream(t, "served-by-low")
 	high := newJSONUpstream(t, "served-by-high")
