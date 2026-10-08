@@ -46,6 +46,9 @@ const (
 	// defaultStoredSecretsEncryptionEnabled stores MCP and auth credentials
 	// encrypted from the first boot of this version.
 	defaultStoredSecretsEncryptionEnabled = true
+	// defaultReservedGatewayDomains keeps NeuralTrust's own hosts out of reach
+	// of a tenant's gateway domain.
+	defaultReservedGatewayDomains = "neuraltrust.ai"
 	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
 	// org/groups/store_access claims are a login-time snapshot re-minted on
 	// refresh, so the snapshot must expire and force a fresh platform login.
@@ -293,6 +296,10 @@ type ServerConfig struct {
 	// MCPBaseDomain; these only widen what the request router recognises, for
 	// when the same cluster is also reachable under a second domain.
 	MCPExtraBaseDomains []string
+	// ReservedGatewayDomains are host suffixes no tenant may claim as a
+	// gateway's own domain, on top of the base domains this deployment routes
+	// gateways on. GATEWAY_RESERVED_DOMAINS, comma separated.
+	ReservedGatewayDomains []string
 	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
 	// redirect_uri base for upstream MCP connect (authorize + code exchange +
 	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
@@ -673,6 +680,7 @@ func getServerConfig() ServerConfig {
 			defaultMCPBaseDomain,
 		),
 		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		ReservedGatewayDomains:         splitCSV(getEnv("GATEWAY_RESERVED_DOMAINS", defaultReservedGatewayDomains)),
 		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
 		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
 		STSIssuer:                      getEnv("STS_ISSUER", "trustgate"),

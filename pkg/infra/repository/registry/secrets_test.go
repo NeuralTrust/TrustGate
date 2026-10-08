@@ -17,6 +17,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -174,5 +175,62 @@ func TestOpenMCPTargetForRead_BlanksValuesThatDoNotOpen(t *testing.T) {
 		if _, ok := stored.Headers["X-Api-Key"]; !ok || stored.Auth.ClientID != "cid" {
 			t.Fatalf("%s: the rest of the target must survive: %+v", name, stored)
 		}
+	}
+}
+
+func TestOpenMCPTargetForRead_MarksWhatDidNotOpen(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.RegistryKind]()
+	target := credentialTarget()
+	target.Auth.Mode = domain.MCPAuthModeStatic
+	target.Headers["X-Second"] = "second-value"
+	raw, err := sealingRepo(t, true).marshalMCPTarget(id, target)
+	if err != nil {
+		t.Fatalf("marshalMCPTarget: %v", err)
+	}
+	stored := storedTarget(t, raw)
+	(&Repository{}).openMCPTargetForRead(context.Background(), id, stored)
+	if !stored.Auth.SecretUnreadable {
+		t.Fatal("auth secret not marked")
+	}
+	if want := []string{"X-Api-Key", "X-Second"}; !slices.Equal(stored.UnreadableHeaders, want) {
+		t.Fatalf("UnreadableHeaders = %v, want %v", stored.UnreadableHeaders, want)
+	}
+}
+
+func TestKeepUnreadableCredentials_ReadTimeMarkKeepsAReadableReplacement(t *testing.T) {
+	t.Parallel()
+	r := sealingRepo(t, true)
+	id := ids.New[ids.RegistryKind]()
+	replacement := &domain.MCPTarget{
+		Headers: map[string]string{"X-Api-Key": "re-entered-header"},
+		Auth:    &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "re-entered-value"},
+	}
+	stored, err := r.sealMCPTarget(id, replacement)
+	if err != nil {
+		t.Fatalf("sealMCPTarget: %v", err)
+	}
+	in := &domain.MCPTarget{
+		Headers:           map[string]string{"X-Api-Key": ""},
+		UnreadableHeaders: []string{"X-Api-Key"},
+		Auth:              &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", SecretUnreadable: true},
+	}
+	out, err := r.sealMCPTarget(id, in)
+	if err != nil {
+		t.Fatalf("sealMCPTarget: %v", err)
+	}
+	r.keepUnreadableCredentials(id, in, out, stored)
+	if out.Auth.Value != stored.Auth.Value || out.Headers["X-Api-Key"] != stored.Headers["X-Api-Key"] {
+		t.Fatalf("readable replacements must be kept: %+v %+v", out.Auth, out.Headers)
+	}
+
+	unmarked := &domain.MCPTarget{
+		Headers: map[string]string{"X-Api-Key": ""},
+		Auth:    &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization"},
+	}
+	cleared, _ := r.sealMCPTarget(id, unmarked)
+	r.keepUnreadableCredentials(id, unmarked, cleared, stored)
+	if cleared.Auth.Value != "" || cleared.Headers["X-Api-Key"] != "" {
+		t.Fatalf("without a mark a readable stored value is replaced: %+v %+v", cleared.Auth, cleared.Headers)
 	}
 }

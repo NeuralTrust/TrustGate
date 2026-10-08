@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
+	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -28,20 +30,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
 const (
 	fieldMCPAuthValue    = "registries.mcp_target.auth.value"
 	fieldMCPAuthClient   = "registries.mcp_target.auth.client_secret"
 	fieldMCPHeaderPrefix = "registries.mcp_target.headers."
-)
-
-var (
-	errNoSealer           = errors.New("registry repository: stored value is encrypted but no field sealer is configured")
-	errEncryptedWritesOff = errors.New("registry repository: encrypted writes are not enabled")
 )
 
 // WithFieldSealer lets the repository read credentials stored encrypted in
@@ -56,7 +50,7 @@ func WithFieldSealer(sealer *crypto.FieldSealer, encryptWrites bool) Option {
 	}
 }
 
-func sealedAAD(field string, id ids.RegistryID) string { return field + "|" + id.String() }
+func sealedAAD(field string, id ids.RegistryID) string { return crypto.FieldAAD(field, id.String()) }
 
 // sealMCPTarget returns a copy of t whose credentials are encrypted for the
 // registry id. t is not modified: the caller keeps caching and returning the
@@ -103,7 +97,7 @@ func (r *Repository) openMCPTarget(
 		return nil
 	}
 	open := func(field, stored string) (string, error) {
-		plain, err := r.openField(sealedAAD(field, id), stored)
+		plain, err := r.sealer.OpenField(sealedAAD(field, id), stored)
 		if err == nil {
 			return plain, nil
 		}
@@ -132,30 +126,32 @@ func (r *Repository) openMCPTarget(
 // decrypted is returned empty, reported and counted, so the registry keeps
 // routing and listing and the credential can be entered again.
 func (r *Repository) openMCPTargetForRead(ctx context.Context, id ids.RegistryID, t *domain.MCPTarget) {
+	// The callback never fails, so neither does the walk.
 	_ = r.openMCPTarget(id, t, func(field, stored string, err error) error {
-		reportUnreadableField(ctx, id, field, stored, err)
-		if field == fieldMCPAuthValue || field == fieldMCPAuthClient {
+		crypto.ReportUnreadableField(ctx, "registries", id.String(), field, stored, err)
+		switch {
+		case field == fieldMCPAuthValue || field == fieldMCPAuthClient:
 			t.Auth.SecretUnreadable = true
+		case strings.HasPrefix(field, fieldMCPHeaderPrefix):
+			t.UnreadableHeaders = append(t.UnreadableHeaders, strings.TrimPrefix(field, fieldMCPHeaderPrefix))
 		}
 		return nil
 	})
+	slices.Sort(t.UnreadableHeaders)
 }
 
 // unopenable reports whether stored is an encrypted value this repository
 // cannot decrypt for aad: another key, another row, or no sealer at all.
 func (r *Repository) unopenable(aad, stored string) bool {
-	if !crypto.IsSealed(stored) {
-		return false
-	}
-	_, err := r.openField(aad, stored)
-	return err != nil
+	return crypto.IsSealed(stored) && !r.sealer.CanOpen(aad, stored)
 }
 
 // encodeMCPTargetForUpdate encodes t for an update of row id. A credential
-// that comes back empty because it could not be decrypted on read must not
-// overwrite what is stored, so for every empty credential whose stored value
-// still cannot be decrypted, the stored value is kept as it is. The stored row
-// is read under a row lock in tx.
+// that came back empty because it could not be decrypted on read must not
+// overwrite what is stored. For every empty credential that t marks as
+// unreadable on read, or whose stored value still cannot be decrypted, the
+// stored value is kept as it is, even when another update has since replaced
+// it with one that reads. The stored row is read under a row lock in tx.
 func (r *Repository) encodeMCPTargetForUpdate(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -185,7 +181,7 @@ func (r *Repository) encodeMCPTargetForUpdate(
 		if err != nil {
 			return nil, err
 		}
-		r.keepUnreadableCredentials(id, &out, stored)
+		r.keepUnreadableCredentials(id, t, &out, stored)
 	}
 	return json.Marshal(&out)
 }
@@ -222,17 +218,22 @@ func lockStoredMCPTarget(ctx context.Context, tx pgx.Tx, id ids.RegistryID, gate
 }
 
 // keepUnreadableCredentials copies into out every stored credential that out
-// leaves empty and that this repository cannot decrypt. An auth secret is only
-// kept while the auth mode is unchanged: a new mode drops the old credential.
-func (r *Repository) keepUnreadableCredentials(id ids.RegistryID, out, stored *domain.MCPTarget) {
+// leaves empty and that was unreadable: marked so on in when it was read, or
+// still undecryptable now. An auth secret is only kept while the auth mode is
+// unchanged: a new mode drops the old credential. Header names match
+// case-insensitively, as HTTP header names do.
+func (r *Repository) keepUnreadableCredentials(id ids.RegistryID, in, out, stored *domain.MCPTarget) {
 	if stored == nil {
 		return
 	}
 	if out.Auth != nil && stored.Auth != nil && out.Auth.Mode == stored.Auth.Mode {
-		if out.Auth.Value == "" && r.unopenable(sealedAAD(fieldMCPAuthValue, id), stored.Auth.Value) {
+		marked := in.Auth != nil && in.Auth.SecretUnreadable
+		if out.Auth.Value == "" && stored.Auth.Value != "" &&
+			((marked && out.Auth.Mode == domain.MCPAuthModeStatic) || r.unopenable(sealedAAD(fieldMCPAuthValue, id), stored.Auth.Value)) {
 			out.Auth.Value = stored.Auth.Value
 		}
-		if out.Auth.ClientSecret == "" && r.unopenable(sealedAAD(fieldMCPAuthClient, id), stored.Auth.ClientSecret) {
+		if out.Auth.ClientSecret == "" && stored.Auth.ClientSecret != "" &&
+			((marked && out.Auth.Mode != domain.MCPAuthModeStatic) || r.unopenable(sealedAAD(fieldMCPAuthClient, id), stored.Auth.ClientSecret)) {
 			out.Auth.ClientSecret = stored.Auth.ClientSecret
 		}
 	}
@@ -240,37 +241,49 @@ func (r *Repository) keepUnreadableCredentials(id ids.RegistryID, out, stored *d
 		if value != "" {
 			continue
 		}
-		if prev, ok := stored.Headers[name]; ok && r.unopenable(sealedAAD(fieldMCPHeaderPrefix+name, id), prev) {
-			out.Headers[name] = prev
+		storedName, prev := storedHeader(stored.Headers, name)
+		if prev == "" {
+			continue
+		}
+		marked := slices.ContainsFunc(in.UnreadableHeaders, func(n string) bool { return strings.EqualFold(n, name) })
+		if marked || r.unopenable(sealedAAD(fieldMCPHeaderPrefix+storedName, id), prev) {
+			out.Headers[name] = r.resealHeader(id, storedName, name, prev)
 		}
 	}
 }
 
-func (r *Repository) openField(aad, stored string) (string, error) {
-	if !crypto.IsSealed(stored) {
-		return stored, nil
+func storedHeader(headers map[string]string, name string) (string, string) {
+	if v, ok := headers[name]; ok {
+		return name, v
 	}
-	if r.sealer == nil {
-		return "", errNoSealer
+	for _, k := range slices.Sorted(maps.Keys(headers)) {
+		if strings.EqualFold(k, name) {
+			return k, headers[k]
+		}
 	}
-	return r.sealer.Open(aad, stored)
+	return "", ""
 }
 
-func reportUnreadableField(ctx context.Context, id ids.RegistryID, field, stored string, err error) {
-	slog.ErrorContext(ctx, "registry repository: stored credential cannot be decrypted; returning it empty",
-		slog.String("component", "registry_repository"),
-		slog.String("registry_id", id.String()),
-		slog.String("field", field),
-		slog.String("key_id", crypto.SealedKeyID(stored)),
-		slog.String("error", err.Error()))
-	counter, cerr := otel.Meter("trustgate/registry_repository").Int64Counter(
-		"trustgate.stored_secrets.unreadable_fields",
-		metric.WithDescription("stored credentials returned empty because they could not be decrypted"),
-	)
-	if cerr != nil {
-		return
+// resealHeader returns a kept stored header value for the name it is written
+// under. The field path is part of what a value is sealed for, so a value kept
+// under a name whose case changed is re-sealed when it can be read, and kept
+// as stored otherwise.
+func (r *Repository) resealHeader(id ids.RegistryID, storedName, name, stored string) string {
+	if storedName == name || !crypto.IsSealed(stored) {
+		return stored
 	}
-	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("table", "registries")))
+	plain, err := r.sealer.OpenField(sealedAAD(fieldMCPHeaderPrefix+storedName, id), stored)
+	if err != nil {
+		return stored
+	}
+	if !r.encryptWrites {
+		return plain
+	}
+	resealed, err := r.sealer.Seal(sealedAAD(fieldMCPHeaderPrefix+name, id), plain)
+	if err != nil {
+		return stored
+	}
+	return resealed
 }
 
 // hasUnsealedSecrets reports whether a stored target still holds a credential
@@ -306,7 +319,7 @@ func (r *Repository) RewriteMCPTargets(
 ) (domain.SecretsRewriteReport, error) {
 	var report domain.SecretsRewriteReport
 	if !r.encryptWrites {
-		return report, errEncryptedWritesOff
+		return report, crypto.ErrEncryptedWritesOff
 	}
 	registryIDs, err := r.mcpTargetIDs(ctx)
 	if err != nil {

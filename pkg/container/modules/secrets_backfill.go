@@ -43,17 +43,24 @@ type SecretsBackfillParams struct {
 // StartSecretsBackfill encrypts, in the background, credentials stored before
 // field encryption existed. Control-plane planes call it on every boot; it does
 // nothing unless STORED_SECRETS_ENCRYPTION_ENABLED is on, and it only writes
-// rows that still need it, so an interrupted run resumes on the next boot.
-func StartSecretsBackfill(p SecretsBackfillParams) {
+// rows that still need it, so an interrupted run resumes on the next boot. The
+// returned stop cancels the pass and waits for it to return; call it before
+// the database pool closes.
+func StartSecretsBackfill(p SecretsBackfillParams) (stop func()) {
 	if !p.Config.Server.StoredSecretsEncryptionEnabled {
-		return
+		return func() {}
 	}
+	ctx, cancel := context.WithTimeout(p.Ctx, secretsBackfillTimeout)
+	done := make(chan struct{})
 	go func() {
-		ctx, cancel := context.WithTimeout(p.Ctx, secretsBackfillTimeout)
-		defer cancel()
+		defer close(done)
 		if err := appregistry.BackfillStoredSecrets(ctx, p.Registries, p.Auths, p.Catalog, p.Logger); err != nil {
 			p.Logger.Warn("stored secrets backfill did not finish; it resumes on the next boot",
 				slog.String("error", err.Error()))
 		}
 	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }

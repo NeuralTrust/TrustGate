@@ -88,15 +88,11 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
-	if cfg == nil || shared == nil {
+	if cfg == nil {
 		return cfg
 	}
-	code := sharedOAuthCode(cfg, reg)
-	creds, ok := shared.CredentialsFor(code)
-	if !ok || !mcpoauth.UsesProviderEndpoints(code, cfg.AuthorizeURL, cfg.TokenURL) {
-		return cfg
-	}
-	if id := strings.TrimSpace(cfg.ClientID); id != "" && id != creds.ClientID {
+	creds, ok := mcpoauth.SharedClientFor(shared, sharedClientQuery(cfg, reg, false))
+	if !ok {
 		return cfg
 	}
 	out := *cfg
@@ -110,15 +106,14 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 // applySharedOAuth accepts empty endpoints, so it cannot know where discovery
 // will point; the secret only goes to the provider's own authorization server.
 func withholdSharedSecret(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
-	if cfg == nil || shared == nil {
+	if cfg == nil || shared == nil || cfg.ClientSecret == "" {
 		return cfg
 	}
-	code := sharedOAuthCode(cfg, reg)
-	creds, ok := shared.CredentialsFor(code)
-	if !ok || cfg.ClientSecret == "" || cfg.ClientSecret != creds.ClientSecret {
+	creds, ok := shared.CredentialsFor(mcpoauth.SharedCode(registryCode(reg), cfg.Provider))
+	if !ok || cfg.ClientSecret != creds.ClientSecret {
 		return cfg
 	}
-	if mcpoauth.UsesProviderEndpoints(code, cfg.AuthorizeURL, cfg.TokenURL) {
+	if _, allowed := mcpoauth.SharedClientFor(shared, sharedClientQuery(cfg, reg, true)); allowed {
 		return cfg
 	}
 	out := *cfg
@@ -126,15 +121,22 @@ func withholdSharedSecret(cfg *registrydomain.MCPAuth, reg *registrydomain.Regis
 	return &out
 }
 
-func sharedOAuthCode(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry) string {
-	code := ""
-	if reg != nil && reg.MCPTarget != nil {
-		code = strings.TrimSpace(reg.MCPTarget.Code)
+func sharedClientQuery(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, strict bool) mcpoauth.SharedClientQuery {
+	return mcpoauth.SharedClientQuery{
+		Code:         registryCode(reg),
+		Provider:     cfg.Provider,
+		ClientID:     cfg.ClientID,
+		AuthorizeURL: cfg.AuthorizeURL,
+		TokenURL:     cfg.TokenURL,
+		Strict:       strict,
 	}
-	if code == "" {
-		code = strings.TrimSpace(cfg.Provider)
+}
+
+func registryCode(reg *registrydomain.Registry) string {
+	if reg == nil || reg.MCPTarget == nil {
+		return ""
 	}
-	return code
+	return reg.MCPTarget.Code
 }
 
 // applyCatalog lets the curated catalog correct the scopes and resource

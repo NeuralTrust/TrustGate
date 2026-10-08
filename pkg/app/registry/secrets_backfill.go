@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -38,7 +39,7 @@ type StoredSecretSealer interface {
 // rules: credentials encrypted, and no copy of the platform's shared OAuth
 // client secret on a registry. It is idempotent and safe to run on every boot
 // of every control-plane replica. A row it cannot handle is counted and left
-// for the next run; only a failure to list the rows stops it.
+// to the next run; only a failure to list the rows stops it.
 func BackfillStoredSecrets(
 	ctx context.Context,
 	registries MCPTargetRewriter,
@@ -71,9 +72,10 @@ func BackfillStoredSecrets(
 }
 
 // clearSharedOAuthSecret drops a stored copy of the platform's shared OAuth
-// client secret and touches nothing else: the exact shared secret wherever it
-// sits, and any secret stored next to the shared client id on a target that
-// uses the provider's endpoints (where the shared one is used at call time).
+// client secret and touches nothing else. It clears the exact shared secret
+// wherever it sits, and any secret stored next to the shared client id on a
+// target that uses the provider's endpoints, where the shared one is used at
+// call time.
 func clearSharedOAuthSecret(t *domain.MCPTarget, catalog MCPAuthCatalog) bool {
 	if t == nil || t.Auth == nil || t.Auth.ClientSecret == "" || catalog == nil {
 		return false
@@ -81,7 +83,8 @@ func clearSharedOAuthSecret(t *domain.MCPTarget, catalog MCPAuthCatalog) bool {
 	if t.Auth.Mode != domain.MCPAuthModeForwarded {
 		return false
 	}
-	if _, sharedSecret, ok := catalog.SharedOAuthCredentials(t.Code); ok && t.Auth.ClientSecret == sharedSecret {
+	code := mcpoauth.SharedCode(t.Code, t.Auth.Provider)
+	if creds, ok := sharedOAuthProvider(catalog).CredentialsFor(code); ok && t.Auth.ClientSecret == creds.ClientSecret {
 		t.Auth.ClientSecret = ""
 		return true
 	}
