@@ -101,6 +101,11 @@ const (
 	// does not read back exactly.
 	MaskCauseToolInput  MaskCause = "tool_input_not_maskable"
 	MaskCauseToolFrames MaskCause = "tool_frames_not_rewritable"
+	// MaskCauseGluedText: the removed text runs across frames, and one of them
+	// holds text that no delta of the model wrote, only a field the view adds. The
+	// view joins frames without a separator, so a match that reaches into such a
+	// frame is not text a client reads anywhere.
+	MaskCauseGluedText MaskCause = "glued_plumbing_text"
 )
 
 // MaskRequestWhy derives the mask from what a plugin did to the text it saw and
