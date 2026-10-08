@@ -460,6 +460,12 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: codePolicyBlocked, Message: notPermitted.Error()},
 		})
+	case errors.Is(err, appmcp.ErrStoreInstallDisabled):
+		// An access decision, said to the caller: an opaque internal error
+		// left the person with nothing to act on.
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codePolicyBlocked, err.Error())
+		return writeRPCError(c, id, codePolicyBlocked, "installing from the Store is turned off for you on this gateway; an administrator changes that in Access")
 	case errors.As(err, &invalidParams):
 		return writeRPCError(c, id, codeInvalidParams, invalidParams.Reason)
 	case errors.Is(err, ErrMethodNotFound):
