@@ -176,6 +176,18 @@ var mediaSignatures = map[string][]byte{
 	"zip":  {'P', 'K', 0x03, 0x04, 0x14, 0x00},
 	"ogg":  []byte("OggS\x00\x02"),
 	"mp3":  []byte("ID3\x04\x00"),
+
+	"webm/mkv EBML":   {0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42},
+	"flv":             []byte("FLV\x01\x05"),
+	"asf/wmv":         {0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11},
+	"mpeg-ps":         {0x00, 0x00, 0x01, 0xBA, 0x44},
+	"aac adts FFF1":   {0xFF, 0xF1, 0x50, 0x80},
+	"aac adts FFF9":   {0xFF, 0xF9, 0x50, 0x80},
+	"mpeg audio FFFA": {0xFF, 0xFA, 0x90, 0x00},
+	"mpeg audio FFFB": {0xFF, 0xFB, 0x90, 0x00},
+	"mpeg audio FFF3": {0xFF, 0xF3, 0x90, 0x00},
+	"mpeg audio FFE3": {0xFF, 0xE3, 0x90, 0x00},
+	"ole":             {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1},
 }
 
 // b64 is the base64 of a file of n bytes that starts with a real media signature.
@@ -274,6 +286,21 @@ func TestNativeAdapter_DecodeRequest_OnlyMediaIsDropped(t *testing.T) {
 				require.NoError(t, err)
 				assert.NotContains(t, requestText(cr), blob[:100], kind)
 			}
+		})
+	}
+}
+
+// TwelveLabs carries the media in mediaSource.base64String next to the prompt: the
+// blob stays out of the view and the prompt stays in.
+func TestNativeAdapter_DecodeRequest_TwelveLabsBase64StringIsMedia(t *testing.T) {
+	for kind := range mediaSignatures {
+		t.Run(kind, func(t *testing.T) {
+			blob := b64(5000, kind)
+			body := `{"inputPrompt":"describe","mediaSource":{"base64String":"` + blob + `"}}`
+			cr, err := (&BedrockNativeAdapter{}).DecodeRequest([]byte(body))
+			require.NoError(t, err)
+			assert.Contains(t, requestText(cr), "describe")
+			assert.NotContains(t, requestText(cr), blob[:100])
 		})
 	}
 }
