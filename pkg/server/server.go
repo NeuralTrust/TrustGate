@@ -64,7 +64,9 @@ func NewBaseServer(name, addr string, cfg config.ServerConfig, logger *slog.Logg
 	r.Server().NoDefaultServerHeader = true
 	r.Server().NoDefaultDate = true
 	r.Server().NoDefaultContentType = true
-	r.Use(decodeRequestBody(bodyLimit))
+	// Registered before any router so no handler on any plane, authenticated or
+	// not, ever reads an encoded body.
+	r.Use(decodeRequestBody(bodyLimit, logger))
 
 	return &BaseServer{Name: name, Addr: addr, Router: r, logger: logger}
 }

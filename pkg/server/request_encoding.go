@@ -15,41 +15,70 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 )
 
+// maxConcurrentDecodes bounds how many request bodies are decompressed at once,
+// so the memory decoding can claim stays near maxConcurrentDecodes*limit.
+const maxConcurrentDecodes = 32
+
+const decodeChunk = 32 << 10
+
 var (
 	errChainedEncoding     = errors.New("chained content encodings are not supported")
 	errUnsupportedEncoding = errors.New("unsupported content encoding")
+	errDecodedTooLarge     = errors.New("decoded body exceeds the limit")
 )
 
-// decodeRequestBody decodes at most one content coding, bounded by limit, so
-// downstream handlers always see an identity body.
-func decodeRequestBody(limit int) fiber.Handler {
+var decoders = map[string]func(io.Reader) (io.ReadCloser, error){
+	"gzip":    func(r io.Reader) (io.ReadCloser, error) { return gzip.NewReader(r) },
+	"x-gzip":  func(r io.Reader) (io.ReadCloser, error) { return gzip.NewReader(r) },
+	"deflate": zlib.NewReader,
+}
+
+func decodeRequestBody(limit int, logger *slog.Logger) fiber.Handler {
+	return decodeRequestBodyWith(limit, maxConcurrentDecodes, logger)
+}
+
+func decodeRequestBodyWith(limit, concurrency int, logger *slog.Logger) fiber.Handler {
+	slots := make(chan struct{}, concurrency)
 	return func(c *fiber.Ctx) error {
 		req := c.Request()
 		coding, err := requestContentCoding(&req.Header)
 		if err != nil {
-			return c.Status(fiber.StatusUnsupportedMediaType).JSON(fiber.Map{"error": err.Error()})
+			return reject(c, logger, fiber.StatusUnsupportedMediaType, "unsupported_content_encoding", err.Error(), coding)
 		}
-		if coding == "" {
+		if coding == "" || len(req.Body()) == 0 {
 			req.Header.Del(fiber.HeaderContentEncoding)
 			return c.Next()
 		}
 
-		body, err := decodeBody(req, coding, limit)
-		if err != nil {
-			if errors.Is(err, fasthttp.ErrBodyTooLarge) {
-				return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{"error": "request body too large"})
-			}
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid compressed request body"})
+		select {
+		case slots <- struct{}{}:
+		default:
+			c.Set(fiber.HeaderRetryAfter, "1")
+			return reject(c, logger, fiber.StatusServiceUnavailable, "decoder_busy", "too many compressed requests in flight", coding)
+		}
+		body, err := decodeBody(req.Body(), decoders[coding], limit)
+		<-slots
+		switch {
+		case errors.Is(err, errDecodedTooLarge):
+			return reject(c, logger, fiber.StatusRequestEntityTooLarge, "request_too_large", "request body too large", coding)
+		case err != nil:
+			return reject(c, logger, fiber.StatusBadRequest, "invalid_compressed_body", "invalid compressed request body", coding)
 		}
 
-		req.SetBody(body)
+		req.SetBodyRaw(body)
 		req.Header.Del(fiber.HeaderContentEncoding)
 		req.Header.SetContentLength(len(body))
 		return c.Next()
@@ -69,27 +98,61 @@ func requestContentCoding(h *fasthttp.RequestHeader) (string, error) {
 			}
 		}
 	}
-	switch len(codings) {
-	case 0:
+	switch {
+	case len(codings) == 0:
 		return "", nil
-	case 1:
-		switch codings[0] {
-		case "gzip", "x-gzip", "deflate", "br":
-			return codings[0], nil
-		}
-		return "", errUnsupportedEncoding
+	case len(codings) > 1:
+		return strings.Join(codings, ","), errChainedEncoding
+	case decoders[codings[0]] == nil:
+		return codings[0], errUnsupportedEncoding
 	default:
-		return "", errChainedEncoding
+		return codings[0], nil
 	}
 }
 
-func decodeBody(req *fasthttp.Request, coding string, limit int) ([]byte, error) {
-	switch coding {
-	case "gzip", "x-gzip":
-		return req.BodyGunzipWithLimit(limit)
-	case "deflate":
-		return req.BodyInflateWithLimit(limit)
-	default:
-		return req.BodyUnbrotliWithLimit(limit)
+// decodeBody never holds more than limit+1 decoded bytes, whatever the
+// compression ratio of the input.
+func decodeBody(raw []byte, open func(io.Reader) (io.ReadCloser, error), limit int) ([]byte, error) {
+	r, err := open(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
 	}
+	defer func() { _ = r.Close() }()
+
+	out := make([]byte, 0, min(limit+1, max(decodeChunk, 4*len(raw))))
+	for {
+		if len(out) == cap(out) {
+			if cap(out) > limit {
+				return nil, errDecodedTooLarge
+			}
+			grown := make([]byte, len(out), min(limit+1, 2*cap(out)))
+			copy(grown, out)
+			out = grown
+		}
+		n, err := r.Read(out[len(out):cap(out)])
+		out = out[:len(out)+n]
+		if errors.Is(err, io.EOF) {
+			if len(out) > limit {
+				return nil, errDecodedTooLarge
+			}
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func reject(c *fiber.Ctx, logger *slog.Logger, status int, code, message, coding string) error {
+	if logger != nil {
+		logger.Warn("request body decoding rejected",
+			slog.Int("status", status),
+			slog.String("reason", code),
+			slog.String("content_encoding", coding),
+			slog.String("method", c.Method()),
+			slog.String("path", c.Path()),
+			slog.String("remote_ip", c.IP()),
+		)
+	}
+	return c.Status(status).JSON(httpio.ErrorBody{Error: code, Message: message})
 }

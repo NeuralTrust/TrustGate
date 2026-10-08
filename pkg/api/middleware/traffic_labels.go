@@ -117,17 +117,9 @@ func (m *TrafficLabelsMiddleware) body(c *fiber.Ctx, bufferOnly bool) ([]byte, b
 		}
 		return nil, false
 	}
-	// Checked on the raw body first so an oversized compressed body is never decompressed.
 	body := c.Request().Body()
 	if len(body) > m.maxBodyBytes {
 		return tooLarge()
-	}
-	// c.Body() scans every header and re-decodes on each call; only an encoded body needs it.
-	if len(c.Request().Header.ContentEncoding()) > 0 {
-		body = c.Body()
-		if len(body) > m.maxBodyBytes {
-			return tooLarge()
-		}
 	}
 	return body, len(body) > 0
 }
