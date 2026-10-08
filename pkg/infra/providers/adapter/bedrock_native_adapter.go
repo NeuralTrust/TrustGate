@@ -632,7 +632,29 @@ func (a *BedrockNativeAdapter) modelledRequest(body []byte) (*CanonicalRequest, 
 	case hasField(fields, converseRequestKeys...):
 		add(a.converse.DecodeRequest(body))
 	}
-	return mergeRequests(parts), nil
+	cr := mergeRequests(parts)
+	for i := range cr.Messages {
+		normalizeToolArguments(cr.Messages[i].ToolCalls)
+	}
+	return cr, nil
+}
+
+// normalizeToolArguments puts each call's arguments in the one spelling the
+// encoders emit for a tool input (compact, with <, > and & escaped). A mask is
+// carried onto a native body by diffing the text decoded before and after the
+// rewrite, so arguments that an encoder would respell must already be spelled
+// that way when decoded, or the diff sees whitespace where only a value changed.
+// Arguments that are not a JSON document are left alone.
+func normalizeToolArguments(calls []CanonicalToolCall) {
+	for i := range calls {
+		raw := json.RawMessage(strings.TrimSpace(calls[i].Arguments))
+		if len(raw) == 0 || !json.Valid(raw) {
+			continue
+		}
+		if b, err := json.Marshal(raw); err == nil {
+			calls[i].Arguments = string(b)
+		}
+	}
 }
 
 func mergeRequests(parts []*CanonicalRequest) *CanonicalRequest {
@@ -674,6 +696,7 @@ func requestParts(cr *CanonicalRequest) []string {
 		parts = append(parts, m.Content)
 		for _, tc := range m.ToolCalls {
 			parts = append(parts, tc.Arguments)
+			parts = append(parts, argumentStrings(tc.Arguments)...)
 		}
 	}
 	return parts
@@ -683,8 +706,38 @@ func responseParts(cr *CanonicalResponse) []string {
 	parts := []string{cr.Content}
 	for _, tc := range cr.ToolCalls {
 		parts = append(parts, tc.Arguments)
+		parts = append(parts, argumentStrings(tc.Arguments)...)
 	}
 	return parts
+}
+
+// argumentStrings are the string values inside a tool call's JSON arguments. They
+// are surfaced with the call, so the same strings found in the raw body are not
+// a leftover: a leftover is rebuilt from the body after a mask, where values that
+// were different before can read the same and be listed once.
+func argumentStrings(arguments string) []string {
+	var doc any
+	if json.Unmarshal([]byte(arguments), &doc) != nil {
+		return nil
+	}
+	var out []string
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			out = append(out, t)
+		case []any:
+			for _, item := range t {
+				walk(item)
+			}
+		case map[string]any:
+			for _, item := range t {
+				walk(item)
+			}
+		}
+	}
+	walk(doc)
+	return out
 }
 
 func requestText(cr *CanonicalRequest) string {
@@ -697,6 +750,16 @@ func requestText(cr *CanonicalRequest) string {
 			sb.WriteByte('\n')
 			sb.WriteString(tc.Arguments)
 		}
+	}
+	return sb.String()
+}
+
+func responseText(cr *CanonicalResponse) string {
+	var sb strings.Builder
+	sb.WriteString(cr.Content)
+	for _, tc := range cr.ToolCalls {
+		sb.WriteByte('\n')
+		sb.WriteString(tc.Arguments)
 	}
 	return sb.String()
 }
@@ -772,6 +835,7 @@ func (a *BedrockNativeAdapter) modelledResponse(body []byte) (*CanonicalResponse
 			out.Model = p.Model
 		}
 	}
+	normalizeToolArguments(out.ToolCalls)
 	return out, nil
 }
 
