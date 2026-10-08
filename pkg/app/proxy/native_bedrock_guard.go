@@ -143,7 +143,8 @@ func (f *forwarder) carryNativeMask(
 	}
 	for _, source := range sources {
 		if source.OnFailure == appplugins.MaskFailureBlock {
-			return nil, nativeMaskBlocked(source.Plugin, cause)
+			return nil, appplugins.WithBlockDirection(
+				nativeMaskBlocked(source.Plugin, cause), appplugins.BlockDirectionForStage(stage))
 		}
 	}
 	appplugins.RecordNativeMaskNotApplied(ctx, f.logger, stage, cause, false)

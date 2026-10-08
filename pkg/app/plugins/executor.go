@@ -88,6 +88,11 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 	for _, batch := range batches {
 		results, err := e.runBatch(ctx, in.Stage, in.Request, in.Response, batch)
 		if err != nil {
+			// The one place a plugin's denial learns which leg it ended, so no
+			// plugin has to say so itself.
+			if pe, ok := AsPluginError(err); ok {
+				return nil, WithBlockDirection(pe, BlockDirectionForStage(in.Stage))
+			}
 			return nil, err
 		}
 		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) && !handsOnResponse(in, outcome) {
@@ -715,6 +720,22 @@ func (e *executor) applyResults(
 			outcome.Headers = cloneHeaders(resp.Headers)
 		} else {
 			outcome.Headers = cloneHeaders(res.Headers)
+		}
+		if res.StatusCode == http.StatusForbidden {
+			// A denial returned as a result rather than as an error (the
+			// allowlists do): same header, on both the outcome and, for the
+			// buffered leg that renders from it, the response.
+			direction := BlockDirectionForStage(stage)
+			if outcome.Headers == nil {
+				outcome.Headers = map[string][]string{}
+			}
+			outcome.Headers[BlockDirectionHeader] = []string{direction}
+			if resp != nil {
+				if resp.Headers == nil {
+					resp.Headers = map[string][]string{}
+				}
+				resp.Headers[BlockDirectionHeader] = []string{direction}
+			}
 		}
 	}
 	return stopApplied
