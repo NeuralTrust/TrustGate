@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -294,6 +295,34 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(registryID, "secret")})
 	require.Equal(t, float64(-32001), rpcErrorCode(t, status, body))
+}
+
+// An upstream server's error under a code the gateway answers with itself
+// (policy, consent, rate limit) reaches the client under a generic code, with
+// what the upstream sent nested under it.
+func TestMCPServer_RelaysUpstreamErrorsUnderTheirOwnCode(t *testing.T) {
+	upstream := startMCPUpstream(t, func(s *sdk.Server) {
+		s.AddTool(
+			&sdk.Tool{Name: "refuse", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+				return nil, &jsonrpc.Error{Code: -32001, Message: "refused upstream", Data: json.RawMessage(`{"why":"upstream"}`)}
+			},
+		)
+	})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+
+	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": exposedToolName(registryID, "refuse"), "arguments": map[string]any{}})
+
+	require.Equal(t, float64(appmcp.CodeUpstreamError), rpcErrorCode(t, status, body))
+	rpcErr := body["error"].(map[string]any)
+	require.Equal(t, "refused upstream", rpcErr["message"])
+	data, ok := rpcErr["data"].(map[string]any)
+	require.True(t, ok, "error data: %v", rpcErr["data"])
+	require.Equal(t, float64(-32001), data["upstream_code"])
+	require.Equal(t, map[string]any{"why": "upstream"}, data["upstream_data"])
 }
 
 func TestMCPServer_PromptsAndResources(t *testing.T) {

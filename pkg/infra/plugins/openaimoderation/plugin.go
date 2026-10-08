@@ -437,15 +437,16 @@ func (p *Plugin) externalFailure(
 	err error,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:    ctx,
-		Plugin: PluginName,
-		Stage:  in.Stage,
-		Mode:   in.Mode,
-		Reason: reason,
-		Detail: detail,
-		Err:    err,
-		Logger: p.logger,
-		Event:  in.Event,
+		Ctx:        ctx,
+		Plugin:     PluginName,
+		Stage:      in.Stage,
+		Mode:       in.Mode,
+		FailClosed: cfg.OnError == pluginutil.OnErrorFailClosed,
+		Reason:     reason,
+		Detail:     detail,
+		Err:        err,
+		Logger:     p.logger,
+		Event:      in.Event,
 	})
 	setExtras(in.Event, ModerationData{
 		Model:         cfg.Model,

@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,7 @@ func newAuthzApp(
 	gateways.Delete("/:id", collection, ok)
 
 	app.Get("/v1/models-catalog", authz.RequireInteractiveIdentity(), ok)
+	app.Get("/v1/config-sync/connections", authz.RequireConfigSyncScopeAccess(), ok)
 	return app
 }
 
@@ -199,4 +201,66 @@ func TestRequireGatewayAccess_InvalidGatewayIDRejected(t *testing.T) {
 	app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "acme"}, finder)
 
 	require.Equal(t, fiber.StatusBadRequest, do(t, app, fiber.MethodGet, "/v1/gateways/not-a-uuid/consumers"))
+}
+
+func TestRequireConfigSyncScopeAccess(t *testing.T) {
+	t.Parallel()
+	own := ids.New[ids.GatewayKind]()
+	foreign := ids.New[ids.GatewayKind]()
+	human := middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "acme"}
+	const path = "/v1/config-sync/connections"
+
+	t.Run("tenant lists its own gateway", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, own).Return(gatewayOwnedBy(own, "acme"), nil).Once()
+		app := newAuthzApp(t, human, finder)
+
+		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, path+"?scope="+own.String()))
+	})
+
+	t.Run("the listing reads the gateway id as authorized", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, own).Return(gatewayOwnedBy(own, "acme"), nil).Once()
+		authz := middleware.NewAdminAuthzMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), finder)
+		app := fiber.New()
+		app.Use(identityMiddleware(human))
+		var seen string
+		app.Get(path, authz.RequireConfigSyncScopeAccess(), func(c *fiber.Ctx) error {
+			seen = middleware.ConfigSyncScope(c)
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, path+"?scope="+strings.ToUpper(own.String())))
+		require.Equal(t, own.String(), seen)
+	})
+
+	t.Run("tenant cannot list another tenant's gateway", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, foreign).Return(gatewayOwnedBy(foreign, "globex"), nil).Once()
+		app := newAuthzApp(t, human, finder)
+
+		require.Equal(t, fiber.StatusNotFound, do(t, app, fiber.MethodGet, path+"?scope="+foreign.String()))
+	})
+
+	t.Run("tenant has to name a gateway", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		app := newAuthzApp(t, human, finder)
+
+		require.Equal(t, fiber.StatusBadRequest, do(t, app, fiber.MethodGet, path))
+		require.Equal(t, fiber.StatusNotFound, do(t, app, fiber.MethodGet, path+"?scope=not-a-gateway"))
+		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
+
+	t.Run("platform lists every data plane", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityPlatform}, finder)
+
+		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, path))
+		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
 }

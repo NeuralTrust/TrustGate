@@ -5,8 +5,10 @@ package functional_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -236,20 +238,44 @@ func mcpForwardedRegistryPayload(name, upstreamURL, provider string, idp *oauthP
 
 func doRedacted(t *testing.T, target, stage string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, target, nil)
+	return doWith(t, noRedirectClient(), http.MethodGet, target, stage, nil)
+}
+
+func doWith(t *testing.T, client *http.Client, method, target, stage string, header http.Header) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, target, nil)
 	if err != nil {
 		t.Fatalf("%s request could not be built", stage)
 	}
-	resp, err := noRedirectClient().Do(req)
+	maps.Copy(req.Header, header)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("%s request failed", stage)
 	}
 	return resp
 }
 
+// driveProviderConsent connects an account the way a browser does: the link
+// opens a page that asks first, continuing posts the start from that page
+// (which sets the flow's cookie on the gateway host), the provider answers on
+// the callback, and the callback hands the result back to the gateway host,
+// which completes it only for the browser holding that cookie.
 func driveProviderConsent(t *testing.T, idp *oauthProviderStub, provider, ticket string) {
 	t.Helper()
-	started := doRedacted(t, MCPURL+"/oauth/connect/"+provider+"?ticket="+url.QueryEscape(ticket), "connect start")
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	browser := noRedirectClient()
+	browser.Jar = jar
+	link := MCPURL + "/oauth/connect/" + provider + "?ticket=" + url.QueryEscape(ticket)
+
+	confirm := doWith(t, browser, http.MethodGet, link, "connect link", nil)
+	page, err := io.ReadAll(confirm.Body)
+	_ = confirm.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, confirm.StatusCode, "a connect link must ask before it starts")
+	require.Contains(t, string(page), `method="post"`)
+
+	started := doWith(t, browser, http.MethodPost, link, "connect start", http.Header{"Origin": {MCPURL}})
 	authorize, err := started.Location()
 	_ = started.Body.Close()
 	require.Equal(t, http.StatusFound, started.StatusCode)
@@ -266,9 +292,29 @@ func driveProviderConsent(t *testing.T, idp *oauthProviderStub, provider, ticket
 	require.NotEmpty(t, callback.Query().Get("code"))
 	require.NotEmpty(t, callback.Query().Get("state"))
 
-	finished := doRedacted(t, callback.String(), "connect callback")
+	exchanges := idp.tokenExchanges()
+	handOff := func(stage string) *url.URL {
+		t.Helper()
+		received := doRedacted(t, callback.String(), stage)
+		finish, err := received.Location()
+		_ = received.Body.Close()
+		require.Equal(t, http.StatusFound, received.StatusCode)
+		require.NoError(t, err)
+		require.Equal(t, "/oauth/connect/finish", finish.Path)
+		require.Equal(t, exchanges, idp.tokenExchanges(), "the callback must not redeem the code")
+		return finish
+	}
+
+	elsewhere := doRedacted(t, handOff("connect callback").String(), "connect finish in another browser")
+	_ = elsewhere.Body.Close()
+	require.Equal(t, http.StatusBadRequest, elsewhere.StatusCode,
+		"a finish without the flow's cookie must not complete it")
+	require.Equal(t, exchanges, idp.tokenExchanges(), "a refused finish must not redeem the code")
+
+	finished := doWith(t, browser, http.MethodGet, handOff("connect callback again").String(), "connect finish", nil)
 	_ = finished.Body.Close()
 	require.Equal(t, http.StatusOK, finished.StatusCode)
+	require.Equal(t, exchanges+1, idp.tokenExchanges())
 }
 
 func requireBearerMatches(t *testing.T, want, got string) {

@@ -308,15 +308,19 @@ dialect's content-filter terminator, and on the event the cut is visible only th
 
 `azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
 record a failure to reach a verdict the same way. On the buffered (non-streamed) leg they
-always **fail open**, in every mode and for every `failure_reason`: a guardrail the gateway
-could not consult never refuses the request. The stream leg is covered by RUN-1786. The entry's `decision` says what happened to the request:
+**fail open** by default, in every mode and for every `failure_reason`: a guardrail the gateway
+could not consult does not refuse the request (RUN-1792). A policy can opt out with
+`settings.on_error: fail_closed`. The stream leg is covered by RUN-1786. The entry's `decision` says what happened to the request:
 
-| Mode | `decision` | Request |
-|------|------------|---------|
-| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
+| Mode | `on_error` | `decision` | Request |
+|------|------------|------------|---------|
+| enforce, throttle or observe | `fail_open` (default) | `failed_open` | Forwarded; the chain carries on |
+| observe | `fail_closed` | `failed_open` | Forwarded; observe never refuses |
+| enforce or throttle | `fail_closed` | `failed_closed` | Refused with HTTP 502 `guardrail_unavailable` |
 
-There is no `failed_closed` decision and no `guardrail_unavailable` error for these four
-plugins on the buffered leg (RUN-1792).
+Under `fail_closed`, `decode_failed` refuses too: a body the guardrail could not read is a body it
+did not inspect. A `config_invalid` failure on settings that could not be parsed at all fails open,
+since `on_error` is one of those settings.
 
 Their `extras` carry two keys:
 

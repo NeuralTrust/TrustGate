@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -70,6 +72,9 @@ type Compiler struct {
 	// rides the snapshot when a reader is wired (WithPinnedTools). Without one a
 	// pinned registry carries no set, which fails closed (nothing is approved).
 	pinnedTools PinnedToolReader
+	// sharedOAuth is optional: it fills the platform's shared OAuth client
+	// secret into the registries that use that client (WithSharedOAuth).
+	sharedOAuth mcpoauth.Provider
 	// pinnedErrors counts failed reads of a pinned registry's decisions, by kind
 	// (corrupt or transient). It is created once with the reader.
 	pinnedErrors metric.Int64Counter
@@ -130,6 +135,14 @@ func WithPinnedTools(r PinnedToolReader) CompilerOption {
 		}
 		c.pinnedErrors = counter
 	}
+}
+
+// WithSharedOAuth fills the platform's shared OAuth client secret into every
+// registry that uses that client. The secret is not stored on the registries;
+// it rides the snapshot so a data plane that refreshes an upstream token from
+// the snapshot alone, without the platform's configuration, still can.
+func WithSharedOAuth(p mcpoauth.Provider) CompilerOption {
+	return func(c *Compiler) { c.sharedOAuth = p }
 }
 
 // WithStorePolicies includes the per-principal Store access policies in every
@@ -532,6 +545,11 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
 		data.StorePolicies = append(data.StorePolicies, x)
 	})
+	for _, data := range byGateway {
+		for i := range data.Registries {
+			c.attachSharedOAuth(&data.Registries[i])
+		}
+	}
 	return byGateway, nil
 }
 
@@ -698,6 +716,7 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 		if err := c.attachPinnedTools(ctx, []*registrydomain.Registry{&data.Registries[i]}); err != nil {
 			return err
 		}
+		c.attachSharedOAuth(&data.Registries[i])
 	}
 
 	policies, err := c.policies.ListByGateway(ctx, gatewayID)
@@ -767,6 +786,30 @@ func (c *Compiler) attachPinnedTools(ctx context.Context, registries []*registry
 		return fmt.Errorf("configsnapshot: %w", err)
 	}
 	return nil
+}
+
+// attachSharedOAuth works on the snapshot's own copy of a registry: it swaps in
+// a new target rather than writing through the one it shares with the
+// repository's result.
+func (c *Compiler) attachSharedOAuth(reg *registrydomain.Registry) {
+	if c.sharedOAuth == nil || reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil {
+		return
+	}
+	auth := reg.MCPTarget.Auth
+	if auth.Mode != registrydomain.MCPAuthModeForwarded || auth.Registration == registrydomain.RegistrationAuto || auth.ClientSecret != "" {
+		return
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	creds, ok := c.sharedOAuth.CredentialsFor(code)
+	if !ok || strings.TrimSpace(auth.ClientID) != creds.ClientID ||
+		!mcpoauth.UsesProviderEndpoints(code, auth.AuthorizeURL, auth.TokenURL) {
+		return
+	}
+	withSecret := *auth
+	withSecret.ClientSecret = creds.ClientSecret
+	target := *reg.MCPTarget
+	target.Auth = &withSecret
+	reg.MCPTarget = &target
 }
 
 func (c *Compiler) listRegistries(ctx context.Context, gatewayID ids.GatewayID) ([]registrydomain.Registry, error) {

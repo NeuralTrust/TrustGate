@@ -473,15 +473,16 @@ func (p *Plugin) externalFailure(
 	fi failureInfo,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:    ctx,
-		Plugin: PluginName,
-		Stage:  in.Stage,
-		Mode:   in.Mode,
-		Reason: fi.reason,
-		Detail: fi.filter,
-		Err:    fi.err,
-		Logger: p.logger,
-		Event:  in.Event,
+		Ctx:        ctx,
+		Plugin:     PluginName,
+		Stage:      in.Stage,
+		Mode:       in.Mode,
+		FailClosed: cfg.OnError == pluginutil.OnErrorFailClosed,
+		Reason:     fi.reason,
+		Detail:     fi.filter,
+		Err:        fi.err,
+		Logger:     p.logger,
+		Event:      in.Event,
 	})
 	data := newData(in, cfg, latencyMS)
 	data.Decision = outcome.Decision

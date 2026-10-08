@@ -86,8 +86,35 @@ func TestMCPRouterDispatch(t *testing.T) {
 		Return(&appoauth.ConnectPage{ConsumerPath: "/tools/mcp"}, nil).
 		Once()
 	connect.EXPECT().
-		Start(mock.Anything, mock.Anything, "oauth-ticket", "provider", mock.Anything).
-		Return("https://provider.example/authorize", nil).
+		Page(mock.Anything, "oauth-ticket").
+		Return(&appoauth.ConnectPage{
+			ConsumerPath: "/tools/mcp",
+			Principal:    appoauth.ConnectPrincipal{Subject: "user-subject"},
+			Providers:    []appoauth.ProviderStatus{{Provider: "provider", Instance: "instance-1"}},
+		}, nil).
+		Once()
+	connect.EXPECT().
+		Start(mock.Anything, "https://tenant.mcp.test", "https://tenant.mcp.test", "oauth-ticket", "provider", "instance-1").
+		Return(&appoauth.ConnectStart{State: "the-state", Location: "https://provider.example/authorize"}, nil).
+		Once()
+	connect.EXPECT().
+		ReceiveCallback(mock.Anything, "provider", "the-state", "the-code", "", "").
+		Return("https://tenant.mcp.test/oauth/connect/finish?f=finish-token", nil).
+		Once()
+	connect.EXPECT().
+		TakeFinish(mock.Anything, "finish-token").
+		Return(&appoauth.ConnectFinish{Provider: "provider", State: "the-state", Code: "the-code"}, nil).
+		Once()
+	connect.EXPECT().
+		Callback(mock.Anything, "https://tenant.mcp.test", "provider", "the-state", "the-code", "", "").
+		Return("oauth-ticket", nil).
+		Once()
+	connect.EXPECT().
+		Page(mock.Anything, "oauth-ticket").
+		Return(&appoauth.ConnectPage{
+			ConsumerPath: "/tools/mcp",
+			Providers:    []appoauth.ProviderStatus{{Provider: "provider", Instance: "instance-1", Linked: true}},
+		}, nil).
 		Once()
 
 	connectHandler := oauthhttp.NewConnectHandler(connect, nil, "")
@@ -142,8 +169,8 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
-	t.Run("existing OAuth connect route", func(t *testing.T) {
-		res, _ := dispatchMCPRequest(
+	t.Run("OAuth connect link asks before it starts", func(t *testing.T) {
+		res, body := dispatchMCPRequest(
 			t,
 			app,
 			fiber.MethodGet,
@@ -152,8 +179,42 @@ func TestMCPRouterDispatch(t *testing.T) {
 			"",
 		)
 
-		assert.Equal(t, fiber.StatusFound, res.StatusCode)
-		assert.Equal(t, "https://provider.example/authorize", res.Header.Get(fiber.HeaderLocation))
+		assert.Equal(t, fiber.StatusOK, res.StatusCode)
+		assert.Contains(t, body, "user-subject")
+		assert.Contains(t, body, `action="/oauth/connect/provider?instance=instance-1&amp;ticket=oauth-ticket"`)
+		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
+	})
+
+	t.Run("OAuth connect start, callback and finish", func(t *testing.T) {
+		req := httptest.NewRequest(fiber.MethodPost, "/oauth/connect/provider?ticket=oauth-ticket&instance=instance-1", nil)
+		req.Host = "tenant.mcp.test"
+		req.Header.Set(fiber.HeaderXForwardedProto, "https")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		started, err := app.Test(req, -1)
+		require.NoError(t, err)
+		require.NoError(t, started.Body.Close())
+		assert.Equal(t, fiber.StatusFound, started.StatusCode)
+		assert.Equal(t, "https://provider.example/authorize", started.Header.Get(fiber.HeaderLocation))
+		var flowCookie *http.Cookie
+		for _, cookie := range started.Cookies() {
+			if strings.HasPrefix(cookie.Name, "__Host-tg_connect_") {
+				flowCookie = cookie
+			}
+		}
+		require.NotNil(t, flowCookie, "start must set the flow cookie")
+
+		callback, _ := dispatchMCPRequest(t, app, fiber.MethodGet, "/oauth/callback/provider?state=the-state&code=the-code", "", "")
+		assert.Equal(t, fiber.StatusFound, callback.StatusCode)
+		assert.Equal(t, "https://tenant.mcp.test/oauth/connect/finish?f=finish-token", callback.Header.Get(fiber.HeaderLocation))
+
+		finishReq := httptest.NewRequest(fiber.MethodGet, "/oauth/connect/finish?f=finish-token", nil)
+		finishReq.Host = "tenant.mcp.test"
+		finishReq.Header.Set(fiber.HeaderXForwardedProto, "https")
+		finishReq.AddCookie(flowCookie)
+		finished, err := app.Test(finishReq, -1)
+		require.NoError(t, err)
+		require.NoError(t, finished.Body.Close())
+		assert.Equal(t, fiber.StatusOK, finished.StatusCode)
 		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
@@ -192,9 +253,9 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Contains(t, unknownResponse.Header.Get(fiber.HeaderWWWAuthenticate), "Bearer ")
 	})
 
-	// Every dispatched request is recorded once: the two connect pages plus the
-	// six MCP method calls above.
-	assert.Equal(t, 8, ops.count)
+	// Every dispatched request is recorded once: the two connect pages, the
+	// connect start, callback and finish, plus the six MCP method calls above.
+	assert.Equal(t, 11, ops.count)
 }
 
 func dispatchMCPRequest(

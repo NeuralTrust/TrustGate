@@ -25,6 +25,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -218,15 +219,16 @@ func (p *Plugin) externalFailure(
 	err error,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:    ctx,
-		Plugin: PluginName,
-		Stage:  in.Stage,
-		Mode:   in.Mode,
-		Reason: reason,
-		Detail: detail,
-		Err:    err,
-		Logger: p.logger,
-		Event:  in.Event,
+		Ctx:        ctx,
+		Plugin:     PluginName,
+		Stage:      in.Stage,
+		Mode:       in.Mode,
+		FailClosed: cfg.OnError == pluginutil.OnErrorFailClosed,
+		Reason:     reason,
+		Detail:     detail,
+		Err:        err,
+		Logger:     p.logger,
+		Event:      in.Event,
 	})
 	setExtras(in.Event, &Data{
 		Endpoint:      cfg.Endpoint,
