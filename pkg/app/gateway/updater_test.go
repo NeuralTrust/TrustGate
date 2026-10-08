@@ -333,7 +333,7 @@ func TestUpdater_Update_EmptyTenantDoesNotImplyPlatform(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
 	ent := stampedEntitlements("enterprise")
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
