@@ -353,7 +353,7 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewAuthorizationServerHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewRegisterHandler); err != nil {
+	if err := c.Provide(provideRegisterHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, store appoauth.FlowStore, cfg *config.Config) *oauthhttp.AuthorizeHandler {
@@ -426,6 +426,17 @@ func provideWhoAmIHandler(
 		opts = append(opts, mcphttp.WithWhoAmIRefuseHybrid())
 	}
 	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain, opts...)
+}
+
+func provideRegisterHandler(
+	metadata appoauth.MetadataService,
+	cfg *config.Config,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.RegisterHandler {
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
+	}
+	return oauthhttp.NewRegisterHandler(metadata, oauthhttp.WithRegistrationLimit(limiter, resolveSource))
 }
 
 func provideEndUserConnectionsHandler(

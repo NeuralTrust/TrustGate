@@ -53,9 +53,9 @@ func TestAuthorizeSkipsValidationOnlyProviderWithSameIssuer(t *testing.T) {
 					resource = "https://gateway.example/consumer/mcp"
 					paths.byPath["/consumer/mcp"] = []appconsumer.PathMatch{{GatewayID: interactive.GatewayID, Auths: auths}}
 				}
-				proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: auths}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+				proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: auths}, paths, http.DefaultClient, storeWithClient("https://client.example/callback"), nil, nil, nil)
 				location, err := authorizeLocation(proxy, t.Context(), "https://gateway.example", AuthorizeRequest{
-					ResponseType: "code", RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256", Resource: resource,
+					ResponseType: "code", ClientID: testClientID, RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256", Resource: resource,
 				})
 				require.NoError(t, err)
 				redirect, err := url.Parse(location)
@@ -82,10 +82,10 @@ func TestAuthorizeRejectsValidationOnlyResource(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/consumer/mcp": {{GatewayID: validation.GatewayID, Auths: []*authdomain.Auth{validation}}},
 	}}
-	store := newMemFlowStore()
+	store := storeWithClient("https://client.example/callback")
 	proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: []*authdomain.Auth{validation}}, paths, http.DefaultClient, store, nil, nil, nil)
 	location, err := authorizeLocation(proxy, t.Context(), "https://gateway.example", AuthorizeRequest{
-		ResponseType: "code", RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256", Resource: "https://gateway.example/consumer/mcp",
+		ResponseType: "code", ClientID: testClientID, RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256", Resource: "https://gateway.example/consumer/mcp",
 	})
 	require.NoError(t, err)
 	assertClientToldOfError(t, location, "https://client.example/callback", "invalid_target")
@@ -95,9 +95,9 @@ func TestAuthorizeRejectsValidationOnlyResource(t *testing.T) {
 func TestCallbackRejectsProviderChangedToValidationOnly(t *testing.T) {
 	idp, captured := fakeIdP(t)
 	auth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idp.URL, ClientID: "interactive-client"})
-	proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: []*authdomain.Auth{auth}}, nil, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: []*authdomain.Auth{auth}}, nil, http.DefaultClient, storeWithClient("https://client.example/callback"), nil, nil, nil)
 	location, err := authorizeLocation(proxy, t.Context(), "https://gateway.example", AuthorizeRequest{
-		ResponseType: "code", RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256",
+		ResponseType: "code", ClientID: testClientID, RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256",
 	})
 	require.NoError(t, err)
 	redirect, err := url.Parse(location)
