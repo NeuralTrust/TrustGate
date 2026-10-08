@@ -516,6 +516,41 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 </div>
 </div></body></html>`))
 
+var consentPageTmpl = template.Must(template.New("consent").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
+<title>Allow access - NeuralTrust TrustGate</title><style>` + pageCSS + `#allow:disabled{opacity:.55;cursor:default}</style></head>
+<body class="dotted"><div class="card flush">
+<div class="card-body">
+  <h1 class="title"><bdi>{{.ClientName}}</bdi> wants to use this MCP server as you</h1>
+  <p class="lede">After you sign in, it receives a token that acts on your behalf on this gateway, including the accounts you have connected to it.</p>
+  <div class="access">
+    <span class="eyebrow">Access is delivered to</span>
+    <div class="chips"><span class="chip" title="{{.RedirectURI}}">{{.RedirectTo}}</span></div>
+  </div>
+  <p class="note">` + alertGlyph + `<span>The application names itself. Only allow this if you just started connecting it yourself and you recognise where access is delivered.</span></p>
+</div>
+<div class="card-foot">
+  <form id="allow-form" method="post" action="/oauth/authorize"><input type="hidden" name="state" value="{{.State}}"><button id="allow" class="btn primary block" type="submit" name="decision" value="approve" disabled>Allow and sign in</button></form>
+  <noscript><form method="post" action="/oauth/authorize"><input type="hidden" name="state" value="{{.State}}"><button class="btn primary block" type="submit" name="decision" value="approve">Allow and sign in</button></form></noscript>
+  <form method="post" action="/oauth/authorize"><input type="hidden" name="state" value="{{.State}}"><button class="btn ghost block" type="submit" name="decision" value="deny">Cancel</button></form>
+  <script>(function () {
+    var button = document.getElementById("allow"), timer = null, interacted = false;
+    function lock() { clearTimeout(timer); timer = null; button.disabled = true; }
+    function arm() {
+      if (timer || !interacted || document.visibilityState !== "visible" || !document.hasFocus()) { return; }
+      timer = setTimeout(function () { button.disabled = false; }, 800);
+    }
+    function onInput() { interacted = true; arm(); }
+    ["pointermove", "keydown"].forEach(function (e) { document.addEventListener(e, onInput); });
+    ["visibilitychange", "blur", "pagehide"].forEach(function (e) { window.addEventListener(e, function () { interacted = false; lock(); }); });
+    window.addEventListener("focus", arm);
+    document.getElementById("allow-form").addEventListener("submit", function () { setTimeout(lock, 0); });
+  })();</script>
+` + securedByFooter + `
+</div>
+</div></body></html>`))
+
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `

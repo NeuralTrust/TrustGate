@@ -22,19 +22,20 @@ import (
 )
 
 type CallbackHandler struct {
-	proxy appoauth.AuthProxy
+	proxy   appoauth.AuthProxy
+	cookies FlowCookies
 }
 
-func NewCallbackHandler(proxy appoauth.AuthProxy) *CallbackHandler {
-	return &CallbackHandler{proxy: proxy}
+func NewCallbackHandler(proxy appoauth.AuthProxy, cookies FlowCookies) *CallbackHandler {
+	return &CallbackHandler{proxy: proxy, cookies: cookies}
 }
 
 func (h *CallbackHandler) Handle(c *fiber.Ctx) error {
 	state := c.Query("state")
 	// The binding is single-use: whatever happens next, the browser must start
 	// over to get another one.
-	bound := c.Cookies(stateCookieName(c))
-	clearStateCookie(c)
+	bound := c.Cookies(h.cookies.stateCookieName(c))
+	h.cookies.clearStateCookie(c)
 	if err := requireStateBinding(bound, state); err != nil {
 		return writeOAuthError(c, err)
 	}

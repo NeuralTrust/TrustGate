@@ -317,6 +317,10 @@ type ServerConfig struct {
 	// AdminTokenMaxTTL is the furthest a console token's exp may sit in the
 	// future. Tokens without exp, or beyond this horizon, are rejected.
 	AdminTokenMaxTTL time.Duration
+	// OAuthInsecureCookies lets the MCP OAuth flow cookies drop the Secure
+	// attribute on plain-http hosts other than loopback (local DNS, on-prem over
+	// http). Leave it off wherever the MCP plane is served over https.
+	OAuthInsecureCookies bool
 }
 
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
@@ -637,6 +641,7 @@ func getServerConfig() ServerConfig {
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
 		AdminTokenMaxTTL:      min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
+		OAuthInsecureCookies:  getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
