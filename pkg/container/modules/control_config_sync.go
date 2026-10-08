@@ -20,6 +20,7 @@ import (
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -80,7 +81,7 @@ type compilerReaders struct {
 // write use cases call. The dispatcher and gRPC server are started in the
 // control/run run funcs; nothing here resolves on the data plane graph.
 func ControlConfigSync(c *container.Container) error {
-	if err := c.Provide(func(r compilerReaders, cfg *config.Config, logger *slog.Logger) (*appsnapshot.Compiler, error) {
+	if err := c.Provide(func(r compilerReaders, shared mcpoauth.Provider, cfg *config.Config, logger *slog.Logger) (*appsnapshot.Compiler, error) {
 		keys, err := playgroundSnapshotKeys(cfg)
 		if err != nil {
 			return nil, err
@@ -92,6 +93,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
 			appsnapshot.WithPinnedTools(r.PinnedTools),
+			appsnapshot.WithSharedOAuth(shared),
 		), nil
 	}); err != nil {
 		return err

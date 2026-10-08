@@ -39,7 +39,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		if err != nil {
 			return nil, err
 		}
-		return manualAuth(effective, meta), nil
+		return withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), nil
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		if err != nil {
 			return nil, err
 		}
-		return manualAuth(effective, meta), nil
+		return withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), nil
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -91,15 +91,9 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 	if cfg == nil || shared == nil {
 		return cfg
 	}
-	code := ""
-	if reg != nil && reg.MCPTarget != nil {
-		code = strings.TrimSpace(reg.MCPTarget.Code)
-	}
-	if code == "" {
-		code = strings.TrimSpace(cfg.Provider)
-	}
+	code := sharedOAuthCode(cfg, reg)
 	creds, ok := shared.CredentialsFor(code)
-	if !ok {
+	if !ok || !mcpoauth.UsesProviderEndpoints(code, cfg.AuthorizeURL, cfg.TokenURL) {
 		return cfg
 	}
 	if id := strings.TrimSpace(cfg.ClientID); id != "" && id != creds.ClientID {
@@ -109,6 +103,38 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 	out.ClientID = creds.ClientID
 	out.ClientSecret = creds.ClientSecret
 	return &out
+}
+
+// withholdSharedSecret drops the platform's shared client secret from a
+// configuration whose endpoints were discovered rather than configured.
+// applySharedOAuth accepts empty endpoints, so it cannot know where discovery
+// will point; the secret only goes to the provider's own authorization server.
+func withholdSharedSecret(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
+	if cfg == nil || shared == nil {
+		return cfg
+	}
+	code := sharedOAuthCode(cfg, reg)
+	creds, ok := shared.CredentialsFor(code)
+	if !ok || cfg.ClientSecret == "" || cfg.ClientSecret != creds.ClientSecret {
+		return cfg
+	}
+	if mcpoauth.UsesProviderEndpoints(code, cfg.AuthorizeURL, cfg.TokenURL) {
+		return cfg
+	}
+	out := *cfg
+	out.ClientSecret = ""
+	return &out
+}
+
+func sharedOAuthCode(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry) string {
+	code := ""
+	if reg != nil && reg.MCPTarget != nil {
+		code = strings.TrimSpace(reg.MCPTarget.Code)
+	}
+	if code == "" {
+		code = strings.TrimSpace(cfg.Provider)
+	}
+	return code
 }
 
 // applyCatalog lets the curated catalog correct the scopes and resource

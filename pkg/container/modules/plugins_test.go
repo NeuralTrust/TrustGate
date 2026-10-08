@@ -107,7 +107,7 @@ func TestNewPluginRegistry_OpenAIModerationCatalogMetadata(t *testing.T) {
 	for _, f := range entry.SettingsSchema.Fields {
 		keys = append(keys, f.Key)
 	}
-	assert.ElementsMatch(t, []string{"api_key", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
+	assert.ElementsMatch(t, []string{"api_key", "on_error", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
 }
 
 // TestNewPluginRegistry_ContentReaderSet pins which plugins the planner

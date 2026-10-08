@@ -322,6 +322,14 @@ type ServerConfig struct {
 	// attribute on plain-http hosts other than loopback (local DNS, on-prem over
 	// http). Leave it off wherever the MCP plane is served over https.
 	OAuthInsecureCookies bool
+	// StoredSecretsEncryptionEnabled makes the registry and auth repositories
+	// store credentials encrypted (enc:v1) and runs the startup backfill that
+	// encrypts rows written before, on the admin and run planes. Every read
+	// path decrypts enc:v1 values whatever its value. Turn it on only once
+	// every plane (admin, proxy, mcp, worker) runs a version that reads enc:v1,
+	// and do not roll back past that version afterwards.
+	// STORED_SECRETS_ENCRYPTION_ENABLED, default false.
+	StoredSecretsEncryptionEnabled bool
 }
 
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
@@ -661,15 +669,16 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
-		MCPExtraBaseDomains:   splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
-		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
-		MCPOAuthClientName:    strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
-		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
-		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
-		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
-		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
-		AdminTokenMaxTTL:      min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
-		OAuthInsecureCookies:  getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
+		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
+		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
+		STSIssuer:                      getEnv("STS_ISSUER", "trustgate"),
+		STSSigningKey:                  getEnv("STS_SIGNING_KEY", ""),
+		TrustXFCCFrom:                  splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		ServeHybridGateways:            getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
+		AdminTokenMaxTTL:               min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
+		OAuthInsecureCookies:           getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
+		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", false),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),

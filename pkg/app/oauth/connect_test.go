@@ -46,6 +46,8 @@ type memConnectStore struct {
 	tickets       map[string]oauth.ConnectTicket
 	connects      map[string]oauth.ConnectState
 	clients       map[string]oauth.RegisteredClient
+	finishes      map[string]oauth.ConnectFinish
+	finishByState map[string]string
 	saveTicketErr error
 }
 
@@ -118,6 +120,45 @@ func (m *memConnectStore) TakeConnect(_ context.Context, state string) (*oauth.C
 	}
 	delete(m.connects, state)
 	return &s, nil
+}
+
+func (m *memConnectStore) PeekConnect(_ context.Context, state string) (*oauth.ConnectState, error) {
+	s, ok := m.connects[state]
+	if !ok {
+		return nil, nil
+	}
+	return &s, nil
+}
+
+func (m *memConnectStore) SaveFinish(_ context.Context, token string, f oauth.ConnectFinish) error {
+	if m.finishes == nil {
+		m.finishes = map[string]oauth.ConnectFinish{}
+		m.finishByState = map[string]string{}
+	}
+	if previous, ok := m.finishByState[f.State]; ok && previous != token {
+		delete(m.finishes, previous)
+	}
+	m.finishByState[f.State] = token
+	m.finishes[token] = f
+	return nil
+}
+
+func (m *memConnectStore) TakeFinish(_ context.Context, token string) (*oauth.ConnectFinish, error) {
+	f, ok := m.finishes[token]
+	if !ok {
+		return nil, nil
+	}
+	delete(m.finishes, token)
+	return &f, nil
+}
+
+// startLocation reads a started authorization as the provider authorize URL,
+// which is what most tests follow.
+func startLocation(started *oauth.ConnectStart, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	return started.Location, nil
 }
 
 type memVaultRepo struct {
@@ -237,6 +278,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "google-access", "expires_in": 3600})
 	}))
 	defer tokenURL.Close()
+	googleToken := routeHostTo(t, "oauth2.googleapis.com", tokenURL.URL)
 
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "gmail-mcp", "", &registrydomain.MCPTarget{
@@ -249,7 +291,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 			ClientID:     "stale-client",
 			ClientSecret: "stale-secret",
 			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
-			TokenURL:     tokenURL.URL,
+			TokenURL:     "https://oauth2.googleapis.com/token",
 			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
 		},
 	})
@@ -270,7 +312,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 		store,
 		&memVaultRepo{},
 		&stubDataFinder{data: data},
-		infraoauth.NewProviderClient(nil),
+		infraoauth.NewProviderClient(googleToken),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
@@ -283,7 +325,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "com.google.workspace/gmail", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -309,6 +351,30 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 		t.Fatalf("refresh cfg = %+v", refreshCfg)
 	}
 }
+
+// routeHostTo answers an HTTP client whose requests to host go to target
+// instead, so a test can point a provider's real endpoint at a local server.
+func routeHostTo(t *testing.T, host, target string) *http.Client {
+	t.Helper()
+	to, err := url.Parse(target)
+	if err != nil {
+		t.Fatalf("parse target: %v", err)
+	}
+	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Hostname() != host {
+			return nil, errors.New("unexpected host " + r.URL.Host)
+		}
+		out := r.Clone(r.Context())
+		out.URL.Scheme = to.Scheme
+		out.URL.Host = to.Host
+		out.Host = to.Host
+		return http.DefaultTransport.RoundTrip(out)
+	})}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestConnectService_SharedGoogleWorkspacePreservesBYO(t *testing.T) {
 	t.Parallel()
@@ -409,7 +475,7 @@ func TestConnectService_OverlaysCatalogGmailModifyScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "com.google.workspace/gmail", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -476,7 +542,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		t.Fatalf("page = %+v, want one unlinked github provider", page)
 	}
 
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "github", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "github", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -618,7 +684,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -660,7 +726,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		t.Fatalf("registrations = %d, want exactly 1 (Callback must reuse the cached client)", registrations)
 	}
 
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", ""); err != nil {
+	if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", "")); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
 	if registrations != 1 {
@@ -721,7 +787,7 @@ func TestConnectService_ManualClientDiscoversEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(context.Background(), "https://gw.example.com", ticket, "com.snowflake/mcp", "")
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.snowflake/mcp", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -782,7 +848,7 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 	)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy", ""); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
+	if _, err := startLocation(svc.Start(ctx, "https://gw", "https://gw", ticket, "legacy", "")); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
 		t.Fatalf("error = %v, want oauth.ErrUpstreamNotDiscoverable", err)
 	}
 }
@@ -796,7 +862,7 @@ func TestConnectService_StateIsSingleUse(t *testing.T) {
 	svc, _, gw := connectFixture(t, provider.URL)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	location, _ := svc.Start(ctx, "https://gw", ticket, "github", "")
+	location, _ := startLocation(svc.Start(ctx, "https://gw", "https://gw", ticket, "github", ""))
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
 
@@ -816,7 +882,7 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 		t.Fatalf("error = %v, want oauth.ErrTicketNotFound", err)
 	}
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	if _, err := svc.Start(ctx, "https://gw", ticket, "slack", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
+	if _, err := startLocation(svc.Start(ctx, "https://gw", "https://gw", ticket, "slack", "")); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("error = %v, want oauth.ErrProviderNotFound", err)
 	}
 }
@@ -942,7 +1008,7 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	svc, vault, gw := connectFixture(t, "https://unused")
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	location, _ := svc.Start(ctx, "https://gw", ticket, "github", "")
+	location, _ := startLocation(svc.Start(ctx, "https://gw", "https://gw", ticket, "github", ""))
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
 
@@ -1032,7 +1098,7 @@ func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing
 	}
 
 	// Start mints an authorize URL, proving forwarded auth resolves end to end.
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "com.notion/mcp", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -1101,7 +1167,7 @@ func TestConnectService_APIKeyTicketWithNoForwardedProviders(t *testing.T) {
 
 	// Still pinned to nothing: the ticket cannot be used to connect a provider
 	// that gets added to the consumer later.
-	if _, err := svc.Start(ctx, "https://gw", ticketID, "github", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
+	if _, err := startLocation(svc.Start(ctx, "https://gw", "https://gw", ticketID, "github", "")); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("Start error = %v, want oauth.ErrProviderNotFound", err)
 	}
 }
@@ -1184,7 +1250,7 @@ func TestConnectService_PageReportsAReconnectWhenTheRegisteredClientIsGone(t *te
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", ""); err != nil {
+	if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", "")); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	statuses, err = svc.Statuses(ctx, gw, "alice", "/dev/mcp")
@@ -1329,7 +1395,7 @@ func TestConnectService_TwoInstancesOfOneProviderConnectSeparately(t *testing.T)
 
 	// Connect the second instance, naming it: the flow must not fall back to
 	// whichever registry happens to serve the provider first.
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "app.linear/mcp", prod.ID.String())
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "app.linear/mcp", prod.ID.String()))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -1434,7 +1500,7 @@ func TestConnectService_RegisteredClientFollowsTheCredentialNotTheRegistry(t *te
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", connected.ID.String()); err != nil {
+	if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", connected.ID.String())); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -1532,7 +1598,7 @@ func TestConnectService_ProviderTicketReachesOnlyItsProvider(t *testing.T) {
 		t.Fatalf("page code = %q, want the pinned server's own code", page.Code)
 	}
 
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "app.linear/mcp", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
+	if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "app.linear/mcp", "")); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("Start on another provider = %v, want ErrProviderNotFound", err)
 	}
 	if err := svc.Disconnect(ctx, ticket, "app.linear/mcp", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
@@ -1540,7 +1606,7 @@ func TestConnectService_ProviderTicketReachesOnlyItsProvider(t *testing.T) {
 	}
 
 	// Its own provider still works, or the pin would have cost the link its job.
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp", ""); err != nil {
+	if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "com.notion/mcp", "")); err != nil {
 		t.Fatalf("Start on its own provider: %v", err)
 	}
 }
@@ -1624,7 +1690,7 @@ func TestConnectService_ASharedInstanceIsReportedButNotRevocable(t *testing.T) {
 	// Alice cannot connect it either, and the refusal is the point: a page she
 	// could walk would store a credential under a subject the runtime never
 	// reads, and leave her told the server is still not connected.
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp", shared.ID.String()); !errors.Is(err, oauth.ErrSharedAccountNotYours) {
+	if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "com.notion/mcp", shared.ID.String())); !errors.Is(err, oauth.ErrSharedAccountNotYours) {
 		t.Fatalf("Start = %v, want ErrSharedAccountNotYours", err)
 	}
 

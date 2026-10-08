@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
@@ -62,10 +63,12 @@ func WithDeleteHook(hook DeleteHook) Option {
 }
 
 type Repository struct {
-	conn        *database.Connection
-	cipher      vaultdomain.Encrypter
-	outbox      outbox.Appender
-	deleteHooks []DeleteHook
+	conn          *database.Connection
+	cipher        vaultdomain.Encrypter
+	sealer        *crypto.FieldSealer
+	encryptWrites bool
+	outbox        outbox.Appender
+	deleteHooks   []DeleteHook
 }
 
 // NewRepository builds the pgx registry repository from the shared connection.
@@ -113,7 +116,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal health_checks: %w", err)
 	}
-	mcpTargetBytes, err := marshalMCPTarget(b.MCPTarget)
+	mcpTargetBytes, err := r.marshalMCPTarget(b.ID, b.MCPTarget)
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
 	}
@@ -150,10 +153,6 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal health_checks: %w", err)
 	}
-	mcpTargetBytes, err := marshalMCPTarget(b.MCPTarget)
-	if err != nil {
-		return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
-	}
 	pricingBytes, err := marshalPricing(b.Pricing())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal pricing: %w", err)
@@ -175,8 +174,12 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		 WHERE id = $1 AND gateway_id = $14
 		RETURNING tool_policy`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		mcpTargetBytes, err := r.encodeMCPTargetForUpdate(ctx, tx, b.ID, b.GatewayID, b.MCPTarget)
+		if err != nil {
+			return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
+		}
 		var stored string
-		err := tx.QueryRow(ctx, query,
+		err = tx.QueryRow(ctx, query,
 			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, toolPolicy(b), b.UpdatedAt, b.GatewayID, b.KeepStoredToolPolicy,
 		).Scan(&stored)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -235,7 +238,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.R
 		  FROM registries
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
-	b, err := r.scanRegistry(row)
+	b, err := r.scanRegistry(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -262,7 +265,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 
 	out := make([]*domain.Registry, 0, len(registryIDs))
 	for rows.Next() {
-		b, err := r.scanRegistry(rows)
+		b, err := r.scanRegistry(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("registry repository: scan: %w", err)
 		}
@@ -311,7 +314,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 
 	items := make([]*domain.Registry, 0, filter.Size)
 	for rows.Next() {
-		b, err := r.scanRegistry(rows)
+		b, err := r.scanRegistry(ctx, rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("registry repository: scan: %w", err)
 		}
@@ -327,7 +330,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
+func (r *Repository) scanRegistry(ctx context.Context, s rowScanner) (*domain.Registry, error) {
 	b := &domain.Registry{}
 	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw, pricingRaw []byte
 	var providerRaw *string
@@ -390,6 +393,7 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 		if err := json.Unmarshal(mcpTargetRaw, &t); err != nil {
 			return nil, fmt.Errorf("scan mcp_target: %w: %w", commonerrors.ErrCorruptData, err)
 		}
+		r.openMCPTargetForRead(ctx, b.ID, &t)
 		b.MCPTarget = &t
 	}
 
@@ -407,11 +411,18 @@ func registryType(b *domain.Registry) string {
 	return string(b.Type)
 }
 
-func marshalMCPTarget(t *domain.MCPTarget) ([]byte, error) {
+func (r *Repository) marshalMCPTarget(id ids.RegistryID, t *domain.MCPTarget) ([]byte, error) {
 	if t == nil {
 		return nil, nil
 	}
-	return json.Marshal(t)
+	if !r.encryptWrites {
+		return json.Marshal(t)
+	}
+	stored, err := r.sealMCPTarget(id, t)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(stored)
 }
 
 func marshalProviderOptions(o map[string]any) ([]byte, error) {

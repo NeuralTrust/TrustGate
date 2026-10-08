@@ -25,6 +25,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -38,8 +39,13 @@ func Auth(c *container.Container) error {
 }
 
 func provideAuthRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
-		return authrepo.NewRepository(conn, appender)
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender, sealer *crypto.FieldSealer, cfg *config.Config) *authrepo.Repository {
+		return authrepo.NewRepository(conn, appender, authrepo.WithFieldSealer(sealer, cfg.Server.StoredSecretsEncryptionEnabled))
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(r *authrepo.Repository) domain.Repository {
+		return r
 	})
 }
 

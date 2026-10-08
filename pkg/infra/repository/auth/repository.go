@@ -23,6 +23,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
@@ -42,15 +43,26 @@ const (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn   *database.Connection
-	outbox outbox.Appender
+	conn          *database.Connection
+	outbox        outbox.Appender
+	sealer        *crypto.FieldSealer
+	encryptWrites bool
 }
+
+// Option customizes the repository at construction time.
+type Option func(*Repository)
 
 // NewRepository builds the pgx auth repository from the shared connection.
 // Each write commits its config-snapshot change marker in the same transaction
 // via the injected outbox appender.
-func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
-	return &Repository{conn: conn, outbox: appender}
+func NewRepository(conn *database.Connection, appender outbox.Appender, opts ...Option) *Repository {
+	r := &Repository{conn: conn, outbox: appender}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
 }
 
 // withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
@@ -68,7 +80,7 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	if a == nil {
 		return errors.New("auth repository: nil auth")
 	}
-	configBytes, err := json.Marshal(a.Config)
+	configBytes, err := r.marshalConfig(a.ID, a.Config)
 	if err != nil {
 		return fmt.Errorf("auth repository: marshal config: %w", err)
 	}
@@ -99,10 +111,6 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 	if a == nil {
 		return errors.New("auth repository: nil auth")
 	}
-	configBytes, err := json.Marshal(a.Config)
-	if err != nil {
-		return fmt.Errorf("auth repository: marshal config: %w", err)
-	}
 	const query = `
 		UPDATE auths
 		   SET name       = $2,
@@ -116,6 +124,10 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       updated_at = $10
 		 WHERE id = $1 AND gateway_id = $11`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		configBytes, err := r.encodeConfigForUpdate(ctx, tx, a.ID, a.GatewayID, a.Config)
+		if err != nil {
+			return fmt.Errorf("auth repository: marshal config: %w", err)
+		}
 		cmd, err := tx.Exec(ctx, query,
 			a.ID, a.Name, string(a.Type), a.Enabled, configBytes,
 			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
@@ -148,7 +160,7 @@ func (r *Repository) UpdateBudget(ctx context.Context, a *domain.Auth) (*domain.
 	var stored *domain.Auth
 	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		var scanErr error
-		stored, scanErr = scanAuth(tx.QueryRow(ctx, query, a.ID, a.GatewayID, budget, a.UpdatedAt))
+		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, budget, a.UpdatedAt))
 		if errors.Is(scanErr, pgx.ErrNoRows) {
 			return domain.ErrNotFound
 		}
@@ -180,7 +192,7 @@ func (r *Repository) UpdateOwnerGroups(ctx context.Context, a *domain.Auth) (*do
 	var stored *domain.Auth
 	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		var scanErr error
-		stored, scanErr = scanAuth(tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt))
+		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt))
 		if errors.Is(scanErr, pgx.ErrNoRows) {
 			return domain.ErrNotFound
 		}
@@ -275,7 +287,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 		  FROM auths
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
-	a, err := scanAuth(row)
+	a, err := r.scanAuth(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -293,7 +305,7 @@ func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*dom
 		   AND type = 'api_key'
 		   AND enabled = TRUE`
 	row := r.conn.Pool.QueryRow(ctx, query, keyHash)
-	a, err := scanAuth(row)
+	a, err := r.scanAuth(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -312,7 +324,7 @@ func (r *Repository) FindByOwner(ctx context.Context, gatewayID ids.GatewayID, o
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND owner_id = $2`
-	a, err := scanAuth(r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID))
+	a, err := r.scanAuth(ctx, r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -339,7 +351,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 
 	out := make([]*domain.Auth, 0, len(authIDs))
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -373,7 +385,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 
 	var out []*domain.Auth
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -406,7 +418,7 @@ func (r *Repository) ListEnabledByGatewayAndType(
 
 	out := make([]*domain.Auth, 0)
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -463,7 +475,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 
 	items := make([]*domain.Auth, 0, page.Size)
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -479,7 +491,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanAuth(s rowScanner) (*domain.Auth, error) {
+func (r *Repository) scanAuth(ctx context.Context, s rowScanner) (*domain.Auth, error) {
 	a := &domain.Auth{}
 	var (
 		authType  string
@@ -515,6 +527,7 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 		if err := json.Unmarshal(configRaw, &a.Config); err != nil {
 			return nil, fmt.Errorf("scan config: %w", err)
 		}
+		r.openConfigForRead(ctx, a.ID, &a.Config)
 	}
 	if len(budgetRaw) > 0 {
 		if err := json.Unmarshal(budgetRaw, &a.Budget); err != nil {

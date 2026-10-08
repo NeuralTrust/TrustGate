@@ -69,6 +69,7 @@ type updater struct {
 	logger           *slog.Logger
 	signaler         configsyncport.SnapshotSignaler
 	rateLimitEnabled bool
+	reservedDomains  []string
 }
 
 func NewUpdater(
@@ -80,8 +81,10 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
+	reservedDomains ...string,
 ) Updater {
 	return &updater{
+		reservedDomains:  reservedDomains,
 		repo:             repo,
 		registries:       registries,
 		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
@@ -109,6 +112,17 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		g.Status = *in.Status
 	}
 	if in.Domain != nil {
+		// Checked only when the domain changes: a row stored before the rule
+		// must still take unrelated updates.
+		changed, err := domainChanged(old.Domain, *in.Domain)
+		if err != nil {
+			return nil, err
+		}
+		if changed && !in.PlatformAdmin {
+			if err := domain.CheckDomainNotReserved(*in.Domain, u.reservedDomains); err != nil {
+				return nil, err
+			}
+		}
 		g.Domain = *in.Domain
 	}
 	tenantID := old.TenantID()
@@ -185,4 +199,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		u.signaler.Signal(ctx)
 	}
 	return g, nil
+}
+
+func domainChanged(stored, requested string) (bool, error) {
+	normalized, err := domain.NormalizeDomain(requested)
+	if err != nil {
+		return false, err
+	}
+	return normalized != stored, nil
 }

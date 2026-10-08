@@ -26,6 +26,13 @@ import (
 // streamed legs, so the caller never sees which vendor made the call.
 const DefaultBlockMessage = "This content violates our usage policy."
 
+// DefaultUnavailableMessage is the vendor-neutral message a guardrail plugin
+// returns when the guardrail itself could not be consulted and the policy's
+// on_error is fail_closed. Unlike DefaultBlockMessage it is never replaced by
+// the policy's configured message: that message is for a real finding, not
+// for the guardrail being unavailable.
+const DefaultUnavailableMessage = "This content could not be checked right now."
+
 // PluginError is returned by a plugin to reject a request and short-circuit the
 // chain with a specific HTTP status (e.g. rate limit 429, request too large 413).
 type PluginError struct {

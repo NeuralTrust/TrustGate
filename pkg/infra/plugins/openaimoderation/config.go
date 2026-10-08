@@ -62,6 +62,10 @@ type Settings struct {
 	Thresholds     map[string]float64 `mapstructure:"thresholds"`
 	BlockOnFlagged bool               `mapstructure:"block_on_flagged"`
 	Action         ActionSettings     `mapstructure:"action"`
+	// OnError decides what a request gets when the guardrail cannot give a
+	// verdict on its buffered leg: fail_open (the default) lets it through and
+	// records failed_open, fail_closed refuses it in a mode that blocks.
+	OnError string `mapstructure:"on_error"`
 	// Streaming tunes the per-block inspection of the pre_response leg. It is on
 	// when the block is absent; streaming.enabled: false opts out.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -91,6 +95,7 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 func (s *Settings) applyDefaults() {
+	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if s.Model == "" {
 		s.Model = defaultModel
 	}
@@ -107,6 +112,9 @@ func (s *Settings) applyDefaults() {
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.APIKey) == "" {
 		return fmt.Errorf("openai_moderation: api_key is required")
+	}
+	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
+		return err
 	}
 	for _, stage := range s.Stages {
 		if stage != stagePreRequest && stage != stagePreResponse {

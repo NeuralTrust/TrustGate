@@ -665,3 +665,69 @@ func TestUpdater_Update_StoreModePreservedWhenOmitted(t *testing.T) {
 		t.Fatalf("StoreMode = %q, want curated preserved", got.StoreMode())
 	}
 }
+
+func TestUpdater_Update_RefusesAReservedDomainForATenant(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(domain.Rehydrate(id, "prod", "active", "", nil, nil, nil, now, now), nil).Once()
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), nil, nil, newTestLogger(), nil, false, "llm.example.test")
+
+	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:       id,
+		TenantID: "acme",
+		Domain:   ptr("other.llm.example.test"),
+	})
+
+	if !errors.Is(err, domain.ErrReservedDomain) {
+		t.Fatalf("err = %v, want ErrReservedDomain", err)
+	}
+}
+
+// A row stored before the rule must still take changes to other fields.
+func TestUpdater_Update_KeepsAStoredReservedDomainWhenItDoesNotChange(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(domain.Rehydrate(id, "prod", "active", "acme.llm.example.test", nil, nil, nil, now, now), nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false, "llm.example.test")
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:       id,
+		TenantID: "acme",
+		Domain:   ptr("acme.llm.example.test"),
+		Status:   ptr("paused"),
+	})
+
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Status != "paused" {
+		t.Fatalf("Status = %q, want paused", got.Status)
+	}
+}
+
+func TestUpdater_Update_LetsThePlatformSetAReservedDomain(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(domain.Rehydrate(id, "prod", "active", "", nil, nil, nil, now, now), nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false, "llm.example.test")
+
+	if _, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:            id,
+		PlatformAdmin: true,
+		Domain:        ptr("acme.llm.example.test"),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}

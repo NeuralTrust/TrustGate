@@ -16,6 +16,7 @@ package modules
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -46,7 +47,54 @@ func Core(c *container.Container) error {
 	if err := c.Provide(database.NewMigrationsManagerProvider); err != nil {
 		return err
 	}
+	if err := provideFieldSealer(c); err != nil {
+		return err
+	}
 	return provideOutbox(c)
+}
+
+// provideFieldSealer registers the sealer the registry and auth repositories
+// encrypt stored credentials with, keyed from SERVER_SECRET_KEY (provisioned
+// the same way as for the vault cipher). It does not depend on the vault
+// cipher, so a plane that never needed the key keeps booting without one: with
+// STORED_SECRETS_ENCRYPTION_ENABLED off and no usable key the sealer is nil,
+// writes stay unencrypted and an encrypted value reads as empty (logged).
+func provideFieldSealer(c *container.Container) error {
+	return c.Provide(func(cfg *config.Config, cc cache.Client, logger *slog.Logger) (*crypto.FieldSealer, error) {
+		secret, err := resolveServerSecret(cfg, cc, logger)
+		if err == nil {
+			var sealer *crypto.FieldSealer
+			if sealer, err = crypto.NewFieldSealer(secret, crypto.RegistrySecretsPurpose); err == nil {
+				return sealer, nil
+			}
+		}
+		if cfg.Server.StoredSecretsEncryptionEnabled {
+			return nil, fmt.Errorf("STORED_SECRETS_ENCRYPTION_ENABLED needs a usable SERVER_SECRET_KEY: %w", err)
+		}
+		logger.Warn("stored credential encryption unavailable: no usable SERVER_SECRET_KEY; encrypted values read as empty",
+			slog.String("component", "stored_secrets"), slog.String("error", err.Error()))
+		return nil, nil
+	})
+}
+
+// resolveServerSecret returns SERVER_SECRET_KEY. In prod an unset key is
+// provisioned once through Redis and shared by every replica; it is written
+// back into cfg so JWT managers (which hold a pointer to it) verify with the
+// same secret.
+func resolveServerSecret(cfg *config.Config, cc cache.Client, logger *slog.Logger) (string, error) {
+	if cfg.Server.SecretKey != "" {
+		return cfg.Server.SecretKey, nil
+	}
+	env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
+	if env != "prod" && env != "production" {
+		return "", nil
+	}
+	resolved, err := crypto.ResolveSharedSecretKey(context.Background(), cc.RedisClient(), logger)
+	if err != nil {
+		return "", err
+	}
+	cfg.Server.SecretKey = resolved
+	return resolved, nil
 }
 
 // provideOutbox registers the config-snapshot change-marker outbox repository and
@@ -90,19 +138,9 @@ func provideRuntimeBase(c *container.Container) error {
 		return err
 	}
 	return c.Provide(func(cfg *config.Config, cc cache.Client, logger *slog.Logger) (vaultdomain.Encrypter, error) {
-		secret := cfg.Server.SecretKey
-		if secret == "" {
-			env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
-			if env == "prod" || env == "production" {
-				resolved, err := crypto.ResolveSharedSecretKey(context.Background(), cc.RedisClient(), logger)
-				if err != nil {
-					return nil, err
-				}
-				secret = resolved
-				// Mutate the shared ServerConfig so JWT managers (which hold a
-				// pointer to it) verify with the same secret as the vault cipher.
-				cfg.Server.SecretKey = resolved
-			}
+		secret, err := resolveServerSecret(cfg, cc, logger)
+		if err != nil {
+			return nil, err
 		}
 		return crypto.NewCipher(secret)
 	})

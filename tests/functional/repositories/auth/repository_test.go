@@ -14,6 +14,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
@@ -23,7 +24,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testSecretKey = "functional-test-secret-0123456789abcdef"
+
 func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
+	t.Helper()
+	r, gw, _ := setupRepoConn(t)
+	return r, gw
+}
+
+func setupRepoConn(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *database.Connection) {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
 	if dsn == "" {
@@ -58,8 +67,12 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
 		pool.Close()
 	})
 
+	sealer, err := crypto.NewFieldSealer(testSecretKey, crypto.RegistrySecretsPurpose)
+	if err != nil {
+		t.Fatalf("new field sealer: %v", err)
+	}
 	appender := outboxrepo.NewRepository(conn)
-	return repo.NewRepository(conn, appender), gatewayrepo.NewRepository(conn, appender)
+	return repo.NewRepository(conn, appender, repo.WithFieldSealer(sealer, true)), gatewayrepo.NewRepository(conn, appender), conn
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {

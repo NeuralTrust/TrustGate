@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -135,7 +136,7 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 	}
 
 	provider := "openai"
-	reg, err := r.scanRegistry(fakeRow{values: []any{
+	reg, err := r.scanRegistry(context.Background(), fakeRow{values: []any{
 		ids.New[ids.RegistryKind](),
 		ids.New[ids.GatewayKind](),
 		"openai-pool",
@@ -174,7 +175,7 @@ func TestRepository_ScanPricing(t *testing.T) {
 
 	provider := "openai"
 	pricingJSON := []byte(`{"discount":0.2,"overrides":{"gpt-4o":{"input":0.0000015,"output":0.000006}}}`)
-	reg, err := r.scanRegistry(fakeRow{values: []any{
+	reg, err := r.scanRegistry(context.Background(), fakeRow{values: []any{
 		ids.New[ids.RegistryKind](),
 		ids.New[ids.GatewayKind](),
 		"openai-pool",

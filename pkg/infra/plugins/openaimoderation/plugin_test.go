@@ -872,3 +872,27 @@ func TestValidateSettingsWriteRejectsFinalPassOptOut(t *testing.T) {
 		"a policy already stored with final_pass: false must stay editable")
 	require.NoError(t, p.ValidateConfig(settings), "the rule applies on write only, never when a policy loads")
 }
+
+func TestExecuteFailureFailsClosedWhenThePolicyAsks(t *testing.T) {
+	t.Parallel()
+	srv := newModeratorServer(t, &fakeModerator{status: http.StatusInternalServerError, rawBody: `{"error":"boom"}`})
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+	settings := blockSettings()
+	settings["on_error"] = "fail_closed"
+
+	event, _ := newEvent()
+	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, requestContext(), nil, event))
+
+	var pluginErr *appplugins.PluginError
+	require.ErrorAs(t, err, &pluginErr)
+	assert.Equal(t, http.StatusBadGateway, pluginErr.StatusCode)
+}
+
+func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
+	t.Parallel()
+	settings := blockSettings()
+	settings["on_error"] = "retry"
+
+	_, err := parseConfig(settings)
+	require.Error(t, err)
+}

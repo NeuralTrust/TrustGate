@@ -693,26 +693,28 @@ func (_c *ConnectService_RefreshAuth_Call) RunAndReturn(run func(context.Context
 	return _c
 }
 
-func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID string, provider string, instanceID string) (string, error) {
-	ret := _m.Called(ctx, baseURL, ticketID, provider, instanceID)
+func (_m *ConnectService) Start(ctx context.Context, baseURL string, startOrigin string, ticketID string, provider string, instanceID string) (*oauth.ConnectStart, error) {
+	ret := _m.Called(ctx, baseURL, startOrigin, ticketID, provider, instanceID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Start")
 	}
 
-	var r0 string
+	var r0 *oauth.ConnectStart
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string) (string, error)); ok {
-		return rf(ctx, baseURL, ticketID, provider, instanceID)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string) (*oauth.ConnectStart, error)); ok {
+		return rf(ctx, baseURL, startOrigin, ticketID, provider, instanceID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string) string); ok {
-		r0 = rf(ctx, baseURL, ticketID, provider, instanceID)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string) *oauth.ConnectStart); ok {
+		r0 = rf(ctx, baseURL, startOrigin, ticketID, provider, instanceID)
 	} else {
-		r0 = ret.Get(0).(string)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*oauth.ConnectStart)
+		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string) error); ok {
-		r1 = rf(ctx, baseURL, ticketID, provider, instanceID)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, string) error); ok {
+		r1 = rf(ctx, baseURL, startOrigin, ticketID, provider, instanceID)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -724,23 +726,181 @@ type ConnectService_Start_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) Start(ctx interface{}, baseURL interface{}, ticketID interface{}, provider interface{}, instanceID interface{}) *ConnectService_Start_Call {
-	return &ConnectService_Start_Call{Call: _e.mock.On("Start", ctx, baseURL, ticketID, provider, instanceID)}
+func (_e *ConnectService_Expecter) Start(ctx interface{}, baseURL interface{}, startOrigin interface{}, ticketID interface{}, provider interface{}, instanceID interface{}) *ConnectService_Start_Call {
+	return &ConnectService_Start_Call{Call: _e.mock.On("Start", ctx, baseURL, startOrigin, ticketID, provider, instanceID)}
 }
 
-func (_c *ConnectService_Start_Call) Run(run func(ctx context.Context, baseURL string, ticketID string, provider string, instanceID string)) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) Run(run func(ctx context.Context, baseURL string, startOrigin string, ticketID string, provider string, instanceID string)) *ConnectService_Start_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(string))
 	})
 	return _c
 }
 
-func (_c *ConnectService_Start_Call) Return(_a0 string, _a1 error) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) Return(_a0 *oauth.ConnectStart, _a1 error) *ConnectService_Start_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *ConnectService_Start_Call) RunAndReturn(run func(context.Context, string, string, string, string) (string, error)) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) RunAndReturn(run func(context.Context, string, string, string, string, string) (*oauth.ConnectStart, error)) *ConnectService_Start_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+func (_m *ConnectService) ReceiveCallback(ctx context.Context, provider string, state string, code string, errCode string, errDesc string) (string, error) {
+	ret := _m.Called(ctx, provider, state, code, errCode, errDesc)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReceiveCallback")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string) (string, error)); ok {
+		return rf(ctx, provider, state, code, errCode, errDesc)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string) string); ok {
+		r0 = rf(ctx, provider, state, code, errCode, errDesc)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, string) error); ok {
+		r1 = rf(ctx, provider, state, code, errCode, errDesc)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_ReceiveCallback_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) ReceiveCallback(ctx interface{}, provider interface{}, state interface{}, code interface{}, errCode interface{}, errDesc interface{}) *ConnectService_ReceiveCallback_Call {
+	return &ConnectService_ReceiveCallback_Call{Call: _e.mock.On("ReceiveCallback", ctx, provider, state, code, errCode, errDesc)}
+}
+
+func (_c *ConnectService_ReceiveCallback_Call) Run(run func(ctx context.Context, provider string, state string, code string, errCode string, errDesc string)) *ConnectService_ReceiveCallback_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_ReceiveCallback_Call) Return(_a0 string, _a1 error) *ConnectService_ReceiveCallback_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_ReceiveCallback_Call) RunAndReturn(run func(context.Context, string, string, string, string, string) (string, error)) *ConnectService_ReceiveCallback_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+func (_m *ConnectService) TakeFinish(ctx context.Context, token string) (*oauth.ConnectFinish, error) {
+	ret := _m.Called(ctx, token)
+
+	if len(ret) == 0 {
+		panic("no return value specified for TakeFinish")
+	}
+
+	var r0 *oauth.ConnectFinish
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*oauth.ConnectFinish, error)); ok {
+		return rf(ctx, token)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *oauth.ConnectFinish); ok {
+		r0 = rf(ctx, token)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*oauth.ConnectFinish)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, token)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_TakeFinish_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) TakeFinish(ctx interface{}, token interface{}) *ConnectService_TakeFinish_Call {
+	return &ConnectService_TakeFinish_Call{Call: _e.mock.On("TakeFinish", ctx, token)}
+}
+
+func (_c *ConnectService_TakeFinish_Call) Run(run func(ctx context.Context, token string)) *ConnectService_TakeFinish_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_TakeFinish_Call) Return(_a0 *oauth.ConnectFinish, _a1 error) *ConnectService_TakeFinish_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_TakeFinish_Call) RunAndReturn(run func(context.Context, string) (*oauth.ConnectFinish, error)) *ConnectService_TakeFinish_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+func (_m *ConnectService) StartOrigin(ctx context.Context, callbackOrigin string, origin string, ticketID string) (string, error) {
+	ret := _m.Called(ctx, callbackOrigin, origin, ticketID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for StartOrigin")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) (string, error)); ok {
+		return rf(ctx, callbackOrigin, origin, ticketID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) string); ok {
+		r0 = rf(ctx, callbackOrigin, origin, ticketID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string) error); ok {
+		r1 = rf(ctx, callbackOrigin, origin, ticketID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_StartOrigin_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) StartOrigin(ctx interface{}, callbackOrigin interface{}, origin interface{}, ticketID interface{}) *ConnectService_StartOrigin_Call {
+	return &ConnectService_StartOrigin_Call{Call: _e.mock.On("StartOrigin", ctx, callbackOrigin, origin, ticketID)}
+}
+
+func (_c *ConnectService_StartOrigin_Call) Run(run func(ctx context.Context, callbackOrigin string, origin string, ticketID string)) *ConnectService_StartOrigin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_StartOrigin_Call) Return(_a0 string, _a1 error) *ConnectService_StartOrigin_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_StartOrigin_Call) RunAndReturn(run func(context.Context, string, string, string) (string, error)) *ConnectService_StartOrigin_Call {
 	_c.Call.Return(run)
 	return _c
 }
