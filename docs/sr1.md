@@ -3,7 +3,7 @@
 Smart routing has one policy. Its default keeps the conversation's committed
 model while warm (`K=0`). The optional escape hatch permits one one-rung upgrade
 on a harder distinct new user turn (`K=1`). Both settings use the same frozen
-scorer and fixed ladder cuts. The internal `sr1` envelope remains for API
+scorer; new two/three-model ladders use fixed cuts. The internal `sr1` envelope remains for API
 compatibility:
 
 ```json
@@ -45,19 +45,29 @@ envelope receive fixed cuts by threshold rank; JSON array order, route targets
 and unrelated metadata are preserved. Their hatch defaults to false and their
 lifetime to 300 seconds. An existing explicit envelope with an omitted hatch
 flag retains its historical true setting only during this migration. Valid
-stored lifetimes remain unchanged.
+stored lifetimes remain unchanged. A single unambiguous historical tier becomes
+a one-member pinned fixed pool and no longer needs the scorer. Historical ladders
+with four or more tiers retain every original threshold, route and array position;
+the stored `legacy_thresholds` marker enables the same conversation policy on
+those retained cuts, including nonzero lowest cuts. The follow-up
+`20261008150000_preserve_legacy_smart_routing` applies this translation in databases
+that already ran the first migration.
 
 A missing historical model pin resolves only from one unambiguous declared
 member, a compatible explicit consumer default, or a singleton concrete member
-model list. The migration rejects unsupported sizes, ambiguous models, invalid
+model list. The migration rejects empty ladders, ambiguous models, invalid
 explicit cuts and unresolved registry references before writing any consumer.
-Owners must repair those configurations before rollout. The migration backs up
+Owners must repair unresolved configurations before rollout. The migration backs up
 original and canonical JSON plus update timestamps. Its transactional rollback
 refuses to overwrite later edits or deletions.
 
 Reading, validating and serializing configurations never migrate them. Disabled
 stored pools permit unrelated consumer edits without rewriting routing. Explicit API routing edits must be canonical even when disabled, including
-changes to model policies, registry associations and fallback references. The previous
+changes to model policies, registry associations and fallback references. Clients
+cannot create a retained-threshold ladder or change its migrated cuts/routes under
+the compatibility marker. Unchanged updates inherit that internal marker from
+storage even if clients omit it. Removing a registry preserves all surviving
+retained cuts; a sole survivor becomes the pinned fixed route. The previous
 per-request smart router is no longer a serving option.
 
 ## Conversation state
