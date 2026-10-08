@@ -333,20 +333,28 @@ func TestHasS3Source(t *testing.T) {
 		"pegasus mediaSource": `{"inputPrompt":"describe this video","mediaSource":` + s3 + `}`,
 		"marengo mediaSource": `{"inputType":"video","mediaSource":{"s3Location":{"uri":"s3://b/k.mp4","bucketOwner":"123456789012"}}}`,
 		"capital Source":      `{"messages":[{"role":"user","content":[{"image":{"format":"png","Source":` + s3 + `}}]}]}`,
+		"toolResult image":    `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"image":{"format":"png","source":` + s3 + `}}]}}]}]}`,
+		"toolResult document": `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"document":{"format":"pdf","name":"d","source":` + s3 + `}}]}}]}]}`,
 	} {
 		assert.True(t, HasS3Source([]byte(body)), name)
 	}
 	for name, body := range map[string]string{
-		"inline bytes":          `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"AAAA"}}}]}]}`,
-		"plain text":            `{"messages":[{"role":"user","content":[{"text":"s3Location"}]}]}`,
-		"unrelated":             `{"additionalModelRequestFields":{"s3Location":"x"}}`,
-		"not json":              `nope`,
-		"toolUse input history": `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}}]}]}`,
-		"toolResult json":       `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"json":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}}]}]}`,
-		"anthropic tool_use":    `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
-		"anthropic tool schema": `{"tools":[{"name":"copy","input_schema":{"type":"object","properties":{"s3Location":{"uri":"x"}}}}]}`,
-		"converse toolSpec":     `{"toolConfig":{"tools":[{"toolSpec":{"name":"c","inputSchema":{"json":{"s3Location":{"uri":"x"}}}}}]}}`,
-		"tool arg string form":  `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":"s3://a/b"}}}}]}]}`,
+		"inline bytes":               `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"AAAA"}}}]}]}`,
+		"plain text":                 `{"messages":[{"role":"user","content":[{"text":"s3Location"}]}]}`,
+		"unrelated":                  `{"additionalModelRequestFields":{"s3Location":"x"}}`,
+		"not json":                   `nope`,
+		"toolUse input history":      `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}}]}]}`,
+		"toolResult json":            `{"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"t1","content":[{"json":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}}]}]}`,
+		"anthropic tool_use":         `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
+		"anthropic tool schema":      `{"tools":[{"name":"copy","input_schema":{"type":"object","properties":{"s3Location":{"uri":"x"}}}}]}`,
+		"converse toolSpec":          `{"toolConfig":{"tools":[{"toolSpec":{"name":"c","inputSchema":{"json":{"s3Location":{"uri":"x"}}}}}]}}`,
+		"openai function parameters": `{"tools":[{"type":"function","function":{"name":"copy","parameters":{"type":"object","properties":{"src":{"type":"object","default":{"s3Location":{"uri":"s3://a/b"}}}}}}}]}`,
+		"openai tool_calls":          `{"messages":[{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"copy","arguments":{"src":{"s3Location":{"uri":"s3://a/b"}}}}}]}]}`,
+		"arguments object":           `{"input":[{"type":"function_call","name":"copy","arguments":{"src":{"s3Location":{"uri":"s3://a/b"}}}}]}`,
+		"root toolSpec":              `{"toolSpec":{"name":"c","inputSchema":{"json":{"s3Location":{"uri":"x"}}}}}`,
+		"root inputSchema":           `{"inputSchema":{"json":{"s3Location":{"uri":"x"}}}}`,
+		"toolUseId casing":           `{"messages":[{"role":"assistant","content":[{"ToolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
+		"tool arg string form":       `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":"s3://a/b"}}}}]}]}`,
 	} {
 		assert.False(t, HasS3Source([]byte(body)), name)
 	}

@@ -309,7 +309,7 @@ func HasS3Source(body []byte) bool {
 				}
 			}
 		case 'o':
-			toolUse := n.strMember("type") == "tool_use" || n.member("toolUseId") != nil
+			toolUse := n.strMember("type") == "tool_use" || hasKeyFold(n, "toolUseId")
 			for i, k := range n.keys {
 				lk := strings.ToLower(k)
 				v := n.vals[i]
@@ -329,16 +329,24 @@ func HasS3Source(body []byte) bool {
 	return walk(root)
 }
 
-// isToolDataKey names the members that hold client-defined tool data: call
-// arguments, JSON tool results and tool schemas.
+// toolDataKeys are the members, beyond toolKeys, that hold client-defined tool
+// data: JSON tool results, tool schemas and call arguments. A toolResult itself is
+// not one of them: its image, document and video blocks are read by the model.
+var toolDataKeys = map[string]struct{}{
+	"json": {}, "toolconfig": {}, "input_schema": {}, "inputschema": {}, "parameters": {}, "arguments": {},
+}
+
+// isToolDataKey is the one classifier HasS3Source uses to skip a member: every
+// toolKeys entry (Converse, Anthropic and OpenAI tool shapes), the schema and
+// argument members, and the input of a tool use.
 func isToolDataKey(lk string, inToolUse bool) bool {
-	switch lk {
-	case "json", "toolspec", "toolconfig", "input_schema", "inputschema":
+	if _, ok := toolKeys[lk]; ok {
 		return true
-	case "input":
-		return inToolUse
 	}
-	return false
+	if _, ok := toolDataKeys[lk]; ok {
+		return true
+	}
+	return lk == "input" && inToolUse
 }
 
 func hasKeyFold(n *jnode, key string) bool {
