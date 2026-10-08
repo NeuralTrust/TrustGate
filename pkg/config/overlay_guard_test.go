@@ -40,24 +40,7 @@ func TestSaaSOverlaysKeepOutboundGuard(t *testing.T) {
 			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", "")
 			t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "")
 
-			f, err := os.Open(path)
-			if err != nil {
-				t.Fatalf("open overlay: %v", err)
-			}
-			defer f.Close()
-			sc := bufio.NewScanner(f)
-			for sc.Scan() {
-				line := strings.TrimSpace(sc.Text())
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				if k, v, ok := strings.Cut(line, "="); ok {
-					t.Setenv(k, v)
-				}
-			}
-			if err := sc.Err(); err != nil {
-				t.Fatalf("read overlay: %v", err)
-			}
+			loadOverlayEnv(t, path)
 
 			if getOutboundConfig().AllowPrivateNetworks {
 				t.Error("shared gateway allows tenant-steered outbound URLs to reach private addresses")
@@ -66,5 +49,44 @@ func TestSaaSOverlaysKeepOutboundGuard(t *testing.T) {
 				t.Error("shared gateway allows Model Armor auth through the pod identity")
 			}
 		})
+	}
+}
+
+func TestSaaSOverlaysRequireExplicitPlatformClaim(t *testing.T) {
+	overlays, err := filepath.Glob(filepath.Join("..", "..", "k8s", "overlays", "*", "config.env"))
+	if err != nil || len(overlays) == 0 {
+		t.Fatalf("no overlay config.env found (err=%v)", err)
+	}
+	for _, path := range overlays {
+		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+			t.Setenv("ADMIN_PLATFORM_CLAIM_REQUIRED", "")
+			loadOverlayEnv(t, path)
+
+			if !getAdminM2MConfig().PlatformClaimRequired {
+				t.Error("shared admin plane treats a console token without tenant_id as platform admin")
+			}
+		})
+	}
+}
+
+func loadOverlayEnv(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open overlay: %v", err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
+			t.Setenv(k, v)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("read overlay: %v", err)
 	}
 }
