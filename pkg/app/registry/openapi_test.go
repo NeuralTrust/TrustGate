@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
@@ -139,5 +140,126 @@ func TestCreator_Create_OpenAPIFetchTransportFailureIsGeneric(t *testing.T) {
 	var netErr net.Error
 	if !errors.As(err, &netErr) {
 		t.Fatal("the transport error should stay reachable through errors.As")
+	}
+}
+
+const validSpec = `{"openapi":"3.0.3","info":{"title":"Pets","version":"1"},"servers":[{"url":"https://api.example.com"}],` +
+	`"paths":{"/pets":{"get":{"operationId":"listPets","responses":{"200":{"description":"ok"}}}}}}`
+
+func specServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validSpec))
+	}))
+	t.Cleanup(server.Close)
+	return server, &hits
+}
+
+func TestOpenAPIValidator_RefusedDestinationReturnsGenericMessage(t *testing.T) {
+	server, hits := specServer(t)
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener address: %v", err)
+	}
+	tests := []struct {
+		name    string
+		specURL string
+		hidden  []string
+	}{
+		{
+			name:    "internal hostname",
+			specURL: "http://localhost:" + port + "/docs/openapi.json",
+			hidden:  []string{"localhost", port, "/docs/openapi.json", "blocked"},
+		},
+		{
+			name:    "literal private address",
+			specURL: "http://10.20.30.40:8080/docs/openapi.json",
+			hidden:  []string{"10.20.30.40", "8080", "blocked"},
+		},
+		{
+			name:    "literal metadata address",
+			specURL: "http://169.254.169.254/computeMetadata/v1/",
+			hidden:  []string{"169.254.169.254", "computeMetadata", "blocked"},
+		},
+		{
+			name:    "unresolvable host",
+			specURL: "https://qa-openapi-fetch.invalid/openapi.json",
+			hidden:  []string{"qa-openapi-fetch.invalid", "no such host", "lookup"},
+		},
+	}
+	validator := appregistry.NewOpenAPIValidator(infraopenapi.NewCompiler())
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := validator.Validate(context.Background(), appopenapi.Source{SpecURL: tc.specURL})
+
+			if result.OK {
+				t.Fatal("validation of a refused destination succeeded")
+			}
+			if result.Stage != appopenapi.StageFetch {
+				t.Fatalf("Stage = %q, want %q", result.Stage, appopenapi.StageFetch)
+			}
+			if result.Message != genericFetchMessage {
+				t.Fatalf("Message = %q, want %q", result.Message, genericFetchMessage)
+			}
+			for _, detail := range tc.hidden {
+				if strings.Contains(result.Message, detail) {
+					t.Fatalf("Message exposes %q: %q", detail, result.Message)
+				}
+			}
+		})
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("the refused destination was reached %d times", got)
+	}
+}
+
+func TestCreator_Create_OpenAPIRefusedDestinationIsGeneric(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil,
+		appregistry.WithOpenAPICompiler(infraopenapi.NewCompiler()))
+
+	_, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "example-api",
+		Type:      domain.TypeMCP,
+		MCPTarget: &domain.MCPTarget{
+			Source:  domain.MCPSourceOpenAPI,
+			OpenAPI: &domain.OpenAPITarget{SpecURL: "http://10.20.30.40:8080/docs/openapi.json"},
+		},
+	})
+
+	if !errors.Is(err, domain.ErrInvalidMCPTarget) {
+		t.Fatalf("error = %v, want ErrInvalidMCPTarget", err)
+	}
+	if !strings.HasSuffix(err.Error(), genericFetchMessage) {
+		t.Fatalf("error = %q, want the generic fetch message", err.Error())
+	}
+	for _, detail := range []string{"10.20.30.40", "8080", "blocked"} {
+		if strings.Contains(err.Error(), detail) {
+			t.Fatalf("error exposes %q: %q", detail, err.Error())
+		}
+	}
+}
+
+func TestOpenAPIValidator_CompilesReachableDocument(t *testing.T) {
+	t.Parallel()
+	server, _ := specServer(t)
+	validator := appregistry.NewOpenAPIValidator(infraopenapi.NewCompilerWithClient(server.Client()))
+
+	result := validator.Validate(context.Background(), appopenapi.Source{SpecURL: server.URL + "/openapi.json"})
+
+	if !result.OK {
+		t.Fatalf("validation failed at %q: %s", result.Stage, result.Message)
+	}
+	if result.Title != "Pets" || result.BaseURL != "https://api.example.com" {
+		t.Fatalf("Title = %q, BaseURL = %q", result.Title, result.BaseURL)
+	}
+	if len(result.Tools) != 1 || result.Tools[0].Name != "listPets" {
+		t.Fatalf("Tools = %+v, want listPets", result.Tools)
 	}
 }
