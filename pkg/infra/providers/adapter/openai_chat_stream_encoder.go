@@ -47,9 +47,9 @@ func (e *OpenAIChatStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte 
 	if chunk.Role == "" && chunk.Delta == "" && chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0 {
 		return nil
 	}
-	copy := *chunk
-	copy.FinishReason, copy.Usage = "", nil
-	return e.encode(&copy)
+	content := *chunk
+	content.FinishReason, content.Usage = "", nil
+	return e.encode(&content)
 }
 
 // Finish emits one finish chunk, optional merged usage, and one final DONE marker.

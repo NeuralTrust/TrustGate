@@ -30,7 +30,7 @@ func TestRegistryPreservesDecodedTerminalWithoutStatelessOutput(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, chunk)
 	assert.True(t, chunk.StreamEnd)
-	assert.True(t, chunk.StreamEndOnly())
+	assert.True(t, chunk.SignalOnly())
 	lines, err := r.AdaptStreamChunk(body, FormatOpenAI, FormatAnthropic)
 	require.NoError(t, err)
 	assert.Empty(t, lines)
@@ -39,19 +39,39 @@ func TestRegistryPreservesDecodedTerminalWithoutStatelessOutput(t *testing.T) {
 	assert.Contains(t, string(bytes.Join(passthrough, nil)), string(body))
 }
 
-func TestCanonicalStreamEndOnlyDoesNotDiscardPayload(t *testing.T) {
-	assert.False(t, (*CanonicalStreamChunk)(nil).StreamEndOnly())
-	assert.False(t, (&CanonicalStreamChunk{}).StreamEndOnly())
-	assert.True(t, (&CanonicalStreamChunk{StreamEnd: true}).StreamEndOnly())
+func TestCanonicalSignalOnlyDoesNotDiscardPayload(t *testing.T) {
+	assert.False(t, (*CanonicalStreamChunk)(nil).SignalOnly())
+	assert.False(t, (&CanonicalStreamChunk{}).SignalOnly())
+	assert.True(t, (&CanonicalStreamChunk{StreamEnd: true}).SignalOnly())
+	assert.True(t, (&CanonicalStreamChunk{ID: "msg"}).SignalOnly())
+	assert.True(t, (&CanonicalStreamChunk{Model: "model"}).SignalOnly())
 	for _, chunk := range []CanonicalStreamChunk{
-		{ID: "msg"}, {Model: "model"}, {Role: "assistant"}, {Delta: "text"},
+		{Role: "assistant"}, {Delta: "text"},
 		{ReasoningDelta: "thinking"}, {FinishReason: "stop"},
 		{ToolCallDeltas: []StreamToolCallDelta{{Index: 0}}},
 		{Usage: &CanonicalUsage{}}, {UpstreamError: &UpstreamStreamError{}},
 		{ProviderExtensions: map[string]json.RawMessage{"future": json.RawMessage(`{}`)}},
 		{OpenItem: &StreamOpenItem{}},
 	} {
-		chunk.StreamEnd = true
-		assert.False(t, chunk.StreamEndOnly())
+		chunk.StreamEnd, chunk.ID, chunk.Model = true, "msg", "model"
+		assert.False(t, chunk.SignalOnly())
+	}
+}
+
+func TestRegistryAdaptStreamChunkSkipsIdentityOnlyEvents(t *testing.T) {
+	r := NewRegistry()
+	for _, tc := range []struct {
+		target  Format
+		payload string
+	}{
+		{FormatOpenAIResponses, `{"type":"response.created","response":{"id":"resp_1","model":"gpt-x"}}`},
+		{FormatOpenAIResponses, `{"type":"response.in_progress","response":{"id":"resp_1","model":"gpt-x"}}`},
+		{FormatGemini, `{"responseId":"g1","modelVersion":"gemini-x"}`},
+	} {
+		for _, source := range []Format{FormatGroq, FormatMistral, FormatOpenRouter} {
+			lines, err := r.AdaptStreamChunk([]byte(tc.payload), source, tc.target)
+			require.NoError(t, err)
+			assert.Empty(t, lines, "%s client of %s: %s", source, tc.target, tc.payload)
+		}
 	}
 }

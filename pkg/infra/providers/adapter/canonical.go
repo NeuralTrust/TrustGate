@@ -309,9 +309,10 @@ type CanonicalStreamChunk struct {
 	OpenItem *StreamOpenItem `json:"open_item,omitempty"`
 }
 
-// StreamEndOnly reports an explicit terminal with no content, identity, finish or usage.
-func (c *CanonicalStreamChunk) StreamEndOnly() bool {
-	return c != nil && c.StreamEnd && c.ID == "" && c.Model == "" && c.Role == "" &&
+// SignalOnly reports whether c carries only the stream identity or the
+// explicit end marker: nothing a stateless re-encode can put on the wire.
+func (c *CanonicalStreamChunk) SignalOnly() bool {
+	return c != nil && (c.StreamEnd || c.ID != "" || c.Model != "") && c.Role == "" &&
 		c.Delta == "" && c.ReasoningDelta == "" && c.FinishReason == "" &&
 		len(c.ToolCallDeltas) == 0 && c.Usage == nil && len(c.ProviderExtensions) == 0 &&
 		c.UpstreamError == nil && c.OpenItem == nil
