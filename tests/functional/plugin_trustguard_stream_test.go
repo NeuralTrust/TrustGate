@@ -241,8 +241,9 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		assert.Equal(t, 1, streams[0].Seq)
 		assert.Contains(t, trustGuardInspectText(payloads[0]), trustGuardStreamMarkers[0])
 
-		// post_response fires from its own detached goroutine after the
-		// response is sent and carries no stream envelope. With the default
+		// post_response used to fire from its own detached goroutine after the
+		// response was sent, carrying no stream envelope; it is now skipped once the
+		// final block was inspected, which is asserted below. With the default
 		// min_chars_between_evals the pre_response leg alone makes two
 		// in-stream calls (head seq 1, forced final seq 2), so GuardHits()>=2
 		// is satisfied before post_response lands and does not wait for it.
@@ -254,7 +255,9 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
 		require.Eventually(t, func() bool {
 			return tg.BufferedHitsForTrace(traceID) >= 1
-		}, 5*time.Second, 20*time.Millisecond, "expected the buffered post_response pass after the stream")
+		}, 5*time.Second, 20*time.Millisecond, "expected the request leg")
+		// Whether post_response re-evaluates is asserted, with a positive
+		// control, in TestPluginE2E_TrustGuard_StreamFinalBlockSkipsPostResponse.
 	})
 
 	t.Run("a blocked head is a 403 carrying none of the response", func(t *testing.T) {
@@ -341,8 +344,8 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		traceID := headers.Get(traceIDHeader)
 		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
 		require.Eventually(t, func() bool {
-			return tg.BufferedHitsForTrace(traceID) >= 2
-		}, 5*time.Second, 20*time.Millisecond, "expected the request leg and the buffered post_response pass")
+			return tg.BufferedHitsForTrace(traceID) >= 1
+		}, 5*time.Second, 20*time.Millisecond, "expected the request leg")
 	})
 
 	t.Run("a blocked head is refused by the stream guard, not the request leg", func(t *testing.T) {
@@ -423,8 +426,7 @@ func trustGuardStreamedContent(t *testing.T, payload json.RawMessage) string {
 // trustGuardStreamCalls are the evaluate calls that carried a stream envelope,
 // in order, with each call's payload beside its envelope. The buffered
 // post_response pass carries no envelope, so counting hits would count it as an
-// extra inspection of the stream (after a cut it is skipped, but a completed
-// stream still gets it).
+// extra inspection of the stream (it is skipped after a cut and after an inspected final block).
 //
 // Both lists are filtered on the same call index. Indexing the unfiltered
 // payloads with a filtered position lines up only as long as no envelope-less
@@ -643,7 +645,9 @@ type streamedEvent struct {
 		Decision  string `json:"decision"`
 		LatencyMs int64  `json:"latency_ms"`
 		Extras    struct {
-			Streaming *streamingExtras `json:"streaming"`
+			Streaming  *streamingExtras `json:"streaming"`
+			Skipped    bool             `json:"skipped"`
+			SkipReason string           `json:"skip_reason"`
 		} `json:"extras"`
 	} `json:"policy_chain"`
 }
@@ -955,4 +959,60 @@ func anthropicEventData(t *testing.T, body, eventType string) string {
 		return payload
 	}
 	return ""
+}
+
+// ENG-1738: the forced final block already evaluated the whole response, so the
+// post_response leg must not call the guard again (it used to, adding a second
+// output row to Activity).
+//
+// A count that stays put proves nothing until the leg has demonstrably been
+// decided, so the positive control comes first: the stored trace carries a
+// post_response entry once that leg ran, and it says why it did not evaluate.
+// Only then is the stub's buffered-call count read, and it is exactly the
+// request leg.
+func TestPluginE2E_TrustGuard_StreamFinalBlockSkipsPostResponse(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamFastGuardDelay)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamEvents(), trustGuardStreamGap)
+	gatewaySlug, consumerSlug, path := setupStreamPlaygroundRoute(t, up, trustGuardStreamCutPolicySettings())
+	token := mintPlaygroundToken(t, consumerSlug)
+
+	status, headers, raw := playgroundPost(t, gatewaySlug, token, path, trustGuardStreamRequest())
+	require.Equal(t, http.StatusOK, status, "body: %s", raw)
+	traceID := headers.Get(traceIDHeader)
+	require.NotEmpty(t, traceID)
+
+	var evt streamedEvent
+	require.Eventually(t, func() bool {
+		code, body := getPlaygroundTrace(t, traceID)
+		if code != http.StatusOK {
+			return false
+		}
+		evt = streamedEvent{}
+		if err := json.Unmarshal(body, &evt); err != nil {
+			return false
+		}
+		for _, entry := range evt.PolicyChain {
+			if entry.Stage == "post_response" {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond, "the post_response leg never reached the stored trace")
+
+	for _, entry := range evt.PolicyChain {
+		if entry.Stage == "post_response" {
+			assert.True(t, entry.Extras.Skipped, "post_response must be recorded as skipped")
+			assert.Equal(t, "stream_final_inspected", entry.Extras.SkipReason)
+		}
+	}
+	assert.Equal(t, 1, tg.BufferedHitsForTrace(traceID),
+		"only the request leg is a buffered call; the stream was evaluated by its own blocks")
+	streams, _ := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
+	assert.NotEmpty(t, streams, "the stream blocks reached the guard")
 }
