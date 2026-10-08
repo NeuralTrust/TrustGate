@@ -150,8 +150,11 @@ func rewriteResponseFromPayload(reg *adapter.Registry, format adapter.Format, cr
 		}
 	}
 	var writes []func()
-	if msgs, present := payload["messages"].([]any); present && len(cresp.ToolCalls) > 0 {
-		if len(msgs) != 1 {
+	if len(cresp.ToolCalls) > 0 {
+		// The arguments travel only in messages[]; a legacy "input" echo would
+		// mask the text and forward them intact.
+		msgs, present := payload["messages"].([]any)
+		if !present || len(msgs) != 1 {
 			return nil, false
 		}
 		msg, _ := msgs[0].(map[string]any)
