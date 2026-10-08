@@ -27,6 +27,18 @@ import (
 // BedrockFrameText is the text a frame carries as the view reads it: what a
 // guardrail is shown for it, every string of the chunk included.
 func BedrockFrameText(frame []byte) string {
+	return bedrockFrameText(frame, true)
+}
+
+// BedrockFrameModelledText is BedrockFrameText without the strings the view
+// adds from fields no family decoder models. What it returns is text the model
+// wrote in a delta; the difference from BedrockFrameText is plumbing that only
+// rides along in the view.
+func BedrockFrameModelledText(frame []byte) string {
+	return bedrockFrameText(frame, false)
+}
+
+func bedrockFrameText(frame []byte, leftover bool) string {
 	a := &BedrockNativeAdapter{}
 	var text string
 	for _, line := range BedrockFrameView(frame) {
@@ -34,7 +46,7 @@ func BedrockFrameText(frame []byte) string {
 		if !ok {
 			continue
 		}
-		chunk, err := a.DecodeStreamChunk(payload)
+		chunk, err := a.decodeStreamChunk(payload, leftover)
 		if err != nil || chunk == nil {
 			continue
 		}

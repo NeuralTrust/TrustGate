@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -59,7 +60,14 @@ var nonTextKeys = map[string]struct{}{
 	"images": {}, "image": {}, "conditionimage": {}, "maskimage": {}, "inputimage": {}, "base64": {}, "init_image": {},
 	"signature": {}, "tooluseid": {}, "ttl": {}, "status": {}, "event_type": {}, "guardrailidentifier": {},
 	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {},
+	"service_tier": {},
 }
+
+// streamPlumbingKeys are the subtrees of a stream chunk that report usage and
+// latency, whatever depth they sit at: Anthropic nests usage in message_start,
+// and Bedrock appends its invocation metrics to the last chunk. A string in one
+// is a label such as a service tier, never text the model wrote.
+var streamPlumbingKeys = []string{"usage", invocationMetricsKey}
 
 var toolKeys = map[string]struct{}{
 	"toolspec": {}, "tool_use": {}, "tooluse": {}, "tools": {}, "tool_choice": {}, "toolchoice": {},
@@ -85,6 +93,12 @@ func isNonTextKey(key string) bool {
 // reappear as the text around it was masked. skipTop names top-level keys that repeat text already
 // surfaced.
 func leftoverText(raw []byte, known []string, skipTop ...string) string {
+	return leftoverTextWithout(raw, known, skipTop, nil)
+}
+
+// leftoverTextWithout is leftoverText that also leaves out every key in
+// skipDeep, at any depth.
+func leftoverTextWithout(raw []byte, known []string, skipTop, skipDeep []string) string {
 	var doc any
 	if json.Unmarshal(raw, &doc) != nil {
 		return ""
@@ -93,6 +107,9 @@ func leftoverText(raw []byte, known []string, skipTop ...string) string {
 		for _, k := range skipTop {
 			delete(m, k)
 		}
+	}
+	if len(skipDeep) > 0 {
+		dropKeys(doc, skipDeep)
 	}
 	var found []string
 	collectStrings(doc, false, &found)
@@ -110,6 +127,23 @@ func leftoverText(raw []byte, known []string, skipTop ...string) string {
 		extra = append(extra, s)
 	}
 	return strings.Join(extra, "\n")
+}
+
+func dropKeys(v any, keys []string) {
+	switch t := v.(type) {
+	case []any:
+		for _, item := range t {
+			dropKeys(item, keys)
+		}
+	case map[string]any:
+		for k, child := range t {
+			if slices.Contains(keys, k) {
+				delete(t, k)
+				continue
+			}
+			dropKeys(child, keys)
+		}
+	}
 }
 
 // The bytes one decode may compare while deduping multi-line leftovers are bounded
@@ -746,6 +780,12 @@ func (a *BedrockNativeAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, 
 }
 
 func (a *BedrockNativeAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	return a.decodeStreamChunk(chunk, true)
+}
+
+// decodeStreamChunk decodes a chunk with the family decoders and, when leftover
+// is set, adds every other text-bearing string the way the view does.
+func (a *BedrockNativeAdapter) decodeStreamChunk(chunk []byte, leftover bool) (*CanonicalStreamChunk, error) {
 	fields, ok := jsonFields(chunk)
 	if !ok {
 		return nil, nil
@@ -811,7 +851,10 @@ func (a *BedrockNativeAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStream
 	if stringField(fields, "event_type") == "stream-end" {
 		skip = append(skip, "response")
 	}
-	if extra := leftoverText(chunk, known, skip...); extra != "" {
+	if !leftover {
+		return out, nil
+	}
+	if extra := leftoverTextWithout(chunk, known, skip, streamPlumbingKeys); extra != "" {
 		if out == nil {
 			out = &CanonicalStreamChunk{}
 		}

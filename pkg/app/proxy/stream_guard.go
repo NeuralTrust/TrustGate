@@ -1584,6 +1584,9 @@ func (g *streamGuard) remaskNative(masked string) bool {
 			}
 		}
 	}
+	if g.hunkReachesPlumbing(at, texts, hunks) {
+		return g.cannotMask(adapter.MaskCauseGluedText)
+	}
 	after := adapter.DistributeHunks(texts, hunks)
 	if strings.Join(after, "") != held {
 		return g.cannotMask(adapter.MaskCauseShape)
@@ -1643,6 +1646,35 @@ func (g *streamGuard) remaskNative(masked string) bool {
 	g.sentChars = g.text.Len()
 	g.inspected = ""
 	return true
+}
+
+// hunkReachesPlumbing reports whether a removal spans more than one frame while
+// one of the frames it touches carries text beyond what its model delta says.
+// The held text is the frames' texts joined with nothing between them, so a
+// match that starts in such a frame can run into the next one's text with no
+// edge to show it. DistributeHunks would put the whole replacement in the first
+// frame it touches and empty the rest, which is how a mask once ended up in a
+// message_start and left every delta blank.
+func (g *streamGuard) hunkReachesPlumbing(at []int, texts []string, hunks []adapter.TextHunk) bool {
+	plumbing := make([]bool, len(at))
+	for k, i := range at {
+		plumbing[k] = adapter.BedrockFrameModelledText(g.produced[i].lines[0]) != texts[k]
+	}
+	for _, h := range hunks {
+		touched, offset := 0, 0
+		reaches := false
+		for k, t := range texts {
+			if max(h.Start, offset) < min(h.End, offset+len(t)) {
+				touched++
+				reaches = reaches || plumbing[k]
+			}
+			offset += len(t)
+		}
+		if touched > 1 && reaches {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *streamGuard) cannotMask(cause adapter.MaskCause) bool {
