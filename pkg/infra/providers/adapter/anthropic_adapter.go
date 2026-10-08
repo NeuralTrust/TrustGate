@@ -92,13 +92,16 @@ type anthropicContentBlock struct {
 	Content   json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
 	IsError   bool            `json:"is_error,omitempty"`
 	Source    json.RawMessage `json:"source,omitempty"`
+	Title     string          `json:"title,omitempty"`
 }
 
 type anthropicImageSource struct {
-	Type      string `json:"type"`
-	MediaType string `json:"media_type,omitempty"`
-	Data      string `json:"data,omitempty"`
-	URL       string `json:"url,omitempty"`
+	Type      string          `json:"type"`
+	MediaType string          `json:"media_type,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	URL       string          `json:"url,omitempty"`
+	FileID    string          `json:"file_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -270,12 +273,19 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 	case "user":
 		var textParts []string
 		var images []CanonicalImage
+		var documents []CanonicalDocument
+		documentsFirst := false
 		var toolMessages []CanonicalMessage
 		for _, b := range blocks {
 			switch b.Type {
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
 					images = append(images, img)
+				}
+			case "document":
+				if doc, ok := anthropicDocumentToCanonical(b.Source, b.Title); ok {
+					documentsFirst = documentsFirst || (len(documents) == 0 && len(textParts) == 0)
+					documents = append(documents, doc)
 				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
@@ -292,11 +302,13 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 			}
 		}
 		out = append(out, toolMessages...)
-		if len(textParts) > 0 || len(images) > 0 {
+		if len(textParts) > 0 || len(images) > 0 || len(documents) > 0 {
 			out = append(out, CanonicalMessage{
-				Role:    "user",
-				Content: strings.Join(textParts, "\n"),
-				Images:  images,
+				Role:           "user",
+				Content:        strings.Join(textParts, "\n"),
+				Images:         images,
+				Documents:      documents,
+				DocumentsFirst: documentsFirst,
 			})
 		}
 	case "assistant":
@@ -364,11 +376,85 @@ func anthropicImageBlock(img CanonicalImage) (anthropicContentBlock, error) {
 	return anthropicContentBlock{Type: "image", Source: raw}, nil
 }
 
+// anthropicDocumentToCanonical defaults a missing media type to PDF, the type
+// Anthropic assumes for base64 and URL documents.
+func anthropicDocumentToCanonical(raw json.RawMessage, title string) (CanonicalDocument, bool) {
+	var src anthropicImageSource
+	if len(raw) == 0 || json.Unmarshal(raw, &src) != nil {
+		return CanonicalDocument{}, false
+	}
+	switch src.Type {
+	case "base64":
+		if src.Data == "" {
+			return CanonicalDocument{}, false
+		}
+		return CanonicalDocument{MediaType: anthropicDocumentMediaType(src.MediaType, title), Data: src.Data, Name: title}, true
+	case "text":
+		if src.Data == "" {
+			return CanonicalDocument{}, false
+		}
+		return textDocument(src.Data, src.MediaType, title), true
+	case "content":
+		text := anthropicToolResultText(src.Content)
+		if text == "" {
+			return CanonicalDocument{}, false
+		}
+		return textDocument(text, mediaTypeTextPlain, title), true
+	case "url":
+		if src.URL == "" {
+			return CanonicalDocument{}, false
+		}
+		return CanonicalDocument{MediaType: anthropicDocumentMediaType(src.MediaType, urlPath(src.URL)), URL: src.URL, Name: title}, true
+	case "file":
+		if src.FileID == "" {
+			return CanonicalDocument{}, false
+		}
+		return CanonicalDocument{FileID: src.FileID, FileOwner: FormatAnthropic, Name: title}, true
+	default:
+		return CanonicalDocument{}, false
+	}
+}
+
+func anthropicDocumentMediaType(mediaType, name string) string {
+	if mt := inferDocumentMediaType(mediaType, name); mt != "" {
+		return mt
+	}
+	return mediaTypePDF
+}
+
+// anthropicDocumentBlock sends textual documents as a text source, the only
+// form Anthropic reads them in, and every other type as base64 for the API to
+// accept or reject.
+func anthropicDocumentBlock(doc CanonicalDocument) (anthropicContentBlock, error) {
+	var src anthropicImageSource
+	switch {
+	case doc.Data != "":
+		if text, ok := doc.text(); ok {
+			src = anthropicImageSource{Type: "text", MediaType: mediaTypeTextPlain, Data: text}
+		} else {
+			src = anthropicImageSource{Type: "base64", MediaType: doc.MediaType, Data: doc.Data}
+		}
+	case isHTTPImageURL(doc.URL):
+		src = anthropicImageSource{Type: "url", URL: doc.URL}
+	case doc.URL != "":
+		return anthropicContentBlock{}, &UnsupportedContentError{Reason: "document must be inline base64 data or an http(s) URL"}
+	case doc.FileOwner == FormatAnthropic:
+		src = anthropicImageSource{Type: "file", FileID: doc.FileID}
+	default:
+		return anthropicContentBlock{}, &UnsupportedContentError{Reason: "file references are not supported by the target; send inline base64 file data"}
+	}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		return anthropicContentBlock{}, err
+	}
+	return anthropicContentBlock{Type: "document", Source: raw, Title: doc.Name}, nil
+}
+
 func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
-	if m.Role != "user" || len(m.Images) == 0 {
+	if m.Role != "user" || (len(m.Images) == 0 && len(m.Documents) == 0) {
 		return stringToContent(m.Content), nil
 	}
-	blocks := make([]anthropicContentBlock, 0, len(m.Images)+1)
+	blocks := make([]anthropicContentBlock, 0, len(m.Images)+len(m.Documents)+1)
 	for _, img := range m.Images {
 		b, err := anthropicImageBlock(img)
 		if err != nil {
@@ -376,10 +462,19 @@ func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
 		}
 		blocks = append(blocks, b)
 	}
-	if m.Content != "" {
-		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
+	docs := make([]anthropicContentBlock, 0, len(m.Documents))
+	for _, doc := range m.Documents {
+		b, err := anthropicDocumentBlock(doc)
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, b)
 	}
-	return json.Marshal(blocks)
+	var text []anthropicContentBlock
+	if m.Content != "" {
+		text = append(text, anthropicContentBlock{Type: "text", Text: m.Content})
+	}
+	return json.Marshal(append(blocks, inClientOrder(m.DocumentsFirst, docs, text)...))
 }
 
 // Request: Decode (Anthropic → Canonical)
