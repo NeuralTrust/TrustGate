@@ -11,3 +11,10 @@ ea2ad861a86b5318a8dd4cb00429c3a21769bd51:pkg/common/secret/settings_test.go:gene
 91ac8265c4078c975f6b0753c07362974e422e84:postman/TrustGate-TrustGuard-E2E.postman_collection.json:postman-secret-variable:1850
 abea1a525a86d691bc87db3172b9a987c138db74:postman/TrustGate-TrustGuard-E2E.postman_collection.json:postman-secret-variable:442
 c2db9eae55225cbd50eeae07e73e11c2d1926e8b:postman/TrustGate-TrustGuard-E2E.postman_collection.json:postman-secret-variable:442
+# Registry header fixtures "key-123456789" on branch fix/run-1801-gateway-scoping (generic-api-key); CI scans every ref.
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/api/handler/http/registry/response/registry_response_test.go:generic-api-key:109
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/app/registry/updater_test.go:generic-api-key:656
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/app/registry/updater_test.go:generic-api-key:679
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:27
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:47
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:78
