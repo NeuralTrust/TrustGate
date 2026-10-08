@@ -96,7 +96,7 @@ func TestConnectService_AutoRegistrationAppliesCatalogScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.vanta/mcp", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "com.vanta/mcp", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestConnectService_AutoRegistrationAppliesCatalogResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "co.axiom/mcp", "")
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "co.axiom/mcp", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

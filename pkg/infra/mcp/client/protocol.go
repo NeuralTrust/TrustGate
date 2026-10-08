@@ -136,9 +136,27 @@ func mapRPCError(err error) error {
 		return nil
 	}
 	if je, ok := errors.AsType[*jsonrpc.Error](err); ok {
+		if appmcp.IsGatewaySignalCode(je.Code) {
+			return &appmcp.RPCError{Code: appmcp.CodeUpstreamError, Message: je.Message, Data: upstreamData(je.Code, je.Data)}
+		}
 		return &appmcp.RPCError{Code: je.Code, Message: je.Message, Data: je.Data}
 	}
 	return err
+}
+
+// upstreamData keeps what the upstream sent, nested, next to the code it used,
+// so a client reading the relayed error finds none of the fields it would read
+// from the gateway's own answer under that code.
+func upstreamData(code int64, data json.RawMessage) json.RawMessage {
+	wrapped := map[string]any{"upstream_code": code}
+	if len(data) > 0 {
+		wrapped["upstream_data"] = data
+	}
+	out, err := json.Marshal(wrapped)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 func mapItems[T any](method string, items any) ([]T, error) {

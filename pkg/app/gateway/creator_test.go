@@ -647,3 +647,19 @@ func TestCreator_Create_InheritsHighestSiblingTier(t *testing.T) {
 		t.Fatalf("Entitlements.Tier = %q, want enterprise", g.Entitlements.Tier)
 	}
 }
+
+func TestCreator_Create_RefusesAReservedDomainForATenant(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	creator := appgateway.NewCreator(repo, nil, newCacheManager(), nil, newTestLogger(), nil, true, "mcp.example.test")
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:     "prod",
+		TenantID: "acme",
+		Domain:   "other.mcp.example.test",
+	})
+
+	if !errors.Is(err, domain.ErrReservedDomain) {
+		t.Fatalf("err = %v, want ErrReservedDomain", err)
+	}
+}

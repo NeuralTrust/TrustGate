@@ -308,6 +308,13 @@ p.lede{
 }
 .done .done-body{color:var(--fg-secondary);font-size:.8125rem;line-height:1.25rem}
 .account.danger svg{color:var(--fg-danger)}
+/* Who an account connected here is linked to, shown before the provider is
+   asked so the person signing in can tell it is meant for them. */
+.owner{margin-top:20px;padding:12px 14px;border:1px solid var(--stroke);border-radius:var(--radius-md)}
+.owner .eyebrow{margin-bottom:6px}
+.owner-name{display:block;color:var(--fg-title);font-size:.9375rem;line-height:1.25rem;font-weight:600;overflow-wrap:anywhere}
+.owner-detail{display:block;margin-top:2px;color:var(--fg-muted);font-size:.8125rem;line-height:1.125rem}
+p.owner-line strong{color:var(--fg-default);font-weight:600;overflow-wrap:anywhere}
 .card-foot{
   position:relative;display:flex;flex-direction:column;gap:6px;align-items:stretch;
   padding:20px 32px 22px;background:var(--card-bg);
@@ -369,6 +376,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 <body class="store dotted"><div class="shell">` + brandHeader + `
 <h1>Connect your accounts</h1>
 <p class="sub">Choose which MCP servers virtual MCP <code>{{.ConsumerPath}}</code> may use. Connect only the ones you need — tokens are stored encrypted in the gateway vault and are never exposed to the agent.</p>
+{{if .Owner.Name}}<p class="sub owner-line">Accounts you connect here are linked to <strong>{{.Owner.Name}}</strong>{{if .Owner.Detail}} ({{.Owner.Detail}}){{end}}.</p>{{end}}
 {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
 {{if .Providers}}<div class="toolbar">
   <div class="input">
@@ -494,6 +502,7 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     <span class="done-body">Back in your assistant the new tools appear on their own; if they do not, start a new conversation — some clients read the tool list only when a session opens.</span>
   </div></div>
   {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}{{end}}
+  {{if .Owner.Name}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
 </div>
@@ -547,6 +556,31 @@ var consentPageTmpl = template.Must(template.New("consent").Parse(`<!doctype htm
     window.addEventListener("focus", arm);
     document.getElementById("allow-form").addEventListener("submit", function () { setTimeout(lock, 0); });
   })();</script>
+` + securedByFooter + `
+</div>
+</div></body></html>`))
+
+var connectConfirmPageTmpl = template.Must(template.New("connect-confirm").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
+<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
+<body class="dotted"><div class="card flush">
+<div class="card-hero">
+  <div class="pair">
+    <div class="mark-tile nt">` + brandMark + `</div>
+    <span class="link" aria-hidden="true"></span>
+    <div class="mark-tile"><img src="{{.LogoURL}}" alt="" width="32" height="32" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+  </div>
+</div>
+<div class="card-body">
+  <h1 class="title">Connect your {{.ServerName}} account</h1>
+  <p class="lede">You will sign in to {{.ServerName}}{{if .InstanceName}} ({{.InstanceName}}){{end}}. The account you sign in with will be linked to:</p>
+  <div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}{{if .ConsumerPath}}<span class="owner-detail">Virtual MCP <code>{{.ConsumerPath}}</code></span>{{end}}</div>
+  {{if .AccountRef}}<div class="account">` + badgeCheck + `Connected now: {{.AccountRef}}. Continuing replaces it.</div>{{end}}
+  <p class="note">` + alertGlyph + `<span>Continue only if the account you sign in with should be linked to the one named above. If you did not expect this page, close it.</span></p>
+</div>
+<div class="card-foot">
+  <form method="post" action="{{.FormAction}}"><button class="btn primary block" type="submit">Continue to {{.ServerName}}</button></form>
 ` + securedByFooter + `
 </div>
 </div></body></html>`))

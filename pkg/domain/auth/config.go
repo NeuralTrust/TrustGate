@@ -83,6 +83,12 @@ type OAuth2Config struct {
 	// so setting them does not turn on brokered login.
 	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
 	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117 -- stored credential, masked in responses
+	// ExchangeSecretUnreadable marks a config read from storage whose exchange
+	// client secret could not be decrypted and was returned empty. Validate
+	// does not require that secret, so unrelated edits still save; the
+	// repository keeps the stored value when it comes back empty. Never
+	// serialised.
+	ExchangeSecretUnreadable bool `json:"-"`
 
 	// Trusted marks an identity provider the operator configured through the
 	// environment (the built-in default IdP): its endpoints may be on a private
@@ -123,6 +129,13 @@ func (c *Config) ResolveSecretsFrom(prev Config) {
 	exchange := storedClient{id: prev.OAuth2.ExchangeClientID, secret: prev.OAuth2.ExchangeClientSecret}
 	c.OAuth2.ClientSecret = carrySecret(c.OAuth2.ClientID, c.OAuth2.ClientSecret, login, exchange)
 	c.OAuth2.ExchangeClientSecret = carrySecret(c.OAuth2.ExchangeClientID, c.OAuth2.ExchangeClientSecret, exchange, login)
+	c.OAuth2.ExchangeSecretUnreadable = false
+	exchangeID := strings.TrimSpace(c.OAuth2.ExchangeClientID)
+	if prev.OAuth2.ExchangeSecretUnreadable && exchangeID != "" && exchangeID == strings.TrimSpace(prev.OAuth2.ExchangeClientID) &&
+		(c.OAuth2.ExchangeClientSecret == "" || secret.IsMasked(c.OAuth2.ExchangeClientSecret)) {
+		c.OAuth2.ExchangeClientSecret = ""
+		c.OAuth2.ExchangeSecretUnreadable = true
+	}
 }
 
 type storedClient struct{ id, secret string }
@@ -251,7 +264,8 @@ func (c *OAuth2Config) validateExchangeClient() error {
 	if secret.IsMasked(c.ExchangeClientSecret) {
 		return fmt.Errorf("%w: oauth2.exchange_client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
 	}
-	if (strings.TrimSpace(c.ExchangeClientID) == "") != (strings.TrimSpace(c.ExchangeClientSecret) == "") {
+	hasSecret := strings.TrimSpace(c.ExchangeClientSecret) != "" || c.ExchangeSecretUnreadable
+	if (strings.TrimSpace(c.ExchangeClientID) == "") == hasSecret {
 		return fmt.Errorf("%w: oauth2.exchange_client_id and oauth2.exchange_client_secret must be set together", ErrInvalidConfig)
 	}
 	return nil

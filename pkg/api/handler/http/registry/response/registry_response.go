@@ -81,6 +81,20 @@ func maskSecretURLVariables(t *domain.MCPTarget) string {
 	return u.String()
 }
 
+// maskHeaders keeps the header names and masks every value: static headers
+// usually carry credentials, and an update that echoes a masked value back
+// keeps the stored one (registry.ResolveHeaders).
+func maskHeaders(headers map[string]string) map[string]string {
+	if headers == nil {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		out[name] = secret.Mask(value)
+	}
+	return out
+}
+
 type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
 	GatewayID       ids.GatewayID         `json:"gateway_id"`
@@ -221,7 +235,7 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		health = &HealthChecksResponse{
 			Passive:   hc.Passive,
 			Path:      hc.Path,
-			Headers:   hc.Headers,
+			Headers:   maskHeaders(hc.Headers),
 			Threshold: hc.Threshold,
 			Interval:  hc.Interval,
 		}
@@ -278,7 +292,7 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 		Source:    string(t.Source),
 		URL:       maskSecretURLVariables(t),
 		Transport: string(t.Transport),
-		Headers:   t.Headers,
+		Headers:   maskHeaders(t.Headers),
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}

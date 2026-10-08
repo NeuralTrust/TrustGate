@@ -115,9 +115,10 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	// connect page submits it as a POST: a GET link is fair game for browser
 	// prefetching, and a prefetched start followed by the real click gives the
 	// IdP two pending approvals — Linear then rejects the first callback with
-	// "Invalid approval". GET stays for clients that already deep-link into it.
+	// "Invalid approval". A GET deep link gets a page that asks first.
+	app.Get(oauthhttp.ConnectFinishPath, r.connectHandler.Finish)
 	app.Post(oauthhttp.ConnectStartPath, r.connectHandler.Start)
-	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Start)
+	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Confirm)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)
 	if r.endUserConnectionsHandler != nil {

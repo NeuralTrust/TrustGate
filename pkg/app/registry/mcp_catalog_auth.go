@@ -61,7 +61,7 @@ func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCat
 	if err := canonicalizeAuthorizationCode(target, entry, code); err != nil {
 		return err
 	}
-	injectSharedOAuth(target, catalog)
+	bindSharedOAuth(target, catalog)
 	return nil
 }
 
@@ -193,23 +193,31 @@ func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain
 	return nil
 }
 
-func injectSharedOAuth(target *domain.MCPTarget, catalog MCPAuthCatalog) {
+// bindSharedOAuth points a forwarded target at the platform's shared OAuth
+// client by its id alone. The client secret is not stored on the registry: the
+// connect and refresh paths read it from the platform configuration each time
+// they present the client, and only to the provider's own endpoints, so binding
+// the id needs no endpoint check of its own. It reports whether the target
+// changed.
+func bindSharedOAuth(target *domain.MCPTarget, catalog MCPAuthCatalog) bool {
 	if target == nil || target.Auth == nil || catalog == nil {
-		return
+		return false
 	}
 	if target.Auth.Mode != domain.MCPAuthModeForwarded {
-		return
+		return false
 	}
 	if target.Auth.Registration == domain.RegistrationAuto {
-		return
+		return false
 	}
-	clientID, clientSecret, ok := catalog.SharedOAuthCredentials(target.Code)
+	clientID, _, ok := catalog.SharedOAuthCredentials(target.Code)
 	if !ok {
-		return
+		return false
 	}
 	if id := strings.TrimSpace(target.Auth.ClientID); id != "" && id != clientID {
-		return
+		return false
 	}
+	changed := target.Auth.ClientID != clientID || target.Auth.ClientSecret != ""
 	target.Auth.ClientID = clientID
-	target.Auth.ClientSecret = clientSecret
+	target.Auth.ClientSecret = ""
+	return changed
 }

@@ -80,6 +80,10 @@ type Settings struct {
 	PIIAction   string      `mapstructure:"pii_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
+	// OnError decides what a request gets when the guardrail cannot give a
+	// verdict on its buffered leg: fail_open (the default) lets it through and
+	// records failed_open, fail_closed refuses it in a mode that blocks.
+	OnError string `mapstructure:"on_error"`
 	// Streaming tunes the per-block inspection of the pre_response leg. It is off
 	// when the block is absent; streaming.enabled: true turns it on.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -104,6 +108,7 @@ func (s *Settings) applyDefaults() {
 	if s.PIIAction == "" {
 		s.PIIAction = piiActionBlock
 	}
+	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if s.Credentials.AWSRegion == "" {
 		s.Credentials.AWSRegion = defaultRegion
 	}
@@ -119,6 +124,9 @@ func (s *Settings) applyDefaults() {
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.GuardrailID) == "" {
 		return fmt.Errorf("bedrock_guardrail: guardrail_id is required")
+	}
+	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
+		return err
 	}
 	switch s.PIIAction {
 	case piiActionBlock, piiActionAnonymize:

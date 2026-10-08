@@ -16,10 +16,12 @@ package middleware
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -115,6 +117,53 @@ func (m *AdminAuthzMiddleware) RequireInteractiveIdentity() fiber.Handler {
 		}
 		return c.Next()
 	}
+}
+
+// RequireConfigSyncScopeAccess guards the config-sync connection listing. A
+// data plane's scope is the gateway it serves, so a tenant caller has to name
+// one of its own gateways in ?scope=; only the platform lists every data plane.
+// A foreign or unknown gateway answers 404, like any other gateway lookup.
+func (m *AdminAuthzMiddleware) RequireConfigSyncScopeAccess() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		identity := AdminIdentityFromContext(c)
+		if identity.Kind == AdminIdentityPlatform {
+			return c.Next()
+		}
+		raw := strings.TrimSpace(c.Query("scope"))
+		if raw == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(httpio.ErrorBody{
+				Error:   "invalid_query",
+				Message: "Query parameter 'scope' is required: pass the id of the gateway whose data planes to list.",
+			})
+		}
+		gatewayID, err := ids.Parse[ids.GatewayKind](raw)
+		if err != nil {
+			return m.notFound(c, identity)
+		}
+		g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
+		if err != nil {
+			return httpio.WriteError(c, err)
+		}
+		if g.TenantID() != identity.TenantID {
+			return m.notFound(c, identity)
+		}
+		c.Locals(configSyncScopeKey, gatewayID.String())
+		return c.Next()
+	}
+}
+
+type configSyncScopeLocal struct{}
+
+var configSyncScopeKey = configSyncScopeLocal{}
+
+// ConfigSyncScope is the scope the config-sync listing should read: the
+// canonical form of the gateway RequireConfigSyncScopeAccess authorized for a
+// tenant caller, or the raw ?scope= of a platform caller.
+func ConfigSyncScope(c *fiber.Ctx) string {
+	if scope, ok := c.Locals(configSyncScopeKey).(string); ok {
+		return scope
+	}
+	return c.Query("scope")
 }
 
 func (m *AdminAuthzMiddleware) forbidden(c *fiber.Ctx, identity AdminIdentity, reason string) error {

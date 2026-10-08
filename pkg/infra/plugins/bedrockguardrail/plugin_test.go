@@ -646,3 +646,27 @@ func TestValidateConfigRejectsMissingGuardrailID(t *testing.T) {
 		t.Fatal("expected validation error for missing guardrail_id")
 	}
 }
+
+func TestExecuteClientErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
+	t.Parallel()
+	p := pluginWith(&recordingClient{err: errors.New("boom")})
+	settings := bedrockSettings(piiActionBlock)
+	settings["on_error"] = "fail_closed"
+
+	res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil))
+
+	var pluginErr *appplugins.PluginError
+	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("res = %+v, err = %v, want a 502 refusal", res, err)
+	}
+}
+
+func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
+	t.Parallel()
+	settings := bedrockSettings(piiActionBlock)
+	settings["on_error"] = "retry"
+
+	if _, err := parseConfig(settings); err == nil {
+		t.Fatal("expected an error for on_error: retry")
+	}
+}

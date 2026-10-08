@@ -108,3 +108,72 @@ func TestConnectStoreReadsLegacyTicketWithoutAuditIdentity(t *testing.T) {
 	require.Empty(t, ticket.ConsumerID)
 	require.Empty(t, ticket.AuthID)
 }
+
+func TestConnectStorePeekLeavesTheStateInPlace(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, _ := newConnectStore(t)
+	state := appoauth.ConnectState{
+		TicketID:    "ticket-sentinel",
+		Provider:    "provider-sentinel",
+		StartOrigin: "https://start.example",
+	}
+	require.NoError(t, store.SaveConnect(ctx, "state-sentinel", state))
+
+	peeked, err := store.PeekConnect(ctx, "state-sentinel")
+	require.NoError(t, err)
+	require.Equal(t, &state, peeked)
+	taken, err := store.TakeConnect(ctx, "state-sentinel")
+	require.NoError(t, err)
+	require.Equal(t, &state, taken)
+	gone, err := store.PeekConnect(ctx, "state-sentinel")
+	require.NoError(t, err)
+	require.Nil(t, gone)
+}
+
+func TestConnectStoreFinishIsShortLivedAndSingleUse(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, server := newConnectStore(t)
+	finish := appoauth.ConnectFinish{Provider: "provider-sentinel", State: "state-sentinel", Code: "code-sentinel"}
+
+	require.NoError(t, store.SaveFinish(ctx, "finish-sentinel", finish))
+	require.Equal(t, 2*time.Minute, server.TTL("oauth:connect:finish:finish-sentinel"))
+
+	first, err := store.TakeFinish(ctx, "finish-sentinel")
+	require.NoError(t, err)
+	second, err := store.TakeFinish(ctx, "finish-sentinel")
+	require.NoError(t, err)
+	require.Equal(t, &finish, first)
+	require.Nil(t, second)
+}
+
+func TestConnectStoreKeepsOnePendingFinishPerFlow(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, server := newConnectStore(t)
+	first := appoauth.ConnectFinish{Provider: "provider-sentinel", State: "state-sentinel", Code: "code-1"}
+	second := appoauth.ConnectFinish{Provider: "provider-sentinel", State: "state-sentinel", Code: "code-2"}
+	other := appoauth.ConnectFinish{Provider: "provider-sentinel", State: "other-state", Code: "code-3"}
+
+	require.NoError(t, store.SaveFinish(ctx, "finish-1", first))
+	require.NoError(t, store.SaveFinish(ctx, "finish-2", second))
+	require.NoError(t, store.SaveFinish(ctx, "finish-3", other))
+
+	replaced, err := store.TakeFinish(ctx, "finish-1")
+	require.NoError(t, err)
+	require.Nil(t, replaced, "a second callback for one flow must replace the first")
+	latest, err := store.TakeFinish(ctx, "finish-2")
+	require.NoError(t, err)
+	require.Equal(t, &second, latest)
+	untouched, err := store.TakeFinish(ctx, "finish-3")
+	require.NoError(t, err)
+	require.Equal(t, &other, untouched)
+
+	for _, key := range server.Keys() {
+		require.NotContains(t, key, "state-sentinel", "the state must not appear in key names")
+	}
+}

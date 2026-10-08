@@ -165,6 +165,28 @@ type Target struct {
 	RestrictPrivateNetwork bool
 }
 
+// CodeUpstreamError is the code an upstream server's error is relayed under
+// when the code it sent is one the gateway answers with itself.
+const CodeUpstreamError int64 = -32000
+
+// CodeConsentRequired is the gateway's consent prompt: the call needs an
+// upstream account the caller has not connected, and the error carries the
+// page to connect it.
+const CodeConsentRequired int64 = -32003
+
+// IsGatewaySignalCode reports whether code is one the gateway uses for its own
+// answers: a policy refusal, a consent prompt, a rate limit or an unavailable
+// limiter. Clients act on these codes — retry, show a connect link, stop — so
+// an upstream server's error is never relayed under one of them. -32002 is
+// left alone: MCP itself uses it for an unknown resource.
+func IsGatewaySignalCode(code int64) bool {
+	switch code {
+	case codePolicyBlocked, CodeConsentRequired, CodeRateLimited, CodeUnavailable:
+		return true
+	}
+	return false
+}
+
 type RPCError struct {
 	Code        int64
 	Message     string

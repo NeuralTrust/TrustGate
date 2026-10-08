@@ -96,3 +96,42 @@ func TestFromAuth_MasksAzureSecretsAndReturnsIdentifiers(t *testing.T) {
 		t.Fatalf("Azure TenantID = %q, want tenant-1", got.Azure.TenantID)
 	}
 }
+
+func TestFromRegistry_MasksHeaderValues(t *testing.T) {
+	t.Parallel()
+	mcp := &domain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "m",
+		Type:      domain.TypeMCP,
+		MCPTarget: &domain.MCPTarget{
+			URL:     "https://mcp.example.com/mcp",
+			Headers: map[string]string{"X-Api-Key": "key-123456789", "X-Short": "abc"},
+		},
+	}
+	got := FromRegistry(mcp).MCPTarget.Headers
+	if got["X-Api-Key"] != secret.Mask("key-123456789") || got["X-Short"] != secret.Redacted {
+		t.Fatalf("mcp_target headers not masked: %v", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("header names must be kept: %v", got)
+	}
+	if mcp.MCPTarget.Headers["X-Api-Key"] != "key-123456789" {
+		t.Fatal("masking must not modify the registry")
+	}
+
+	llm := &domain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "l",
+		Type:      domain.TypeLLM,
+		LLMTarget: &domain.LLMTarget{
+			Provider:     "openai",
+			HealthChecks: &domain.HealthChecks{Interval: 10, Threshold: 3, Headers: map[string]string{"Authorization": "Bearer abcdefgh123"}},
+		},
+	}
+	hc := FromRegistry(llm).HealthChecks.Headers
+	if hc["Authorization"] != secret.Mask("Bearer abcdefgh123") {
+		t.Fatalf("health check headers not masked: %v", hc)
+	}
+}

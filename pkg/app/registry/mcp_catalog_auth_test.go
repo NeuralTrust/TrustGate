@@ -192,7 +192,7 @@ func TestCanonicalizeMCPAuthFromCatalog_ManualOAuthAllowsEndpointDiscovery(t *te
 	require.NoError(t, target.Validate())
 }
 
-func TestCanonicalizeMCPAuthFromCatalog_InjectsSharedOAuth(t *testing.T) {
+func TestCanonicalizeMCPAuthFromCatalog_BindsSharedOAuthWithoutSecret(t *testing.T) {
 	t.Parallel()
 	cat := gmailCatalog(map[string]stubSharedOAuth{
 		"com.google.workspace/gmail": {clientID: "nt-client", clientSecret: "nt-secret"},
@@ -204,7 +204,7 @@ func TestCanonicalizeMCPAuthFromCatalog_InjectsSharedOAuth(t *testing.T) {
 	}
 	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
 	require.Equal(t, "nt-client", target.Auth.ClientID)
-	require.Equal(t, "nt-secret", target.Auth.ClientSecret)
+	require.Empty(t, target.Auth.ClientSecret, "the shared client secret is resolved at use time, never stored")
 	require.Equal(t, "com.google.workspace/gmail", target.Auth.Provider)
 	require.NoError(t, target.Validate())
 }
@@ -229,7 +229,7 @@ func TestCanonicalizeMCPAuthFromCatalog_PreservesBYOClient(t *testing.T) {
 	require.Equal(t, "customer-secret", target.Auth.ClientSecret)
 }
 
-func TestCanonicalizeMCPAuthFromCatalog_RotatesMatchingPlatformClient(t *testing.T) {
+func TestCanonicalizeMCPAuthFromCatalog_ClearsStoredPlatformClientSecret(t *testing.T) {
 	t.Parallel()
 	cat := gmailCatalog(map[string]stubSharedOAuth{
 		"com.google.workspace/gmail": {clientID: "nt-client", clientSecret: "rotated-secret"},
@@ -246,7 +246,8 @@ func TestCanonicalizeMCPAuthFromCatalog_RotatesMatchingPlatformClient(t *testing
 	}
 	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
 	require.Equal(t, "nt-client", target.Auth.ClientID)
-	require.Equal(t, "rotated-secret", target.Auth.ClientSecret)
+	require.Empty(t, target.Auth.ClientSecret)
+	require.NoError(t, target.Validate())
 }
 
 func gmailCatalog(shared map[string]stubSharedOAuth) stubCatalog {
@@ -432,4 +433,38 @@ func githubCatalog(shared map[string]stubSharedOAuth) stubCatalog {
 		},
 		shared: shared,
 	}
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_SharedOAuthBindsTheClientIDOnly(t *testing.T) {
+	t.Parallel()
+	shared := map[string]stubSharedOAuth{
+		"com.google.workspace/gmail": {clientID: "nt-client", clientSecret: "nt-secret"},
+	}
+	cat := gmailCatalog(shared)
+	entry := cat.entries["com.google.workspace/gmail"]
+	entry.OAuth.TokenURL = "https://idp.example.com/token"
+	cat.entries["com.google.workspace/gmail"] = entry
+
+	target := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Registration: domain.RegistrationManual,
+			ClientID:     "own-client",
+			ClientSecret: "own-secret",
+		},
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+	require.Equal(t, "own-client", target.Auth.ClientID)
+	require.Equal(t, "own-secret", target.Auth.ClientSecret)
+
+	unbound := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeForwarded, Registration: domain.RegistrationManual},
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(unbound, cat))
+	require.Equal(t, "nt-client", unbound.Auth.ClientID, "the shared client id is bound; its secret is only ever presented to the provider's own endpoints")
+	require.Empty(t, unbound.Auth.ClientSecret)
 }
