@@ -309,8 +309,9 @@ func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
 	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	ent := stampedEntitlements("standard")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
-		ID:           id,
-		Entitlements: &ent,
+		ID:            id,
+		PlatformAdmin: true,
+		Entitlements:  &ent,
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -318,6 +319,32 @@ func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
 	if got.Entitlements.Tier != "standard" {
 		t.Fatalf("Entitlements.Tier = %q, want standard", got.Entitlements.Tier)
 	}
+}
+
+func TestUpdater_Update_EmptyTenantDoesNotImplyPlatform(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+	ent := stampedEntitlements("enterprise")
+	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:           id,
+		TenantID:     "",
+		Entitlements: &ent,
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation rejecting entitlements without the platform flag, got %v", err)
+	}
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_PreservesEntitlementsWhenOmitted(t *testing.T) {

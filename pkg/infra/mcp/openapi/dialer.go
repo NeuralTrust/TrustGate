@@ -311,11 +311,12 @@ func (u *upstream) request(
 		}
 		switch parameter.In {
 		case "path":
-			path = strings.ReplaceAll(
-				path,
-				"{"+parameter.Name+"}",
-				url.PathEscape(serializeSimple(value, parameter.Explode)),
-			)
+			serialized := serializeSimple(value, parameter.Explode)
+			// "." and ".." are not valid single-segment values.
+			if serialized == "." || serialized == ".." {
+				return nil, fmt.Errorf("path parameter %q must not be %q", parameter.Name, serialized)
+			}
+			path = strings.ReplaceAll(path, "{"+parameter.Name+"}", url.PathEscape(serialized))
 		case "query":
 			addQuery(query, parameter.Name, value, parameter.Style, parameter.Explode)
 		case "header":

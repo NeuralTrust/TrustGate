@@ -57,3 +57,12 @@ docker compose \
 The dashboard is served on [http://localhost:3000](http://localhost:3000) and reaches the
 admin service at `http://admin:8080` over the compose network. `SERVER_SECRET_KEY` is read from
 the root `.env` file, the same one used by the gateway servers.
+
+The dashboard has no login of its own and acts with platform rights, so the compose file publishes
+it on `127.0.0.1:3000` only. To expose it remotely, change the host side of the `ports` mapping in
+`docker-compose.frontend.yaml` (for example `0.0.0.0:3000:3000`) and put an authenticating
+reverse proxy in front of it, or reach it through an SSH tunnel (`ssh -L 3000:localhost:3000 <host>`).
+
+State-changing requests to `/api/*` are only accepted from the dashboard's own origin and with
+`Content-Type: application/json` (see `src/proxy.ts`). A reverse proxy in front of the dashboard
+must preserve the `Host` header or set `X-Forwarded-Host`.

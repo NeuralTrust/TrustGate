@@ -47,7 +47,7 @@ type CreateInput struct {
 	TrafficLabeling *trafficlabel.Config
 	// Entitlements is required when PlatformAdmin is true (full stamped caps).
 	Entitlements *domain.Entitlements
-	// PlatformAdmin is true when the JWT has no tenant claim (must stamp entitlements; TenantID comes from the body).
+	// PlatformAdmin is true for a platform identity (must stamp entitlements; TenantID comes from the body).
 	PlatformAdmin bool
 }
 
