@@ -54,11 +54,12 @@ func nativeModified(message string) *appplugins.PluginError {
 	}
 }
 
-func nativeShortCircuit(req *infracontext.RequestContext, short *ForwardResult) *ForwardResult {
+func nativeShortCircuit(req *infracontext.RequestContext, short *ForwardResult, stage policydomain.Stage) *ForwardResult {
 	if short == nil || !req.IsBedrockNative() || short.StatusCode >= http.StatusBadRequest {
 		return short
 	}
-	return pluginErrorResult(nativeModified(nativeShortCircuited))
+	return pluginErrorResult(appplugins.WithBlockDirection(
+		nativeModified(nativeShortCircuited), appplugins.BlockDirectionForStage(stage)))
 }
 
 func nativeResponseChanged(provider *ProviderResponse, plugin *infracontext.ResponseContext) bool {
@@ -143,7 +144,8 @@ func (f *forwarder) carryNativeMask(
 	}
 	for _, source := range sources {
 		if source.OnFailure == appplugins.MaskFailureBlock {
-			return nil, nativeMaskBlocked(source.Plugin, cause)
+			return nil, appplugins.WithBlockDirection(
+				nativeMaskBlocked(source.Plugin, cause), appplugins.BlockDirectionForStage(stage))
 		}
 	}
 	appplugins.RecordNativeMaskNotApplied(ctx, f.logger, stage, cause, false)

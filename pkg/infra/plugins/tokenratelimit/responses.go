@@ -94,7 +94,10 @@ func budgetUnavailableError() *appplugins.PluginError {
 }
 
 func modelUnpricedError(model string) *appplugins.PluginError {
-	return budgetError(http.StatusForbidden, modelUnpriced, nil, map[string]any{"scope": partitionKey, "model": model})
+	pe := budgetError(http.StatusForbidden, modelUnpriced, nil, map[string]any{"scope": partitionKey, "model": model})
+	// A pricing gap is a configuration failure, not a verdict on the content.
+	pe.NotAVerdict = true
+	return pe
 }
 
 func budgetError(status int, errType string, headers map[string][]string, detail map[string]any) *appplugins.PluginError {

@@ -257,7 +257,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if short, err := f.runPreRequest(ctx, policies, plan, in.Request, resp); err != nil {
 		return nil, err
 	} else if short != nil {
-		return nativeShortCircuit(in.Request, short), nil
+		return nativeShortCircuit(in.Request, short, policydomain.StagePreRequest), nil
 	}
 	if nativeBody != nil && !bytes.Equal(nativeBody, in.Request.Body) {
 		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreRequest, in.Request, nativeBody, in.Request.Body, f.masker.MaskRequestWhy)
@@ -686,7 +686,7 @@ func (f *forwarder) finalizeStream(
 	}
 	if outcome != nil && outcome.ShortCircuit {
 		f.drainAsync(providerResp.Stream)
-		return nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome))
+		return nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome), policydomain.StagePreResponse)
 	}
 	stream := providerResp.Stream
 	var cutBarrier func() <-chan struct{}
@@ -901,7 +901,7 @@ func (f *forwarder) finalizeBodyGated(
 		errorResponse := providerResp.StatusCode >= http.StatusMultipleChoices &&
 			len(dto.request.NativeMask.Sources(policydomain.StagePreResponse)) > 0
 		if !errorResponse && pluginResp.StatusCode != providerResp.StatusCode {
-			pe := nativeModified(nativeResponseModified)
+			pe := appplugins.WithBlockDirection(nativeModified(nativeResponseModified), appplugins.BlockDirectionOutput)
 			return pluginErrorResult(pe), pe
 		}
 		maskResponse := f.masker.MaskResponseWhy

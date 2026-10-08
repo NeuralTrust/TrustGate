@@ -795,7 +795,7 @@ func TestForward_MidStreamCutEndsOnATerminatorAndDrainsTheUpstream(t *testing.T)
 	assert.Equal(t, []string{
 		`data: {"id":"c","object":"chat.completion.chunk","choices":` +
 			`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
-		`data: {"error":{"message":"blocked mid-stream","type":"content_filter"}}`, "",
+		`data: {"error":{"message":"blocked mid-stream","type":"content_filter","direction":"output"}}`, "",
 		"data: [DONE]", "",
 	}, got[2:])
 

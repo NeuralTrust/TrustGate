@@ -531,7 +531,15 @@ func streamError(source adapter.Format, errType, message string) *appplugins.Plu
 	if adapter.NeedsAdaptedError(source) {
 		pe.Body = adapter.EncodeErrorBody(source, pe.StatusCode, message)
 	}
-	return pe
+	if errType == streamUnverifiableType {
+		// The guard could not be consulted: a failure of the guard, not a
+		// verdict on the response.
+		pe.NotAVerdict = true
+	}
+	// The head gate refuses before any byte of the response is sent, so this is
+	// a plain 403 and the header is still a channel. It always inspects the
+	// response.
+	return appplugins.WithBlockDirection(pe, appplugins.BlockDirectionOutput)
 }
 
 // replay writes the events the head verdict cleared and then runs the block
@@ -1314,7 +1322,7 @@ func (g *streamGuard) cutLines() [][]byte {
 		return g.cutDoneLines()
 	}
 	if !adapter.IsSameWireFormat(g.source, adapter.FormatCohere) {
-		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage)...)
+		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage, appplugins.BlockDirectionOutput)...)
 	}
 	return append(lines, g.cutDoneLines()...)
 }

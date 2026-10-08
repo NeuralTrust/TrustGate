@@ -288,6 +288,13 @@ func TestStreamGuard_HeadGate(t *testing.T) {
 				require.NotNil(t, pe)
 				require.Equal(t, http.StatusForbidden, pe.StatusCode)
 				require.Equal(t, tc.wantBodyIsSet, pe.Body != nil)
+				if pe.Type == streamUnverifiableType {
+					require.NotContains(t, pe.Headers, appplugins.BlockDirectionHeader,
+						"a guard that could not be consulted gave no verdict on the response")
+				} else {
+					require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader],
+						"a head-gate refusal is a real 403, so the direction header is still a channel")
+				}
 				require.Zero(t, g.releasedIdx, "a head-gate block must have written nothing")
 				drained, _ := collectGuardOutput(t, g, out)
 				require.Zero(t, g.releasedIdx, "draining the remainder must not release held events")
@@ -974,7 +981,7 @@ func openAICutLines(message string) []string {
 	return []string{
 		`data: {"id":"c1","object":"chat.completion.chunk","choices":` +
 			`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
-		`data: {"error":{"message":` + strconv.Quote(message) + `,"type":"content_filter"}}`, "",
+		`data: {"error":{"message":` + strconv.Quote(message) + `,"type":"content_filter","direction":"output"}}`, "",
 		"data: [DONE]", "",
 	}
 }
@@ -1013,6 +1020,9 @@ func TestStreamGuard_CutRegimeIsDecidedBySeq(t *testing.T) {
 			if tc.wantHead {
 				require.NotNil(t, pe)
 				require.Equal(t, http.StatusForbidden, pe.StatusCode)
+				if pe.Type != streamUnverifiableType {
+					require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader])
+				}
 				require.Zero(t, g.releasedIdx, "a head-gate block writes nothing at all")
 				return
 			}
@@ -1323,7 +1333,7 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 				`data: {"type":"response.incomplete","response":{"incomplete_details":` +
 					`{"reason":"content_filter"},"object":"response","output":[],"status":"incomplete"}}`, "",
 				"event: error",
-				`data: {"type":"error","code":"content_filter","message":"nope","param":null}`, "",
+				`data: {"type":"error","code":"content_filter","message":"nope","param":null,"direction":"output"}`, "",
 			},
 		},
 	}
