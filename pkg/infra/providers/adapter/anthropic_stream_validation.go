@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // ValidateAnthropicStreamEvent validates known event shapes without rejecting future event types.
@@ -29,10 +30,12 @@ func ValidateAnthropicStreamEvent(body []byte) error {
 	if json.Unmarshal(body, &kind) != nil || kind.Type == "" {
 		return invalid
 	}
-	switch kind.Type {
-	case "message_start", "message_delta", "content_block_start", "content_block_delta", "content_block_stop", "message_stop", "ping", "error":
-	default:
+	if !anthropicKnownStreamEvent(kind.Type) {
 		return nil
+	}
+	fields, ok := streamJSONFields(body)
+	if !ok || !streamFieldsNonNull(fields, "index", "usage") {
+		return invalid
 	}
 	var event anthropicStreamEvent
 	if json.Unmarshal(body, &event) != nil {
@@ -53,11 +56,30 @@ func ValidateAnthropicStreamEvent(body []byte) error {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, target) != nil {
 		return invalid
 	}
+	nested, ok := streamJSONFields(raw)
+	if !ok || !streamFieldsNonNull(nested, "type", "text", "thinking", "partial_json", "usage") {
+		return invalid
+	}
 	if event.Type == "content_block_delta" && target.(*anthropicDelta).Type == "" {
 		return invalid
 	}
 	if event.Type == "content_block_start" && target.(*anthropicContentBlock).Type == "" {
 		return invalid
 	}
+	if event.Type == "message_start" {
+		message := target.(*anthropicMessageStart)
+		if strings.TrimSpace(message.ID) == "" || strings.TrimSpace(message.Model) == "" {
+			return invalid
+		}
+	}
 	return nil
+}
+
+func anthropicKnownStreamEvent(kind string) bool {
+	switch kind {
+	case "message_start", "message_delta", "content_block_start", "content_block_delta", "content_block_stop", "message_stop", "ping", "error":
+		return true
+	default:
+		return false
+	}
 }

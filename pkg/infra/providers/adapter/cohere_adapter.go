@@ -459,9 +459,28 @@ func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 }
 
 func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	fields, valid := streamJSONFields(chunk)
+	if !valid || len(fields) == 0 {
+		return invalidStreamEvent("Cohere"), nil
+	}
+	if decodeStreamError(fields["error"]) != nil {
+		return failedStreamEvent("Cohere"), nil
+	}
+	var kind string
+	if json.Unmarshal(fields["type"], &kind) != nil || kind == "" {
+		return invalidStreamEvent("Cohere"), nil
+	}
+	switch kind {
+	case "message-start", "content-start", "content-delta", "content-end", "tool-plan-delta", "tool-call-start", "tool-call-delta", "tool-call-end", "message-end":
+	default:
+		return nil, nil
+	}
+	if !validCohereStreamDelta(fields, kind) {
+		return invalidStreamEvent("Cohere"), nil
+	}
 	var event cohereStreamEvent
 	if err := json.Unmarshal(chunk, &event); err != nil {
-		return nil, nil
+		return invalidStreamEvent("Cohere"), nil
 	}
 	switch event.Type {
 	case "message-start":
@@ -469,7 +488,7 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 	case "content-delta":
 		var delta cohereContentDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.Content == nil {
-			return nil, nil
+			return invalidStreamEvent("Cohere"), nil
 		}
 		if delta.Message.Content.Type != "" && delta.Message.Content.Type != "text" {
 			return nil, nil
@@ -480,14 +499,17 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		return &CanonicalStreamChunk{Delta: delta.Message.Content.Text}, nil
 	case "tool-plan-delta":
 		var delta cohereToolPlanDelta
-		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.ToolPlan == "" {
+		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil {
+			return invalidStreamEvent("Cohere"), nil
+		}
+		if delta.Message.ToolPlan == "" {
 			return nil, nil
 		}
 		return &CanonicalStreamChunk{Delta: delta.Message.ToolPlan}, nil
 	case "tool-call-start", "tool-call-delta":
 		var delta cohereToolCallsDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.ToolCalls == nil {
-			return nil, nil
+			return invalidStreamEvent("Cohere"), nil
 		}
 		tc := StreamToolCallDelta{Index: event.Index, ID: delta.Message.ToolCalls.ID}
 		if fn := delta.Message.ToolCalls.Function; fn != nil {
@@ -498,21 +520,55 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		}
 		return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{tc}}, nil
 	case "message-end":
+		deltaFields, valid := streamJSONFields(event.Delta)
+		if !valid {
+			return invalidStreamEvent("Cohere"), nil
+		}
+		if _, valid := streamNullableJSONObject(deltaFields, "usage"); !valid {
+			return invalidStreamEvent("Cohere"), nil
+		}
 		var delta cohereMessageEndDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
-			return nil, nil
+			return invalidStreamEvent("Cohere"), nil
 		}
-		sc := &CanonicalStreamChunk{}
+		sc := &CanonicalStreamChunk{StreamEnd: true}
 		if delta.FinishReason != "" {
 			sc.FinishReason = cohereFinishToCanonical(delta.FinishReason)
 		}
 		sc.Usage = cohereUsageToCanonical(delta.Usage)
-		if sc.FinishReason == "" && sc.Usage == nil {
-			return nil, nil
+		if delta.Error != "" || sc.FinishReason == "error" {
+			sc.UpstreamError = failedStreamEvent("Cohere").UpstreamError
 		}
 		return sc, nil
 	default:
 		return nil, nil
+	}
+}
+
+func validCohereStreamDelta(fields map[string]json.RawMessage, kind string) bool {
+	delta, valid := streamJSONObject(fields, "delta")
+	if !valid {
+		return false
+	}
+	message, valid := streamJSONObject(delta, "message")
+	if !valid {
+		return false
+	}
+	switch kind {
+	case "content-delta":
+		content, valid := streamJSONObject(message, "content")
+		return valid && streamFieldsNonNull(content, "type", "text")
+	case "tool-plan-delta":
+		return true
+	case "tool-call-start", "tool-call-delta":
+		call, valid := streamJSONObject(message, "tool_calls")
+		if !valid {
+			return false
+		}
+		_, valid = streamNullableJSONObject(call, "function")
+		return valid
+	default:
+		return true
 	}
 }
 
