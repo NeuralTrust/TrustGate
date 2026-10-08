@@ -171,7 +171,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 			CreatedAt:   in.CreatedAt,
 			UpdatedAt:   in.UpdatedAt,
 		}
-		if entry, ok := p.catalog.GetByCode(in.CatalogCode); ok && entry.DisplayName != "" {
+		if entry, ok, err := storeEntry(ctx, p.catalog, p.registries, gatewayID, in.CatalogCode); err == nil && ok && entry.DisplayName != "" {
 			row.Name = entry.DisplayName
 		}
 		if reg := byID[in.RegistryID]; reg != nil {
@@ -195,7 +195,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 		}
 		conn := PrincipalConnection{
 			Provider:   auth.Provider,
-			Code:       reg.MCPTarget.Code,
+			Code:       registrydomain.StoreCode(reg),
 			RegistryID: reg.ID,
 			Registry:   reg.Name,
 		}

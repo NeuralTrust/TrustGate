@@ -78,6 +78,9 @@ func listRegistriesByGateway(ctx context.Context, lister RegistryLister, gateway
 
 func findRegistriesByCode(ctx context.Context, lister RegistryLister, gatewayID ids.GatewayID, code string) ([]*registrydomain.Registry, error) {
 	code = strings.TrimSpace(code)
+	if id, ok := registrydomain.ParseCustomStoreCode(code); ok {
+		return findCustomRegistry(ctx, lister, gatewayID, id)
+	}
 	if indexed, ok := lister.(catalogRegistryLister); ok {
 		items, err := indexed.ListByGatewayAndCatalogCode(ctx, gatewayID, code)
 		if err != nil {
@@ -100,6 +103,28 @@ func findRegistriesByCode(ctx context.Context, lister RegistryLister, gatewayID 
 	}
 	sortRegistries(out)
 	return out, nil
+}
+
+// findCustomRegistry is the one instance a custom server's Store code names:
+// the registry itself, while it is still a custom MCP server of the gateway.
+func findCustomRegistry(ctx context.Context, lister RegistryLister, gatewayID ids.GatewayID, id ids.RegistryID) ([]*registrydomain.Registry, error) {
+	var items []*registrydomain.Registry
+	var err error
+	if indexed, ok := lister.(registryIDLister); ok {
+		items, err = indexed.ListByGatewayAndIDs(ctx, gatewayID, []ids.RegistryID{id})
+		if err != nil {
+			return nil, fmt.Errorf("store: list registries by id: %w", err)
+		}
+	} else if items, err = listRegistriesByGateway(ctx, lister, gatewayID); err != nil {
+		return nil, err
+	}
+	code := registrydomain.CustomStoreCode(id)
+	for _, registry := range items {
+		if registry != nil && registry.ID == id && registrydomain.StoreCode(registry) == code {
+			return []*registrydomain.Registry{registry}, nil
+		}
+	}
+	return nil, nil
 }
 
 func findRegistryByCode(ctx context.Context, lister RegistryLister, gatewayID ids.GatewayID, code string) (*registrydomain.Registry, error) {
@@ -129,6 +154,11 @@ func listRegistriesForInstalls(
 			continue
 		}
 		if install.RegistryID.IsNil() {
+			// A custom server's code names its registry, so it is listed by id.
+			if id, ok := registrydomain.ParseCustomStoreCode(install.CatalogCode); ok {
+				registryIDs = append(registryIDs, id)
+				continue
+			}
 			codes[install.CatalogCode] = struct{}{}
 			continue
 		}

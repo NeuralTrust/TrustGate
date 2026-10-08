@@ -173,7 +173,8 @@ func (s *scoper) installedRegistries(
 			continue
 		}
 		byID[reg.ID] = reg
-		byCode[reg.MCPTarget.Code] = append(byCode[reg.MCPTarget.Code], reg)
+		code := registrydomain.StoreCode(reg)
+		byCode[code] = append(byCode[code], reg)
 	}
 	for _, regs := range byCode {
 		sortRegistries(regs)
@@ -226,7 +227,7 @@ func resolveInstance(
 ) *registrydomain.Registry {
 	if !in.RegistryID.IsNil() {
 		reg, ok := byID[in.RegistryID]
-		if !ok || reg.MCPTarget == nil || reg.MCPTarget.Code != in.CatalogCode {
+		if !ok || registrydomain.StoreCode(reg) != in.CatalogCode {
 			return nil
 		}
 		return reg
