@@ -102,7 +102,10 @@ type storeTool struct {
 	connect   ServerConnectGateway
 	// personalKeys offers the personal key page; nil keeps the tool dark.
 	personalKeys PersonalKeyLinks
-	proxyDomain  string
+	// ownedKeys and modelLister answer the models tool; nil keeps it dark.
+	ownedKeys   OwnedKeyFinder
+	modelLister StoreModelLister
+	proxyDomain string
 }
 
 // StoreToolOption tunes NewStoreToolWithInstaller.
@@ -178,6 +181,11 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 			tools = append(tools, personalKey)
 		}
 	}
+	if t.ownedKeys != nil && t.modelLister != nil {
+		if models, err := storeModelsDefinition(); err == nil {
+			tools = append(tools, models)
+		}
+	}
 	return tools
 }
 
@@ -200,6 +208,8 @@ func (t *storeTool) Call(
 		return t.uninstall(ctx, rc, arguments)
 	case StorePersonalKeyToolName:
 		return t.personalKey(ctx, rc, baseURL)
+	case StoreModelsToolName:
+		return t.models(ctx, baseURL)
 	default:
 		return nil, fmt.Errorf("%w: unknown tool %q", ErrStoreToolUnavailable, name)
 	}

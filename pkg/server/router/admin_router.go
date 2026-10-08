@@ -255,6 +255,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Post("/principal/installs", r.deps.StorePrincipal.Install)
 			store.Post("/principal/connect-link", r.deps.StorePrincipal.ConnectLink)
 			store.Post("/principal/configure-link", r.deps.StorePrincipal.ConfigureLink)
+			store.Delete("/principal/connections/:registry_id", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.StorePrincipal.Disconnect)
 		}
 		if r.deps.StoreLLMKey != nil {
 			selfOnly := r.deps.AdminAuthz.RequireInteractiveIdentity()

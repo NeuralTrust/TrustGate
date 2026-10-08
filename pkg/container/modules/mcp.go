@@ -30,12 +30,14 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -331,7 +333,30 @@ type rpcGatewayParams struct {
 	// PersonalKeys mints the link to the personal key page. Nil where no key
 	// can be issued; the Store then offers no personal key tool.
 	PersonalKeys appoauth.PersonalKeyPages `optional:"true"`
-	Cfg          *config.Config
+	// Auths and StoreModels answer the Store's models tool: the caller's
+	// personal key, and the models its links reach as /store/v1/models lists
+	// them. Either absent, the Store offers no models tool.
+	Auths       authdomain.Repository `optional:"true"`
+	StoreModels appproxy.StoreModels  `optional:"true"`
+	Cfg         *config.Config
+}
+
+// storeModelsAdapter answers the Store's models tool with the proxy's own
+// /store/v1/models listing, so the two never disagree.
+type storeModelsAdapter struct {
+	models appproxy.StoreModels
+}
+
+func (a storeModelsAdapter) StoreModels(ctx context.Context, links []appconsumer.StoreLink, data *appconsumer.Data) ([]appmcp.StoreModel, error) {
+	listed, err := a.models.List(ctx, appproxy.StoreModelsInput{Links: links, Data: data})
+	if err != nil || listed == nil {
+		return nil, err
+	}
+	out := make([]appmcp.StoreModel, 0, len(listed.Data))
+	for _, card := range listed.Data {
+		out = append(out, appmcp.StoreModel{ID: card.ID, Provider: card.OwnedBy})
+	}
+	return out, nil
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -373,6 +398,9 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	storeOpts := []appmcp.StoreToolOption{appmcp.WithStoreToolModes(modes)}
 	if p.PersonalKeys != nil {
 		storeOpts = append(storeOpts, appmcp.WithStoreToolPersonalKeys(p.PersonalKeys, p.Cfg.Server.GatewayBaseDomain))
+	}
+	if p.Auths != nil && p.StoreModels != nil {
+		storeOpts = append(storeOpts, appmcp.WithStoreToolModels(p.Auths, storeModelsAdapter{models: p.StoreModels}, p.Cfg.Server.GatewayBaseDomain))
 	}
 	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, grants, configure, connect, storeOpts...)
 	if err != nil {

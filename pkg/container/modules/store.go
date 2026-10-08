@@ -31,6 +31,7 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	storeaccessrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/storeaccess"
 	"go.uber.org/dig"
+	"log/slog"
 )
 
 // Store wires the MCP Store's state on the full plane: the per-principal
@@ -150,6 +151,7 @@ type storePrincipalParams struct {
 	// and mints the connect link the Portal's own sign-in button opens. Absent
 	// on planes without the OAuth connect service.
 	Connect appoauth.ConnectService `optional:"true"`
+	Logger  *slog.Logger            `optional:"true"`
 }
 
 // provideStorePrincipalHandler serves the Portal's admin preview of one user's
@@ -193,7 +195,17 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 			return nil, err
 		}
 	}
-	return storehttp.NewPrincipalHandler(preview, onBehalf, linker, configurer), nil
+	var handlerOpts []storehttp.PrincipalHandlerOption
+	// Revoking an account deletes it from the vault the preview reads it from;
+	// a plane without one offers no Disconnect.
+	if p.Vault != nil {
+		disconnector, err := appstore.NewPrincipalDisconnector(p.Registries, p.Vault, p.Logger)
+		if err != nil {
+			return nil, err
+		}
+		handlerOpts = append(handlerOpts, storehttp.WithPrincipalDisconnector(disconnector))
+	}
+	return storehttp.NewPrincipalHandler(preview, onBehalf, linker, configurer, handlerOpts...), nil
 }
 
 type storeApprovalParams struct {

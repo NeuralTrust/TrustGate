@@ -5248,6 +5248,107 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/principal/connections/{registry_id}": {
+            "delete": {
+                "description": "Revokes the account the caller linked to one Store server: the instance's registry_id, as the principal preview lists it under connections. The credential is deleted from the gateway vault, and the next call to that server asks the caller to connect again; the install stays. Acts on the signed-in user only; a service credential or a platform token answers 403. An instance that reads one account shared by everyone answers 409: an administrator disconnects it in Registry. An account that is not linked answers 204, as one just revoked does.",
+                "tags": [
+                    "store"
+                ],
+                "summary": "Disconnect your account from a Store server",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Instance (registry) id",
+                        "name": "registry_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "No such instance on the gateway, or one that needs no account",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The instance uses one shared account",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/principal/installs": {
             "post": {
                 "description": "Runs the Store installer as the given user (their live access level applies): installs at once when allowed, records an approval request otherwise. Same outcome the user's own client would get.",
@@ -10846,6 +10947,10 @@
                     },
                     "registry_id": {
                         "type": "string"
+                    },
+                    "shared": {
+                        "description": "Shared is an instance with one account for everyone, which only an\nadministrator connects and disconnects.",
+                        "type": "boolean"
                     }
                 }
             },
