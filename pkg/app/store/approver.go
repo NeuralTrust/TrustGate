@@ -23,6 +23,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
@@ -197,16 +198,12 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 		if in == nil {
 			continue
 		}
-		name := in.CatalogCode
-		if entry, ok := a.catalog.GetByCode(in.CatalogCode); ok {
-			name = displayName(entry, in.CatalogCode)
-		}
 		out = append(out, PendingRequest{
 			GatewayID:       in.GatewayID,
 			InstanceID:      in.ID.String(),
 			PrincipalSub:    in.PrincipalSub,
 			Code:            in.CatalogCode,
-			Name:            name,
+			Name:            a.serverName(ctx, gatewayID, in.CatalogCode),
 			InstalledBy:     in.InstalledBy,
 			Reason:          in.Reason,
 			RequesterGroups: append([]string(nil), in.RequesterGroups...),
@@ -231,16 +228,12 @@ func (a *approver) ListDecided(ctx context.Context, gatewayID ids.GatewayID) ([]
 		if in == nil || in.Decision == "" {
 			continue
 		}
-		name := in.CatalogCode
-		if entry, ok := a.catalog.GetByCode(in.CatalogCode); ok {
-			name = displayName(entry, in.CatalogCode)
-		}
 		out = append(out, DecidedRequest{
 			GatewayID:    in.GatewayID,
 			InstanceID:   in.ID.String(),
 			PrincipalSub: in.PrincipalSub,
 			Code:         in.CatalogCode,
-			Name:         name,
+			Name:         a.serverName(ctx, gatewayID, in.CatalogCode),
 			RegistryID:   in.RegistryID,
 			Reason:       in.Reason,
 			Decision:     in.Decision,
@@ -277,6 +270,11 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 		return fmt.Errorf("%w: instance %s of %q", ErrNotShelved, existing.RegistryID, code)
 	}
 	if len(instances) == 0 {
+		// A custom server has no catalog entry to materialise from: once its
+		// registry is gone there is nothing to approve it onto.
+		if _, custom := registrydomain.ParseCustomStoreCode(code); custom {
+			return fmt.Errorf("%w: %q", ErrNotShelved, code)
+		}
 		// Nobody connected this server yet: materialise it so the install has a
 		// registry to land on, when we can.
 		if a.ensurer == nil {
@@ -458,4 +456,13 @@ func requesterHasGroup(request *installationdomain.Installation, group string) e
 		}
 	}
 	return fmt.Errorf("%w: %q", ErrGroupNotRequesters, group)
+}
+
+// serverName is what a request shows for its server: the catalog's name, or a
+// custom server's registry name; the code itself when neither is found.
+func (a *approver) serverName(ctx context.Context, gatewayID ids.GatewayID, code string) string {
+	if entry, ok, err := storeEntry(ctx, a.catalog, a.registries, gatewayID, code); err == nil && ok {
+		return displayName(entry, code)
+	}
+	return code
 }

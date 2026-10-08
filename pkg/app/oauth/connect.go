@@ -616,7 +616,7 @@ func (s *connectService) storeRegistry(
 		return nil
 	}
 	for _, reg := range items {
-		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
+		if reg != nil && reg.MCPTarget != nil && registrydomain.StoreCode(reg) == code {
 			return reg
 		}
 	}
