@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -69,8 +70,8 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
-	caller := tenantIDFromContext(c)
-	if caller != "" {
+	caller := middleware.AdminIdentityFromContext(c)
+	if !isPlatform(caller) {
 		existing, err := h.finder.FindByID(c.UserContext(), id)
 		if err != nil {
 			return httpio.WriteError(c, err)
@@ -85,8 +86,8 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Slug:                 req.Slug,
 		Status:               req.Status,
 		Domain:               req.Domain,
-		TenantID:             caller,
-		PlatformAdmin:        caller == "",
+		TenantID:             caller.TenantID,
+		PlatformAdmin:        isPlatform(caller),
 		Metadata:             req.Metadata,
 		Telemetry:            req.Telemetry,
 		ClientTLSConfig:      req.ClientTLSConfig,

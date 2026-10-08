@@ -15,10 +15,14 @@
 package gateway
 
 import (
+	"fmt"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -47,6 +51,10 @@ func NewListGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain s
 // @Failure      401   {object}  httpio.ErrorBody
 // @Router       /v1/gateways [get]
 func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
+	caller := middleware.AdminIdentityFromContext(c)
+	if !isPlatform(caller) && caller.TenantID == "" {
+		return httpio.WriteError(c, fmt.Errorf("caller has no tenant: %w", commonerrors.ErrForbidden))
+	}
 	page, err := httpio.ParsePage(c)
 	if err != nil {
 		return httpio.WriteError(c, err)
@@ -63,7 +71,7 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
 		SlugContains: req.Slug,
-		TenantID:     tenantIDFromContext(c),
+		TenantID:     caller.TenantID,
 		Page:         req.Page,
 		Size:         req.Size,
 	})

@@ -19,10 +19,10 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -65,7 +65,7 @@ func NewRestampEntitlementsHandler(restamper appgateway.EntitlementsRestamper) *
 func (h *RestampEntitlementsHandler) Handle(c *fiber.Ctx) error {
 	// Stamping crosses tenants by nature, so it stays platform-only: the same rule
 	// the per-gateway PUT applies to its entitlements block.
-	if caller := tenantIDFromContext(c); caller != "" {
+	if middleware.AdminIdentityFromContext(c).Kind != middleware.AdminIdentityPlatform {
 		return httpio.WriteError(c, fmt.Errorf(
 			"entitlements may only be stamped by platform admins: %w", commonerrors.ErrValidation))
 	}
@@ -95,11 +95,4 @@ func (h *RestampEntitlementsHandler) Handle(c *fiber.Ctx) error {
 		MaxInstances: result.MaxInstances,
 		OverCap:      result.OverCap,
 	})
-}
-
-func tenantIDFromContext(c *fiber.Ctx) string {
-	if v, ok := c.Locals(string(infracontext.TenantIDContextKey)).(string); ok {
-		return v
-	}
-	return ""
 }
