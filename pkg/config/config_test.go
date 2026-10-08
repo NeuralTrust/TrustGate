@@ -1180,6 +1180,27 @@ func TestGetAdminM2MConfig_TokenTTLCeiling(t *testing.T) {
 	})
 }
 
+func TestGetServerConfig_AdminTokenMaxTTL(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want time.Duration
+	}{
+		{name: "defaults to 1h", want: time.Hour},
+		{name: "shorter override", env: "10m", want: 10 * time.Minute},
+		{name: "capped at 24h", env: "720h", want: 24 * time.Hour},
+		{name: "invalid falls back", env: "-5m", want: time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ADMIN_TOKEN_MAX_TTL", tt.env)
+			if got := getServerConfig().AdminTokenMaxTTL; got != tt.want {
+				t.Errorf("AdminTokenMaxTTL = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseAdminM2MPublicKeys(t *testing.T) {
 	const pemKey = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
 	b64 := base64.StdEncoding.EncodeToString([]byte(pemKey))

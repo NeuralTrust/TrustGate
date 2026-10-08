@@ -61,6 +61,7 @@ func TestConnectAttemptLimiterThresholds(t *testing.T) {
 	}{
 		{name: "source", scope: appoauth.ConnectAttemptScopeSource, subject: "192.0.2.1", limit: 10},
 		{name: "consumer", scope: appoauth.ConnectAttemptScopeConsumer, subject: "d99dcf57-8bbe-41de-aaae-c503f448a2f0", limit: 100},
+		{name: "registration", scope: appoauth.ConnectAttemptScopeRegistration, subject: "192.0.2.1", limit: 10},
 	}
 
 	for _, tc := range tests {

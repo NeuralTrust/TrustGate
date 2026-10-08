@@ -396,7 +396,7 @@ export SERVER_SECRET_KEY="$(grep ^SERVER_SECRET_KEY .env | cut -d= -f2-)"
 export ADMIN_TOKEN=$(python3 - <<'PY'
 import jwt, os, time
 secret = os.environ["SERVER_SECRET_KEY"]
-print(jwt.encode({"sub": "admin", "iat": int(time.time()), "exp": int(time.time()) + 3600}, secret, algorithm="HS256"))
+print(jwt.encode({"sub": "admin", "platform_admin": True, "iat": int(time.time()), "exp": int(time.time()) + 3600}, secret, algorithm="HS256"))
 PY
 )
 ```

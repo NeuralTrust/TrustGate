@@ -47,6 +47,7 @@ type ConnectAttemptScope uint8
 const (
 	ConnectAttemptScopeSource ConnectAttemptScope = iota + 1
 	ConnectAttemptScopeConsumer
+	ConnectAttemptScopeRegistration
 )
 
 type ConnectRateLimitExceeded struct {

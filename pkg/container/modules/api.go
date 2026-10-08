@@ -353,16 +353,18 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewAuthorizationServerHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewRegisterHandler); err != nil {
+	if err := c.Provide(provideRegisterHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, store appoauth.FlowStore, cfg *config.Config) *oauthhttp.AuthorizeHandler {
 		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
-		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
+		return oauthhttp.NewAuthorizeHandler(proxy, gateways, store, oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewCallbackHandler); err != nil {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, cfg *config.Config) *oauthhttp.CallbackHandler {
+		return oauthhttp.NewCallbackHandler(proxy, oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
@@ -424,6 +426,17 @@ func provideWhoAmIHandler(
 		opts = append(opts, mcphttp.WithWhoAmIRefuseHybrid())
 	}
 	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain, opts...)
+}
+
+func provideRegisterHandler(
+	metadata appoauth.MetadataService,
+	cfg *config.Config,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.RegisterHandler {
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
+	}
+	return oauthhttp.NewRegisterHandler(metadata, oauthhttp.WithRegistrationLimit(limiter, resolveSource))
 }
 
 func provideEndUserConnectionsHandler(

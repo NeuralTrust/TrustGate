@@ -62,7 +62,7 @@ func guardedDefaultIdP(t *testing.T, idp *httptest.Server, issuer string, truste
 
 func loginAt(t *testing.T, proxy AuthProxy, ctx context.Context) (string, error) {
 	t.Helper()
-	loc, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+	loc, err := authorizeLocation(proxy, ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType: "code", ClientID: "trustgate", RedirectURI: "cursor://anysphere.cursor-mcp/oauth/callback",
 		State: "s", CodeChallenge: s256("v"), CodeChallengeMethod: "S256", Resource: trustedResource,
 	})

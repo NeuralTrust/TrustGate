@@ -63,10 +63,20 @@ func (s *stubEndUserConnections) AppConnections(_ context.Context, _ ids.Gateway
 	return s.appAccounts, s.appErr
 }
 
+type refusingLimiter struct{ err error }
+
+func (l refusingLimiter) Check(context.Context, appoauth.ConnectAttemptScope, string) error {
+	return l.err
+}
+
 func newEndUserApp(svc appoauth.EndUserConnectionsService) *fiber.App {
+	return newEndUserAppWithLimiter(svc, appoauth.NewNoopConnectAttemptLimiter())
+}
+
+func newEndUserAppWithLimiter(svc appoauth.EndUserConnectionsService, limiter appoauth.ConnectAttemptLimiter) *fiber.App {
 	h := NewEndUserConnectionsHandler(
 		endUserGatewayResolver{gw: &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}},
-		svc, appoauth.NewNoopConnectAttemptLimiter(), func(string, string) string { return "127.0.0.1" },
+		svc, limiter, func(string, string) string { return "127.0.0.1" },
 	)
 	app := fiber.New()
 	app.Post("/:slug/connections/links", h.Link)
@@ -251,4 +261,51 @@ func TestEndUserConnectionsHandler_ServesBothActorsOfOneConsumer(t *testing.T) {
 	defer func() { _ = userResponse.Body.Close() }()
 	require.Equal(t, fiber.StatusOK, userResponse.StatusCode)
 	require.Equal(t, "user_123", svc.gotEndUser)
+}
+
+func TestEndUserConnectionsHandler_SourceLimitStopsTheRequest(t *testing.T) {
+	limiters := map[string]struct {
+		limiter    appoauth.ConnectAttemptLimiter
+		wantStatus int
+		retryAfter string
+	}{
+		"limit reached": {
+			limiter:    refusingLimiter{err: &appoauth.ConnectRateLimitExceeded{RetryAfter: 30 * time.Second}},
+			wantStatus: fiber.StatusTooManyRequests,
+			retryAfter: "30",
+		},
+		"limiter unavailable": {
+			limiter:    refusingLimiter{err: appoauth.ErrConnectRateLimitUnavailable},
+			wantStatus: fiber.StatusServiceUnavailable,
+		},
+	}
+	requests := map[string]func() *http.Request{
+		"link": func() *http.Request {
+			req := httptest.NewRequest(fiber.MethodPost, "/assistant/connections/links", strings.NewReader(`{"end_user":"user_123","provider":"github"}`))
+			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+			return req
+		},
+		"list for an end user": func() *http.Request {
+			return httptest.NewRequest(fiber.MethodGet, "/assistant/connections?end_user=user_123", nil)
+		},
+		"list for the application": func() *http.Request {
+			return httptest.NewRequest(fiber.MethodGet, "/assistant/connections", nil)
+		},
+	}
+	for limiterName, lc := range limiters {
+		for reqName, build := range requests {
+			t.Run(limiterName+"/"+reqName, func(t *testing.T) {
+				svc := &stubEndUserConnections{link: &appoauth.EndUserLink{Ticket: "t-1"}}
+				req := build()
+				req.Host = "acme.mcp.test"
+				req.Header.Set("X-AG-API-Key", "ag_secret")
+				resp, err := newEndUserAppWithLimiter(svc, lc.limiter).Test(req)
+				require.NoError(t, err)
+				require.Equal(t, lc.wantStatus, resp.StatusCode)
+				require.Equal(t, lc.retryAfter, resp.Header.Get(fiber.HeaderRetryAfter))
+				require.Empty(t, svc.gotKey, "the connections service must not be reached")
+				require.False(t, svc.askedForApp, "the connections service must not be reached")
+			})
+		}
+	}
 }

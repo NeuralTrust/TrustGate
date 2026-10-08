@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,29 @@ func mcpRequestWithHost(t *testing.T, method, path, host string, query url.Value
 	return resp
 }
 
+var consentStateField = regexp.MustCompile(`name="state" value="([^"]+)"`)
+
+// approveConsent submits the consent page in resp from the same browser,
+// carrying the cookie that page set.
+func approveConsent(t *testing.T, resp *http.Response, host string) *http.Response {
+	t.Helper()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	m := consentStateField.FindSubmatch(raw)
+	require.NotNil(t, m, "consent page carries no state: %s", string(raw))
+	form := url.Values{"state": {string(m[1])}, "decision": {"approve"}}
+	req, err := http.NewRequest(http.MethodPost, MCPURL+"/oauth/authorize", strings.NewReader(form.Encode()))
+	require.NoError(t, err)
+	req.Host = host
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range resp.Cookies() {
+		req.AddCookie(c)
+	}
+	out, err := noRedirectClient().Do(req)
+	require.NoError(t, err)
+	return out
+}
+
 func decodeBody(t *testing.T, resp *http.Response) map[string]any {
 	t.Helper()
 	defer func() { _ = resp.Body.Close() }()
@@ -268,10 +292,15 @@ func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) 
 			resp := mcpRequestWithHost(t, http.MethodGet, "/oauth/authorize", sharedHost,
 				authorizeQuery(clientA, wantResource), nil)
 			defer func() { _ = resp.Body.Close() }()
-			if resp.StatusCode != http.StatusFound {
+			if resp.StatusCode != http.StatusOK {
 				return false
 			}
-			loc, err := resp.Location()
+			approved := approveConsent(t, resp, sharedHost)
+			defer func() { _ = approved.Body.Close() }()
+			if approved.StatusCode != http.StatusSeeOther {
+				return false
+			}
+			loc, err := approved.Location()
 			return err == nil && loc.Host == idpA.host(t)
 		}, 5*time.Second, 100*time.Millisecond,
 			"authorize must redirect to the consumer's IdP once the credential propagates")

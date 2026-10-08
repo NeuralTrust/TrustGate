@@ -15,13 +15,16 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -178,4 +181,65 @@ func TestRegisterHandlerManagementRejectsUnsafeRedirects(t *testing.T) {
 	if res.StatusCode != fiber.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for a non-loopback http redirect", res.StatusCode)
 	}
+}
+
+type countingLimiter struct {
+	allowed int
+	scopes  []appoauth.ConnectAttemptScope
+	err     error
+}
+
+func (l *countingLimiter) Check(_ context.Context, scope appoauth.ConnectAttemptScope, _ string) error {
+	l.scopes = append(l.scopes, scope)
+	if l.err != nil {
+		return l.err
+	}
+	if len(l.scopes) > l.allowed {
+		return &appoauth.ConnectRateLimitExceeded{RetryAfter: 30 * time.Second}
+	}
+	return nil
+}
+
+func TestRegisterHandlerLimitsRegistrationsPerSource(t *testing.T) {
+	t.Parallel()
+	register := func(limiter appoauth.ConnectAttemptLimiter) *http.Response {
+		svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{oauth2Auth("https://idp.example.com", "upstream-client")}}, nil, nil, newMemFlowStore())
+		app := fiber.New()
+		app.Post(RegisterPath, NewRegisterHandler(svc, WithRegistrationLimit(limiter, func(peer, _ string) string { return peer })).Handle)
+		req := httptest.NewRequest(fiber.MethodPost, RegisterPath, strings.NewReader(`{"redirect_uris":["https://client.example.com/cb"]}`))
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		return res
+	}
+
+	t.Run("within the limit", func(t *testing.T) {
+		t.Parallel()
+		limiter := &countingLimiter{allowed: 1}
+		res := register(limiter)
+		if res.StatusCode != fiber.StatusCreated {
+			t.Fatalf("expected 201, got %d", res.StatusCode)
+		}
+		if len(limiter.scopes) != 1 || limiter.scopes[0] != appoauth.ConnectAttemptScopeRegistration {
+			t.Fatalf("registration must be counted in its own bucket, got %v", limiter.scopes)
+		}
+	})
+
+	t.Run("over the limit", func(t *testing.T) {
+		t.Parallel()
+		res := register(&countingLimiter{allowed: 0})
+		if res.StatusCode != fiber.StatusTooManyRequests || res.Header.Get(fiber.HeaderRetryAfter) != "30" {
+			t.Fatalf("expected 429 with Retry-After 30, got %d %q", res.StatusCode, res.Header.Get(fiber.HeaderRetryAfter))
+		}
+	})
+
+	t.Run("limiter unavailable", func(t *testing.T) {
+		t.Parallel()
+		res := register(&countingLimiter{err: appoauth.ErrConnectRateLimitUnavailable})
+		if res.StatusCode != fiber.StatusServiceUnavailable {
+			t.Fatalf("expected 503, got %d", res.StatusCode)
+		}
+	})
 }

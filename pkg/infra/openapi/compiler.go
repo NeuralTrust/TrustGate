@@ -641,7 +641,7 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 	}
 	host := parsed.Hostname()
 	for _, address := range addresses {
-		if blockedDestination(host, address.IP) {
+		if blockedDestination(host, address.IP, netguard.AllowPrivate()) {
 			return fmt.Errorf("host resolves to a blocked address %s", address.IP)
 		}
 	}
@@ -649,9 +649,10 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 }
 
 // NewSafeHTTPClient returns an HTTP client that rejects loopback, link-local,
-// and reserved destinations. RFC1918 and CGNAT addresses are allowed when the
-// URL host is a DNS name (cluster-internal FQDNs) and blocked when it is a
-// literal IP.
+// and reserved destinations. Where OUTBOUND_ALLOW_PRIVATE_NETWORKS is on,
+// RFC1918 and CGNAT addresses are allowed when the URL host is a DNS name
+// (cluster-internal FQDNs) and blocked when it is a literal IP; otherwise every
+// non-public address is refused.
 func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 	return newSafeHTTPClient(timeout, false)
 }
@@ -668,7 +669,7 @@ func newSafeHTTPClient(timeout time.Duration, publicOnly bool) *http.Client {
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return resolveAndDial(ctx, network, address, publicOnly, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
+		return resolveAndDial(ctx, network, address, publicOnly, netguard.AllowPrivate(), net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
 	return &http.Client{
 		Transport: transport,
@@ -686,7 +687,7 @@ func newSafeHTTPClient(timeout time.Duration, publicOnly bool) *http.Client {
 }
 
 func resolveAndDial(
-	ctx context.Context, network, address string, publicOnly bool,
+	ctx context.Context, network, address string, publicOnly, allowPrivate bool,
 	lookup func(context.Context, string) ([]net.IPAddr, error),
 	dial func(context.Context, string, string) (net.Conn, error),
 ) (net.Conn, error) {
@@ -706,7 +707,7 @@ func resolveAndDial(
 		}
 	}
 	for _, resolved := range ips {
-		if blockedDestination(host, resolved.IP) {
+		if blockedDestination(host, resolved.IP, allowPrivate) {
 			continue
 		}
 		return dial(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
@@ -718,9 +719,12 @@ func publicDestination(ip net.IP) bool {
 	return netguard.IsPublicUnicast(ip)
 }
 
-func blockedDestination(host string, ip net.IP) bool {
+func blockedDestination(host string, ip net.IP, allowPrivate bool) bool {
 	if ipAlwaysBlocked(ip) {
 		return true
+	}
+	if !allowPrivate {
+		return !netguard.IsPublicUnicast(ip)
 	}
 	if net.ParseIP(host) == nil {
 		return false

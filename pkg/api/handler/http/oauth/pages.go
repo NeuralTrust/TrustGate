@@ -445,6 +445,21 @@ func renderDeepLinkPage(c *fiber.Ctx, location string) error {
 	})
 }
 
+type consentView struct {
+	ClientName  string
+	RedirectTo  string
+	RedirectURI string
+	State       string
+}
+
+func renderConsentPage(c *fiber.Ctx, view consentView) error {
+	if view.ClientName == "" {
+		view.ClientName = "This application"
+	}
+	c.Set("Content-Security-Policy", "frame-ancestors 'none'")
+	return renderHTML(c, consentPageTmpl, view)
+}
+
 func renderHTML(c *fiber.Ctx, tmpl *template.Template, data any) error {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

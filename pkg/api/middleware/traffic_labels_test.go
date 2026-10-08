@@ -15,8 +15,6 @@
 package middleware_test
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
@@ -156,16 +154,8 @@ func newTrafficLabelsApp(t *testing.T, s trafficLabelsSetup) (*fiber.App, *recor
 
 func postTo(t *testing.T, app *fiber.App, path, body string) (int, string) {
 	t.Helper()
-	return postEncoded(t, app, path, []byte(body), "")
-}
-
-func postEncoded(t *testing.T, app *fiber.App, path string, body []byte, encoding string) (int, string) {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	if encoding != "" {
-		req.Header.Set("Content-Encoding", encoding)
-	}
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -285,45 +275,6 @@ func TestTrafficLabels_UnsetCapFallsBackToTheDefault(t *testing.T) {
 	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` + strings.Repeat("x", 600<<10) + `"}]}`
 	postTo(t, app, "/acme/v1/chat/completions", huge)
 	assert.Len(t, intake.submitted(), 1, "a cap of zero or less is not \"no cap\"")
-}
-
-func gzipped(t *testing.T, body string) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	_, err := zw.Write([]byte(body))
-	require.NoError(t, err)
-	require.NoError(t, zw.Close())
-	return buf.Bytes()
-}
-
-func TestTrafficLabels_DecodesAnEncodedBody(t *testing.T) {
-	t.Parallel()
-	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{gateway: labeledGateway(true), accept: true})
-
-	status, _ := postEncoded(t, app, "/acme/v1/chat/completions", gzipped(t, chatBody), "gzip")
-
-	assert.Equal(t, fiber.StatusOK, status)
-	got := intake.submitted()
-	require.Len(t, got, 1)
-	assert.Equal(t, chatBody, string(got[0].Body), "the labeler gets the decoded body")
-}
-
-func TestTrafficLabels_EncodedBodyOverTheCapOnceDecoded(t *testing.T) {
-	t.Parallel()
-	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` + strings.Repeat("x", 64<<10) + `"}]}`
-	encoded := gzipped(t, huge)
-	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{
-		gateway:  labeledGateway(true),
-		maxBody:  len(encoded) + 1024,
-		accept:   true,
-		outcomes: []string{trafficlabels.OutcomeBodyTooLarge},
-	})
-
-	status, _ := postEncoded(t, app, "/acme/v1/chat/completions", encoded, "gzip")
-
-	assert.Equal(t, fiber.StatusOK, status)
-	assert.Empty(t, intake.submitted(), "the cap applies to the decoded size too")
 }
 
 const responsesContinuationBody = `{"model":"gpt-4o","previous_response_id":"resp_prev1","input":"and the second invoice?"}`

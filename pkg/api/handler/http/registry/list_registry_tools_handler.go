@@ -90,7 +90,7 @@ func (h *ListRegistryToolsHandler) Handle(c *fiber.Ctx) error {
 	tools, err := h.introspector.ListRegistryTools(c.UserContext(), gatewayID, id)
 	if err != nil {
 		if errors.Is(err, appmcp.ErrUpstreamUnavailable) {
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": appmcp.ErrUpstreamUnavailable.Error()})
 		}
 		return httpio.WriteError(c, err)
 	}

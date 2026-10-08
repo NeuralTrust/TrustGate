@@ -27,20 +27,23 @@ import (
 func TestResolveAndDialEnforcesPublicDNSAnswers(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                string
-		ips                 []string
-		publicOnly, allowed bool
+		name                              string
+		ips                               []string
+		publicOnly, allowPrivate, allowed bool
 	}{
-		{"public", []string{"8.8.8.8"}, true, true},
-		{"private_dns", []string{"10.1.2.3"}, true, false},
-		{"mixed_dns", []string{"8.8.8.8", "10.1.2.3"}, true, false},
-		{"loopback_dns", []string{"127.0.0.1"}, true, false},
-		{"cgnat_dns", []string{"100.64.0.1"}, true, false},
-		{"ula_dns", []string{"fd00::1"}, true, false},
-		{"nat64_public", []string{"64:ff9b::808:808"}, true, true},
-		{"nat64_private", []string{"64:ff9b::a00:1"}, true, false},
-		{"admin_private_dns", []string{"10.1.2.3"}, false, true},
-		{"admin_cgnat_dns", []string{"100.64.0.1"}, false, true},
+		{"public", []string{"8.8.8.8"}, true, true, true},
+		{"private_dns", []string{"10.1.2.3"}, true, true, false},
+		{"mixed_dns", []string{"8.8.8.8", "10.1.2.3"}, true, true, false},
+		{"loopback_dns", []string{"127.0.0.1"}, true, true, false},
+		{"cgnat_dns", []string{"100.64.0.1"}, true, true, false},
+		{"ula_dns", []string{"fd00::1"}, true, true, false},
+		{"nat64_public", []string{"64:ff9b::808:808"}, true, true, true},
+		{"nat64_private", []string{"64:ff9b::a00:1"}, true, true, false},
+		{"admin_private_dns", []string{"10.1.2.3"}, false, true, true},
+		{"admin_cgnat_dns", []string{"100.64.0.1"}, false, true, true},
+		{"admin_private_dns_guarded", []string{"10.1.2.3"}, false, false, false},
+		{"admin_cgnat_dns_guarded", []string{"100.64.0.1"}, false, false, false},
+		{"admin_public_guarded", []string{"8.8.8.8"}, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -59,7 +62,7 @@ func TestResolveAndDialEnforcesPublicDNSAnswers(t *testing.T) {
 				require.NoError(t, b.Close())
 				return a, nil
 			}
-			conn, err := resolveAndDial(context.Background(), "tcp", "user.example.com:443", tc.publicOnly, lookup, dial)
+			conn, err := resolveAndDial(context.Background(), "tcp", "user.example.com:443", tc.publicOnly, tc.allowPrivate, lookup, dial)
 			if tc.allowed {
 				require.NoError(t, err)
 				require.Equal(t, net.JoinHostPort(tc.ips[0], "443"), dialed)
