@@ -65,6 +65,10 @@ type PendingAuthorization struct {
 	AuthorizeURL string `json:"authorize_url,omitempty"`
 	// Approved is set by Approve; Callback redeems nothing that lacks it.
 	Approved bool `json:"approved,omitempty"`
+	// BrowserSignIn marks a sign-in the gateway started for one of its own
+	// pages (see BrowserSignIn): its callback leaves a proof of who signed in
+	// at RedirectURI instead of a code for a client.
+	BrowserSignIn bool `json:"browser_sign_in,omitempty"`
 }
 
 type CodeGrant struct {
@@ -93,6 +97,10 @@ type CodeGrant struct {
 	Audiences   []string `json:"audiences,omitempty"`
 	Scopes      []string `json:"scopes,omitempty"`
 	SessionMode bool     `json:"session_mode,omitempty"`
+	// BrowserSignIn marks a proof of a browser sign-in rather than a code: it
+	// names who signed in for one of the gateway's own pages, and the token
+	// endpoint never exchanges it.
+	BrowserSignIn bool `json:"browser_sign_in,omitempty"`
 }
 
 type SessionRecord struct {

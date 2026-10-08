@@ -93,6 +93,9 @@ type storeTool struct {
 	modes     appstore.ModeResolver
 	configure ConfigureGateway
 	connect   ServerConnectGateway
+	// personalKeys offers the personal key page; nil keeps the tool dark.
+	personalKeys PersonalKeyLinks
+	proxyDomain  string
 }
 
 // StoreToolOption tunes NewStoreToolWithInstaller.
@@ -163,6 +166,11 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 			tools = append(tools, uninstall)
 		}
 	}
+	if t.personalKeys != nil {
+		if personalKey, err := storePersonalKeyDefinition(); err == nil {
+			tools = append(tools, personalKey)
+		}
+	}
 	return tools
 }
 
@@ -183,6 +191,8 @@ func (t *storeTool) Call(
 		return t.install(ctx, rc, baseURL, arguments)
 	case StoreUninstallToolName:
 		return t.uninstall(ctx, rc, arguments)
+	case StorePersonalKeyToolName:
+		return t.personalKey(ctx, rc, baseURL)
 	default:
 		return nil, fmt.Errorf("%w: unknown tool %q", ErrStoreToolUnavailable, name)
 	}

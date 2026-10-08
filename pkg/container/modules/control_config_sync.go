@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
@@ -151,14 +152,22 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// The MCP Store's personal key page runs on the data plane and writes the
+	// key here. The service checks the gateway against the caller's scope.
+	if err := c.Provide(func(issuer appauth.PersonalKeyIssuer, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.PersonalKeysServer {
+		return configsyncgrpc.NewPersonalKeysService(issuer, gateways, logger)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(configsyncgrpc.NewAuthInterceptor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, pinned snapshotpb.PinnedToolsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
+	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, pinned snapshotpb.PinnedToolsServer, personalKeys snapshotpb.PersonalKeysServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
 		if cfg.IsDeployed() && (cfg.ConfigSync.GRPCTLSCertPath == "" || cfg.ConfigSync.GRPCTLSKeyPath == "") {
 			return nil, fmt.Errorf("%w: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY are required on the control plane in deployed environments", commonerrors.ErrInvalidConfig)
 		}
-		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger, configsyncgrpc.RegisterPinnedTools(pinned))
+		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger,
+			configsyncgrpc.RegisterPinnedTools(pinned), configsyncgrpc.RegisterPersonalKeys(personalKeys))
 	}); err != nil {
 		return err
 	}
