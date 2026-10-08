@@ -179,13 +179,13 @@ func (m NativeMasker) MaskResponseWhy(original, modified []byte) ([]byte, MaskCa
 		if err != nil {
 			return "", err
 		}
-		return cr.Content, nil
+		return responseText(cr), nil
 	}
-	subs, hits, ok := deriveSubstitutions(before.Content, after.Content)
+	subs, hits, ok := deriveSubstitutions(responseText(before), responseText(after))
 	if !ok {
 		return nil, MaskCauseNotAReplacement
 	}
-	if !placeShort(original, before.Content, decode, subs, hits) {
+	if !placeShort(original, responseText(before), decode, subs, hits) {
 		return nil, MaskCausePlaceUnknown
 	}
 	masked, err := m.patch(original, subs)
@@ -200,7 +200,7 @@ func (m NativeMasker) MaskResponseWhy(original, modified []byte) ([]byte, MaskCa
 		return nil, MaskCauseOutsideReadStrings
 	case !sameResponseShape(got, after):
 		return nil, MaskCauseShape
-	case leaks(got.Content, subs) || treeLeaks(masked, subs):
+	case leaks(responseText(got), subs) || treeLeaks(masked, subs):
 		return nil, MaskCauseLeak
 	}
 	return masked, ""
@@ -328,7 +328,7 @@ func sameFloat(a, b *float64) bool {
 }
 
 func sameResponseShape(got, want *CanonicalResponse) bool {
-	if normalizeSpace(got.Content) != normalizeSpace(want.Content) || len(got.ToolCalls) != len(want.ToolCalls) {
+	if normalizeSpace(responseText(got)) != normalizeSpace(responseText(want)) || len(got.ToolCalls) != len(want.ToolCalls) {
 		return false
 	}
 	for i := range got.ToolCalls {
