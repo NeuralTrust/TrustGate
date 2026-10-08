@@ -22,6 +22,9 @@ const (
 	CapabilityImages             = "images"
 	CapabilityAudioSpeech        = "audio_speech"
 	CapabilityAudioTranscription = "audio_transcription"
+	// CapabilityBedrockNative marks a request that spoke the Bedrock Runtime
+	// API itself (Converse or InvokeModel) and is relayed without translation.
+	CapabilityBedrockNative = "bedrock_native"
 )
 
 func SupportsCapability(provider, capability string) bool {

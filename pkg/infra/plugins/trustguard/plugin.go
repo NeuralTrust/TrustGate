@@ -205,6 +205,12 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// NativeBedrock declares what the plugin does on a native Amazon Bedrock Runtime
+// call (see appplugins.BedrockNativeAware).
+func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeMasks
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	if !p.tokens.configured() {
 		return fmt.Errorf("trustguard: client credentials are not configured (set TRUSTGUARD_CLIENT_ID and TRUSTGUARD_CLIENT_SECRET)")

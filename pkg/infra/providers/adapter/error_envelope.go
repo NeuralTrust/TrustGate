@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 )
@@ -40,6 +41,11 @@ type geminiErrorBody struct {
 }
 
 type cohereErrorEnvelope struct {
+	Message string `json:"message"`
+}
+
+type bedrockErrorEnvelope struct {
+	Type    string `json:"__type"`
 	Message string `json:"message"`
 }
 
@@ -124,6 +130,9 @@ func EncodeErrorBody(source Format, status int, message string) []byte {
 		return out
 	case FormatCohere:
 		out, _ := json.Marshal(cohereErrorEnvelope{Message: message})
+		return out
+	case FormatBedrock:
+		out, _ := json.Marshal(bedrockErrorEnvelope{Type: BedrockErrorType(status), Message: message})
 		return out
 	default:
 		out, _ := json.Marshal(map[string]any{
@@ -235,7 +244,7 @@ func StreamBlockedEvent(source Format, reason, message string) [][]byte {
 
 func NeedsAdaptedError(source Format) bool {
 	switch normalizeFormat(source) {
-	case FormatAnthropic, FormatGemini, FormatCohere:
+	case FormatAnthropic, FormatGemini, FormatCohere, FormatBedrock:
 		return true
 	default:
 		return false
@@ -283,4 +292,84 @@ func geminiRPCStatus(status int) string {
 	default:
 		return "UNKNOWN"
 	}
+}
+
+// HeaderAmznErrorType carries the exception name of an AWS error. SDKs read it
+// before the body, so a client cannot classify an error without it.
+const HeaderAmznErrorType = "X-Amzn-Errortype"
+
+// BedrockErrorType names the Bedrock Runtime exception for an HTTP status.
+// Every name is modelled in the bedrock-runtime API, so SDKs raise a typed
+// error. A policy block is a 403 and therefore AccessDeniedException; the
+// "error" key of the body tells it from an IAM denial.
+func BedrockErrorType(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "UnrecognizedClientException"
+	case http.StatusForbidden:
+		return "AccessDeniedException"
+	case http.StatusNotFound:
+		return "ResourceNotFoundException"
+	case http.StatusRequestTimeout:
+		return "ModelTimeoutException"
+	case http.StatusFailedDependency:
+		return "ModelErrorException"
+	case http.StatusTooManyRequests:
+		return "ThrottlingException"
+	case http.StatusServiceUnavailable:
+		return "ServiceUnavailableException"
+	}
+	switch {
+	case status >= 400 && status < 500:
+		return "ValidationException"
+	default:
+		return "InternalServerException"
+	}
+}
+
+// BedrockErrorEnvelope turns a gateway error body into an AWS-compatible one:
+// __type and message are merged into the gateway's own object, which keeps its
+// error, type and policy fields, so a client that knows the gateway shape
+// still reads it. It returns the headers to send with it. A body that is not a
+// JSON object is wrapped, with its text as the message.
+func BedrockErrorEnvelope(status int, body []byte) (map[string][]string, []byte) {
+	name := BedrockErrorType(status)
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		fields = map[string]json.RawMessage{}
+		if text := string(bytes.TrimSpace(body)); text != "" && !json.Valid(body) {
+			raw, _ := json.Marshal(text)
+			fields["message"] = raw
+		}
+	}
+	if !isJSONString(fields["message"]) {
+		msg := nestedErrorMessage(fields["error"])
+		if msg == "" {
+			msg = http.StatusText(status)
+		}
+		fields["message"], _ = json.Marshal(msg)
+	}
+	fields["__type"], _ = json.Marshal(name)
+	out, err := json.Marshal(fields)
+	if err != nil {
+		out = EncodeErrorBody(FormatBedrock, status, "")
+	}
+	return map[string][]string{
+		"Content-Type":      {"application/json"},
+		HeaderAmznErrorType: {name},
+	}, out
+}
+
+func isJSONString(raw json.RawMessage) bool {
+	return len(raw) > 0 && raw[0] == '"'
+}
+
+func nestedErrorMessage(raw json.RawMessage) string {
+	var nested struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &nested) != nil {
+		return ""
+	}
+	return nested.Message
 }

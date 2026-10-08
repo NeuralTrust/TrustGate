@@ -107,6 +107,7 @@ func NewRegistry() *Registry {
 	r.Register(FormatGemini, &GeminiAdapter{})
 	r.Register(FormatVertex, NewVertexAdapter())
 	r.Register(FormatBedrock, &BedrockAdapter{})
+	r.Register(FormatBedrockNative, &BedrockNativeAdapter{})
 	r.Register(FormatMistral, &MistralAdapter{})
 	r.Register(FormatCohere, &CohereAdapter{})
 	r.Register(FormatOpenAIEmbeddings, &OpenAIEmbeddingsAdapter{})

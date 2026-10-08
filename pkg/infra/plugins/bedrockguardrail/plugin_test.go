@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"sync"
 	"testing"
@@ -645,4 +647,25 @@ func TestValidateConfigRejectsMissingGuardrailID(t *testing.T) {
 	if err := p.ValidateConfig(set); err == nil {
 		t.Fatal("expected validation error for missing guardrail_id")
 	}
+}
+
+// on_mask_failure is the setting every plugin that masks carries: its values are
+// validated, the plugin accepts it among its settings, and it declares that it
+// masks on a native Bedrock call.
+func TestOnMaskFailureSetting(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	assert.Equal(t, appplugins.BedrockNativeMasks, appplugins.BedrockNativeOf(p))
+	for _, value := range []string{"pass", "block"} {
+		set := bedrockSettings(piiActionBlock)
+		set[appplugins.SettingOnMaskFailure] = value
+		assert.NoError(t, p.ValidateConfig(set), value)
+	}
+	set := bedrockSettings(piiActionBlock)
+	set[appplugins.SettingOnMaskFailure] = "explode"
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(p))
+	err := reg.Validate(p.Name(), set)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), appplugins.SettingOnMaskFailure)
 }

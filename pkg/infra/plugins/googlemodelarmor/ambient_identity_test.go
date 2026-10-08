@@ -218,3 +218,24 @@ func TestExecuteAmbientIdentityUnchangedWhenEnabled(t *testing.T) {
 		})
 	}
 }
+
+// on_mask_failure is the setting every plugin that masks carries: its values are
+// validated, the plugin accepts it among its settings, and it declares that it
+// masks on a native Bedrock call.
+func TestOnMaskFailureSetting(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "", time.Second, false, nil)
+	assert.Equal(t, appplugins.BedrockNativeMasks, appplugins.BedrockNativeOf(p))
+	for _, value := range []string{"pass", "block"} {
+		set := withCredentials(modelArmorSettings(), map[string]any{"service_account_json": "{}"})
+		set[appplugins.SettingOnMaskFailure] = value
+		assert.NoError(t, p.ValidateConfig(set), value)
+	}
+	set := withCredentials(modelArmorSettings(), map[string]any{"service_account_json": "{}"})
+	set[appplugins.SettingOnMaskFailure] = "explode"
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(p))
+	err := reg.Validate(p.Name(), set)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), appplugins.SettingOnMaskFailure)
+}

@@ -183,6 +183,13 @@ func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	}
 }
 
+func resolvedModel(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	return req.ResolvedModel
+}
+
 // modelFor names the model a request is counted against. A key-partitioned
 // policy falls back to the default model of the routed registry when the
 // request names none (no model, auto, a pool), so a hard limit cannot be
@@ -191,6 +198,11 @@ func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 func modelFor(cfg *config, req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
+	}
+	if req.IsBedrockNative() {
+		// The model of a native Bedrock call is the identifier in its path, a
+		// literal one: never a routing reference, and never a field of its body.
+		return req.BedrockNative.ModelID
 	}
 	if len(req.Body) > 0 {
 		if m, err := adapter.ExtractModel(req.Body); err == nil && m != "" {
@@ -513,7 +525,7 @@ func (p *Plugin) accrueDollars(
 	if req != nil {
 		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
 	}
-	rates, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested)
+	rates, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested, resolvedModel(req))
 	if !found {
 		slog.Warn("token_rate_limiter: unpriced model in dollar budget, accruing zero",
 			slog.String("provider", provider),
@@ -583,12 +595,19 @@ func (p *Plugin) extractUsageAndModel(req *infracontext.RequestContext, resp *in
 	if resp == nil {
 		return nil, ""
 	}
-	if resp.Streaming {
-		if req != nil && req.Metadata != nil {
-			if cu, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage); ok {
-				return cu, ""
-			}
+	// The usage the provider invoker observed wins on both legs. A native
+	// Bedrock InvokeModel answer reports it in headers, and its model-native
+	// body may carry none, so for a native call the body is never the source.
+	if req != nil && req.Metadata != nil {
+		cu, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
+		if ok && cu != nil {
+			return cu, ""
 		}
+	}
+	if req.IsBedrockNative() {
+		return nil, ""
+	}
+	if resp.Streaming {
 		return nil, ""
 	}
 

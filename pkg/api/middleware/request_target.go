@@ -26,8 +26,9 @@ func stampRequestTarget(c *fiber.Ctx, req *infracontext.RequestContext) {
 		return
 	}
 	if route, ok := proxyRouteFor(c); ok {
-		req.SourceFormat = string(route.SourceFormat)
+		req.SourceFormat = string(route.RequestFormat())
 		req.ProxyCapability = string(route.Capability)
+		req.BedrockNative = route.BedrockTarget()
 	}
 	req.RequestedModel = appproxy.RequestedModelRef(req)
 }

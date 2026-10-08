@@ -1176,6 +1176,14 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody:
+    properties:
+      __type:
+        example: AccessDeniedException
+        type: string
+      message:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody:
     properties:
       error:
@@ -3703,6 +3711,330 @@ paths:
       summary: Test a backend connection from the data plane
       tags:
       - diagnostics
+  /{consumer_slug}/model/{model_id}/converse:
+    post:
+      consumes:
+      - application/json
+      description: 'Relays a native Amazon Bedrock Runtime request to the consumer''s
+        Bedrock registry exactly as the client sent it: Converse and ConverseStream,
+        InvokeModel and InvokeModelWithResponseStream, answered in Bedrock''s own
+        format. The consumer authenticates with its X-AG-API-Key (or another application
+        credential such as a client certificate); an AWS SigV4 Authorization header
+        is accepted and ignored, it does not authenticate the call. model_id is a
+        model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
+        mask the call but never rewrite it: a change that cannot be carried onto the
+        original body fails open, or blocks when the policy''s on_mask_failure is
+        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
+        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
+        are relayed unchanged.'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: Model ID, inference profile ID or URL-encoded ARN
+        in: path
+        name: model_id
+        required: true
+        type: string
+      - description: An AWS SigV4 Authorization header is accepted and ignored; authenticate
+          with X-AG-API-Key
+        in: header
+        name: Authorization
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: The Bedrock Runtime request body for the operation
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+      summary: Proxy a native Amazon Bedrock Runtime call
+      tags:
+      - proxy
+  /{consumer_slug}/model/{model_id}/converse-stream:
+    post:
+      consumes:
+      - application/json
+      description: 'Relays a native Amazon Bedrock Runtime request to the consumer''s
+        Bedrock registry exactly as the client sent it: Converse and ConverseStream,
+        InvokeModel and InvokeModelWithResponseStream, answered in Bedrock''s own
+        format. The consumer authenticates with its X-AG-API-Key (or another application
+        credential such as a client certificate); an AWS SigV4 Authorization header
+        is accepted and ignored, it does not authenticate the call. model_id is a
+        model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
+        mask the call but never rewrite it: a change that cannot be carried onto the
+        original body fails open, or blocks when the policy''s on_mask_failure is
+        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
+        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
+        are relayed unchanged.'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: Model ID, inference profile ID or URL-encoded ARN
+        in: path
+        name: model_id
+        required: true
+        type: string
+      - description: An AWS SigV4 Authorization header is accepted and ignored; authenticate
+          with X-AG-API-Key
+        in: header
+        name: Authorization
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: The Bedrock Runtime request body for the operation
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+      summary: Proxy a native Amazon Bedrock Runtime call
+      tags:
+      - proxy
+  /{consumer_slug}/model/{model_id}/invoke:
+    post:
+      consumes:
+      - application/json
+      description: 'Relays a native Amazon Bedrock Runtime request to the consumer''s
+        Bedrock registry exactly as the client sent it: Converse and ConverseStream,
+        InvokeModel and InvokeModelWithResponseStream, answered in Bedrock''s own
+        format. The consumer authenticates with its X-AG-API-Key (or another application
+        credential such as a client certificate); an AWS SigV4 Authorization header
+        is accepted and ignored, it does not authenticate the call. model_id is a
+        model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
+        mask the call but never rewrite it: a change that cannot be carried onto the
+        original body fails open, or blocks when the policy''s on_mask_failure is
+        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
+        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
+        are relayed unchanged.'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: Model ID, inference profile ID or URL-encoded ARN
+        in: path
+        name: model_id
+        required: true
+        type: string
+      - description: An AWS SigV4 Authorization header is accepted and ignored; authenticate
+          with X-AG-API-Key
+        in: header
+        name: Authorization
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: The Bedrock Runtime request body for the operation
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+      summary: Proxy a native Amazon Bedrock Runtime call
+      tags:
+      - proxy
+  /{consumer_slug}/model/{model_id}/invoke-with-response-stream:
+    post:
+      consumes:
+      - application/json
+      description: 'Relays a native Amazon Bedrock Runtime request to the consumer''s
+        Bedrock registry exactly as the client sent it: Converse and ConverseStream,
+        InvokeModel and InvokeModelWithResponseStream, answered in Bedrock''s own
+        format. The consumer authenticates with its X-AG-API-Key (or another application
+        credential such as a client certificate); an AWS SigV4 Authorization header
+        is accepted and ignored, it does not authenticate the call. model_id is a
+        model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
+        mask the call but never rewrite it: a change that cannot be carried onto the
+        original body fails open, or blocks when the policy''s on_mask_failure is
+        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
+        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
+        are relayed unchanged.'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: Model ID, inference profile ID or URL-encoded ARN
+        in: path
+        name: model_id
+        required: true
+        type: string
+      - description: An AWS SigV4 Authorization header is accepted and ignored; authenticate
+          with X-AG-API-Key
+        in: header
+        name: Authorization
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: The Bedrock Runtime request body for the operation
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody'
+      summary: Proxy a native Amazon Bedrock Runtime call
+      tags:
+      - proxy
   /{consumer_slug}/v1/chat/completions:
     post:
       consumes:

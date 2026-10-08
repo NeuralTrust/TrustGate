@@ -139,7 +139,7 @@ func (p *Plugin) preRequest(
 	var downgradeHeaders map[string][]string
 	var downgradeBody []byte
 	if cfg.CostCap != nil && cfg.CostCap.Enabled {
-		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), cfg.CostCap, req.Provider, model, req.RequestedModel)
+		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), cfg.CostCap, req.Provider, model, req.RequestedModel, req.ResolvedModel)
 		capTel = llmcost.TelemetryFrom(dec)
 		if dec.Kind == llmcost.DecisionViolation {
 			appplugins.SetDecision(event, mode)
@@ -173,7 +173,7 @@ func (p *Plugin) preRequest(
 }
 
 func (p *Plugin) priced(ctx context.Context, cfg *config, req *infracontext.RequestContext, model string) bool {
-	_, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), req.Provider, model, req.RequestedModel)
+	_, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), req.Provider, model, req.RequestedModel, req.ResolvedModel)
 	return found
 }
 
