@@ -360,13 +360,13 @@ func TestWhoAmI_RefusesAnUnknownKeyOnTheFixedHost(t *testing.T) {
 	require.Equal(t, 2, limiter.calls, "every lookup is counted, a failed one included")
 }
 
-func TestWhoAmI_RefusesPersonalAndDisabledKeysOnTheFixedHostAsUnknown(t *testing.T) {
+func TestWhoAmI_RefusesDisabledKeysOnTheFixedHostAsUnknown(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	expired := time.Now().UTC().Add(-time.Minute)
 	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true}}}
 	keys := keyStore{
-		"ag_alice":    {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice"},
+		"ag_alice":    {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, OwnerID: "alice"},
 		"ag_disabled": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey},
 		"ag_expired":  {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, ExpiresAt: &expired},
 	}
@@ -389,6 +389,30 @@ func TestWhoAmI_RefusesPersonalAndDisabledKeysOnTheFixedHostAsUnknown(t *testing
 		require.Equal(t, unknownStatus, status, key)
 		require.Equal(t, unknownBody, body, key)
 	}
+}
+
+// A personal key starts from the fixed host too: its gateway is found from the
+// key, and the Store comes back on both planes, marked as a person's.
+func TestWhoAmI_DescribesAPersonalKeyOnTheFixedHost(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	service := &whoAmIConsumers{
+		key: appconsumer.KeyInfo{Name: "personal", Personal: true},
+		consumers: []appconsumer.KeyConsumer{
+			{Slug: "store", Name: "Store", Type: consumerdomain.TypeMCP, Active: true},
+			{Slug: "store", Name: "Store", Type: consumerdomain.TypeLLM, Active: true},
+		},
+	}
+	keys := keyStore{"ag_alice": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice"}}
+	app := fixedHostApp(service, keys, gatewaysByID{gw.ID: gw}, &countingLimiter{})
+
+	status, body, _ := callFixedHost(t, app, "ag_alice")
+
+	require.Equal(t, fiber.StatusOK, status)
+	require.True(t, body.Key.Personal)
+	require.Equal(t, "acme", body.Gateway)
+	require.Equal(t, "https://acme.mcp.neuraltrust.ai/store/mcp", body.Consumers[0].URL)
+	require.Equal(t, "https://acme.acme.neuraltrust.ai/store/v1", body.Consumers[1].URL)
 }
 
 // An unknown key is remembered only briefly and only by its exact digest, so

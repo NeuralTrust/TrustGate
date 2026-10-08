@@ -20,13 +20,16 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -134,8 +137,9 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 		// Not guarded: an api key's subject is the name an admin gave the key,
 		// a row in this gateway's own database, and the MCP plane replaces it
 		// with the application's subject anyway. Refusing it would only lock
-		// out a key somebody happened to call "app:something".
-		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
+		// out a key somebody happened to call "app:something". A personal
+		// key's subject is its owner, and is guarded where it is admitted.
+		return r.resolveAPIKey(c.UserContext(), rawKey, scope, isStorePath(c.Path()))
 	}
 	// Info, not Warn: an MCP client's first call carries no credential by
 	// design, to be challenged into OAuth discovery.
@@ -374,7 +378,7 @@ func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string,
 	return credentialRejected(ctx, slog.LevelWarn, "no oauth2 auth on the path introspects opaque tokens")
 }
 
-func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope) (Identity, error) {
+func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope, store bool) (Identity, error) {
 	a, err := r.apiKeys.FindByAPIKey(ctx, rawKey)
 	switch {
 	case errors.Is(err, authdomain.ErrNotFound):
@@ -384,9 +388,11 @@ func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string
 	case err != nil:
 		return credentialRejected(ctx, slog.LevelWarn, "api key lookup failed", slog.String("error", err.Error()))
 	}
-	// A personal key belongs to the LLM Store and is never an MCP credential.
+	if a.IsOwned() {
+		return personalKeyIdentity(ctx, a, store, r.now().UTC())
+	}
 	if !a.IsApplicationKey(r.now().UTC()) {
-		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled, expired or personal", slog.String("auth_id", a.ID.String()))
+		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled or expired", slog.String("auth_id", a.ID.String()))
 	}
 	if !scope.allows(a.ID) {
 		return credentialRejected(ctx, slog.LevelWarn, "api key is not attached to the path", slog.String("auth_id", a.ID.String()))
@@ -396,6 +402,46 @@ func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string
 		Method:  identity.MethodAPIKey,
 	}
 	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+}
+
+// personalKeyIdentity admits a person's own key on the MCP Store, and nowhere
+// else on this plane.
+//
+// The Store is the one MCP surface that is a person's: what they installed,
+// narrowed by what Access grants them. A signed-in session reaches it as its
+// subject with the groups the platform put in the token; the key reaches it as
+// its owner with the groups the platform recorded on the key, which is the
+// same principal by another credential. Every other MCP path is an
+// application's, and a personal key there would be a person posing as one.
+func personalKeyIdentity(ctx context.Context, a *authdomain.Auth, store bool, now time.Time) (Identity, error) {
+	attrs := slog.String("auth_id", a.ID.String())
+	if !store {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key used outside the MCP Store", attrs)
+	}
+	if !a.IsPersonalKey(now) {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key is disabled or expired", attrs)
+	}
+	// The owner is a platform user id, but nothing at creation stops it
+	// spelling a subject only the gateway mints.
+	if identity.ReservedSubject(a.OwnerID) {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key owner is in a namespace only the gateway mints", attrs)
+	}
+	// The Store is served on every gateway's host; the key reaches only its
+	// own, the way a session reaches only the gateway it was minted for.
+	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil && gw.ID != a.GatewayID {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key belongs to another gateway", attrs)
+	}
+	principal := &identity.Principal{Subject: a.OwnerID, Method: identity.MethodPersonalKey}
+	if len(a.OwnerGroups) > 0 {
+		principal.Claims = map[string]any{identity.ClaimGroups: slices.Clone(a.OwnerGroups)}
+	}
+	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+}
+
+// isStorePath reports whether path addresses the MCP Store, as the path
+// resolver reads it.
+func isStorePath(path string) bool {
+	return consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(path))
 }
 
 func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificate {

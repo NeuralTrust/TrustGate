@@ -112,7 +112,8 @@ type adminRouterParams struct {
 	RotateAuth *authhttp.RotateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
-	UpdateAuthBudget *authhttp.UpdateAuthBudgetHandler
+	UpdateAuthBudget      *authhttp.UpdateAuthBudgetHandler
+	UpdateAuthOwnerGroups *authhttp.UpdateAuthOwnerGroupsHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
@@ -196,6 +197,7 @@ func ServerAdmin(c *container.Container) error {
 				UpdateAuth:                p.UpdateAuth,
 				RotateAuth:                p.RotateAuth,
 				UpdateAuthBudget:          p.UpdateAuthBudget,
+				UpdateAuthOwnerGroups:     p.UpdateAuthOwnerGroups,
 				DeleteAuth:                p.DeleteAuth,
 
 				ListProvidersCatalog:  p.ListProvidersCatalog,

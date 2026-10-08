@@ -587,6 +587,56 @@ func TestRepository_UpdateBudgetWritesOnlyTheBudget(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
+func TestRepository_UpdateOwnerGroupsWritesOnlyTheGroups(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID, otherGW := seedGateway(t, gw, "groups-write"), seedGateway(t, gw, "groups-other")
+	owned := ownedAuth(t, gwID, "alice")
+	owned.Budget = &domain.KeyBudget{Max: 50, Unit: domain.BudgetUnitDollars, TimeWindow: domain.BudgetWindowCalendarMonth}
+	require.NoError(t, r.Save(ctx, owned))
+
+	stale, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	rotated, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	_, err = rotated.RotateAPIKey(time.Now())
+	require.NoError(t, err)
+	require.NoError(t, r.Update(ctx, rotated))
+
+	stale.Name, stale.Budget, stale.UpdatedAt = "renamed", nil, time.Now().UTC().Truncate(time.Microsecond)
+	stale.OwnerGroups = []string{"engineering", "sre"}
+	stored, err := r.UpdateOwnerGroups(ctx, stale)
+	require.NoError(t, err)
+	require.Equal(t, []string{"engineering", "sre"}, stored.OwnerGroups)
+	require.Equal(t, rotated.KeyHash, stored.KeyHash, "a concurrent rotation is neither undone nor hidden")
+	require.Equal(t, owned.Name, stored.Name)
+	require.Equal(t, owned.Budget, stored.Budget, "the budget is left alone")
+
+	byHash, err := r.FindByAPIKeyHash(ctx, rotated.KeyHash)
+	require.NoError(t, err)
+	require.Equal(t, []string{"engineering", "sre"}, byHash.OwnerGroups, "the key lookup the MCP plane uses carries them")
+
+	again, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	_, err = again.RotateAPIKey(time.Now())
+	require.NoError(t, err)
+	again.OwnerGroups = nil
+	require.NoError(t, r.Update(ctx, again))
+	afterRotate, err := r.FindByID(ctx, owned.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"engineering", "sre"}, afterRotate.OwnerGroups, "a rotation keeps the groups")
+
+	afterRotate.OwnerGroups = nil
+	cleared, err := r.UpdateOwnerGroups(ctx, afterRotate)
+	require.NoError(t, err)
+	require.Nil(t, cleared.OwnerGroups)
+
+	foreign := *cleared
+	foreign.GatewayID = otherGW
+	_, err = r.UpdateOwnerGroups(ctx, &foreign)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
 func TestRepository_RotateKeyOnlyWinsAgainstTheSecretItRead(t *testing.T) {
 	r, gw := setupRepo(t)
 	ctx := context.Background()

@@ -143,6 +143,16 @@ definitions:
         example: dollars
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest:
+    properties:
+      groups:
+        example:
+        - engineering
+        - sre
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest:
     properties:
       config:
@@ -210,6 +220,13 @@ definitions:
         type: string
       name:
         type: string
+      owner_groups:
+        description: |-
+          OwnerGroups are the directory groups of a personal key's owner, as the
+          platform last reported them. Absent means none were reported.
+        items:
+          type: string
+        type: array
       owner_id:
         type: string
       type:
@@ -3370,6 +3387,11 @@ definitions:
         type: string
       name:
         type: string
+      personal:
+        description: |-
+          Personal is set for a person's own key (a personal key): it runs as its
+          owner, and its consumers are the Store on each plane.
+        type: boolean
     type: object
   pkg_api_handler_http_mcp.WhoAmIResponse:
     properties:
@@ -4316,6 +4338,66 @@ paths:
       security:
       - BearerAuth: []
       summary: Set the budget of a personal key
+      tags:
+      - auths
+  /v1/gateways/{gateway_id}/auths/{id}/groups:
+    put:
+      consumes:
+      - application/json
+      description: 'Records the directory groups of a personal (owned) key''s owner.
+        The body is {"groups": ["<group>", ...]}; an empty list clears them. Names
+        are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters
+        each. On the MCP Store (/store/mcp) the key runs as its owner with these groups,
+        so Store grants, Store access policies and MCP policies scoped to a group
+        apply as they do to a signed-in session. The platform sends them whenever
+        the owner''s membership changes. The secret, the expiry, the budget and the
+        consumers of the key do not change, and a rotation keeps the groups. An application
+        key answers 422 application_key; an invalid body answers 422 validation_failed.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The owner's groups
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: An application key (application_key), or invalid groups (validation_failed)
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Set the owner groups of a personal key
       tags:
       - auths
   /v1/gateways/{gateway_id}/auths/{id}/rotate:
@@ -7244,16 +7326,19 @@ paths:
       - tenants
   /whoami:
     get:
-      description: Returns the consumers this API key is attached to, one per plane,
+      description: 'Returns the consumers this API key is attached to, one per plane,
         each with the URL it is served on — plus when the key itself expires and,
         for an MCP consumer, which of its bound servers still need an account connected
-        and by whom. A key is attached to consumers and a consumer has one type, so
-        an agent that calls both tools and models holds an MCP consumer and an LLM
-        one behind the same key; this is how a client learns their slugs and addresses
-        instead of being configured with them. Carries no identifiers and no credentials.
-        An unknown, disabled, expired or foreign key is refused without saying which.
+        and by whom. A personal key (key.personal) is a person''s own: it lists the
+        Store, slug "store", on the MCP plane (/store/mcp, where it runs as its owner)
+        and, when the gateway has personal consumers, on the LLM plane (/store/v1).
+        A key is attached to consumers and a consumer has one type, so an agent that
+        calls both tools and models holds an MCP consumer and an LLM one behind the
+        same key; this is how a client learns their slugs and addresses instead of
+        being configured with them. Carries no identifiers and no credentials. An
+        unknown, disabled, expired or foreign key is refused without saying which.
         On a host that names no gateway (the fixed entry point), the gateway is found
-        from the key itself and the answer carries that gateway's own plane URLs.
+        from the key itself and the answer carries that gateway''s own plane URLs.'
       produces:
       - application/json
       responses:

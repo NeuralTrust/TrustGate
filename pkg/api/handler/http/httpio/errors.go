@@ -48,7 +48,7 @@ const (
 	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
 	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
 	msgOwnedKeyHint       = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
-	msgApplicationKeyHint = "Budgets apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
+	msgApplicationKeyHint = "Budgets and owner groups apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
 	msgPersonalKeyHint    = "You already hold a key on this gateway. Rotate or revoke it instead."
 )
 

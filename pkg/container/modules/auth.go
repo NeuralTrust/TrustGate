@@ -59,6 +59,11 @@ func provideAuthServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.OwnerGroupsSetter {
+		return appauth.NewOwnerGroupsSetter(repo, manager, publisher, logger, sig.Signaler, utcNow)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.BudgetSetter {
 		return appauth.NewBudgetSetter(repo, manager, publisher, logger, sig.Signaler, utcNow)
 	}); err != nil {
@@ -124,6 +129,9 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(authhttp.NewRotateAuthHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(authhttp.NewUpdateAuthOwnerGroupsHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(authhttp.NewUpdateAuthBudgetHandler); err != nil {
