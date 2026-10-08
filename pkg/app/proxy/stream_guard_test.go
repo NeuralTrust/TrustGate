@@ -973,7 +973,7 @@ func openAICutLines(message string) []string {
 	return []string{
 		`data: {"id":"c1","object":"chat.completion.chunk","choices":` +
 			`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
-		`data: {"error":{"message":` + strconv.Quote(message) + `,"type":"content_filter"}}`, "",
+		`data: {"error":{"message":` + strconv.Quote(message) + `,"type":"content_filter","direction":"output"}}`, "",
 		"data: [DONE]", "",
 	}
 }
@@ -1323,7 +1323,7 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 				`data: {"type":"response.incomplete","response":{"incomplete_details":` +
 					`{"reason":"content_filter"},"object":"response","output":[],"status":"incomplete"}}`, "",
 				"event: error",
-				`data: {"type":"error","code":"content_filter","message":"nope","param":null}`, "",
+				`data: {"type":"error","code":"content_filter","message":"nope","param":null,"direction":"output"}`, "",
 			},
 		},
 	}
