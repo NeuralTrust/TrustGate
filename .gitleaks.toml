@@ -24,3 +24,16 @@ regexes = [
   '''smoke-secret-key-that-is-long-enough-\d+''',
   '''test-secret-key-that-[a-z]-\d+''',
 ]
+
+# Postman keeps each variable as separate "key"/"value" JSON fields, which the
+# default rules do not pair up. Templated ({{...}}) and placeholder values pass.
+[[rules]]
+id = "postman-secret-variable"
+description = "Secret-named Postman variable with a literal value"
+regex = '''"key":\s*"[^"]*(?i:secret|token|password|passwd|api_?key|private_?key)[^"]*",\s*"value":\s*"([^"{][^"]{7,})"'''
+secretGroup = 1
+keywords = ["\"key\""]
+
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''^(sk-)?replace-with-''']
