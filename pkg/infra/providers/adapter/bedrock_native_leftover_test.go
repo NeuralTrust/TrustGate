@@ -371,5 +371,7 @@ func TestSurfacedIndex_ChargesBytesNotComparisons(t *testing.T) {
 		assert.False(t, idx.has(line+"\n"+tail+fmt.Sprintf("%08d", n+i)))
 	}
 	assert.LessOrEqual(t, idx.budget, 0, "n*n candidates of 8 KiB each is more than the budget allows")
-	assert.True(t, idx.has(line+"\n"+tail+fmt.Sprintf("%08d", 0)) || idx.budget <= 0)
+	// Once the budget is spent has() stops comparing and answers false, even for a
+	// line run that is surfaced: the string is kept, which only repeats text.
+	assert.False(t, idx.has(line+"\n"+tail+fmt.Sprintf("%08d", 0)))
 }
