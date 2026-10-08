@@ -73,6 +73,9 @@ const (
 	// ClaimGroups is the claim carrying the principal's IdP group memberships,
 	// which role oidc_mapping rules are authored against.
 	ClaimGroups = "groups"
+	// ClaimEmail is the claim carrying the principal's email, which requests
+	// and traces show them under.
+	ClaimEmail = "email"
 	// ClaimStoreAccess is the claim carrying the principal's per-principal MCP
 	// Store access level: "open" (the whole Store), "curated" (only servers the
 	// admin granted them), or "none" (closed). Minted by the control plane from

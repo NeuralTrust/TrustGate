@@ -37,7 +37,7 @@ import (
 
 const validLLMKeyBody = `{"expires_at":"2099-01-01T00:00:00Z"}`
 
-var alice = middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "t1", Subject: "alice"}
+var alice = middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "t1", Subject: "alice", Email: "alice@acme.test"}
 
 func newLLMKeyApp(keys appauth.PersonalKeys, identity middleware.AdminIdentity) *fiber.App {
 	app := fiber.New()
@@ -84,6 +84,22 @@ func TestLLMKeyHandler_RefusesCallersWithoutATenantUser(t *testing.T) {
 	}
 }
 
+// A token whose email is not an address still gets its key, without one.
+func TestLLMKeyHandler_CreatesWithoutAnEmailThatIsNotOne(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", time.Now().Add(time.Hour), time.Now())
+	require.NoError(t, err)
+	keys := appauthmocks.NewPersonalKeys(t)
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, mock.Anything).Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
+	caller := alice
+	caller.Email = "alice at acme"
+
+	status, raw := callLLMKey(t, newLLMKeyApp(keys, caller), http.MethodPost, gw, "", validLLMKeyBody, fiber.MIMEApplicationJSON)
+
+	require.Equal(t, http.StatusCreated, status, raw)
+}
+
 func TestLLMKeyHandler_ActsOnTheCallerAndShowsTheSecretOnlyWhenIssued(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
@@ -92,7 +108,7 @@ func TestLLMKeyHandler_ActsOnTheCallerAndShowsTheSecretOnlyWhenIssued(t *testing
 	require.NoError(t, err)
 	key := &appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}
 	keys := appauthmocks.NewPersonalKeys(t)
-	keys.EXPECT().Create(mock.Anything, gw, "alice", mock.MatchedBy(expiry.Equal)).Return(key, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.MatchedBy(expiry.Equal)).Return(key, nil).Once()
 	keys.EXPECT().Get(mock.Anything, gw, "alice").Return(key, nil).Once()
 	keys.EXPECT().Rotate(mock.Anything, gw, "alice", mock.MatchedBy(func(at *time.Time) bool { return at != nil && at.Equal(expiry) })).Return(key, nil).Once()
 	app := newLLMKeyApp(keys, alice)
@@ -131,16 +147,16 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 		"create without a content type":      {method: http.MethodPost, body: validLLMKeyBody, plain: true, want: http.StatusUnprocessableEntity},
 		"rotate with a malformed body":       {method: http.MethodPost, suffix: "/rotate", body: `{"expires_at":1}`, want: http.StatusUnprocessableEntity},
 		"create a second key": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusConflict, says: "Rotate or revoke it instead", expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
 		}},
 		"create out of range": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, domain.ErrOwnedExpiry).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, domain.ErrOwnedExpiry).Once()
 		}},
 		"create on a hybrid gateway": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
 		}},
 		"create failing unexpectedly": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusInternalServerError, hides: "10.0.0.7", expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, "alice", mock.Anything).Return(nil, errors.New("dial tcp 10.0.0.7:5432: refused")).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, errors.New("dial tcp 10.0.0.7:5432: refused")).Once()
 		}},
 		"get without a key": {method: http.MethodGet, want: http.StatusNotFound, expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Get(mock.Anything, mock.Anything, "alice").Return(nil, domain.ErrNotFound).Once()

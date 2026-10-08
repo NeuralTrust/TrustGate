@@ -39,6 +39,7 @@ type memIssuer struct {
 	keys   map[string]*appauth.PersonalKey
 	err    error
 	groups []string
+	email  string
 }
 
 func newMemIssuer() *memIssuer { return &memIssuer{keys: map[string]*appauth.PersonalKey{}} }
@@ -58,22 +59,24 @@ func (m *memIssuer) Get(_ context.Context, gw ids.GatewayID, owner string) (*app
 	return &appauth.PersonalKey{Auth: &copied, ConsumerIDs: k.ConsumerIDs}, nil
 }
 
-func (m *memIssuer) Create(_ context.Context, gw ids.GatewayID, owner string, groups []string) (*appauth.PersonalKey, error) {
+func (m *memIssuer) Create(_ context.Context, gw ids.GatewayID, owner appauth.PersonalKeyOwner, groups []string) (*appauth.PersonalKey, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	if _, ok := m.keys[ownerKey(gw, owner)]; ok {
+	if _, ok := m.keys[ownerKey(gw, owner.ID)]; ok {
 		return nil, authdomain.ErrOwnedKeyExists
 	}
 	m.groups = groups
+	m.email = owner.Email
 	expires := time.Now().Add(time.Hour).Truncate(time.Second)
-	a, err := authdomain.NewOwnedAPIKeyAuth(gw, owner, expires, time.Now())
+	a, err := authdomain.NewOwnedAPIKeyAuth(gw, owner.ID, expires, time.Now())
 	if err != nil {
 		return nil, err
 	}
 	a.OwnerGroups = groups
+	a.OwnerEmail = owner.Email
 	key := &appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{ids.New[ids.ConsumerKind]()}}
-	m.keys[ownerKey(gw, owner)] = key
+	m.keys[ownerKey(gw, owner.ID)] = key
 	return key, nil
 }
 
@@ -113,7 +116,7 @@ func dialPersonalKeys(t *testing.T, issuer appauth.PersonalKeyIssuer) *PersonalK
 }
 
 // The data plane's page reaches the control plane's key: created with the
-// owner's groups, its secret back once, then read without it, rotated, and
+// owner's email and groups, its secret back once, then read without it, rotated, and
 // revoked, every refusal arriving as the error the console's routes answer.
 func TestPersonalKeysClient_RoundTrip(t *testing.T) {
 	issuer := newMemIssuer()
@@ -124,7 +127,7 @@ func TestPersonalKeysClient_RoundTrip(t *testing.T) {
 	if _, err := client.Get(ctx, gw, "alice"); !errors.Is(err, authdomain.ErrNotFound) {
 		t.Fatalf("Get before create: err = %v, want ErrNotFound", err)
 	}
-	created, err := client.Create(ctx, gw, "alice", []string{"eng"})
+	created, err := client.Create(ctx, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, []string{"eng"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -137,8 +140,11 @@ func TestPersonalKeysClient_RoundTrip(t *testing.T) {
 	if len(issuer.groups) != 1 || issuer.groups[0] != "eng" {
 		t.Fatalf("groups = %v, want the owner's", issuer.groups)
 	}
+	if issuer.email != "alice@acme.test" || created.Auth.OwnerEmail != "alice@acme.test" {
+		t.Fatalf("email = %q, created = %q, want the owner's both ways", issuer.email, created.Auth.OwnerEmail)
+	}
 
-	if _, err := client.Create(ctx, gw, "alice", nil); !errors.Is(err, authdomain.ErrOwnedKeyExists) {
+	if _, err := client.Create(ctx, gw, appauth.PersonalKeyOwner{ID: "alice"}, nil); !errors.Is(err, authdomain.ErrOwnedKeyExists) {
 		t.Fatalf("second Create: err = %v, want ErrOwnedKeyExists", err)
 	}
 	got, err := client.Get(ctx, gw, "alice")
@@ -157,7 +163,7 @@ func TestPersonalKeysClient_RoundTrip(t *testing.T) {
 	}
 
 	issuer.err = consumerdomain.ErrHybridPersonal
-	if _, err := client.Create(ctx, gw, "bob", nil); !errors.Is(err, consumerdomain.ErrHybridPersonal) {
+	if _, err := client.Create(ctx, gw, appauth.PersonalKeyOwner{ID: "bob"}, nil); !errors.Is(err, consumerdomain.ErrHybridPersonal) {
 		t.Fatalf("Create on a hybrid gateway: err = %v, want ErrHybridPersonal", err)
 	}
 }

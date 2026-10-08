@@ -98,9 +98,9 @@ func (i *pkIssuer) Get(context.Context, ids.GatewayID, string) (*appauth.Persona
 	return i.key, nil
 }
 
-func (i *pkIssuer) Create(_ context.Context, gw ids.GatewayID, owner string, _ []string) (*appauth.PersonalKey, error) {
+func (i *pkIssuer) Create(_ context.Context, gw ids.GatewayID, owner appauth.PersonalKeyOwner, _ []string) (*appauth.PersonalKey, error) {
 	expires := time.Now().Add(90 * 24 * time.Hour)
-	i.key = &appauth.PersonalKey{Auth: &authdomain.Auth{GatewayID: gw, OwnerID: owner, KeyPrefix: "ag_ab", KeySuffix: "yz", ExpiresAt: &expires, RawKey: "ag_the_secret"}}
+	i.key = &appauth.PersonalKey{Auth: &authdomain.Auth{GatewayID: gw, OwnerID: owner.ID, OwnerEmail: owner.Email, KeyPrefix: "ag_ab", KeySuffix: "yz", ExpiresAt: &expires, RawKey: "ag_the_secret"}}
 	return i.key, nil
 }
 

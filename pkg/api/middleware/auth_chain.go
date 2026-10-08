@@ -432,8 +432,17 @@ func personalKeyIdentity(ctx context.Context, a *authdomain.Auth, store bool, no
 		return credentialRejected(ctx, slog.LevelWarn, "personal key belongs to another gateway", attrs)
 	}
 	principal := &identity.Principal{Subject: a.OwnerID, Method: identity.MethodPersonalKey}
+	claims := map[string]any{}
 	if len(a.OwnerGroups) > 0 {
-		principal.Claims = map[string]any{identity.ClaimGroups: slices.Clone(a.OwnerGroups)}
+		claims[identity.ClaimGroups] = slices.Clone(a.OwnerGroups)
+	}
+	// The owner's email, so the key's calls are shown under the person who
+	// made them, as a session's are, and not under their user id.
+	if a.OwnerEmail != "" {
+		claims[identity.ClaimEmail] = a.OwnerEmail
+	}
+	if len(claims) > 0 {
+		principal.Claims = claims
 	}
 	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 }

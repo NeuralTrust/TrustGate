@@ -51,6 +51,9 @@ message CreatePersonalKeyRequest {
   string owner_id = 2;
   // groups are the owner's groups as their sign-in carried them.
   repeated string groups = 3;
+  // email is the owner's email as their sign-in carried it, which the key's
+  // calls are shown under. Empty when the sign-in carried none.
+  string email = 4;
 }
 
 // PersonalKey mirrors the console's view of a personal key. Timestamps are Unix
@@ -66,6 +69,7 @@ message PersonalKey {
   repeated string consumer_ids = 8;
   // secret is the key itself, set only by Create and Rotate.
   string secret = 9;
+  string owner_email = 10;
 }
 
 message PersonalKeyResponse {
