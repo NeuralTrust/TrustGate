@@ -47,6 +47,7 @@ var (
 	ErrOwnedExpiry         = fmt.Errorf("auth: expires_at must be in the future and within 90 days: %w", commonerrors.ErrValidation)
 	ErrInvalidOwner        = fmt.Errorf("auth: invalid owner_id: %w", commonerrors.ErrValidation)
 	ErrInvalidBudget       = fmt.Errorf("auth: invalid budget: %w", commonerrors.ErrValidation)
+	ErrInvalidOwnerGroups  = fmt.Errorf("auth: invalid owner_groups: %w", commonerrors.ErrValidation)
 	// ErrApplicationKey is an owner-only operation, such as a budget, asked of
 	// an application key.
 	ErrApplicationKey = errors.New("auth: application_key: not a personal key")

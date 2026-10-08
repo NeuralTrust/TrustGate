@@ -134,6 +134,49 @@ func TestAPIKeyConsumers_AnswerEmptyWhenTheKeyReachesNothing(t *testing.T) {
 	require.Empty(t, got.Consumers)
 }
 
+// A personal key is a person's own: it reaches the Store on both planes rather
+// than consumers of an application, and says so, so a client opens the Store
+// for that person instead of looking for an application.
+func TestAPIKeyConsumers_DescribeAPersonalKeyAsTheStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	expires := time.Now().UTC().Add(24 * time.Hour)
+	personal := consumerWith(gatewayID, "anthropic-for-engineering", domain.TypeLLM, domain.Identity{})
+	personal.Consumer.Audience = domain.AudiencePersonal
+	key := &authdomain.Auth{
+		ID: authID, GatewayID: gatewayID, Name: "personal", Type: authdomain.TypeAPIKey,
+		Enabled: true, OwnerID: "alice", ExpiresAt: &expires,
+	}
+
+	for name, consumers := range map[string][]appconsumer.RoutableConsumer{
+		"with personal consumers":    {personal},
+		"without personal consumers": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			data := appconsumer.NewData(gatewayID, consumers)
+			finder := appconsumermocks.NewDataFinder(t)
+			finder.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
+			keys := appauthmocks.NewAPIKeyFinder(t)
+			keys.EXPECT().FindByAPIKey(ctx, "ag_alice").Return(key, nil).Once()
+
+			service, _ := appconsumer.NewAPIKeyConsumers(finder, keys, nil)
+			got, err := service.ForAPIKey(ctx, gatewayID, "ag_alice")
+
+			require.NoError(t, err)
+			require.True(t, got.Key.Personal)
+			require.Equal(t, &expires, got.Key.ExpiresAt)
+			want := []appconsumer.KeyConsumer{{Slug: "store", Name: domain.StoreConsumerName, Type: domain.TypeMCP, Active: true}}
+			if len(consumers) > 0 {
+				want = append(want, appconsumer.KeyConsumer{Slug: "store", Name: "LLM Store", Type: domain.TypeLLM, Active: true})
+			}
+			require.Equal(t, want, got.Consumers)
+		})
+	}
+}
+
 // One refusal for every way a key can be wrong, so the endpoint never
 // confirms which gateway a key belongs to or that it exists at all.
 func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
@@ -151,8 +194,14 @@ func TestAPIKeyConsumers_RefuseEveryKeyThatIsNotThisGatewaysOwn(t *testing.T) {
 		"a credential that is not an api key": {
 			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeOAuth2, Enabled: true,
 		},
-		"a personal key": {
-			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice",
+		"another gateway's personal key": {
+			ID: authID, GatewayID: ids.New[ids.GatewayKind](), Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice",
+		},
+		"a disabled personal key": {
+			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: false, OwnerID: "alice",
+		},
+		"an expired personal key": {
+			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, OwnerID: "alice", ExpiresAt: &expired,
 		},
 		"an expired key": {
 			ID: authID, GatewayID: gatewayID, Type: authdomain.TypeAPIKey, Enabled: true, ExpiresAt: &expired,

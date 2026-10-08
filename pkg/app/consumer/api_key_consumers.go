@@ -24,6 +24,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -110,6 +111,9 @@ type KeyInfo struct {
 	// ExpiresAt is when the key retires itself. Nil means never, which is the
 	// answer for every key created before expiry existed.
 	ExpiresAt *time.Time
+	// Personal: the key is a person's own (a personal key). It reaches the
+	// Store as its owner, not consumers of an application.
+	Personal bool
 }
 
 // APIKeyConsumers answers what an api key reaches.
@@ -161,6 +165,12 @@ func (s *apiKeyConsumers) ForAPIKey(
 		}
 		return nil, fmt.Errorf("consumer api key consumers: find api key: %w", err)
 	}
+	if auth.IsOwned() {
+		if !auth.IsPersonalKey(s.now().UTC()) || auth.GatewayID != gatewayID {
+			return nil, ErrAPIKeyUnknown
+		}
+		return s.forPersonalKey(ctx, gatewayID, auth)
+	}
 	if !auth.AcceptsApplicationKey(gatewayID, s.now().UTC()) {
 		return nil, ErrAPIKeyUnknown
 	}
@@ -197,6 +207,40 @@ func (s *apiKeyConsumers) ForAPIKey(
 	sort.Slice(described.Consumers, func(i, j int) bool {
 		return described.Consumers[i].Slug < described.Consumers[j].Slug
 	})
+	return described, nil
+}
+
+// llmStoreName is how /whoami names /store/v1: the console's name for it.
+const llmStoreName = "LLM Store"
+
+// forPersonalKey describes a person's own key: the Store, on both planes.
+//
+// A personal key is attached to no consumer of its own. It reaches the MCP
+// Store as its owner (what they installed, narrowed by Access) and, when the
+// gateway has personal consumers, the LLM Store at /store/v1, which picks one
+// of the consumers its owner was granted. Both answer on the slug "store".
+// Upstreams are left out: a person's accounts are theirs to see in the Store's
+// own trustgate_list_tools, answered for them on the call.
+func (s *apiKeyConsumers) forPersonalKey(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	auth *authdomain.Auth,
+) (*KeyDescription, error) {
+	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("consumer api key consumers: find consumers: %w", err)
+	}
+	store := domain.BuildStoreConsumer(gatewayID)
+	described := &KeyDescription{
+		Key: KeyInfo{Name: auth.Name, ExpiresAt: auth.ExpiresAt, Personal: true},
+		Consumers: []KeyConsumer{
+			{Slug: store.Slug, Name: store.Name, Type: domain.TypeMCP, Active: true},
+		},
+	}
+	if data.HasPersonalConsumers() {
+		described.Consumers = append(described.Consumers,
+			KeyConsumer{Slug: store.Slug, Name: llmStoreName, Type: domain.TypeLLM, Active: true})
+	}
 	return described, nil
 }
 

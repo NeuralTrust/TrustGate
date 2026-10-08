@@ -109,6 +109,10 @@ func (r *authRepository) UpdateBudget(_ context.Context, _ *domain.Auth) (*domai
 	return nil, configsync.ErrReadOnly
 }
 
+func (r *authRepository) UpdateOwnerGroups(_ context.Context, _ *domain.Auth) (*domain.Auth, error) {
+	return nil, configsync.ErrReadOnly
+}
+
 func (r *authRepository) RotateKey(_ context.Context, _ *domain.Auth, _ string) error {
 	return configsync.ErrReadOnly
 }
