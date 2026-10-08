@@ -25,9 +25,11 @@ var (
 	bearerPattern   = regexp.MustCompile(`(?i)\bbearer\s+\S+`)
 	basicPattern    = regexp.MustCompile(`(?i)\bbasic\s+\S+`)
 	headerPattern   = regexp.MustCompile(`(?i)\b(?:authorization|x-[\w-]*-api-key|api-key)\s*:\s*\S+`)
-	jsonCredPattern = regexp.MustCompile(`(?i)"(?:api_key|apikey|token|secret|authorization|access_token|client_secret|private_key)"\s*:\s*"[^"]*"`)
+	jsonCredPattern = regexp.MustCompile(`(?i)"(?:api_key|apikey|token|secret|authorization|access_token|refresh_token|id_token|code_verifier|subject_token|actor_token|client_assertion|client_secret|private_key|password)"\s*:\s*"[^"]*"`)
+	kvCredPattern   = regexp.MustCompile(`(?i)\b(api_key|access_token|refresh_token|id_token|code_verifier|subject_token|actor_token|client_assertion|client_secret|password)=[^&\s"]+`)
 	skKeyPattern    = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}\b`)
 	tgkKeyPattern   = regexp.MustCompile(`\btgk_[A-Za-z0-9_-]{8,}\b`)
+	agKeyPattern    = regexp.MustCompile(`\bag_[A-Za-z0-9_-]{43,}`)
 )
 
 // RedactLogString scrubs credential-shaped substrings from unstructured log text.
@@ -50,7 +52,9 @@ func RedactLogString(s string) string {
 		}
 		return match
 	})
+	out = kvCredPattern.ReplaceAllString(out, "${1}="+placeholder)
 	out = skKeyPattern.ReplaceAllString(out, placeholder)
 	out = tgkKeyPattern.ReplaceAllString(out, placeholder)
+	out = agKeyPattern.ReplaceAllString(out, placeholder)
 	return out
 }

@@ -16,6 +16,8 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,7 +105,10 @@ func (s *Store) DeleteGatewayClient(ctx context.Context, clientID string) error 
 // proxy fixed at login. Re-saving a rotated record therefore shortens the TTL
 // rather than resetting it: the session cannot be kept alive indefinitely by
 // refreshing, and a revoked or changed platform decision is re-derived at the
-// next login. A record with no deadline keeps the legacy TTL.
+// next login. A record with no deadline keeps the legacy TTL. The record is
+// keyed by a digest of the refresh token. For one release it is also written
+// under the previous key, so instances still running the previous release, or a
+// rollback to it, keep finding sessions rotated by this one.
 func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord) error {
 	ttl := sessionTTL
 	if !rec.ExpiresAt.IsZero() {
@@ -112,31 +117,65 @@ func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoau
 			return errors.New("oauth flow store: session already expired")
 		}
 	}
-	return s.save(ctx, sessionPrefix+refreshToken, rec, ttl)
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("oauth flow store: encode: %w", err)
+	}
+	_, err = s.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range sessionKeys(refreshToken) {
+			pipe.Set(ctx, key, raw, ttl)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("oauth flow store: set session: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
-	raw, err := s.rdb.Get(ctx, sessionPrefix+refreshToken).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return nil, nil
+	for _, key := range sessionKeys(refreshToken) {
+		raw, err := s.rdb.Get(ctx, key).Bytes()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("oauth flow store: get session: %w", err)
+		}
+		var rec appoauth.SessionRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return nil, fmt.Errorf("oauth flow store: decode session: %w", err)
+		}
+		return &rec, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("oauth flow store: get session: %w", err)
-	}
-	var rec appoauth.SessionRecord
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		return nil, fmt.Errorf("oauth flow store: decode session: %w", err)
-	}
-	return &rec, nil
+	return nil, nil
 }
 
 func (s *Store) RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error {
 	// EXPIRE LT only ever shortens the remaining TTL: replaying an already
 	// retired token cannot push its expiry out again.
-	if err := s.rdb.ExpireLT(ctx, sessionPrefix+refreshToken, grace).Err(); err != nil {
+	_, err := s.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range sessionKeys(refreshToken) {
+			pipe.ExpireLT(ctx, key, grace)
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("oauth flow store: retire session: %w", err)
 	}
 	return nil
+}
+
+func sessionKey(refreshToken string) string {
+	sum := sha256.Sum256([]byte(refreshToken))
+	return sessionPrefix + hex.EncodeToString(sum[:])
+}
+
+// sessionKeys lists the digest key first and the previous key second. Once no
+// instance runs a release older than this one, stop writing the previous key;
+// reading it can stop sessionTTL after that.
+func sessionKeys(refreshToken string) []string {
+	return []string{sessionKey(refreshToken), sessionPrefix + refreshToken}
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {
