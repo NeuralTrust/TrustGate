@@ -161,6 +161,11 @@ type singleConnectView struct {
 	// AutoReturn sends the user back to ResumeURL on its own: set on the page
 	// the OAuth callback lands on, once the account is connected.
 	AutoReturn bool
+	// AutoClose closes the tab on its own when there is nowhere to send the
+	// user: a link handed out in a tool result, where the assistant they came
+	// from is the tab or app underneath. A browser that refuses (a tab it did
+	// not open by script) leaves the page as it is, saying to go back.
+	AutoClose bool
 	// Description is the catalog one-liner for the server, shown under the
 	// headline so the card says what the user is connecting to.
 	Description string
@@ -225,6 +230,7 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		view.ServerName = serverDisplayName(catalog, page.Code)
 	}
 	view.AutoReturn = justConnected && view.Linked && flash == "" && view.ResumeURL != ""
+	view.AutoClose = justConnected && view.Linked && flash == "" && view.ResumeURL == ""
 	// Not here yet, the server still has a logo: the catalog's, rather than the
 	// generic MCP mark the "getting ready" page showed in its place.
 	if !view.Found {
