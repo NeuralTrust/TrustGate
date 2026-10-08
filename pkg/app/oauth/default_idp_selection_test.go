@@ -301,6 +301,7 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 		Resource:      "http://localhost:8082/oMTXK0qG/mcp",
 		AuthID:        appauth.DefaultIdPAuthID().String(),
 		GatewayID:     gw.String(),
+		Approved:      true,
 	}))
 
 	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")
@@ -333,6 +334,7 @@ func TestCallbackDefaultIdPCapturesEmailFromAccessToken(t *testing.T) {
 		Resource:      "http://localhost:8082/oMTXK0qG/mcp",
 		AuthID:        appauth.DefaultIdPAuthID().String(),
 		GatewayID:     gw.String(),
+		Approved:      true,
 	}))
 
 	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")

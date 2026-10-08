@@ -16,7 +16,6 @@ package oauth
 
 import (
 	"crypto/subtle"
-	"net/url"
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
@@ -77,22 +76,6 @@ func clearStateCookie(c *fiber.Ctx) {
 		HTTPOnly: true,
 		SameSite: fiber.CookieSameSiteLaxMode,
 	})
-}
-
-// gatewayStateOf extracts the state the proxy minted for the IdP leg from the
-// redirect it produced. A protocol error is redirected back to the client
-// instead, carrying the client's own state; that redirect never returns to the
-// callback, so it gets no cookie.
-func gatewayStateOf(location, clientState string) string {
-	u, err := url.Parse(location)
-	if err != nil {
-		return ""
-	}
-	state := u.Query().Get("state")
-	if state == "" || state == clientState {
-		return ""
-	}
-	return state
 }
 
 // requireStateBinding rejects a callback whose state was not issued to this

@@ -124,22 +124,22 @@ func NewAuthProxy(
 	return p
 }
 
-func (p *authProxy) Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (string, error) {
+func (p *authProxy) Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (AuthorizeResult, error) {
 	if req.ResponseType != "code" {
-		return "", oauthErr("unsupported_response_type", "only response_type=code is supported")
+		return AuthorizeResult{}, oauthErr("unsupported_response_type", "only response_type=code is supported")
 	}
 	if req.RedirectURI == "" {
-		return "", oauthErr("invalid_request", "redirect_uri is required")
+		return AuthorizeResult{}, oauthErr("invalid_request", "redirect_uri is required")
 	}
 	if req.CodeChallenge == "" || (req.CodeChallengeMethod != "" && req.CodeChallengeMethod != "S256") {
-		return "", oauthErr("invalid_request", "PKCE with code_challenge_method=S256 is required")
+		return AuthorizeResult{}, oauthErr("invalid_request", "PKCE with code_challenge_method=S256 is required")
 	}
 	// The redirect_uri is only trustworthy once it has been checked against the
 	// client, so that check comes before anything else that can fail: from here
 	// on a protocol error can be reported to the client instead of rendered
 	// here, where an agent waiting on its callback would never read it.
 	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
-		return "", err
+		return AuthorizeResult{}, err
 	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
@@ -176,16 +176,16 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
-		return "", err
+		return AuthorizeResult{}, err
 	}
 
 	state, err := randomToken()
 	if err != nil {
-		return "", err
+		return AuthorizeResult{}, err
 	}
 	verifier, err := randomToken()
 	if err != nil {
-		return "", err
+		return AuthorizeResult{}, err
 	}
 	pending := PendingAuthorization{
 		ClientID:            req.ClientID,
@@ -199,10 +199,6 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		AuthID:              auth.ID.String(),
 		GatewayID:           auth.GatewayID.String(),
 	}
-	if err := p.store.SavePending(ctx, state, pending); err != nil {
-		return "", fmt.Errorf("oauth: park authorization: %w", err)
-	}
-
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", cfg.ClientID)
@@ -231,22 +227,60 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 			}
 		}
 	}
-	return endpoints.authorize + "?" + q.Encode(), nil
+	pending.AuthorizeURL = endpoints.authorize + "?" + q.Encode()
+	if err := p.store.SavePending(ctx, state, pending); err != nil {
+		return AuthorizeResult{}, fmt.Errorf("oauth: park authorization: %w", err)
+	}
+	return AuthorizeResult{Location: pending.AuthorizeURL, ConsentState: state}, nil
 }
 
 // authorizeFailure turns a rejected authorization into a redirect back to the
 // client, as RFC 6749 §4.1.2.1 requires once the redirect_uri is validated.
 // Anything that is not a protocol error is a fault on this side and is left to
 // the caller to render.
-func authorizeFailure(req AuthorizeRequest, err error) (string, error) {
+func authorizeFailure(req AuthorizeRequest, err error) (AuthorizeResult, error) {
 	var oe *OAuthError
 	if !errors.As(err, &oe) {
-		return "", err
+		return AuthorizeResult{}, err
 	}
-	return clientRedirect(req.RedirectURI, url.Values{
+	return AuthorizeResult{Location: clientRedirect(req.RedirectURI, url.Values{
 		"error":             {oe.Code},
 		"error_description": {oe.Description},
-	}, req.State), nil
+	}, req.State)}, nil
+}
+
+// Approve releases an authorization parked by Authorize and returns the
+// identity provider redirect it was waiting on. The pending entry stays parked
+// for the callback.
+func (p *authProxy) Approve(ctx context.Context, state string) (string, error) {
+	pending, err := p.store.TakePending(ctx, state)
+	if err != nil {
+		return "", fmt.Errorf("oauth: load pending authorization: %w", err)
+	}
+	if pending == nil || pending.AuthorizeURL == "" {
+		return "", oauthErr("invalid_request", "unknown or expired authorization request")
+	}
+	pending.Approved = true
+	if err := p.store.SavePending(ctx, state, *pending); err != nil {
+		return "", fmt.Errorf("oauth: park authorization: %w", err)
+	}
+	return pending.AuthorizeURL, nil
+}
+
+// Deny abandons a parked authorization and returns the client redirect that
+// reports the refusal.
+func (p *authProxy) Deny(ctx context.Context, state string) (string, error) {
+	pending, err := p.store.TakePending(ctx, state)
+	if err != nil {
+		return "", fmt.Errorf("oauth: load pending authorization: %w", err)
+	}
+	if pending == nil {
+		return "", oauthErr("invalid_request", "unknown or expired authorization request")
+	}
+	return clientRedirect(pending.RedirectURI, url.Values{
+		"error":             {"access_denied"},
+		"error_description": {"the user did not grant access"},
+	}, pending.State), nil
 }
 
 func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc string) (string, error) {
@@ -256,6 +290,9 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	}
 	if pending == nil {
 		return "", oauthErr("invalid_request", "unknown or expired authorization request")
+	}
+	if !pending.Approved {
+		return "", oauthErr("access_denied", "authorization request was not approved")
 	}
 	if idpErr != "" {
 		return clientRedirect(pending.RedirectURI, url.Values{
