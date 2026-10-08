@@ -42,6 +42,19 @@ func (regexMaskRunner) RunStreamSegment(_ context.Context, _ appplugins.StageInp
 	return &appplugins.SegmentOutcome{HasTransform: true, Transformed: plumbingEmailRE.ReplaceAllString(seg.Accumulated, "[MASKED_EMAIL]")}, nil
 }
 
+var spanningMaskRE = regexp.MustCompile(`standard\s+jane\.doe@example\.com`)
+
+// spanningMaskRunner masks a pattern that reads across a line break, the one
+// way a match can still run from text no delta wrote into a delta.
+type spanningMaskRunner struct{}
+
+func (spanningMaskRunner) RunStreamSegment(_ context.Context, _ appplugins.StageInput, seg appplugins.StreamSegment) (*appplugins.SegmentOutcome, error) {
+	if seg.Closing || !spanningMaskRE.MatchString(seg.Accumulated) {
+		return &appplugins.SegmentOutcome{}, nil
+	}
+	return &appplugins.SegmentOutcome{HasTransform: true, Transformed: spanningMaskRE.ReplaceAllString(seg.Accumulated, "[MASKED]")}, nil
+}
+
 func invokeChunkInner(t *testing.T, frame []byte) string {
 	t.Helper()
 	var holder struct {
@@ -117,11 +130,56 @@ func TestNativeStream_AnthropicInvokeMaskLandsInTheDeltasNotInMessageStart(t *te
 // rather than empty the deltas.
 func TestNativeStream_MaskSpanningPlumbingTextFailsOpen(t *testing.T) {
 	t.Parallel()
-	// The "note" field is synthetic: real plumbing no longer reaches the guard,
-	// so the guard is pinned with a constructed spanning case.
+	// The "note" field is synthetic, and the pattern reads across the line break
+	// that fences it: the guard is pinned with a constructed spanning case.
 	frames := anthropicInvokeTextStream(t, `,"note":"standard"`, "jane", ".doe", "@example", ".com")
-	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
+	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(spanningMaskRunner{}, streamGuardConfig{}), frames)
 	require.Nil(t, pe)
 	requireStreamFailedOpen(t, got, frames, rt, string(adapter.MaskCauseGluedText))
 	assert.Equal(t, "jane.doe@example.com", textDeltas(t, got), "the text is released whole, never emptied")
+}
+
+// message_delta reports the stop sequence the model ended on. It is a label, not
+// text, so a mask on the address the last delta ends with must still land.
+func TestNativeStream_StopSequenceIsNotGluedToTheLastDelta(t *testing.T) {
+	t.Parallel()
+	for name, pieces := range map[string][]string{
+		"one delta":    {"Mail bob@example.com"},
+		"split deltas": {"Mail bob", "@example", ".com"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			frames := anthropicInvokeTextStream(t, "", pieces...)
+			stop := len(frames) - 2
+			frames[stop] = chunkFrame(t, `{"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"END"},"usage":{"output_tokens":12}}`)
+			got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
+			require.Nil(t, pe)
+			require.Len(t, got, len(frames))
+			assert.Empty(t, streamFailedOpenEntries(rt))
+			assert.Equal(t, frames[stop], got[stop], "message_delta is released byte for byte")
+			released := textDeltas(t, got)
+			assert.Contains(t, released, "[MASKED_EMAIL]")
+			assert.NotContains(t, released, "bob")
+			assert.NotContains(t, released, "example.com")
+		})
+	}
+}
+
+// A citation carries the quoted source text beside the model's own text. It is
+// not text the model wrote in a delta, so a mask on the address the delta ends
+// with must not take the quotation into its match.
+func TestNativeStream_CitedTextIsNotGluedToTheLastDelta(t *testing.T) {
+	t.Parallel()
+	frames := anthropicInvokeTextStream(t, "", "Mail bob", "@example", ".com")
+	at := len(frames) - 3
+	cite := chunkFrame(t, `{"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"char_location","cited_text":"Source quote","document_index":0,"document_title":"Doc","start_char_index":0,"end_char_index":12}}}`)
+	frames = append(frames[:at+1], append([][]byte{cite}, frames[at+1:]...)...)
+	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
+	require.Nil(t, pe)
+	require.Len(t, got, len(frames))
+	assert.Empty(t, streamFailedOpenEntries(rt))
+	assert.Equal(t, cite, got[at+1], "the citation is released byte for byte")
+	released := textDeltas(t, got)
+	assert.Contains(t, released, "[MASKED_EMAIL]")
+	assert.NotContains(t, released, "bob")
 }
