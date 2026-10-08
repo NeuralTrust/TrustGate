@@ -249,20 +249,8 @@ type ConnectService interface {
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
 	// Start begins an upstream authorization. baseURL is the origin of the
 	// provider's redirect_uri; startOrigin is the origin the browser started
-	// from, which the callback sends it back to (see ReceiveCallback).
+	// from, which the callback sends it back to (see ConnectHandoff).
 	Start(ctx context.Context, baseURL, startOrigin, ticketID, provider, instanceID string) (*ConnectStart, error)
-	// StartOrigin answers origin, rebuilt as scheme://host[:port], when a
-	// connection with this ticket may be started there, and
-	// ErrStartOriginNotServed when it may not.
-	StartOrigin(ctx context.Context, callbackOrigin, origin, ticketID string) (string, error)
-	// ReceiveCallback takes the provider's redirect without completing it: it
-	// keeps the result under a one-time token and answers the URL on the start
-	// origin where the browser that started the flow finishes it. The started
-	// authorization is left in place.
-	ReceiveCallback(ctx context.Context, provider, state, code, errCode, errDesc string) (string, error)
-	// TakeFinish redeems a finish token once; a second call answers
-	// ErrConnectFinishNotFound.
-	TakeFinish(ctx context.Context, token string) (*ConnectFinish, error)
 	// Callback completes an authorization: it uses up the state, redeems the
 	// code and stores the credential under the ticket's principal.
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)

@@ -92,6 +92,7 @@ type connectConfirmView struct {
 }
 
 func renderConnectConfirmPage(c *fiber.Ctx, view connectConfirmView, row appoauth.ProviderStatus, catalog appcatalog.MCPServerCatalog) error {
+	connectPageReferrerPolicy(c)
 	decorated := decorateProvider(catalog, row)
 	view.ServerName = decorated.DisplayName
 	view.InstanceName = decorated.InstanceName
@@ -109,6 +110,7 @@ func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash s
 // opened later, a connected page stays put, or the user could never reach
 // Disconnect.
 func renderConnectPageAfter(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, justConnected bool, catalog appcatalog.MCPServerCatalog) error {
+	connectPageReferrerPolicy(c)
 	// A ticket minted for one server (e.g. a Store install) shows the focused
 	// single-server page instead of the full provider grid.
 	if strings.TrimSpace(page.Code) != "" {
@@ -122,6 +124,15 @@ func renderConnectPageAfter(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, fl
 		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
 		Owner:        ownerOf(page.Principal),
 	})
+}
+
+// connectPageReferrerPolicy serves a connect page with a same-origin referrer
+// policy instead of no-referrer: under no-referrer a browser sends "Origin:
+// null" with the page's own forms, and the start then cannot tell them from a
+// form on another site when the browser sends no fetch metadata. Cross-origin
+// requests, the provider included, still get no referrer.
+func connectPageReferrerPolicy(c *fiber.Ctx) {
+	c.Set(fiber.HeaderReferrerPolicy, "same-origin")
 }
 
 type singleConnectView struct {
@@ -245,9 +256,9 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 }
 
 // connectPageWaitAttempts and connectPageWaitSeconds bound how long the
-// focused page waits for a server that is not on this plane yet: long enough
-// for config-sync to deliver one shelved a moment ago, short enough that a
-// server which really is not here is said so within half a minute. Each
+// focused page waits for a server that is not on this plane yet: long
+// enough that config-sync delivers one shelved a moment ago, short enough that
+// a server which really is not here is said so within half a minute. Each
 // attempt also holds its answer for up to connectPageHoldFor first, so four
 // attempts of that and two seconds between them come to under thirty.
 const (

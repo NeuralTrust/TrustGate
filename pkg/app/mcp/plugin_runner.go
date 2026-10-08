@@ -31,10 +31,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-// codePolicyBlocked is a server-defined JSON-RPC error code (in the reserved
-// -32000..-32099 range) used when the plugin chain blocks a tools/call;
-// -32002 and -32003 are already used elsewhere in the MCP handler.
-const codePolicyBlocked int64 = -32001
+// CodePolicyBlocked is a server-defined JSON-RPC error code (in the reserved
+// -32000..-32099 range) used when the plugin chain or the toolkit refuses a
+// call; -32002 and -32003 are already used elsewhere in the MCP handler.
+const CodePolicyBlocked int64 = -32001
 
 // CodeRateLimited is returned whenever a denial is a matter of timing rather
 // than of permission: the gateway plan throttle (rpc_dispatcher), TrustGuard's
@@ -71,7 +71,7 @@ type PluginRunner struct {
 }
 
 // IsPolicyBlockedCode reports whether a JSON-RPC error is a policy denial.
-func IsPolicyBlockedCode(code int64) bool { return code == codePolicyBlocked }
+func IsPolicyBlockedCode(code int64) bool { return code == CodePolicyBlocked }
 
 // NewPluginRunner accepts the shared executor port; a nil executor makes every
 // method a no-op (plugin-free parity with today's MCP path).
@@ -439,7 +439,7 @@ func cloneInboundHeaders(ctx context.Context) map[string][]string {
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
-	code := codePolicyBlocked
+	code := CodePolicyBlocked
 	if pe != nil && pe.StatusCode == http.StatusTooManyRequests {
 		code = CodeRateLimited
 	}

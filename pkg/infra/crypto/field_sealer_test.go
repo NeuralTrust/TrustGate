@@ -93,3 +93,31 @@ func TestSealedKeyID(t *testing.T) {
 		t.Fatalf("SealedKeyID(plain) = %q", got)
 	}
 }
+
+func TestFieldSealer_OpenFieldAndCanOpen(t *testing.T) {
+	t.Parallel()
+	s, _ := NewFieldSealer(randomSecret(t), RegistrySecretsPurpose)
+	aad := FieldAAD("table.field", "row-1")
+	if aad != "table.field|row-1" {
+		t.Fatalf("FieldAAD = %q", aad)
+	}
+	sealed, _ := s.Seal(aad, "value")
+
+	if got, err := s.OpenField(aad, sealed); err != nil || got != "value" {
+		t.Fatalf("OpenField = %q, %v", got, err)
+	}
+	if !s.CanOpen(aad, sealed) || s.CanOpen(FieldAAD("table.field", "row-2"), sealed) {
+		t.Fatal("CanOpen must follow the aad")
+	}
+
+	var none *FieldSealer
+	if got, err := none.OpenField(aad, "plain"); err != nil || got != "plain" {
+		t.Fatalf("nil sealer, plain value: %q, %v", got, err)
+	}
+	if _, err := none.OpenField(aad, sealed); !errors.Is(err, ErrNoFieldSealer) {
+		t.Fatalf("nil sealer, sealed value: err = %v", err)
+	}
+	if none.CanOpen(aad, sealed) || !none.CanOpen(aad, "plain") {
+		t.Fatal("nil sealer: only unsealed values open")
+	}
+}

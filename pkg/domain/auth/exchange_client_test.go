@@ -60,6 +60,16 @@ func TestOAuth2Config_ExchangeCredentials(t *testing.T) {
 			"obo", "os", true,
 		},
 		{"login client without a secret", &OAuth2Config{ClientID: "login"}, "", "", false},
+		{
+			"exchange client without a secret does not fall back to the login client",
+			&OAuth2Config{ClientID: "login", ClientSecret: "ls", ExchangeClientID: "obo"},
+			"", "", false,
+		},
+		{
+			"unreadable exchange secret does not fall back to the login client",
+			&OAuth2Config{ClientID: "login", ClientSecret: "ls", ExchangeClientID: "obo", ExchangeSecretUnreadable: true},
+			"", "", false,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
