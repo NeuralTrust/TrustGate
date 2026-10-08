@@ -37,7 +37,8 @@ type UpdateInput struct {
 	Status   *string
 	Domain   *string
 	TenantID string
-	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements).
+	// PlatformAdmin is true only for the platform identity, which may set
+	// entitlements and reserved domains. An empty TenantID never implies it.
 	PlatformAdmin   bool
 	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
@@ -162,10 +163,10 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	case in.ClearTrafficLabeling:
 		g.TrafficLabeling = nil
 	}
-	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
-		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
-	}
-	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
+	if in.Entitlements != nil {
+		if !in.PlatformAdmin {
+			return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
+		}
 		g.Entitlements = *in.Entitlements
 	}
 	g.UpdatedAt = time.Now().UTC()

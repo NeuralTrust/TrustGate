@@ -16,6 +16,9 @@ package oauth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -31,6 +34,25 @@ func newSessionStore(t *testing.T) (*infraoauth.Store, *miniredis.Miniredis) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	return infraoauth.NewStore(rdb), mr
+}
+
+func digestSessionKey(refreshToken string) string {
+	sum := sha256.Sum256([]byte(refreshToken))
+	return "oauth:session:" + hex.EncodeToString(sum[:])
+}
+
+func seedLegacySession(t *testing.T, mr *miniredis.Miniredis, refreshToken string, rec appoauth.SessionRecord, ttl time.Duration) string {
+	t.Helper()
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("encode legacy record: %v", err)
+	}
+	key := "oauth:session:" + refreshToken
+	if err := mr.Set(key, string(raw)); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+	mr.SetTTL(key, ttl)
+	return key
 }
 
 func TestStoreSessionRoundTrip(t *testing.T) {
@@ -164,7 +186,7 @@ func TestStoreSessionTTLIsAbsoluteNotSliding(t *testing.T) {
 	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	first := mr.TTL("oauth:session:refresh-1")
+	first := mr.TTL(digestSessionKey("refresh-1"))
 	if first > time.Hour || first < 59*time.Minute {
 		t.Fatalf("TTL must end at ExpiresAt (~1h), not the legacy 30d, got %v", first)
 	}
@@ -176,7 +198,7 @@ func TestStoreSessionTTLIsAbsoluteNotSliding(t *testing.T) {
 	if err := store.SaveSession(ctx, "refresh-2", rotated); err != nil {
 		t.Fatalf("save rotated session: %v", err)
 	}
-	second := mr.TTL("oauth:session:refresh-2")
+	second := mr.TTL(digestSessionKey("refresh-2"))
 	if second > 40*time.Minute || second < 39*time.Minute {
 		t.Fatalf("rotated TTL must be the remaining lifetime (~40m), got %v", second)
 	}
@@ -199,7 +221,7 @@ func TestStoreSaveSessionRefusesExpiredRecord(t *testing.T) {
 	if err == nil {
 		t.Fatal("saving a record past its deadline must fail rather than persist it")
 	}
-	if mr.Exists("oauth:session:refresh-1") {
+	if mr.Exists(digestSessionKey("refresh-1")) {
 		t.Fatal("an expired record must not be written")
 	}
 }
@@ -350,5 +372,136 @@ func TestStoreGatewayClientManagementKeepsTheTTLSensible(t *testing.T) {
 	// DELETE must not see a failure.
 	if err := store.DeleteGatewayClient(ctx, "agw-managed"); err != nil {
 		t.Fatalf("delete is idempotent: %v", err)
+	}
+}
+
+func TestStoreSaveSessionWritesDigestAndPreviousKey(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	rec := appoauth.SessionRecord{Subject: "user-42", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := store.SaveSession(ctx, "gwrt_refresh-token-value", rec); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	digest, previous := digestSessionKey("gwrt_refresh-token-value"), "oauth:session:gwrt_refresh-token-value"
+	for _, key := range []string{digest, previous} {
+		if !mr.Exists(key) {
+			t.Fatalf("session must be stored under %q, got %v", key, mr.Keys())
+		}
+		if ttl := mr.TTL(key); ttl <= 0 || ttl > time.Hour {
+			t.Fatalf("key %q must expire at the session deadline, got %v", key, ttl)
+		}
+	}
+	if len(mr.Keys()) != 2 {
+		t.Fatalf("expected exactly the digest and previous keys, got %v", mr.Keys())
+	}
+}
+
+func TestStoreGetSessionReadsLegacyPlainKey(t *testing.T) {
+	store, mr := newSessionStore(t)
+	seedLegacySession(t, mr, "legacy-refresh", appoauth.SessionRecord{Subject: "user-7", GatewayID: "gw-1"}, time.Hour)
+
+	got, err := store.GetSession(context.Background(), "legacy-refresh")
+	if err != nil {
+		t.Fatalf("get legacy session: %v", err)
+	}
+	if got == nil || got.Subject != "user-7" || got.GatewayID != "gw-1" {
+		t.Fatalf("legacy session must stay readable, got %+v", got)
+	}
+}
+
+func TestStoreGetSessionPrefersDigestKey(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	seedLegacySession(t, mr, "refresh-1", appoauth.SessionRecord{Subject: "legacy"}, time.Hour)
+	if err := store.SaveSession(ctx, "refresh-1", appoauth.SessionRecord{Subject: "current"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	got, err := store.GetSession(ctx, "refresh-1")
+	if err != nil || got == nil {
+		t.Fatalf("get session: rec=%v err=%v", got, err)
+	}
+	if got.Subject != "current" {
+		t.Fatalf("digest-keyed record must win over the legacy one, got %+v", got)
+	}
+}
+
+func TestStoreLegacySessionRotatesOntoDigestKey(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	rec := appoauth.SessionRecord{Subject: "user-42", ExpiresAt: time.Now().Add(time.Hour)}
+	legacyKey := seedLegacySession(t, mr, "refresh-old", rec, time.Hour)
+
+	loaded, err := store.GetSession(ctx, "refresh-old")
+	if err != nil || loaded == nil {
+		t.Fatalf("rotation must load the legacy token: rec=%v err=%v", loaded, err)
+	}
+	if err := store.SaveSession(ctx, "refresh-new", *loaded); err != nil {
+		t.Fatalf("save rotated session: %v", err)
+	}
+	if err := store.RetireSession(ctx, "refresh-old", time.Minute); err != nil {
+		t.Fatalf("retire legacy session: %v", err)
+	}
+
+	if ttl := mr.TTL(legacyKey); ttl > time.Minute || ttl <= 0 {
+		t.Fatalf("retiring must shorten the legacy record to the grace window, got %v", ttl)
+	}
+	if got, err := store.GetSession(ctx, "refresh-old"); err != nil || got == nil {
+		t.Fatalf("retired legacy session must survive the grace window: rec=%v err=%v", got, err)
+	}
+
+	mr.FastForward(time.Minute + time.Second)
+	old, err := store.GetSession(ctx, "refresh-old")
+	if err != nil {
+		t.Fatalf("get old: %v", err)
+	}
+	if old != nil {
+		t.Fatal("retired legacy session must expire once the grace window has passed")
+	}
+	fresh, err := store.GetSession(ctx, "refresh-new")
+	if err != nil || fresh == nil || fresh.Subject != "user-42" {
+		t.Fatalf("rotated-in session must be readable: rec=%v err=%v", fresh, err)
+	}
+	if !mr.Exists(digestSessionKey("refresh-new")) {
+		t.Fatal("rotated-in session must be stored under its digest key")
+	}
+}
+
+func TestStoreRetireSessionShortensBothKeys(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	legacyKey := seedLegacySession(t, mr, "refresh-1", appoauth.SessionRecord{Subject: "user-42"}, time.Hour)
+	if err := store.SaveSession(ctx, "refresh-1", appoauth.SessionRecord{Subject: "user-42"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	if err := store.RetireSession(ctx, "refresh-1", time.Minute); err != nil {
+		t.Fatalf("retire session: %v", err)
+	}
+	for _, key := range []string{legacyKey, digestSessionKey("refresh-1")} {
+		if ttl := mr.TTL(key); ttl > time.Minute || ttl <= 0 {
+			t.Fatalf("key %q TTL = %v, want at most the grace window", key, ttl)
+		}
+	}
+
+	mr.FastForward(time.Minute + time.Second)
+	gone, err := store.GetSession(ctx, "refresh-1")
+	if err != nil {
+		t.Fatalf("get after grace: %v", err)
+	}
+	if gone != nil {
+		t.Fatal("no record may outlive the grace window under either key")
+	}
+}
+
+func TestStoreRetireSessionUnknownTokenIsNoop(t *testing.T) {
+	store, mr := newSessionStore(t)
+	if err := store.RetireSession(context.Background(), "absent", time.Minute); err != nil {
+		t.Fatalf("retiring an unknown token must not fail: %v", err)
+	}
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Fatalf("retiring an unknown token must not create keys, got %v", keys)
 	}
 }
