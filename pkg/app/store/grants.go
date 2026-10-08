@@ -54,8 +54,9 @@ type grantService struct {
 	signaler   configsyncport.SnapshotSignaler
 }
 
-// NewGrantService wires the grant admin service. catalog validates the code
-// (only catalog servers are grantable); signaler may be nil.
+// NewGrantService wires the grant admin service. catalog validates the code:
+// a catalog server, or a custom server of the gateway by its Store code
+// (registrydomain.CustomStoreCode). signaler may be nil.
 func NewGrantService(
 	repo storeaccessdomain.Repository,
 	registries RegistryLister,
@@ -77,7 +78,12 @@ func (s *grantService) Set(ctx context.Context, in SetGrantRequest) (*storeacces
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := s.catalog.GetByCode(grant.CatalogCode); !ok {
+	// A catalog server, or a custom server of this gateway named by its Store code.
+	_, ok, err := storeEntry(ctx, s.catalog, s.registries, in.GatewayID, grant.CatalogCode)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, grant.CatalogCode)
 	}
 	if grant.IsInstance() {
