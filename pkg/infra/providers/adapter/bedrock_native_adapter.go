@@ -220,7 +220,25 @@ func isBinaryBlob(s string) bool {
 	if err != nil {
 		return false
 	}
+	if hasFrameSync(raw) {
+		// A two-byte sync word is weak: the URL alphabet's "__main__" decodes to a
+		// valid-looking ADTS header. Real media in a request is standard base64, so
+		// a frame-synced header counts only when the string has no URL-safe characters.
+		return validFrameHeader(raw) && !strings.ContainsAny(s, "-_")
+	}
 	return hasMediaSignature(raw)
+}
+
+func hasFrameSync(b []byte) bool { return len(b) >= 4 && b[0] == 0xFF && b[1]&0xE0 == 0xE0 }
+
+// validFrameHeader checks the header bits of an AAC ADTS or MPEG audio frame, so
+// bytes that merely start with a sync word do not pass.
+func validFrameHeader(b []byte) bool {
+	layer := (b[1] >> 1) & 3
+	if layer == 0 { // ADTS: layer bits are always 00
+		return b[1]&0xF0 == 0xF0 && (b[2]>>2)&0xF < 13
+	}
+	return (b[1]>>3)&3 != 1 && b[2]>>4 != 0 && b[2]>>4 != 0xF && (b[2]>>2)&3 != 3
 }
 
 const mediaProbeChars = 32
@@ -244,8 +262,7 @@ func hasMediaSignature(b []byte) bool {
 
 var mediaPrefixes = [][]byte{
 	{0x89, 'P', 'N', 'G'}, {0xFF, 0xD8, 0xFF}, []byte("GIF8"), []byte("%PDF"), []byte("ID3"),
-	{0xFF, 0xFB}, {0xFF, 0xFA}, {0xFF, 0xF3}, {0xFF, 0xF2}, {0xFF, 0xE3}, []byte("OggS"), []byte("fLaC"),
-	{0xFF, 0xF1}, {0xFF, 0xF9}, // AAC ADTS
+	[]byte("OggS"), []byte("fLaC"),
 	{0x1A, 0x45, 0xDF, 0xA3}, // EBML: WebM, MKV
 	{'F', 'L', 'V', 0x01},
 	{0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11}, // ASF: WMV, WMA
@@ -309,7 +326,7 @@ func HasS3Source(body []byte) bool {
 				}
 			}
 		case 'o':
-			toolUse := n.strMember("type") == "tool_use" || hasKeyFold(n, "toolUseId")
+			toolUse := strings.HasSuffix(strings.ToLower(n.strMember("type")), "tool_use") || hasKeyFold(n, "toolUseId")
 			for i, k := range n.keys {
 				lk := strings.ToLower(k)
 				v := n.vals[i]
@@ -334,6 +351,7 @@ func HasS3Source(body []byte) bool {
 // not one of them: its image, document and video blocks are read by the model.
 var toolDataKeys = map[string]struct{}{
 	"json": {}, "toolconfig": {}, "input_schema": {}, "inputschema": {}, "parameters": {}, "arguments": {},
+	"tool_results": {}, // Cohere: the outputs of earlier tool calls
 }
 
 // isToolDataKey is the one classifier HasS3Source uses to skip a member: every
