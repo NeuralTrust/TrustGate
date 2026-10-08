@@ -292,6 +292,15 @@ func transformedCallArguments(toolCalls []adapter.CanonicalToolCall, raw any) ([
 			return nil, false
 		}
 		tc := &toolCalls[j]
+		// An echo is matched to its call by position, so one that names a call
+		// other than the one at its position was reordered, and its arguments
+		// belong to another call.
+		if id, named := call["id"].(string); named && id != "" && tc.ID != "" && id != tc.ID {
+			return nil, false
+		}
+		if name, named := fn["name"].(string); named && name != "" && tc.Name != "" && name != tc.Name {
+			return nil, false
+		}
 		if !sameJSON(tc.Arguments, args) {
 			writes = append(writes, func() { tc.Arguments = args })
 		}
