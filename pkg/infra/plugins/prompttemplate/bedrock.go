@@ -87,7 +87,7 @@ func (rb *requestBody) injectBedrockUser(content string) (bool, string) {
 					return false, reasonBedrockMessageBad
 				}
 			}
-			next := make([]json.RawMessage, 0, len(blocks)+1)
+			next := make([]json.RawMessage, 0)
 			next = append(next, bedrockTextBlock(content))
 			next = append(next, blocks...)
 			encodedBlocks, err := json.Marshal(next)
@@ -128,7 +128,7 @@ func (rb *requestBody) injectBedrockSystem(mode onExistingSystem, content string
 	if mode == onExistingReplace {
 		blocks = []json.RawMessage{block}
 	} else {
-		next := make([]json.RawMessage, 0, len(blocks)+1)
+		next := make([]json.RawMessage, 0)
 		next = append(next, blocks...)
 		blocks = append(next, block)
 	}

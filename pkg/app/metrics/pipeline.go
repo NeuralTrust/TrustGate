@@ -152,9 +152,9 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 	for _, e := range explicit {
 		overrides[e.Name] = e
 	}
-	merged := make([]SourcedExporter, 0, len(p.defaultConfigs)+len(explicit))
-	seenIdentity := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
-	seenName := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
+	merged := make([]SourcedExporter, 0)
+	seenIdentity := make(map[string]struct{})
+	seenName := make(map[string]struct{})
 	for _, d := range p.defaultConfigs {
 		identity := exporterIdentity(d)
 		if _, dup := seenIdentity[identity]; dup {

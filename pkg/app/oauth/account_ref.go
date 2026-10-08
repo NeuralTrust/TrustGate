@@ -160,8 +160,8 @@ func identityScopesFor(cfg *registrydomain.MCPAuth) []string {
 }
 
 func mergeScopeList(existing, extra []string) []string {
-	seen := make(map[string]struct{}, len(existing)+len(extra))
-	out := make([]string, 0, len(existing)+len(extra))
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
 	for _, scope := range append(append([]string{}, extra...), existing...) {
 		scope = strings.TrimSpace(scope)
 		if scope == "" {

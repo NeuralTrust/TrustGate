@@ -318,7 +318,11 @@ func TestDistributeHunks(t *testing.T) {
 		{"split across three pieces", []string{"a bo", "b@x", ".io z"}, []TextHunk{{Start: 2, End: 10, Insert: "<M>"}}, []string{"a <M>", "", " z"}},
 		{"two hunks", []string{"one two ", "three four"}, []TextHunk{{Start: 0, End: 3, Insert: "1"}, {Start: 8, End: 13, Insert: "3"}}, []string{"1 two ", "3 four"}},
 		{"insertion at the end", []string{"ab", "cd"}, []TextHunk{{Start: 4, End: 4, Insert: "!"}}, []string{"ab", "cd!"}},
+		{"insertion after trailing empty piece", []string{"ab", ""}, []TextHunk{{Start: 2, End: 2, Insert: "!"}}, []string{"ab", "!"}},
+		{"insertion into empty piece", []string{""}, []TextHunk{{Start: 0, End: 0, Insert: "!"}}, []string{"!"}},
+		{"empty pieces around replacement", []string{"", "abc", ""}, []TextHunk{{Start: 0, End: 3, Insert: "x"}}, []string{"", "x", ""}},
 		{"deletion", []string{"abc", "def"}, []TextHunk{{Start: 2, End: 4, Insert: ""}}, []string{"ab", "ef"}},
+		{"no pieces", []string{}, nil, []string{}},
 		{"no hunks", []string{"x", "y"}, nil, []string{"x", "y"}},
 	}
 	for _, tc := range cases {

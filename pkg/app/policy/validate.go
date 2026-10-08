@@ -143,8 +143,8 @@ func validateMCPScopeRegistries(
 }
 
 func scopeRegistryIDs(scope *domain.MCPScope) []ids.RegistryID {
-	seen := make(map[ids.RegistryID]struct{}, len(scope.RegistryIDs)+len(scope.Tools))
-	out := make([]ids.RegistryID, 0, len(scope.RegistryIDs)+len(scope.Tools))
+	seen := make(map[ids.RegistryID]struct{})
+	out := make([]ids.RegistryID, 0)
 	add := func(id ids.RegistryID) {
 		if _, dup := seen[id]; dup {
 			return
