@@ -18,6 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/url"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -56,6 +59,7 @@ func NewOpenAPIValidator(compiler appopenapi.Compiler) OpenAPIValidator {
 func (v *openAPIValidator) Validate(ctx context.Context, source appopenapi.Source) OpenAPIValidationResult {
 	doc, err := v.compiler.Compile(ctx, source)
 	if err != nil {
+		err = publicCompileError(ctx, source.SpecURL, err)
 		stage := appopenapi.StageCompile
 		var compileErr *appopenapi.CompileError
 		if errors.As(err, &compileErr) {
@@ -98,8 +102,50 @@ func compileOpenAPITarget(ctx context.Context, target *domain.MCPTarget, compile
 		BaseURL: target.URL,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", domain.ErrInvalidMCPTarget, err)
+		return fmt.Errorf("%w: %w", domain.ErrInvalidMCPTarget, publicCompileError(ctx, target.OpenAPI.SpecURL, err))
 	}
 	target.URL = doc.BaseURL
 	return nil
+}
+
+// fetchFailure keeps the transport error reachable through errors.Is/As while
+// showing only a generic message.
+type fetchFailure struct {
+	cause error
+}
+
+func (e *fetchFailure) Error() string {
+	return "could not fetch the OpenAPI document"
+}
+
+func (e *fetchFailure) Unwrap() error {
+	return e.cause
+}
+
+// publicCompileError replaces the text of a dial or DNS failure while fetching
+// the document with a generic message and logs the detail instead. Redirect,
+// policy, HTTP status, size and parse failures keep their message.
+func publicCompileError(ctx context.Context, specURL string, err error) error {
+	var compileErr *appopenapi.CompileError
+	if !errors.As(err, &compileErr) || compileErr.Stage != appopenapi.StageFetch {
+		return err
+	}
+	var opErr *net.OpError
+	var dnsErr *net.DNSError
+	if !errors.As(compileErr.Err, &opErr) && !errors.As(compileErr.Err, &dnsErr) {
+		return err
+	}
+	slog.WarnContext(ctx, "openapi document fetch failed",
+		slog.String("spec_host", specHost(specURL)),
+		slog.String("error", err.Error()),
+	)
+	return &appopenapi.CompileError{Stage: appopenapi.StageFetch, Err: &fetchFailure{cause: compileErr.Err}}
+}
+
+func specHost(specURL string) string {
+	parsed, err := url.Parse(specURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
 }

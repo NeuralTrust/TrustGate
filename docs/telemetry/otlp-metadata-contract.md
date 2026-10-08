@@ -94,7 +94,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.targets` | `mcp.targets` |
 | `trustgate.mcp.upstream_status` | `mcp.upstream_status` |
 | `trustgate.mcp.upstream_latency_ms` | `mcp.upstream_latency_ms` |
-| `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
+| `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` (an upstream server's error under one of the gateway's own codes, -32001, -32003, -32004 or -32005, is relayed and recorded as -32000; the code it sent travels in the error's `data.upstream_code`) |
 | `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
 | `trustgate.mcp.decision` | `mcp.decision` (call-level outcome; only `failed_open` today, when a plugin stage failed on a non-block error and the call proceeded uninspected. Omitted when nothing at that level failed — a per-plugin decision still lives in `policy_chain[]`) |
 | `trustgate.mcp.tool_risk` | `mcp.tool_risk` (tools/call only: the called tool's risk from the MCP annotations its server declares — `read_only` when `readOnlyHint` is true, else `destructive` unless `destructiveHint` is false (the protocol default), else `additive`. Omitted when the tool declares none of the four hints: unannotated tools are never guessed. Advisory, the server's own claim) |
@@ -323,6 +323,9 @@ Under `fail_closed`, `decode_failed` refuses too: a body the guardrail could not
 did not inspect. A `config_invalid` failure on settings that could not be parsed at all fails open,
 since `on_error` is one of those settings.
 
+`settings.on_error` is read by data planes on this version or later. A hybrid data plane on an older
+version ignores it and keeps failing open.
+
 Their `extras` carry two keys:
 
 | Key | Meaning |
@@ -353,18 +356,35 @@ cadence (the first participant that owns them), but two options are merged acros
 a failing policy that resolved `fail_open` is recorded `failed_open` and the chain carries on
 with the next policy on the same block, so another policy's `fail_closed` neither cuts the
 stream on its behalf nor stops the policies behind it from inspecting. A `fail_closed` cut is
-labelled `blocked` on the failing policy, at the head (HTTP 403) and after it.
+labelled `failed_closed` on the failing policy (RUN-1710; it used to read `blocked`), at the
+head (HTTP 403) and after it. Only the policy whose own call failed carries it: the other
+policies on the stream do not, and a cut that is a block verdict, or a mask that could not be
+applied, stays `blocked`.
 
 When a policy's own provider call failed on at least one block and the stream was not cut,
 its `decision` is `failed_open`, in enforce and in observe alike. The count is per policy:
 two policies of one plugin on the same stream, one with a bad key, label only the bad one.
 Cancellation (a client that left) is not a failure. The `decision` of a stream leg is, in
-order of precedence: a cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
+order of precedence: a cut that resolved this policy's own failed call as fail_closed
+(`failed_closed`), any other cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
 failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
 a missing inspection. `streaming.degraded_reason` is a different, chain-wide signal and is
 not what the decision is read from: it is one value for the whole stream, overwritten by a
 later size degrade, and the failure of an observe policy, or of an enforcing policy that
 resolved `fail_open`, never reaches it (the chain absorbs it per policy).
+
+**Streamed failures carry their reason (RUN-1710).** `bedrock_guardrail`, `google_model_armor`
+and `openai_moderation` write `failure_reason` and `failure_detail` (the same vocabulary and keys
+as the buffered leg, above) on the stream entry's `extras`, once, when the stream closes. They
+are present whenever the policy's own call failed on at least one block, whatever the final
+`decision`: a stream whose first block failed and which was later cut by a finding still says
+`decision: blocked` with the failure's `failure_reason`. With several failed blocks the **first
+failure that carries a reason** is kept; later failures, which are usually the same outage
+repeating, do not overwrite it. A failure of a plugin that does not use the shared vocabulary
+carries no reason and is not tracked, so a later one that does carry a reason is the first kept. If the closing call itself fails, the entry still gets a decision (`failed_open`, or
+`failed_closed` when the guard's fail_closed cut was on that policy's failed call) and, when a
+reason is known, a minimal `extras` of `decision`, `failure_reason` and `failure_detail`. The
+keys are additive: nothing that shipped is renamed or retyped.
 
 A policy absorbed this way whose provider fails on three blocks in a row is not called again
 for the rest of that stream: its span keeps `failed_open` and carries
@@ -425,6 +445,7 @@ tokens:
 | `tool_call_not_held` | A stream window holds a tool call the guard could not hold whole, or of a family whose tool calls are not understood |
 | `already_released_text` | The mask reaches text the client has already read |
 | `already_released_input` | The removed text is in tool input or reasoning that was already released |
+| `glued_plumbing_text` | The removed text runs across stream frames and one of them holds text that no delta of the model wrote, only a field the view adds |
 | `no_inspected_window` | The verdict does not name a window of the held text |
 | `tool_input_not_maskable` | The mask is not a replacement inside a string of the tool input, or the input is not valid JSON or does not read back exactly |
 | `tool_frames_not_rewritable` | The held frames of a tool call cannot be rewritten |

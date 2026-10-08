@@ -97,11 +97,12 @@ func TestMCPRouterDispatch(t *testing.T) {
 		Start(mock.Anything, "https://tenant.mcp.test", "https://tenant.mcp.test", "oauth-ticket", "provider", "instance-1").
 		Return(&appoauth.ConnectStart{State: "the-state", Location: "https://provider.example/authorize"}, nil).
 		Once()
-	connect.EXPECT().
+	handoff := oauthmocks.NewConnectHandoff(t)
+	handoff.EXPECT().
 		ReceiveCallback(mock.Anything, "provider", "the-state", "the-code", "", "").
-		Return("https://tenant.mcp.test/oauth/connect/finish?f=finish-token", nil).
+		Return(&appoauth.CallbackReceipt{FinishURL: "https://tenant.mcp.test/oauth/connect/finish?f=finish-token"}, nil).
 		Once()
-	connect.EXPECT().
+	handoff.EXPECT().
 		TakeFinish(mock.Anything, "finish-token").
 		Return(&appoauth.ConnectFinish{Provider: "provider", State: "the-state", Code: "the-code"}, nil).
 		Once()
@@ -117,7 +118,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		}, nil).
 		Once()
 
-	connectHandler := oauthhttp.NewConnectHandler(connect, nil, "")
+	connectHandler := oauthhttp.NewConnectHandler(connect, handoff, nil, "", oauthhttp.FlowCookies{})
 	mcpHandler := mcphttp.NewHandler(nil, nil)
 	ops := &routerOpsRecorder{}
 	mcpRouter := router.NewMCPRouter(

@@ -219,6 +219,65 @@ func TestOpenAPIUpstreamRejectsInvalidArguments(t *testing.T) {
 	require.Equal(t, int64(-32602), rpcErr.Code)
 }
 
+func TestOpenAPIUpstreamPathParameterValues(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	var lastPath atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		lastPath.Store(r.URL.EscapedPath())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	compiler := compilerFunc(func(context.Context, appopenapi.Source) (*appopenapi.Document, error) {
+		return &appopenapi.Document{
+			BaseURL: server.URL + "/v1",
+			Operations: []appopenapi.Operation{{
+				Name:        "getFile",
+				Method:      http.MethodGet,
+				Path:        "/files/{name}/content",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`),
+				Parameters:  []appopenapi.Parameter{{Name: "name", In: "path", Required: true}},
+			}},
+		}, nil
+	})
+	dialer := NewDialerWithClient(nil, compiler, server.Client())
+	upstream, err := dialer.Connect(context.Background(), appmcp.Target{
+		Revision: "registry:1",
+		OpenAPI:  &appopenapi.Source{SpecURL: "https://spec.example/openapi.json"},
+	})
+	require.NoError(t, err)
+
+	call := func(name string) error {
+		arguments, marshalErr := json.Marshal(map[string]string{"name": name})
+		require.NoError(t, marshalErr)
+		_, callErr := upstream.CallTool(context.Background(), "getFile", arguments)
+		return callErr
+	}
+
+	for _, value := range []string{".", ".."} {
+		err := call(value)
+		var rpcErr *appmcp.RPCError
+		require.ErrorAs(t, err, &rpcErr, value)
+		require.Equal(t, int64(-32602), rpcErr.Code)
+		require.Contains(t, rpcErr.Message, `path parameter "name"`)
+	}
+	require.Zero(t, calls.Load())
+
+	for _, tc := range []struct{ value, path string }{
+		{"file.json", "/v1/files/file.json/content"},
+		{"a..b", "/v1/files/a..b/content"},
+		{"v1.2", "/v1/files/v1.2/content"},
+		{"...", "/v1/files/.../content"},
+		{"dir/file", "/v1/files/dir%2Ffile/content"},
+		{"%2e%2e", "/v1/files/%252e%252e/content"},
+	} {
+		require.NoError(t, call(tc.value), tc.value)
+		require.Equal(t, tc.path, lastPath.Load(), tc.value)
+	}
+	require.Equal(t, int32(6), calls.Load())
+}
+
 func TestDialerPreservesRemoteMCPPath(t *testing.T) {
 	t.Parallel()
 	var called bool

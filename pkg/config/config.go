@@ -43,6 +43,12 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+	// defaultStoredSecretsEncryptionEnabled stores MCP and auth credentials
+	// encrypted from the first boot of this version.
+	defaultStoredSecretsEncryptionEnabled = true
+	// defaultReservedGatewayDomains keeps NeuralTrust's own hosts out of reach
+	// of a tenant's gateway domain.
+	defaultReservedGatewayDomains = "neuraltrust.ai"
 	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
 	// org/groups/store_access claims are a login-time snapshot re-minted on
 	// refresh, so the snapshot must expire and force a fresh platform login.
@@ -290,6 +296,10 @@ type ServerConfig struct {
 	// MCPBaseDomain; these only widen what the request router recognises, for
 	// when the same cluster is also reachable under a second domain.
 	MCPExtraBaseDomains []string
+	// ReservedGatewayDomains are host suffixes no tenant may claim as a
+	// gateway's own domain, on top of the base domains this deployment routes
+	// gateways on. GATEWAY_RESERVED_DOMAINS, comma separated.
+	ReservedGatewayDomains []string
 	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
 	// redirect_uri base for upstream MCP connect (authorize + code exchange +
 	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
@@ -325,10 +335,10 @@ type ServerConfig struct {
 	// StoredSecretsEncryptionEnabled makes the registry and auth repositories
 	// store credentials encrypted (enc:v1) and runs the startup backfill that
 	// encrypts rows written before, on the admin and run planes. Every read
-	// path decrypts enc:v1 values whatever its value. Turn it on only once
-	// every plane (admin, proxy, mcp, worker) runs a version that reads enc:v1,
-	// and do not roll back past that version afterwards.
-	// STORED_SECRETS_ENCRYPTION_ENABLED, default false.
+	// path decrypts enc:v1 values whatever its value. A version older than the
+	// one that introduced it cannot read those values, so upgrade every plane
+	// in one deploy and do not roll back past it.
+	// STORED_SECRETS_ENCRYPTION_ENABLED, default true.
 	StoredSecretsEncryptionEnabled bool
 	// ConsoleEventsURL is where the control plane tells the console about a
 	// personal key the MCP Store's page created, rotated or revoked, so the
@@ -679,6 +689,7 @@ func getServerConfig() ServerConfig {
 			defaultMCPBaseDomain,
 		),
 		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		ReservedGatewayDomains:         splitCSV(getEnv("GATEWAY_RESERVED_DOMAINS", defaultReservedGatewayDomains)),
 		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
 		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
 		STSIssuer:                      getEnv("STS_ISSUER", "trustgate"),
@@ -687,7 +698,7 @@ func getServerConfig() ServerConfig {
 		ServeHybridGateways:            getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
 		AdminTokenMaxTTL:               min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
 		OAuthInsecureCookies:           getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
-		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", false),
+		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", defaultStoredSecretsEncryptionEnabled),
 		ConsoleEventsURL:               strings.TrimSpace(getEnv("CONSOLE_EVENTS_URL", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),

@@ -1,15 +1,12 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27-trixie AS builder
+FROM golang:1.27-trixie@sha256:8f58fd67ea075142d947a60e0caa4317746a55118d312f027793d382c7741734 AS builder
 
 WORKDIR /build
 
 # CGO is off: the binary is fully static and runs on distroless "static". With
 # cgo disabled Go uses its pure-Go DNS resolver, which reads /etc/resolv.conf
 # (search domains, ndots) and /etc/hosts but ignores nsswitch.conf.
-ENV GOPRIVATE=github.com/NeuralTrust/* \
-    GONOPROXY=github.com/NeuralTrust/* \
-    GONOSUMDB=github.com/NeuralTrust/* \
-    GIT_TERMINAL_PROMPT=0 \
+ENV GIT_TERMINAL_PROMPT=0 \
     CGO_ENABLED=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,11 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY go.mod go.sum ./
 COPY pkg/metrics/go.mod ./pkg/metrics/go.mod
 
-ARG GITHUB_TOKEN
-RUN if [ -n "$GITHUB_TOKEN" ]; then \
-        git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/" ; \
-    fi && \
-    go mod download
+RUN go mod download
 
 COPY . .
 
@@ -54,7 +47,7 @@ RUN if readelf -d /out/trustgate | grep -q NEEDED; then \
 
 # --- Runtime stage ---------------------------------------------------------
 # distroless "static": CA certificates, tzdata and the nonroot user, no libc.
-FROM gcr.io/distroless/static-debian13:nonroot AS runtime
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3 AS runtime
 
 WORKDIR /app
 

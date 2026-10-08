@@ -178,9 +178,18 @@ so raw addresses and consumer IDs never reach Redis:
 | `MCP_CONNECT_RATE_LIMIT_SOURCE` | Attempts per source per window |
 | `MCP_CONNECT_RATE_LIMIT_CONSUMER` | Attempts per consumer per window |
 | `MCP_CONNECT_RATE_LIMIT_WINDOW` | Window duration |
-| `MCP_CONNECT_TRUSTED_PROXY_CIDRS` | Proxies whose `X-Forwarded-For` is trusted |
+| `MCP_CONNECT_TRUSTED_PROXY_CIDRS` | Proxies whose `X-Forwarded-For` is trusted; empty uses `ORIGINAL_REQUEST_IP_MODE` |
 
-`X-Forwarded-For` is only honored when the peer matches a trusted CIDR, and
+When `MCP_CONNECT_TRUSTED_PROXY_CIDRS` is empty, the source is the client IP the
+plane resolves everywhere else (`ORIGINAL_REQUEST_IP_MODE` and
+`ORIGINAL_REQUEST_TRUSTED_PROXY_CIDRS`, see
+[trustguard-original-request.md](../trustguard-original-request.md)). Behind a GCP
+Application Load Balancer, leave it empty and use `ORIGINAL_REQUEST_IP_MODE=gcp`:
+the socket peer is one of several managed proxies, so counting by peer splits one
+caller across buckets, and the chain ends with the forwarding rule's address,
+which every caller shares.
+
+When set, `X-Forwarded-For` is only honored when the peer matches a trusted CIDR, and
 parsing is bounded to 2048 bytes and 16 hops so a crafted header cannot burn CPU.
 Configuration rejects `0.0.0.0/0` and `::/0`, which would trust anyone. Limiter
 backend failures surface as an opaque `503`, exceeded limits as `429`.

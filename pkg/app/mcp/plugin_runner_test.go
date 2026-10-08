@@ -88,13 +88,13 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 		{
 			name:        "enforce block via plugin error",
 			execErr:     &appplugins.PluginError{StatusCode: 403, Message: "blocked", Body: []byte(`{"trace_id":"t1"}`)},
-			wantRPCCode: codePolicyBlocked,
+			wantRPCCode: CodePolicyBlocked,
 			wantRPCData: `{"trace_id":"t1"}`,
 		},
 		{
 			name:        "enforce block via short circuit",
 			outcome:     &appplugins.StageOutcome{ShortCircuit: true, StatusCode: 403, Body: []byte(`{"trace_id":"t2"}`)},
-			wantRPCCode: codePolicyBlocked,
+			wantRPCCode: CodePolicyBlocked,
 			wantRPCData: `{"trace_id":"t2"}`,
 		},
 		{
@@ -213,14 +213,14 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			name:        "enforce block via plugin error",
 			plan:        []policydomain.Stage{policydomain.StagePreResponse},
 			execErr:     &appplugins.PluginError{StatusCode: 403, Message: "blocked", Body: []byte(`{"trace_id":"t3"}`)},
-			wantRPCCode: codePolicyBlocked,
+			wantRPCCode: CodePolicyBlocked,
 			wantRPCData: `{"trace_id":"t3"}`,
 		},
 		{
 			name:        "enforce block via short circuit",
 			plan:        []policydomain.Stage{policydomain.StagePreResponse},
 			outcome:     &appplugins.StageOutcome{ShortCircuit: true, StatusCode: 403, Body: []byte(`{"trace_id":"t4"}`)},
-			wantRPCCode: codePolicyBlocked,
+			wantRPCCode: CodePolicyBlocked,
 			wantRPCData: `{"trace_id":"t4"}`,
 		},
 		{

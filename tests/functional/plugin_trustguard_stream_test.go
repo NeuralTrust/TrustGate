@@ -382,7 +382,7 @@ const trustGuardStreamCutBlockMessage = "Request blocked by security policy: " +
 func trustGuardOpenAICut() string {
 	return `data: {"id":"chatcmpl-tg-stream","object":"chat.completion.chunk",` +
 		`"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}` + "\n\n" +
-		`data: {"error":{"message":"` + trustGuardStreamCutBlockMessage + `","type":"content_filter"}}` + "\n\n" +
+		`data: {"error":{"message":"` + trustGuardStreamCutBlockMessage + `","type":"content_filter","direction":"output"}}` + "\n\n" +
 		"data: [DONE]\n\n"
 }
 

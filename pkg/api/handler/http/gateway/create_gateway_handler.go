@@ -21,10 +21,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -61,8 +61,8 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
-	callerTenant := tenantIDFromContext(c)
-	effectiveTenant, err := resolveCreateTenantID(callerTenant, req.TenantID)
+	caller := middleware.AdminIdentityFromContext(c)
+	effectiveTenant, err := resolveCreateTenantID(caller, req.TenantID)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
@@ -71,7 +71,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Slug:            req.Slug,
 		Domain:          req.Domain,
 		TenantID:        effectiveTenant,
-		PlatformAdmin:   callerTenant == "",
+		PlatformAdmin:   isPlatform(caller),
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
@@ -85,33 +85,36 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }
 
-// resolveCreateTenantID picks ownership tenant: JWT wins; platform may stamp body tenant_id; mismatched or missing body is rejected.
-func resolveCreateTenantID(callerTenant, bodyTenant string) (string, error) {
+// resolveCreateTenantID picks ownership tenant: a tenant caller always creates
+// in its own tenant, only the platform may stamp the body tenant_id, and any
+// other caller without a tenant is refused.
+func resolveCreateTenantID(caller middleware.AdminIdentity, bodyTenant string) (string, error) {
 	bodyTenant = strings.TrimSpace(bodyTenant)
-	if callerTenant != "" {
-		if bodyTenant != "" && bodyTenant != callerTenant {
-			return "", fmt.Errorf("tenant_id does not match authenticated tenant: %w", commonerrors.ErrValidation)
+	if isPlatform(caller) {
+		if bodyTenant == "" {
+			return "", fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation)
 		}
-		return callerTenant, nil
+		return bodyTenant, nil
 	}
-	if bodyTenant == "" {
-		return "", fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation)
+	if caller.TenantID == "" {
+		return "", fmt.Errorf("caller has no tenant: %w", commonerrors.ErrForbidden)
 	}
-	return bodyTenant, nil
+	if bodyTenant != "" && bodyTenant != caller.TenantID {
+		return "", fmt.Errorf("tenant_id does not match authenticated tenant: %w", commonerrors.ErrValidation)
+	}
+	return caller.TenantID, nil
 }
 
-// tenantIDFromContext returns the tenant identifier stamped by the admin auth
-// middleware from the JWT claim. It is empty when the token carries no tenant.
-func tenantIDFromContext(c *fiber.Ctx) string {
-	if v, ok := c.Locals(string(infracontext.TenantIDContextKey)).(string); ok {
-		return v
-	}
-	return ""
+func isPlatform(caller middleware.AdminIdentity) bool {
+	return caller.Kind == middleware.AdminIdentityPlatform
 }
 
 // callerOwnsGateway reports whether a caller may act on the loaded gateway.
-// A tenant-scoped caller only sees gateways stamped with its own tenant; a
-// platform admin (empty tenant claim) sees every gateway.
-func callerOwnsGateway(caller string, g *domain.Gateway) bool {
-	return caller == "" || (g != nil && g.TenantID() == caller)
+// The platform sees every gateway; any other caller only sees gateways stamped
+// with its own, non-empty tenant.
+func callerOwnsGateway(caller middleware.AdminIdentity, g *domain.Gateway) bool {
+	if isPlatform(caller) {
+		return true
+	}
+	return caller.TenantID != "" && g != nil && g.TenantID() == caller.TenantID
 }

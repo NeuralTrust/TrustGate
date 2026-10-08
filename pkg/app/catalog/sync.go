@@ -66,7 +66,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderVertex, "Google Vertex AI", "google"},
 	{providers.ProviderAnthropic, "Anthropic", "anthropic"},
 	{providers.ProviderBedrock, "AWS Bedrock", "anthropic"},
-	{providers.ProviderAzure, "Azure OpenAI", "openai"},
+	{providers.ProviderAzure, "Azure Foundry", "openai"},
 	{providers.ProviderMistral, "Mistral", "openai"},
 	{providers.ProviderGroq, "Groq", "openai"},
 	{providers.ProviderDeepSeek, "DeepSeek", "openai"},

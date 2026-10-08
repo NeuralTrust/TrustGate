@@ -326,7 +326,7 @@ func TestBedrockNativeAdapter_DecodeStreamChunk_InvokeShapes(t *testing.T) {
 		{
 			name:      "unknown shape",
 			chunk:     `{"mystery":{"text":"words"}}`,
-			wantDelta: "words",
+			wantDelta: "\nwords\n",
 		},
 	}
 	adapter := &BedrockNativeAdapter{}

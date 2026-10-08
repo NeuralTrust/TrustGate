@@ -31,17 +31,18 @@ func TestCompilerFillsTheSharedOAuthSecretOnlyForProviderEndpoints(t *testing.T)
 	gw := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
 	google := sharedClientRegistry(gw, "shared-id")
 	google.Name = "google"
-	google.MCPTarget.Auth.AuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
-	google.MCPTarget.Auth.TokenURL = "https://oauth2.googleapis.com/token"
 	elsewhere := sharedClientRegistry(gw, "shared-id")
 	elsewhere.Name = "elsewhere"
-	elsewhere.MCPTarget.Auth.AuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
 	elsewhere.MCPTarget.Auth.TokenURL = "https://idp.example.com/token"
+	discovered := sharedClientRegistry(gw, "shared-id")
+	discovered.Name = "discovered"
+	discovered.MCPTarget.Auth.AuthorizeURL = ""
+	discovered.MCPTarget.Auth.TokenURL = ""
 
 	compiler := appsnapshot.NewCompiler(
 		fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}}},
 		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
-		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{gw.String(): {google, elsewhere}}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{gw.String(): {google, elsewhere, discovered}}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
 		fakeCatalog{},
@@ -62,5 +63,8 @@ func TestCompilerFillsTheSharedOAuthSecretOnlyForProviderEndpoints(t *testing.T)
 	}
 	if secrets["elsewhere"] != "" {
 		t.Fatalf("another token endpoint got the shared secret: %q", secrets["elsewhere"])
+	}
+	if secrets["discovered"] != "" {
+		t.Fatalf("endpoints left to discovery got the shared secret: %q", secrets["discovered"])
 	}
 }

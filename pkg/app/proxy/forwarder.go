@@ -257,7 +257,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if short, err := f.runPreRequest(ctx, policies, plan, in.Request, resp); err != nil {
 		return nil, err
 	} else if short != nil {
-		return nativeShortCircuit(in.Request, short), nil
+		return nativeShortCircuit(in.Request, short, policydomain.StagePreRequest), nil
 	}
 	if nativeBody != nil && !bytes.Equal(nativeBody, in.Request.Body) {
 		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreRequest, in.Request, nativeBody, in.Request.Body, f.masker.MaskRequestWhy)
@@ -686,7 +686,7 @@ func (f *forwarder) finalizeStream(
 	}
 	if outcome != nil && outcome.ShortCircuit {
 		f.drainAsync(providerResp.Stream)
-		return nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome))
+		return nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome), policydomain.StagePreResponse)
 	}
 	stream := providerResp.Stream
 	var cutBarrier func() <-chan struct{}
@@ -812,6 +812,7 @@ func (f *forwarder) newStreamGuard(
 	// charged. post_response then orders itself behind guard.cutBarrier, which
 	// is what makes "charged" true rather than aspirational.
 	guard.drain = f.drainAsync
+	guard.detach = f.goAsync
 	if dto.request.IsBedrockNative() {
 		// The same segmentation and plugin calls as an SSE stream, over frames:
 		// each frame is an event, its decoded text is what is inspected, and the
@@ -862,6 +863,19 @@ func (f *forwarder) drainAsync(stream iter.Seq2[[]byte, error]) {
 	}()
 }
 
+// goAsync runs fn on its own goroutine, which owns its panic: a panic is
+// recovered and logged rather than crashing the process.
+func (f *forwarder) goAsync(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				f.logger.Error("panic in detached stream work", slog.Any("panic", r))
+			}
+		}()
+		fn()
+	}()
+}
+
 func (f *forwarder) finalizeBody(
 	ctx context.Context,
 	dto *forwardRequestDTO,
@@ -887,7 +901,7 @@ func (f *forwarder) finalizeBodyGated(
 		errorResponse := providerResp.StatusCode >= http.StatusMultipleChoices &&
 			len(dto.request.NativeMask.Sources(policydomain.StagePreResponse)) > 0
 		if !errorResponse && pluginResp.StatusCode != providerResp.StatusCode {
-			pe := nativeModified(nativeResponseModified)
+			pe := appplugins.WithBlockDirection(nativeModified(nativeResponseModified), appplugins.BlockDirectionOutput)
 			return pluginErrorResult(pe), pe
 		}
 		maskResponse := f.masker.MaskResponseWhy

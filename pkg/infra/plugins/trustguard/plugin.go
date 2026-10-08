@@ -354,7 +354,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
 	if data.Decision == decisionBlocked {
 		recordGuardOutcome(in.Event, data)
-		return nil, blockError(resp)
+		return nil, blockError(resp, direction)
 	}
 	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
@@ -546,8 +546,13 @@ func (p *Plugin) llmInspectionPayload(
 	if !responseHasInspectableContent(response) && len(tools) == 0 {
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
 	}
-	if strings.TrimSpace(response.Content) != "" {
+	// The arguments of a tool call travel only in the messages echo, so with
+	// calls present a text-only fallback would forward them unmasked.
+	if strings.TrimSpace(response.Content) != "" && len(response.ToolCalls) == 0 {
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteResponse(p.registry, format, response, masked) }
+	}
+	tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+		return rewriteResponseFromPayload(p.registry, format, response, payload)
 	}
 	payload, payloadErr := llmResponsePayload(response, tools)
 	if payloadErr != nil {
@@ -699,7 +704,7 @@ func (p *Plugin) transformDegraded(
 		data.Decision = decisionBlocked
 		data.FailureReason = ""
 		recordGuardOutcome(in.Event, data)
-		return nil, blockError(resp)
+		return nil, blockError(resp, data.Direction)
 	}
 	p.warn(ctx, "trustguard transform could not be applied, forwarding unmasked", attrs...)
 	data.Decision = decisionFailedOpen

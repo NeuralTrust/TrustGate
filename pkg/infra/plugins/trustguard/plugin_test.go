@@ -347,6 +347,9 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	if pe.Type != typeBlocked {
 		t.Fatalf("type = %q, want %q", pe.Type, typeBlocked)
 	}
+	if got := blockDirectionOf(t, pe.Body); got != directionInput {
+		t.Fatalf("body direction = %q, want %q", got, directionInput)
+	}
 	if len(pe.Body) == 0 {
 		t.Fatalf("expected non-empty block body")
 	}
@@ -687,6 +690,9 @@ func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	}
 	if pe.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusForbidden)
+	}
+	if got := blockDirectionOf(t, pe.Body); got != directionOutput {
+		t.Fatalf("body direction = %q, want %q", got, directionOutput)
 	}
 	got := f.captured()
 	if got.Direction != directionOutput {

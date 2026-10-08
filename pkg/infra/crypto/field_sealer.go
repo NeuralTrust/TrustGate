@@ -29,9 +29,21 @@ const SealedPrefix = "enc:v1:"
 // registry and auth configuration columns.
 const RegistrySecretsPurpose = "registry-secrets/v1"
 
-// ErrSealedValue reports a stored value that carries the sealed prefix but
-// cannot be opened: malformed, sealed under another key, or tampered with.
-var ErrSealedValue = errors.New("crypto: sealed value cannot be opened")
+var (
+	// ErrSealedValue reports a stored value that carries the sealed prefix but
+	// cannot be opened: malformed, sealed under another key, or tampered with.
+	ErrSealedValue = errors.New("crypto: sealed value cannot be opened")
+	// ErrNoFieldSealer reports a sealed value read where no sealer is
+	// configured.
+	ErrNoFieldSealer = errors.New("crypto: stored value is encrypted but no field sealer is configured")
+	// ErrEncryptedWritesOff reports an operation that needs encrypted writes
+	// while they are turned off.
+	ErrEncryptedWritesOff = errors.New("crypto: encrypted writes are not enabled")
+)
+
+// FieldAAD is the additional authenticated data that binds a sealed value to
+// its field path and to the row it is stored in.
+func FieldAAD(field, rowID string) string { return field + "|" + rowID }
 
 // FieldSealer encrypts single string fields of a JSON document so they can be
 // stored in place. The caller's additional authenticated data names where the
@@ -101,4 +113,25 @@ func (s *FieldSealer) Open(aad, stored string) (string, error) {
 		return "", fmt.Errorf("%w: %w", ErrSealedValue, err)
 	}
 	return string(plain), nil
+}
+
+// OpenField is Open on a sealer that may be nil. A value without the sealed
+// prefix is returned unchanged; a sealed value needs a sealer and fails with
+// ErrNoFieldSealer without one.
+func (s *FieldSealer) OpenField(aad, stored string) (string, error) {
+	if !IsSealed(stored) {
+		return stored, nil
+	}
+	if s == nil {
+		return "", ErrNoFieldSealer
+	}
+	return s.Open(aad, stored)
+}
+
+// CanOpen reports whether stored reads back for aad. A value without the
+// sealed prefix always does; a sealed one only under this sealer's key, for
+// this aad.
+func (s *FieldSealer) CanOpen(aad, stored string) bool {
+	_, err := s.OpenField(aad, stored)
+	return err == nil
 }

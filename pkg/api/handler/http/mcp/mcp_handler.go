@@ -132,11 +132,9 @@ const (
 )
 
 const (
-	codeConsentRequired  = -32003
+	codeConsentRequired  = int(appmcp.CodeConsentRequired)
 	codeResourceNotFound = -32002
-	// codePolicyBlocked mirrors the app-layer policy-denial code, so a toolkit
-	// denial is classified alongside plugin blocks.
-	codePolicyBlocked = -32001
+	codePolicyBlocked    = int(appmcp.CodePolicyBlocked)
 )
 
 // reasonApplicationNotConnected tells a -32003 that carries no connect link
@@ -462,6 +460,12 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: codePolicyBlocked, Message: notPermitted.Error()},
 		})
+	case errors.Is(err, appmcp.ErrStoreInstallDisabled):
+		// An access decision, said to the caller: an opaque internal error
+		// left the person with nothing to act on.
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codePolicyBlocked, err.Error())
+		return writeRPCError(c, id, codePolicyBlocked, "installing from the Store is turned off for you on this gateway; an administrator changes that in Access")
 	case errors.As(err, &invalidParams):
 		return writeRPCError(c, id, codeInvalidParams, invalidParams.Reason)
 	case errors.Is(err, ErrMethodNotFound):
