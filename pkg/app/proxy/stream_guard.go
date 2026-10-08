@@ -1207,7 +1207,7 @@ func (g *streamGuard) cutLines() [][]byte {
 		return g.cutDoneLines()
 	}
 	if !adapter.IsSameWireFormat(g.source, adapter.FormatCohere) {
-		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage)...)
+		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage, appplugins.BlockDirectionOutput)...)
 	}
 	return append(lines, g.cutDoneLines()...)
 }

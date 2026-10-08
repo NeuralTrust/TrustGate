@@ -56,6 +56,9 @@ type openaiStreamErrorEnvelope struct {
 type openaiStreamErrorBody struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
+	// Direction is set only on a guardrail cut. It is an additive member of the
+	// error object, so a client that reads message and type is unaffected.
+	Direction string `json:"direction,omitempty"`
 }
 
 type responsesStreamErrorEvent struct {
@@ -63,6 +66,8 @@ type responsesStreamErrorEvent struct {
 	Code    string  `json:"code"`
 	Message string  `json:"message"`
 	Param   *string `json:"param"`
+	// Direction is set only on a guardrail cut; see openaiStreamErrorBody.
+	Direction string `json:"direction,omitempty"`
 }
 
 const (
@@ -210,11 +215,15 @@ func StreamErrorEvent(source Format, status int, errType, message string) []byte
 // Each element is one SSE line and every dialect that emits one ends with the
 // same empty-line separator, so callers frame them identically; a nil return
 // means this dialect has nothing to add and the caller appends nothing. reason
-// reaches the wire only where the dialect has a free-form slot (OpenAI-chat
+// direction ("input" or "output"; a stream is only ever cut on output) is added
+// to the error object of the two dialects whose error object is free to carry
+// it, the OpenAI-chat default and Responses. Gemini's error object is the
+// google.rpc.Status shape and is left as it is, and the dialects above carry no
+// event at all. reason reaches the wire only where the dialect has a free-form slot (OpenAI-chat
 // "type", Responses "code") and is constrained to the closed set
 // streamBlockedReason allows; the rest carry the block through their own
 // permission-denied taxonomy.
-func StreamBlockedEvent(source Format, reason, message string) [][]byte {
+func StreamBlockedEvent(source Format, reason, message, direction string) [][]byte {
 	reason = streamBlockedReason(reason)
 	if message == "" {
 		message = defaultStreamBlockedMessage
@@ -226,16 +235,18 @@ func StreamBlockedEvent(source Format, reason, message string) [][]byte {
 		return SSEData(EncodeErrorBody(FormatGemini, http.StatusForbidden, message))
 	case FormatOpenAIResponses:
 		data, _ := json.Marshal(responsesStreamErrorEvent{
-			Type:    "error",
-			Code:    reason,
-			Message: message,
+			Type:      "error",
+			Code:      reason,
+			Message:   message,
+			Direction: direction,
 		})
 		return SSEEvent("error", data)
 	default:
 		data, _ := json.Marshal(openaiStreamErrorEnvelope{
 			Error: openaiStreamErrorBody{
-				Message: message,
-				Type:    reason,
+				Message:   message,
+				Type:      reason,
+				Direction: direction,
 			},
 		})
 		return SSEData(data)

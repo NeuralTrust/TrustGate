@@ -156,7 +156,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 			name:   "openai",
 			source: FormatOpenAI,
 			want: []string{
-				`data: {"error":{"message":"blocked","type":"content_filter"}}`,
+				`data: {"error":{"message":"blocked","type":"content_filter","direction":"output"}}`,
 				"",
 			},
 		},
@@ -164,7 +164,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 			name:   "azure normalizes to openai",
 			source: FormatAzure,
 			want: []string{
-				`data: {"error":{"message":"blocked","type":"content_filter"}}`,
+				`data: {"error":{"message":"blocked","type":"content_filter","direction":"output"}}`,
 				"",
 			},
 		},
@@ -185,7 +185,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 			name:   "cohere falls through to openai: its union has no error member",
 			source: FormatCohere,
 			want: []string{
-				`data: {"error":{"message":"blocked","type":"content_filter"}}`,
+				`data: {"error":{"message":"blocked","type":"content_filter","direction":"output"}}`,
 				"",
 			},
 		},
@@ -194,7 +194,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 			source: FormatOpenAIResponses,
 			want: []string{
 				"event: error",
-				`data: {"type":"error","code":"content_filter","message":"blocked","param":null}`,
+				`data: {"type":"error","code":"content_filter","message":"blocked","param":null,"direction":"output"}`,
 				"",
 			},
 		},
@@ -202,7 +202,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := StreamBlockedEvent(tc.source, "content_filter", "blocked")
+			got := StreamBlockedEvent(tc.source, "content_filter", "blocked", "output")
 			var lines []string
 			for _, line := range got {
 				lines = append(lines, string(line))
@@ -223,7 +223,7 @@ func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
 	for _, source := range sources {
 		t.Run(string(source), func(t *testing.T) {
 			t.Parallel()
-			got := StreamBlockedEvent(source, "", "")
+			got := StreamBlockedEvent(source, "", "", "")
 			require.NotEmpty(t, got)
 			assert.Empty(t, got[len(got)-1])
 			for _, line := range got {
@@ -246,7 +246,18 @@ func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
 func TestStreamBlockedEvent_AnthropicEmitsNothing(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []string{"", "content_filter", "some_plugin_name"} {
-		assert.Empty(t, StreamBlockedEvent(FormatAnthropic, reason, "blocked"))
+		assert.Empty(t, StreamBlockedEvent(FormatAnthropic, reason, "blocked", "output"))
 	}
-	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", ""))
+	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", "", "output"))
+}
+
+// An empty direction leaves the error object exactly as it was before the
+// field existed.
+func TestStreamBlockedEvent_NoDirectionLeavesTheEnvelopeUnchanged(t *testing.T) {
+	t.Parallel()
+	got := StreamBlockedEvent(FormatOpenAI, "content_filter", "blocked", "")
+	assert.Equal(t, [][]byte{
+		[]byte(`data: {"error":{"message":"blocked","type":"content_filter"}}`),
+		[]byte(""),
+	}, got)
 }
