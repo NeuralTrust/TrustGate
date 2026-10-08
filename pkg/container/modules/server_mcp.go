@@ -82,6 +82,8 @@ type mcpRouterParams struct {
 	JWKSHandler                *oauthhttp.JWKSHandler
 	// WhoAmIHandler is absent on a plane without the consumer services.
 	WhoAmIHandler *mcphttp.WhoAmIHandler `optional:"true"`
+	// PersonalKeyHandler is nil on a plane that cannot issue personal keys.
+	PersonalKeyHandler *oauthhttp.PersonalKeyHandler `optional:"true"`
 }
 
 type mcpServerParams struct {
@@ -118,6 +120,7 @@ func ServerMCP(c *container.Container) error {
 				p.JWKSHandler,
 				p.WhoAmIHandler,
 				ops,
+				router.WithPersonalKeyHandler(p.PersonalKeyHandler),
 			)
 		},
 		dig.Name("mcp"),

@@ -196,3 +196,42 @@ func storeInventoryServer(t *testing.T, gatewayID, apiKey string) map[string]any
 	server, _ := servers[0].(map[string]any)
 	return server
 }
+
+// The Store hands its owner a link to the personal key page, on this gateway's
+// host. The link alone opens nothing: a browser that has not signed in as its
+// owner is sent to sign in, and on a gateway with no sign-in to send it to the
+// page says so — it never shows a key.
+func TestPersonalKey_StoreLinksThePersonalKeyPage(t *testing.T) {
+	defer Track(t, "LLMKey")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("personal-page")})
+	alice := uniqueName("alice")
+	status, issued := CreateLLMKey(t, gwID, alice, llmKeyExpiry(llmKeyDay))
+	require.Equal(t, http.StatusCreated, status, "body=%v", issued)
+	rawKey := fmt.Sprint(issued["api_key"])
+
+	assert.Contains(t, storeToolNames(t, gwID, rawKey), "trustgate_store_personal_key")
+
+	status, called := storeMCPWith(t, gwID, rawKey, "tools/call", map[string]any{
+		"name": "trustgate_store_personal_key", "arguments": map[string]any{},
+	})
+	result := requireRPCSucceeded(t, status, called)
+	structured, _ := result["structuredContent"].(map[string]any)
+	link, err := url.Parse(fmt.Sprint(structured["personal_key_url"]))
+	require.NoError(t, err, "body=%v", called)
+	require.Equal(t, "/store/mcp/personal-key", link.Path)
+	host, _ := gatewayHosts.Load(gwID)
+	require.Equal(t, host, link.Host, "the page is on the gateway the link was minted for")
+	require.NotEmpty(t, link.Query().Get("ticket"))
+	text := fmt.Sprint(result["content"])
+	assert.NotContains(t, text, rawKey, "the model never sees a key")
+
+	req, err := http.NewRequest(http.MethodGet, MCPURL+link.RequestURI(), nil)
+	require.NoError(t, err)
+	req.Host = link.Host
+	resp, err := noRedirectClient().Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	assert.NotEqual(t, http.StatusOK, resp.StatusCode, "a browser that has not signed in sees no page: %s", body)
+	assert.NotContains(t, string(body), "ag_", "no key is shown before the browser signs in")
+}
