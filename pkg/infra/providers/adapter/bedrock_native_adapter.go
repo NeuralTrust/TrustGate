@@ -58,7 +58,7 @@ var nonTextKeys = map[string]struct{}{
 	"format": {}, "media_type": {}, "mediatype": {}, "bytes": {},
 	"images": {}, "image": {}, "conditionimage": {}, "maskimage": {}, "inputimage": {}, "base64": {}, "init_image": {},
 	"signature": {}, "tooluseid": {}, "ttl": {}, "status": {}, "event_type": {}, "guardrailidentifier": {},
-	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {},
+	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {}, "base64string": {},
 }
 
 var toolKeys = map[string]struct{}{
@@ -244,7 +244,13 @@ func hasMediaSignature(b []byte) bool {
 
 var mediaPrefixes = [][]byte{
 	{0x89, 'P', 'N', 'G'}, {0xFF, 0xD8, 0xFF}, []byte("GIF8"), []byte("%PDF"), []byte("ID3"),
-	{0xFF, 0xFB}, {0xFF, 0xF3}, {0xFF, 0xF2}, []byte("OggS"), []byte("fLaC"),
+	{0xFF, 0xFB}, {0xFF, 0xFA}, {0xFF, 0xF3}, {0xFF, 0xF2}, {0xFF, 0xE3}, []byte("OggS"), []byte("fLaC"),
+	{0xFF, 0xF1}, {0xFF, 0xF9}, // AAC ADTS
+	{0x1A, 0x45, 0xDF, 0xA3}, // EBML: WebM, MKV
+	[]byte("FLV"),
+	{0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11}, // ASF: WMV, WMA
+	{0x00, 0x00, 0x01, 0xBA},                         // MPEG program stream
+	{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}, // OLE: legacy Office
 	{'P', 'K', 0x03, 0x04}, {'I', 'I', '*', 0x00}, {'M', 'M', 0x00, '*'}, []byte("BM"),
 }
 
