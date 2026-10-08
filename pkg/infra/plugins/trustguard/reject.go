@@ -37,13 +37,16 @@ const guardErrorMessage = "trustguard unavailable"
 
 const guardTimeoutMessage = "trustguard did not answer in time"
 
-func blockError(resp *GuardResponse) *appplugins.PluginError {
+// blockError renders a TrustGuard block. direction ("input" or "output") says
+// which leg of the exchange was blocked; it travels in the body so an
+// integrator can tell a blocked prompt from a blocked completion.
+func blockError(resp *GuardResponse, direction string) *appplugins.PluginError {
 	message := clientBlockMessage(resp)
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,
 		Type:       typeBlocked,
 		Message:    message,
-		Body:       blockBody(resp, message),
+		Body:       blockBody(resp, message, direction),
 	}
 }
 
@@ -139,7 +142,7 @@ func transportFailClosedError() *appplugins.PluginError {
 	}
 }
 
-func blockBody(resp *GuardResponse, message string) []byte {
+func blockBody(resp *GuardResponse, message, direction string) []byte {
 	if message == "" {
 		message = blockMessage
 	}
@@ -147,6 +150,7 @@ func blockBody(resp *GuardResponse, message string) []byte {
 		Status       string `json:"status"`
 		Message      string `json:"message"`
 		Type         string `json:"type,omitempty"`
+		Direction    string `json:"direction,omitempty"`
 		Reason       string `json:"reason,omitempty"`
 		Plugin       string `json:"plugin,omitempty"`
 		DetectorName string `json:"detector_name,omitempty"`
@@ -154,9 +158,10 @@ func blockBody(resp *GuardResponse, message string) []byte {
 		TraceID      string `json:"trace_id,omitempty"`
 		RequestID    string `json:"request_id,omitempty"`
 	}{
-		Status:  statusBlock,
-		Message: message,
-		Type:    typeBlocked,
+		Status:    statusBlock,
+		Message:   message,
+		Type:      typeBlocked,
+		Direction: direction,
 	}
 	if resp != nil {
 		if resp.Status != "" {
