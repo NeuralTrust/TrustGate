@@ -812,6 +812,7 @@ func (f *forwarder) newStreamGuard(
 	// charged. post_response then orders itself behind guard.cutBarrier, which
 	// is what makes "charged" true rather than aspirational.
 	guard.drain = f.drainAsync
+	guard.detach = f.goAsync
 	if dto.request.IsBedrockNative() {
 		// The same segmentation and plugin calls as an SSE stream, over frames:
 		// each frame is an event, its decoded text is what is inspected, and the
@@ -859,6 +860,19 @@ func (f *forwarder) drainAsync(stream iter.Seq2[[]byte, error]) {
 			}
 		}()
 		drainStream(stream)
+	}()
+}
+
+// goAsync runs fn on its own goroutine, which owns its panic: a panic is
+// recovered and logged rather than crashing the process.
+func (f *forwarder) goAsync(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				f.logger.Error("panic in detached stream work", slog.Any("panic", r))
+			}
+		}()
+		fn()
 	}()
 }
 

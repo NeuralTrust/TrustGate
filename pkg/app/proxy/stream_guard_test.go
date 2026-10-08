@@ -849,8 +849,10 @@ func TestStreamGuard_DisconnectStopsCalling(t *testing.T) {
 	}
 	require.Equal(t, pullUntil, pulled)
 
-	require.Equal(t, 3, runner.calls,
-		"the head and one call per block the loop closed, and none for what the consumer never pulled")
+	require.Equal(t, 4, runner.calls,
+		"the head, one call per block the loop closed and the final block the abort owes, and none for what the consumer never pulled")
+	require.True(t, runner.segments[3].Final, "the abort evaluates what was produced as the final block")
+	require.False(t, runner.segments[2].Final)
 	require.Less(t, g.releasedIdx, len(g.produced), "the consumer left with the stream unfinished")
 	require.False(t, g.final(), "the loop stopped well before the terminal event")
 }
@@ -873,7 +875,8 @@ func TestStreamGuard_ACancelledParentRetiresTheLoop(t *testing.T) {
 	got, err := collectGuardOutput(t, g, out)
 	require.NoError(t, err)
 	require.Equal(t, lines, got)
-	require.Equal(t, 1, runner.calls, "only the head call, issued before the cancellation")
+	require.Equal(t, 2, runner.calls, "the head call, issued before the cancellation, and the final block the abort owes")
+	require.True(t, runner.segments[1].Final)
 	require.Equal(t, fallbackClientDisconnected, g.fallbackReason)
 }
 
@@ -1782,6 +1785,7 @@ func TestStreamGuard_ClosesTheStreamExactlyOnce(t *testing.T) {
 			cfg:      streamGuardConfig{headChars: 1, minChars: 1},
 			stopAt:   1,
 			wantFall: fallbackClientDisconnected,
+			wantFin:  true,
 		},
 		{
 			name:     "a block loop retired by consecutive failures",
@@ -2252,4 +2256,209 @@ func TestBlockFailureReason(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, degradeGuardTimeout, blockFailureReason(fmt.Errorf("call: %w", context.DeadlineExceeded)))
 	assert.Equal(t, degradeGuardError, blockFailureReason(errors.New("provider rejected the payload")))
+}
+
+// abortedGuard drives a stream the client abandons after the head, with the
+// detached evaluation run inline so the runner can be read without a race.
+func abortedGuard(t *testing.T, runner *scriptedRunner, lines []string, pull int) *streamGuard {
+	t.Helper()
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	drainUpTo(out, pull)
+	return g
+}
+
+// TestStreamGuard_ADisconnectEvaluatesTheFinalBlock is RUN-1807. A client that
+// leaves before the terminal event used to leave the engine with blocks that
+// were all non-final, so a stream it could not tell had ended recorded no
+// response. The abort sends the one final block over what was produced, on the
+// same stream with the next seq, before the aggregate.
+func TestStreamGuard_ADisconnectEvaluatesTheFinalBlock(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{}
+	g := abortedGuard(t, runner, textStreamLines("a1", "b2", "c3", "d4", "e5"), 6)
+
+	require.Equal(t, fallbackClientDisconnected, g.fallbackReason)
+	finals := 0
+	for _, seg := range runner.segments {
+		if seg.Final {
+			finals++
+		}
+	}
+	require.Equal(t, 1, finals, "exactly one final block")
+	last := runner.segments[len(runner.segments)-1]
+	require.True(t, last.Final)
+	require.Equal(t, len(runner.segments), last.Seq, "the next seq of the stream")
+	require.Equal(t, g.text.String(), last.Accumulated, "the text produced before the abort")
+	require.Equal(t, g.streamID, last.StreamID)
+
+	require.Len(t, runner.closings, 1)
+	require.Equal(t, last.Seq, runner.closings[0].Seq)
+	require.True(t, runner.closings[0].Report.FinalPass)
+	require.Equal(t, runner.calls, runner.closings[0].Report.Evals)
+	require.Equal(t, runner.calls, runner.closings[0].Report.GuardCalls)
+}
+
+// TestStreamGuard_ANormalCompletionKeepsItsSingleFinal guards the other side:
+// a stream that reached its terminal event already evaluated its final block,
+// and a client that leaves while it is being released must not add a second.
+func TestStreamGuard_ANormalCompletionKeepsItsSingleFinal(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	out, pe := g.Run(context.Background(), invariantSource(t, g, openAIStreamLines(), nil))
+	require.Nil(t, pe)
+	_, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	finals := 0
+	for _, seg := range runner.segments {
+		if seg.Final {
+			finals++
+		}
+	}
+	require.Equal(t, 1, finals)
+
+	// The same stream with the client leaving at the very last line.
+	runner = &scriptedRunner{}
+	abortedGuard(t, runner, openAIStreamLines(), len(openAIStreamLines())*2)
+	finals = 0
+	for _, seg := range runner.segments {
+		if seg.Final {
+			finals++
+		}
+	}
+	require.Equal(t, 1, finals, "a final block already inspected is not sent again")
+}
+
+// TestStreamGuard_ADisconnectWithNothingProducedSendsNoFinal: with no text, no
+// reasoning and no tool call there is nothing to evaluate, and an empty call
+// would only make an empty response row. The aggregate is still written.
+func TestStreamGuard_ADisconnectWithNothingProducedSendsNoFinal(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	out, pe := g.Run(ctx, invariantSource(t, g, nil, nil))
+	require.Nil(t, pe)
+	cancel()
+	drainUpTo(out, 0)
+
+	require.Zero(t, runner.calls)
+	require.Len(t, runner.closings, 1)
+}
+
+// ctxRunner records, at the instant of each call, whether its context was live
+// and bounded, so the detached evaluation can be shown to outlive the request.
+type ctxRunner struct {
+	scriptedRunner
+	live     []error
+	deadline []bool
+}
+
+func (r *ctxRunner) RunStreamSegment(
+	ctx context.Context,
+	in appplugins.StageInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentOutcome, error) {
+	_, bounded := ctx.Deadline()
+	r.live = append(r.live, ctx.Err())
+	r.deadline = append(r.deadline, bounded)
+	return r.scriptedRunner.RunStreamSegment(ctx, in, seg)
+}
+
+// TestStreamGuard_TheAbortEvaluationIsDetachedFromTheRequest: the final call
+// runs through detach, on a context that survives the request's cancellation
+// and has a deadline, and the spans stay held until it is done.
+func TestStreamGuard_TheAbortEvaluationIsDetachedFromTheRequest(t *testing.T) {
+	t.Parallel()
+	runner := &ctxRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	var queued func()
+	g.detach = func(fn func()) { queued = fn }
+	released := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	out, pe := g.Run(ctx, invariantSource(t, g, textStreamLines("a1", "b2", "c3"), nil))
+	require.Nil(t, pe)
+	g.release = func() { released++ }
+	cancel()
+	drainUpTo(out, 0)
+
+	require.NotNil(t, queued, "the evaluation was handed to detach")
+	require.Equal(t, 1, runner.calls, "nothing ran on the request goroutine beyond the head")
+	require.Empty(t, runner.closings, "the aggregate waits behind the final block")
+	require.Zero(t, released, "the spans are published by the detached call")
+
+	queued()
+	require.Equal(t, 2, runner.calls)
+	require.Len(t, runner.closings, 1)
+	require.Equal(t, 1, released)
+	for _, err := range runner.live[1:] {
+		require.NoError(t, err, "a cancelled client request does not cancel the evaluation")
+	}
+	require.True(t, runner.deadline[1], "the final call is bounded")
+}
+
+// failingFinalRunner fails the abort's final call the way the chain reports it,
+// by error or by an absorbed per-entry failure, and records the closing segment.
+type failingFinalRunner struct {
+	scriptedRunner
+	absorbed bool
+	deadline []bool
+}
+
+func (r *failingFinalRunner) RunStreamSegment(
+	ctx context.Context,
+	in appplugins.StageInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentOutcome, error) {
+	_, bounded := ctx.Deadline()
+	r.deadline = append(r.deadline, bounded)
+	if seg.Closing || seg.Seq == 1 {
+		return r.scriptedRunner.RunStreamSegment(ctx, in, seg)
+	}
+	r.calls++
+	r.segments = append(r.segments, seg)
+	if r.absorbed {
+		return &appplugins.SegmentOutcome{FailedEntries: 1}, nil
+	}
+	return nil, errors.New("guard unreachable")
+}
+
+// TestStreamGuard_AFailedAbortEvaluationStillClosesTheStream: the verdict of
+// the abort's final call is moot, but its failure must neither skip the
+// aggregate nor the span release, and counts as a guard call that never came
+// back exactly once.
+func TestStreamGuard_AFailedAbortEvaluationStillClosesTheStream(t *testing.T) {
+	t.Parallel()
+	for name, absorbed := range map[string]bool{"error": false, "absorbed entry failure": true} {
+		absorbed := absorbed
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			runner := &failingFinalRunner{absorbed: absorbed}
+			var logs strings.Builder
+			g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+			g.logger = slog.New(slog.NewTextHandler(&logs, nil))
+			released := 0
+			ctx, cancel := context.WithCancel(context.Background())
+			out, pe := g.Run(ctx, invariantSource(t, g, textStreamLines("a1", "b2", "c3"), nil))
+			require.Nil(t, pe)
+			g.release = func() { released++ }
+			cancel()
+			drainUpTo(out, 0)
+
+			require.Equal(t, 2, runner.calls, "the head and the final block")
+			require.Len(t, runner.closings, 1, "the aggregate is still written")
+			report := runner.closings[0].Report
+			require.Equal(t, 2, report.Evals)
+			require.Equal(t, 1, report.GuardCalls, "the failed final is not a guard call, counted once")
+			require.True(t, report.FinalPass)
+			require.Equal(t, 1, released, "the spans are still released")
+			require.Contains(t, logs.String(), "final block of an aborted stream was not evaluated")
+			for _, bounded := range runner.deadline[1:] {
+				require.True(t, bounded, "the final call and the aggregate are both bounded")
+			}
+		})
+	}
 }

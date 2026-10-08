@@ -128,6 +128,11 @@ const (
 	// open for the rest of a long generation nobody will read is the worse of
 	// the two, and the deadline is what makes the drain a bounded cost.
 	cutDrainDeadline = 30 * time.Second
+	// abortFinalDeadline bounds the final evaluation a client disconnect still
+	// owes the chain. Each entry also bounds its own call with
+	// streaming.guard_timeout; this is the ceiling over the whole chain, so the
+	// detached call can never outlive the stream by more than a fixed amount.
+	abortFinalDeadline = 15 * time.Second
 )
 
 // Why a stream stopped being inspected the way the policy asked. A degrade is
@@ -202,6 +207,14 @@ type streamGuard struct {
 	// a cut still accounts the usage the last chunk carries. A nil drain cuts
 	// the same way and charges nothing.
 	drain func(iter.Seq2[[]byte, error])
+	// detach runs the evaluation a client disconnect still owes the chain off
+	// the goroutine that was serving the client. A nil detach runs it inline.
+	detach func(func())
+	// release publishes the stream's span context. A disconnect that owes a
+	// final evaluation hands it to the detached call, so the spans and the
+	// trace stay open until that call has been recorded.
+	release   func()
+	spansHeld bool
 	// drained is closed by that reader when it is done. It is the only
 	// happens-before edge between the drain's writes to req.Metadata and the
 	// stages that read them.
@@ -324,6 +337,7 @@ func (g *streamGuard) Run(
 	src iter.Seq2[[]byte, error],
 ) (iter.Seq2[[]byte, error], *appplugins.PluginError) {
 	spanCtx, release := appplugins.NewStreamSpanContext(ctx)
+	g.release = release
 	g.streamID = streamCorrelationID(ctx)
 	g.next, g.stop = iter.Pull2(src)
 	handed := false
@@ -533,7 +547,13 @@ func streamError(source adapter.Format, errType, message string) *appplugins.Plu
 func (g *streamGuard) replay(ctx context.Context, release func()) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		streamCtx, cancel := context.WithCancel(ctx)
-		defer release()
+		// A disconnect that owes a final evaluation hands the release to the
+		// detached call, which publishes the spans once it is done.
+		defer func() {
+			if !g.spansHeld {
+				release()
+			}
+		}()
 		// A cut hands the pull coroutine to the background drain, which closes
 		// it when it is done. Stopping it here as well would cut the drain off
 		// mid-read and lose the usage it exists to recover.
@@ -954,22 +974,112 @@ func (g *streamGuard) report() appplugins.StreamReport {
 // it exists so the aggregate is written exactly once, on every path a stream can
 // end on, including the ones that never reach a final block. Its own cost is
 // deliberately outside the report it carries.
+//
+// A client that left before the final block was inspected is the one path that
+// still owes the chain a final evaluation: without it the engine never sees the
+// response complete and records nothing for it. That evaluation and the closing
+// segment run together, in that order, off the goroutine serving the client.
 func (g *streamGuard) close(ctx context.Context) {
 	if g.closed {
 		return
 	}
 	g.closed = true
-	if _, err := g.runner.RunStreamSegment(ctx, g.in, appplugins.StreamSegment{
+	if final, ok := g.abortFinal(); ok {
+		g.closeAfterAbort(ctx, final)
+		return
+	}
+	if _, err := g.runner.RunStreamSegment(ctx, g.in, g.closingSegment()); err != nil && g.logger != nil {
+		g.logger.Warn("stream aggregate was not published",
+			slog.String("format", string(g.source)),
+			slog.String("error", err.Error()))
+	}
+}
+
+func (g *streamGuard) closingSegment() appplugins.StreamSegment {
+	return appplugins.StreamSegment{
 		StreamID: g.streamID,
 		Seq:      g.seq,
 		Closing:  true,
 		Report:   g.report(),
 		Findings: g.findings,
-	}); err != nil && g.logger != nil {
-		g.logger.Warn("stream aggregate was not published",
-			slog.String("format", string(g.source)),
-			slog.String("error", err.Error()))
 	}
+}
+
+// abortFinal builds the final segment a client disconnect owes, and reports
+// whether there is one. It is owed only when the stream was retired for the
+// disconnect, no final block has been inspected yet, the stream was not cut and
+// something inspectable was produced: with nothing accumulated there is no text
+// to evaluate, and an empty call would only create an empty response row.
+//
+// The segment carries the same cumulative text as any other block and takes the
+// next seq, so the engine reads it as the end of the stream it already knows.
+// Finality is forced because the stream never reached its terminal event.
+func (g *streamGuard) abortFinal() (appplugins.StreamSegment, bool) {
+	if g.fallbackReason != fallbackClientDisconnected || g.finalSent || g.stopped {
+		return appplugins.StreamSegment{}, false
+	}
+	if g.text.Len() == 0 && g.reasoning.Len() == 0 && len(g.pendingTools()) == 0 {
+		return appplugins.StreamSegment{}, false
+	}
+	seg := g.nextSegment()
+	seg.Final = true
+	g.finalSent = true
+	return seg, true
+}
+
+func (g *streamGuard) pendingTools() []adapter.CanonicalToolCall {
+	if g.native {
+		return g.unhandledTools.calls()
+	}
+	return g.tools.calls()
+}
+
+// closeAfterAbort evaluates the final block and then publishes the aggregate,
+// detached from the request: the client is gone, so its context is cancelled
+// and nothing may wait on this call. The verdict is ignored for the same
+// reason, and a failure is only logged. Everything the call reads is captured
+// here, on the goroutine that owns the guard, so the detached call touches no
+// guard state, and the request is a snapshot because post_response goes on
+// using the original.
+func (g *streamGuard) closeAfterAbort(ctx context.Context, final appplugins.StreamSegment) {
+	closing := g.closingSegment()
+	in := g.in
+	in.Request = snapshotRequest(g.in.Request)
+	runner, logger, format, release := g.runner, g.logger, g.source, g.release
+	g.spansHeld = release != nil
+
+	run := func() {
+		if release != nil {
+			defer release()
+		}
+		base := context.WithoutCancel(ctx)
+		callCtx, cancel := context.WithTimeout(base, abortFinalDeadline)
+		defer cancel()
+		outcome, err := runner.RunStreamSegment(callCtx, in, final)
+		if err != nil || (outcome != nil && outcome.FailedEntries > 0) {
+			closing.Report.GuardCalls--
+			if logger != nil {
+				logger.Warn("final block of an aborted stream was not evaluated",
+					slog.String("format", string(format)),
+					slog.Any("error", err))
+			}
+		}
+		// The closing segment gets a budget of its own: the final call may have
+		// spent the whole of callCtx's, and the aggregate and the span release
+		// behind it must still be written, yet never wait on a runner that hangs.
+		closeCtx, closeCancel := context.WithTimeout(base, abortFinalDeadline)
+		defer closeCancel()
+		if _, err := runner.RunStreamSegment(closeCtx, in, closing); err != nil && logger != nil {
+			logger.Warn("stream aggregate was not published",
+				slog.String("format", string(format)),
+				slog.String("error", err.Error()))
+		}
+	}
+	if g.detach == nil {
+		run()
+		return
+	}
+	g.detach(run)
 }
 
 // budget spends max_accumulated_bytes across everything one call carries, as a
