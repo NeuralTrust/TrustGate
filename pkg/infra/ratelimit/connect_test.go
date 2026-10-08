@@ -88,6 +88,23 @@ func TestConnectAttemptLimiterThresholds(t *testing.T) {
 	}
 }
 
+// Personal key changes are bounded as the Portal bounds them, ten an hour,
+// whatever the connect window is.
+func TestConnectAttemptLimiterBoundsPersonalKeyChangesPerHour(t *testing.T) {
+	limiter, _ := newConnectLimiterTest(t, config.MCPConnectRateLimitConfig{SourceLimit: 1, ConsumerLimit: 1, Window: time.Minute})
+	subject := "gateway-id|user-1"
+	for attempt := 1; attempt <= 10; attempt++ {
+		if err := limiter.Check(context.Background(), appoauth.ConnectAttemptScopePersonalKey, subject); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+	}
+	err := limiter.Check(context.Background(), appoauth.ConnectAttemptScopePersonalKey, subject)
+	var exceeded *appoauth.ConnectRateLimitExceeded
+	if !errors.As(err, &exceeded) || exceeded.RetryAfter != time.Hour {
+		t.Fatalf("error = %v, want ConnectRateLimitExceeded retrying in an hour", err)
+	}
+}
+
 func TestConnectAttemptLimiterConcurrentThreshold(t *testing.T) {
 	const attempts = 128
 	tests := []struct {

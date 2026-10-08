@@ -23,6 +23,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 )
 
@@ -162,6 +163,7 @@ func (t *inventoryTool) Call(
 	}
 	filter := strings.ToLower(strings.TrimSpace(args.Server))
 	previews := t.catalogTools()
+	store := consumerdomain.IsStoreConsumer(rc.Consumer)
 
 	servers := make([]map[string]any, 0, len(inventory.Servers))
 	callable, pending := 0, 0
@@ -187,8 +189,12 @@ func (t *inventoryTool) Call(
 			// The connection meta-tool for this provider, so a caller can chain
 			// straight into it. It is the name that tool derives from the same
 			// provider; where two providers reduce to one slug the tool list is
-			// authoritative.
+			// authoritative. The Store has no such tool: installing the server
+			// again, by its code, returns its connect link.
 			entry["connect_tool"] = ConnectToolName(server.Provider)
+			if store && server.Code != "" {
+				entry["connect_tool"] = StoreInstallToolName
+			}
 		}
 		tools := server.Tools
 		if len(tools) == 0 && notServing(server.State) {
@@ -467,7 +473,10 @@ func inventoryStateText(server map[string]any) string {
 			return "not connected: it keeps one account per person and this request named nobody; the application has to name the user it acts for"
 		}
 		text := "not connected: its tools cannot be called until the user connects their account"
-		if connect := displayString(server["connect_tool"]); connect != "" {
+		switch connect := displayString(server["connect_tool"]); {
+		case connect == StoreInstallToolName:
+			text += ", which " + connect + " with code \"" + displayString(server["code"]) + "\" gives them a link for"
+		case connect != "":
 			text += ", which " + connect + " gives them a link for"
 		}
 		if cause := displayString(server["cause"]); cause != "" {

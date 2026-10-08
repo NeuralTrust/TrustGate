@@ -93,6 +93,9 @@ type storeTool struct {
 	modes     appstore.ModeResolver
 	configure ConfigureGateway
 	connect   ServerConnectGateway
+	// personalKeys offers the personal key page; nil keeps the tool dark.
+	personalKeys PersonalKeyLinks
+	proxyDomain  string
 }
 
 // StoreToolOption tunes NewStoreToolWithInstaller.
@@ -163,6 +166,11 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 			tools = append(tools, uninstall)
 		}
 	}
+	if t.personalKeys != nil {
+		if personalKey, err := storePersonalKeyDefinition(); err == nil {
+			tools = append(tools, personalKey)
+		}
+	}
 	return tools
 }
 
@@ -183,6 +191,8 @@ func (t *storeTool) Call(
 		return t.install(ctx, rc, baseURL, arguments)
 	case StoreUninstallToolName:
 		return t.uninstall(ctx, rc, arguments)
+	case StorePersonalKeyToolName:
+		return t.personalKey(ctx, rc, baseURL)
 	default:
 		return nil, fmt.Errorf("%w: unknown tool %q", ErrStoreToolUnavailable, name)
 	}
@@ -989,7 +999,8 @@ func storeInstallDefinition() (Tool, error) {
 			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
 			"When the administrator connected several instances of a server, this returns requires_instance_choice with the list — ask the user which one and call install again with its id in `instance`. " +
 			"Governed by the user's role: a server outside it cannot be installed here, and this returns requires_reason with a request_url — hand that link to the user, who writes why they need it and files the request themselves. " +
-			"A server that needs the user's own account returns a connect link for them to authorize before its tools work." + GatewayToolDisclaimer,
+			"A server that needs the user's own account returns a connect link for them to authorize before its tools work. " +
+			"This is also how an installed server gets connected: when its tools are missing because the user has not connected their account (" + InventoryToolName + " reports it needs_connect), call this again with its code and hand the user the link it returns." + GatewayToolDisclaimer,
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -40,6 +40,15 @@ type mcpRouter struct {
 	configureHandler           *oauthhttp.ConfigureHandler
 	jwksHandler                *oauthhttp.JWKSHandler
 	whoAmIHandler              *mcphttp.WhoAmIHandler
+	personalKeyHandler         *oauthhttp.PersonalKeyHandler
+}
+
+// MCPRouterOption adds an optional page to the MCP router.
+type MCPRouterOption func(*mcpRouter)
+
+// WithPersonalKeyHandler serves the MCP Store's personal key page.
+func WithPersonalKeyHandler(h *oauthhttp.PersonalKeyHandler) MCPRouterOption {
+	return func(r *mcpRouter) { r.personalKeyHandler = h }
 }
 
 func NewMCPRouter(
@@ -59,8 +68,9 @@ func NewMCPRouter(
 	jwksHandler *oauthhttp.JWKSHandler,
 	whoAmIHandler *mcphttp.WhoAmIHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
+	opts ...MCPRouterOption,
 ) ServerRouter {
-	return &mcpRouter{
+	r := &mcpRouter{
 		baseTransport:              baseTransport,
 		authTransport:              authTransport,
 		opsMetrics:                 opsMetrics,
@@ -78,6 +88,12 @@ func NewMCPRouter(
 		jwksHandler:                jwksHandler,
 		whoAmIHandler:              whoAmIHandler,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
 }
 
 func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
@@ -135,6 +151,13 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	if r.configureHandler != nil {
 		app.Get("/+/configure", r.configureHandler.Page)
 		app.Post("/+/configure", r.configureHandler.Submit)
+	}
+	// The personal key page is reached by a Store link and a browser sign-in,
+	// never by the auth chain: it sits ahead of the catch-alls below.
+	if r.personalKeyHandler != nil {
+		app.Get(appoauth.PersonalKeyReturnPath, r.personalKeyHandler.Return)
+		app.Get(appoauth.PersonalKeyPagePath, r.personalKeyHandler.Page)
+		app.Post(appoauth.PersonalKeyPagePath, r.personalKeyHandler.Act)
 	}
 
 	// The streamable-HTTP notification stream is a GET, so it has to be

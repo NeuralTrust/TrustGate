@@ -22,6 +22,8 @@ import (
 	"testing"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func inventoryByName(inv *ToolInventory, name string) *InventoryServer {
@@ -237,5 +239,38 @@ func TestComposer_ToolInventory_NamesWhoConnectsAServerTheCallerCannot(t *testin
 	}
 	if !callerCannotConnect(shared.Cause) || !callerCannotConnect(perUser.Cause) || callerCannotConnect(ConsentCauseNoCredential) {
 		t.Fatal("only the causes no link fixes withhold the connection tool")
+	}
+}
+
+// On the Store the code is what the Store's tools take, and a server an admin
+// added by hand has no catalog code: it carries its Store code instead, or
+// the install that connects it could not be named.
+func TestComposer_ToolInventory_OnTheStoreACustomServerCarriesItsStoreCode(t *testing.T) {
+	t.Parallel()
+	custom := mcpRegistry(t, "internal", "https://internal.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://internal.example.com/mcp": {tools: tools("query")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://internal.example.com/mcp": &ConsentRequiredError{Provider: "internal", Ticket: "tk", Path: "/store/mcp"},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	store := routable(consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()), custom)
+	inv, err := c.ToolInventory(context.Background(), store)
+	if err != nil {
+		t.Fatalf("inventory: %v", err)
+	}
+	if got := inventoryByName(inv, "internal"); got == nil || got.Code != registrydomain.CustomStoreCode(custom.ID) {
+		t.Fatalf("internal = %+v, want its Store code %q", got, registrydomain.CustomStoreCode(custom.ID))
+	}
+
+	app := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, custom)
+	inv, err = c.ToolInventory(context.Background(), app)
+	if err != nil {
+		t.Fatalf("inventory: %v", err)
+	}
+	if got := inventoryByName(inv, "internal"); got == nil || got.Code != "" {
+		t.Fatalf("internal = %+v, want no code off the Store", got)
 	}
 }

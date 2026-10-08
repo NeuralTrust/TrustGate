@@ -960,7 +960,7 @@ silent. It answers server by server, each with a state:
 | State | Meaning | What fixes it |
 | --- | --- | --- |
 | `ready` | the server answered; its tools are callable now | — |
-| `needs_connect` | bound, but waiting for this principal's upstream account | the `trustgate_connect_*` tool named in the entry, or the connect page |
+| `needs_connect` | bound, but waiting for this principal's upstream account | the tool named in the entry's `connect_tool` (`trustgate_connect_*` on an application, `trustgate_store_install` with the entry's `code` on the Store), or the connect page |
 | `unavailable` | the gateway could not reach it | operational |
 | `no_tools` | it answered but offers this consumer nothing | the consumer's toolkit |
 

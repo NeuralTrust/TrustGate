@@ -1,0 +1,75 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package snapshotpb;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpb";
+
+// PersonalKeys is the DP-initiated channel behind the MCP Store's personal key
+// page. The page runs on the MCP plane, which in production has no database, so
+// the key a person creates, rotates or revokes there is written by the control
+// plane. The data plane has already established who the person is (a Store
+// session, then a sign-in in the browser that opened the page); the server
+// authorises the gateway against the caller's config-sync scope and applies the
+// same rules the console's Portal does: one key per owner, the 90-day ceiling,
+// no personal keys on a hybrid gateway.
+//
+// Errors are status codes: NotFound (no key), AlreadyExists (the owner holds
+// one), FailedPrecondition (hybrid gateway), InvalidArgument (bad owner or
+// expiry).
+service PersonalKeys {
+  // Get returns the owner's key without its secret.
+  rpc Get(PersonalKeyRequest) returns (PersonalKeyResponse);
+  // Create issues the owner's key with its groups and returns its secret once.
+  rpc Create(CreatePersonalKeyRequest) returns (PersonalKeyResponse);
+  // Rotate replaces the owner's secret and returns the new one once.
+  rpc Rotate(PersonalKeyRequest) returns (PersonalKeyResponse);
+  // Revoke deletes the owner's key.
+  rpc Revoke(PersonalKeyRequest) returns (RevokePersonalKeyResponse);
+}
+
+message PersonalKeyRequest {
+  string gateway_id = 1;
+  string owner_id = 2;
+}
+
+message CreatePersonalKeyRequest {
+  string gateway_id = 1;
+  string owner_id = 2;
+  // groups are the owner's groups as their sign-in carried them.
+  repeated string groups = 3;
+}
+
+// PersonalKey mirrors the console's view of a personal key. Timestamps are Unix
+// seconds; expires_at_unix is 0 when the key never expires.
+message PersonalKey {
+  string id = 1;
+  string key_prefix = 2;
+  string key_suffix = 3;
+  int64 expires_at_unix = 4;
+  bool enabled = 5;
+  int64 created_at_unix = 6;
+  repeated string owner_groups = 7;
+  repeated string consumer_ids = 8;
+  // secret is the key itself, set only by Create and Rotate.
+  string secret = 9;
+}
+
+message PersonalKeyResponse {
+  PersonalKey key = 1;
+}
+
+message RevokePersonalKeyResponse {}
