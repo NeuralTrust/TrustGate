@@ -392,27 +392,35 @@ func TestCompilerSetsOpenAPIUserAgent(t *testing.T) {
 	require.Equal(t, "TrustGate-OpenAPI/1.0", userAgent)
 }
 
-func TestBlockedDestinationAllowsPrivateAddressesForFQDNs(t *testing.T) {
+func TestBlockedDestination(t *testing.T) {
 	t.Parallel()
+	const fqdn = "agentgateway-admin.dev.neuraltrust.ai"
 	cases := []struct {
-		host    string
-		ip      string
-		blocked bool
+		host         string
+		ip           string
+		allowPrivate bool
+		blocked      bool
 	}{
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "10.0.0.1", blocked: false},
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "100.64.0.1", blocked: false},
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "192.168.1.8", blocked: false},
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "8.8.8.8", blocked: false},
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "127.0.0.1", blocked: true},
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "169.254.169.254", blocked: true},
-		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "192.0.2.1", blocked: true},
-		{host: "10.0.0.1", ip: "10.0.0.1", blocked: true},
-		{host: "100.64.0.1", ip: "100.64.0.1", blocked: true},
+		{host: fqdn, ip: "10.0.0.1", allowPrivate: true, blocked: false},
+		{host: fqdn, ip: "100.64.0.1", allowPrivate: true, blocked: false},
+		{host: fqdn, ip: "192.168.1.8", allowPrivate: true, blocked: false},
+		{host: fqdn, ip: "8.8.8.8", allowPrivate: true, blocked: false},
+		{host: fqdn, ip: "127.0.0.1", allowPrivate: true, blocked: true},
+		{host: fqdn, ip: "169.254.169.254", allowPrivate: true, blocked: true},
+		{host: fqdn, ip: "192.0.2.1", allowPrivate: true, blocked: true},
+		{host: "10.0.0.1", ip: "10.0.0.1", allowPrivate: true, blocked: true},
+		{host: "100.64.0.1", ip: "100.64.0.1", allowPrivate: true, blocked: true},
+		{host: "8.8.8.8", ip: "8.8.8.8", allowPrivate: true, blocked: false},
+		{host: fqdn, ip: "10.0.0.1", blocked: true},
+		{host: fqdn, ip: "100.64.0.1", blocked: true},
+		{host: fqdn, ip: "192.168.1.8", blocked: true},
+		{host: fqdn, ip: "fd00::1", blocked: true},
+		{host: fqdn, ip: "8.8.8.8", blocked: false},
 		{host: "8.8.8.8", ip: "8.8.8.8", blocked: false},
 	}
 	for _, tc := range cases {
-		if got := blockedDestination(tc.host, net.ParseIP(tc.ip)); got != tc.blocked {
-			t.Fatalf("blockedDestination(%q, %s) = %v, want %v", tc.host, tc.ip, got, tc.blocked)
+		if got := blockedDestination(tc.host, net.ParseIP(tc.ip), tc.allowPrivate); got != tc.blocked {
+			t.Fatalf("blockedDestination(%q, %s, allowPrivate=%v) = %v, want %v", tc.host, tc.ip, tc.allowPrivate, got, tc.blocked)
 		}
 	}
 }
