@@ -204,7 +204,11 @@ func targets(root *jnode) []patchTarget {
 					continue
 				}
 				_, tool := toolKeys[lk]
-				walk(n.vals[i], inTool || tool, signed)
+				child := n.vals[i]
+				if lk == "mediasource" && child.kind == 'o' {
+					child = withoutBase64StringNode(child)
+				}
+				walk(child, inTool || tool, signed)
 			}
 		}
 	}
@@ -512,4 +516,19 @@ func viewSpans(body []byte, view string, decode func([]byte) (string, error)) ([
 		return nil, false
 	}
 	return spans, true
+}
+
+// withoutBase64StringNode is withoutBase64String for the patch walker: a shallow copy
+// of a mediaSource object without its base64String member, so masking touches only
+// the strings the view reads.
+func withoutBase64StringNode(n *jnode) *jnode {
+	c := *n
+	c.keys, c.vals = nil, nil
+	for i, k := range n.keys {
+		if !strings.EqualFold(k, "base64String") {
+			c.keys = append(c.keys, k)
+			c.vals = append(c.vals, n.vals[i])
+		}
+	}
+	return &c
 }
