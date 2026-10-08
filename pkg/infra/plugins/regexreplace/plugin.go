@@ -28,6 +28,9 @@ import (
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
+// Plugin masks text with regular-expression rules. On the tool calls of a
+// request or response the rules see the decoded string values, and the numbers,
+// of the call's arguments, never the raw JSON; object keys are not rewritten.
 type Plugin struct {
 	registry *adapter.Registry
 	logger   *slog.Logger

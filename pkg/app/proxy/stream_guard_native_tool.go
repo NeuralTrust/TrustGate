@@ -288,13 +288,22 @@ func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, norm
 	}
 	frames := make(map[int][]byte, len(b.deltas))
 	var joined strings.Builder
-	for k, di := range b.deltas {
+	carrier := -1
+	for _, di := range b.deltas {
 		ev := g.produced[di]
-		if len(ev.toolCalls) != 1 || len(ev.lines) != 1 {
+		if len(ev.lines) != 1 || len(ev.toolCalls) > 1 {
 			return adapter.MaskCauseToolFrames
 		}
+		if len(ev.toolCalls) == 0 {
+			if current, ok := adapter.BedrockFrameToolInput(ev.lines[0]); !ok || current != "" {
+				return adapter.MaskCauseToolFrames
+			}
+			frames[di] = ev.lines[0]
+			continue
+		}
 		fragment := ""
-		if k == 0 {
+		if carrier < 0 {
+			carrier = di
 			fragment = input
 		}
 		frame := ev.lines[0]
@@ -318,7 +327,7 @@ func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, norm
 			}
 		}
 	}
-	if joined.String() != input {
+	if carrier < 0 || joined.String() != input {
 		return adapter.MaskCauseShape
 	}
 	for _, h := range hunks {
@@ -326,10 +335,13 @@ func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, norm
 			return adapter.MaskCauseLeak
 		}
 	}
-	for k, di := range b.deltas {
+	for _, di := range b.deltas {
 		ev := g.produced[di]
 		ev.lines[0] = frames[di]
-		if k == 0 {
+		if len(ev.toolCalls) == 0 {
+			continue
+		}
+		if di == carrier {
 			ev.toolCalls[0].ArgumentsDelta = input
 		} else {
 			ev.toolCalls[0].ArgumentsDelta = ""
