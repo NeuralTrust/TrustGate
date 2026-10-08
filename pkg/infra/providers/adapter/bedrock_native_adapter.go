@@ -58,7 +58,7 @@ var nonTextKeys = map[string]struct{}{
 	"format": {}, "media_type": {}, "mediatype": {}, "bytes": {},
 	"images": {}, "image": {}, "conditionimage": {}, "maskimage": {}, "inputimage": {}, "base64": {}, "init_image": {},
 	"signature": {}, "tooluseid": {}, "ttl": {}, "status": {}, "event_type": {}, "guardrailidentifier": {},
-	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {}, "base64string": {},
+	"guardrailversion": {}, "trace": {}, "version": {}, "encoding": {}, "object": {},
 }
 
 var toolKeys = map[string]struct{}{
@@ -220,7 +220,25 @@ func isBinaryBlob(s string) bool {
 	if err != nil {
 		return false
 	}
+	if hasFrameSync(raw) {
+		// A two-byte sync word is weak: the URL alphabet's "__main__" decodes to a
+		// valid-looking ADTS header. Real media in a request is standard base64, so
+		// a frame-synced header counts only when the string has no URL-safe characters.
+		return validFrameHeader(raw) && !strings.ContainsAny(s, "-_")
+	}
 	return hasMediaSignature(raw)
+}
+
+func hasFrameSync(b []byte) bool { return len(b) >= 4 && b[0] == 0xFF && b[1]&0xE0 == 0xE0 }
+
+// validFrameHeader checks the header bits of an AAC ADTS or MPEG audio frame, so
+// bytes that merely start with a sync word do not pass.
+func validFrameHeader(b []byte) bool {
+	layer := (b[1] >> 1) & 3
+	if layer == 0 { // ADTS: layer bits are always 00
+		return b[1]&0xF0 == 0xF0 && (b[2]>>2)&0xF < 13
+	}
+	return (b[1]>>3)&3 != 1 && b[2]>>4 != 0 && b[2]>>4 != 0xF && (b[2]>>2)&3 != 3
 }
 
 const mediaProbeChars = 32
@@ -244,10 +262,9 @@ func hasMediaSignature(b []byte) bool {
 
 var mediaPrefixes = [][]byte{
 	{0x89, 'P', 'N', 'G'}, {0xFF, 0xD8, 0xFF}, []byte("GIF8"), []byte("%PDF"), []byte("ID3"),
-	{0xFF, 0xFB}, {0xFF, 0xFA}, {0xFF, 0xF3}, {0xFF, 0xF2}, {0xFF, 0xE3}, []byte("OggS"), []byte("fLaC"),
-	{0xFF, 0xF1}, {0xFF, 0xF9}, // AAC ADTS
+	[]byte("OggS"), []byte("fLaC"),
 	{0x1A, 0x45, 0xDF, 0xA3}, // EBML: WebM, MKV
-	[]byte("FLV"),
+	{'F', 'L', 'V', 0x01},
 	{0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11}, // ASF: WMV, WMA
 	{0x00, 0x00, 0x01, 0xBA},                         // MPEG program stream
 	{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}, // OLE: legacy Office
@@ -309,7 +326,7 @@ func HasS3Source(body []byte) bool {
 				}
 			}
 		case 'o':
-			toolUse := n.strMember("type") == "tool_use" || n.member("toolUseId") != nil
+			toolUse := strings.HasSuffix(strings.ToLower(n.strMember("type")), "tool_use") || hasKeyFold(n, "toolUseId")
 			for i, k := range n.keys {
 				lk := strings.ToLower(k)
 				v := n.vals[i]
@@ -329,16 +346,25 @@ func HasS3Source(body []byte) bool {
 	return walk(root)
 }
 
-// isToolDataKey names the members that hold client-defined tool data: call
-// arguments, JSON tool results and tool schemas.
+// toolDataKeys are the members, beyond toolKeys, that hold client-defined tool
+// data: JSON tool results, tool schemas and call arguments. A toolResult itself is
+// not one of them: its image, document and video blocks are read by the model.
+var toolDataKeys = map[string]struct{}{
+	"json": {}, "toolconfig": {}, "input_schema": {}, "inputschema": {}, "arguments": {},
+	"tool_results": {}, // Cohere: the outputs of earlier tool calls
+}
+
+// isToolDataKey is the one classifier HasS3Source uses to skip a member: every
+// toolKeys entry (Converse, Anthropic and OpenAI tool shapes), the schema and
+// argument members, and the input of a tool use.
 func isToolDataKey(lk string, inToolUse bool) bool {
-	switch lk {
-	case "json", "toolspec", "toolconfig", "input_schema", "inputschema":
+	if _, ok := toolKeys[lk]; ok {
 		return true
-	case "input":
-		return inToolUse
 	}
-	return false
+	if _, ok := toolDataKeys[lk]; ok {
+		return true
+	}
+	return lk == "input" && inToolUse
 }
 
 func hasKeyFold(n *jnode, key string) bool {
@@ -441,9 +467,30 @@ func collectStrings(v any, inTool bool, out *[]string) {
 				continue
 			}
 			_, tool := toolKeys[lk]
-			collectStrings(t[k], inTool || tool, out)
+			child := t[k]
+			if lk == "mediasource" {
+				child = withoutBase64String(child)
+			}
+			collectStrings(child, inTool || tool, out)
 		}
 	}
+}
+
+// withoutBase64String drops the base64String member of a TwelveLabs mediaSource, the
+// media bytes. The key is media only under mediaSource: anywhere else the string is
+// text a model reads.
+func withoutBase64String(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := make(map[string]any, len(m))
+	for k, x := range m {
+		if !strings.EqualFold(k, "base64String") {
+			out[k] = x
+		}
+	}
+	return out
 }
 
 // HasInvalidText reports a body that is not valid UTF-8 or that carries an
