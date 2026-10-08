@@ -381,7 +381,7 @@ func TestCreatorRejectsDisabledSmartRoutingOutsideActualPolicy(t *testing.T) {
 			repo := repomocks.NewRepository(t)
 			registryRepo := registrymocks.NewRepository(t)
 			publisher := cachemocks.NewEventPublisher(t)
-			creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), publisher, newTestLogger(), nil)
+			creator := appconsumer.NewCreator(repo, registryRepo, rolemocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 			cfg := &domain.LBConfig{Algorithm: "smart-routing", Members: []domain.LBPoolMember{{RegistryID: id, Model: "low"}, {RegistryID: id, Model: "high"}}, SmartRouting: &registrydomain.SmartRoutingConfig{SR1: &registrydomain.SR1Config{CacheTTLSeconds: 30}, Tiers: []registrydomain.SmartRoutingTier{{RegistryID: tc.tierID, Model: "low", MinScore: 0}, {RegistryID: id, Model: "high", MinScore: .45}}}}
 			_, err := creator.Create(context.Background(), appconsumer.CreateInput{GatewayID: gw, Name: "disabled", Type: domain.TypeLLM, RegistryIDs: []ids.RegistryID{id}, ModelPolicies: domain.ModelPolicies{id: {Allowed: []string{"low"}}}, LBConfig: cfg})
 			if !errors.Is(err, tc.want) {

@@ -244,7 +244,11 @@ func TestInvokeStream_NonOpenAIChatCompletion(t *testing.T) {
 						if tool {
 							assert.Empty(t, text.String())
 							require.Len(t, calls, 1)
-							assert.Equal(t, "call_non_openai", calls[0].ID)
+							expectedID := "call_non_openai"
+							if fixture.provider == "google" {
+								expectedID = "lookup"
+							}
+							assert.Equal(t, expectedID, calls[0].ID)
 							assert.Equal(t, "lookup", calls[0].Function.Name)
 							assert.JSONEq(t, `{"answer":42}`, calls[0].Function.Arguments)
 						} else {
@@ -343,4 +347,20 @@ func TestInvokeStream_CohereChatOptionalNullFields(t *testing.T) {
 			assertNonOpenAIChatCompletion(t, fixture, lines, false, "stop")
 		})
 	}
+}
+
+func TestGeminiMainStreamToolNameMatchesContinuation(t *testing.T) {
+	decoder := &adapter.GeminiAdapter{}
+	chunk, err := decoder.DecodeStreamChunk([]byte(`{"candidates":[{"content":{"parts":[{"functionCall":{"id":"provider-call-id","name":"lookup","args":{"answer":42}}}]}}]}`))
+	require.NoError(t, err)
+	require.NotNil(t, chunk)
+	require.Len(t, chunk.ToolCallDeltas, 1)
+	call := chunk.ToolCallDeltas[0]
+	require.Equal(t, "lookup", call.ID)
+	body, err := decoder.EncodeRequest(&adapter.CanonicalRequest{Model: "gemini-chat", Messages: []adapter.CanonicalMessage{
+		{Role: "assistant", ToolCalls: []adapter.CanonicalToolCall{{ID: call.ID, Name: call.Name, Arguments: call.ArgumentsDelta}}},
+		{Role: "tool", ToolCallID: call.ID, Content: `{"answer":42}`},
+	}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gemini-chat","contents":[{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"answer":42}}}]},{"role":"user","parts":[{"functionResponse":{"name":"lookup","response":{"answer":42}}}]}]}`, string(body))
 }
