@@ -43,7 +43,7 @@ func NewUpdateAuthOwnerGroupsHandler(setter appauth.OwnerGroupsSetter, reach app
 
 // Handle godoc
 // @Summary      Set the owner groups of a personal key
-// @Description  Records the directory groups of a personal (owned) key's owner. The body is {"groups": ["<group>", ...]}; an empty list clears them. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.
+// @Description  Records the directory groups of a personal (owned) key's owner. The body is {"groups": ["<group>", ...], "email": "<owner email>"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.
 // @Tags         auths
 // @Accept       json
 // @Produce      json
@@ -71,6 +71,7 @@ func (h *UpdateAuthOwnerGroupsHandler) Handle(c *fiber.Ctx) error {
 		ID:        id,
 		GatewayID: gatewayID,
 		Groups:    req.Groups,
+		Email:     req.Email,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

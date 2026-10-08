@@ -498,10 +498,11 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
   {{else if .Linked}}{{if .AccountRef}}<div class="account">` + badgeCheck + `{{.AccountRef}}</div>{{end}}
   <div class="done">` + doneGlyph + `<div>
-    <span class="done-title">{{if .AutoReturn}}All set — taking you back{{else if .ResumeURL}}All set — head back to your app{{else}}All set — you can close this window{{end}}</span>
-    <span class="done-body">Back in your assistant the new tools appear on their own; if they do not, start a new conversation — some clients read the tool list only when a session opens.</span>
+    <span class="done-title">{{if .AutoReturn}}All set — taking you back{{else if .ResumeURL}}All set — head back to your app{{else}}All set — go back to your assistant{{end}}</span>
+    <span class="done-body">{{.ServerName}} is ready to use there. If its tools do not show up, refresh the connector's tools in your assistant or start a new conversation — some clients read the tool list only when asked to or when a conversation opens.</span>
   </div></div>
-  {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}{{end}}
+  {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}
+  {{if .AutoClose}}<script>setTimeout(function () { window.close(); }, 1500);</script>{{end}}{{end}}
   {{if .Owner.Name}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}

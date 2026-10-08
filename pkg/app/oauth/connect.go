@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -235,6 +236,9 @@ func (s *connectService) CreateAppTicket(
 }
 
 func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (string, error) {
+	if t.PrincipalEmail == "" {
+		t.PrincipalEmail = minterEmail(ctx, t.PrincipalSub)
+	}
 	id, err := randomToken()
 	if err != nil {
 		return "", err
@@ -429,12 +433,34 @@ func (s *connectService) Start(
 	}, nil
 }
 
+type ticketOwnerEmailKey struct{}
+
+// WithTicketOwnerEmail names the email of the person a ticket minted under ctx
+// is for, where the minting request is theirs but carries no MCP principal:
+// the console's own requests, for one.
+func WithTicketOwnerEmail(ctx context.Context, email string) context.Context {
+	return context.WithValue(ctx, ticketOwnerEmailKey{}, strings.TrimSpace(email))
+}
+
+// minterEmail is the email of the person a ticket for subject is minted by,
+// when it is minted by that person: a ticket handed to anyone else must not
+// name them by someone else's address.
+func minterEmail(ctx context.Context, subject string) string {
+	if email, ok := ctx.Value(ticketOwnerEmailKey{}).(string); ok && identity.LooksLikeEmail(email) {
+		return email
+	}
+	if p := identity.PrincipalFromContext(ctx); p != nil && subject != "" && p.Subject == subject {
+		return p.Email()
+	}
+	return ""
+}
+
 // connectPrincipal describes the ticket's principal for the page that asks
 // before linking an account to it. An application and the end users it names
 // are keyed by the consumer, so those subjects read back as names; any other
 // subject is shown as it is.
 func connectPrincipal(ticket *ConnectTicket, rc *appconsumer.RoutableConsumer) ConnectPrincipal {
-	p := ConnectPrincipal{Subject: ticket.PrincipalSub}
+	p := ConnectPrincipal{Subject: ticket.PrincipalSub, Email: ticket.PrincipalEmail}
 	if rc == nil || rc.Consumer == nil {
 		return p
 	}

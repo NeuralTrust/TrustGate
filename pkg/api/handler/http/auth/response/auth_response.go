@@ -44,6 +44,9 @@ type AuthResponse struct {
 	// OwnerGroups are the directory groups of a personal key's owner, as the
 	// platform last reported them. Absent means none were reported.
 	OwnerGroups []string `json:"owner_groups,omitempty"`
+	// OwnerEmail is the email of a personal key's owner, which the key's calls
+	// are shown under. Absent means none was recorded.
+	OwnerEmail string `json:"owner_email,omitempty"`
 	// Consumers are the consumers this auth reaches, which is what a caller
 	// needs before revoking one: a key can be attached to several, so
 	// disabling it stops more than the endpoint the reader was looking at.
@@ -131,6 +134,7 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		OwnerID:     a.OwnerID,
 		Budget:      fromBudget(a.Budget),
 		OwnerGroups: a.OwnerGroups,
+		OwnerEmail:  a.OwnerEmail,
 		CreatedAt:   a.CreatedAt,
 		UpdatedAt:   a.UpdatedAt,
 	}
