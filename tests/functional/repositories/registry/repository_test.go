@@ -65,8 +65,14 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 		t.Fatalf("new cipher: %v", err)
 	}
 
+	sealer, err := crypto.NewFieldSealer(testSecretKey, crypto.RegistrySecretsPurpose)
+	if err != nil {
+		pool.Close()
+		t.Fatalf("new field sealer: %v", err)
+	}
+
 	appender := outboxrepo.NewRepository(conn)
-	return repo.NewRepository(conn, cipher, appender), gatewayrepo.NewRepository(conn, appender), conn
+	return repo.NewRepository(conn, cipher, appender, repo.WithFieldSealer(sealer, true)), gatewayrepo.NewRepository(conn, appender), conn
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {

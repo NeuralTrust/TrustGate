@@ -27,7 +27,10 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
+	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -216,6 +219,29 @@ func TestDISmoke_ControlPlane_BuildsControlConfigSync(t *testing.T) {
 				}
 			}); err != nil {
 				t.Fatalf("Invoke(*appsnapshot.Holder): %v", err)
+			}
+		})
+	}
+}
+
+// The stored-secrets backfill is started with Invoke on the control plane, so a
+// missing binding would stop it from booting. A dry run checks the graph
+// without opening the database the repositories need.
+func TestDISmoke_ControlPlane_ResolvesSecretsBackfill(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
+	for _, plane := range []string{"admin", "run"} {
+		t.Run(plane, func(t *testing.T) {
+			c := &container.Container{Container: dig.New(dig.DryRun(true))}
+			for _, opt := range modules.All(plane, false) {
+				if err := opt(c); err != nil {
+					t.Fatalf("modules.All(%q, false): %v", plane, err)
+				}
+			}
+			if err := c.Invoke(modules.StartSecretsBackfill); err != nil {
+				t.Fatalf("Invoke(StartSecretsBackfill): %v", err)
+			}
+			if err := c.Invoke(func(_ *crypto.FieldSealer, _ *registryrepo.Repository, _ *authrepo.Repository) {}); err != nil {
+				t.Fatalf("Invoke(field sealer and repositories): %v", err)
 			}
 		})
 	}

@@ -17,6 +17,7 @@ package azurecontentsafety
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -459,5 +460,32 @@ func TestValidateSettingsWriteAcceptsMatchingKeys(t *testing.T) {
 	}
 	if err := p.ValidateSettingsWrite(set, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecuteAzureErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := srv.URL
+	srv.Close()
+	settings := settings(addr, map[string]int{CategoryHate: 2})
+	settings["on_error"] = "fail_closed"
+
+	p := New(adapter.NewRegistry(), nil)
+	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, requestContext(openAIRequestBody())))
+
+	var pluginErr *appplugins.PluginError
+	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("err = %v, want a 502 refusal", err)
+	}
+}
+
+func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
+	t.Parallel()
+	settings := settings("https://example.test", map[string]int{CategoryHate: 2})
+	settings["on_error"] = "retry"
+
+	if _, err := parseConfig(settings); err == nil {
+		t.Fatal("expected an error for on_error: retry")
 	}
 }

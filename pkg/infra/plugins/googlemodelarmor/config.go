@@ -112,6 +112,10 @@ type Settings struct {
 	SDPAction   string      `mapstructure:"sdp_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
+	// OnError decides what a request gets when the guardrail cannot give a
+	// verdict on its buffered leg: fail_open (the default) lets it through and
+	// records failed_open, fail_closed refuses it in a mode that blocks.
+	OnError string `mapstructure:"on_error"`
 	// Streaming tunes the per-block inspection of the pre_response leg. It is on
 	// when the block is absent; streaming.enabled: false opts out.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -130,6 +134,7 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 func (s *Settings) applyDefaults() {
+	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if len(s.BlockOn) == 0 {
 		s.BlockOn = append([]string(nil), allFilters...)
 	}
@@ -158,6 +163,9 @@ var (
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.Project) == "" {
 		return fmt.Errorf("google_model_armor: project is required")
+	}
+	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
+		return err
 	}
 	if strings.TrimSpace(s.Location) == "" {
 		return fmt.Errorf("google_model_armor: location is required")

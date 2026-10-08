@@ -287,7 +287,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), interactive, r.deps.GetTrace.Handle)
 
-	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListConfigSyncConnections.Handle)
+	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), interactive,
+		r.deps.AdminAuthz.RequireConfigSyncScopeAccess(), r.deps.ListConfigSyncConnections.Handle)
 
 	return nil
 }

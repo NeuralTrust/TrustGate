@@ -16,6 +16,7 @@ package modules
 
 import (
 	"log/slog"
+	"net/url"
 
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
@@ -67,12 +68,12 @@ func provideGatewayRepository(c *container.Container) error {
 
 func provideGatewayServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
-		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
+		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg)...)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
-		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
+		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg)...)
 	}); err != nil {
 		return err
 	}
@@ -132,4 +133,14 @@ func provideGatewayServices(c *container.Container) error {
 		return err
 	}
 	return nil
+}
+
+// reservedGatewayDomains are the host suffixes this deployment routes gateways
+// on by slug, which no tenant may claim as one gateway's own domain.
+func reservedGatewayDomains(cfg *config.Config) []string {
+	reserved := []string{cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain}
+	if u, err := url.Parse(cfg.Server.MCPOAuthPublicBaseURL); err == nil && u.Hostname() != "" {
+		reserved = append(reserved, u.Hostname())
+	}
+	return append(reserved, cfg.Server.MCPExtraBaseDomains...)
 }

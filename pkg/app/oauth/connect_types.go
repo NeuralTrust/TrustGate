@@ -29,6 +29,9 @@ var (
 	ErrTicketNotFound     = errors.New("oauth connect: ticket expired or unknown")
 	ErrProviderNotFound   = errors.New("oauth connect: provider not configured for this consumer")
 	ErrNoRegisteredClient = errors.New("oauth connect: no dynamically registered client for this upstream")
+	// ErrConnectFinishNotFound is answered for a finish token that was already
+	// used, has expired, or never existed.
+	ErrConnectFinishNotFound = errors.New("oauth connect: sign-in link already used or expired")
 	// ErrSharedAccountNotYours: the instance holds one account for every caller,
 	// so no caller owns it. Connecting it is refused at the runtime funnel for
 	// the same reason; this is the other half, revoking.
@@ -37,6 +40,18 @@ var (
 		commonerrors.ErrConflict,
 	)
 )
+
+// ConnectFinishPath is where the provider callback sends the browser back to,
+// on the host the connection was started from: the cookie that host set when
+// the flow started is what lets it finish there.
+const ConnectFinishPath = "/oauth/connect/finish"
+
+// ConnectStateTTL is how long a started authorization waits for its callback.
+const ConnectStateTTL = 10 * time.Minute
+
+// ConnectFinishTTL is how long the browser has to follow the callback's
+// redirect to ConnectFinishPath, which it does at once.
+const ConnectFinishTTL = 2 * time.Minute
 
 type ConnectTicket struct {
 	GatewayID    string    `json:"gateway_id"`
@@ -88,13 +103,52 @@ type ConnectState struct {
 	// from the provider — which cannot tell two instances of one provider apart.
 	Instance string `json:"instance,omitempty"`
 	Verifier string `json:"verifier,omitempty"`
+	// StartOrigin is the origin the connection was started from, where the
+	// callback sends the browser to finish it.
+	StartOrigin string `json:"start_origin,omitempty"`
 }
 
+// ConnectStart is a started authorization: Location is the provider's
+// authorize URL, State the value the provider returns with the callback.
+type ConnectStart struct {
+	Location string
+	State    string
+}
+
+// ConnectFinish is a provider callback waiting for the browser that started
+// the flow to finish it on its start origin.
+type ConnectFinish struct {
+	Provider string `json:"provider"`
+	State    string `json:"state"`
+	Code     string `json:"code,omitempty"`
+	ErrCode  string `json:"error,omitempty"`
+	ErrDesc  string `json:"error_description,omitempty"`
+}
+
+// ConnectPrincipal names whose account a connect links, in the terms the
+// confirmation shows it.
+type ConnectPrincipal struct {
+	// Subject is the principal the credential is stored under.
+	Subject string `json:"subject"`
+	// Application is the consumer's name when Subject is that application or
+	// one of the end users it names.
+	Application string `json:"application,omitempty"`
+	// EndUser is the end-user id the application named, when Subject is one.
+	EndUser string `json:"end_user,omitempty"`
+}
+
+// ConnectStore keeps the connect flow's short-lived records.
 type ConnectStore interface {
 	SaveTicket(ctx context.Context, id string, t ConnectTicket) error
 	GetTicket(ctx context.Context, id string) (*ConnectTicket, error)
 	SaveConnect(ctx context.Context, state string, s ConnectState) error
 	TakeConnect(ctx context.Context, state string) (*ConnectState, error)
+	// PeekConnect reads a started authorization without using it up.
+	PeekConnect(ctx context.Context, state string) (*ConnectState, error)
+	SaveFinish(ctx context.Context, token string, f ConnectFinish) error
+	// TakeFinish reads and removes a pending finish atomically, so it is used
+	// once.
+	TakeFinish(ctx context.Context, token string) (*ConnectFinish, error)
 }
 
 type ProviderStatus struct {
@@ -131,6 +185,8 @@ type ConnectPage struct {
 	// single-server page of a code with several instances shows that one instead
 	// of whichever came first.
 	Instance string
+	// Principal is who the accounts connected from this page are linked to.
+	Principal ConnectPrincipal
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
@@ -191,7 +247,24 @@ type ConnectService interface {
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
-	Start(ctx context.Context, baseURL, ticketID, provider, instanceID string) (string, error)
+	// Start begins an upstream authorization. baseURL is the origin of the
+	// provider's redirect_uri; startOrigin is the origin the browser started
+	// from, which the callback sends it back to (see ReceiveCallback).
+	Start(ctx context.Context, baseURL, startOrigin, ticketID, provider, instanceID string) (*ConnectStart, error)
+	// StartOrigin answers origin, rebuilt as scheme://host[:port], when a
+	// connection with this ticket may be started there, and
+	// ErrStartOriginNotServed when it may not.
+	StartOrigin(ctx context.Context, callbackOrigin, origin, ticketID string) (string, error)
+	// ReceiveCallback takes the provider's redirect without completing it: it
+	// keeps the result under a one-time token and answers the URL on the start
+	// origin where the browser that started the flow finishes it. The started
+	// authorization is left in place.
+	ReceiveCallback(ctx context.Context, provider, state, code, errCode, errDesc string) (string, error)
+	// TakeFinish redeems a finish token once; a second call answers
+	// ErrConnectFinishNotFound.
+	TakeFinish(ctx context.Context, token string) (*ConnectFinish, error)
+	// Callback completes an authorization: it uses up the state, redeems the
+	// code and stores the credential under the ticket's principal.
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider, instanceID string) error
 	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)

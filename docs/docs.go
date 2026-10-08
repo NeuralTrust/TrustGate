@@ -243,7 +243,7 @@ const docTemplate = `{
         },
         "/v1/config-sync/connections": {
             "get": {
-                "description": "Returns the observed data-plane Sync connections, optionally filtered by opaque scope. Answers \"is this data plane online?\".",
+                "description": "Returns the observed data-plane Sync connections of one gateway. Answers \"is this data plane online?\". A tenant caller must pass the id of one of its gateways as scope; only a platform caller may omit it to list every data plane. Pass page and size to paginate.",
                 "produces": [
                     "application/json"
                 ],
@@ -254,8 +254,20 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by opaque scope (exact match); omit for all",
+                        "description": "Gateway id whose data planes to list (exact match). Required for tenant callers.",
                         "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (1-based); omit page and size for every match",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (max 200)",
+                        "name": "size",
                         "in": "query"
                     }
                 ],
@@ -266,8 +278,26 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }

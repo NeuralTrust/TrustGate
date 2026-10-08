@@ -66,6 +66,7 @@ type creator struct {
 	logger           *slog.Logger
 	signaler         configsyncport.SnapshotSignaler
 	rateLimitEnabled bool
+	reservedDomains  []string
 }
 
 func NewCreator(
@@ -76,8 +77,10 @@ func NewCreator(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
+	reservedDomains ...string,
 ) Creator {
 	return &creator{
+		reservedDomains:  reservedDomains,
 		repo:             repo,
 		registries:       registries,
 		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
@@ -98,6 +101,11 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	g, err := domain.New(in.Slug)
 	if err != nil {
 		return nil, err
+	}
+	if !in.PlatformAdmin {
+		if err := domain.CheckDomainNotReserved(in.Domain, c.reservedDomains); err != nil {
+			return nil, err
+		}
 	}
 	g.Domain = in.Domain
 	g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), in.TenantID)

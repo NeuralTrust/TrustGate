@@ -19,6 +19,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/gofiber/fiber/v2"
 )
@@ -26,7 +27,7 @@ import (
 // ConnectionLister reads persisted data-plane connection state, optionally
 // filtered by opaque scope.
 type ConnectionLister interface {
-	List(ctx context.Context, scope string) ([]configsyncconn.Connection, error)
+	List(ctx context.Context, scope string, page configsyncconn.Page) ([]configsyncconn.Connection, error)
 }
 
 type ListConnectionsHandler struct {
@@ -39,17 +40,26 @@ func NewListConnectionsHandler(lister ConnectionLister) *ListConnectionsHandler 
 
 // Handle godoc
 // @Summary      List config-sync data-plane connections
-// @Description  Returns the observed data-plane Sync connections, optionally filtered by opaque scope. Answers "is this data plane online?".
+// @Description  Returns the observed data-plane Sync connections of one gateway. Answers "is this data plane online?". A tenant caller must pass the id of one of its gateways as scope; only a platform caller may omit it to list every data plane. Pass page and size to paginate.
 // @Tags         config-sync
 // @Produce      json
 // @Security     BearerAuth
-// @Param        scope  query     string  false  "Filter by opaque scope (exact match); omit for all"
+// @Param        scope  query     string  false  "Gateway id whose data planes to list (exact match). Required for tenant callers."
+// @Param        page   query     int     false  "Page number (1-based); omit page and size for every match"
+// @Param        size   query     int     false  "Page size (max 200)"
 // @Success      200    {object}  response.ListConnectionsResponse
+// @Failure      400    {object}  httpio.ErrorBody
 // @Failure      401    {object}  httpio.ErrorBody
+// @Failure      404    {object}  httpio.ErrorBody
+// @Failure      422    {object}  httpio.ErrorBody
 // @Failure      500    {object}  httpio.ErrorBody
 // @Router       /v1/config-sync/connections [get]
 func (h *ListConnectionsHandler) Handle(c *fiber.Ctx) error {
-	conns, err := h.lister.List(c.UserContext(), c.Query("scope"))
+	page, err := parsePage(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	conns, err := h.lister.List(c.UserContext(), middleware.ConfigSyncScope(c), page)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
@@ -60,4 +70,21 @@ func (h *ListConnectionsHandler) Handle(c *fiber.Ctx) error {
 		out.Items = append(out.Items, response.FromConnection(conn))
 	}
 	return httpio.WriteOK(c, out)
+}
+
+// parsePage reads page and size only when the caller asks for them, so a
+// listing without either keeps returning every match.
+func parsePage(c *fiber.Ctx) (configsyncconn.Page, error) {
+	if c.Query("page") == "" && c.Query("size") == "" {
+		return configsyncconn.Page{}, nil
+	}
+	page, err := httpio.ParsePage(c)
+	if err != nil {
+		return configsyncconn.Page{}, err
+	}
+	size, err := httpio.ParseSize(c)
+	if err != nil {
+		return configsyncconn.Page{}, err
+	}
+	return configsyncconn.Page{Limit: size, Offset: (page - 1) * size}, nil
 }

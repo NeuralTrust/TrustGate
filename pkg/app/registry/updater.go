@@ -243,6 +243,7 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 		target.Auth = in.Auth
 	}
 	if in.HealthChecks != nil {
+		in.HealthChecks.ResolveSecretsFrom(target.HealthChecks)
 		target.HealthChecks = in.HealthChecks
 	}
 	if in.SetPricing {

@@ -270,6 +270,10 @@ type connectServiceParams struct {
 	// Present where installs are: a templated server's OAuth server is then
 	// discovered at the URL the principal dials, filled in from their install.
 	Installs installationdomain.Repository `optional:"true"`
+	// Gateways and Config decide which hosts of a ticket's gateway a
+	// connection may be started from.
+	Gateways appgateway.Finder `optional:"true"`
+	Config   *config.Config    `optional:"true"`
 }
 
 type rpcGatewayParams struct {
@@ -469,6 +473,10 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 	var opts []appoauth.ConnectOption
 	if p.Installs != nil {
 		opts = append(opts, appoauth.WithConnectURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
+	}
+	if p.Gateways != nil && p.Config != nil {
+		domains := append([]string{p.Config.Server.MCPBaseDomain}, p.Config.Server.MCPExtraBaseDomains...)
+		opts = append(opts, appoauth.WithConnectStartOrigins(p.Gateways, domains...))
 	}
 	return appoauth.NewConnectService(
 		p.Store,

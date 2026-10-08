@@ -17,6 +17,7 @@ package registry_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
@@ -644,5 +645,124 @@ func TestUpdater_Update_OnlyWritesTheToolPolicyWhenTheRequestSetsIt(t *testing.T
 				t.Fatalf("Update: %v", err)
 			}
 		})
+	}
+}
+
+func TestUpdater_Update_MaskedHeaderEchoKeepsStoredValue(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL:     "https://mcp.example.com/mcp",
+		Headers: map[string]string{"X-Api-Key": "header-value-aaaa", "X-Tenant": "acme", "X-Old": "gone"},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		MCPTarget: &domain.MCPTarget{Headers: map[string]string{
+			"X-Api-Key": "***aaaa",
+			"X-Tenant":  "globex",
+			"X-Region":  "eu",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	want := map[string]string{"X-Api-Key": "header-value-aaaa", "X-Tenant": "globex", "X-Region": "eu"}
+	if !maps.Equal(got.MCPTarget.Headers, want) {
+		t.Fatalf("headers = %v, want %v", got.MCPTarget.Headers, want)
+	}
+}
+
+func TestUpdater_Update_MaskedHealthCheckHeaderKeepsStoredValue(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "llm", "", &domain.LLMTarget{
+		Provider:     "openai",
+		Auth:         domain.NewAPIKeyAuth("sk-1"),
+		HealthChecks: &domain.HealthChecks{Interval: 10, Threshold: 3, Headers: map[string]string{"Authorization": "Bearer abcdefgh123"}},
+	})
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:           existing.ID,
+		HealthChecks: &domain.HealthChecks{Interval: 20, Threshold: 3, Headers: map[string]string{"Authorization": "***h123"}},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	hc := got.HealthChecks()
+	if hc.Interval != 20 || hc.Headers["Authorization"] != "Bearer abcdefgh123" {
+		t.Fatalf("health checks = %+v", hc)
+	}
+}
+
+func TestUpdater_Update_MaskedHeaderWithoutStoredValueIsRefused(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL: "https://mcp.example.com/mcp",
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, nil)
+	_, err = updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		MCPTarget: &domain.MCPTarget{Headers: map[string]string{"X-Api-Key": "***aaaa"}},
+	})
+	if !errors.Is(err, domain.ErrInvalidMCPTarget) {
+		t.Fatalf("err = %v, want ErrInvalidMCPTarget", err)
+	}
+}
+
+func TestUpdater_Update_UnreadableStoredCredentialDoesNotBlockEdits(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL:  "https://mcp.example.com/mcp",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer x"},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	existing.MCPTarget.Auth.Value = ""
+	existing.MCPTarget.Auth.SecretUnreadable = true
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Twice()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Twice()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Twice()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	if _, err := updater.Update(context.Background(), appregistry.UpdateInput{ID: existing.ID, Name: ptr("renamed")}); err != nil {
+		t.Fatalf("name-only update: %v", err)
+	}
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		MCPTarget: &domain.MCPTarget{Auth: &domain.MCPAuth{
+			Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "***",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("masked echo update: %v", err)
+	}
+	if got.MCPTarget.Auth.Value != "" || !got.MCPTarget.Auth.SecretUnreadable {
+		t.Fatalf("auth = %+v, want the unreadable marker carried", got.MCPTarget.Auth)
 	}
 }

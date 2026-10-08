@@ -757,3 +757,27 @@ func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
 		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", data, ok)
 	}
 }
+
+func TestExecuteClientErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
+	t.Parallel()
+	p := pluginWithClientError(errors.New("boom"))
+	settings := modelArmorSettings()
+	settings["on_error"] = "fail_closed"
+
+	res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil))
+
+	var pluginErr *appplugins.PluginError
+	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("res = %+v, err = %v, want a 502 refusal", res, err)
+	}
+}
+
+func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
+	t.Parallel()
+	settings := modelArmorSettings()
+	settings["on_error"] = "retry"
+
+	if _, err := parseConfig(settings); err == nil {
+		t.Fatal("expected an error for on_error: retry")
+	}
+}

@@ -134,6 +134,11 @@ type MCPAuth struct {
 	// stored or accepted from a client: the gateway only calls an endpoint the
 	// upstream itself advertised, with the token that upstream just issued.
 	UserinfoURL string `json:"-"`
+	// SecretUnreadable marks an auth read from storage whose value or client
+	// secret could not be decrypted and was returned empty. Validate does not
+	// require that secret, so unrelated edits still save; the repository keeps
+	// the stored value when the secret comes back empty. Never serialised.
+	SecretUnreadable bool `json:"-"`
 }
 
 type MCPTarget struct {
@@ -313,6 +318,10 @@ func (t *MCPTarget) Validate() error {
 	default:
 		return fmt.Errorf("%w: unsupported source %q", ErrInvalidMCPTarget, t.Source)
 	}
+	if name, masked := maskedHeader(t.Headers); masked {
+		return fmt.Errorf("%w: header %q has a masked value but no stored value to keep",
+			ErrInvalidMCPTarget, name)
+	}
 	if t.Auth != nil {
 		if err := t.Auth.Validate(); err != nil {
 			return err
@@ -376,7 +385,7 @@ func (a *MCPAuth) Validate() error {
 			return fmt.Errorf("%w: auth mode none does not accept header/value", ErrInvalidMCPTarget)
 		}
 	case MCPAuthModeStatic:
-		if strings.TrimSpace(a.Header) == "" || strings.TrimSpace(a.Value) == "" {
+		if strings.TrimSpace(a.Header) == "" || (strings.TrimSpace(a.Value) == "" && !a.SecretUnreadable) {
 			return fmt.Errorf("%w: auth mode static requires header and value", ErrInvalidMCPTarget)
 		}
 		if secret.IsMasked(a.Value) {
@@ -440,7 +449,7 @@ func (a *MCPAuth) Validate() error {
 			return fmt.Errorf("%w: unknown registration mode %q", ErrInvalidMCPTarget, a.Registration)
 		}
 	case MCPAuthModeClientCredentials:
-		if strings.TrimSpace(a.ClientID) == "" || strings.TrimSpace(a.ClientSecret) == "" {
+		if strings.TrimSpace(a.ClientID) == "" || (strings.TrimSpace(a.ClientSecret) == "" && !a.SecretUnreadable) {
 			return fmt.Errorf("%w: client_credentials requires client_id and client_secret", ErrInvalidMCPTarget)
 		}
 		if strings.TrimSpace(a.TokenURL) == "" || !isHTTPURL(a.TokenURL) {
@@ -487,8 +496,15 @@ func isHTTPURL(s string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
+// ResolveSecretsFrom keeps the stored credentials an update left blank or sent
+// back masked: the auth secret of an unchanged mode and each static header
+// echoed masked (see ResolveHeaders).
 func (t *MCPTarget) ResolveSecretsFrom(prev *MCPTarget) {
-	if t == nil || prev == nil || t.Auth == nil || prev.Auth == nil {
+	if t == nil || prev == nil {
+		return
+	}
+	t.Headers = ResolveHeaders(t.Headers, prev.Headers)
+	if t.Auth == nil || prev.Auth == nil {
 		return
 	}
 	if t.Auth.Mode != prev.Auth.Mode {
@@ -497,7 +513,9 @@ func (t *MCPTarget) ResolveSecretsFrom(prev *MCPTarget) {
 	switch t.Auth.Mode {
 	case MCPAuthModeStatic:
 		t.Auth.Value = secret.Resolve(t.Auth.Value, prev.Auth.Value)
+		t.Auth.SecretUnreadable = t.Auth.Value == "" && prev.Auth.SecretUnreadable
 	case MCPAuthModeForwarded, MCPAuthModeClientCredentials:
 		t.Auth.ClientSecret = secret.Resolve(t.Auth.ClientSecret, prev.Auth.ClientSecret)
+		t.Auth.SecretUnreadable = t.Auth.ClientSecret == "" && prev.Auth.SecretUnreadable
 	}
 }

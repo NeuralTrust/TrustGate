@@ -52,6 +52,51 @@ type connectPageView struct {
 	Ticket       string
 	Providers    []providerView
 	ResumeURL    template.URL
+	Owner        ownerView
+}
+
+// ownerView is who an account connected from a page is linked to: Name is
+// what the person reading it recognises, Detail what kind of principal it is.
+// An end-user id is whatever the application sent, so it is labelled as the
+// application's word rather than as a verified person.
+type ownerView struct {
+	Name   string
+	Detail string
+}
+
+func ownerOf(p appoauth.ConnectPrincipal) ownerView {
+	switch {
+	case p.EndUser != "" && p.Application != "":
+		return ownerView{Name: p.EndUser, Detail: "end-user id named by " + p.Application}
+	case p.EndUser != "":
+		return ownerView{Name: p.EndUser, Detail: "end-user id named by the application"}
+	case p.Application != "":
+		return ownerView{Name: p.Application, Detail: "application"}
+	default:
+		return ownerView{Name: p.Subject}
+	}
+}
+
+// connectConfirmView is the page that asks before a provider connection
+// starts, for a connection opened from a link rather than from a connect page.
+type connectConfirmView struct {
+	ServerName   string
+	InstanceName string
+	LogoURL      template.URL
+	ConsumerPath string
+	Owner        ownerView
+	// AccountRef names the account already connected, which continuing
+	// replaces. Empty when there is none.
+	AccountRef string
+	FormAction string
+}
+
+func renderConnectConfirmPage(c *fiber.Ctx, view connectConfirmView, row appoauth.ProviderStatus, catalog appcatalog.MCPServerCatalog) error {
+	decorated := decorateProvider(catalog, row)
+	view.ServerName = decorated.DisplayName
+	view.InstanceName = decorated.InstanceName
+	view.LogoURL = decorated.LogoURL
+	return renderHTML(c, connectConfirmPageTmpl, view)
 }
 
 func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
@@ -75,6 +120,7 @@ func renderConnectPageAfter(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, fl
 		Ticket:       ticket,
 		Providers:    decorateProviders(catalog, page.Providers),
 		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
+		Owner:        ownerOf(page.Principal),
 	})
 }
 
@@ -112,6 +158,7 @@ type singleConnectView struct {
 	AccessLabel string
 	Items       []string
 	ItemsMore   int
+	Owner       ownerView
 }
 
 // providerRowsForPage narrows a page's rows to the server it is scoped to: the
@@ -144,6 +191,7 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		Ticket:    ticket,
 		Flash:     flash,
 		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
+		Owner:     ownerOf(page.Principal),
 	}
 	var granted []string
 	for _, p := range providerRowsForPage(page) {

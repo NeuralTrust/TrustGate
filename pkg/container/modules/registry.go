@@ -22,12 +22,14 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -58,6 +60,8 @@ type registryRepositoryDeps struct {
 	dig.In
 	Conn      *database.Connection
 	Encrypter vaultdomain.Encrypter
+	Sealer    *crypto.FieldSealer
+	Config    *config.Config
 	Appender  outboxrepo.Appender
 	Consumers *consumerrepo.Repository
 	Policies  *policyrepo.Repository
@@ -75,14 +79,20 @@ func provideRegistryRepository(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(deps registryRepositoryDeps) domain.Repository {
+	if err := c.Provide(func(deps registryRepositoryDeps) *registryrepo.Repository {
 		return registryrepo.NewRepository(
 			deps.Conn,
 			deps.Encrypter,
 			deps.Appender,
+			registryrepo.WithFieldSealer(deps.Sealer, deps.Config.Server.StoredSecretsEncryptionEnabled),
 			registryrepo.WithDeleteHook(deps.Consumers.PruneRegistryReferencesTx),
 			registryrepo.WithDeleteHook(deps.Policies.PruneRegistryReferencesTx),
 		)
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(r *registryrepo.Repository) domain.Repository {
+		return r
 	})
 }
 

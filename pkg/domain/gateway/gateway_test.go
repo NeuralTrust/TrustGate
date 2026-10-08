@@ -323,3 +323,34 @@ func TestValidateTier(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckDomainNotReserved(t *testing.T) {
+	t.Parallel()
+	reserved := []string{"llm.example.test", "mcp.example.test"}
+
+	for _, d := range []string{
+		"llm.example.test",
+		"acme.llm.example.test",
+		"ACME.MCP.Example.Test",
+		"neuraltrust.ai",
+		"gateway-mcp.us.neuraltrust.ai",
+		"10.0.0.5",
+		"localhost",
+		"trustgate-proxy",
+		"agentgateway-mcp.agentgateway.svc.cluster.local",
+		"agentgateway-mcp.agentgateway.svc",
+	} {
+		if err := CheckDomainNotReserved(d, reserved); !errors.Is(err, ErrReservedDomain) {
+			t.Fatalf("%q: err = %v, want ErrReservedDomain", d, err)
+		}
+		if err := CheckDomainNotReserved(d, reserved); !errors.Is(err, commonerrors.ErrValidation) {
+			t.Fatalf("%q: err = %v, want a validation error", d, err)
+		}
+	}
+
+	for _, d := range []string{"", "api.acme.com", "notneuraltrust.ai", "llm.example.test.acme.com"} {
+		if err := CheckDomainNotReserved(d, reserved); err != nil {
+			t.Fatalf("%q: unexpected error %v", d, err)
+		}
+	}
+}

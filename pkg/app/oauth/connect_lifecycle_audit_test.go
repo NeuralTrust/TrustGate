@@ -245,13 +245,14 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, completeConnectTicket(fixture), fixture.store.tickets[ticketID])
 
-	location, err := fixture.service.Start(
+	location, err := startLocation(fixture.service.Start(
 		ctx,
+		"https://gateway.example",
 		"https://gateway.example",
 		ticketID,
 		connectAuditProviderID,
 		"",
-	)
+	))
 	require.NoError(t, err)
 	parsed, err := url.Parse(location)
 	require.NoError(t, err)
@@ -282,13 +283,14 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 		fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
 		addConnectAuditProvider(t, fixture, "added-registry", "added-provider")
 
-		location, err := fixture.service.Start(
+		location, err := startLocation(fixture.service.Start(
 			context.Background(),
+			"https://gateway.example",
 			"https://gateway.example",
 			"ticket-sentinel",
 			"added-provider",
 			"",
-		)
+		))
 
 		require.Empty(t, location)
 		require.ErrorIs(t, err, oauth.ErrProviderNotFound)
@@ -365,13 +367,14 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 		fixture := newConnectAuditFixture(t, discardConnectAuditor(), tokenServer.URL)
 		fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
 
-		location, err := fixture.service.Start(
+		location, err := startLocation(fixture.service.Start(
 			context.Background(),
+			"https://gateway.example",
 			"https://gateway.example",
 			"ticket-sentinel",
 			connectAuditProviderID,
 			"",
-		)
+		))
 		require.NoError(t, err)
 		parsed, err := url.Parse(location)
 		require.NoError(t, err)
@@ -878,13 +881,14 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 		"",
 	)
 	require.NoError(t, err)
-	location, err := fixture.service.Start(
+	location, err := startLocation(fixture.service.Start(
 		ctx,
+		"https://gateway.example",
 		"https://gateway.example",
 		ticketID,
 		connectAuditProviderID,
 		"",
-	)
+	))
 	require.NoError(t, err)
 	parsed, err := url.Parse(location)
 	require.NoError(t, err)
@@ -926,13 +930,14 @@ func TestConnectServiceSkipsAuditForNonAPIKeyTicket(t *testing.T) {
 		"/runtime/mcp",
 	)
 	require.NoError(t, err)
-	location, err := fixture.service.Start(
+	location, err := startLocation(fixture.service.Start(
 		ctx,
+		"https://gateway.example",
 		"https://gateway.example",
 		ticketID,
 		connectAuditProviderID,
 		"",
-	)
+	))
 	require.NoError(t, err)
 	parsed, err := url.Parse(location)
 	require.NoError(t, err)
@@ -1089,13 +1094,14 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 			run: func(t *testing.T, fixture connectAuditFixtureData) error {
 				fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
 				fixture.vault.upsertErr = dependencyErr
-				location, err := fixture.service.Start(
+				location, err := startLocation(fixture.service.Start(
 					context.Background(),
+					"https://gateway.example",
 					"https://gateway.example",
 					"ticket-sentinel",
 					connectAuditProviderID,
 					"",
-				)
+				))
 				require.NoError(t, err)
 				parsed, err := url.Parse(location)
 				require.NoError(t, err)

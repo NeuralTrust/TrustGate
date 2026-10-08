@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -55,7 +56,11 @@ type connectService struct {
 	catalog     authCatalog
 	registries  RegistryLister
 	urlValues   URLValueSource
-	now         func() time.Time
+	// gateways and startDomains decide where a connection may be started
+	// from (see WithConnectStartOrigins).
+	gateways     ConnectGatewayFinder
+	startDomains []string
+	now          func() time.Time
 }
 
 // URLValueSource returns a principal's values for a registry's URL
@@ -250,6 +255,7 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		Providers:    providers,
 		Code:         ticket.Code,
 		Instance:     ticket.InstanceID,
+		Principal:    connectPrincipal(ticket, rc),
 	}
 	// A ticket pinned to one provider is the one-server case, so it gets the
 	// focused card rather than a picker with a single entry in it: the user was
@@ -364,48 +370,117 @@ func (s *connectService) providerStatuses(
 
 func (s *connectService) Start(
 	ctx context.Context,
-	baseURL, ticketID, provider, instanceID string,
-) (string, error) {
+	baseURL, startOrigin, ticketID, provider, instanceID string,
+) (*ConnectStart, error) {
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	startOrigin, err = s.startOrigin(ctx, baseURL, startOrigin, gatewayID)
+	if err != nil {
+		return nil, err
 	}
 	if !connectProviderAllowed(ticket, data, rc, provider) {
-		return "", ErrProviderNotFound
+		return nil, ErrProviderNotFound
 	}
 	reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)
 	if reg == nil {
-		return "", ErrProviderNotFound
+		return nil, ErrProviderNotFound
 	}
 	if !ownsSharedAccount(reg, ticket.PrincipalSub) {
-		return "", ErrSharedAccountNotYours
+		return nil, ErrSharedAccountNotYours
 	}
 	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, ticket.PrincipalSub, reg)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	state, err := randomToken()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	verifier, err := randomToken()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	// The callback stores the credential for the instance this authorization was
 	// started from, so the instance travels in the state and is not re-derived
 	// there: two instances of one provider are otherwise indistinguishable on
 	// the way back, and the first one always won.
 	if err := s.store.SaveConnect(ctx, state, ConnectState{
-		Ticket:   *ticket,
-		TicketID: ticketID,
+		Ticket:      *ticket,
+		TicketID:    ticketID,
+		Provider:    provider,
+		Instance:    reg.ID.String(),
+		Verifier:    verifier,
+		StartOrigin: startOrigin,
+	}); err != nil {
+		return nil, err
+	}
+	return &ConnectStart{
+		Location: s.provider.AuthorizeURL(cfg, connectCallbackURL(baseURL, provider), state, s256(verifier)),
+		State:    state,
+	}, nil
+}
+
+func (s *connectService) ReceiveCallback(ctx context.Context, provider, state, code, errCode, errDesc string) (string, error) {
+	if state == "" {
+		return "", oauthErr("invalid_request", "unknown or expired state")
+	}
+	st, err := s.store.PeekConnect(ctx, state)
+	if err != nil {
+		return "", err
+	}
+	if st == nil || st.Provider != provider || st.StartOrigin == "" {
+		return "", oauthErr("invalid_request", "unknown or expired state")
+	}
+	token, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.SaveFinish(ctx, token, ConnectFinish{
 		Provider: provider,
-		Instance: reg.ID.String(),
-		Verifier: verifier,
+		State:    state,
+		Code:     code,
+		ErrCode:  errCode,
+		ErrDesc:  errDesc,
 	}); err != nil {
 		return "", err
 	}
-	return s.provider.AuthorizeURL(cfg, connectCallbackURL(baseURL, provider), state, s256(verifier)), nil
+	return st.StartOrigin + ConnectFinishPath + "?" + url.Values{"f": {token}}.Encode(), nil
+}
+
+func (s *connectService) TakeFinish(ctx context.Context, token string) (*ConnectFinish, error) {
+	if token == "" {
+		return nil, ErrConnectFinishNotFound
+	}
+	f, err := s.store.TakeFinish(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, ErrConnectFinishNotFound
+	}
+	return f, nil
+}
+
+// connectPrincipal describes the ticket's principal for the page that asks
+// before linking an account to it. An application and the end users it names
+// are keyed by the consumer, so those subjects read back as names; any other
+// subject is shown as it is.
+func connectPrincipal(ticket *ConnectTicket, rc *appconsumer.RoutableConsumer) ConnectPrincipal {
+	p := ConnectPrincipal{Subject: ticket.PrincipalSub}
+	if rc == nil || rc.Consumer == nil {
+		return p
+	}
+	app := consumerdomain.AppSubject(rc.Consumer.ID)
+	switch {
+	case p.Subject == app:
+		p.Application = rc.Consumer.Name
+	case strings.HasPrefix(p.Subject, app+":"):
+		p.Application = rc.Consumer.Name
+		p.EndUser = strings.TrimPrefix(p.Subject, app+":")
+	}
+	return p
 }
 
 func (s *connectService) Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error) {

@@ -16,6 +16,8 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,9 +30,14 @@ import (
 const (
 	ticketPrefix  = "oauth:connect:ticket:"
 	connectPrefix = "oauth:connect:state:"
-	clientPrefix  = "oauth:dcr:client:"
-	ticketTTL     = appoauth.ConnectTicketTTL
-	connectTTL    = 10 * time.Minute
+	finishPrefix  = "oauth:connect:finish:"
+	// finishStatePrefix points from a flow to its one pending finish, so a
+	// callback that arrives again for the same state replaces it.
+	finishStatePrefix = "oauth:connect:finish-state:"
+	clientPrefix      = "oauth:dcr:client:"
+	ticketTTL         = appoauth.ConnectTicketTTL
+	connectTTL        = appoauth.ConnectStateTTL
+	finishTTL         = appoauth.ConnectFinishTTL
 )
 
 var (
@@ -82,6 +89,66 @@ func (s *ConnectStore) TakeConnect(ctx context.Context, state string) (*appoauth
 		return nil, fmt.Errorf("oauth connect store: decode: %w", err)
 	}
 	return &c, nil
+}
+
+// PeekConnect reads a started authorization without removing it.
+func (s *ConnectStore) PeekConnect(ctx context.Context, state string) (*appoauth.ConnectState, error) {
+	raw, err := s.rdb.Get(ctx, connectPrefix+state).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth connect store: get: %w", err)
+	}
+	var c appoauth.ConnectState
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return nil, fmt.Errorf("oauth connect store: decode: %w", err)
+	}
+	return &c, nil
+}
+
+// SaveFinish keeps a provider callback for ConnectFinishTTL until the start
+// origin finishes it. A flow has one pending finish at a time: saving another
+// for the same state removes the one before.
+func (s *ConnectStore) SaveFinish(ctx context.Context, token string, f appoauth.ConnectFinish) error {
+	if err := s.set(ctx, finishPrefix+token, f, finishTTL); err != nil {
+		return err
+	}
+	stateKey := finishStatePrefix + finishStateID(f.State)
+	previous, err := s.rdb.SetArgs(ctx, stateKey, token, redis.SetArgs{TTL: finishTTL, Get: true}).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("oauth connect store: set finish state: %w", err)
+	}
+	if previous != "" && previous != token {
+		if err := s.rdb.Del(ctx, finishPrefix+previous).Err(); err != nil {
+			return fmt.Errorf("oauth connect store: drop previous finish: %w", err)
+		}
+	}
+	return nil
+}
+
+// finishStateID keys a flow's pending finish by a digest of its state, so the
+// state itself is not written into a key name.
+func finishStateID(state string) string {
+	sum := sha256.Sum256([]byte(state))
+	return hex.EncodeToString(sum[:])
+}
+
+// TakeFinish reads and removes a pending finish in one step (GETDEL), so a
+// token is redeemed at most once.
+func (s *ConnectStore) TakeFinish(ctx context.Context, token string) (*appoauth.ConnectFinish, error) {
+	raw, err := s.rdb.GetDel(ctx, finishPrefix+token).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth connect store: getdel finish: %w", err)
+	}
+	var f appoauth.ConnectFinish
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("oauth connect store: decode finish: %w", err)
+	}
+	return &f, nil
 }
 
 func (s *ConnectStore) SaveClient(ctx context.Context, key string, c appoauth.RegisteredClient) error {
