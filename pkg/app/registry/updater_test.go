@@ -653,7 +653,7 @@ func TestUpdater_Update_MaskedHeaderEchoKeepsStoredValue(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
 		URL:     "https://mcp.example.com/mcp",
-		Headers: map[string]string{"X-Api-Key": "key-123456789", "X-Tenant": "acme", "X-Old": "gone"},
+		Headers: map[string]string{"X-Api-Key": "header-value-aaaa", "X-Tenant": "acme", "X-Old": "gone"},
 	})
 	if err != nil {
 		t.Fatalf("NewMCPRegistry error: %v", err)
@@ -668,7 +668,7 @@ func TestUpdater_Update_MaskedHeaderEchoKeepsStoredValue(t *testing.T) {
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		MCPTarget: &domain.MCPTarget{Headers: map[string]string{
-			"X-Api-Key": "***6789",
+			"X-Api-Key": "***aaaa",
 			"X-Tenant":  "globex",
 			"X-Region":  "eu",
 		}},
@@ -676,7 +676,7 @@ func TestUpdater_Update_MaskedHeaderEchoKeepsStoredValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	want := map[string]string{"X-Api-Key": "key-123456789", "X-Tenant": "globex", "X-Region": "eu"}
+	want := map[string]string{"X-Api-Key": "header-value-aaaa", "X-Tenant": "globex", "X-Region": "eu"}
 	if !maps.Equal(got.MCPTarget.Headers, want) {
 		t.Fatalf("headers = %v, want %v", got.MCPTarget.Headers, want)
 	}
@@ -724,7 +724,7 @@ func TestUpdater_Update_MaskedHeaderWithoutStoredValueIsRefused(t *testing.T) {
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, nil)
 	_, err = updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
-		MCPTarget: &domain.MCPTarget{Headers: map[string]string{"X-Api-Key": "***6789"}},
+		MCPTarget: &domain.MCPTarget{Headers: map[string]string{"X-Api-Key": "***aaaa"}},
 	})
 	if !errors.Is(err, domain.ErrInvalidMCPTarget) {
 		t.Fatalf("err = %v, want ErrInvalidMCPTarget", err)

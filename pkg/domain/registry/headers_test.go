@@ -24,7 +24,7 @@ import (
 
 func TestResolveHeaders(t *testing.T) {
 	t.Parallel()
-	stored := map[string]string{"X-Api-Key": "key-123456789", "X-Tenant": "acme"}
+	stored := map[string]string{"X-Api-Key": "header-value-aaaa", "X-Tenant": "acme"}
 
 	tests := []struct {
 		name     string
@@ -38,13 +38,13 @@ func TestResolveHeaders(t *testing.T) {
 		},
 		{
 			name:     "masked echo keeps stored values",
-			incoming: map[string]string{"X-Api-Key": secret.Mask("key-123456789"), "X-Tenant": secret.Mask("acme")},
+			incoming: map[string]string{"X-Api-Key": secret.Mask("header-value-aaaa"), "X-Tenant": secret.Mask("acme")},
 			want:     stored,
 		},
 		{
 			name:     "header names match case-insensitively",
 			incoming: map[string]string{"x-api-key": secret.Redacted},
-			want:     map[string]string{"x-api-key": "key-123456789"},
+			want:     map[string]string{"x-api-key": "header-value-aaaa"},
 		},
 		{
 			name:     "new value replaces, new key is added, absent key is dropped",
@@ -75,10 +75,10 @@ func TestResolveHeaders(t *testing.T) {
 
 func TestMCPTarget_ResolveSecretsFromMergesHeadersWithoutAuth(t *testing.T) {
 	t.Parallel()
-	prev := &MCPTarget{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Api-Key": "key-123456789"}}
-	next := &MCPTarget{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Api-Key": secret.Mask("key-123456789")}}
+	prev := &MCPTarget{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Api-Key": "header-value-aaaa"}}
+	next := &MCPTarget{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Api-Key": secret.Mask("header-value-aaaa")}}
 	next.ResolveSecretsFrom(prev)
-	if next.Headers["X-Api-Key"] != "key-123456789" {
+	if next.Headers["X-Api-Key"] != "header-value-aaaa" {
 		t.Fatalf("stored header not kept: %v", next.Headers)
 	}
 }
