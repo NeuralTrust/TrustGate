@@ -33,7 +33,5 @@ jobs:
     secrets:
       WIF_PROVIDER: ${{ secrets.PROD_WIF_PROVIDER }}
       WIF_SERVICE_ACCOUNT: ${{ secrets.PROD_WIF_SERVICE_ACCOUNT }}
-      BUILD_SECRETS: |
-        GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
