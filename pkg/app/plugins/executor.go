@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -257,7 +258,15 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			whole.Transformed = head + verdict.Transformed
 			verdict = &whole
 		}
+		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && BedrockNativeOf(entry.plugin) != BedrockNativeMasks {
+			// A transform that is not a mask cannot be carried out on a relayed
+			// call: it ends the stream like a block, never fails open.
+			verdict = &SegmentVerdict{Block: true, Type: BedrockNativePassthrough, Message: NativeRewriteRefusal(entry.plugin.Name(), policy.StagePreResponse).Message}
+		}
 		stop := e.mergeVerdict(outcome, verdict, entry)
+		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && MaskFailureOf(entry.config.Settings) == MaskFailureBlock {
+			outcome.MaskFailureBlock = true
+		}
 		// Hand-off mirrors mergeVerdict: only a transform from an entry that
 		// blocks is applied to what the client receives, so only that one
 		// changes what the entries behind it see. An observe transform is
@@ -458,6 +467,14 @@ func (e *executor) runOne(
 		event.SetMode(string(entry.mode))
 	}
 
+	if skipsNative(req, entry) {
+		recordNativeSkip(event, entry, stage)
+		if event != nil {
+			event.SetStatusCode(http.StatusOK)
+		}
+		return &Result{StatusCode: http.StatusOK}, nil
+	}
+
 	start := time.Now()
 	res, err := entry.plugin.Execute(ctx, ExecInput{
 		Stage:    stage,
@@ -468,6 +485,16 @@ func (e *executor) runOne(
 		Response: resp,
 		Event:    event,
 	})
+
+	if err == nil && req.IsBedrockNative() && !Blocks(entry.mode) {
+		res = withoutRewrites(res)
+	}
+	if err == nil {
+		err = nativeRewriteVerdict(stage, req, resp, entry, res)
+		if err != nil {
+			res = nil
+		}
+	}
 
 	if err != nil {
 		if _, ok := AsPluginError(err); !ok && !Blocks(entry.mode) && ctx.Err() == nil {
@@ -514,6 +541,61 @@ func (e *executor) runOne(
 			slog.String("error", err.Error()))
 	}
 	return res, err
+}
+
+func skipsNative(req *infracontext.RequestContext, entry chainEntry) bool {
+	return req.IsBedrockNative() && BedrockNativeOf(entry.plugin) == BedrockNativeSkips
+}
+
+// nativeRewriteVerdict is the one place a native call's rewrites are classified.
+func nativeRewriteVerdict(
+	stage policy.Stage,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	entry chainEntry,
+	res *Result,
+) error {
+	if !req.IsBedrockNative() || res == nil || !Blocks(entry.mode) || !rewritesNativeBytes(stage, req, resp, res) {
+		return nil
+	}
+	if BedrockNativeOf(entry.plugin) != BedrockNativeMasks {
+		return NativeRewriteRefusal(entry.plugin.Name(), stage)
+	}
+	req.NativeMask.Add(infracontext.NativeMaskSource{
+		Plugin:    entry.plugin.Name(),
+		Stage:     stage,
+		OnFailure: MaskFailureOf(entry.config.Settings),
+	})
+	return nil
+}
+
+// withoutRewrites is the result of an entry that does not enforce, on a native
+// call: observe reports what it would do and never does it, so its rewrite of the
+// body and its short circuit are dropped here, where the mode is known, before the
+// results are applied. Translated calls are left to their plugins, which already
+// gate observe themselves; the result is copied, never edited in place.
+func withoutRewrites(res *Result) *Result {
+	if res == nil || (res.RequestBody == nil && !res.StopUpstream && res.Body == nil) {
+		return res
+	}
+	clone := *res
+	clone.RequestBody, clone.StopUpstream, clone.Body = nil, false, nil
+	return &clone
+}
+
+func rewritesNativeBytes(stage policy.Stage, req *infracontext.RequestContext, resp *infracontext.ResponseContext, res *Result) bool {
+	switch stage {
+	case policy.StagePreRequest:
+		return res.RequestBody != nil && !bytes.Equal(res.RequestBody, req.Body)
+	case policy.StagePreResponse:
+		// A rewrite keeps the status of what it rewrites (a mask of an AWS error
+		// answers with that error's status), or is a 2xx short circuit. Any other
+		// status is a policy answering for the upstream, which the forwarder refuses.
+		ok := res.StatusCode == 0 || (res.StatusCode >= http.StatusOK && res.StatusCode < http.StatusMultipleChoices) ||
+			(resp != nil && res.StatusCode == resp.StatusCode)
+		return res.StopUpstream && ok && res.Body != nil && (resp == nil || !bytes.Equal(res.Body, resp.Body))
+	}
+	return false
 }
 
 func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScope {

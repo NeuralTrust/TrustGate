@@ -17,6 +17,7 @@ package providers
 import (
 	"context"
 	"iter"
+	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
@@ -115,4 +116,36 @@ type EmbeddingsClient interface {
 
 type RerankClient interface {
 	Rerank(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
+}
+
+// NativeBedrockRequest is a Bedrock Runtime call relayed exactly as the client
+// made it. Path and RawPath are the decoded and escaped forms of the upstream
+// path; Headers are the client's, filtered by the client before anything is
+// forwarded.
+type NativeBedrockRequest struct {
+	Path    string
+	RawPath string
+	Stream  bool
+	Body    []byte
+	Headers http.Header
+	// MaxResponseBytes bounds a buffered answer; zero is the provider's default.
+	MaxResponseBytes int64
+}
+
+// NativeBedrockResponse is what Bedrock answered, unmodified. Body is set for a
+// buffered call and for any non-2xx answer. Frames is set only for a 2xx stream
+// and yields each raw eventstream frame; the consumer must drain it, which
+// closes the upstream body.
+type NativeBedrockResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+	Frames     iter.Seq2[[]byte, error]
+}
+
+// NativeBedrockClient relays a Bedrock Runtime request without translating it.
+//
+//go:generate mockery --name=NativeBedrockClient --dir=. --output=./mocks --filename=native_bedrock_client_mock.go --case=underscore --with-expecter
+type NativeBedrockClient interface {
+	InvokeNative(ctx context.Context, config *Config, req NativeBedrockRequest) (*NativeBedrockResponse, error)
 }

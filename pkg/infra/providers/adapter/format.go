@@ -165,7 +165,7 @@ func (f Format) IsOpenAIFamily() bool {
 // leaves it to the format.
 func IsChatRequest(capability string, f Format) bool {
 	if capability != "" {
-		return capability == providers.CapabilityChat
+		return capability == providers.CapabilityChat || capability == providers.CapabilityBedrockNative
 	}
 	switch f {
 	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
@@ -178,7 +178,7 @@ func IsChatRequest(capability string, f Format) bool {
 
 func SupportedSourceFormat(f Format) bool {
 	switch f {
-	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
+	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini, FormatBedrock, FormatBedrockNative,
 		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
 		FormatCohere, FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
 		FormatCohereEmbed, FormatCohereRerank,

@@ -16,10 +16,14 @@ package context
 
 import (
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -50,6 +54,83 @@ type RoutingDecision struct {
 	TierApplied bool
 }
 
+// BedrockNativeTarget is the Bedrock Runtime operation and model a native
+// request addressed in its path.
+type BedrockNativeTarget struct {
+	Op         bedrocknative.Op
+	ModelID    string
+	RawModelID string
+}
+
+// IsStream reports whether the operation answers with an event stream.
+func (t *BedrockNativeTarget) IsStream() bool {
+	return t != nil && t.Op.IsStream()
+}
+
+// NativeMaskSource is a policy whose change to a native Bedrock call is a mask:
+// the plugin declared it masks text, and the change is carried onto the bytes the
+// client sent. OnFailure is what the policy asks for when that cannot be done.
+type NativeMaskSource struct {
+	Plugin    string
+	Stage     policy.Stage
+	OnFailure MaskFailure
+}
+
+// MaskFailure is what a masking policy asks for when its mask cannot be carried
+// onto the bytes of a native call.
+type MaskFailure string
+
+const (
+	// MaskFailurePass lets the call through unmasked and records it as failed open.
+	MaskFailurePass MaskFailure = "pass"
+	// MaskFailureBlock refuses the call.
+	MaskFailureBlock MaskFailure = "block"
+)
+
+// NativeMaskLog collects the masks the plugins of a native call made, per stage.
+// A request context is copied for parallel plugins and the log is shared by every
+// copy, so it is safe for concurrent use.
+type NativeMaskLog struct {
+	mu      sync.Mutex
+	sources []NativeMaskSource
+}
+
+// Add records a mask.
+func (l *NativeMaskLog) Add(s NativeMaskSource) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.sources = append(l.sources, s)
+	l.mu.Unlock()
+}
+
+// Reset forgets the masks recorded for a stage.
+func (l *NativeMaskLog) Reset(stage policy.Stage) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sources = slices.DeleteFunc(l.sources, func(s NativeMaskSource) bool { return s.Stage == stage })
+}
+
+// Sources returns the masks recorded for a stage.
+func (l *NativeMaskLog) Sources(stage policy.Stage) []NativeMaskSource {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []NativeMaskSource
+	for _, s := range l.sources {
+		if s.Stage == stage {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 type RequestContext struct {
 	GatewayID          string
 	ConsumerID         string
@@ -74,10 +155,20 @@ type RequestContext struct {
 	SourceFormat       string
 	TargetFormat       string
 	ProxyCapability    string
-	AllowedModels      []string
-	DefaultModel       string
-	RequestedModel     string
-	RoutingDecision    *RoutingDecision
+	// BedrockNative is set when the client called a Bedrock Runtime operation
+	// directly; the body is then relayed to Bedrock as received.
+	BedrockNative *BedrockNativeTarget
+	// NativeMask records the masks plugins made on a native call. The forwarder
+	// sets it before the first stage; it is nil on every other request.
+	NativeMask *NativeMaskLog
+	// ResolvedModel is the model behind an identifier that names it only
+	// indirectly, such as an application inference profile ARN, once known. It
+	// is for pricing and the span; RequestedModel keeps what the client sent.
+	ResolvedModel   string
+	AllowedModels   []string
+	DefaultModel    string
+	RequestedModel  string
+	RoutingDecision *RoutingDecision
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool
@@ -125,3 +216,8 @@ func (r *RequestContext) HeaderValue(name string) string {
 	}
 	return ""
 }
+
+// IsBedrockNative reports whether the client called a Bedrock Runtime operation
+// directly. It is the one answer to that question: every place that treats a
+// native call differently asks here.
+func (r *RequestContext) IsBedrockNative() bool { return r != nil && r.BedrockNative != nil }

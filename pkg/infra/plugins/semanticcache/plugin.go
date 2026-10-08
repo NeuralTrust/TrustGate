@@ -116,6 +116,28 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return true }
 
+// BedrockNativeSkipExtras keeps the span of a skipped call in the shape the console
+// renders for the cache: never a hit, the threshold, scope and mode, with the skip
+// reason beside them.
+func (p *Plugin) BedrockNativeSkipExtras(settings map[string]any, stage string) any {
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return nil
+	}
+	return SemanticCacheData{
+		Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode(),
+		SkipReason: appplugins.BedrockNativePassthrough, Skipped: true, Stage: stage,
+	}
+}
+
+// NativeBedrock: a hit would answer a native Bedrock call with a stored body the
+// gateway cannot show to be a valid Bedrock response, and a store would key on a
+// model-native body, so the cache is skipped on a native call (see
+// appplugins.BedrockNativeAware).
+func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeSkips
+}
+
 // ReadsContent opts into being sequenced after any same-priority rewriter at
 // pre_request, where it only reads the prompt to key its cache lookup, so the
 // lookup key matches the one post_response stores under (the rewritten body).

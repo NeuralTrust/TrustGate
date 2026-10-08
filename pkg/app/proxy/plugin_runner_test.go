@@ -70,6 +70,14 @@ func (s *stubPlugin) Execute(_ context.Context, in appplugins.ExecInput) (*apppl
 	return s.result, s.err
 }
 
+// maskStubPlugin is a stubPlugin that declares it masks text, as the real masking
+// plugins do.
+type maskStubPlugin struct{ *stubPlugin }
+
+func (maskStubPlugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeMasks
+}
+
 func forwarderWithPlugin(
 	t *testing.T,
 	invoker appproxy.ProviderInvoker,
