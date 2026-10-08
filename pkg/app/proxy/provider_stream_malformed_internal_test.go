@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -22,6 +23,30 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestAdaptStream_GenuineInvalidEventTypeAfterFinishRemainsAnError(t *testing.T) {
+	for _, target := range []adapter.Format{adapter.FormatOpenAI, adapter.FormatOpenRouter} {
+		for _, source := range []adapter.Format{adapter.FormatAnthropic, adapter.FormatOpenAIResponses, adapter.FormatCohere, adapter.FormatGemini} {
+			t.Run(string(source)+"<-"+string(target), func(t *testing.T) {
+				upstream := linesSeq(
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+					`data: {"error":{"type":"invalid_stream_event","message":"provider failed"}}`,
+					`data: [DONE]`,
+				)
+				lines, err := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), source, target, slog.New(slog.DiscardHandler), nil))
+				assert.Error(t, err)
+				_, notified := errors.AsType[*ClientNotifiedStreamError](err)
+				assert.True(t, notified)
+				if source == adapter.FormatCohere {
+					joined := strings.Join(lines, "\n")
+					assert.Contains(t, joined, `"finish_reason":"ERROR"`)
+					assert.NotContains(t, joined, `"finish_reason":"COMPLETE"`)
+				}
+			})
+		}
+	}
+}
 
 func TestAdaptStream_MalformedKnownEventSkippedForNonChatClients(t *testing.T) {
 	upstreams := []struct {
