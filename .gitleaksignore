@@ -4,3 +4,10 @@
 354c4fffbfee19851254dffc7677725fc42add4d:pkg/container/di_smoke_test.go:generic-api-key:96
 # settings_test.go case-variant masking fixture "sk-live-0123456789" (generic-api-key).
 ea2ad861a86b5318a8dd4cb00429c3a21769bd51:pkg/common/secret/settings_test.go:generic-api-key:257
+# Registry header fixtures "key-123456789" on branch fix/run-1801-gateway-scoping (generic-api-key); CI scans every ref.
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/api/handler/http/registry/response/registry_response_test.go:generic-api-key:109
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/app/registry/updater_test.go:generic-api-key:656
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/app/registry/updater_test.go:generic-api-key:679
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:27
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:47
+0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:78
