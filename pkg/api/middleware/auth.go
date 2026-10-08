@@ -155,8 +155,14 @@ func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, rou
 		return internalError(c, "failed to resolve api key")
 	}
 	c.Locals(resolver.ProxyRouteLocalsKey, route)
+	principal := &identity.Principal{Subject: key.OwnerID, Method: identity.MethodAPIKey}
+	if key.OwnerEmail != "" {
+		// The owner's email, so the key's calls are shown under the person
+		// who made them and not under their user id.
+		principal.Claims = map[string]any{identity.ClaimEmail: key.OwnerEmail}
+	}
 	m.attach(c, &appauth.AuthContext{
-		Principal:   &identity.Principal{Subject: key.OwnerID, Method: identity.MethodAPIKey},
+		Principal:   principal,
 		Method:      appauth.MethodAPIKey,
 		GatewayID:   gw.ID,
 		GatewaySlug: gw.Slug,

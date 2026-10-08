@@ -983,6 +983,22 @@ func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T)
 	}
 }
 
+// A model call made with a personal key is shown under its owner's email, as
+// a Store session is.
+func TestAuthMiddleware_StoreCarriesTheOwnersEmail(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.finder.keys["ag_alice"].OwnerEmail = "alice@acme.test"
+	app := f.app(func(c *fiber.Ctx) error {
+		p := identity.PrincipalFromContext(c.UserContext())
+		require.Equal(t, "alice", p.Subject)
+		require.Equal(t, "alice@acme.test", p.Email())
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusNoContent, status)
+}
+
 func TestAuthMiddleware_StoreCarriesACopyOfTheKeyBudget(t *testing.T) {
 	t.Parallel()
 	f := newStoreFixture(t)

@@ -41,8 +41,9 @@ type PersonalKeyIssuer interface {
 	// Get is the owner's key, or domain.ErrNotFound.
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
 	// Create issues the owner's key for as long as a personal key may live,
-	// with groups as its owner groups. The secret is on the returned key, once.
-	Create(ctx context.Context, gatewayID ids.GatewayID, ownerID string, groups []string) (*PersonalKey, error)
+	// with their email and groups as its owner's. The secret is on the
+	// returned key, once.
+	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, groups []string) (*PersonalKey, error)
 	// Rotate replaces the secret, keeping the key's id and links. An expired
 	// key is given a new full lifetime with it; otherwise its expiry stays.
 	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
@@ -130,12 +131,20 @@ func (i *personalKeyIssuer) Get(ctx context.Context, gatewayID ids.GatewayID, ow
 	return i.keys.Get(ctx, gatewayID, ownerID)
 }
 
-func (i *personalKeyIssuer) Create(ctx context.Context, gatewayID ids.GatewayID, ownerID string, groups []string) (*PersonalKey, error) {
-	key, err := i.keys.Create(ctx, gatewayID, ownerID, i.fullLifetime())
+func (i *personalKeyIssuer) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, groups []string) (*PersonalKey, error) {
+	// An address the sign-in carried that is not one costs the key its email,
+	// not the key: the console's reconcile records the right one.
+	email, err := domain.NormalizeOwnerEmail(owner.Email)
+	if err != nil {
+		i.logger.WarnContext(ctx, "personal key: owner email is not an address, issued without it",
+			slog.String("gateway_id", gatewayID.String()))
+	}
+	owner.Email = email
+	key, err := i.keys.Create(ctx, gatewayID, owner, i.fullLifetime())
 	if err != nil {
 		return nil, err
 	}
-	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyCreated, GatewayID: gatewayID, OwnerID: ownerID, AuthID: key.Auth.ID, ExpiresAt: key.Auth.ExpiresAt})
+	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyCreated, GatewayID: gatewayID, OwnerID: owner.ID, AuthID: key.Auth.ID, ExpiresAt: key.Auth.ExpiresAt})
 	normalized, err := domain.NormalizeOwnerGroups(groups)
 	if err != nil || len(normalized) == 0 || i.groups == nil {
 		return key, nil

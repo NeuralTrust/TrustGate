@@ -1109,7 +1109,7 @@
         },
         "/v1/gateways/{gateway_id}/auths/{id}/groups": {
             "put": {
-                "description": "Records the directory groups of a personal (owned) key's owner. The body is {\"groups\": [\"<group>\", ...]}; an empty list clears them. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "description": "Records the directory groups of a personal (owned) key's owner. The body is {\"groups\": [\"<group>\", ...], \"email\": \"<owner email>\"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
                 "tags": [
                     "auths"
                 ],
@@ -5415,7 +5415,7 @@
                 ]
             },
             "post": {
-                "description": "Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored.",
+                "description": "Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored. The key records the email the caller's token carries, which every call it makes is shown under.",
                 "tags": [
                     "store"
                 ],
@@ -7560,6 +7560,10 @@
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest": {
                 "type": "object",
                 "properties": {
+                    "email": {
+                        "type": "string",
+                        "example": "alice@example.com"
+                    },
                     "groups": {
                         "type": "array",
                         "items": {
@@ -7659,6 +7663,10 @@
                         "type": "string"
                     },
                     "name": {
+                        "type": "string"
+                    },
+                    "owner_email": {
+                        "description": "OwnerEmail is the email of a personal key's owner, which the key's calls\nare shown under. Absent means none was recorded.",
                         "type": "string"
                     },
                     "owner_groups": {

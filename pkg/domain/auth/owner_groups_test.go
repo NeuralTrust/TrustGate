@@ -67,3 +67,34 @@ func TestNormalizeOwnerGroups_RefusesPastTheBounds(t *testing.T) {
 		t.Errorf("at the bound: %v", err)
 	}
 }
+
+func TestNormalizeOwnerEmail(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{" ada@acme.test ", "ada@acme.test", true},
+		{"", "", true},
+		{"not-an-email", "", false},
+		{"@acme.test", "", false},
+		{"ada@", "", false},
+		{"ada lovelace@acme.test", "", false},
+		{strings.Repeat("a", 320) + "@acme.test", "", false},
+	} {
+		got, err := NormalizeOwnerEmail(tc.in)
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Fatalf("NormalizeOwnerEmail(%q) = %q, %v", tc.in, got, err)
+		}
+	}
+}
+
+func TestSetOwnerEmail_OnlyOnAPersonalKey(t *testing.T) {
+	app := &Auth{}
+	if err := app.SetOwnerEmail("ada@acme.test", time.Now()); err != ErrApplicationKey {
+		t.Fatalf("err = %v, want ErrApplicationKey", err)
+	}
+	owned := &Auth{OwnerID: "ada"}
+	if err := owned.SetOwnerEmail("ada@acme.test", time.Now()); err != nil || owned.OwnerEmail != "ada@acme.test" {
+		t.Fatalf("owned = %+v, %v", owned, err)
+	}
+}

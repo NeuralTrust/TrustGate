@@ -322,6 +322,24 @@ func userToken(t *testing.T, tenantID, userID string) string {
 	return token
 }
 
+// userTokenWithEmail is userToken carrying the user's email, as the console's
+// tokens do.
+func userTokenWithEmail(t *testing.T, tenantID, userID, email string) string {
+	t.Helper()
+	now := time.Now()
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, &jwt.Claims{
+		TenantID:  tenantID,
+		UserID:    userID,
+		UserEmail: email,
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			IssuedAt:  golangjwt.NewNumericDate(now),
+			ExpiresAt: golangjwt.NewNumericDate(now.Add(time.Hour)),
+		},
+	}).SignedString([]byte(GlobalConfig.Server.SecretKey))
+	require.NoError(t, err)
+	return token
+}
+
 func llmKeyRequest(t *testing.T, method, gatewayID, token, suffix string, body any) (int, map[string]any) {
 	t.Helper()
 	url := fmt.Sprintf("%s/v1/gateways/%s/store/principal/llm-key%s", AdminURL, gatewayID, suffix)
