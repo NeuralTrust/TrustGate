@@ -332,6 +332,18 @@ func spanDecisions(t *testing.T, g *streamGuard) []string {
 // the head: the closing segment is published whether or not a status was sent.
 func spanDecisionsAnyOutcome(t *testing.T, g *streamGuard) (*appplugins.PluginError, []string) {
 	t.Helper()
+	pe, spans := moderationSpansAnyOutcome(t, g)
+	var decisions []string
+	for _, span := range spans {
+		decisions = append(decisions, span.Plugin.Decision)
+	}
+	return pe, decisions
+}
+
+// moderationSpansAnyOutcome is spanDecisionsAnyOutcome returning the spans, for a
+// case that reads what the closing write put in their extras.
+func moderationSpansAnyOutcome(t *testing.T, g *streamGuard) (*appplugins.PluginError, []*trace.Span) {
+	t.Helper()
 	rt := trace.New("t", trace.Metadata{})
 	ctx, publish := appplugins.NewStreamSpanContext(trace.NewContext(context.Background(), rt))
 	out, pe := g.Run(ctx, invariantSource(t, g, textStreamLines("first block of text ", "second block of text ", "third block of text"), nil))
@@ -340,13 +352,13 @@ func spanDecisionsAnyOutcome(t *testing.T, g *streamGuard) (*appplugins.PluginEr
 		require.NoError(t, err)
 	}
 	publish()
-	var decisions []string
+	var spans []*trace.Span
 	for _, span := range rt.Spans() {
 		if span.Name == openaimoderation.PluginName {
-			decisions = append(decisions, span.Plugin.Decision)
+			spans = append(spans, span)
 		}
 	}
-	return pe, decisions
+	return pe, spans
 }
 
 // The span of the policy records failed_open when a block went uninspected, in
@@ -451,28 +463,39 @@ func TestStreamGuard_GuardrailCancellationIsNotAFailure(t *testing.T) {
 	}
 }
 
-// A fail_closed cut is a cut: the failing policy's span says blocked, not
-// failed_open, whether the client got a 403 at the head or a terminator later.
-func TestStreamGuard_GuardrailFailClosedCutIsLabelledBlocked(t *testing.T) {
+// A fail_closed cut is a cut, but the guardrail never gave a verdict: the
+// failing policy's span says failed_closed (RUN-1710), with the reason of the
+// failure, whether the client got a 403 at the head or a terminator later. It is
+// never failed_open for a request the client was refused, and never blocked.
+func TestStreamGuard_GuardrailFailClosedCutIsLabelledFailedClosed(t *testing.T) {
 	t.Parallel()
 	closed := map[string]any{"on_error": "fail_closed"}
-	t.Run("head 403", func(t *testing.T) {
-		t.Parallel()
-		srv, _ := moderationStub(t, provError)
-		g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, closed))
-		pe, decisions := spanDecisionsAnyOutcome(t, g)
-		require.NotNil(t, pe)
-		assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-		assert.Equal(t, []string{"block"}, decisions)
-	})
-	t.Run("cut after the head", func(t *testing.T) {
-		t.Parallel()
-		srv, _ := moderationStub(t, provOK, provError)
-		g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, closed))
-		pe, decisions := spanDecisionsAnyOutcome(t, g)
-		require.Nil(t, pe)
-		assert.Equal(t, []string{"block"}, decisions)
-	})
+	for name, tc := range map[string]struct {
+		script   []string
+		wantHead bool
+	}{
+		"head 403":           {[]string{provError}, true},
+		"cut after the head": {[]string{provOK, provError}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv, _ := moderationStub(t, tc.script...)
+			g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, closed))
+			pe, spans := moderationSpansAnyOutcome(t, g)
+			if tc.wantHead {
+				require.NotNil(t, pe)
+				assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+			} else {
+				require.Nil(t, pe)
+			}
+			require.Len(t, spans, 1)
+			assert.Equal(t, "failed_closed", spans[0].Plugin.Decision)
+			data, ok := spans[0].Plugin.Extras.(openaimoderation.ModerationData)
+			require.True(t, ok)
+			assert.Equal(t, "failed_closed", data.Decision)
+			assert.Equal(t, string(appplugins.FailureTransport), data.FailureReason)
+		})
+	}
 }
 
 // One policy asked for fail_closed; another, on its default, has an outage. The

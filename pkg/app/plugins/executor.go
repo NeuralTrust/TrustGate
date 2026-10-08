@@ -205,13 +205,19 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		}
 		if err != nil {
 			event.SetError(err)
-			if seg.Closing {
-				continue
-			}
 			// The caller's own cancellation (a client that left, a deadline
 			// unwinding the stream) is not this entry failing, as on the
 			// buffered path: it is neither counted nor labelled failed_open.
 			cancelled := ctx.Err() != nil
+			if seg.Closing {
+				if !cancelled {
+					spans.closingFailure(event, spanKey(seg, entry), err, call.Report, !Blocks(entry.mode) || entryFailsOpen(inspector, entry))
+				}
+				continue
+			}
+			if !cancelled {
+				spans.noteFailure(spanKey(seg, entry), err)
+			}
 			// Observe never blocks, and streaming.on_error is the stream's
 			// answer for entries that can: an observe entry that could not
 			// inspect a segment records that it failed open and lets the

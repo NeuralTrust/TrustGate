@@ -526,3 +526,46 @@ func TestStreamSettingsAbsentKeyIsOffAndUnparsedOptInStaysOff(t *testing.T) {
 	on, _ = p.StreamSettings(streamSettings(map[string]any{"enabled": nil, "head_chars": 100}))
 	assert.False(t, on)
 }
+
+// RUN-1710: the closing write carries the first failed block's reason whatever
+// the decision settled on, and a cut that resolved this entry's failed call as
+// fail_closed is failed_closed, not blocked.
+func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
+	t.Parallel()
+	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
+		r.FailedEvals = 1
+		r.FailureReason = appplugins.FailureTransport
+		r.FailureDetail = "throttled"
+		return r
+	}
+	cases := []struct {
+		name         string
+		report       appplugins.StreamReport
+		wantDecision string
+		wantReason   string
+		wantDetail   string
+	}{
+		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", "throttled"},
+		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "transport", "throttled"},
+		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", "throttled"},
+		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := streamPlugin(t, allowing())
+			event, span := newEvent()
+
+			_, err := p.InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), event),
+				appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: tc.report})
+
+			require.NoError(t, err)
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantDecision, data.Decision)
+			assert.Equal(t, tc.wantReason, data.FailureReason)
+			assert.Equal(t, tc.wantDetail, data.FailureDetail)
+		})
+	}
+}
