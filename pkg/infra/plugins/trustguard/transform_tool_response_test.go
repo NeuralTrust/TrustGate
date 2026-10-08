@@ -189,3 +189,25 @@ func TestResponseToolCallsWithLegacyInputEchoAreNotApplied(t *testing.T) {
 		})
 	}
 }
+
+func TestResponseToolCallEchoInAnotherOrderIsNotApplied(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi","tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_email","arguments":"{\"to\":\"` + toolResponseEmail + `\"}"}},{"id":"call_2","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"weather\"}"}}]},"finish_reason":"tool_calls"}]}`)
+	f := &fakeGuard{response: GuardResponse{
+		Status: statusTransform,
+		TransformedPayload: map[string]any{"messages": []any{map[string]any{"role": "assistant", "content": "hi", "tool_calls": []any{
+			map[string]any{"id": "call_2", "type": "function", "function": map[string]any{"name": "lookup", "arguments": `{"q":"weather"}`}},
+			map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"name": "send_email", "arguments": `{"to":"` + toolResponseMask + `"}`}},
+		}}}},
+	}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+	event, span := newEvent()
+	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), &infracontext.ResponseContext{StatusCode: 200, Body: body}, event))
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Nil(t, res.Body, "arguments echoed for another call must not be written onto this one")
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	assert.True(t, extras.FailedOpen)
+	assert.True(t, extras.Degraded)
+}
