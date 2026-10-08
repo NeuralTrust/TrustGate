@@ -288,8 +288,13 @@ func TestStreamGuard_HeadGate(t *testing.T) {
 				require.NotNil(t, pe)
 				require.Equal(t, http.StatusForbidden, pe.StatusCode)
 				require.Equal(t, tc.wantBodyIsSet, pe.Body != nil)
-				require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader],
-					"a head-gate refusal is a real 403, so the direction header is still a channel")
+				if pe.Type == streamUnverifiableType {
+					require.NotContains(t, pe.Headers, appplugins.BlockDirectionHeader,
+						"a guard that could not be consulted gave no verdict on the response")
+				} else {
+					require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader],
+						"a head-gate refusal is a real 403, so the direction header is still a channel")
+				}
 				require.Zero(t, g.releasedIdx, "a head-gate block must have written nothing")
 				drained, _ := collectGuardOutput(t, g, out)
 				require.Zero(t, g.releasedIdx, "draining the remainder must not release held events")
@@ -1012,7 +1017,9 @@ func TestStreamGuard_CutRegimeIsDecidedBySeq(t *testing.T) {
 			if tc.wantHead {
 				require.NotNil(t, pe)
 				require.Equal(t, http.StatusForbidden, pe.StatusCode)
-				require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader])
+				if pe.Type != streamUnverifiableType {
+					require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader])
+				}
 				require.Zero(t, g.releasedIdx, "a head-gate block writes nothing at all")
 				return
 			}

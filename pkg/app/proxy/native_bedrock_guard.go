@@ -54,11 +54,12 @@ func nativeModified(message string) *appplugins.PluginError {
 	}
 }
 
-func nativeShortCircuit(req *infracontext.RequestContext, short *ForwardResult) *ForwardResult {
+func nativeShortCircuit(req *infracontext.RequestContext, short *ForwardResult, stage policydomain.Stage) *ForwardResult {
 	if short == nil || !req.IsBedrockNative() || short.StatusCode >= http.StatusBadRequest {
 		return short
 	}
-	return pluginErrorResult(nativeModified(nativeShortCircuited))
+	return pluginErrorResult(appplugins.WithBlockDirection(
+		nativeModified(nativeShortCircuited), appplugins.BlockDirectionForStage(stage)))
 }
 
 func nativeResponseChanged(provider *ProviderResponse, plugin *infracontext.ResponseContext) bool {
