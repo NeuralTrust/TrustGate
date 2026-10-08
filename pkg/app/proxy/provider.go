@@ -279,7 +279,8 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req),
-		withStreamContext(ctx), withStreamCancel(cancel), withStreamIncludeUsage(openAIChatIncludesUsage(req.Body)))
+		withStreamContext(ctx), withStreamCancel(cancel), withStreamIncludeUsage(adapter.OpenAIChatIncludesUsage(req.Body)),
+		withStreamModel(prep.sentModel))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,

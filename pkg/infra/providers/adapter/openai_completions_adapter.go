@@ -23,6 +23,16 @@ import (
 	"strings"
 )
 
+// OpenAIChatIncludesUsage reports whether the Chat request explicitly asks for stream usage.
+func OpenAIChatIncludesUsage(body []byte) bool {
+	var request struct {
+		StreamOptions struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	return json.Unmarshal(body, &request) == nil && request.StreamOptions.IncludeUsage
+}
+
 type openaiRequest struct {
 	Model                string                 `json:"model,omitempty"`
 	Messages             []openaiMessage        `json:"messages"`
