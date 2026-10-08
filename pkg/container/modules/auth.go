@@ -15,16 +15,19 @@
 package modules
 
 import (
+	"fmt"
 	"log/slog"
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/console"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
@@ -35,7 +38,28 @@ func Auth(c *container.Container) error {
 	if err := provideAuthRepository(c); err != nil {
 		return err
 	}
-	return provideAuthServices(c)
+	if err := provideAuthServices(c); err != nil {
+		return err
+	}
+	return providePersonalKeyIssuer(c)
+}
+
+// providePersonalKeyIssuer is the full plane's: it writes the database. A data
+// plane with no database gets the config-sync client instead (ConfigSyncData).
+func providePersonalKeyIssuer(c *container.Container) error {
+	// It tells the console about every change when CONSOLE_EVENTS_URL is set,
+	// so the console audits it and links a new key to its models.
+	return c.Provide(func(cfg *config.Config, keys appauth.PersonalKeys, groups appauth.OwnerGroupsSetter, gateways gatewaydomain.Repository, logger *slog.Logger) (appauth.PersonalKeyIssuer, error) {
+		var opts []appauth.PersonalKeyIssuerOption
+		if endpoint := cfg.Server.ConsoleEventsURL; endpoint != "" {
+			events, err := console.NewPersonalKeyEvents(endpoint, cfg.Server.SecretKey, nil)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", commonerrors.ErrInvalidConfig, err)
+			}
+			opts = append(opts, appauth.WithPersonalKeyNotifier(events, gateways))
+		}
+		return appauth.NewPersonalKeyIssuer(keys, groups, logger, utcNow, opts...), nil
+	})
 }
 
 func provideAuthRepository(c *container.Container) error {

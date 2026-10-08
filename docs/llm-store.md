@@ -207,9 +207,9 @@ the OpenAI catalog, so `/store/v1/models` gains it.
 The same key opens its owner's MCP Store, `https://<gateway>.<MCP_BASE_DOMAIN>/store/mcp`,
 sent in any of the key headers above. It is the Store a signed-in session gets:
 what the owner installed, narrowed by the Store grants and access policies that
-name them or one of their groups, with the `trustgate_store_*`,
-`trustgate_list_tools` and `trustgate_connect_*` tools, and every call made
-with the owner's own upstream accounts.
+name them or one of their groups, with the `trustgate_store_*` and
+`trustgate_list_tools` tools, and every call made with the owner's own
+upstream accounts.
 
 - The principal is the key's owner (`subject` = `owner_id`), method
   `personal_key`, with the groups recorded by `PUT …/auths/{auth_id}/groups` as
@@ -219,11 +219,47 @@ with the owner's own upstream accounts.
   `/store/mcp`, answers 401 like an unknown key. A disabled or expired key, a key
   whose owner spells a subject only the gateway mints (`app:…`, `instance:…`),
   and a key sent to another gateway's host answer the same.
-- A connect link the Store hands out (a consent error, `trustgate_connect_*`)
-  connects the owner's account, as it does for a session.
+- A connect link the Store hands out (a consent error, or
+  `trustgate_store_install` called again for an installed server that is not
+  connected) connects the owner's account, as it does for a session. The Store
+  lists no `trustgate_connect_*` tool: installing is its one way in, and
+  `trustgate_list_tools` names it (`connect_tool`) with the server's `code`.
 - `GET /whoami` describes a personal key with `"key": {"personal": true, …}`
   and the Store on each plane, slug `store`: the MCP Store, and `/store/v1` when
   the gateway has an active personal consumer.
+
+### The personal key page
+
+A person can get the key from the Store itself, without the console:
+`trustgate_store_personal_key` returns a link to
+`/store/mcp/personal-key?ticket=…`, a page like the connect page where they
+create, rotate or revoke it, with what the Portal's Personal key offers (90 days,
+the secret shown once, the SDK / OpenAI / MCP usage). The key is never shown to
+the model.
+
+- **Who opens it.** The tool's caller is already signed in to the Store, so the
+  ticket (15 minutes) names them. The link went through a model, though, and
+  the page will show a secret, so the link alone opens nothing: the browser
+  signs in through the default identity provider (instant for a person signed
+  in to the console) and must come back as the ticket's owner on the same
+  gateway. Another account is told who it is signed in as. The return is a
+  one-time proof the token endpoint refuses (`BrowserSignIn`).
+- **The page.** A cookie per link binds the browser; every form carries a CSRF
+  token and a cross-site post is refused (`Sec-Fetch-Site`). Showing a secret,
+  or revoking, spends the link. Changes count against the Portal's budget, 10
+  an hour per person and gateway. Hybrid gateways have no personal keys.
+- **Writes.** The MCP plane has no database in production: it writes the key
+  through the control plane over config sync (`PersonalKeys` gRPC service,
+  scoped like the Store's installs). A new key gets the groups the browser's
+  sign-in carried as its owner groups.
+- **The console.** With `CONSOLE_EVENTS_URL` set, the control plane posts each
+  change to the console (`POST /api/internal/trustgate/personal-key-events`),
+  signed with `SERVER_SECRET_KEY` (the console's `AGENTGATEWAY_JWT_SECRET`):
+  `X-TrustGate-Timestamp` and `X-TrustGate-Signature: v1=hex(HMAC-SHA256(secret,
+  "trustgate.console-events.v1." + timestamp + "." + body))`. The console audits
+  it as the Portal does and reconciles the gateway, which links a new key to
+  its models. Unset, a new key opens the MCP Store at once and reaches its
+  models on the console's next reconcile.
 
 ## Errors
 
@@ -357,6 +393,7 @@ the first personal consumer exists.
 | k | `POST …/auths/{auth_id}/rotate` writes the new secret only while the stored one is the secret it read: of two rotations of the same key racing each other, the second answers 409 `conflict` and changes nothing. | Both answered 200; the secret the first one returned was already dead. |
 | l | The LLM Store migrations wait at most 5 s for a table lock (`lock_timeout`); one that cannot get it fails and the rollout retries it, instead of queueing every later read and write on `consumers`, `auths` or `consumer_auth` behind it. | — |
 | m | `auths` gains a nullable `owner_groups` column and `PUT …/auths/{auth_id}/groups` is new. A personal key is accepted on `/store/mcp` as its owner, and `whoami` describes one (`key.personal`) instead of refusing it. Application keys and every other MCP path are unchanged. | A personal key answered 401 on every MCP path and on `whoami`. |
+| n | The MCP Store offers `trustgate_store_personal_key` and serves `/store/mcp/personal-key` (and `/return`) where a key can be issued. The config-sync listener gains the `PersonalKeys` service; `CONSOLE_EVENTS_URL` is new and optional. Deploy the control plane first: against an older one a DB-less data plane's page answers 500, since the control plane does not know the `PersonalKeys` service yet. | — |
 
 Roll back (a) by reverting it; the rest needs no action.
 

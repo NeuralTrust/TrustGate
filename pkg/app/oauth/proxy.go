@@ -347,6 +347,9 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	if err := checkTokenGateway(verified, token, effectiveGatewayID); err != nil {
 		return "", err
 	}
+	if pending.BrowserSignIn {
+		return p.finishBrowserSignIn(ctx, pending, auth, verified, token, effectiveGatewayID.String())
+	}
 
 	gwCode, err := randomToken()
 	if err != nil {
@@ -739,6 +742,11 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		return nil, fmt.Errorf("oauth: load code grant: %w", err)
 	}
 	if grant == nil {
+		return nil, oauthErr("invalid_grant", "unknown, expired or already used code")
+	}
+	// A browser sign-in's proof says who someone is to one of the gateway's own
+	// pages. It is not a code, and nothing is minted from it.
+	if grant.BrowserSignIn {
 		return nil, oauthErr("invalid_grant", "unknown, expired or already used code")
 	}
 	if grant.RedirectURI != req.RedirectURI {
