@@ -395,6 +395,9 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(providePersonalKeyHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
 		return err
 	}
@@ -460,4 +463,21 @@ func provideEndUserConnectionsHandler(
 
 func utcNow() time.Time {
 	return time.Now().UTC()
+}
+
+type personalKeyHandlerParams struct {
+	dig.In
+	Pages  appoauth.PersonalKeyPages `optional:"true"`
+	Finder appgateway.Finder
+	Cfg    *config.Config
+}
+
+// providePersonalKeyHandler serves the MCP Store's personal key page where
+// the plane can issue keys; nil leaves the page unrouted.
+func providePersonalKeyHandler(p personalKeyHandlerParams) *oauthhttp.PersonalKeyHandler {
+	if p.Pages == nil {
+		return nil
+	}
+	gateways := resolver.NewGatewayResolver(p.Finder, p.Cfg.Server.MCPBaseDomain, p.Cfg.Server.MCPExtraBaseDomains...)
+	return oauthhttp.NewPersonalKeyHandler(p.Pages, gateways, oauthhttp.FlowCookies{AllowInsecure: p.Cfg.Server.OAuthInsecureCookies})
 }

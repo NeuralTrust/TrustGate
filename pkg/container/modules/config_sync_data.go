@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -92,6 +93,13 @@ func ConfigSyncData(c *container.Container) error {
 	// module serves directly on the full plane.
 	if err := c.Provide(func(client *configsyncgrpc.Client) appstore.RegistryEnsurer {
 		return configsyncgrpc.NewInstallationsClient(client.ClientConn())
+	}); err != nil {
+		return err
+	}
+	// The MCP Store's personal key page writes the key through the control
+	// plane too: this plane cannot write auths.
+	if err := c.Provide(func(client *configsyncgrpc.Client) appauth.PersonalKeyIssuer {
+		return configsyncgrpc.NewPersonalKeysClient(client.ClientConn())
 	}); err != nil {
 		return err
 	}

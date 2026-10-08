@@ -124,9 +124,9 @@ func TestChain_PersonalKeyIsRefused(t *testing.T) {
 		host *gatewaydomain.Gateway
 	}{
 		"on an application's MCP path": {key: personalKey(t, "alice"), path: "/acme/mcp"},
-		"expired":                       {key: expired, path: "/store/mcp"},
-		"disabled":                      {key: disabled, path: "/store/mcp"},
-		"owner in a gateway namespace":  {key: reserved, path: "/store/mcp"},
+		"expired":                      {key: expired, path: "/store/mcp"},
+		"disabled":                     {key: disabled, path: "/store/mcp"},
+		"owner in a gateway namespace": {key: reserved, path: "/store/mcp"},
 		"on another gateway's host": {
 			key: foreign, path: "/store/mcp",
 			host: &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "other"},

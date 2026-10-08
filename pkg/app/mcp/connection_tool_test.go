@@ -238,6 +238,24 @@ func TestConnectionToolCallWrapsTicketFailure(t *testing.T) {
 	require.ErrorIs(t, err, appmcp.ErrConnectionToolUnavailable)
 }
 
+// The Store connects a server through its install tool, so it lists no
+// connect tool, and a call to one is refused with the tool that does it.
+func TestConnectionToolIsNotOnTheStore(t *testing.T) {
+	t.Parallel()
+	gw := &recordingGateway{ticket: "t-1", statuses: []appoauth.ProviderStatus{{Provider: "app.linear/mcp", Registry: "Linear"}}}
+	tool, err := appmcp.NewConnectionTool(gw)
+	require.NoError(t, err)
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+
+	require.Empty(t, tool.Definitions(ctx, store))
+	_, err = tool.Call(ctx, store, "https://gw.example", "trustgate_connect_app_linear_mcp")
+	require.ErrorIs(t, err, appmcp.ErrConnectionToolUnavailable)
+	require.ErrorContains(t, err, appmcp.StoreInstallToolName)
+	require.Zero(t, gw.statusCalls)
+	require.Zero(t, gw.createCalls)
+}
+
 func marshalTool(t *testing.T, tool appmcp.Tool) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(tool)
