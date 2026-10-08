@@ -2438,6 +2438,11 @@ definitions:
         type: string
       registry_id:
         type: string
+      shared:
+        description: |-
+          Shared is an instance with one account for everyone, which only an
+          administrator connects and disconnects.
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalInstall:
     properties:
