@@ -25,17 +25,26 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// stubAuthProxy plays the brokered flow: Authorize redirects to the IdP with
-// the gateway state, Callback records what it was asked to redeem.
+// stubAuthProxy plays the brokered flow: Authorize parks an IdP leg under the
+// gateway state, Approve releases it, Callback records what it was asked to
+// redeem.
 type stubAuthProxy struct {
-	authorizeLocation string
-	authorizeErr      error
-	callbackState     string
-	callbackCalls     int
+	authorizeResult appoauth.AuthorizeResult
+	authorizeErr    error
+	callbackState   string
+	callbackCalls   int
 }
 
-func (s *stubAuthProxy) Authorize(context.Context, string, appoauth.AuthorizeRequest) (string, error) {
-	return s.authorizeLocation, s.authorizeErr
+func (s *stubAuthProxy) Authorize(context.Context, string, appoauth.AuthorizeRequest) (appoauth.AuthorizeResult, error) {
+	return s.authorizeResult, s.authorizeErr
+}
+
+func (s *stubAuthProxy) Approve(context.Context, string) (string, error) {
+	return s.authorizeResult.Location, nil
+}
+
+func (s *stubAuthProxy) Deny(context.Context, string) (string, error) {
+	return "", nil
 }
 
 func (s *stubAuthProxy) Callback(_ context.Context, _, state, _, _, _ string) (string, error) {
@@ -79,7 +88,10 @@ func authorizeReq(scheme string) *http.Request {
 
 func TestAuthorizeSetsBrowserBoundStateCookie(t *testing.T) {
 	t.Parallel()
-	proxy := &stubAuthProxy{authorizeLocation: "https://idp.example.com/authorize?client_id=trustgate&state=" + gatewayState}
+	proxy := &stubAuthProxy{authorizeResult: appoauth.AuthorizeResult{
+		Location:     "https://idp.example.com/authorize?client_id=trustgate&state=" + gatewayState,
+		ConsentState: gatewayState,
+	}}
 	app := newFlowApp(proxy)
 
 	t.Run("https uses a __Host- cookie", func(t *testing.T) {
@@ -132,7 +144,7 @@ func TestAuthorizeSetsBrowserBoundStateCookie(t *testing.T) {
 // state; that never comes back through the callback, so no binding is set.
 func TestAuthorizeErrorRedirectSetsNoStateCookie(t *testing.T) {
 	t.Parallel()
-	proxy := &stubAuthProxy{authorizeLocation: "https://client.example.com/cb?error=invalid_target&state=client-state"}
+	proxy := &stubAuthProxy{authorizeResult: appoauth.AuthorizeResult{Location: "https://client.example.com/cb?error=invalid_target&state=client-state"}}
 	res, err := newFlowApp(proxy).Test(authorizeReq("https"))
 	if err != nil {
 		t.Fatalf("request: %v", err)

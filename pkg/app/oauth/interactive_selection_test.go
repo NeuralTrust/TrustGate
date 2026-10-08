@@ -54,7 +54,7 @@ func TestAuthorizeSkipsValidationOnlyProviderWithSameIssuer(t *testing.T) {
 					paths.byPath["/consumer/mcp"] = []appconsumer.PathMatch{{GatewayID: interactive.GatewayID, Auths: auths}}
 				}
 				proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: auths}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
-				location, err := proxy.Authorize(t.Context(), "https://gateway.example", AuthorizeRequest{
+				location, err := authorizeLocation(proxy, t.Context(), "https://gateway.example", AuthorizeRequest{
 					ResponseType: "code", RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256", Resource: resource,
 				})
 				require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestAuthorizeRejectsValidationOnlyResource(t *testing.T) {
 	}}
 	store := newMemFlowStore()
 	proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: []*authdomain.Auth{validation}}, paths, http.DefaultClient, store, nil, nil, nil)
-	location, err := proxy.Authorize(t.Context(), "https://gateway.example", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, t.Context(), "https://gateway.example", AuthorizeRequest{
 		ResponseType: "code", RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256", Resource: "https://gateway.example/consumer/mcp",
 	})
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestCallbackRejectsProviderChangedToValidationOnly(t *testing.T) {
 	idp, captured := fakeIdP(t)
 	auth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idp.URL, ClientID: "interactive-client"})
 	proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: []*authdomain.Auth{auth}}, nil, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
-	location, err := proxy.Authorize(t.Context(), "https://gateway.example", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, t.Context(), "https://gateway.example", AuthorizeRequest{
 		ResponseType: "code", RedirectURI: "https://client.example/callback", CodeChallenge: s256("verifier"), CodeChallengeMethod: "S256",
 	})
 	require.NoError(t, err)

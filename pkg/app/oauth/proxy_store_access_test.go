@@ -255,7 +255,7 @@ func newDefaultIdPFixture(t *testing.T, idp *httptest.Server, issuer string, aud
 // login runs authorize + callback and returns the callback outcome.
 func (f *defaultIdPFixture) login(t *testing.T) (string, error) {
 	t.Helper()
-	loc, err := f.proxy.Authorize(f.ctx, "http://gw.example.com", AuthorizeRequest{
+	loc, err := authorizeLocation(f.proxy, f.ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "trustgate",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",

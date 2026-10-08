@@ -43,14 +43,19 @@ func (h *AuthorizeHandler) Handle(c *fiber.Ctx) error {
 		Resource:            c.Query("resource"),
 	}
 	ctx := resolver.WithResolvedGateway(c, h.gateways)
-	location, err := h.proxy.Authorize(ctx, c.BaseURL(), req)
+	res, err := h.proxy.Authorize(ctx, c.BaseURL(), req)
+	if err != nil {
+		return writeOAuthError(c, err)
+	}
+	if res.ConsentState == "" {
+		return c.Redirect(res.Location, fiber.StatusFound)
+	}
+	location, err := h.proxy.Approve(ctx, res.ConsentState)
 	if err != nil {
 		return writeOAuthError(c, err)
 	}
 	// Bind the IdP leg to this browser so the callback can refuse a state (and
 	// the code that comes with it) that was minted for someone else.
-	if state := gatewayStateOf(location, req.State); state != "" {
-		setStateCookie(c, state)
-	}
+	setStateCookie(c, res.ConsentState)
 	return c.Redirect(location, fiber.StatusFound)
 }
