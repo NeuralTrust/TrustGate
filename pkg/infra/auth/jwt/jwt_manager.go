@@ -15,12 +15,8 @@
 package jwt
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -32,9 +28,7 @@ var (
 	ErrExpiredToken = errors.New("expired token")
 )
 
-// defaultTokenTTL bounds the lifetime of tokens minted by CreateToken so a
-// self-issued token cannot live forever.
-const defaultTokenTTL = 24 * time.Hour
+const clockSkewLeeway = 30 * time.Second
 
 //go:generate mockery --name=Manager --dir=. --output=./mocks --filename=jwt_manager_mock.go --case=underscore --with-expecter
 type Manager interface {
@@ -86,7 +80,7 @@ func (m *manager) CreateToken() (string, error) {
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(defaultTokenTTL)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(m.maxTTL())),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -94,84 +88,45 @@ func (m *manager) CreateToken() (string, error) {
 }
 
 func (m *manager) ValidateToken(tokenString string) error {
-	// An empty signing key cannot authenticate anyone: a token signed with the
-	// empty key is trivially forgeable, so reject every token until a key is set.
-	if m.config.SecretKey == "" {
-		return ErrInvalidToken
-	}
-	parts := strings.Split(tokenString, ".")
-	if len(parts) != 3 {
-		return ErrInvalidToken
-	}
-
-	signingInput := parts[0] + "." + parts[1]
-	h := hmac.New(sha256.New, []byte(m.config.SecretKey))
-	h.Write([]byte(signingInput))
-	expectedSig := h.Sum(nil)
-
-	providedSig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return ErrInvalidToken
-	}
-
-	if !hmac.Equal(expectedSig, providedSig) {
-		return ErrInvalidToken
-	}
-
-	if exp, ok := m.extractExpiration(parts[1]); ok {
-		if time.Now().After(exp) {
-			return ErrExpiredToken
-		}
-	}
-
-	return nil
-}
-
-func (m *manager) extractExpiration(payloadB64 string) (time.Time, bool) {
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	var payload struct {
-		Exp *json.Number `json:"exp"`
-	}
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return time.Time{}, false
-	}
-
-	if payload.Exp == nil {
-		return time.Time{}, false
-	}
-
-	expInt, err := payload.Exp.Int64()
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	return time.Unix(expInt, 0), true
+	_, err := m.parse(tokenString)
+	return err
 }
 
 func (m *manager) DecodeToken(tokenString string) (*Claims, error) {
+	return m.parse(tokenString)
+}
+
+func (m *manager) parse(tokenString string) (*Claims, error) {
+	// An empty signing key cannot authenticate anyone: a token signed with the
+	// empty key is trivially forgeable, so reject every token until a key is set.
 	if m.config.SecretKey == "" {
 		return nil, ErrInvalidToken
 	}
-	token, err := jwt.ParseWithClaims(
+	claims := &Claims{}
+	_, err := jwt.ParseWithClaims(
 		tokenString,
-		&Claims{},
-		func(token *jwt.Token) (interface{}, error) {
-			return []byte(m.config.SecretKey), nil
-		},
-		jwt.WithoutClaimsValidation(),
+		claims,
+		func(*jwt.Token) (interface{}, error) { return []byte(m.config.SecretKey), nil },
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithLeeway(clockSkewLeeway),
 	)
+	if errors.Is(err, jwt.ErrTokenExpired) {
+		return nil, fmt.Errorf("%w: %v", ErrExpiredToken, err)
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok {
-		return nil, ErrInvalidToken
+	if time.Until(claims.ExpiresAt.Time) > m.maxTTL()+clockSkewLeeway {
+		return nil, fmt.Errorf("%w: exp exceeds the %s lifetime limit", ErrInvalidToken, m.maxTTL())
 	}
-
 	return claims, nil
+}
+
+func (m *manager) maxTTL() time.Duration {
+	if m.config.AdminTokenMaxTTL > 0 {
+		return m.config.AdminTokenMaxTTL
+	}
+	return config.DefaultAdminTokenMaxTTL
 }
