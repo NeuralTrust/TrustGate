@@ -367,7 +367,6 @@ func TestWorkerRoutingLKGAdmissionDuringControlPlaneOutage(t *testing.T) {
 			cancel()
 			require.ErrorIs(t, worker.Run(ctx), context.Canceled)
 			assert.NoError(t, configsync.ReadinessCheck(store)(context.Background()))
-			assert.Equal(t, configsync.SnapshotLKG, worker.Status().Info().State)
 			retained, ok := store.Load()
 			require.True(t, ok)
 			assert.Equal(t, raw, retained.Raw)

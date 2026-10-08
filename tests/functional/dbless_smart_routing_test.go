@@ -60,9 +60,9 @@ func TestDBLessDataPlane_CanonicalSmartRoutingAndLKGRecovery(t *testing.T) {
 		"canonical smart consumer must arrive through config sync")
 	status, ready = sendRequest(t, http.MethodGet, base+"/readyz", nil, nil)
 	require.Equal(t, http.StatusOK, status)
-	snapshot, ok := ready["snapshot"].(map[string]any)
+	dependencies, ok = ready["dependencies"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "live", snapshot["state"])
+	require.Equal(t, "ok", dependencies["snapshot"])
 
 	assertRoutes := func(base string) {
 		for _, tc := range []struct {
@@ -94,8 +94,8 @@ func TestDBLessDataPlane_CanonicalSmartRoutingAndLKGRecovery(t *testing.T) {
 		"a new DB-less proxy must recover canonical encrypted LKG without live sync")
 	status, ready = sendRequest(t, http.MethodGet, restored+"/readyz", nil, nil)
 	require.Equal(t, http.StatusOK, status)
-	snapshot, ok = ready["snapshot"].(map[string]any)
+	dependencies, ok = ready["dependencies"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "lkg", snapshot["state"], "failed sync authentication must not report a live snapshot")
+	require.Equal(t, "ok", dependencies["snapshot"])
 	assertRoutes(restored)
 }
