@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -118,7 +119,16 @@ type StreamReport struct {
 	// Like MaskedEvals only the executor knows it, so it is zero on the guard's
 	// chain-wide report and set per entry. DegradedReason cannot say this: it is
 	// one value for the whole chain, and a later size degrade overwrites it.
-	FailedEvals    int
+	FailedEvals int
+	// FailureReason and FailureDetail are the FIRST failure this entry had on
+	// the stream, as the typed error its plugin returned carried them
+	// (ExternalStreamFailure). Like FailedEvals only the executor knows them,
+	// per entry; they are empty for an entry that did not fail and for a
+	// failure whose error was not an ExternalStreamFailure. They are kept
+	// whatever the final decision was: a cut, a finding or a mask does not
+	// erase that an earlier block went uninspected.
+	FailureReason  FailureReason
+	FailureDetail  string
 	FinalPass      bool
 	DegradedReason string
 	FallbackReason string
@@ -275,6 +285,13 @@ type streamSpans struct {
 	// the guard's DegradedReason is one value for the whole chain: it is copied
 	// to every entry and the last degrade overwrites it.
 	failed map[string]int
+	// failureReason and failureDetail hold, per entry, what the first failure
+	// that carries a reason (a typed ExternalStreamFailure) said. Later ones
+	// never overwrite them: the first is the cause, and the ones behind it are
+	// usually the same outage repeating. A failure with no reason is not
+	// tracked, so a typed one behind it is the first recorded.
+	failureReason map[string]FailureReason
+	failureDetail map[string]string
 	// streak counts the consecutive absorbed failures of an entry and retired
 	// records the ones that reached streamEntryRetireAfter. A streak ends on a
 	// call that returns.
@@ -299,8 +316,11 @@ func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 		failedBy: make(map[string]string),
 		masked:   make(map[string]int),
 		failed:   make(map[string]int),
-		streak:   make(map[string]int),
-		retired:  make(map[string]bool),
+
+		failureReason: make(map[string]FailureReason),
+		failureDetail: make(map[string]string),
+		streak:        make(map[string]int),
+		retired:       make(map[string]bool),
 	}
 	rt := trace.FromContext(ctx)
 	if rt != nil {
@@ -363,6 +383,72 @@ func (s *streamSpans) fail(key string) (first, retiredNow bool) {
 		retiredNow = true
 	}
 	return s.failed[key] == 1, retiredNow
+}
+
+// noteFailure keeps the reason and detail of an entry's first typed failure
+// (the first failure that carries a reason) on the stream. An error that is not an ExternalStreamFailure (a plugin that
+// does not use the shared vocabulary) records nothing, and the error text is
+// never parsed to guess one.
+func (s *streamSpans) noteFailure(key string, err error) {
+	if s == nil {
+		return
+	}
+	var failure *ExternalStreamFailure
+	if !errors.As(err, &failure) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, seen := s.failureReason[key]; seen {
+		return
+	}
+	s.failureReason[key] = failure.Reason
+	s.failureDetail[key] = failure.Detail
+}
+
+// closingFailure gives an entry whose closing segment itself failed the
+// decision its plugin could not write, so the span does not end with none.
+// failsOpen is the entry's own answer (observe, or streaming.on_error
+// fail_open): it records failed_open. Otherwise the stream's on_error decided
+// for it, and the guard's answer is in the report it was handed: a cut it
+// resolved on this entry's failed call is failed_closed, anything else is a
+// release, so failed_open. The guard's on_error is not visible from here, so a
+// failure the report does not attribute to this entry is recorded failed_open
+// rather than guessed at.
+//
+// Precondition: this runs only when the plugin's closing call returned an
+// error, which a plugin does before its one extras write. SetExtras replaces
+// and SetDecision overwrites, so writing over a plugin's own account would
+// destroy it: the extras write is skipped when the span already carries any.
+// The decision is still set, because an absorbed block failure may already have
+// recorded failed_open there and the closing answer supersedes it. When a typed
+// failure is known and no extras exist, its reason and detail are written as
+// the entry's extras, the only way the closing write that was owed them still
+// reaches the event.
+func (s *streamSpans) closingFailure(event *metrics.EventContext, key string, err error, report StreamReport, failsOpen bool) {
+	if event == nil {
+		return
+	}
+	decision := DecisionFailedOpen
+	if !failsOpen && report.CutOnFailure && report.FailedEvals > 0 {
+		decision = DecisionFailedClosed
+	}
+	SetDecisionFromOutcome(event, decision)
+	s.noteFailure(key, err)
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	reason, detail := s.failureReason[key], s.failureDetail[key]
+	s.mu.Unlock()
+	if reason == "" || event.HasExtras() {
+		return
+	}
+	extras := map[string]any{"decision": decision, "failure_reason": string(reason)}
+	if detail != "" {
+		extras["failure_detail"] = detail
+	}
+	event.SetExtras(extras)
 }
 
 // recovered ends an entry's streak: a call that returned.
@@ -525,6 +611,8 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	report.GuardLatency = s.spent[key]
 	report.MaskedEvals = s.masked[key]
 	report.FailedEvals = s.failed[key]
+	report.FailureReason = s.failureReason[key]
+	report.FailureDetail = s.failureDetail[key]
 	if s.retired[key] && report.FallbackReason == "" {
 		report.FallbackReason = StreamFallbackEntryRetired
 	}
@@ -537,6 +625,12 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	if (claimed && !claimedByEntry) || (!claimed && !Blocks(entry.mode)) {
 		report.CutAtEval = 0
 		report.CutOffsetChars = 0
+	}
+	// CutOnFailure travels with the cut: it says THIS entry's failed call was
+	// resolved as fail_closed, so an entry that did not author the cut (it
+	// masked, observed, or failed open earlier) must not read it as its own.
+	if report.CutAtEval == 0 {
+		report.CutOnFailure = false
 	}
 	return report
 }
