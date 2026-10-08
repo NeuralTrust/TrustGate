@@ -34,6 +34,9 @@ import (
 var (
 	ErrUnavailable          = errors.New("store: installer unavailable")
 	ErrCatalogEntryNotFound = errors.New("store: catalog entry not found")
+	// ErrNotInstalled: the principal holds no installed instance of the code
+	// (or of the instance named), or holds several and named none.
+	ErrNotInstalled = errors.New("store: not installed")
 	// ErrRoleNotAllowed is returned when a server is on the shelf but the
 	// principal's roles are not permitted to install it.
 	ErrRoleNotAllowed = errors.New("store: your role is not allowed to install this server")
@@ -122,6 +125,13 @@ type Installer interface {
 	// Instances returns the principal's active instances of a catalog code, so the
 	// caller can present a picker when an operation must target one of several.
 	Instances(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) ([]*installationdomain.Installation, error)
+	// Installed answers an install of a server the principal already has,
+	// without writing anything or deciding access again: the instance they
+	// hold, as an install result, so its connect link can be handed out. It is
+	// how an installed server gets connected where installing is not open to
+	// the principal (Store access None): connecting what they already have is
+	// not installing. ErrNotInstalled when there is no single such instance.
+	Installed(ctx context.Context, in InstallRequest) (*InstallResult, error)
 	// Uninstall removes an install. When instanceID is set it removes that one
 	// instance (which must belong to code); otherwise it removes the sole
 	// instance, or returns ErrAmbiguousInstance when the principal holds several
@@ -534,6 +544,57 @@ func loadGrantSet(ctx context.Context, reader storeaccessdomain.Reader, gatewayI
 
 // Instances returns the principal's active instances of a catalog code, oldest
 // first, for a disambiguation picker.
+func (i *installer) Installed(ctx context.Context, in InstallRequest) (*InstallResult, error) {
+	code := strings.TrimSpace(in.Code)
+	rows, err := i.Instances(ctx, in.GatewayID, in.PrincipalSub, code)
+	if err != nil {
+		return nil, err
+	}
+	var held *installationdomain.Installation
+	for _, row := range rows {
+		// A request is not an install: an approver has not said yes to it yet.
+		if row.Status != installationdomain.StatusInstalled {
+			continue
+		}
+		if !in.RegistryID.IsNil() && row.RegistryID != in.RegistryID {
+			continue
+		}
+		if held != nil {
+			return nil, ErrNotInstalled
+		}
+		held = row
+	}
+	if held == nil {
+		return nil, ErrNotInstalled
+	}
+	entry, ok, err := storeEntry(ctx, i.catalog, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
+	}
+	instances, err := findRegistriesByCode(ctx, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	// The instance the row is bound to, or the code's canonical one (the
+	// oldest), which is what an unbound install is served by.
+	bound := pickRegistry(instances, held.RegistryID)
+	if held.RegistryID.IsNil() && len(instances) > 0 {
+		bound = instances[0]
+	}
+	return &InstallResult{
+		Code:             code,
+		Name:             displayName(entry, code),
+		Status:           held.Status,
+		InstanceID:       held.ID.String(),
+		RegistryID:       held.RegistryID,
+		RequiresAuth:     requiresUserAuth(entry, bound),
+		AlreadyInstalled: true,
+	}, nil
+}
+
 func (i *installer) Instances(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
