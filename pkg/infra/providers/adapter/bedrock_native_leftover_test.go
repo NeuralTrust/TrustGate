@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -328,6 +329,25 @@ func TestNativeAdapter_DecodeRequest_Base64StringAndFLVPrefixStayText(t *testing
 	assert.NotContains(t, requestText(cr), blob[:100], "mediaSource blob")
 }
 
+// Identifier-like text whose first bytes decode to a valid-looking frame header
+// stays in the view, while real ADTS and MPEG audio frames are still media.
+func TestIsBinaryBlob_FrameSyncNeedsRealHeader(t *testing.T) {
+	t.Parallel()
+	for _, prefix := range []string{"__main__", "__name__", "__repr__"} {
+		s := prefix + strings.Repeat("a_b", 400)
+		require.GreaterOrEqual(t, len(s), 1024)
+		assert.False(t, isBinaryBlob(s), prefix)
+	}
+	frame := func(h ...byte) string {
+		raw := append(append([]byte{}, h...), bytes.Repeat([]byte{0x55, 0xAA, 0x33}, 600)...)
+		return base64.StdEncoding.EncodeToString(raw)
+	}
+	assert.True(t, isBinaryBlob(frame(0xFF, 0xF1, 0x50, 0x80, 0x02, 0x1F, 0xFC)), "adts")
+	assert.True(t, isBinaryBlob(frame(0xFF, 0xFB, 0x90, 0x64)), "mp3")
+	assert.False(t, isBinaryBlob(frame(0xFF, 0xFB, 0xF0, 0x64)), "mp3 bad bitrate")
+	assert.False(t, isBinaryBlob(frame(0xFF, 0xF1, 0x3C, 0x80)), "adts bad sample rate")
+}
+
 func TestNativeMasker_MaskRequest_HostileBodyStaysLinear(t *testing.T) {
 	requireLinear(t, 5_000, 5*time.Second, func(n int) {
 		body := hostileBody(t, 7*n, 8*n)
@@ -376,6 +396,9 @@ func TestHasS3Source(t *testing.T) {
 		"arguments object":           `{"input":[{"type":"function_call","name":"copy","arguments":{"src":{"s3Location":{"uri":"s3://a/b"}}}}]}`,
 		"root toolSpec":              `{"toolSpec":{"name":"c","inputSchema":{"json":{"s3Location":{"uri":"x"}}}}}`,
 		"root inputSchema":           `{"inputSchema":{"json":{"s3Location":{"uri":"x"}}}}`,
+		"cohere tool_results":        `{"tool_results":[{"call":{"name":"ls","parameters":{}},"outputs":[{"s3Location":{"uri":"s3://a/b"}}]}]}`,
+		"cohere tool_calls params":   `{"tool_calls":[{"name":"copy","parameters":{"src":{"s3Location":{"uri":"s3://a/b"}}}}]}`,
+		"server_tool_use input":      `{"messages":[{"role":"assistant","content":[{"type":"server_tool_use","id":"t1","name":"web","input":{"q":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
 		"toolUseId casing":           `{"messages":[{"role":"assistant","content":[{"ToolUseId":"t1","name":"copy","input":{"source":{"s3Location":{"uri":"s3://a/b"}}}}]}]}`,
 		"tool arg string form":       `{"messages":[{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"copy","input":{"source":{"s3Location":"s3://a/b"}}}}]}]}`,
 	} {
