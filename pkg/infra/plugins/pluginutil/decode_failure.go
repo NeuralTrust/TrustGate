@@ -73,6 +73,16 @@ func SkipWithoutCompletion(event *metrics.EventContext, stage string, resp *infr
 	return true
 }
 
+// skippedData is the extras of a leg the plugin ran on and did not inspect. The
+// keys match pertoolratelimit's and trustguard's skip marker, so the console
+// renders it without knowing which plugin wrote it. Without it the span is
+// dropped by the metrics builder as a no-op and the policy looks unattached.
+type skippedData struct {
+	Stage      string `json:"stage"`
+	Skipped    bool   `json:"skipped"`
+	SkipReason string `json:"skip_reason"`
+}
+
 // RecordSkipped marks, on the event's span, that a leg passed this policy
 // uninspected and why, in the shape the console renders for every plugin.
 func RecordSkipped(event *metrics.EventContext, stage, reason string) {

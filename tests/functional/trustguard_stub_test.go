@@ -280,6 +280,23 @@ func (s *trustGuardStub) GuardForTrace(traceID string) (trustGuardGuardCapture, 
 	return trustGuardGuardCapture{}, false
 }
 
+// FinalStreamGuardForTrace returns the capture of the final in-stream block for
+// the given trace id: the call that carried the whole streamed response.
+func (s *trustGuardStub) FinalStreamGuardForTrace(traceID string) (trustGuardGuardCapture, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.guardCaptures) - 1; i >= 0; i-- {
+		st := s.guardStreams[i]
+		if st.ID == "" || !st.Final {
+			continue
+		}
+		if i < len(s.guardTraceIDs) && s.guardTraceIDs[i] == traceID {
+			return s.guardCaptures[i], true
+		}
+	}
+	return trustGuardGuardCapture{}, false
+}
+
 func (s *trustGuardStub) Reset() {
 	atomic.StoreInt64(&s.tokenHits, 0)
 	atomic.StoreInt64(&s.guardHits, 0)

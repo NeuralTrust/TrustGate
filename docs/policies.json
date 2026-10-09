@@ -369,7 +369,7 @@
         {
           "slug": "regex_replace",
           "name": "Regex Replace",
-          "description": "Rewrite text with RE2 regular expressions on one leg: the request prompt or the LLM response. Rules apply in declaration order and chain, so each rule sees the previous rule's output. Response rewrites short-circuit later pre-response plugins, so order a response-side instance last in its chain. Streamed responses are rewritten block by block when the rule targets the response; set streaming.enabled to false to leave them unrewritten, in which case the trace marks the policy as skipped with reason streaming_disabled.",
+          "description": "Rewrite text with RE2 regular expressions on one leg: the request prompt or the LLM response. Rules apply in declaration order and chain, so each rule sees the previous rule's output. Response rewrites short-circuit later pre-response plugins, so order a response-side instance last in its chain. Whether a response streams is decided by the client request; a streamed response is always rewritten block by block when the rule targets the response, and this cannot be turned off.",
           "mandatory_stages": [],
           "supported_stages": [
             "pre_request",

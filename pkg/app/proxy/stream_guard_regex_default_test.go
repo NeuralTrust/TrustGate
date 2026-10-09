@@ -77,18 +77,19 @@ func TestStreamGuard_RegexWithNoStreamingKeyMasksASplitCard(t *testing.T) {
 	assert.False(t, g.stopped)
 }
 
-func TestStreamGuard_RegexExplicitlyDisabledLeavesTheStreamAlone(t *testing.T) {
+func TestStreamGuard_RegexStoredEnabledFalseStillMasks(t *testing.T) {
 	t.Parallel()
 	g := regexGuardFor(t, regexPolicy(regexSettings(`\d{16}`, "[CARD]",
 		map[string]any{"streaming": map[string]any{"enabled": false}})))
 
 	text := runRegexGuard(t, g, "the card is 4242424242", "424242 ok")
 
-	assert.Equal(t, "the card is 4242424242424242 ok", text)
+	assert.Equal(t, "the card is [CARD] ok", text)
+	assert.False(t, g.stopped)
 }
 
-// A request-only policy must not start inspecting responses because streaming
-// is now on when the key is absent.
+// A request-only policy must not start inspecting responses because every
+// response-side policy inspects a stream.
 func TestStreamGuard_RegexRequestOnlyPolicyLeavesTheResponseAlone(t *testing.T) {
 	t.Parallel()
 	set := regexSettings(`\d{16}`, "[CARD]", nil)
@@ -101,9 +102,9 @@ func TestStreamGuard_RegexRequestOnlyPolicyLeavesTheResponseAlone(t *testing.T) 
 }
 
 // F8: a stored regex policy whose settings no longer parse fails every
-// buffered run already. Default-on must not also make it fail every block of a
-// stream: it is not a participant, so the guard neither cuts nor errors, and a
-// valid policy beside it still masks.
+// buffered run already. Stream inspection must not also make it fail every
+// block of a stream: it is not a participant, so the guard neither cuts nor
+// errors, and a valid policy beside it still masks.
 func TestStreamGuard_RegexUnparseableStoredPolicyIsNotAParticipant(t *testing.T) {
 	t.Parallel()
 	broken := regexPolicy(map[string]any{"target": "response", "rules": []map[string]any{{"pattern": "(", "replacement": "x"}}})

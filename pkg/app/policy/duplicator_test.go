@@ -384,3 +384,66 @@ func TestDuplicator_LeavesMCPScopeNilWhenSourceHasNone(t *testing.T) {
 		t.Fatalf("Duplicate error: %v", err)
 	}
 }
+
+func TestDuplicator_DropsInertStreamingOptOuts(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		source func() map[string]any
+		want   map[string]any
+	}{
+		"enabled false": {
+			source: func() map[string]any {
+				return map[string]any{"limit": 100, "streaming": map[string]any{"enabled": false, "head_chars": 200}}
+			},
+			want: map[string]any{"limit": 100, "streaming": map[string]any{"head_chars": 200}},
+		},
+		"final_pass false as a string": {
+			source: func() map[string]any {
+				return map[string]any{"limit": 100, "streaming": map[string]any{"final_pass": "false", "on_error": "fail_closed"}}
+			},
+			want: map[string]any{"limit": 100, "streaming": map[string]any{"on_error": "fail_closed"}},
+		},
+		"both false, zero form": {
+			source: func() map[string]any {
+				return map[string]any{"streaming": map[string]any{"enabled": float64(0), "final_pass": false}}
+			},
+			want: map[string]any{"streaming": map[string]any{}},
+		},
+		"true values are kept": {
+			source: func() map[string]any {
+				return map[string]any{"streaming": map[string]any{"enabled": true, "final_pass": true}}
+			},
+			want: map[string]any{"streaming": map[string]any{"enabled": true, "final_pass": true}},
+		},
+		"no streaming block": {
+			source: func() map[string]any { return map[string]any{"limit": 100, "window": "1m"} },
+			want:   map[string]any{"limit": 100, "window": "1m"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			src := sourcePolicy(gwID, "Foo")
+			src.Settings = tc.source()
+
+			finder := policymocks.NewFinder(t)
+			finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
+			finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
+
+			creator := policymocks.NewCreator(t)
+			creator.EXPECT().Create(mock.Anything, mock.Anything).RunAndReturn(createFromInput).Once()
+
+			got, err := apppolicy.NewDuplicator(finder, creator, newTestLogger()).Duplicate(context.Background(), gwID, src.ID)
+			if err != nil {
+				t.Fatalf("Duplicate error: %v", err)
+			}
+			if !reflect.DeepEqual(got.Settings, tc.want) {
+				t.Fatalf("copy settings = %v, want %v", got.Settings, tc.want)
+			}
+			if !reflect.DeepEqual(src.Settings, tc.source()) {
+				t.Fatalf("the source settings changed: %v", src.Settings)
+			}
+		})
+	}
+}

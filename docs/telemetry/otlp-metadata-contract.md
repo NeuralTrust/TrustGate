@@ -230,11 +230,14 @@ that never reported.
 
 Since RUN-1745:
 
-- **Only policies that take part in per-block inspection get an entry.** A policy of a
-  streaming-capable plugin takes part unless its `streaming.enabled` is `false`, or absent
-  for a plugin whose default is off (`bedrock_guardrail`). A policy that opted out is no
-  longer walked per block, so it writes no streamed entry with no decision. Its settings no longer failing to parse
-  cannot fail the blocks of a stream another policy opted into.
+- **Only policies that take part in per-block inspection get an entry.** Since RUN-1661
+  every policy of a streaming-capable plugin that acts on the response takes part: the
+  request decides whether the response streams, and `streaming.enabled` does not opt a
+  policy out: a stored `streaming.enabled` (`false` or `true`) is accepted and has no
+  effect, and a write that newly sets it to `false` is rejected (422 `validation_failed`).
+  The guarantee holds per data-plane version (see RUN-1661 below). A policy that does not act on the
+  response is not walked per block, so it writes no streamed entry with no decision. Its
+  settings failing to parse cannot fail the blocks of a stream other policies inspect.
 - **A cut on a failure is the failing policy's.** When a block's call fails and
   the stream resolves it as `fail_closed`, `cut_at_eval` lands on the policy whose call
   failed, not on a policy that masked the same block. Only a rewriter that asks for it
@@ -286,9 +289,10 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `tool_input_uninspected` | `degraded_reason` | A native Amazon Bedrock stream released a tool call without its input having been read by the policies as a text of its own: the call outgrew the hold (the configured hold, `BEDROCK_NATIVE_TOOL_HOLD`, 30 seconds by default, or the bytes the guard keeps), the stream ended before it closed, another frame sat inside it, its start had already been released, or its model family's tool calls are not understood. The call is not cut. It stays the reason of the stream when a later `accumulation_cap`, `guard_timeout` or `guard_error` would have replaced it |
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
+| `entry_retired` | `fallback_reason` | Published on **one** entry's span: that policy failed on consecutive blocks and stopped being called for the rest of the stream. The other policies keep inspecting every block, so it is the entry's own reason, not the stream's (see [External guardrail failures](#external-guardrail-failures)) |
 | `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
-| `inspected_as_stream` | `skip_reason` | The `pre_response` leg of a streamed LLM response whose policy opted into per-block inspection. The leg runs with headers only and hands the response to the stream guard, which writes its own entry. Emitted with `skipped: true`, but it is not a coverage gap: the response is inspected block by block and audited again by `post_response` |
-| `streaming_stage_mismatch` | `skip_reason` | The leg does not handle this response mode: a streamed `pre_response` with per-block inspection off or not selected (and every MCP streamed leg), or a buffered `post_response`. Another leg handles the response |
+| `inspected_as_stream` | `skip_reason` | The `pre_response` leg of a streamed LLM response whose policy inspects it block by block. The leg runs with headers only and hands the response to the stream guard, which writes its own entry. Emitted with `skipped: true`, but it is not a coverage gap: the response is inspected block by block. Only `trustguard` audits it again on `post_response`, and only when the final block was not evaluated in full; the other streaming-capable plugins have no `post_response` stage |
+| `streaming_stage_mismatch` | `skip_reason` | The leg does not handle this response mode: a streamed `pre_response` whose policy does not inspect the response per block (and every MCP streamed leg), or a buffered `post_response`. Another leg handles the response |
 | `no_inspectable_output` | `skip_reason` | A buffered `pre_response` leg whose upstream answered with a non-2xx status (an error envelope, an error page from a proxy in front of it, a throttle): it carries no completion. Emitted by `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. Not a coverage gap: there was no model output to inspect. These two tokens are the ones the console already labels for every plugin; no route- or status-specific token exists |
 | `undecodable_response` | `skip_reason` | A 2xx buffered response whose body no adapter reads as a completion, such as the audio bytes of a speech route. Emitted by `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. A coverage gap only when the body was a completion in a shape no adapter reads; binary media is not |
 | `no_inspectable_input` | `skip_reason` | A request with no text for the guardrail to judge: an empty body, or a route that carries no chat (image generation, audio and file routes), whose body is not chat JSON. Emitted by `azure_content_safety`, `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. Not a failure and not counted as one; the route is outside what these plugins inspect. A malformed body on a chat route is still `decode_failed` |
@@ -307,6 +311,82 @@ for it (`regex_replace`, whose stream leg fails closed by default), and a guardr
 failure depends on the content of the block (see *External guardrail failures*), which is
 recorded `failed_closed` on the policy that authored the cut. A guardrail whose provider is
 unavailable still fails open.
+
+#### What can reach the client before a verdict
+
+Per-block inspection holds text; it does not recall it. Each block is held until the
+policies' verdicts on it return, and each call carries the prefix produced so far (bounded
+as below), so text a verdict refuses is not released — except in the cases listed below.
+What a cut cannot do is take back what earlier verdicts already cleared: when it lands, the
+client has read `streaming.cut_offset_chars` characters. That number, not any setting, is
+the exposure a given response had.
+
+The settings decide how much is held at a time, which is what a verdict can still stop:
+
+- **Head.** Nothing is written until the head has a verdict. The head closes on
+  `head_chars` of inspectable text (400 by default), on the terminal event, or on the
+  held-bytes ceiling (256 KiB), and an open tool call extends it. A refusal at the head is a
+  real HTTP 403 with no byte sent.
+- **Blocks.** After the head, a block closes on the terminal event; on the first event
+  that arrives once `max_hold_ms` has passed since the block opened (800 ms by default;
+  500 ms for `openai_moderation` and `regex_replace`); once it carries
+  `min_chars_between_evals` (2048 by default; 1024 for `openai_moderation`); or once it
+  holds 256 KiB. There is no timer: the gate is checked as events arrive. An open native
+  tool call keeps the block open past `max_hold_ms`.
+- **Payload.** The prefix a call carries is bounded by each plugin's window, which a
+  `max_accumulated_bytes` setting can lower but never raise: `trustguard` 64 KiB,
+  `google_model_armor` 56 KiB, `openai_moderation` 32 KiB, `bedrock_guardrail` 8 KiB,
+  `regex_replace` 256 KiB. The stream runs on the largest window any participant asks for
+  and reports `degraded_reason: accumulation_cap` once it is crossed; a policy with a
+  smaller window is narrowed to its own on every block without that reason being reported,
+  so beside a `trustguard` policy a `bedrock_guardrail` one sees only the most recent 8 KiB.
+  A block whose own new text is larger than a policy's window is screened in chunks of that
+  window (`streaming.chunked_blocks`); a block that would need more than 8 chunks is cut in a
+  mode that blocks. `trustguard` is never split: a block above its 64 KiB window is refused
+  as `stream_block_too_large`.
+
+Larger blocks keep more text held while the guard decides, so less of a passage that only
+reads as refusable as a whole — a value split across two blocks, an answer whose first part
+looks benign — is already out when the verdict lands. The cost is latency the client sees
+(`streaming.added_latency_ms`). Smaller blocks (`min_chars_between_evals` down to 256,
+`max_hold_ms` down to 50 ms) release text sooner and make more calls per response
+(`streaming.evals_total`, `streaming.guard_calls`), which is engine cost, and they leave
+more of such a passage delivered before it is refused. A short, fast response gets a head
+block and a final block and no verdict in between: everything after the head is held
+until the final verdict. The bounds are declared in `pkg/infra/plugins/pluginutil/streaming.go`
+and mirrored by `pkg/infra/plugins/trustguard/config.go`.
+
+Text leaves without the verdict a policy asked for in these cases:
+
+- **A guardrail's call fails on a block for its provider's availability** (timeout,
+  provider error, throttle). The failure is absorbed: the entry records
+  `decision: failed_open` with `failure_reason`, the block is released on the other
+  policies' verdicts, and after three consecutive failures that policy is retired for the
+  rest of the stream (`fallback_reason: entry_retired` on its entry) while the others keep
+  inspecting. A throttle, and an `input` failure, never count toward retiring it. No
+  `degraded_reason` is written for it. A head whose call fails this way is released the same
+  way. An `input` failure is not absorbed: it cuts the stream in a mode that blocks (see
+  above).
+- **The guard itself resolves a failure as `fail_open`** — an error the chain hands back
+  from a policy that asked for `fail_closed` (`regex_replace`) on a stream whose resolved
+  `on_error` is `fail_open` because a guardrail takes part. Then the block is released with
+  `degraded_reason` `guard_timeout` or `guard_error`, and three such failures in a row retire
+  per-block inspection for the rest of the stream (`fallback_reason:
+  segmentation_unavailable`): what follows is released block by block without any call.
+  Only `trustguard` policies audit it afterwards, on their buffered `post_response` pass; the
+  other streaming-capable plugins have no such pass.
+- `accumulation_cap` (`degraded_reason`): from that block on, verdicts cover only the most
+  recent `max_accumulated_bytes` of the response, not the whole prefix.
+- `tool_input_uninspected` (`degraded_reason`): a native Amazon Bedrock tool call was
+  released without its input being read.
+- `degraded_reason` holds one reason for the whole stream — the latest, except that
+  `tool_input_uninspected` is never replaced — not a count of degraded blocks.
+- `client_disconnected` (`fallback_reason`) releases nothing more, because nobody is
+  reading.
+- A policy cannot opt out of per-block inspection (RUN-1661): every policy that acts on the
+  response inspects a streamed one block by block. `skip_reason: streaming_disabled` only
+  appears on events from data planes older than this version. A hybrid data plane on an
+  older version still honours a stored `streaming.enabled: false` until it is upgraded.
 
 **`status.reason` does not yet name a mid-stream cut.** It is set on the error path only
 (`writeProxyError`), so a head-of-stream block — which happens before a single byte is
@@ -395,22 +475,42 @@ the stream, which is recorded `failed_closed` on the policy that authored the cu
 `failed_open`. An `input` failure is not counted toward retiring a policy for the rest of the
 stream (below): a client padding a stream must not be able to switch its inspection off.
 
-**Changed in RUN-1786.** `google_model_armor` and `openai_moderation` inspect a streamed
-response by default: a policy with no `streaming` block is on, and `streaming.enabled: false`
-is the opt-out (the trace then marks it `skipped` with `skip_reason: streaming_disabled`).
-`bedrock_guardrail` stays **opt-in** (`streaming.enabled: true`): every block resends the
-accumulated prefix to ApplyGuardrail, whose on-demand quota is per account and region (25 text
-units per second in most non-US regions), so inspecting every stream by default would throttle
-the customer's buffered requests too. Until the console exposes the control (RUN-1661) a
-Bedrock policy with no `streaming` block records `skipped` / `streaming_disabled` on a streamed
-response. For all three, an `availability` failure on the stream leg fails **open** once it takes
-part, as the buffered leg does since RUN-1792: a provider error or timeout on a block
-releases the held text and does not cut the stream. Since RUN-1813 that is not configurable.
+**Changed in RUN-1786.** `google_model_armor` and `openai_moderation` inspected a streamed
+response by default: a policy with no `streaming` block was on, and `streaming.enabled: false`
+was the opt-out (the trace then marked it `skipped` with `skip_reason: streaming_disabled`).
+`bedrock_guardrail` stayed **opt-in** (`streaming.enabled: true`) until RUN-1661: every block
+resends its window to ApplyGuardrail, whose on-demand quota is per account and region (25 text
+units per second in most non-US regions), and a Bedrock policy with no `streaming` block
+recorded `skipped` / `streaming_disabled` on a streamed response. For all three, an
+`availability` failure on the stream leg fails **open** once it takes part, as the buffered leg
+does since RUN-1792: a provider error or timeout on a block releases the held text and does not
+cut the stream. Since RUN-1813 that is not configurable.
+
+**Changed in RUN-1661.** Whether a response is inspected as a stream is decided by the
+request alone (`"stream": true`, or a provider's streaming endpoint), and no policy setting
+turns it off. A stored `streaming.enabled` (`false` or `true`) is accepted and has no effect;
+a write that newly sets it to `false` is rejected (422 `validation_failed`), and duplicating a
+policy drops a stored `false`. `bedrock_guardrail` inspects streamed responses like the others.
+The guarantee holds per data-plane version: a hybrid data plane on an older version still
+honours a stored `streaming.enabled: false` until it is upgraded.
+
+Every block of a streamed response calls ApplyGuardrail, so its per-account, per-region quota
+is shared with the policy's buffered calls. Each block sends at most 8 KiB and its pieces are
+spaced under the region's quota, so a throttle comes from other traffic, concurrent streams
+included. A throttled block is retried within its 2 s deadline (not when an earlier block of
+the same stream was already throttled), then released as `availability` (`failed_open`), and a
+throttle never retires the entry. Fewer calls per response come from a slower cadence
+(`head_chars`, `min_chars_between_evals`, `max_hold_ms`), but the stream runs on one cadence:
+that of the first participating policy, in chain order, that owns stream options. Chain order
+is ascending `priority`, then the more specific scope, then slug and id; `regex_replace` never
+owns them while another participant does. Raising these settings on a Bedrock policy changes
+the stream only when that policy comes first in that order.
 
 When the stream leg has several participants the stream still runs on one head gate and one
 cadence (the first participant that owns them), but two options are not taken from it:
 `on_error` is `fail_open` whenever a guardrail takes part, and
-`max_accumulated_bytes` is the smallest any participant asks for. `on_error` is also resolved per policy:
+`max_accumulated_bytes` is the largest any participant asks for, and each policy is then
+narrowed to its own window on every block. `on_error` is also resolved per policy:
 a failing policy that fails open is recorded `failed_open` and the chain carries on
 with the next policy on the same block, so a failing policy neither cuts the
 stream nor stops the policies behind it from inspecting. A cut resolved on a failed call
