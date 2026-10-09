@@ -252,10 +252,7 @@ type SegmentOutcome struct {
 	Message         string
 	HasTransform    bool
 	Transformed     string
-	// MaskFailureBlock says an entry whose transform is in this outcome asked, with
-	// on_mask_failure, for the stream to end when its mask cannot be applied.
-	MaskFailureBlock bool
-	Fingerprints     []StreamFinding
+	Fingerprints    []StreamFinding
 }
 
 // StreamFinding is one finding fingerprint and the chain entry that reported

@@ -129,9 +129,6 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			}
 			if outcome != nil && outcome.HasTransform {
 				if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
-					if outcome.MaskFailureBlock {
-						return toolVerdict{outcome: outcome, stop: true}
-					}
 					g.maskFailedOpen(ctx, cause)
 				}
 			}
@@ -154,11 +151,7 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 		if outcome != nil && outcome.HasTransform {
 			if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
 				// The mask cannot be written into the held frames and read back: the
-				// call goes through as it came and the outcome is recorded, unless the
-				// policy asked for on_mask_failure: block.
-				if outcome.MaskFailureBlock {
-					return toolVerdict{outcome: outcome, stop: true}
-				}
+				// call goes through as it came and the outcome is recorded.
 				g.maskFailedOpen(ctx, cause)
 			}
 		}

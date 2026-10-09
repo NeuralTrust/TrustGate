@@ -157,8 +157,6 @@ func TestNewPluginRegistry_LocalRewriterSet(t *testing.T) {
 // native Amazon Bedrock Runtime call. Every plugin not listed runs and is refused
 // if it changes the bytes of the call, so adding a plugin that masks or that
 // transforms the request must be a conscious edit here as well as in the plugin.
-// The plugins that mask are exactly the ones that carry the on_mask_failure
-// setting in the catalog.
 func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 	reg := newTestPluginRegistry(t)
 	want := map[string]appplugins.BedrockNativeBehavior{
@@ -182,24 +180,11 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 	assert.Equal(t, want, got)
 
 	catalog := appplugins.NewCatalogService(reg).Catalog()
-	carriers := map[string]bool{}
 	for _, group := range catalog.Groups {
 		for _, item := range group.Items {
 			for _, f := range item.SettingsSchema.Fields {
-				if f.Key == appplugins.SettingOnMaskFailure {
-					carriers[item.Slug] = true
-					assert.Equal(t, appplugins.FieldTypeEnum, f.Type)
-					assert.Equal(t, string(appplugins.MaskFailurePass), f.Default)
-				}
+				assert.NotEqual(t, "on_mask_failure", f.Key, "%s: a mask that cannot be applied always fails open", item.Slug)
 			}
-		}
-	}
-	for slug, behavior := range want {
-		assert.Equal(t, behavior == appplugins.BedrockNativeMasks, carriers[slug], "%s: on_mask_failure belongs to the plugins that mask", slug)
-		if behavior == appplugins.BedrockNativeMasks {
-			err := reg.Validate(slug, map[string]any{appplugins.SettingOnMaskFailure: "Block"})
-			require.Error(t, err, "%s: an invalid on_mask_failure must be refused", slug)
-			assert.Contains(t, err.Error(), appplugins.SettingOnMaskFailure)
 		}
 	}
 }

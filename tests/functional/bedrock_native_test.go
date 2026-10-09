@@ -580,8 +580,8 @@ func TestBedrockNative_StorePathIsNotANativeRoute(t *testing.T) {
 }
 
 // A client can make a mask impossible to apply by putting the value where no mask may
-// rewrite it. By default the call goes through, as sent; a masking policy set to
-// block refuses it; and a rewrite that is not a mask is refused whatever the setting.
+// rewrite it. The call goes through, as sent, whatever on_mask_failure a stored
+// policy still carries: the setting was removed and is ignored.
 func TestBedrockNative_OnMaskFailure(t *testing.T) {
 	defer Track(t, "BedrockNativeOnMaskFailure")()
 	stub := newBedrockRuntimeStub(t)
@@ -600,16 +600,16 @@ func TestBedrockNative_OnMaskFailure(t *testing.T) {
 		assert.Equal(t, body, string(stub.last(t).Body), "the original, as sent")
 	})
 
-	t.Run("a policy set to block refuses it", func(t *testing.T) {
+	t.Run("a stored on_mask_failure block is ignored and the call goes through unmasked", func(t *testing.T) {
 		apiKey, slug := setupBedrockNativeRoute(t, withStages(policyPlugin("regex_replace", map[string]any{
 			"target": "request", "rules": rules, "on_mask_failure": "block",
 		}), "pre_request"))
 		before := stub.callCount()
-		status, header, raw := proxyRequest(t, http.MethodPost, apiKey,
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey,
 			"/"+slug+"/model/amazon.nova-lite-v1:0/converse", nativeHeaders(), []byte(body))
-		require.Equal(t, http.StatusForbidden, status, "body: %s", raw)
-		assert.Equal(t, "AccessDeniedException", header.Get("X-Amzn-Errortype"))
-		assert.Equal(t, before, stub.callCount(), "nothing reached Bedrock")
+		require.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.Equal(t, before+1, stub.callCount())
+		assert.Equal(t, body, string(stub.last(t).Body), "the original, as sent")
 	})
 
 	t.Run("a mask that can be applied is applied whatever the setting", func(t *testing.T) {
@@ -623,13 +623,12 @@ func TestBedrockNative_OnMaskFailure(t *testing.T) {
 		assert.Contains(t, string(stub.last(t).Body), "my [REDACTED] code")
 	})
 
-	t.Run("an invalid setting is refused when the policy is saved", func(t *testing.T) {
+	t.Run("an unknown on_mask_failure value is ignored when the policy is saved", func(t *testing.T) {
 		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("native-mask-setting")})
 		status, body := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gatewayID), nil,
 			map[string]any{"name": uniqueName("mask"), "slug": "regex_replace", "enabled": true, "mode": "enforce", "stages": []string{"pre_request"},
 				"settings": map[string]any{"target": "request", "rules": rules, "on_mask_failure": "explode"}})
-		assert.GreaterOrEqual(t, status, 400, "body: %s", body)
-		assert.Contains(t, fmt.Sprint(body), "on_mask_failure")
+		assert.Less(t, status, 300, "body: %v", body)
 	})
 }
 
