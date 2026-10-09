@@ -46,11 +46,15 @@ var notAboutTheInput = map[string]struct{}{
 	"RequestExpired":              {},
 	"NotAuthorized":               {},
 	// Throttling and quotas.
-	"ThrottlingException":           {},
-	"Throttling":                    {},
-	"ThrottledException":            {},
-	"TooManyRequestsException":      {},
-	"RequestLimitExceeded":          {},
+	"ThrottlingException":      {},
+	"Throttling":               {},
+	"ThrottledException":       {},
+	"TooManyRequestsException": {},
+	"RequestLimitExceeded":     {},
+	// ServiceQuotaExceededException is the account's quota (on-demand text units
+	// per second, per region), which no request content decides, so it fails
+	// open; classifyApplyErr reads it as input only when its message says the
+	// text's size was the quota.
 	"ServiceQuotaExceededException": {},
 	// The guardrail the policy names is not there: configuration, not content.
 	"ResourceNotFoundException": {},
@@ -85,6 +89,9 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	var api smithy.APIError
 	if !errors.As(err, &api) {
 		return appplugins.FailureTransport, ""
+	}
+	if api.ErrorCode() == "ServiceQuotaExceededException" && namesTextUnits(api.ErrorMessage()) {
+		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 	}
 	if _, skip := notAboutTheInput[api.ErrorCode()]; skip {
 		return appplugins.FailureTransport, ""
@@ -138,4 +145,10 @@ const applyGuardrailOperation = "ApplyGuardrail"
 func namesGuardrailReference(message string) bool {
 	m := strings.ToLower(message)
 	return strings.Contains(m, "guardrailidentifier") || strings.Contains(m, "guardrailversion")
+}
+
+// namesTextUnits reports whether a quota error says the text units of the
+// request were what exceeded it, which is the text's size.
+func namesTextUnits(message string) bool {
+	return strings.Contains(strings.ToLower(message), "text unit")
 }

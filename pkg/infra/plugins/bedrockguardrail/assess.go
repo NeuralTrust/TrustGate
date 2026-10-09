@@ -46,8 +46,11 @@ type finding struct {
 
 type assessmentResult struct {
 	intervened bool
-	block      *finding
-	anonymize  *finding
+	// partialCoverage is the guardrail reporting that it guarded fewer of the
+	// text's characters than the text has: the rest was never judged.
+	partialCoverage bool
+	block           *finding
+	anonymize       *finding
 }
 
 func buildApplyInput(cfg Settings, text string, source types.GuardrailContentSource) *bedrockruntime.ApplyGuardrailInput {
@@ -71,6 +74,7 @@ func inspect(output *bedrockruntime.ApplyGuardrailOutput, piiAction string) asse
 		return res
 	}
 	res.intervened = output.Action == types.GuardrailActionGuardrailIntervened
+	res.partialCoverage = partiallyCovered(output.GuardrailCoverage)
 	for i := range output.Assessments {
 		inspectTopic(output.Assessments[i].TopicPolicy, &res)
 	}
@@ -263,4 +267,15 @@ func inspectContextualGrounding(p *types.GuardrailContextualGroundingPolicyAsses
 			return
 		}
 	}
+}
+
+// partiallyCovered reports whether ApplyGuardrail guarded fewer text characters
+// than it was sent. An answer that reports no coverage is not partial: the
+// field is absent on answers that predate it.
+func partiallyCovered(coverage *types.GuardrailCoverage) bool {
+	if coverage == nil || coverage.TextCharacters == nil {
+		return false
+	}
+	text := coverage.TextCharacters
+	return text.Guarded != nil && text.Total != nil && *text.Guarded < *text.Total
 }

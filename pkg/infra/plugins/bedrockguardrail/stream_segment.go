@@ -108,6 +108,10 @@ func (p *Plugin) InspectSegment(
 	}
 
 	res := inspect(out, cfg.PIIAction)
+	if res.block == nil && res.partialCoverage {
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial, nil,
+			fmt.Errorf("stream block %d: guardrail covered only part of the text", seg.Seq))
+	}
 	// Same rule as the buffered leg: an intervention neither block nor
 	// anonymize can explain is not a clean pass, and a mode that blocks cuts.
 	if res.intervened && res.block == nil && res.anonymize == nil {
