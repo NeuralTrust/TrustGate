@@ -35,8 +35,5 @@ type skippedData struct {
 // RecordStreamingDisabled marks, on the event's span, that a streamed response
 // passed this policy uninspected because its streaming is disabled.
 func RecordStreamingDisabled(event *metrics.EventContext, stage string) {
-	if event == nil {
-		return
-	}
-	event.SetExtras(skippedData{Stage: stage, Skipped: true, SkipReason: SkipReasonStreamingDisabled})
+	RecordSkipped(event, stage, SkipReasonStreamingDisabled)
 }

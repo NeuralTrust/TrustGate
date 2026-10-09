@@ -52,9 +52,11 @@ const (
 	// a running policy that validated at save time under older rules, so it
 	// is handled at run time rather than surfaced only at write time.
 	FailureConfigInvalid FailureReason = "config_invalid"
-	// FailureDecodeFailed is our own side failing to decode the request or
-	// response body before the guardrail ever saw it. The guardrail was
-	// never consulted, so there was nothing for it to say.
+	// FailureDecodeFailed is a request body that a chat route promised and the
+	// adapters cannot decode, before the guardrail ever saw it. The guardrail
+	// was never consulted, so there was nothing for it to say. A response body
+	// that cannot be decoded is the upstream's and is skipped, not failed, and a
+	// route with no chat decoder is config_invalid (unsupported_format).
 	FailureDecodeFailed FailureReason = "decode_failed"
 	// FailureCounterUnavailable is TrustGate's own counter store (Redis)
 	// failing a read or a write: rate_limiter, per_tool_rate_limiter and
@@ -115,10 +117,11 @@ func IsMaskOverFinding(detail string) bool {
 // decide whether the traffic goes through. A pair this table does not name is
 // availability, so a new reason cannot start refusing traffic by omission.
 //
-// decode_failed is input: a concrete body the adapters cannot decode is the
+// decode_failed is input: a chat body the adapters cannot decode is the
 // client's, and one the upstream accepts would otherwise skip the guardrail. A
-// provider or format the gateway does not support at all is not the body's
-// fault but a configuration gap, and is config_invalid (unsupported_format).
+// provider or format the gateway does not support at all, and a route that has
+// no chat decoder (images, audio, files), is not the body's fault but a
+// configuration gap, and is config_invalid (unsupported_format).
 // filter_not_in_template stays availability: it is the customer's template, not
 // anything the request did.
 func ClassOf(reason FailureReason, detail string) FailureClass {

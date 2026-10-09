@@ -281,9 +281,19 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return p.externalFailure(ctx, in, cfg, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 
+	if in.Stage == policy.StagePreResponse && !pluginutil.ResponseCarriesCompletion(in.Response) {
+		pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUpstreamStatus)
+		return passThrough(), nil
+	}
+
 	text, decErr := p.extractText(in, format)
 	if decErr != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", decErr)
+		if in.Stage == policy.StagePreResponse {
+			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUndecodableResponse)
+			return passThrough(), nil
+		}
+		reason, detail := pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format)
+		return p.externalFailure(ctx, in, cfg, reason, detail, decErr)
 	}
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
