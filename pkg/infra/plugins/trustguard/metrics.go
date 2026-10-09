@@ -41,6 +41,11 @@ const (
 	// failureReasonPayloadTooLarge is TrustGuard refusing the body for its size
 	// (HTTP 413): what the request carries, not the engine being unavailable.
 	failureReasonPayloadTooLarge = "payload_too_large"
+	// failureReasonStreamBlockTooLarge is a streamed block above the one evaluate
+	// this plugin sends for it (the stream window): refused before any call as the
+	// response's own size, with the detail chunk_limit. It is distinct from
+	// payload_too_large, which is TrustGuard's 413 or the 8 MiB buffered limit.
+	failureReasonStreamBlockTooLarge = "stream_block_too_large"
 	// failureReasonAttachmentRejected is TrustGuard answering 400 "invalid
 	// attachment": it could not fetch or decode an attachment it was sent.
 	failureReasonAttachmentRejected = "attachment_rejected"
