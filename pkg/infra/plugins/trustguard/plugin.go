@@ -269,9 +269,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return halt.result, halt.err
 	}
 
-	if len(payload) > maxBufferedPayloadBytes {
+	if tgt.textBytes > maxBufferedTextBytes {
 		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonPayloadTooLarge,
-			fmt.Errorf("trustguard: payload exceeds the %d bytes a buffered leg sends", maxBufferedPayloadBytes))
+			fmt.Errorf("trustguard: the text exceeds the %d bytes a buffered leg sends", maxBufferedTextBytes))
 	}
 
 	// A pod that cannot reach TrustGuard at all — no URL, no credentials: a
@@ -321,45 +321,36 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	defer cancel()
 	resp, err := p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
 	if err != nil {
+		var rejected *attachmentRejectedError
+		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
+			// TrustGuard answers "invalid attachment" for every attachment it
+			// cannot resolve, a URL it could not fetch included, which is the
+			// URL's availability and not this request's content. The text is
+			// evaluated again with the URL attachments left out, and what was
+			// left out is recorded. A rejection on that second call comes from
+			// an attachment sent as data, which is the content's.
+			if without, buildErr := tgt.withoutURLAttachments(); buildErr == nil {
+				body.Payload = without
+				tgt.attachmentsOmitted += tgt.urlAttachments
+				tgt.attachmentsNotFetched += tgt.urlAttachments
+				tgt.urlAttachments = 0
+				resp, err = p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+			}
+		}
+	}
+	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
-			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted})
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted, AttachmentsNotFetched: tgt.attachmentsNotFetched})
 			return nil, rateLimitError(limited)
 		}
-		var tooBig *pluginutil.AnswerTooLargeError
-		if errors.As(err, &tooBig) {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonResponseTooLarge, err)
-		}
-		var rejected *attachmentRejectedError
-		if errors.As(err, &rejected) {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonAttachmentRejected, err)
-		}
-		var tooLarge *payloadTooLargeError
-		if errors.As(err, &tooLarge) {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonPayloadTooLarge, err)
-		}
-		var unavailable *entitlementsUnavailableError
-		if errors.As(err, &unavailable) {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonEntitlementsUnavailable, err)
-		}
-		var auth *authRejectedError
-		if errors.As(err, &auth) {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonUnauthorized, err)
-		}
-		if errors.Is(err, errUnauthorized) {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonUnauthorized, err)
-		}
-		// The caller's own cancellation is not ours to reinterpret: only a
-		// deadline this call imposed counts as the guard running out of time.
-		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonTimeout, err)
-		}
-		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonTransport, err)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, reasonOfError(ctx, err), err)
 	}
 
 	data := guardData{
 		Direction:               direction,
 		AttachmentsNotInspected: tgt.attachmentsOmitted,
+		AttachmentsNotFetched:   tgt.attachmentsNotFetched,
 		Status:                  resp.Status,
 		TraceID:                 resp.TraceID,
 		RequestID:               resp.RequestID,
@@ -476,6 +467,7 @@ func (p *Plugin) mcpInspectionPayload(
 			return mcpTransformedRequest(payload, toolName)
 		}
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPRequest(reqBody, masked) }
+		tgt.textBytes = len(mcpInputText(reqBody))
 		payload, err := mcpToolsCallPayload(reqBody)
 		if err != nil {
 			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard mcp tools/call payload build failed", err)
@@ -495,6 +487,7 @@ func (p *Plugin) mcpInspectionPayload(
 	respBody := in.Response.Body
 	tgt.applyPayload = mcpTransformedResult
 	tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPResponse(respBody, masked) }
+	tgt.textBytes = mcpOutputTextBytes(respBody)
 	payload, err := mcpToolsResultPayload(respBody)
 	if err != nil {
 		return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard mcp tools/result payload build failed", err)
@@ -529,8 +522,15 @@ func (p *Plugin) llmInspectionPayload(
 				slog.Int("dropped_items", request.DroppedInputItems),
 			)
 		}
-		attachments, omitted := partitionAttachments(extractPayloadAttachments(in.Request.Body))
+		found := extractPayloadAttachments(in.Request.Body)
+		attachments, omitted := partitionAttachments(found)
 		tgt.attachmentsOmitted = omitted
+		tgt.attachmentsNotFetched = countCallerAuthURLs(found)
+		tgt.textBytes = requestTextBytes(request)
+		tgt.urlAttachments = countURLAttachments(attachments)
+		tgt.withoutURLAttachments = func() (json.RawMessage, error) {
+			return llmRequestPayloadWithAttachments(request, dataAttachments(attachments))
+		}
 		if request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
@@ -571,6 +571,7 @@ func (p *Plugin) llmInspectionPayload(
 	tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
 		return rewriteResponseFromPayload(p.registry, format, response, payload)
 	}
+	tgt.textBytes = responseTextBytes(response, tools)
 	payload, payloadErr := llmResponsePayload(response, tools)
 	if payloadErr != nil {
 		return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed", payloadErr)

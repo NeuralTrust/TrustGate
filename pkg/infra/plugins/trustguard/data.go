@@ -168,6 +168,11 @@ type guardData struct {
 	// data that is not base64). The text beside them was inspected; the
 	// attachments were not.
 	AttachmentsNotInspected int `json:"attachments_not_inspected,omitempty"`
+	// AttachmentsNotFetched counts the attachments sent as a URL that TrustGuard
+	// could not fetch (a Gemini Files URI needs the caller's key, or the fetch
+	// failed), so the text was evaluated without them. They are also in
+	// AttachmentsNotInspected.
+	AttachmentsNotFetched int `json:"attachments_not_fetched,omitempty"`
 	// Streaming carries the per-stream aggregate for a response inspected
 	// block by block. It is a pointer so the buffered path, which has nothing
 	// to say about streaming, keeps emitting an identical event.
