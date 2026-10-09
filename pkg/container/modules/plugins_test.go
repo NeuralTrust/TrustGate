@@ -191,7 +191,7 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 
 // TestNewPluginRegistry_RetiredSettingsSet pins which plugins refuse to store
 // which keys, by running the registry's own strip over a settings object that
-// carries every key a guardrail used to take. A plugin missing from the table
+// carries every key a guardrail ignores. A plugin missing from the table
 // stores them all.
 func TestNewPluginRegistry_RetiredSettingsSet(t *testing.T) {
 	reg := newTestPluginRegistry(t)

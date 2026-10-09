@@ -471,8 +471,8 @@ func withRemovedKeys(set map[string]any) map[string]any {
 	return set
 }
 
-// on_error was removed: a policy stored with it, or with any of the other removed
-// failure keys, keeps loading and fails open on a transport error.
+// on_error is not an azure_content_safety setting: a policy stored with it, or with any
+// of the other failure keys a guardrail ignores, keeps loading and fails open on a transport error.
 func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
 

@@ -323,9 +323,8 @@ says what happened to the request:
 
 **Changed in RUN-1813.** `on_error` (and, on the stream leg, `streaming.on_error` and
 `streaming.guard_timeout`) used to let a policy opt into `fail_closed`. The settings were
-removed: a policy that still stores them keeps loading, the keys are ignored, and they are
-stripped from published config snapshots, so a hybrid data plane on an older version no
-longer honours them either. The contract is additive, so nothing that shipped is renamed or
+removed: a policy that still stores them keeps loading and the keys are ignored. A migration
+deletes them from stored policies and the policy API drops them on create and update. The contract is additive, so nothing that shipped is renamed or
 retyped, and the values stay in the vocabulary because `regex_replace` and enforcement
 refusals still record `failed_closed`. What can no longer occur for these four plugins is
 `decision: failed_closed`, the HTTP 502 `guardrail_unavailable` refusal and, on a stream, a
@@ -432,7 +431,7 @@ rewrite it the way they rewrite a translated one. Three outcomes are recorded in
 |-------|------|------------|--------|
 | A plugin that did not run | `prompt_template`, `tool_injection`, `prompt_compression` and `semantic_cache`, which transform the request and have nowhere to write on a relayed call | none (`skipped: true`) | `stage`, `skipped: true`, `skip_reason: native_bedrock_passthrough` |
 | A mask that could not be applied | A masking policy (`regex_replace`, `trustguard`, `bedrock_guardrail`, `google_model_armor`) changed the text a call carries and the change could not be carried onto the client's bytes safely. The call goes through unmasked, always (RUN-1813) | `failed_open` | `decision: failed_open`, `stage` (`pre_request` or `pre_response`), `mode`, `failure_reason: mask_not_applicable:<cause>`, `streamed: true` on a stream |
-| A refusal | A policy that does not mask rewrote the call (a tool filter, a per-tool limit that strips a tool, a model downgrade), The call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`. On a stream the stream ends like a block verdict | the policy's own (`block`) | the error of the block |
+| A refusal | A policy that does not mask rewrote the call (a tool filter, a per-tool limit that strips a tool, a model downgrade). The call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`. On a stream the stream ends like a block verdict | the policy's own (`block`) | the error of the block |
 
 `failure_reason` is `mask_not_applicable:` followed by one of these causes, which are additive
 tokens:
@@ -461,7 +460,7 @@ A failed-open entry is written once per kind of cause on a request, or on a stre
 
 **Changed in RUN-1813.** `on_mask_failure` (`pass` or `block`) was a setting of the policies that
 mask. It was removed: a mask that cannot be applied always fails open, a policy that still
-stores the key keeps loading and the key is ignored and stripped from published snapshots. What
+stores the key keeps loading and the key is ignored; a migration deletes it from stored policies and the policy API drops it on write. What
 can no longer occur is the refusal of a mask that could not be applied; a refusal of a rewrite
 that is not a mask is unchanged.
 
@@ -555,8 +554,9 @@ guard's answers, not failures, and always block.
 
 **Changed in RUN-1813.** `on_error`, `on_timeout`, `timeout`, `streaming.on_error` and
 `streaming.guard_timeout` were removed. A stored policy keeps loading, the keys are ignored and
-stripped from published snapshots, and every call is bounded by the deployment-wide
-`TRUSTGUARD_TIMEOUT` (a streamed block by the default stream guard timeout of 2 seconds). The
+deleted from stored policies by a migration and dropped by the policy API on write. Every call
+is bounded by the deployment-wide `TRUSTGUARD_TIMEOUT`; a streamed block waits for the
+shorter of that and the 2 second stream guard timeout. The
 contract is additive, so the vocabulary is unchanged; what can no longer occur is
 `decision: failed_closed`, `extras.failed_closed`, the HTTP 502, 503 and 504 refusals
 (`trustguard_unauthorized`, `trustguard_unavailable`, `trustguard_error`) and a block recorded

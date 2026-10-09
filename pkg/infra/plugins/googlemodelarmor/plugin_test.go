@@ -778,8 +778,8 @@ func withRemovedKeys(set map[string]any) map[string]any {
 	return set
 }
 
-// on_error, streaming.on_error and streaming.guard_timeout were removed: a policy
-// stored with them keeps loading, fails open on a client error, and runs its
+// on_error, streaming.on_error and streaming.guard_timeout are not guardrail settings: a
+// policy stored with them keeps loading, fails open on a client error, and runs its
 // stream leg fail open under the default guard timeout.
 func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
