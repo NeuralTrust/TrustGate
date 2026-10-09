@@ -36,6 +36,17 @@ const (
 	playgroundOriginHeader = "X-AG-Playground"
 	maxResponseBytes       = 1 << 20
 
+	// maxBufferedPayloadBytes is the largest evaluate payload a buffered leg
+	// sends. A normal prompt or completion is a few tens of KiB and an agent
+	// conversation with its tool results a few hundred; TrustGuard itself only
+	// refuses a body above 10 MiB, long after a padded one has run the call into
+	// its timeout, which fails open. The bound is half of maxResponseBytes on
+	// purpose: the mask answers with the payload echoed back, so a payload at
+	// the bound still fits an answer that has to carry it once more. Above it
+	// the request is the input's doing and is refused locally as
+	// payload_too_large; a streamed leg sends a 64 KiB window and never gets here.
+	maxBufferedPayloadBytes = 512 << 10
+
 	// evaluateTimeoutHeader tells TrustGuard how long, in milliseconds, this
 	// call will wait. TrustGuard holds its detectors to a little less, so one
 	// that runs out of time fails open inside the answer instead of outliving

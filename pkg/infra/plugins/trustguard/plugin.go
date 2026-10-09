@@ -269,6 +269,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return halt.result, halt.err
 	}
 
+	if len(payload) > maxBufferedPayloadBytes {
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonPayloadTooLarge,
+			fmt.Errorf("trustguard: payload exceeds the %d bytes a buffered leg sends", maxBufferedPayloadBytes))
+	}
+
 	// A pod that cannot reach TrustGuard at all — no URL, no credentials: a
 	// Secret that did not mount, a partial rollout, a hybrid data plane that
 	// received the policy through config sync without the environment — is a
