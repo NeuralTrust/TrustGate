@@ -16,17 +16,18 @@ package bedrockguardrail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -68,6 +69,9 @@ type Plugin struct {
 	registry   *adapter.Registry
 	guardrails *cachedGuardrailClient
 	logger     *slog.Logger
+	// pacer spends each credential's text units under its region's quota, for
+	// the buffered leg and the stream leg alike, because they share it.
+	pacer pacer
 	// throttledStreams holds the streams whose first throttled block has been
 	// seen, so a sustained throttle does not add a backoff to every later
 	// block. A stream's closing segment removes its entry.
@@ -138,7 +142,7 @@ func (p *Plugin) CredentialPaths() []string {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, "", err)
 	}
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -156,7 +160,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil {
@@ -164,9 +168,9 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 			return passThrough(), nil
 		}
 		if !adapter.IsRequestDecodeError(err) {
-			return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
+			return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 		}
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureDecodeFailed, "", err)
 	}
 	if creq == nil {
 		return passThrough(), nil
@@ -205,7 +209,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
 	if err != nil {
@@ -229,62 +233,129 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceOutput, span)
 }
 
-// maxBufferedTextChars is the longest text a buffered leg sends to
-// ApplyGuardrail, counted in characters as AWS bills them (a text unit is up to
-// 1,000 characters). The per-policy burst quota of the largest-quota regions is
-// 1,000 text units, so no region can serve a longer text in one call whatever
-// its quota: above it the text is the input's doing and is refused locally as
-// payload_too_large instead of ending in a timeout, which fails open.
+// A buffered text is split into chunks of chunkBytes. The smallest per-call
+// burst of any region is 25 text units (every other supported region), and a
+// text unit is up to 1,000 characters (a partial unit is billed whole), so 24
+// units per chunk fits it whatever the region. Bytes are never fewer than
+// characters, and AWS does not say whether its characters are code points or
+// UTF-16 units, which bytes bound both. The overlap keeps a pattern that
+// straddles a cut whole in one chunk; it re-bills about 4%.
 //
-// The bound is deliberately the ceiling of the most generous region rather than
-// of the smallest. Regions with 25 text units per second throttle a long text
-// well below it, but that is availability (the quota, not the content), so
-// refusing there would turn a quota into a 403 and would also refuse texts the
-// large-quota regions accept.
-const maxBufferedTextChars = 1_000_000
+// Only the last user message of a request (or the whole response) is sent, as
+// before; sending the rest of the conversation is a separate change.
+//
+// A request is refused before any call when it splits into more than
+// maxBufferedChunks, or when its text units exceed what the region's floor can
+// serve inside bufferedBudget (demandBound). Pacing keeps the request's own
+// calls under that floor, so a throttle that still comes back is other traffic,
+// which is availability. Without the bound a client could pad a message until
+// the quota throttles it and have the throttle read as availability.
+// https://aws.amazon.com/blogs/machine-learning/use-the-applyguardrail-api-with-long-context-inputs-and-streaming-outputs-in-amazon-bedrock/
+const (
+	chunkBytes        = 24000
+	chunkOverlap      = 1000
+	maxBufferedChunks = 32
+	chunkParallel     = 4
+	bufferedBudget    = 10 * time.Second
+)
+
+var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
+
+// demandBound is the most text units a request may need: the burst plus what
+// the floor serves while the call's budget lasts.
+func demandBound(q regionQuota) int {
+	return q.burst + q.unitsPerSecond*int(bufferedBudget/time.Second)
+}
+
+// chunkEval is what ApplyGuardrail said about one chunk.
+type chunkEval struct {
+	out *bedrockruntime.ApplyGuardrailOutput
+	res assessmentResult
+}
 
 func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string, source types.GuardrailContentSource, span rewriteSpan) (*appplugins.Result, error) {
-	if utf8.RuneCountInString(text) > maxBufferedTextChars {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
-			fmt.Errorf("bedrock_guardrail: text exceeds the %d characters a buffered leg sends", maxBufferedTextChars))
+	creds := credentialsFromConfig(cfg.Credentials)
+	n := textchunk.Count(text, chunkSpec)
+	if n > maxBufferedChunks {
+		return p.externalFailure(ctx, in, cfg, 0, n, appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
+			fmt.Errorf("bedrock_guardrail: the text splits into %d chunks, above the %d evaluated", n, maxBufferedChunks))
 	}
+	chunks := textchunk.Split(text, chunkSpec)
+	units := 0
+	for _, c := range chunks {
+		units += textUnits(len(c.Text))
+	}
+	if bound := demandBound(floorFor(creds.region)); units > bound {
+		return p.externalFailure(ctx, in, cfg, 0, len(chunks), appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
+			fmt.Errorf("bedrock_guardrail: the text needs %d text units, above the %d the region quota serves in %s", units, bound, bufferedBudget))
+	}
+
 	start := time.Now()
-	out, err := p.guardrails.ApplyWithBackoff(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source), callLimitsFor(len(text)))
+	budget, cancel := context.WithTimeout(ctx, bufferedBudget)
+	defer cancel()
+	evals := make([]chunkEval, len(chunks))
+	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
+		Parallel: chunkParallel,
+		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
+	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
+		if err := p.pacer.Wait(ctx, creds, textUnits(len(c.Text))); err != nil {
+			return struct{}{}, err
+		}
+		out, err := p.guardrails.ApplyWithBackoff(ctx, creds, buildApplyInput(cfg, c.Text, source), callLimitsFor(len(c.Text)))
+		if err != nil {
+			return struct{}{}, err
+		}
+		evals[i] = chunkEval{out: out, res: inspect(out, cfg.PIIAction)}
+		return struct{}{}, nil
+	})
 	latency := time.Since(start).Milliseconds()
-	if err != nil {
-		reason, detail := classifyApplyErr(err)
-		return p.externalFailure(ctx, in, cfg, latency, reason, detail, fmt.Errorf("apply guardrail: %w", err))
+	count := len(chunks)
+
+	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{},
+		func(i int, _ struct{}, err error) pluginutil.ChunkState {
+			if err != nil {
+				reason, detail := failureOfCall(err)
+				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
+			}
+			return evals[i].state()
+		})
+
+	var gap *pluginutil.ChunkDecision
+	switch decision.Kind {
+	case pluginutil.ChunkInputFailure, pluginutil.ChunkAvailabilityFailure:
+		if decision.Kind == pluginutil.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
+			gap = &decision
+			break
+		}
+		return p.failedChunk(ctx, in, cfg, latency, count, decision, evals, outs)
 	}
 
-	res := inspect(out, cfg.PIIAction)
-
-	if res.judgedOnlyInPart() {
-		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial,
-			fmt.Errorf("guardrail covered only part of the text"))
-	}
-
-	// The guardrail intervened on this content, but none of the policy types
-	// this plugin reads (topic, content, word, sensitive-information,
-	// contextual-grounding) produced a finding to explain it — an intervention
-	// type AWS added that this plugin does not yet parse. Reading that as a
-	// clean pass would let any input steer into the gap, so a mode that blocks
-	// refuses it. The policy types are named in failure_policies; the detail is
-	// the stable token the class is read from.
-	if res.intervened && res.block == nil && res.anonymize == nil {
-		return p.externalFailureWithPolicies(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, appplugins.DetailInterventionUnparsed,
-			unparsedPolicies(out.Assessments), fmt.Errorf("guardrail intervened with no block or anonymize finding"))
+	var finding *finding
+	switch {
+	case decision.Kind == pluginutil.ChunkBlocked:
+		finding = evals[decision.Index].res.block
+	case decision.Masked:
+		for i, ev := range evals {
+			if outs[i].Started && outs[i].Err == nil && ev.res.anonymize != nil {
+				finding = ev.res.anonymize
+				break
+			}
+		}
 	}
 
 	data := newData(in, cfg, latency)
+	if count > 1 {
+		data.ChunkCount = count
+	}
 
-	if res.block != nil {
-		applyFinding(data, res.block)
+	if decision.Kind == pluginutil.ChunkBlocked {
+		applyFinding(data, finding)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
 			data.Decision = decisionBlocked
 			setExtras(in.Event, data)
 			appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-			return nil, blockError(cfg.Message, *res.block)
+			return nil, blockError(cfg.Message, *finding)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -292,11 +363,17 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		return passThrough(), nil
 	}
 
-	if res.anonymize != nil {
-		applyFinding(data, res.anonymize)
+	if finding != nil {
+		applyFinding(data, finding)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
-			return p.anonymizeEnforce(ctx, in, data, cfg.Message, out, span, res.anonymize)
+			if gap != nil {
+				data.FailureReason = string(gap.Reason)
+				data.FailureDetail = gap.Detail
+				data.FailureClass = string(appplugins.FailureClassAvailability)
+			}
+			masked, failed := mergedMask(text, chunks, evals, outs)
+			return p.anonymizeEnforceMasked(ctx, in, data, cfg.Message, masked, failed, span, finding)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -310,10 +387,107 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	return passThrough(), nil
 }
 
+// state reads one chunk's answer as the shared verdict: a finding that blocks, a
+// gap in what the guardrail judged (coverage, or an intervention nothing here
+// explains), or a mask to apply.
+func (e chunkEval) state() pluginutil.ChunkState {
+	switch {
+	case e.res.block != nil:
+		return pluginutil.ChunkState{Blocks: true}
+	case e.res.judgedOnlyInPart():
+		return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{
+			Reason: appplugins.FailureVerdictIncomplete, Detail: appplugins.DetailCoveragePartial,
+		}}
+	case e.res.intervened && e.res.anonymize == nil:
+		return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{
+			Reason: appplugins.FailureVerdictIncomplete, Detail: appplugins.DetailInterventionUnparsed,
+		}}
+	case e.res.anonymize != nil:
+		return pluginutil.ChunkState{Mask: true}
+	}
+	return pluginutil.ChunkState{}
+}
+
+// failureOfCall maps the error of one chunk's call: the pacer giving up is the
+// quota held by other traffic, and every other error is what ApplyGuardrail
+// answered.
+func failureOfCall(err error) (appplugins.FailureReason, string) {
+	if errors.Is(err, errPacerSaturated) {
+		return appplugins.FailureTransport, appplugins.DetailThrottled
+	}
+	return classifyApplyErr(err)
+}
+
+func (p *Plugin) failedChunk(
+	ctx context.Context, in appplugins.ExecInput, cfg Settings, latency int64, count int,
+	d pluginutil.ChunkDecision, evals []chunkEval, outs []textchunk.Outcome[struct{}],
+) (*appplugins.Result, error) {
+	var cause error
+	switch {
+	case d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil:
+		cause = fmt.Errorf("apply guardrail: %w", outs[d.Index].Err)
+	case d.Detail == appplugins.DetailCoveragePartial:
+		cause = fmt.Errorf("guardrail covered only part of the text")
+	case d.Detail == appplugins.DetailInterventionUnparsed:
+		cause = fmt.Errorf("guardrail intervened with no block or anonymize finding")
+	default:
+		cause = fmt.Errorf("chunk %d of %d was not evaluated: %s", d.Index+1, count, d.Detail)
+	}
+	policies := ""
+	if d.Detail == appplugins.DetailInterventionUnparsed {
+		policies = unparsedPolicies(evals[d.Index].out.Assessments)
+	}
+	return p.externalFailureWithPolicies(ctx, in, cfg, latency, count, d.Reason, d.Detail, policies, cause)
+}
+
+// mergedMask is the masked text the chunks that asked for a mask add up to. A
+// single chunk's text is the guardrail's own output. With several, each chunk's
+// output is mapped back onto the original, so the overlap does not apply a mask
+// twice and no byte a chunk masked is left in the clear. failed is the reason
+// there is no masked text: a chunk asked for a mask and gave none, or the masks
+// cannot be mapped back onto the original.
+func mergedMask(text string, chunks []textchunk.Chunk, evals []chunkEval, outs []textchunk.Outcome[struct{}]) (masked string, failed string) {
+	if len(chunks) == 1 {
+		m, ok := maskedText(evals[0].out)
+		if !ok {
+			return "", reasonAnonymizeNoOutput
+		}
+		return m, ""
+	}
+	perChunk := make([]string, len(chunks))
+	for i, c := range chunks {
+		perChunk[i] = c.Text
+		if !outs[i].Started || outs[i].Err != nil || evals[i].res.anonymize == nil {
+			continue
+		}
+		m, ok := maskedText(evals[i].out)
+		if !ok {
+			return "", reasonAnonymizeNoOutput
+		}
+		perChunk[i] = m
+	}
+	merged, ok := textchunk.MergeMasks(text, chunks, perChunk)
+	if !ok {
+		return "", reasonAnonymizeEncodeFailed
+	}
+	return merged, ""
+}
+
 func (p *Plugin) anonymizeEnforce(ctx context.Context, in appplugins.ExecInput, data *Data, message string, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan, f *finding) (*appplugins.Result, error) {
 	masked, ok := maskedText(out)
+	reason := ""
 	if !ok {
-		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeNoOutput, f)
+		reason = reasonAnonymizeNoOutput
+	}
+	return p.anonymizeEnforceMasked(ctx, in, data, message, masked, reason, span, f)
+}
+
+// anonymizeEnforceMasked applies a mask the guardrail asked for, already read
+// from its output, or refuses in a mode that blocks when it cannot be applied:
+// failedReason is why there is no masked text, and empty when there is.
+func (p *Plugin) anonymizeEnforceMasked(ctx context.Context, in appplugins.ExecInput, data *Data, message string, masked string, failedReason string, span rewriteSpan, f *finding) (*appplugins.Result, error) {
+	if failedReason != "" {
+		return p.anonymizeDegraded(ctx, in, data, message, failedReason, f)
 	}
 	if !supportsReencode(p.registry, span.format) {
 		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeUnsupportedFormat, f)
@@ -370,11 +544,12 @@ func (p *Plugin) externalFailure(
 	in appplugins.ExecInput,
 	cfg Settings,
 	latencyMS int64,
+	chunks int,
 	reason appplugins.FailureReason,
 	detail string,
 	err error,
 ) (*appplugins.Result, error) {
-	return p.externalFailureWithPolicies(ctx, in, cfg, latencyMS, reason, detail, "", err)
+	return p.externalFailureWithPolicies(ctx, in, cfg, latencyMS, chunks, reason, detail, "", err)
 }
 
 func (p *Plugin) externalFailureWithPolicies(
@@ -382,6 +557,7 @@ func (p *Plugin) externalFailureWithPolicies(
 	in appplugins.ExecInput,
 	cfg Settings,
 	latencyMS int64,
+	chunks int,
 	reason appplugins.FailureReason,
 	detail string,
 	policies string,
@@ -400,6 +576,9 @@ func (p *Plugin) externalFailureWithPolicies(
 		Event:   in.Event,
 	})
 	data := newData(in, cfg, latencyMS)
+	if chunks > 1 {
+		data.ChunkCount = chunks
+	}
 	data.Decision = outcome.Decision
 	data.FailureReason = string(reason)
 	data.FailureDetail = detail

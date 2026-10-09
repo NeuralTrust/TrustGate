@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 )
 
 type scriptedGuardrail struct {
+	mu      sync.Mutex
 	calls   int
 	inputs  []string
 	sources []types.GuardrailContentSource
@@ -46,6 +48,7 @@ func (s *scriptedGuardrail) ApplyGuardrail(
 	in *bedrockruntime.ApplyGuardrailInput,
 	_ ...func(*bedrockruntime.Options),
 ) (*bedrockruntime.ApplyGuardrailOutput, error) {
+	s.mu.Lock()
 	s.calls++
 	s.sources = append(s.sources, in.Source)
 	for _, c := range in.Content {
@@ -53,6 +56,7 @@ func (s *scriptedGuardrail) ApplyGuardrail(
 			s.inputs = append(s.inputs, aws.ToString(text.Value.Text))
 		}
 	}
+	s.mu.Unlock()
 	return s.apply(in)
 }
 

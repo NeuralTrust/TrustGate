@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -98,20 +99,16 @@ func (p *Plugin) InspectSegment(
 	if _, throttled := p.throttledStreams.Load(id); throttled {
 		limits.noThrottleRetry = true
 	}
-	out, err := p.guardrails.ApplyWithBackoff(
-		callCtx,
-		credentialsFromConfig(cfg.Credentials),
-		buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput),
-		limits,
-	)
+	creds := credentialsFromConfig(cfg.Credentials)
+	out, err := p.applyBlock(callCtx, creds, buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput), limits)
 	if err != nil {
-		if isThrottled(err) && id != "" {
-			p.throttledStreams.Store(id, struct{}{})
-		}
 		// The provider answering for what the block carries (a 4xx that is not
 		// credentials or throttling) is the content's, and cuts a stream in a
 		// mode that blocks; every other failure releases the held text.
-		reason, detail := classifyApplyErr(err)
+		reason, detail := failureOfCall(err)
+		if detail == appplugins.DetailThrottled && id != "" {
+			p.throttledStreams.Store(id, struct{}{})
+		}
 		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("applying guardrail to stream block %d: %w", seg.Seq, err))
 	}
@@ -253,4 +250,17 @@ func streamID(ctx context.Context, seg appplugins.StreamSegment) string {
 
 func segmentAllow() *appplugins.SegmentVerdict {
 	return &appplugins.SegmentVerdict{}
+}
+
+// applyBlock sends one block, after the pacer has reserved its text units.
+func (p *Plugin) applyBlock(
+	ctx context.Context,
+	creds awsCredentials,
+	in *bedrockruntime.ApplyGuardrailInput,
+	limits callLimits,
+) (*bedrockruntime.ApplyGuardrailOutput, error) {
+	if err := p.pacer.Wait(ctx, creds, textUnits(inputBytes(in))); err != nil {
+		return nil, err
+	}
+	return p.guardrails.ApplyWithBackoff(ctx, creds, in, limits)
 }
