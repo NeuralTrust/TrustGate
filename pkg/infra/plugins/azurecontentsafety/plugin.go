@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -107,6 +108,9 @@ func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return err
+	}
+	if parsed, err := url.Parse(cfg.Endpoint); err != nil || parsed.Query().Get("api-version") == "" {
+		return fmt.Errorf("azure_content_safety: endpoint must carry the api-version query parameter")
 	}
 	if missing := cfg.unrequestedThresholds(); len(missing) > 0 {
 		return fmt.Errorf(
@@ -209,12 +213,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 }
 
 // failureOf maps what Azure answered to the shared failure vocabulary. A 400 is
-// Azure refusing the text it was sent, which is the request's own content; every
-// other status, a timeout and a network error are Azure's availability.
+// Azure refusing the text it was sent, which is the request's own content,
+// unless its envelope names the call's configuration; every other status, a
+// timeout and a network error are Azure's availability.
 func failureOf(err error) (appplugins.FailureReason, string) {
 	var status *statusError
 	if errors.As(err, &status) {
-		return pluginutil.FailureOfStatus(status.status)
+		return pluginutil.FailureOfRejection(status.status, status.configShaped)
 	}
 	return appplugins.FailureTransport, ""
 }

@@ -503,7 +503,7 @@ func TestValidateSettingsWriteRejectsThresholdOutsideCategories(t *testing.T) {
 	p := New(adapter.NewRegistry(), nil)
 	set := map[string]any{
 		"api_key":           "secret-key",
-		"endpoint":          "https://content.azure.com",
+		"endpoint":          "https://content.azure.com/contentsafety/text:analyze?api-version=2023-10-01",
 		"categories":        []any{CategoryHate},
 		"category_severity": map[string]any{CategoryViolence: 2},
 	}
@@ -518,7 +518,7 @@ func TestValidateSettingsWriteAcceptsMatchingKeys(t *testing.T) {
 	p := New(adapter.NewRegistry(), nil)
 	set := map[string]any{
 		"api_key":           "secret-key",
-		"endpoint":          "https://content.azure.com",
+		"endpoint":          "https://content.azure.com/contentsafety/text:analyze?api-version=2023-10-01",
 		"categories":        []any{CategoryHate, CategoryViolence},
 		"category_severity": map[string]any{CategoryViolence: 2},
 	}

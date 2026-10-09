@@ -435,12 +435,13 @@ func (p *Plugin) warnUnknownConfig(ctx context.Context, in appplugins.ExecInput,
 }
 
 // failureOf maps what OpenAI answered to the shared failure vocabulary. A 400 is
-// OpenAI refusing the input it was sent, which is the request's own content;
-// every other status, a timeout and a network error are OpenAI's availability.
+// OpenAI refusing the input it was sent, which is the request's own content,
+// unless its envelope names the policy's model or key; every other status, a
+// timeout and a network error are OpenAI's availability.
 func failureOf(err error) (appplugins.FailureReason, string) {
 	var status *errModeration
 	if errors.As(err, &status) {
-		return pluginutil.FailureOfStatus(status.status)
+		return pluginutil.FailureOfRejection(status.status, status.configShaped)
 	}
 	return appplugins.FailureTransport, ""
 }
