@@ -225,9 +225,9 @@ func TestInspectSegmentSkipsEmptyText(t *testing.T) {
 	assert.Zero(t, f.count(), "whitespace must not cost a moderation call")
 }
 
-// on_error is the guard's to resolve: only it knows whether the status is still
-// uncommitted, which is what makes fail_closed a clean 403 at the head and a
-// terminator after it.
+// A failure is returned rather than resolved here: the executor absorbs it per
+// entry, so a failing guardrail fails open and the rest of the chain still
+// inspects the block.
 func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	t.Parallel()
 	f := &fakeModerator{status: http.StatusInternalServerError, rawBody: `{"error":"nope"}`}

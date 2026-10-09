@@ -308,7 +308,7 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 		t.Fatal("a failed sanitize must reach the guard as an error")
 	}
 	if got != nil {
-		t.Errorf("verdict = %+v, want nil so the guard resolves on_error", got)
+		t.Errorf("verdict = %+v, want nil so the executor absorbs the failure and fails open", got)
 	}
 	if !strings.Contains(err.Error(), "block 6") {
 		t.Errorf("error %q does not name the block", err)
@@ -317,7 +317,7 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 
 // RUN-1667 on the streaming leg: a block_on filter absent from the response
 // (a template that never enabled it) or present but not executed must reach
-// the guard as an error, so streaming.on_error decides, instead of releasing
+// the executor as an error, which fails open and is recorded, instead of releasing
 // the block as clean.
 func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
 	t.Parallel()
@@ -342,7 +342,7 @@ func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
 				t.Fatalf("expected an error for the guard, got verdict %+v", got)
 			}
 			if got != nil {
-				t.Errorf("verdict = %+v, want nil so the guard resolves on_error", got)
+				t.Errorf("verdict = %+v, want nil so the executor absorbs the failure and fails open", got)
 			}
 			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "block 3") {
 				t.Errorf("error %q should name the block and %q", err, tc.want)
