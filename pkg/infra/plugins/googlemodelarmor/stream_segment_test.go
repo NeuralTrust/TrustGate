@@ -271,8 +271,7 @@ func TestInspectSegmentAnonymisesAsATransform(t *testing.T) {
 
 // inspectSDP only reports an anonymise when de-identified text came back, so a
 // match with nothing to mask with arrives here already downgraded to a block.
-// What matters either way is that the unmasked prefix is not released; the
-// backstop in InspectSegment covers the same condition if that ever changes.
+// That is a provider block verdict, not an unappliable mask, so it still cuts.
 func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, sdpAnonymizeResponse(""))
@@ -637,5 +636,29 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 				t.Errorf("failure = %q/%q, want %q/%q", data.FailureReason, data.FailureDetail, tc.wantReason, tc.wantDetail)
 			}
 		})
+	}
+}
+
+func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	event, span := newStreamEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 2, FailedEvals: 1,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+		}})
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != appplugins.DecisionFailedOpen || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput {
+		t.Fatalf("extras = %+v, want failed_open + degraded %q", data, reasonAnonymizeNoOutput)
 	}
 }

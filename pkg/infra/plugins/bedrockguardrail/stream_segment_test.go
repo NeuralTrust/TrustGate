@@ -302,9 +302,9 @@ func TestInspectSegmentAnonymisesAsATransform(t *testing.T) {
 	assert.Equal(t, "write to {EMAIL} for details", got.Transformed)
 }
 
-// Releasing the unmasked text is the one outcome the policy ruled out, and the
-// buffered leg blocks for the same reason.
-func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
+// A mask that cannot be applied is a failed inspection like any other: the
+// block is released unmasked, never cut, and the guard records it failed open.
+func TestInspectSegmentReleasesWhenAnonymisationProducedNothing(t *testing.T) {
 	t.Parallel()
 	p := streamPlugin(t, intervening(anonymisingOutput("")))
 
@@ -312,10 +312,31 @@ func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
 		streamInput(policy.ModeEnforce, streamSettings(nil), nil),
 		segment(2, "write to a@b.com for details"))
 
+	require.Error(t, err)
+	assert.Nil(t, got, "a failed mask must not be reported as a block or a clean allow")
+	var failure *appplugins.ExternalStreamFailure
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, reasonAnonymizeNoOutput, failure.Detail)
+}
+
+func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, allowing())
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 2, FailedEvals: 1,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+		}})
+
 	require.NoError(t, err)
-	assert.True(t, got.Block)
-	assert.False(t, got.HasTransform, "there is nothing to transform with")
-	assert.Equal(t, anonymizeDegradedMessage, got.Message)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
+	assert.True(t, data.Degraded)
+	assert.Equal(t, reasonAnonymizeNoOutput, data.DegradedReason)
 }
 
 func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
