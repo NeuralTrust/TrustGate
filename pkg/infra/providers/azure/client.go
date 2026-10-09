@@ -34,10 +34,11 @@ import (
 )
 
 const (
-	defaultAPIVersion        = "2024-10-21"
-	anthropicVersion         = "2023-06-01"
-	azureFoundryTokenScope   = "https://ai.azure.com/.default"                // #nosec G101 -- OAuth audience scope, not a credential value
-	azureCognitiveTokenScope = "https://cognitiveservices.azure.com/.default" // #nosec G101 -- OAuth audience scope, not a credential value
+	defaultAPIVersion         = "2024-10-21"
+	anthropicVersion          = "2023-06-01"
+	deploymentsListAPIVersion = "2023-03-15-preview"
+	azureFoundryTokenScope    = "https://ai.azure.com/.default"                // #nosec G101 -- OAuth audience scope, not a credential value
+	azureCognitiveTokenScope  = "https://cognitiveservices.azure.com/.default" // #nosec G101 -- OAuth audience scope, not a credential value
 )
 
 type client struct {

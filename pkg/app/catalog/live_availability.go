@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	providerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -44,7 +46,11 @@ const (
 
 //go:generate mockery --name=LiveAvailabilityFilter --dir=. --output=./mocks --filename=catalog_live_availability_filter_mock.go --case=underscore --with-expecter
 type LiveAvailabilityFilter interface {
-	Filter(ctx context.Context, in ServerlessFilterInput) []domain.Model
+	// Filter narrows in.Models to what the registry serves. It fails only for
+	// a provider whose listing is the sole truthful answer (Azure: the catalog
+	// names model families, while a request must name a deployment); every
+	// other provider falls back to the unnarrowed catalog.
+	Filter(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error)
 }
 
 // LiveCatalogLister answers what a registry serves when the stored catalog
@@ -127,20 +133,23 @@ func newLiveCatalog(
 	}
 }
 
-func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilterInput) []domain.Model {
-	if in.ProviderCode == providerdomain.Bedrock || len(in.Models) == 0 {
-		return in.Models
+func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error) {
+	if in.ProviderCode == providerdomain.Bedrock {
+		return in.Models, nil
 	}
 	if in.GatewayID.IsNil() || in.RegistryID.IsNil() {
-		return in.Models
+		return in.Models, nil
+	}
+	if in.ProviderCode == providerdomain.Azure {
+		return f.azureDeployments(ctx, in)
+	}
+	if len(in.Models) == 0 {
+		return in.Models, nil
 	}
 
 	live, ok := f.listRegistryModels(ctx, in)
 	if !ok || len(live) == 0 {
-		return in.Models
-	}
-	if in.ProviderCode == providerdomain.Azure {
-		return azureDeploymentModels(in.Models, live)
+		return in.Models, nil
 	}
 
 	liveIDs := make(map[string]struct{}, len(live))
@@ -167,7 +176,7 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 			slog.String("provider", in.ProviderCode),
 			slog.String("registry_id", in.RegistryID.String()),
 			slog.Int("live_models", len(live)))
-		return in.Models
+		return in.Models, nil
 	}
 
 	f.logger.Debug("catalog narrowed to live provider models",
@@ -175,7 +184,19 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 		slog.String("registry_id", in.RegistryID.String()),
 		slog.Int("before", len(in.Models)),
 		slog.Int("after", len(kept)))
-	return kept
+	return kept, nil
+}
+
+// azureDeployments answers with the resource's own deployments. Falling back
+// to the catalog here is what RUN-1144 was: catalog ids such as gpt-5.6-terra
+// are model families, a deployment name cannot even contain a dot, and every
+// pick ended in DeploymentNotFound.
+func (f *liveAvailabilityFilter) azureDeployments(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error) {
+	live, err := f.registryModels(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	return azureDeploymentModels(in.Models, live), nil
 }
 
 // List returns the registry's live models as catalog entries. It answers only
@@ -229,38 +250,51 @@ func (f *liveAvailabilityFilter) listRegistryModels(
 	ctx context.Context,
 	in ServerlessFilterInput,
 ) ([]LiveModel, bool) {
-	if f.source == nil || !f.source.Supports(in.ProviderCode) {
+	live, err := f.registryModels(ctx, in)
+	if err != nil || len(live) == 0 {
 		return nil, false
+	}
+	return live, true
+}
+
+func (f *liveAvailabilityFilter) registryModels(
+	ctx context.Context,
+	in ServerlessFilterInput,
+) ([]LiveModel, error) {
+	if f.source == nil || !f.source.Supports(in.ProviderCode) {
+		f.debugSkip(in, "provider has no live listing", nil)
+		return nil, fmt.Errorf("%w: %s registries cannot list their models", commonerrors.ErrUpstreamUnavailable, in.ProviderCode)
 	}
 
 	reg, err := f.finder.FindByID(ctx, in.GatewayID, in.RegistryID)
 	if err != nil {
 		f.debugSkip(in, "find registry", err)
-		return nil, false
+		return nil, fmt.Errorf("find registry: %w", err)
 	}
 	if reg.Provider() != in.ProviderCode {
 		f.debugSkip(in, "registry provider mismatch", nil)
-		return nil, false
+		return nil, fmt.Errorf("%w: registry serves provider %s, not %s", commonerrors.ErrValidation, reg.Provider(), in.ProviderCode)
 	}
 	auth := reg.Auth()
 	if auth == nil || auth.Type == registrydomain.AuthTypeOAuth2 {
 		f.debugSkip(in, "unsupported auth for live listing", nil)
-		return nil, false
+		return nil, fmt.Errorf("%w: the registry's credentials cannot list its models", commonerrors.ErrInvalidConfig)
 	}
 
 	live, err := f.liveModels(ctx, in.ProviderCode, auth, reg.ProviderOptions())
 	if err != nil {
-		f.logger.Warn("live model listing failed, listing unfiltered catalog",
+		f.logger.Warn("live model listing failed",
 			slog.String("provider", in.ProviderCode),
 			slog.String("registry_id", in.RegistryID.String()),
 			slog.String("error", err.Error()))
-		return nil, false
+		// The provider's own error stays in the log: it can carry the upstream
+		// body, which must not reach an API response.
+		return nil, fmt.Errorf("%w: the %s provider did not list this registry's models", commonerrors.ErrUpstreamUnavailable, in.ProviderCode)
 	}
 	if len(live) == 0 {
 		f.debugSkip(in, "provider reported no models", nil)
-		return nil, false
 	}
-	return live, true
+	return live, nil
 }
 
 func azureDeploymentModels(catalogModels []domain.Model, live []LiveModel) []domain.Model {

@@ -21,6 +21,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	regmocks "github.com/NeuralTrust/TrustGate/pkg/app/registry/mocks"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -90,7 +91,7 @@ func TestLiveAvailabilityFilter_NarrowsToLiveModels(t *testing.T) {
 		Return(openaiRegistry(apiKeyAuth("sk-restricted")), nil).Once()
 
 	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: providers.ProviderOpenAI,
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
@@ -100,6 +101,7 @@ func TestLiveAvailabilityFilter_NarrowsToLiveModels(t *testing.T) {
 			{Slug: "o4", ExternalID: "o4-preview"},
 		},
 	})
+	require.NoError(t, err)
 
 	// Case-insensitive match on slug; the model the key cannot use is dropped.
 	assert.Equal(t, []string{"gpt-5.6", "gpt-4o-mini"}, slugsOf(got))
@@ -116,7 +118,7 @@ func TestLiveAvailabilityFilter_MatchesExternalID(t *testing.T) {
 		Return(openaiRegistry(apiKeyAuth("sk-restricted")), nil).Once()
 
 	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: providers.ProviderOpenAI,
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
@@ -125,6 +127,7 @@ func TestLiveAvailabilityFilter_MatchesExternalID(t *testing.T) {
 			{Slug: "gpt-4o"},
 		},
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"o4"}, slugsOf(got))
 }
@@ -141,12 +144,13 @@ func TestLiveAvailabilityFilter_FallsBackWhenListingFails(t *testing.T) {
 
 	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
 	models := catalogModels("gpt-5.6", "gpt-4o")
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: providers.ProviderOpenAI,
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
 		Models:       models,
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, slugsOf(models), slugsOf(got))
 }
@@ -163,12 +167,13 @@ func TestLiveAvailabilityFilter_FallsBackOnEmptyIntersection(t *testing.T) {
 
 	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
 	models := catalogModels("gpt-5.6", "gpt-4o")
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: providers.ProviderOpenAI,
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
 		Models:       models,
 	})
+	require.NoError(t, err)
 
 	// A naming mismatch must not empty the picker.
 	assert.Equal(t, slugsOf(models), slugsOf(got))
@@ -188,7 +193,7 @@ func TestLiveAvailabilityFilter_AzureReturnsDeploymentNames(t *testing.T) {
 		Return(azureRegistry(apiKeyAuth("azure-key")), nil).Once()
 
 	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: providers.ProviderAzure,
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
@@ -197,6 +202,7 @@ func TestLiveAvailabilityFilter_AzureReturnsDeploymentNames(t *testing.T) {
 			{Slug: "gpt-5-codex", DisplayName: "Codex", InputPrice: "2", Enabled: true},
 		},
 	})
+	require.NoError(t, err)
 
 	require.Len(t, got, 2)
 	assert.Equal(t, "sonnet-prod", got[0].Slug)
@@ -207,6 +213,97 @@ func TestLiveAvailabilityFilter_AzureReturnsDeploymentNames(t *testing.T) {
 	assert.Equal(t, "2", got[1].InputPrice)
 }
 
+func TestLiveAvailabilityFilter_AzureFailsInsteadOfListingTheCatalog(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{err: errors.New(`404 {"error":{"code":"404","message":"Resource not found"}}`)}
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(apiKeyAuth("azure-key")), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models:       catalogModels("gpt-5.6-terra", "gpt-4o"),
+	})
+
+	require.ErrorIs(t, err, commonerrors.ErrUpstreamUnavailable)
+	assert.NotContains(t, err.Error(), "Resource not found", "the upstream body stays in the log")
+	assert.Empty(t, got, "a catalog name is not a deployment and would answer DeploymentNotFound")
+}
+
+func TestLiveAvailabilityFilter_AzureWithoutCredentialsIsAConfigError(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{models: liveIDs("never-asked")}
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(nil), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	_, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models:       catalogModels("gpt-4o"),
+	})
+
+	require.ErrorIs(t, err, commonerrors.ErrInvalidConfig)
+	assert.Zero(t, source.calls)
+}
+
+func TestLiveAvailabilityFilter_AzureListsDeploymentsWithoutCatalogRows(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{models: []appcatalog.LiveModel{
+		{ID: "gpt-6-luna", DisplayName: "gpt-6-luna", ProviderModel: "gpt-6-luna"},
+	}}
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(apiKeyAuth("azure-key")), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "gpt-6-luna", got[0].Slug)
+	assert.True(t, got[0].Enabled)
+}
+
+func TestLiveAvailabilityFilter_AzureWithNoDeploymentsListsNothing(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(apiKeyAuth("azure-key")), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, &stubLiveModelSource{}, discardLogger())
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models:       catalogModels("gpt-4o"),
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
 func TestLiveAvailabilityFilter_LeavesBedrockToServerlessFilter(t *testing.T) {
 	t.Parallel()
 	filter := appcatalog.NewLiveAvailabilityFilter(
@@ -215,12 +312,13 @@ func TestLiveAvailabilityFilter_LeavesBedrockToServerlessFilter(t *testing.T) {
 		discardLogger(),
 	)
 	models := catalogModels("amazon.nova-pro-v1:0")
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: providers.ProviderBedrock,
 		GatewayID:    ids.New[ids.GatewayKind](),
 		RegistryID:   ids.New[ids.RegistryKind](),
 		Models:       models,
 	})
+	require.NoError(t, err)
 	assert.Equal(t, slugsOf(models), slugsOf(got))
 }
 
@@ -231,12 +329,13 @@ func TestLiveAvailabilityFilter_SkipsProvidersWithoutLister(t *testing.T) {
 
 	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
 	models := catalogModels("gemini-2.5-pro")
-	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
 		ProviderCode: "vertex",
 		GatewayID:    ids.New[ids.GatewayKind](),
 		RegistryID:   ids.New[ids.RegistryKind](),
 		Models:       models,
 	})
+	require.NoError(t, err)
 	assert.Equal(t, slugsOf(models), slugsOf(got))
 }
 
@@ -258,8 +357,10 @@ func TestLiveAvailabilityFilter_CachesLiveListingPerCredentials(t *testing.T) {
 		Models:       catalogModels("gpt-5.6", "gpt-4o"),
 	}
 
-	first := filter.Filter(context.Background(), in)
-	second := filter.Filter(context.Background(), in)
+	first, err := filter.Filter(context.Background(), in)
+	require.NoError(t, err)
+	second, err := filter.Filter(context.Background(), in)
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"gpt-5.6"}, slugsOf(first))
 	assert.Equal(t, []string{"gpt-5.6"}, slugsOf(second))

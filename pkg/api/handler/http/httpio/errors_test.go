@@ -66,6 +66,8 @@ func TestMapDomainError(t *testing.T) {
 		{name: "invalid key budget → 422", err: authdomain.ErrInvalidBudget, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid budget"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},
 		{name: "result too large → 422", err: commonerrors.ErrResultTooLarge, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "result_too_large", wantMsgPart: "pagination"},
+		{name: "upstream unavailable → 502", err: commonerrors.ErrUpstreamUnavailable, wantStatus: fiber.StatusBadGateway, wantCode: "upstream_unavailable", wantMsgPart: "endpoint and credentials"},
+		{name: "upstream unavailable with detail → 502 keeps detail", err: fmt.Errorf("%w: could not list the deployments on this Azure resource", commonerrors.ErrUpstreamUnavailable), wantStatus: fiber.StatusBadGateway, wantCode: "upstream_unavailable", wantMsgPart: "could not list the deployments"},
 		{name: "unknown → 500 without leaking", err: errors.New("boom secret=hunter2"), wantStatus: fiber.StatusInternalServerError, wantCode: "internal_error", wantMsgPart: "X-Request-ID"},
 	}
 
