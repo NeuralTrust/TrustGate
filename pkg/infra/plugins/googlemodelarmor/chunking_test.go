@@ -530,7 +530,7 @@ func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
 func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 	t.Parallel()
 	s := newArmorScript(t, func(int, string) (int, string) {
-		time.Sleep(240 * time.Millisecond)
+		time.Sleep(480 * time.Millisecond)
 		return http.StatusOK, allowResponse
 	})
 	p := pluginWithStub(s.modelArmorStub)
@@ -541,7 +541,7 @@ func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 	text := armorPlain(800 << 10)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, text)), nil)
 	in.Event = event
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1600*time.Millisecond)
 	defer cancel()
 
 	_, err := p.Execute(ctx, in)

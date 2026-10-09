@@ -519,7 +519,7 @@ func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
-		time.Sleep(240 * time.Millisecond)
+		time.Sleep(480 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Hate","severity":0}]}`))
 	}))
@@ -531,7 +531,7 @@ func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(srv.URL, map[string]int{CategoryHate: 2}),
 		requestContext(chatBody(t, map[string]string{"role": "user", "content": text})))
 	in.Event = event
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1600*time.Millisecond)
 	defer cancel()
 
 	_, err := p.Execute(ctx, in)
