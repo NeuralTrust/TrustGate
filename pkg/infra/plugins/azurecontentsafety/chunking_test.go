@@ -71,7 +71,7 @@ func TestEveryChunkFitsTheLimitInUTF16Units(t *testing.T) {
 func TestAConversationAtTheCeilingIsEvaluatedAndOneUnitMoreIsRefusedBeforeAnyCall(t *testing.T) {
 	t.Parallel()
 	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, evaluationBudget)
-	require.Equal(t, 20, ceiling)
+	require.Equal(t, 60, ceiling)
 	atLimit := chunkUnits + (ceiling-1)*(chunkUnits-chunkOverlap)
 	require.Equal(t, ceiling, textchunk.Count(strings.Repeat("a", atLimit), chunkSpec))
 	require.Equal(t, ceiling+1, textchunk.Count(strings.Repeat("a", atLimit+1), chunkSpec))
@@ -486,4 +486,28 @@ func TestAParentDeadlineFollowsTheBudgetRule(t *testing.T) {
 	extras, _ := span.PluginAttrsCopy().Extras.(*Data)
 	require.NotNil(t, extras)
 	assert.Equal(t, "availability", extras.FailureClass)
+}
+
+// A provider that hangs is cut by the call's own timeout, not by the evaluation's
+// budget: the request fails open after about one call.
+func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	p := New(adapter.NewRegistry(), nil)
+	p.client.http.Timeout = 400 * time.Millisecond
+	require.Equal(t, evaluationBudget, p.budget)
+
+	started := time.Now()
+	res, data, err := run(t, p, policy.ModeEnforce, srv.URL,
+		chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 50000)}))
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Less(t, time.Since(started), 5*time.Second, "far below the evaluation budget")
+	assert.Equal(t, "availability", data.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
 }

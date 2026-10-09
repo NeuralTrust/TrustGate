@@ -50,8 +50,8 @@ const (
 // JSON of about 3.5 KB) to lie whole in one chunk; a pattern longer than it, or
 // a context that a cut separates by more than it, can still be cut in two. A
 // text is evaluated when its estimate, one callReserve per round of evalParallel
-// requests, is at most half of the client's timeout for the whole evaluation:
-// that is the ceiling, at most maxChunks, 12 at the default 15 s, and a text above
+// requests, is at most half of evaluationBudget:
+// that is the ceiling, at most maxChunks, 28 at the default 30 s, and a text above
 // it is refused before any call as chunk_limit. The headroom lets OpenAI answer
 // up to twice as slowly as callReserve, about twice a call's usual latency, on
 // every round without the budget cutting a chunk. A chunk that is not started or
@@ -73,6 +73,14 @@ const (
 	callReserve  = 2 * time.Second
 )
 
+// evaluationBudget is the time one evaluation has for all of its chunks. It is
+// not a call's timeout: every call keeps the client's own, so a provider that
+// hangs fails the evaluation open after about one call and not after the whole
+// budget. It sets the ceiling (see above): 15 s of admitted estimate at two
+// seconds a round of four calls is 28 chunks, about 807,000 bytes, or about
+// 200,000 tokens.
+const evaluationBudget = 30 * time.Second
+
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -88,6 +96,16 @@ type Plugin struct {
 	// warning on every request. A different gap on the same config id (the
 	// operator edited it) is a new key, so it still warns.
 	warnedConfigs sync.Map
+	// budget is the time one evaluation has for all of its chunks; zero means
+	// evaluationBudget.
+	budget time.Duration
+}
+
+func (p *Plugin) evaluationBudget() time.Duration {
+	if p.budget > 0 {
+		return p.budget
+	}
+	return evaluationBudget
 }
 
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logger *slog.Logger) *Plugin {
@@ -338,14 +356,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	limit := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.client.timeout)
+	limit := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.evaluationBudget())
 	if n := textchunk.Count(text, chunkSpec); n > limit {
 		return p.externalFailure(ctx, in, cfg, n, appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
 			fmt.Errorf("openai_moderation: the text splits into %d chunks, above the %d evaluated", n, limit))
 	}
 	chunks := textchunk.Split(text, chunkSpec)
 
-	budget, cancel := context.WithTimeout(ctx, p.client.timeout)
+	budget, cancel := context.WithTimeout(ctx, p.evaluationBudget())
 	defer cancel()
 	slow := textchunk.SlowCallOf(budget, callReserve)
 	verdicts := make([]chunkVerdict, len(chunks))

@@ -178,3 +178,27 @@ func TestAClientThatLeavesIsNeverInput(t *testing.T) {
 	assert.Equal(t, "availability", extras.FailureClass)
 	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
 }
+
+// A provider that hangs is cut by the call's own timeout, not by the evaluation's
+// budget: the request fails open after about one call.
+func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
+	t.Parallel()
+	srv := answeringServer(t, func(_ int32, _ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	p := New(adapter.NewRegistry(), srv.URL, 400*time.Millisecond, nil)
+	require.Equal(t, evaluationBudget, p.evaluationBudget())
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(100)), nil, event)
+
+	started := time.Now()
+	res, err := p.Execute(context.Background(), in)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Less(t, time.Since(started), 5*time.Second, "far below the evaluation budget")
+	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, "availability", extras.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+}

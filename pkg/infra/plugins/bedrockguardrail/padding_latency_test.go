@@ -362,12 +362,12 @@ func TestLongLegitimateMessagesInASmallQuotaRegionPassInEnforce(t *testing.T) {
 }
 
 // The ceiling is the same in every region, and the estimate never exceeds the
-// headroom up to it: a text of maxBufferedChunks chunks (103,616 bytes) is judged,
+// headroom up to it: a text of maxBufferedChunks chunks (203,416 bytes) is judged,
 // one byte more is refused as chunk_limit before any call.
 func TestTheCeilingIsTheSameInEveryRegion(t *testing.T) {
 	t.Parallel()
 	atCeiling := chunkBytes + (maxBufferedChunks-1)*(chunkBytes-chunkOverlap)
-	require.Equal(t, 5, maxBufferedChunks)
+	require.Equal(t, 10, maxBufferedChunks)
 	require.Equal(t, maxBufferedChunks, textchunk.Count(strings.Repeat("a", atCeiling), chunkSpec))
 	require.Equal(t, maxBufferedChunks+1, textchunk.Count(strings.Repeat("a", atCeiling+1), chunkSpec))
 	for _, region := range []string{"", "eu-west-3", "us-east-1", "us-west-2"} {
@@ -404,4 +404,27 @@ func regionOrDefault(region string) string {
 		return defaultRegion
 	}
 	return region
+}
+
+// A provider that hangs on the first chunk is cut by the call's own timeout, not
+// by the evaluation's budget: the request fails open after about one call.
+func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
+	t.Parallel()
+	g := &latencyGuardrail{delay: 10 * time.Millisecond, hang: "HANG-HERE"}
+	p := pluginOver(g)
+	p.callTimeout = 400 * time.Millisecond
+	require.Equal(t, bufferedBudget, p.evaluationBudget())
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, "HANG-HERE "+benignWords(15000)), nil)
+	in.Event = event
+
+	started := time.Now()
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	assert.Less(t, time.Since(started), 3*time.Second, "far below the evaluation budget")
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+	assert.Equal(t, "availability", extras.FailureClass)
 }

@@ -122,8 +122,8 @@ func TestBufferedLegsRefuseATextAboveTheChunkLimitLocally(t *testing.T) {
 // chunks is moderated, and one byte more is refused before any call.
 func TestTheChunkCeilingKeepsHalfTheBudgetInHand(t *testing.T) {
 	t.Parallel()
-	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, 15*time.Second)
-	require.Equal(t, 12, ceiling)
+	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, evaluationBudget)
+	require.Equal(t, 28, ceiling)
 	atCeiling := chunkBytes + (ceiling-1)*(chunkBytes-chunkOverlap)
 	require.Equal(t, ceiling, textchunk.Count(strings.Repeat("a", atCeiling), chunkSpec))
 

@@ -49,8 +49,8 @@ const (
 // so can a context that a cut separates by more than the overlap. A conversation
 // above the ceiling is refused before any call as chunk_limit, so a padded request
 // costs nothing at Azure. The ceiling is what half of one evaluationBudget admits
-// at evalParallel calls at once and callReserve a round, at most maxChunks: 20 at
-// the 10 s budget. The headroom lets Azure answer up to twice as slowly as
+// at evalParallel calls at once and callReserve a round, at most maxChunks: 60 at
+// the 30 s budget. The headroom lets Azure answer up to twice as slowly as
 // callReserve, about twice a call's usual latency, without the budget cutting a
 // chunk. A chunk that is not started or is cut by the budget is availability only
 // when some call took longer than twice callReserve, and otherwise chunk_budget,
@@ -63,13 +63,20 @@ const (
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/region-availability#service-limits
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#query-rates
 const (
-	chunkUnits       = 10000
-	chunkOverlap     = 2000
-	maxChunks        = 64
-	evalParallel     = 4
-	evaluationBudget = defaultTimeout
-	callReserve      = time.Second
+	chunkUnits   = 10000
+	chunkOverlap = 2000
+	maxChunks    = 64
+	evalParallel = 4
+	callReserve  = time.Second
 )
+
+// evaluationBudget is the time one evaluation has for all of its chunks. It is
+// not a call's timeout: every call keeps defaultTimeout, so a provider that
+// hangs fails the evaluation open after about one call and not after the whole
+// budget. It sets the ceiling (see above): 15 s of admitted estimate at one
+// second a round of four calls is 60 chunks, about 490,000 UTF-16 units, or
+// about 120,000 tokens.
+const evaluationBudget = 30 * time.Second
 
 var chunkSpec = textchunk.Spec{Max: chunkUnits, Overlap: chunkOverlap, Unit: textchunk.UTF16}
 
