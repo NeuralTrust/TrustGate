@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -39,7 +40,11 @@ const (
 	decisionAllowed  = "allowed"
 )
 
-const roleUser = "user"
+// maxTextCodePoints is the length text:analyze accepts for one text, counted in
+// Unicode code points. A longer conversation cannot be analysed whole, which is
+// the input's doing and not Azure's availability.
+// https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#input-requirements
+const maxTextCodePoints = 10000
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -158,9 +163,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if creq == nil {
 		return passThrough(), nil
 	}
-	text := lastUserText(creq)
+	text := joinRequestText(creq)
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
+	}
+
+	if utf8.RuneCountInString(text) > maxTextCodePoints {
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
+			fmt.Errorf("azure_content_safety: conversation exceeds the %d characters text:analyze accepts", maxTextCodePoints))
 	}
 
 	start := time.Now()
@@ -267,18 +277,20 @@ func (p *Plugin) externalFailure(
 	return outcome.Result, nil
 }
 
-// lastUserText is the text of the last user turn, the same span
-// bedrock_guardrail and google_model_armor read on pre_request. Azure caps the
-// text it analyses at 10K characters, and a system prompt plus the history of a
-// long conversation would cross it on a request whose own content is short.
-func lastUserText(creq *adapter.CanonicalRequest) string {
-	for i := len(creq.Messages) - 1; i >= 0; i-- {
-		msg := creq.Messages[i]
-		if msg.Role == roleUser && strings.TrimSpace(msg.Content) != "" {
-			return msg.Content
+// joinRequestText is the whole conversation the request carries: the system
+// prompt and every message, so content placed in an earlier turn is analysed
+// too and a client cannot hide a payload behind a forged assistant turn.
+func joinRequestText(creq *adapter.CanonicalRequest) string {
+	parts := make([]string, 0, len(creq.Messages)+1)
+	if strings.TrimSpace(creq.System) != "" {
+		parts = append(parts, creq.System)
+	}
+	for _, msg := range creq.Messages {
+		if strings.TrimSpace(msg.Content) != "" {
+			parts = append(parts, msg.Content)
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }
 
 // evaluate reports every breached category plus, when none breached, the
