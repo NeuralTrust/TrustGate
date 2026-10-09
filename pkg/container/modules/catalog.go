@@ -16,7 +16,10 @@ package modules
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
@@ -156,6 +159,12 @@ func (s *liveModelSource) Supports(providerCode string) bool {
 	return err == nil
 }
 
+// Authoritative is true for Azure: a request names a deployment on the
+// resource, so only the resource's own listing can answer.
+func (s *liveModelSource) Authoritative(providerCode string) bool {
+	return providerCode == providers.ProviderAzure
+}
+
 func (s *liveModelSource) List(
 	ctx context.Context,
 	providerCode string,
@@ -171,13 +180,40 @@ func (s *liveModelSource) List(
 		Credentials: providers.CredentialsFromTargetAuth(auth),
 	})
 	if err != nil {
+		if listingMisconfigured(err) {
+			return nil, fmt.Errorf("%w: %w", appcatalog.ErrLiveListingMisconfigured, err)
+		}
 		return nil, err
 	}
 	out := make([]appcatalog.LiveModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, appcatalog.LiveModel{ID: model.ID, DisplayName: model.DisplayName, ProviderModel: model.ProviderModel})
+		out = append(out, appcatalog.LiveModel{
+			ID:            model.ID,
+			DisplayName:   model.DisplayName,
+			ProviderModel: model.ProviderModel,
+			Pending:       model.Pending,
+		})
 	}
 	return out, nil
+}
+
+// listingMisconfigured reports a failure the registry's own configuration
+// causes and a retry cannot fix: a precondition the adapter rejected, or the
+// provider refusing the credentials or not knowing the endpoint.
+func listingMisconfigured(err error) bool {
+	if errors.Is(err, providers.ErrModelListingMisconfigured) {
+		return true
+	}
+	var status *providers.ModelListingStatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	switch status.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	default:
+		return false
+	}
 }
 
 type CatalogSyncParams struct {
