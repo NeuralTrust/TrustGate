@@ -319,8 +319,17 @@ decides what it costs. There is no setting to change that (RUN-1813).
 
 | `failure_class` | What it depends on | Examples | Enforce or throttle | Observe |
 |-----------------|--------------------|----------|---------------------|---------|
-| `availability` | The provider, the network or the deployment | The provider is down, a timeout, a 5xx, a 429, missing or rejected credentials (401 or 403), a missing base URL, a stored configuration that cannot be used, a provider or format the gateway does not support (`config_invalid`, `unsupported_format`), a Model Armor template that does not enable a `block_on` filter | `failed_open`: the request is forwarded and the chain carries on | `failed_open` |
-| `input` | The content of the request itself | A concrete body the gateway cannot decode, a request the provider refuses for what it carries (a 4xx that is not credentials or throttling), a Model Armor filter in `block_on` that was skipped, an intervention the plugin cannot explain, a TrustGuard 413, an anonymize that cannot be applied | `failed_closed`: the request is refused with HTTP 403 and the error type `guardrail_input_uninspectable` (on a native Amazon Bedrock route, an `AccessDeniedException`) | `failed_open`: observe never blocks, the failure is only recorded |
+| `availability` | The provider, the network, the deployment or the policy's own configuration | The provider is down, a timeout, a 5xx, a 429, missing or rejected credentials (401 or 403), a missing base URL, a stored configuration that cannot be used, a 4xx that names the configuration and not the content (a role that cannot be assumed, a guardrail version or identifier AWS refuses, a Model Armor resource name, a model or `api-version` the provider does not know: `config_invalid`, `provider_config_rejected`), a provider or format the gateway does not support and a route with no chat decoder (`config_invalid`, `unsupported_format`), a Model Armor template that does not enable a `block_on` filter | `failed_open`: the request is forwarded and the chain carries on | `failed_open` |
+| `input` | The content of the request itself | A chat body the gateway cannot decode, a request the provider refuses for what it carries (a 4xx that does not name the configuration, and is not credentials or throttling), a text above what the provider takes (`payload_too_large`), a guardrail that judged only part of the text (`coverage_partial`), a Model Armor filter in `block_on` that was skipped, an intervention the plugin cannot explain, a TrustGuard 413, an anonymize that cannot be applied | `failed_closed`: the request is refused with HTTP 403 and the error type `guardrail_input_uninspectable` (on a native Amazon Bedrock route, an `AccessDeniedException`) | `failed_open`: observe never blocks, the failure is only recorded |
+
+A configuration problem, ours or the tenant's, is always `availability`: it can never turn into
+a 403 on all traffic. A timeout is `availability` too, by product decision: a slow provider does
+not refuse requests. What a client could once do to cause one, grow the text of a stream until
+the provider exceeded its deadline, no longer applies, because each streamed evaluation sends at
+most a bounded tail window (see the streaming window defaults in the MCP policy scope notes).
+A response the upstream answered with a non-2xx status, and a 2xx body no adapter reads as a
+completion (the audio bytes of a speech route), are not failures: the leg is recorded as skipped
+(`skip_reason` `upstream_error_status` or `undecodable_response`) and passes.
 
 The classification is made in one place, from the `failure_reason` and `failure_detail`
 below. A pair it does not name is `availability`, so a reason added later cannot start refusing
@@ -347,8 +356,8 @@ Their `extras` carry these keys:
 
 | Key | Meaning |
 |-----|---------|
-| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body), `input_too_large` (the provider refused the content of the call; the detail says how) |
-| `failure_detail` | Optional. What was incomplete or refused: `filter_not_executed` (a Model Armor filter was skipped), `filter_not_in_template` (the template does not enable it), `invocation_partial` (Model Armor ran only some filters, every `block_on` filter among them: `availability`), `intervention_unparsed` (Bedrock intervened and no policy type the plugin reads explains it), `anonymize_no_output`, `anonymize_unsupported_format` or `anonymize_encode_failed` (a mask that could not be applied), `provider_rejected_input` (a 4xx the provider answers for the content), or the category the provider left unanswered |
+| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used, or the provider refused the configuration), `decode_failed` (a chat body the gateway could not read), `input_too_large` (the provider refused the content of the call; the detail says how) |
+| `failure_detail` | Optional. What was incomplete or refused: `filter_not_executed` (a Model Armor filter was skipped), `filter_not_in_template` (the template does not enable it), `invocation_partial` (Model Armor ran only some filters, every `block_on` filter among them: `availability`), `intervention_unparsed` (Bedrock intervened and no policy type the plugin reads explains it), `anonymize_no_output`, `anonymize_unsupported_format` or `anonymize_encode_failed` (a mask that could not be applied), `provider_rejected_input` (a 4xx the provider answers for the content), `payload_too_large` (a text above what the provider takes, refused before the call), `coverage_partial` (Bedrock guarded fewer characters than it was sent: `input`), `provider_config_rejected` (a 4xx that names the configuration: `availability`), `unsupported_format` (no decoder for the route), or the category the provider left unanswered |
 | `failure_class` | `availability` or `input` (above). Present on every failure, so one query separates "the provider is down" from "the client padded the input" across all four plugins without knowing their reasons |
 | `failure_policies` | `bedrock_guardrail` only. With `failure_detail: intervention_unparsed`, the policy assessments AWS returned that the plugin does not read (for example `automated_reasoning_policy`) |
 
@@ -357,7 +366,10 @@ error type, never from the message text:
 
 | Provider | `input` | `availability` |
 |----------|---------|----------------|
-| `bedrock_guardrail` | An `ApplyGuardrail` client error (4xx) that is not one of the others, a `ValidationException` above all | Credentials (`AccessDeniedException`, `UnrecognizedClientException`, `ExpiredTokenException` and the signature errors, which AWS answers with a 400 or a 403), throttling and quotas (`ThrottlingException`, `ServiceQuotaExceededException`), `ResourceNotFoundException` (the guardrail the policy names is not there: configuration), a timeout and every 5xx. The exact error AWS returns for an oversize text is not documented, so the class is read from the error type and status |
+| `bedrock_guardrail` | An `ApplyGuardrail` client error (4xx) that is not one of the others, a `ValidationException` above all; a `ServiceQuotaExceededException` whose message names text units; a response whose `guardrailCoverage.textCharacters.guarded` is below `total`; a text above `streaming.max_accumulated_bytes` (24 KiB by default), refused before the call | Anything the credential chain raises (an STS `AssumeRole` `ValidationError` for a malformed `role_arn` or `session_name` reaches the caller wrapped by the `ApplyGuardrail` call, and is told apart from it), credentials (`AccessDeniedException`, `UnrecognizedClientException`, `ExpiredTokenException` and the signature errors, which AWS answers with a 400 or a 403), a `ValidationException` that names `guardrailIdentifier` or `guardrailVersion` (configuration), throttling and the account's quota (`ThrottlingException`, `ServiceQuotaExceededException`), `ResourceNotFoundException` (the guardrail the policy names is not there: configuration), a timeout and every 5xx. The exact error AWS returns for an oversize text is not documented, so the class is read from the error type, the status and, for the guardrail reference only, the member a `ValidationException` names. `guardrail_id`, `version`, `role_arn` and `session_name` are validated when the policy is written |
+| `google_model_armor` | A 400 or 413 about the content, an `EXECUTION_SKIPPED` filter in `block_on`, a text above 64 KiB, refused before the call | A 400 whose `google.rpc.BadRequest` field violation names the resource (`name`, `parent`) or whose message opens by calling the resource name, location or template invalid (configuration); `EXECUTION_STATE_UNSPECIFIED` and any other state that is not a skip; credentials, throttling and 5xx |
+| `azure_content_safety` | A 400 in the `{"error":{"code","message","target"}}` envelope that does not name the call's configuration, a 413. Only the last user turn is analysed, as the other guardrails do on `pre_request`; a last turn above Azure's 10,000 characters is `input` | A 400 whose target is `api-version`, `categories` or `outputType`, or whose code names the api-version; the endpoint must carry an `api-version` when the policy is written |
+| `openai_moderation` | A 400 or 413 that does not name the model or the key | A 400 whose `param` is `model`, or whose `code` is `model_not_found`, `invalid_model` or `invalid_api_key` |
 | `azure_content_safety` | 400, or 413 | 401, 403, 408, 429 and 5xx |
 | `openai_moderation` | 400, or 413 | 401, 403, 408, 429 and 5xx |
 | `google_model_armor` | A filter selected in `block_on` that ends `EXECUTION_SKIPPED` (above its token limit), which is also what a `PARTIAL` invocation blocks on | `FAILURE`, a non-2xx, a filter the template does not enable, a `PARTIAL` invocation in which every `block_on` filter ran |
@@ -593,13 +605,18 @@ limit are the guard's answers, not failures, and always block.
 deleted from stored policies by a migration and dropped by the policy API on write. Every call
 is bounded by the deployment-wide `TRUSTGUARD_TIMEOUT`; a streamed block waits for the
 shorter of that and the 2 second stream guard timeout. The
-contract is additive, so the vocabulary is unchanged; what can no longer occur is
-`decision: failed_closed`, `extras.failed_closed`, the HTTP 502, 503 and 504 refusals
-(`trustguard_unauthorized`, `trustguard_unavailable`, `trustguard_error`) and a block recorded
-for a mask that could not be applied. Events written before the change still carry them.
+contract is additive, so the vocabulary is unchanged. `decision: failed_closed` and
+`extras.failed_closed: true` occur only for an `input` failure in a mode that blocks, buffered
+and streamed. What can no longer occur is the HTTP 502, 503 and 504 refusals
+(`trustguard_unauthorized`, `trustguard_unavailable`, `trustguard_error`): an availability
+failure is never refused. A mask that could not be applied is recorded `blocked` and `degraded`,
+refused with the finding's own block, not `failed_closed`. Events written before the change still
+carry the refusals.
 
-`extras.failed_open` is set to match, and `extras.failure_reason`
-names the cause. The same token labels `trustguard_evaluate_failures_total{reason}`:
+`extras.failed_open` (or `extras.failed_closed`) is set to match, `extras.failure_class` says
+whose failure it was, and `extras.failure_reason` names the cause. A streamed block waits for the
+shorter of the deployment timeout and the stream guard timeout, and each streamed evaluation sends
+at most a 64 KiB tail window, so a timeout is not driven by the length of the response. The same token labels `trustguard_evaluate_failures_total{reason}`:
 
 | `failure_reason` | Cause |
 |------------------|-------|
