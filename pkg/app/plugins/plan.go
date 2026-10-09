@@ -204,13 +204,13 @@ const streamOnErrorFailOpen = "fail_open"
 //
 //   - on_error is fail_open whenever an owner takes part. Owners are the
 //     guardrails, whose availability failures fail open and whose content-
-//     dependent failures arrive as a cut verdict rather than an error, and a
-//     passive rewriter never fails a call. The guard applies this one value only to an error the executor hands
-//     it, and RunStreamSegment hands back only the error of an entry whose own
-//     options say fail_closed (a rewriter such as regex_replace): everything
-//     else is absorbed per entry. So the guard cannot cut on behalf of a
-//     guardrail that failed, and a rewriter that rides alongside one inherits
-//     the owner's fail_open.
+//     dependent failures arrive as a cut verdict rather than an error. A
+//     passive rewriter's own fail_closed is not honoured beside a guardrail: it
+//     inherits the owner's fail_open. The guard applies this one value only to
+//     an error the executor hands it, and RunStreamSegment hands back only the
+//     error of an entry whose own options say fail_closed (a rewriter such as
+//     regex_replace); everything else is absorbed per entry, so the guard cannot
+//     cut on behalf of a guardrail that failed.
 //   - max_accumulated_bytes is the largest any participant asks for, passive
 //     ones included, and the executor narrows each entry to its own
 //     (segmentWithin). No provider receives a larger prefix than its policy
