@@ -63,23 +63,32 @@ func textUnits(n int) int { return (n + 999) / 1000 }
 //
 // Because the waits and the calls are known before the first call, the request is
 // refused when they cannot fit the evaluation's budget, so a client cannot pad a
-// message until its last chunk is paced to the deadline.
+// message until its last chunk is paced to the deadline. Once the estimate admits
+// a request, a chunk that the budget cuts or that has no time left to start is
+// the provider being slower than the estimate: availability, never the request's
+// size.
 
-// estimateDuration is the time the chunks need: the waits that spacing adds plus
-// a reserve per call.
+// estimateDuration is the time the chunks need. Each call is reserved
+// callReserve, and the quota refills while it runs, so a chunk waits only for
+// what that refill did not cover: a chunk costs the longer of callReserve and the
+// time its units need.
 func estimateDuration(chunks []textchunk.Chunk, q regionQuota) time.Duration {
 	tokens := float64(q.burst)
-	var wait time.Duration
-	for _, c := range chunks {
+	var total time.Duration
+	for i, c := range chunks {
+		if i > 0 {
+			tokens = min(float64(q.burst), tokens+callReserve.Seconds()*float64(q.unitsPerSecond))
+		}
 		u := float64(min(textUnits(len(c.Text)), q.burst))
+		var wait time.Duration
 		if tokens < u {
-			d := time.Duration((u - tokens) / float64(q.unitsPerSecond) * float64(time.Second))
-			wait += d
-			tokens += d.Seconds() * float64(q.unitsPerSecond)
+			wait = time.Duration((u - tokens) / float64(q.unitsPerSecond) * float64(time.Second))
+			tokens = u
 		}
 		tokens -= u
+		total += callReserve + wait
 	}
-	return wait + time.Duration(len(chunks))*callReserve
+	return total
 }
 
 // spacer spaces one request's chunks.

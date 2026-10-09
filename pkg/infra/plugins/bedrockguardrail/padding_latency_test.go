@@ -15,6 +15,7 @@ package bedrockguardrail
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -131,9 +132,10 @@ func TestALegitimateLongMessageInASmallQuotaRegionPasses(t *testing.T) {
 // deadline and fails open, even when its harmful part is in that last chunk.
 func TestAMessageThatCannotFitTheBudgetIsRefusedBeforeAnyCall(t *testing.T) {
 	t.Parallel()
-	text := benignWords(252000) + " HARMFUL-TAIL"
+	text := benignWords(100000) + " HARMFUL-TAIL"
 	g := &latencyGuardrail{delay: 500 * time.Millisecond, block: "HARMFUL-TAIL"}
 	p := pluginOver(g)
+	p.budget = 3 * time.Second
 	event, span := eventFor(t)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, text), nil)
 	in.Event = event
@@ -180,8 +182,8 @@ func TestTheLargestUSRegionsUseTheirLargerFloor(t *testing.T) {
 	assert.Equal(t, regionQuota{25, 25}, floorFor("eu-west-3"))
 	assert.Equal(t, regionQuota{50, 200}, floorFor(""))
 	small, large := estimateDuration(chunks, floorFor("eu-west-3")), estimateDuration(chunks, floorFor("us-east-1"))
-	assert.Greater(t, small, large, "105 units fit the 200-unit burst, so there is no wait")
-	assert.Equal(t, time.Duration(len(chunks))*callReserve, large)
+	assert.Equal(t, time.Duration(len(chunks))*callReserve, large, "105 units fit the 200-unit burst, so there is no wait")
+	assert.Equal(t, large, small, "the quota refills more than a chunk uses while a call runs, so the floor adds no wait")
 
 	g := &latencyGuardrail{delay: 20 * time.Millisecond}
 	p := pluginOver(g)
@@ -191,10 +193,9 @@ func TestTheLargestUSRegionsUseTheirLargerFloor(t *testing.T) {
 	assert.Less(t, time.Since(started), time.Second, "no spacing inside the burst")
 }
 
-// The chunks after the first round wait for this request's own earlier chunks. A
-// chunk that is cut by the evaluation's budget after waiting was kept from
-// finishing by the request's size, so it is input, not an outage.
-func TestAChunkCutByTheBudgetAfterWaitingIsInputInEnforce(t *testing.T) {
+// The estimate admitted the request, so a chunk that hangs after the first one is
+// the provider being slower than that estimate: availability, never input.
+func TestAChunkOfAnAdmittedRequestThatHangsFailsOpen(t *testing.T) {
 	t.Parallel()
 	// The marker sits in the second chunk, which waits behind the first.
 	words := benignWords(40000)
@@ -208,13 +209,12 @@ func TestAChunkCutByTheBudgetAfterWaitingIsInputInEnforce(t *testing.T) {
 
 	res, err := p.Execute(context.Background(), in)
 
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok, "got res=%v err=%v", res, err)
-	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	assertPassThrough(t, res, err)
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 	require.True(t, ok)
-	assert.Equal(t, "input", extras.FailureClass)
-	assert.Equal(t, appplugins.DetailChunkBudget, extras.FailureDetail)
+	assert.Equal(t, "availability", extras.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+	assert.NotEqual(t, appplugins.DetailChunkBudget, extras.FailureDetail)
 }
 
 // The provider being slow on a chunk of the first round is its own doing.
@@ -235,4 +235,125 @@ func TestASlowChunkOfTheFirstRoundIsAvailability(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "availability", extras.FailureClass)
 	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+}
+
+// The first chunk of an admitted two-chunk request takes nearly the whole budget,
+// so the second is not started for lack of reserve. The provider was slower than
+// the estimate, which is not the request's doing.
+func TestASlowFirstChunkOfAnAdmittedRequestFailsOpen(t *testing.T) {
+	t.Parallel()
+	g := &latencyGuardrail{delay: 2850 * time.Millisecond}
+	p := pluginOver(g)
+	p.budget = 3 * time.Second
+	text := benignWords(30000)
+	require.Equal(t, 2, textchunk.Count(text, chunkSpec))
+	require.LessOrEqual(t, estimateDuration(textchunk.Split(text, chunkSpec), floorFor("eu-west-3")), p.budget)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, text), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, "availability", extras.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+	assert.EqualValues(t, 1, g.calls.Load(), "the second chunk was never started")
+}
+
+// A provider that hangs on the third chunk of an admitted request fails open.
+func TestAHangOnTheThirdChunkOfAnAdmittedRequestFailsOpen(t *testing.T) {
+	t.Parallel()
+	words := benignWords(60000)
+	text := words[:50000] + " HANG-HERE " + words[50000:]
+	require.Equal(t, 3, textchunk.Count(text, chunkSpec))
+	g := &latencyGuardrail{delay: 10 * time.Millisecond, hang: "HANG-HERE"}
+	p := pluginOver(g)
+	p.budget = 6 * time.Second
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("us-east-1"), chatRequestOf(t, text), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, "availability", extras.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+}
+
+// A legitimate message of 84 KB and one of 123 KB, in the region with the
+// smallest quota, are judged and never refused.
+func TestLongLegitimateMessagesInASmallQuotaRegionPassInEnforce(t *testing.T) {
+	t.Parallel()
+	for _, size := range []int{84000, 123000} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			t.Parallel()
+			g := &quotaGuardrail{
+				latencyGuardrail: latencyGuardrail{delay: 100 * time.Millisecond},
+				bucket:           rate.NewLimiter(25, 25),
+				err:              throttlingError(t),
+			}
+			p := pluginOver(g)
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, benignWords(size)), nil)
+			in.Event = event
+
+			res, err := p.Execute(context.Background(), in)
+
+			assertPassThrough(t, res, err)
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, "allowed", extras.Decision)
+			assert.Zero(t, g.denied.Load())
+			assert.Equal(t, extras.ChunkCount, int(g.calls.Load()))
+		})
+	}
+}
+
+// The ceiling is the same in every region, and the estimate never exceeds the
+// budget up to it: a text of maxBufferedChunks chunks (203,136 bytes) is judged,
+// one byte more is refused as chunk_limit before any call.
+func TestTheCeilingIsTheSameInEveryRegion(t *testing.T) {
+	t.Parallel()
+	atCeiling := chunkBytes + (maxBufferedChunks-1)*(chunkBytes-chunkOverlap)
+	require.Equal(t, 10, maxBufferedChunks)
+	require.Equal(t, maxBufferedChunks, textchunk.Count(strings.Repeat("a", atCeiling), chunkSpec))
+	require.Equal(t, maxBufferedChunks+1, textchunk.Count(strings.Repeat("a", atCeiling+1), chunkSpec))
+	for _, region := range []string{"", "eu-west-3", "us-east-1", "us-west-2"} {
+		t.Run(region, func(t *testing.T) {
+			t.Parallel()
+			chunks := textchunk.Split(strings.Repeat("a", atCeiling), chunkSpec)
+			assert.Equal(t, bufferedBudget, estimateDuration(chunks, floorFor(region)), "the largest text just fits the budget")
+
+			g := &latencyGuardrail{delay: time.Millisecond}
+			full := pluginOver(&latencyGuardrail{delay: time.Millisecond})
+			res, err := full.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce,
+				settingsIn(regionOrDefault(region)), chatRequestOf(t, strings.Repeat("a", atCeiling)), nil))
+			assertPassThrough(t, res, err)
+
+			p := pluginOver(g)
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn(regionOrDefault(region)), chatRequestOf(t, strings.Repeat("a", atCeiling+1)), nil)
+			in.Event = event
+			_, err = p.Execute(context.Background(), in)
+
+			pe, ok := appplugins.AsPluginError(err)
+			require.True(t, ok, "got %v", err)
+			assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+			assert.Zero(t, g.calls.Load(), "refused before any call")
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, appplugins.DetailChunkLimit, extras.FailureDetail)
+		})
+	}
+}
+
+func regionOrDefault(region string) string {
+	if region == "" {
+		return defaultRegion
+	}
+	return region
 }

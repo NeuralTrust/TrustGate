@@ -67,11 +67,12 @@ func TestALongMessageIsSentInChunksOfAtMostTwentyFourUnits(t *testing.T) {
 	assert.Equal(t, "allowed", extras.Decision)
 }
 
-func TestAMessageOfThirtyThreeChunksIsRefusedBeforeAnyCall(t *testing.T) {
+func TestAMessageAboveTheChunkLimitIsRefusedBeforeAnyCall(t *testing.T) {
 	t.Parallel()
 	g := allowing()
 	p := streamPlugin(t, g)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("us-east-1"), chatRequestOf(t, benignWords(33*chunkBytes)), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("us-east-1"),
+		chatRequestOf(t, benignWords((maxBufferedChunks+1)*chunkBytes)), nil)
 
 	_, err := p.Execute(context.Background(), in)
 
