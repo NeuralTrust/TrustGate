@@ -441,10 +441,11 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 - An `observe` entry's transform is never applied to the client, so it is not
   handed on: the entries behind it judge the text the client will actually get.
 - A block still ends the chain and discards any transform of the same segment.
-- If a guardrail fails after an earlier entry masked the segment, the failure
-  fails open, as every guardrail failure does, and the chain goes on with the
-  masked text: what is released is the masked text, never the raw text. The
-  stream is cut only if the mask cannot be applied.
+- If a guardrail fails on an availability failure after an earlier entry masked
+  the segment, the failure fails open and the chain goes on with the masked
+  text: what is released is the masked text, never the raw text. A failure that
+  depends on the content of the block cuts the stream in a mode that blocks, and
+  so does a mask that cannot be applied.
 - Masks can stack within a block: a wide pattern in a later rewriter may match
   inside the placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders
   change, never raw data. Across blocks they do not: `regex_replace` replaces
@@ -462,8 +463,12 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 
 **Each streaming entry is sent its own window.** One stream has one head gate
 and one cadence, taken from the first entry that owns them, usually
-`trustguard`; the stream fails open whenever a guardrail takes part, because no
-guardrail has a setting for it. The stream keeps the largest
+`trustguard`. The stream's own `on_error` is `fail_open` when a guardrail takes
+part, because no guardrail has a setting for it: a guardrail's availability
+failure is absorbed per entry and fails open, and one that depends on the content
+of the block arrives as a cut verdict. The one exception is an enforcing rewriter
+that asks for `fail_closed` (`regex_replace`, by default), which keeps it beside
+a guardrail whatever the order of the two. The stream keeps the largest
 `max_accumulated_bytes` of its participants, and each entry is handed only the
 tail of the text that its own `streaming.max_accumulated_bytes` allows. So a
 policy's setting bounds what its provider receives whatever policy owns the
@@ -471,9 +476,12 @@ stream, and a provider with a small limit never shrinks what another policy
 inspects. A rewrite over that tail is put back behind the text the entry did
 not see. The one exception is a block whose new text alone is larger than the
 window: it is sent whole, because that text is about to reach the client, and
-if the provider refuses or skips it, the guardrail fails open and the block is
-released uninspected. The defaults follow the
-providers' per-request limits:
+if the provider refuses or skips it, that is a failure of the content, so a mode
+that blocks cuts the stream and observe releases the block. Every evaluation
+sends at most the entry's window, which a provider ceiling caps whatever the
+setting asks for, so the time of a block does not grow with the response and a
+long preamble cannot push the blocks that follow past the per-block deadline. The
+defaults follow the providers' per-request limits and deadlines:
 
 - `google_model_armor`: 64 KiB, and never more. Model Armor skips its filters
   above 65,536 tokens, which the plugin counts as a filter that did not run, so
@@ -488,8 +496,11 @@ providers' per-request limits:
   bounds the size of each call, not their rate: in regions where the
   content-filter quota is 25 text units per second, a long stream also needs
   that quota raised, or throttled calls fail open.
-- `openai_moderation` and `trustguard`: 256 KiB, unchanged. OpenAI documents no
-  per-request input limit for moderations.
+- `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
+  input limit for moderations, so the window is fitted to the 1.5 second block
+  deadline.
+- `trustguard`: 64 KiB, and never more, fitted to the 2 second deadline that
+  covers the token and the evaluate call.
 
 ## Deny pattern: "only group X may call this tool"
 
