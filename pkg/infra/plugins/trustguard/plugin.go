@@ -318,13 +318,12 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// indistinguishable transport error. The client's own Timeout is only a
 	// backstop above this deadline.
 	//
-	// A request that sends a URL attachment may need a second call without it
-	// (below), so the first call is held to what is left of the budget after the
-	// share the second needs, and the second runs under the deadline of the whole
-	// evaluation, never past it.
-	started := time.Now()
-	deadline := started.Add(p.timeout)
-	firstCtx, cancelFirst := context.WithDeadline(ctx, firstCallDeadline(started, p.timeout, tgt.urlAttachments > 0))
+	// The first call has the whole budget: a slow answer is still an answer. A
+	// request that sends a URL attachment may need a second call without it
+	// (below), and that call is made only when its minimum share is left, under
+	// the same deadline, never past it.
+	deadline := time.Now().Add(p.timeout)
+	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
 	defer cancelFirst()
 	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
 	if err != nil {
@@ -995,16 +994,6 @@ const retryMinShare = 4
 // budget left at now.
 func retryHasBudget(now, deadline time.Time, budget time.Duration) bool {
 	return deadline.Sub(now) >= budget/retryMinShare
-}
-
-// firstCallDeadline is when the first evaluate call must end. A request that
-// sends a URL attachment holds back the minimum share a second call needs, so a
-// first call that is slow to say "invalid attachment" cannot leave none.
-func firstCallDeadline(start time.Time, budget time.Duration, mayRetry bool) time.Time {
-	if !mayRetry {
-		return start.Add(budget)
-	}
-	return start.Add(budget - budget/retryMinShare)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
