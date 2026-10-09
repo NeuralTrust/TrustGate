@@ -222,7 +222,7 @@ func TestNewPluginRegistry_RetiredSettingsSet(t *testing.T) {
 			switch slug {
 			case "regex_replace":
 				assert.Contains(t, streaming, "on_error", "a rewriter keeps its stream failure policy")
-				assert.Contains(t, streaming, "guard_timeout")
+				assert.NotContains(t, streaming, "guard_timeout", "a rewriter has no stream guard timeout")
 			case "azure_content_safety":
 				assert.Contains(t, streaming, "on_error", "azure has no stream leg and retires only its own keys")
 			default:
