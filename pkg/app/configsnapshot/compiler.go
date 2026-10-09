@@ -499,7 +499,9 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	byGateway := make(map[ids.GatewayID]*readmodel.Data)
 	groupByGateway(byGateway, consumers, func(x *consumerdomain.Consumer) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x consumerdomain.Consumer) { data.Consumers = append(data.Consumers, x) })
 	groupByGateway(byGateway, registries, func(x *registrydomain.Registry) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x registrydomain.Registry) { data.Registries = append(data.Registries, x) })
-	groupByGateway(byGateway, policies, func(x *policydomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x policydomain.Policy) { data.Policies = append(data.Policies, x) })
+	groupByGateway(byGateway, policies, func(x *policydomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x policydomain.Policy) {
+		data.Policies = append(data.Policies, withoutRemovedSettings(x))
+	})
 	groupByGateway(byGateway, auths, func(x *authdomain.Auth) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x authdomain.Auth) { data.Auths = append(data.Auths, x) })
 	groupByGateway(byGateway, grants, func(x *storeaccessdomain.Grant) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Grant) { data.StoreGrants = append(data.StoreGrants, x) })
 	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
@@ -684,7 +686,7 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 		if p == nil {
 			continue
 		}
-		data.Policies = append(data.Policies, *p)
+		data.Policies = append(data.Policies, withoutRemovedSettings(*p))
 	}
 
 	auths, err := c.listAuths(ctx, gatewayID)
