@@ -92,7 +92,7 @@ func pluginWith(client guardrailClient) *Plugin {
 
 func bedrockSettings(piiAction string) map[string]any {
 	return map[string]any{
-		"guardrail_id": "gr-123",
+		"guardrail_id": "gr123abc",
 		"version":      "DRAFT",
 		"pii_action":   piiAction,
 		"credentials": map[string]any{

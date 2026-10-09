@@ -115,7 +115,7 @@ func streamSettings(over map[string]any) map[string]any {
 		stream[k] = v
 	}
 	return map[string]any{
-		"guardrail_id": "gr-1",
+		"guardrail_id": "gr1abc",
 		"pii_action":   piiActionAnonymize,
 		"credentials": map[string]any{
 			"access_key_id":     "AKIAEXAMPLE",
@@ -534,7 +534,7 @@ func TestClosingSegmentPublishesTheStreamAccount(t *testing.T) {
 	assert.Equal(t, 310, data.Streaming.CutOffsetChars)
 	assert.Equal(t, int64(900), data.Streaming.GuardLatencyMsTotal)
 	assert.Equal(t, decisionBlocked, data.Decision)
-	assert.Equal(t, "gr-1", data.GuardrailID)
+	assert.Equal(t, "gr1abc", data.GuardrailID)
 }
 
 func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {

@@ -376,9 +376,9 @@ func TestReadPoliciesAreAssessmentFields(t *testing.T) {
 
 func TestBuildApplyInput(t *testing.T) {
 	t.Parallel()
-	cfg := Settings{GuardrailID: "gr-123", Version: "DRAFT"}
+	cfg := Settings{GuardrailID: "gr123abc", Version: "DRAFT"}
 	in := buildApplyInput(cfg, "hello", types.GuardrailContentSourceInput)
-	if aws.ToString(in.GuardrailIdentifier) != "gr-123" {
+	if aws.ToString(in.GuardrailIdentifier) != "gr123abc" {
 		t.Fatalf("GuardrailIdentifier = %q", aws.ToString(in.GuardrailIdentifier))
 	}
 	if aws.ToString(in.GuardrailVersion) != "DRAFT" {

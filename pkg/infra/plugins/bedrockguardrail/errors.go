@@ -17,7 +17,9 @@ package bedrockguardrail
 import (
 	"errors"
 	"net/http"
+	"strings"
 
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/smithy-go"
 
@@ -55,24 +57,40 @@ var notAboutTheInput = map[string]struct{}{
 }
 
 // classifyApplyErr maps what ApplyGuardrail answered to the shared failure
-// vocabulary. A client error (4xx) the provider returns for what the call
-// carries, a ValidationException above all, is the request's own content
-// (input_too_large, provider_rejected_input). Everything else is the provider,
-// the network or the credentials: transport, which fails open.
+// vocabulary. A client error (4xx) that ApplyGuardrail itself returns for what
+// the call carries, a ValidationException above all, is the request's own
+// content (input_too_large, provider_rejected_input). Everything else is the
+// provider, the network, the credentials or the policy's own configuration:
+// transport or config_invalid, which fail open.
 //
-// The answer is classified on the AWS error type and the HTTP status, never on
-// the message. The exact error AWS returns for an oversize text is not
-// documented (the quotas page lists 25 text units in some regions and the API
-// reference lists ValidationException among the errors without tying it to
+// Only an error raised by the ApplyGuardrail operation can be about the input.
+// A role that cannot be assumed surfaces from the same call wrapped by the
+// signer, and STS answers a malformed role_arn or session_name with the very
+// ValidationError a content problem would produce, so the credential chain is
+// told apart before the answer is read. A ValidationException that names the
+// guardrail identifier or version is the policy pointing at a guardrail AWS
+// cannot take, which no request can change, so it is config_invalid.
+//
+// The answer is classified on the AWS error type, the HTTP status and, for the
+// guardrail reference only, the member a ValidationException names, never on
+// the rest of the message. The exact error AWS returns for an oversize text is
+// not documented (the quotas page lists 25 text units in some regions and the
+// API reference lists ValidationException among the errors without tying it to
 // size), so a match on message text would be a guess that breaks when AWS
 // rewords it, and one that fails closed on the wrong error.
 func classifyApplyErr(err error) (appplugins.FailureReason, string) {
+	if !raisedByApplyGuardrail(err) {
+		return appplugins.FailureTransport, ""
+	}
 	var api smithy.APIError
 	if !errors.As(err, &api) {
 		return appplugins.FailureTransport, ""
 	}
 	if _, skip := notAboutTheInput[api.ErrorCode()]; skip {
 		return appplugins.FailureTransport, ""
+	}
+	if api.ErrorCode() == "ValidationException" && namesGuardrailReference(api.ErrorMessage()) {
+		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
 	}
 	status := 0
 	var response *awshttp.ResponseError
@@ -90,4 +108,34 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 	}
 	return appplugins.FailureTransport, ""
+}
+
+// raisedByApplyGuardrail reports whether err is the answer of the
+// ApplyGuardrail operation and not of the credential chain that signs it. The
+// SDK wraps a failed credential fetch in a signing error and the fetch's own
+// operation (STS AssumeRole) in a nested operation error, so the innermost
+// operation names who answered.
+func raisedByApplyGuardrail(err error) bool {
+	var signing *v4.SigningError
+	if errors.As(err, &signing) {
+		return false
+	}
+	var innermost *smithy.OperationError
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if op, ok := e.(*smithy.OperationError); ok {
+			innermost = op
+		}
+	}
+	return innermost == nil || innermost.OperationName == applyGuardrailOperation
+}
+
+const applyGuardrailOperation = "ApplyGuardrail"
+
+// namesGuardrailReference reports whether a ValidationException is about the
+// guardrail identifier or version the policy configures. AWS names the member
+// in the constraint it reports ("at 'guardrailVersion'"), and the member is
+// the only part of the message read.
+func namesGuardrailReference(message string) bool {
+	m := strings.ToLower(message)
+	return strings.Contains(m, "guardrailidentifier") || strings.Contains(m, "guardrailversion")
 }
