@@ -127,12 +127,11 @@ func TestPartialCoverageCutsAStreamInEnforce(t *testing.T) {
 	assert.Equal(t, appplugins.DetailCoveragePartial, verdict.Failure.Detail)
 }
 
-// A long text is sent whole on both legs: a region with a larger quota judges
-// it, and one that cannot says so (an AWS rejection or partial coverage, both
-// input), so nothing is refused locally on a guess about the quota.
-func TestALongTextIsSentWhole(t *testing.T) {
+// A text that fits one chunk is sent whole on both legs, well above a stream
+// window.
+func TestATextWithinOneChunkIsSentWhole(t *testing.T) {
 	t.Parallel()
-	over := strings.Repeat("a", streamingDefaults.MaxAccumulatedBytes*3)
+	over := strings.Repeat("a", chunkBytes)
 	request := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + over + `"}]}`)
 	response := []byte(`{"id":"r1","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"` + over + `"},"finish_reason":"stop"}]}`)
 	for _, tc := range []struct {

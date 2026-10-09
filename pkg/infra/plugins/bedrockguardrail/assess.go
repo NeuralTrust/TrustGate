@@ -288,3 +288,14 @@ func partiallyCovered(coverage *types.GuardrailCoverage) bool {
 func (r assessmentResult) judgedOnlyInPart() bool {
 	return r.partialCoverage && r.block == nil
 }
+
+// inputBytes is the size of the text blocks an ApplyGuardrail input carries.
+func inputBytes(in *bedrockruntime.ApplyGuardrailInput) int {
+	n := 0
+	for _, block := range in.Content {
+		if text, ok := block.(*types.GuardrailContentBlockMemberText); ok {
+			n += len(aws.ToString(text.Value.Text))
+		}
+	}
+	return n
+}

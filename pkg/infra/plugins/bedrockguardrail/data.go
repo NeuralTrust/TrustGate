@@ -20,17 +20,20 @@ import (
 )
 
 type Data struct {
-	GuardrailID    string `json:"guardrail_id,omitempty"`
-	Version        string `json:"version,omitempty"`
-	Region         string `json:"region,omitempty"`
-	Stage          string `json:"stage,omitempty"`
-	Mode           string `json:"mode,omitempty"`
-	Decision       string `json:"decision,omitempty"`
-	Policy         string `json:"policy,omitempty"`
-	MatchType      string `json:"type,omitempty"`
-	Action         string `json:"action,omitempty"`
-	Name           string `json:"name,omitempty"`
-	LatencyMS      int64  `json:"latency_ms,omitempty"`
+	GuardrailID string `json:"guardrail_id,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Region      string `json:"region,omitempty"`
+	Stage       string `json:"stage,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Decision    string `json:"decision,omitempty"`
+	Policy      string `json:"policy,omitempty"`
+	MatchType   string `json:"type,omitempty"`
+	Action      string `json:"action,omitempty"`
+	Name        string `json:"name,omitempty"`
+	LatencyMS   int64  `json:"latency_ms,omitempty"`
+	// ChunkCount is how many ApplyGuardrail calls the text was split into; it
+	// is set only when that is more than one.
+	ChunkCount     int    `json:"chunk_count,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
 	// FailureReason and FailureDetail are set on a failed_open or failed_closed

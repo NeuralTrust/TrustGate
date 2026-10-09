@@ -27,6 +27,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
 
 func chatRequestOf(t *testing.T, text string) *infracontext.RequestContext {
@@ -48,11 +49,10 @@ func chatResponseOf(t *testing.T, text string) *infracontext.ResponseContext {
 	return r
 }
 
-// A text above the characters any region can serve is the client's doing and
-// would only run the call into its timeout, which fails open. It is refused
-// locally as input before a call; a text a large-quota region accepts, here
-// 400,000 characters, is sent whole.
-func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
+// A text that splits into more chunks than are evaluated is the client's doing
+// and cannot be screened whole. It is refused locally as input before a call; a
+// text the region's quota serves is sent in chunks.
+func TestBufferedLegsRefuseATextAboveTheChunkLimitLocally(t *testing.T) {
 	t.Parallel()
 
 	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
@@ -77,6 +77,7 @@ func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
 				extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 				require.True(t, ok)
 				assert.Equal(t, "input", extras.FailureClass)
+				assert.Equal(t, appplugins.DetailChunkLimit, extras.FailureDetail)
 				if mode == policy.ModeEnforce {
 					pe, isPE := appplugins.AsPluginError(err)
 					require.True(t, isPE, "want a refusal, got res=%v err=%v", res, err)
@@ -90,7 +91,7 @@ func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
 				t.Parallel()
 				client := &recordingClient{output: allowOutput()}
 				p := pluginWith(client)
-				text := strings.Repeat("é", 400000)
+				text := strings.Repeat("é", 100000)
 				in := execInput(stage, mode, bedrockSettings("block"), reqCtx(openAIRequest()), nil)
 				if stage == policy.StagePreRequest {
 					in.Request = chatRequestOf(t, text)
@@ -99,7 +100,7 @@ func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
 				}
 				_, err := p.Execute(context.Background(), in)
 				require.NoError(t, err)
-				assert.Equal(t, 1, client.count())
+				assert.Equal(t, textchunk.Count(text, chunkSpec), client.count())
 			})
 		}
 	}
