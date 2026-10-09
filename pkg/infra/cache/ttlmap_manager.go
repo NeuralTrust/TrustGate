@@ -53,7 +53,7 @@ const (
 	LoadBalancerCacheTTL   = 5 * time.Minute
 	CatalogModelCacheTTL   = 24 * time.Hour
 	CatalogListingCacheTTL = 24 * time.Hour
-	MCPToolsCacheTTL       = 5 * time.Minute
+	MCPToolsCacheTTL       = 1 * time.Hour
 )
 
 type TTLMapManager struct {
