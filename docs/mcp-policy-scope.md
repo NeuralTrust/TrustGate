@@ -441,9 +441,10 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 - An `observe` entry's transform is never applied to the client, so it is not
   handed on: the entries behind it judge the text the client will actually get.
 - A block still ends the chain and discards any transform of the same segment.
-- If an enforcing entry fails after an earlier one masked the segment, the mask
-  travels with the error: `on_error: fail_open` releases the masked text, never
-  the raw text, and cuts the stream if the mask cannot be applied.
+- If a guardrail fails after an earlier entry masked the segment, the failure
+  fails open, as every guardrail failure does, and the chain goes on with the
+  masked text: what is released is the masked text, never the raw text. The
+  stream is cut only if the mask cannot be applied.
 - Masks can stack within a block: a wide pattern in a later rewriter may match
   inside the placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders
   change, never raw data. Across blocks they do not: `regex_replace` replaces
@@ -461,7 +462,8 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 
 **Each streaming entry is sent its own window.** One stream has one head gate
 and one cadence, taken from the first entry that owns them, usually
-`trustguard`; `on_error` is merged across policies. The stream keeps the largest
+`trustguard`; the stream fails open whenever a guardrail takes part, because no
+guardrail has a setting for it. The stream keeps the largest
 `max_accumulated_bytes` of its participants, and each entry is handed only the
 tail of the text that its own `streaming.max_accumulated_bytes` allows. So a
 policy's setting bounds what its provider receives whatever policy owns the
@@ -469,13 +471,14 @@ stream, and a provider with a small limit never shrinks what another policy
 inspects. A rewrite over that tail is put back behind the text the entry did
 not see. The one exception is a block whose new text alone is larger than the
 window: it is sent whole, because that text is about to reach the client, and
-if the provider refuses or skips it, `on_error` decides. The defaults follow the
+if the provider refuses or skips it, the guardrail fails open and the block is
+released uninspected. The defaults follow the
 providers' per-request limits:
 
 - `google_model_armor`: 64 KiB, and never more. Model Armor skips its filters
   above 65,536 tokens, which the plugin counts as a filter that did not run, so
-  a larger payload would cut a `fail_closed` stream or release the block
-  uninspected on `fail_open`. Google does not raise this limit, so a higher
+  a larger payload would release the block
+  uninspected. Google does not raise this limit, so a higher
   setting is treated as 64 KiB.
 - `bedrock_guardrail` (streaming is opt-in): 24 KiB. AWS bounds each
   `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
@@ -484,7 +487,7 @@ providers' per-request limits:
   larger setting is honoured; raise it only after raising the quota. The window
   bounds the size of each call, not their rate: in regions where the
   content-filter quota is 25 text units per second, a long stream also needs
-  that quota raised, or throttled calls fail as `on_error` says.
+  that quota raised, or throttled calls fail open.
 - `openai_moderation` and `trustguard`: 256 KiB, unchanged. OpenAI documents no
   per-request input limit for moderations.
 

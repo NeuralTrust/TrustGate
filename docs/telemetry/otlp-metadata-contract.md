@@ -235,9 +235,10 @@ Since RUN-1745:
   longer walked per block, so it writes no streamed entry with no decision. Its settings no longer failing to parse
   cannot fail the blocks of a stream another policy opted into.
 - **A cut on a failure is the failing policy's.** When a block's call fails and
-  `streaming.on_error` is `fail_closed`, `cut_at_eval` lands on the policy whose call
-  failed, not on a policy that masked the same block. A mask that `fail_open` could not
-  apply is still the masking policy's cut.
+  the stream resolves it as `fail_closed`, `cut_at_eval` lands on the policy whose call
+  failed, not on a policy that masked the same block. Only a rewriter that asks for it
+  (`regex_replace` by default) can cause that cut: since RUN-1813 no guardrail has a
+  `fail_closed` option. A mask that could not be applied is still the masking policy's cut.
 - **A masked stream says so.** An enforcing policy whose mask reached the client reports
   the same decision as its buffered leg: `transformed` (`trustguard`) or `anonymized`
   (`bedrock_guardrail`, `google_model_armor`); it used to read `allowed`.
@@ -279,7 +280,7 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | Token | Field | Meaning |
 |-------|-------|---------|
 | `accumulation_cap` | `degraded_reason` | The payload crossed its size cap and the block was inspected against a tail window rather than the whole prefix |
-| `guard_timeout` | `degraded_reason` | A block's verdict did not arrive within `guard_timeout` and the held text was released uninspected |
+| `guard_timeout` | `degraded_reason` | A block's verdict did not arrive within the guard timeout and the held text was released uninspected |
 | `guard_error` | `degraded_reason` | A block's call failed for another reason (the provider rejected it, a transport error) and the held text was released uninspected. Before RUN-1745 these read `guard_timeout` |
 | `tool_input_uninspected` | `degraded_reason` | A native Amazon Bedrock stream released a tool call without its input having been read by the policies as a text of its own: the call outgrew the hold (the configured hold, `BEDROCK_NATIVE_TOOL_HOLD`, 30 seconds by default, or the bytes the guard keeps), the stream ended before it closed, another frame sat inside it, its start had already been released, or its model family's tool calls are not understood. The call is not cut. It stays the reason of the stream when a later `accumulation_cap`, `guard_timeout` or `guard_error` would have replaced it |
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
@@ -291,13 +292,14 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `stream_cut` | `skip_reason` | The `post_response` leg of a stream the stream guard cut mid-way. What was delivered ends on the cut terminator and nothing after the cut reached the client; the guard's own entry already reports `blocked`, so the truncated body is not inspected again. Emitted with `skipped: true`, but it is not a coverage gap. A stream that degrades or whose client disconnects without a cut keeps its `post_response` audit unless its final block was inspected in full (`stream_final_inspected`) |
 | `stream_final_inspected` | `skip_reason` | The `post_response` leg of a stream whose final block the stream guard already evaluated in full under the same policy entry: every entry answered and the call carried the whole accumulated text. The drained body is that text, so it is not evaluated again (a second pass only duplicated the output row). Emitted with `skipped: true`, but it is not a coverage gap. A stream whose final block was not evaluated in full (degraded, failed call, accumulation cap) keeps its `post_response` audit |
 
-**A cut is not always a verdict.** Under `on_error: fail_closed` a guard call that fails
-outright stops the stream too, and that stop is reported the way a verdict's is:
+**A cut is not always a verdict.** When the stream's `on_error` is `fail_closed`, a call that
+fails outright stops the stream too, and that stop is reported the way a verdict's is:
 `cut_at_eval` names the block and the decision is `blocked`, on every policy that could
 have blocked. Nothing in `degraded_reason` marks it — fail_closed does not degrade, it
 stops — so the tell is `guard_calls` short of `evals_total` on a leg with a cut. Read
 `cut_at_eval` as "the block at which the stream stopped", not "the block whose verdict
-stopped it".
+stopped it". Since RUN-1813 only a rewriter that asks for it (`regex_replace`, whose stream
+leg fails closed by default) can cause such a cut; guardrails always fail open.
 
 **`status.reason` does not yet name a mid-stream cut.** It is set on the error path only
 (`writeProxyError`), so a head-of-stream block — which happens before a single byte is
@@ -310,22 +312,25 @@ dialect's content-filter terminator, and on the event the cut is visible only th
 
 `azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
 record a failure to reach a verdict the same way. On the buffered (non-streamed) leg they
-**fail open** by default, in every mode and for every `failure_reason`: a guardrail the gateway
-could not consult does not refuse the request (RUN-1792). A policy can opt out with
-`settings.on_error: fail_closed`. The stream leg is covered by RUN-1786. The entry's `decision` says what happened to the request:
+**always fail open**, in every mode and for every `failure_reason`: a guardrail the gateway
+could not consult does not refuse the request (RUN-1792). There is no setting to change
+that (RUN-1813). The stream leg fails open too (RUN-1786, RUN-1813). The entry's `decision`
+says what happened to the request:
 
-| Mode | `on_error` | `decision` | Request |
-|------|------------|------------|---------|
-| enforce, throttle or observe | `fail_open` (default) | `failed_open` | Forwarded; the chain carries on |
-| observe | `fail_closed` | `failed_open` | Forwarded; observe never refuses |
-| enforce or throttle | `fail_closed` | `failed_closed` | Refused with HTTP 502 `guardrail_unavailable` |
+| Mode | `decision` | Request |
+|------|------------|---------|
+| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
 
-Under `fail_closed`, `decode_failed` refuses too: a body the guardrail could not read is a body it
-did not inspect. A `config_invalid` failure on settings that could not be parsed at all fails open,
-since `on_error` is one of those settings.
-
-`settings.on_error` is read by data planes on this version or later. A hybrid data plane on an older
-version ignores it and keeps failing open.
+**Changed in RUN-1813.** `on_error` (and, on the stream leg, `streaming.on_error` and
+`streaming.guard_timeout`) used to let a policy opt into `fail_closed`. The settings were
+removed: a policy that still stores them keeps loading, the keys are ignored, and they are
+stripped from published config snapshots, so a hybrid data plane on an older version no
+longer honours them either. The contract is additive, so nothing that shipped is renamed or
+retyped, and the values stay in the vocabulary because `regex_replace` and enforcement
+refusals still record `failed_closed`. What can no longer occur for these four plugins is
+`decision: failed_closed`, the HTTP 502 `guardrail_unavailable` refusal and, on a stream, a
+cut resolved on a failed call. Events written before the change still carry them. A
+guardrail's stream leg runs under the default guard timeout of its plugin.
 
 Their `extras` carry two keys:
 
@@ -334,8 +339,8 @@ Their `extras` carry two keys:
 | `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body) |
 | `failure_detail` | Optional. The category, or the Model Armor sub-reason, that produced no verdict |
 
-A streamed response leg follows `streaming.on_error` for enforce entries; an observe entry
-that fails records `failed_open` and never cuts the stream.
+A streamed response leg that fails records `failed_open` too, in enforce and in observe, and
+never cuts the stream.
 
 **Changed in RUN-1786.** `google_model_armor` and `openai_moderation` inspect a streamed
 response by default: a policy with no `streaming` block is on, and `streaming.enabled: false`
@@ -345,18 +350,18 @@ accumulated prefix to ApplyGuardrail, whose on-demand quota is per account and r
 units per second in most non-US regions), so inspecting every stream by default would throttle
 the customer's buffered requests too. Until the console exposes the control (RUN-1661) a
 Bedrock policy with no `streaming` block records `skipped` / `streaming_disabled` on a streamed
-response. For all three, the stream leg fails **open** by default once it takes part, as the
+response. For all three, the stream leg fails **open** once it takes part, as the
 buffered leg does since RUN-1792: a provider error or timeout on a block
-releases the held text and does not cut the stream. A policy that wants the old behaviour sets
-`streaming.on_error: fail_closed`.
+releases the held text and does not cut the stream. Since RUN-1813 that is not configurable.
 
 When the stream leg has several participants the stream still runs on one head gate and one
-cadence (the first participant that owns them), but two options are merged across the chain:
-`on_error` is `fail_closed` when any enforcing policy asked for it, and
+cadence (the first participant that owns them), but two options are not taken from it:
+`on_error` is `fail_open` whenever a guardrail takes part, and
 `max_accumulated_bytes` is the smallest any participant asks for. `on_error` is also resolved per policy:
-a failing policy that resolved `fail_open` is recorded `failed_open` and the chain carries on
-with the next policy on the same block, so another policy's `fail_closed` neither cuts the
-stream on its behalf nor stops the policies behind it from inspecting. A `fail_closed` cut is
+a failing policy that fails open is recorded `failed_open` and the chain carries on
+with the next policy on the same block, so a failing policy neither cuts the
+stream nor stops the policies behind it from inspecting. A cut resolved on a failed call
+(only a rewriter that asks for `fail_closed`, such as `regex_replace`, can cause one) is
 labelled `failed_closed` on the failing policy (RUN-1710; it used to read `blocked`), at the
 head (HTTP 403) and after it. Only the policy whose own call failed carries it: the other
 policies on the stream do not, and a cut that is a block verdict, or a mask that could not be
@@ -367,12 +372,12 @@ its `decision` is `failed_open`, in enforce and in observe alike. The count is p
 two policies of one plugin on the same stream, one with a bad key, label only the bad one.
 Cancellation (a client that left) is not a failure. The `decision` of a stream leg is, in
 order of precedence: a cut that resolved this policy's own failed call as fail_closed
-(`failed_closed`), any other cut (`blocked`), a mask (`anonymized`), a finding (`reported`), a
-failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
+(`failed_closed`; no guardrail emits it since RUN-1813), any other cut (`blocked`), a mask
+(`anonymized`), a finding (`reported`), a failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
 a missing inspection. `streaming.degraded_reason` is a different, chain-wide signal and is
 not what the decision is read from: it is one value for the whole stream, overwritten by a
-later size degrade, and the failure of an observe policy, or of an enforcing policy that
-resolved `fail_open`, never reaches it (the chain absorbs it per policy).
+later size degrade, and the failure of an observe policy, or of an enforcing guardrail,
+never reaches it (the chain absorbs it per policy).
 
 **Streamed failures carry their reason (RUN-1710).** `bedrock_guardrail`, `google_model_armor`
 and `openai_moderation` write `failure_reason` and `failure_detail` (the same vocabulary and keys
@@ -382,8 +387,7 @@ are present whenever the policy's own call failed on at least one block, whateve
 `decision: blocked` with the failure's `failure_reason`. With several failed blocks the **first
 failure that carries a reason** is kept; later failures, which are usually the same outage
 repeating, do not overwrite it. A failure of a plugin that does not use the shared vocabulary
-carries no reason and is not tracked, so a later one that does carry a reason is the first kept. If the closing call itself fails, the entry still gets a decision (`failed_open`, or
-`failed_closed` when the guard's fail_closed cut was on that policy's failed call) and, when a
+carries no reason and is not tracked, so a later one that does carry a reason is the first kept. If the closing call itself fails, the entry still gets a decision (`failed_open`) and, when a
 reason is known, a minimal `extras` of `decision`, `failure_reason` and `failure_detail`. The
 keys are additive: nothing that shipped is renamed or retyped.
 
@@ -425,8 +429,8 @@ rewrite it the way they rewrite a translated one. Three outcomes are recorded in
 | Entry | When | `decision` | Extras |
 |-------|------|------------|--------|
 | A plugin that did not run | `prompt_template`, `tool_injection`, `prompt_compression` and `semantic_cache`, which transform the request and have nowhere to write on a relayed call | none (`skipped: true`) | `stage`, `skipped: true`, `skip_reason: native_bedrock_passthrough` |
-| A mask that could not be applied | A masking policy (`regex_replace`, `trustguard`, `bedrock_guardrail`, `google_model_armor`) changed the text a call carries and the change could not be carried onto the client's bytes safely, and the policy's `on_mask_failure` is `pass` (the default). The call goes through unmasked | `failed_open` | `decision: failed_open`, `stage` (`pre_request` or `pre_response`), `mode`, `failure_reason: mask_not_applicable:<cause>`, `streamed: true` on a stream |
-| A refusal | A policy that does not mask rewrote the call (a tool filter, a per-tool limit that strips a tool, a model downgrade), or a masking policy whose `on_mask_failure` is `block` could not apply its mask. The call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`. On a stream the stream ends like a block verdict | the policy's own (`block`) | the error of the block |
+| A mask that could not be applied | A masking policy (`regex_replace`, `trustguard`, `bedrock_guardrail`, `google_model_armor`) changed the text a call carries and the change could not be carried onto the client's bytes safely. The call goes through unmasked, always (RUN-1813) | `failed_open` | `decision: failed_open`, `stage` (`pre_request` or `pre_response`), `mode`, `failure_reason: mask_not_applicable:<cause>`, `streamed: true` on a stream |
+| A refusal | A policy that does not mask rewrote the call (a tool filter, a per-tool limit that strips a tool, a model downgrade), The call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`. On a stream the stream ends like a block verdict | the policy's own (`block`) | the error of the block |
 
 `failure_reason` is `mask_not_applicable:` followed by one of these causes, which are additive
 tokens:
@@ -452,8 +456,12 @@ tokens:
 | `tool_frames_not_rewritable` | The held frames of a tool call cannot be rewritten |
 
 A failed-open entry is written once per kind of cause on a request, or on a stream.
-`on_mask_failure` (`pass` or `block`) is a setting of the policies that mask; it changes the
-outcome of a mask that cannot be applied from `failed_open` to a block, and nothing else.
+
+**Changed in RUN-1813.** `on_mask_failure` (`pass` or `block`) was a setting of the policies that
+mask. It was removed: a mask that cannot be applied always fails open, a policy that still
+stores the key keeps loading and the key is ignored and stripped from published snapshots. What
+can no longer occur is the refusal of a mask that could not be applied; a refusal of a rewrite
+that is not a mask is unchanged.
 
 ### Counter-store (rate-limit / budget) failures
 
@@ -534,41 +542,47 @@ same way a streamed response already handles an observe-mode inspection failure.
 
 ### TrustGuard failures
 
-`trustguard` treats a failure of TrustGuard itself differently from the providers above:
-it **fails open by default**, so a TrustGuard problem never cuts the client's request.
-A policy opts into refusing with `on_error: fail_closed`, and `on_timeout: fail_closed`
-for timeouts. An unset `on_timeout` inherits `on_error`. A TrustGuard block (a finding)
-and a 429 rate limit are the guard's answers, not failures, and always block.
+`trustguard` treats a failure of TrustGuard itself like the providers above: it
+**always fails open**, so a TrustGuard problem never cuts the client's request. There is no
+setting to change that (RUN-1813). A TrustGuard block (a finding) and a 429 rate limit are the
+guard's answers, not failures, and always block.
 
-| `on_error` / `on_timeout` | `decision` | Request |
-|---------------------------|------------|---------|
-| `fail_open` (default) | `failed_open` | Forwarded uninspected; the chain carries on |
-| `fail_closed` | `failed_closed` | Refused (502, 503 or 504 depending on the reason) |
+| `decision` | Request |
+|------------|---------|
+| `failed_open` | Forwarded uninspected; the chain carries on |
 
-`extras.failed_open` / `extras.failed_closed` is set to match, and `extras.failure_reason`
+**Changed in RUN-1813.** `on_error`, `on_timeout`, `timeout`, `streaming.on_error` and
+`streaming.guard_timeout` were removed. A stored policy keeps loading, the keys are ignored and
+stripped from published snapshots, and every call is bounded by the deployment-wide
+`TRUSTGUARD_TIMEOUT` (a streamed block by the default stream guard timeout of 2 seconds). The
+contract is additive, so the vocabulary is unchanged; what can no longer occur is
+`decision: failed_closed`, `extras.failed_closed`, the HTTP 502, 503 and 504 refusals
+(`trustguard_unauthorized`, `trustguard_unavailable`, `trustguard_error`) and a block recorded
+for a mask that could not be applied. Events written before the change still carry them.
+
+`extras.failed_open` is set to match, and `extras.failure_reason`
 names the cause. The same token labels `trustguard_evaluate_failures_total{reason}`:
 
 | `failure_reason` | Cause |
 |------------------|-------|
 | `transport` | The call failed, or returned a non-2xx status other than the ones below |
-| `timeout` | The call did not answer within the policy's `timeout` (governed by `on_timeout`) |
+| `timeout` | The call did not answer within the deployment-wide `TRUSTGUARD_TIMEOUT` |
 | `unauthorized` | `/v1/evaluate` answered 401 (after one token refresh) or 403, or `/v1/token` answered 400, 401 or 403 |
 | `entitlements_unavailable` | `/v1/evaluate` answered 503 |
 | `credentials_missing` | The gateway has no `TRUSTGUARD_CLIENT_ID` / `TRUSTGUARD_CLIENT_SECRET` |
 | `base_url_missing` | The gateway has no `TRUSTGUARD_BASE_URL` |
-| `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed. Under `fail_open` the content is forwarded **unmasked**. Under `fail_closed` the request is blocked and the decision is `blocked`, because TrustGuard did find something |
-| `config_invalid` | The stored settings could not be parsed. Always `failed_open`: there is no `on_error` to read |
+| `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed. The content is forwarded **unmasked** |
+| `config_invalid` | The stored settings could not be parsed. Always `failed_open` |
 | `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
 | `payload_unreadable` | The gateway could not read the body. Always `failed_open` |
 
-On a streamed response leg the plugin resolves `streaming.on_error` itself. Under
-`fail_open` it allows the block, so later policies in the chain still inspect it, and the
+On a streamed response leg the plugin resolves a failure itself: it allows the block, so
+later policies in the chain still inspect it, and the
 closing event carries `decision: failed_open` with the last `failure_reason`. After three
 failed blocks in a row the policy stops calling TrustGuard for the rest of that stream, and
 the closing event also carries `streaming.fallback_reason: segmentation_unavailable`. A block
 the guard does answer resets the count. A stream that was cut reports `blocked` even if earlier
-blocks failed open; those still count in `trustguard_evaluate_failures_total`. Under
-`fail_closed` the block is returned as a failure and the stream is cut. The
+blocks failed open; those still count in `trustguard_evaluate_failures_total`. The
 `trustguard_stream_evals_total` / `trustguard_stream_responses_total` metrics label such a
 stream `outcome="failed_open"`, ranked just below `blocked`; the label reflects the policy
 that reports the stream, so on a route with two TrustGuard policies read the other one's span.
@@ -576,10 +590,9 @@ Without a stream identity (telemetry disabled, so no trace) nothing is recorded 
 each failed block fails open on its own and inspection never retires.
 
 **Changed in RUN-1725.** Rejected or missing credentials, a missing base URL and a 503 used
-to always fail closed, and an unappliable mask always blocked; all now follow `on_error`.
-`on_timeout` used to default to `fail_closed`; it now inherits `on_error`, whose default is
-`fail_open`. Policies saved through the console since `on_timeout` was added hold an
-explicit `on_timeout: fail_closed` and keep it. On a stream these failures used to be
+to always fail closed, and an unappliable mask always blocked; all followed `on_error` from
+then on, and since RUN-1813 they always fail open. A policy that stored `on_timeout:
+fail_closed` no longer keeps it. On a stream these failures used to be
 reported as `degraded_reason: guard_timeout`; they now appear as `failed_open` on the
 closing event.
 
