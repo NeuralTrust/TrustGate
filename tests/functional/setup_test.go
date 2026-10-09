@@ -78,7 +78,7 @@ func getEnv(key, fallback string) string {
 
 // buildCmdEnv returns the env the gateway binary will see, pinning
 // ENV_FILE so it loads the same .env.functional as TestMain.
-func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL string) []string {
+func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelRequestsURL string) []string {
 	env := os.Environ()
 	env = append(env, "ENV_FILE=../../.env.functional")
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
@@ -97,6 +97,9 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL string) []string {
 	if firewallComplexityBaseURL != "" {
 		env = append(env, "FIREWALL_BASE_URL="+firewallComplexityBaseURL)
 		env = append(env, "FIREWALL_SECRET_KEY="+firewallComplexityFunctionalSecret)
+	}
+	if consoleModelRequestsURL != "" {
+		env = append(env, "CONSOLE_MODEL_REQUESTS_URL="+consoleModelRequestsURL)
 	}
 	return env
 }
@@ -148,7 +151,8 @@ func setupTestEnvironment() {
 		trustGuardStubURL = StartTrustGuardFunctionalStub()
 	}
 	firewallComplexityStubURL := StartFirewallComplexityStub()
-	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL)
+	consoleModelRequestsURL := StartConsoleModelRequestsStub()
+	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL, consoleModelRequestsURL)
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
 	// The admin plane runs the migrations on boot; wait for it to be ready before
@@ -171,6 +175,7 @@ func setupTestEnvironment() {
 func teardownTestEnvironment() {
 	StopTrustGuardFunctionalStub()
 	StopFirewallComplexityStub()
+	StopConsoleModelRequestsStub()
 	if mcpCmd != nil && mcpCmd.Process != nil {
 		if err := syscall.Kill(-mcpCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing mcp server: %v", err)

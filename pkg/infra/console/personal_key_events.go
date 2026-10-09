@@ -105,14 +105,10 @@ func (e *PersonalKeyEvents) Notify(ctx context.Context, event appauth.PersonalKe
 	if err != nil {
 		return fmt.Errorf("console events: encode: %w", err)
 	}
-	timestamp := strconv.FormatInt(e.now().Unix(), 10)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url, bytes.NewReader(body))
+	req, err := newSignedRequest(ctx, e.url, e.secret, e.now(), body)
 	if err != nil {
 		return fmt.Errorf("console events: build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(TimestampHeader, timestamp)
-	req.Header.Set(SignatureHeader, "v1="+Sign(e.secret, timestamp, body))
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("console events: post: %w", err)
@@ -123,6 +119,19 @@ func (e *PersonalKeyEvents) Notify(ctx context.Context, event appauth.PersonalKe
 		return fmt.Errorf("console events: the console answered %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// newSignedRequest is a POST of body to endpoint, signed as the console checks.
+func newSignedRequest(ctx context.Context, endpoint string, secret []byte, now time.Time, body []byte) (*http.Request, error) {
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(TimestampHeader, timestamp)
+	req.Header.Set(SignatureHeader, "v1="+Sign(secret, timestamp, body))
+	return req, nil
 }
 
 // Sign is the signature the console recomputes to accept an event.

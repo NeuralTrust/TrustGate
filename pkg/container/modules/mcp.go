@@ -16,6 +16,7 @@ package modules
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -34,6 +35,7 @@ import (
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -45,6 +47,7 @@ import (
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/console"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
@@ -134,6 +137,12 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(providePersonalKeyPages); err != nil {
+		return err
+	}
+	if err := c.Provide(provideModelAccessConsole); err != nil {
+		return err
+	}
+	if err := c.Provide(provideModelRequestPages); err != nil {
 		return err
 	}
 	if err := c.Provide(provideEndUserConnectionsService); err != nil {
@@ -340,7 +349,12 @@ type rpcGatewayParams struct {
 	// them. Either absent, the Store offers no models tool.
 	Auths       authdomain.Repository `optional:"true"`
 	StoreModels appproxy.StoreModels  `optional:"true"`
-	Cfg         *config.Config
+	// ModelAccess and ModelRequests answer the Store's request tool: the
+	// console the request is checked with and filed in, and the page the
+	// person writes their reason on. Either absent, the tool stays dark.
+	ModelAccess   appoauth.ModelAccessConsole `optional:"true"`
+	ModelRequests appoauth.ModelRequestPages  `optional:"true"`
+	Cfg           *config.Config
 }
 
 // storeModelsAdapter answers the Store's models tool with the proxy's own
@@ -403,6 +417,9 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	}
 	if p.Auths != nil && p.StoreModels != nil {
 		storeOpts = append(storeOpts, appmcp.WithStoreToolModels(p.Auths, storeModelsAdapter{models: p.StoreModels}, p.Cfg.Server.GatewayBaseDomain))
+	}
+	if p.ModelAccess != nil && p.ModelRequests != nil {
+		storeOpts = append(storeOpts, appmcp.WithStoreToolModelRequests(p.ModelAccess, p.ModelRequests))
 	}
 	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, grants, configure, connect, storeOpts...)
 	if err != nil {
@@ -647,4 +664,35 @@ func providePersonalKeyPages(p personalKeyPagesParams) (appoauth.PersonalKeyPage
 		return nil, nil
 	}
 	return appoauth.NewPersonalKeyPages(infraoauth.NewPersonalKeyPageStore(p.Cache.RedisClient()), signIn, p.Issuer, p.Limiter, p.Logger)
+}
+
+// provideModelAccessConsole is the console a request for a provider's models
+// is checked with and filed in, when CONSOLE_MODEL_REQUESTS_URL is set. Nil
+// leaves the Store's request tool dark; users then ask from the Portal.
+func provideModelAccessConsole(cfg *config.Config) (appoauth.ModelAccessConsole, error) {
+	endpoint := cfg.Server.ConsoleModelRequestsURL
+	if endpoint == "" {
+		return nil, nil
+	}
+	client, err := console.NewModelAccessRequests(endpoint, cfg.Server.SecretKey, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", commonerrors.ErrInvalidConfig, err)
+	}
+	return client, nil
+}
+
+type modelRequestPagesParams struct {
+	dig.In
+	Cache   cache.Client
+	Console appoauth.ModelAccessConsole `optional:"true"`
+}
+
+// provideModelRequestPages lights up the page a person files a request for a
+// provider's models from, where the console takes them. Nil leaves the page
+// and the Store tool that links to it dark.
+func provideModelRequestPages(p modelRequestPagesParams) (appoauth.ModelRequestPages, error) {
+	if p.Console == nil {
+		return nil, nil
+	}
+	return appoauth.NewModelRequestPages(infraoauth.NewModelRequestStore(p.Cache.RedisClient()), p.Console)
 }

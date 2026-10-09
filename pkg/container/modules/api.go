@@ -395,6 +395,9 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(provideModelRequestHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(providePersonalKeyHandler); err != nil {
 		return err
 	}
@@ -464,6 +467,20 @@ type personalKeyHandlerParams struct {
 	Pages  appoauth.PersonalKeyPages `optional:"true"`
 	Finder appgateway.Finder
 	Cfg    *config.Config
+}
+
+type modelRequestHandlerParams struct {
+	dig.In
+	Pages appoauth.ModelRequestPages `optional:"true"`
+}
+
+// provideModelRequestHandler serves the MCP Store's model request page where
+// the console takes requests; nil leaves the page unrouted.
+func provideModelRequestHandler(p modelRequestHandlerParams) *oauthhttp.ModelRequestHandler {
+	if p.Pages == nil {
+		return nil
+	}
+	return oauthhttp.NewModelRequestHandler(p.Pages)
 }
 
 // providePersonalKeyHandler serves the MCP Store's personal key page where

@@ -349,6 +349,14 @@ type ServerConfig struct {
 	// console is not told, and a new key reaches its models on the console's
 	// next reconcile.
 	ConsoleEventsURL string
+	// ConsoleModelRequestsURL is where the MCP Store's request tool asks the
+	// console about a request for a provider's models, and files it once the
+	// person sends their reason, so Access → Approvals decides it as it does the
+	// Portal's (CONSOLE_MODEL_REQUESTS_URL, e.g.
+	// https://app.neuraltrust.ai/api/internal/trustgate/llm-access-requests).
+	// Signed with SecretKey, like ConsoleEventsURL. Empty: the Store offers no
+	// request tool, and users ask from the Portal.
+	ConsoleModelRequestsURL string
 }
 
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
@@ -700,6 +708,7 @@ func getServerConfig() ServerConfig {
 		OAuthInsecureCookies:           getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
 		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", defaultStoredSecretsEncryptionEnabled),
 		ConsoleEventsURL:               strings.TrimSpace(getEnv("CONSOLE_EVENTS_URL", "")),
+		ConsoleModelRequestsURL:        strings.TrimSpace(getEnv("CONSOLE_MODEL_REQUESTS_URL", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
