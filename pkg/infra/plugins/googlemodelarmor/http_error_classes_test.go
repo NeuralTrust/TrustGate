@@ -125,36 +125,47 @@ func TestStreamHTTPErrorsAreClassifiedByTheirGoogleRPCBody(t *testing.T) {
 	}
 }
 
-// A buffered text above what Model Armor screens is refused locally in a mode
-// that blocks, with no call: the filters would skip it, and a call that is
-// known to be skipped only spends the quota.
-func TestBufferedTextAboveTheScreeningLimitIsRefusedLocally(t *testing.T) {
+// A buffered text is sent whole whatever its size: Model Armor answers
+// EXECUTION_SKIPPED for a filter it could not run, which is the content's and
+// decides, and nothing is refused locally on a guess about its token limit.
+func TestBufferedTextAboveTheStreamWindowIsSentWhole(t *testing.T) {
 	t.Parallel()
 	over := strings.Repeat("a", maxSanitizeBytes+1)
 	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + over + `"}]}`)
-	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
-		t.Run(string(mode), func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response string
+		mode     policy.Mode
+		blocked  bool
+		detail   string
+		class    string
+	}{
+		{"screened", allowResponse, policy.ModeEnforce, false, "", ""},
+		{"skipped in enforce", tokenLimitSkipResponse, policy.ModeEnforce, true, appplugins.DetailFilterNotExecuted, "input"},
+		{"skipped in observe", tokenLimitSkipResponse, policy.ModeObserve, false, appplugins.DetailFilterNotExecuted, "input"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+			stub := newModelArmorStub(t, http.StatusOK, tc.response)
 			p := pluginWithStub(stub)
 			event, span := newStreamEvent()
-			in := execInput(policy.StagePreRequest, mode, modelArmorSettings(), reqCtx(body), nil)
+			in := execInput(policy.StagePreRequest, tc.mode, modelArmorSettings(), reqCtx(body), nil)
 			in.Event = event
 
 			res, err := p.Execute(context.Background(), in)
-			if mode == policy.ModeEnforce {
+			if tc.blocked {
 				pe, ok := appplugins.AsPluginError(err)
 				require.True(t, ok, "got %v", err)
 				assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 			} else {
 				assertPassThrough(t, res, err)
 			}
-			assert.Zero(t, stub.count())
+			assert.Equal(t, 1, stub.count())
+			assert.Contains(t, string(stub.lastBody), over)
 			data, ok := span.PluginAttrsCopy().Extras.(*Data)
 			require.True(t, ok)
-			assert.Equal(t, "input_too_large", data.FailureReason)
-			assert.Equal(t, "payload_too_large", data.FailureDetail)
-			assert.Equal(t, "input", data.FailureClass)
+			assert.Equal(t, tc.detail, data.FailureDetail)
+			assert.Equal(t, tc.class, data.FailureClass)
 		})
 	}
 }
