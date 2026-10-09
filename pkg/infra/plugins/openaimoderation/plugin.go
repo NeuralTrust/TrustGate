@@ -16,6 +16,7 @@ package openaimoderation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -55,8 +56,9 @@ const (
 // it was queued behind the request's own chunks, so the request's size used the
 // time and it is refused as chunk_budget, not sent to time out as an outage.
 // OpenAI meters tokens per minute per tier, which the gateway cannot see, so a
-// rate limit on a request split into several calls may be that request's own
-// size and is input (throttled_oversize). An exhausted account (insufficient_quota,
+// rate limit on a chunk of the first round is other traffic and fails open, and
+// one on a chunk that waited behind the request's own (index evalParallel or
+// more) may be that request's own size and is input (throttled_oversize). An exhausted account (insufficient_quota,
 // billing_hard_limit_reached) is configuration, not a rate, and fails open.
 // https://developers.openai.com/api/docs/guides/moderation
 const (
@@ -370,7 +372,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 		return appplugins.ChunkState{}
 	}
-	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
 	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
 		return p.externalFailure(ctx, in, cfg, len(chunks), decision.Reason, decision.Detail,
 			fmt.Errorf("openai_moderation: chunk %d of %d: %s", decision.Index+1, len(chunks), failureText(decision, outs)))

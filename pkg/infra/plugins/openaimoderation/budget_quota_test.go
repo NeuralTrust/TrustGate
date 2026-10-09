@@ -172,8 +172,9 @@ func TestAClientThatLeavesIsNeverInput(t *testing.T) {
 	p := New(adapter.NewRegistry(), srv.URL, 5*time.Second, nil)
 	event, span := newEvent()
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(300)), nil, event)
-	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	time.AfterFunc(400*time.Millisecond, cancel)
 
 	res, err := p.Execute(ctx, in)
 

@@ -16,6 +16,7 @@ package bedrockguardrail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -324,7 +325,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		}
 		return evals[i].state()
 	}
-	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {

@@ -92,11 +92,16 @@ func TestClassifyChunksFollowsTheTable(t *testing.T) {
 			o[5].Value.Failure = transport
 			return o
 		}, ChunkAvailabilityFailure, 5, FailureTransport, "", false},
-		{"a throttle on several chunks is input", func() []textchunk.Outcome[ChunkState] {
-			o := started(3)
+		{"a throttle on a chunk that waited behind the request's own is input", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[5].Value.Failure, o[5].Waited = throttled, true
+			return o
+		}, ChunkInputFailure, 5, FailureInputTooLarge, DetailThrottledOversize, false},
+		{"a throttle on a first-round chunk of a long text is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
 			o[2].Value.Failure = throttled
 			return o
-		}, ChunkInputFailure, 2, FailureInputTooLarge, DetailThrottledOversize, false},
+		}, ChunkAvailabilityFailure, 2, FailureTransport, DetailThrottled, false},
 		{"a throttle on one chunk stays availability", func() []textchunk.Outcome[ChunkState] {
 			o := started(1)
 			o[0].Value.Failure = throttled
@@ -104,12 +109,12 @@ func TestClassifyChunksFollowsTheTable(t *testing.T) {
 		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
 		{"a throttle on spaced calls is other traffic even on several chunks", func() []textchunk.Outcome[ChunkState] {
 			o := started(3)
-			o[1].Value.Failure = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}
+			o[1].Value.Failure, o[1].Waited = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}, true
 			return o
 		}, ChunkAvailabilityFailure, 1, FailureTransport, DetailThrottled, false},
 		{"an exhausted provider quota is configuration even on several chunks", func() []textchunk.Outcome[ChunkState] {
 			o := started(3)
-			o[1].Value.Failure = quota
+			o[1].Value.Failure, o[1].Waited = quota, true
 			return o
 		}, ChunkAvailabilityFailure, 1, FailureConfigInvalid, DetailProviderQuotaExhausted, false},
 		{"a mask is kept when another chunk fails open", func() []textchunk.Outcome[ChunkState] {
@@ -181,9 +186,9 @@ func TestAnEvaluationCutByTheCallersContextIsNeverInput(t *testing.T) {
 			o[5].Value.Failure = fail(FailureTransport, "")
 			return o
 		}, ChunkAvailabilityFailure, FailureTransport, ""},
-		"a throttle on several chunks": {func() []textchunk.Outcome[ChunkState] {
+		"a throttle on a chunk that waited": {func() []textchunk.Outcome[ChunkState] {
 			o := started(3)
-			o[1].Value.Failure = fail(FailureTransport, DetailThrottled)
+			o[1].Value.Failure, o[1].Waited = fail(FailureTransport, DetailThrottled), true
 			return o
 		}, ChunkAvailabilityFailure, FailureTransport, DetailThrottled},
 		"an input failure": {func() []textchunk.Outcome[ChunkState] {
@@ -206,4 +211,46 @@ func TestAnEvaluationCutByTheCallersContextIsNeverInput(t *testing.T) {
 	blocking := started(3)
 	blocking[1].Value.Blocks = true
 	assert.Equal(t, ChunkBlocked, ClassifyChunks(blocking, true, pass).Kind, "a finding that was made still decides")
+}
+
+// An evaluation the plugin admitted by its estimate read a time cut as the
+// provider being slower than that estimate, never as the request's size.
+func TestAnAdmittedEvaluationReadsATimeCutAsAvailability(t *testing.T) {
+	t.Parallel()
+	pass := func(_ int, v ChunkState, err error) ChunkState {
+		if err != nil {
+			return ChunkState{Failure: fail(FailureTransport, "")}
+		}
+		return v
+	}
+	cases := map[string]func() []textchunk.Outcome[ChunkState]{
+		"a waiting chunk the budget cut": func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[2].Err, o[2].Waited, o[2].BudgetCut = errors.New("context deadline exceeded"), true, true
+			return o
+		},
+		"chunks never started for lack of reserve": func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Started, o[2].Started = false, false
+			return o
+		},
+	}
+	for name, build := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyChunks(build(), false, pass, AdmittedByEstimate())
+			assert.Equal(t, ChunkAvailabilityFailure, got.Kind)
+			assert.Equal(t, FailureTransport, got.Reason)
+			assert.Empty(t, got.Detail)
+			// the generic rule is unchanged without the option
+			assert.Equal(t, ChunkInputFailure, ClassifyChunks(build(), false, pass).Kind)
+		})
+	}
+	t.Run("a block of an earlier chunk still decides", func(t *testing.T) {
+		t.Parallel()
+		o := started(3)
+		o[0].Value.Blocks = true
+		o[2].Started = false
+		assert.Equal(t, ChunkBlocked, ClassifyChunks(o, false, pass, AdmittedByEstimate()).Kind)
+	})
 }

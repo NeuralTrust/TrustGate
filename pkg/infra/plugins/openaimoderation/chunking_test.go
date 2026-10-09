@@ -16,6 +16,7 @@ package openaimoderation
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,15 +89,54 @@ func rateLimitOn(t *testing.T, nth int32) (*httptest.Server, *atomic.Int32) {
 	return srv, &calls
 }
 
+// lateMarker ends a text so that the one chunk that carries it is among the last
+// dispatched, whatever order the parallel calls reach the stub in.
+const lateMarker = " ZZLATEZZ"
+
+func rateLimitOnMarker(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(raw), lateMarker) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(rateLimited))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"modr-1","model":"omni-moderation-latest","results":[{"flagged":false,"categories":{"hate":false},"category_scores":{"hate":0.01}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A throttle on a chunk of the first round has nothing of the request's own
+// before it: it is other traffic, so it fails open as the provider's load.
+func TestARateLimitOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
+	t.Parallel()
+	srv, _ := rateLimitOn(t, 1)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(300)), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, "availability", extras.FailureClass)
+	assert.Equal(t, appplugins.DetailThrottled, extras.FailureDetail)
+}
+
 func TestARateLimitOnAChunkOfALongTextIsInput(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			srv, _ := rateLimitOn(t, 3)
+			srv := rateLimitOnMarker(t)
 			p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
 			event, span := newEvent()
-			in := execInput(policy.StagePreRequest, mode, blockSettings(), chatRequestOf(t, benignText(300)), nil, event)
+			in := execInput(policy.StagePreRequest, mode, blockSettings(), chatRequestOf(t, benignText(300)+lateMarker), nil, event)
 
 			res, err := p.Execute(context.Background(), in)
 

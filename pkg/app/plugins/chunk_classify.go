@@ -23,6 +23,9 @@ import (
 // mask. Started is false for a chunk that was never sent.
 type ChunkState struct {
 	Started bool
+	// Waited says the chunk was dispatched after the first round, queued behind
+	// chunks of the same evaluation (ClassifyChunks fills it from the outcome).
+	Waited  bool
 	Blocks  bool
 	Failure *ChunkFailure
 	Mask    bool
@@ -67,36 +70,61 @@ type ChunkDecision struct {
 	Masked bool
 }
 
+// ClassifyOption changes how ClassifyChunks reads a time cut.
+type ClassifyOption func(*classifyConfig)
+
+type classifyConfig struct{ admitted bool }
+
+// AdmittedByEstimate is for an evaluation whose time the plugin estimated before
+// the first call and found to fit its budget. A chunk that the budget then cut,
+// or that was not started for lack of reserve, is the provider being slower than
+// the estimate, which is availability: the request's size was already accepted.
+// Without it the generic rule applies, where size is what used the time.
+func AdmittedByEstimate() ClassifyOption {
+	return func(c *classifyConfig) { c.admitted = true }
+}
+
 // ClassifyChunks reads the outcomes of one chunked evaluation through the one
 // precedence table every guardrail shares (DecideChunks). A started chunk whose
 // call was cut by the evaluation's budget after waiting on the request's own
 // earlier chunks is chunk_budget, whatever of says: the request's size used the
 // time, the provider was not slow. of maps every other started chunk.
 //
-// cancelled is the caller's own context having ended (a client that left, the
-// request's deadline). Nothing in the content ended the evaluation then, so none
-// of the input readings apply: a chunk that blocks still decides, and otherwise
-// the evaluation is an availability failure, the first failed chunk's or, with
-// none, a bare transport failure for the chunks that never ran.
-func ClassifyChunks[T any](outs []textchunk.Outcome[T], cancelled bool, of func(i int, v T, err error) ChunkState) ChunkDecision {
+// cancelled is the client having left (the caller's context was cancelled), which
+// the caller reads as errors.Is(ctx.Err(), context.Canceled). Nothing in the
+// content ended the evaluation then, so none of the input readings apply: a chunk
+// that blocks still decides, and otherwise the evaluation is an availability
+// failure, the first failed chunk's or, with none, a bare transport failure for
+// the chunks that never ran. A parent deadline is not a cancellation: it follows
+// the budget rule above.
+func ClassifyChunks[T any](
+	outs []textchunk.Outcome[T], cancelled bool, of func(i int, v T, err error) ChunkState, opts ...ClassifyOption,
+) ChunkDecision {
+	var cfg classifyConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	states := make([]ChunkState, len(outs))
 	for i, out := range outs {
 		if !out.Started {
+			if cfg.admitted {
+				states[i] = ChunkState{Started: true, Failure: &ChunkFailure{Reason: FailureTransport}}
+			}
 			continue
 		}
-		if out.Err != nil && out.BudgetCut && out.Waited && !cancelled {
-			states[i] = ChunkState{Started: true, Failure: &ChunkFailure{Reason: FailureInputTooLarge, Detail: DetailChunkBudget}}
+		if out.Err != nil && out.BudgetCut && out.Waited && !cancelled && !cfg.admitted {
+			states[i] = ChunkState{Started: true, Waited: true, Failure: &ChunkFailure{Reason: FailureInputTooLarge, Detail: DetailChunkBudget}}
 			continue
 		}
 		states[i] = of(i, out.Value, out.Err)
 		states[i].Started = true
+		states[i].Waited = out.Waited
 	}
 	return DecideChunks(states, cancelled)
 }
 
 // DecideChunks is the precedence of a chunked evaluation (see ClassifyChunks for
-// cancelled), shared by the
-// buffered legs and the stream leg. A chunk that blocks wins over every
+// cancelled), shared by the buffered legs and the stream leg. A chunk that blocks wins over every
 // failure. Then, by lowest index: a failure that is the content's (input);
 // a chunk that never started because the budget ran out (chunk_budget); a
 // throttle on an evaluation of more than one chunk (throttled_oversize), since
@@ -105,8 +133,9 @@ func ClassifyChunks[T any](outs []textchunk.Outcome[T], cancelled bool, of func(
 // that is availability. An evaluation with no verdict and no failure is
 // allowed.
 //
-// A throttle on a single chunk stays availability, and so does a provider
-// quota that is configuration (an exhausted or unbilled account): those are
+// A throttle on a chunk of the first round stays availability: nothing of the
+// request's own was in flight before it, so other traffic caused it. So does a
+// provider quota that is configuration (an exhausted or unbilled account): those are
 // recorded as config_invalid and never carry the throttled detail.
 func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 	d := ChunkDecision{Index: -1}
@@ -134,11 +163,9 @@ func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 			return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailChunkBudget)
 		}
 	}
-	if len(states) > 1 {
-		for i, st := range states {
-			if st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic {
-				return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailThrottledOversize)
-			}
+	for i, st := range states {
+		if st.Started && st.Waited && st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic {
+			return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailThrottledOversize)
 		}
 	}
 	for i, st := range states {

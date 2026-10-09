@@ -31,7 +31,8 @@ func mergeEntry(mode policy.Mode) chainEntry {
 }
 
 // mergeOf runs mergeChunkVerdicts over n chunks of 10 bytes each. A nil entry of
-// errs means the call succeeded; started is true for every chunk.
+// errs means the call succeeded; started is true for every chunk, and the chunks
+// from streamChunkParallel on waited behind the first round.
 func mergeOf(mode policy.Mode, verdicts []*SegmentVerdict, errs []error) (*SegmentVerdict, error) {
 	n := len(verdicts)
 	chunks := make([]textchunk.Chunk, n)
@@ -41,6 +42,7 @@ func mergeOf(mode policy.Mode, verdicts []*SegmentVerdict, errs []error) (*Segme
 		chunks[i] = textchunk.Chunk{Start: i * 10, End: i*10 + 10, Text: "0123456789"}
 		text.WriteString(chunks[i].Text)
 		outs[i].Started = true
+		outs[i].Waited = i >= streamChunkParallel
 		if errs != nil {
 			outs[i].Err = errs[i]
 		}
@@ -120,11 +122,26 @@ func TestMergeChunkVerdicts_TheFingerprintsOfEveryChunkSurviveABlock(t *testing.
 	assert.Same(t, incomplete, got.Incomplete, "the first incomplete over every chunk that answered")
 }
 
-func TestMergeChunkVerdicts_AThrottleOnABlockOfSeveralChunksIsInput(t *testing.T) {
+func TestMergeChunkVerdicts_AThrottleOnAFirstRoundChunkIsAvailability(t *testing.T) {
 	t.Parallel()
 	throttled := newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
-	verdicts := []*SegmentVerdict{{}, nil, {}, {}}
-	errs := []error{nil, throttled, nil, nil}
+	verdicts := []*SegmentVerdict{{}, nil, {}, {}, {}, {}}
+	errs := []error{nil, throttled, nil, nil, nil, nil}
+
+	got, err := mergeOf(policy.ModeEnforce, verdicts, errs)
+
+	assert.Nil(t, got)
+	var typed *ExternalStreamFailure
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, DetailThrottled, typed.Detail)
+	assert.Equal(t, FailureClassAvailability, typed.Class)
+}
+
+func TestMergeChunkVerdicts_AThrottleOnAChunkThatWaitedIsInput(t *testing.T) {
+	t.Parallel()
+	throttled := newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
+	verdicts := []*SegmentVerdict{{}, {}, {}, {}, {}, nil}
+	errs := []error{nil, nil, nil, nil, nil, throttled}
 
 	got, err := mergeOf(policy.ModeEnforce, verdicts, errs)
 

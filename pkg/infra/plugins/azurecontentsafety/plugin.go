@@ -16,6 +16,7 @@ package azurecontentsafety
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -54,16 +55,17 @@ const (
 // usual latency: it was queued behind the request's own chunks, so the request's
 // size used the time and the chunk is refused as chunk_budget, not sent to time
 // out as an outage. The free tier (F0) allows 5 requests a second, so a long
-// conversation throttles itself there, and a throttle on a conversation of
-// several chunks is input (throttled_oversize): F0 does not support complete
-// coverage of long conversations.
+// conversation throttles itself there. A throttle on a chunk of the first round
+// is other traffic and fails open; a throttle on a chunk that waited behind the
+// request's own (index evalParallel or more) is input (throttled_oversize),
+// because its own earlier calls plausibly used the quota.
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/region-availability#service-limits
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#query-rates
 const (
 	chunkUnits       = 10000
 	chunkOverlap     = 2000
 	maxChunks        = 64
-	evalParallel     = 8
+	evalParallel     = 4
 	evaluationBudget = defaultTimeout
 	callReserve      = time.Second
 )
@@ -265,7 +267,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 		return appplugins.ChunkState{}
 	}
-	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
 	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
 		return p.externalFailure(ctx, in, cfg, latency, count, decision.Reason, decision.Detail,
 			fmt.Errorf("azure_content_safety: chunk %d of %d: %s", decision.Index+1, count, failureText(decision, outs)))
