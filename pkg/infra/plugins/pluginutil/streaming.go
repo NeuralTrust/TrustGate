@@ -241,8 +241,11 @@ type StreamData struct {
 	GuardLatencyMsTotal int64  `json:"guard_latency_ms_total"`
 	GuardLatencyMsMax   int64  `json:"guard_latency_ms_max"`
 	AddedLatencyMs      int64  `json:"added_latency_ms"`
-	DegradedReason      string `json:"degraded_reason"`
-	FallbackReason      string `json:"fallback_reason"`
+	// ChunkedBlocks counts the blocks larger than the entry's window that were
+	// screened in chunks of it; it is omitted when there were none.
+	ChunkedBlocks  int    `json:"chunked_blocks,omitempty"`
+	DegradedReason string `json:"degraded_reason"`
+	FallbackReason string `json:"fallback_reason"`
 	// Findings is the one exception to the rule above: an absent key and an
 	// empty list both say the stream reported nothing, so there is no zero to
 	// preserve, and omitting it keeps a stream with no findings emitting the
@@ -267,6 +270,7 @@ func NewStreamData(streamID string, r appplugins.StreamReport) *StreamData {
 		GuardLatencyMsTotal: r.GuardLatency.Milliseconds(),
 		GuardLatencyMsMax:   r.GuardLatencyMax.Milliseconds(),
 		AddedLatencyMs:      r.AddedLatency.Milliseconds(),
+		ChunkedBlocks:       r.ChunkedEvals,
 		DegradedReason:      r.DegradedReason,
 		FallbackReason:      r.FallbackReason,
 	}

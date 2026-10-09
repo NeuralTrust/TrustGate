@@ -197,7 +197,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			}
 		}
 		started := e.clock()
-		verdict, err := inspector.InspectSegment(ctx, ExecInput{
+		execIn := ExecInput{
 			Stage:    policy.StagePreResponse,
 			Mode:     entry.mode,
 			Config:   entry.config,
@@ -205,7 +205,15 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			Request:  in.Request,
 			Response: in.Response,
 			Event:    event,
-		}, call)
+		}
+		var verdict *SegmentVerdict
+		var err error
+		if !seg.Closing && entry.streamWindow > 0 && len(call.Accumulated) > entry.streamWindow {
+			spans.chunked(spanKey(seg, entry))
+			verdict, err = e.inspectChunked(ctx, inspector, execIn, call, entry)
+		} else {
+			verdict, err = inspector.InspectSegment(ctx, execIn, call)
+		}
 		if !seg.Closing {
 			spans.charge(seg, entry, e.clock().Sub(started))
 		}
@@ -335,9 +343,8 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 //
 // The block's own text is never cut: it is about to be released, and text this
 // entry never saw would reach the client uninspected. A block larger than the
-// window is sent whole, and a provider that refuses it for its size answers
-// with an input-class failure, which cuts the stream in a mode that blocks
-// instead of releasing text no one read.
+// window therefore stays whole here, and the caller screens it in chunks of the
+// window (inspectChunked).
 func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
 	if window <= 0 {
 		return seg, ""
