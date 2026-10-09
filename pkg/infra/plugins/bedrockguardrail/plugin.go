@@ -164,6 +164,9 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
+	if len(text) > cfg.Streaming.MaxAccumulatedBytes {
+		return p.oversizeFailure(ctx, in, cfg)
+	}
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
@@ -209,6 +212,9 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
+	if len(text) > cfg.Streaming.MaxAccumulatedBytes {
+		return p.oversizeFailure(ctx, in, cfg)
+	}
 	span := rewriteSpan{
 		format:     format,
 		isResponse: true,
@@ -229,6 +235,14 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	}
 
 	res := inspect(out, cfg.PIIAction)
+
+	// A finding on the part that was guarded is a verdict and wins. With none,
+	// a guardrail that judged only part of the text says nothing about the rest,
+	// which a client can steer by padding, so a mode that blocks refuses it.
+	if res.block == nil && res.partialCoverage {
+		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial,
+			fmt.Errorf("guardrail covered only part of the text"))
+	}
 
 	// The guardrail intervened on this content, but none of the policy types
 	// this plugin reads (topic, content, word, sensitive-information,
@@ -419,4 +433,15 @@ func responseText(cresp *adapter.CanonicalResponse) string {
 
 func passThrough() *appplugins.Result {
 	return &appplugins.Result{StatusCode: http.StatusOK}
+}
+
+// oversizeFailure refuses, as input, a buffered text above the window the
+// stream leg also sends at most. ApplyGuardrail caps the text per policy at a
+// number of text units that depends on region and tier, so a longer text is
+// either refused by the service or judged in part; the window is the size every
+// region takes, and a region with a larger quota raises
+// streaming.max_accumulated_bytes.
+func (p *Plugin) oversizeFailure(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
+	return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
+		fmt.Errorf("text exceeds the %d bytes the guardrail takes", cfg.Streaming.MaxAccumulatedBytes))
 }

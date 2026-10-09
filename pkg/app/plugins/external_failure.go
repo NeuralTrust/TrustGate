@@ -99,6 +99,7 @@ const (
 	DetailPayloadTooLarge         = "payload_too_large"
 	DetailUnsupportedFormat       = "unsupported_format"
 	DetailProviderConfigRejected  = "provider_config_rejected"
+	DetailCoveragePartial         = "coverage_partial"
 )
 
 // IsMaskOverFinding reports whether a failure detail is a mask that could not
@@ -130,7 +131,7 @@ func ClassOf(reason FailureReason, detail string) FailureClass {
 		return FailureClassInput
 	case FailureVerdictIncomplete:
 		switch detail {
-		case DetailFilterNotExecuted, DetailInterventionUnparsed:
+		case DetailFilterNotExecuted, DetailInterventionUnparsed, DetailCoveragePartial:
 			return FailureClassInput
 		}
 		if IsMaskOverFinding(detail) {
