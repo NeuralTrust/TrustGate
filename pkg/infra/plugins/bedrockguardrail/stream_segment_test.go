@@ -647,7 +647,7 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
 		r.FailedEvals = 1
 		r.FailureReason = appplugins.FailureTransport
-		r.FailureDetail = "throttled"
+		r.FailureDetail = appplugins.DetailThrottled
 		return r
 	}
 	cases := []struct {
@@ -657,8 +657,8 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		wantReason   string
 		wantDetail   string
 	}{
-		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", "throttled"},
-		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", "throttled"},
+		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", appplugins.DetailThrottled},
+		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", appplugins.DetailThrottled},
 		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
 	}
 	for _, tc := range cases {
