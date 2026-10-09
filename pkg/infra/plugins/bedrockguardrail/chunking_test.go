@@ -94,7 +94,7 @@ func blockOnMarker(marker string) *scriptedGuardrail {
 
 func TestABlockedChunkStopsTheRestInEnforceAndObserveScreensAll(t *testing.T) {
 	t.Parallel()
-	text := "BLOCKME " + benignWords(120000)
+	text := "BLOCKME " + benignWords(100000)
 	for _, tc := range []struct {
 		mode    policy.Mode
 		decided string

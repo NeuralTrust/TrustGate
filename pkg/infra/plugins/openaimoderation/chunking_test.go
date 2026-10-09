@@ -215,7 +215,7 @@ func TestAnObserveRunScreensEveryChunkAndEnforceStopsAtTheFirstFlag(t *testing.T
 		t.Cleanup(srv.Close)
 		return srv, &calls
 	}
-	text := benignText(600)
+	text := benignText(300)
 	total := int32(0)
 	{
 		stub := &moderationStub{}

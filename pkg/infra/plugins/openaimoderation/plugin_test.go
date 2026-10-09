@@ -38,7 +38,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-const pluginTestTimeout = 2 * time.Second
+const pluginTestTimeout = 15 * time.Second
 
 type fakeModerator struct {
 	mu       sync.Mutex

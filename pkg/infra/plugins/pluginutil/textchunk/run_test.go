@@ -204,3 +204,44 @@ func TestRunDoesNotCallAStopOnCancelABudgetCut(t *testing.T) {
 		assert.False(t, out[i].BudgetCut, "a chunk cancelled by StopOn was not cut by a deadline")
 	}
 }
+
+// Took is the call's own time: what Before held a chunk back for is not in it,
+// and an error from Before is the chunk's error with no call made.
+func TestRunTimesTheCallWithoutWhatBeforeHeldItFor(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	out := Run(context.Background(), chunksOf(2), RunOptions{
+		Parallel: 1,
+		Before: func(ctx context.Context, i int, _ Chunk) error {
+			if i == 1 {
+				return errors.New("held back")
+			}
+			time.Sleep(150 * time.Millisecond)
+			return nil
+		},
+	}, func(context.Context, int, Chunk) (int, error) {
+		calls.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		return 0, nil
+	})
+
+	assert.EqualValues(t, 1, calls.Load())
+	assert.Less(t, out[0].Took, 120*time.Millisecond)
+	assert.GreaterOrEqual(t, out[0].Took, 20*time.Millisecond)
+	require.Error(t, out[1].Err)
+	assert.Zero(t, out[1].Took)
+}
+
+func TestAdmissionKeepsHalfTheBudgetInHand(t *testing.T) {
+	t.Parallel()
+	const reserve, budget = 2 * time.Second, 15 * time.Second
+	assert.Equal(t, 12, MaxChunks(32, 4, reserve, budget))
+	assert.Equal(t, 5, MaxChunks(1<<30, 1, 1500*time.Millisecond, budget))
+	assert.Equal(t, 32, MaxChunks(32, 4, reserve, 0), "with no budget only the limit applies")
+	assert.Equal(t, 1, MaxChunks(0, 4, reserve, budget), "a single chunk is always evaluated")
+	assert.True(t, Admits(12, 4, reserve, budget))
+	assert.False(t, Admits(13, 4, reserve, budget))
+	assert.True(t, Admits(1, 1, reserve, time.Millisecond))
+	assert.Equal(t, 2*time.Second, SlowCall(time.Second, 15*time.Second))
+	assert.Equal(t, time.Second, SlowCall(2*time.Second, 2*time.Second), "a short budget shrinks the threshold with the reserve")
+}

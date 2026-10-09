@@ -222,15 +222,17 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	if n := textchunk.Count(text, chunkSpec); n > maxChunks {
+	limit := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.budget)
+	if n := textchunk.Count(text, chunkSpec); n > limit {
 		return p.externalFailure(ctx, in, cfg, 0, n, appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
-			fmt.Errorf("azure_content_safety: the conversation splits into %d chunks, above the %d evaluated", n, maxChunks))
+			fmt.Errorf("azure_content_safety: the conversation splits into %d chunks, above the %d evaluated", n, limit))
 	}
 	chunks := textchunk.Split(text, chunkSpec)
 
 	start := time.Now()
 	budget, cancel := context.WithTimeout(ctx, p.budget)
 	defer cancel()
+	slow := textchunk.SlowCallOf(budget, callReserve)
 	evals := make([]chunkEval, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
 		Parallel: evalParallel,
@@ -266,7 +268,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 		return appplugins.ChunkState{}
 	}
-	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState,
+		appplugins.SlowCall(slow))
 	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
 		return p.externalFailure(ctx, in, cfg, latency, count, decision.Reason, decision.Detail,
 			fmt.Errorf("azure_content_safety: chunk %d of %d: %s", decision.Index+1, count, failureText(decision, outs)))

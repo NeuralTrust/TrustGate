@@ -66,13 +66,17 @@ func TestEveryChunkFitsTheLimitInUTF16Units(t *testing.T) {
 	assert.Equal(t, len(sent), data.ChunkCount)
 }
 
-func TestAConversationOfSixtyFourChunksIsEvaluatedAndSixtyFiveIsRefusedBeforeAnyCall(t *testing.T) {
+// The ceiling is what half of the budget admits: with the 10 s budget, 4
+// parallel calls and a 1 s reserve, five rounds, so 20 chunks.
+func TestAConversationAtTheCeilingIsEvaluatedAndOneUnitMoreIsRefusedBeforeAnyCall(t *testing.T) {
 	t.Parallel()
-	atLimit := chunkUnits + (maxChunks-1)*(chunkUnits-chunkOverlap)
-	require.Equal(t, maxChunks, textchunk.Count(strings.Repeat("a", atLimit), chunkSpec))
-	require.Equal(t, maxChunks+1, textchunk.Count(strings.Repeat("a", atLimit+1), chunkSpec))
+	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, evaluationBudget)
+	require.Equal(t, 20, ceiling)
+	atLimit := chunkUnits + (ceiling-1)*(chunkUnits-chunkOverlap)
+	require.Equal(t, ceiling, textchunk.Count(strings.Repeat("a", atLimit), chunkSpec))
+	require.Equal(t, ceiling+1, textchunk.Count(strings.Repeat("a", atLimit+1), chunkSpec))
 
-	t.Run("sixty-four", func(t *testing.T) {
+	t.Run("at the ceiling", func(t *testing.T) {
 		t.Parallel()
 		f := &limitedAzure{}
 		srv := f.server(t)
@@ -80,11 +84,11 @@ func TestAConversationOfSixtyFourChunksIsEvaluatedAndSixtyFiveIsRefusedBeforeAny
 		_, data, err := run(t, p, policy.ModeEnforce, srv.URL,
 			chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", atLimit)}))
 		require.NoError(t, err)
-		assert.Len(t, f.sent(), maxChunks)
-		assert.Equal(t, maxChunks, data.ChunkCount)
+		assert.Len(t, f.sent(), ceiling)
+		assert.Equal(t, ceiling, data.ChunkCount)
 		assert.Equal(t, "allowed", data.Decision)
 	})
-	t.Run("sixty-five", func(t *testing.T) {
+	t.Run("above the ceiling", func(t *testing.T) {
 		t.Parallel()
 		f := &limitedAzure{}
 		srv := f.server(t)
@@ -99,7 +103,7 @@ func TestAConversationOfSixtyFourChunksIsEvaluatedAndSixtyFiveIsRefusedBeforeAny
 		assert.Equal(t, appplugins.DetailChunkLimit, data.FailureDetail)
 		assert.Equal(t, "input", data.FailureClass)
 	})
-	t.Run("sixty-five in observe", func(t *testing.T) {
+	t.Run("above the ceiling in observe", func(t *testing.T) {
 		t.Parallel()
 		f := &limitedAzure{}
 		srv := f.server(t)
@@ -253,7 +257,7 @@ func TestAnEnforceBlockStopsTheChunksThatHaveNotStarted(t *testing.T) {
 		t.Cleanup(srv.Close)
 		return srv, &calls
 	}
-	text := strings.Repeat("a", 400000)
+	text := strings.Repeat("a", 150000)
 	total := int32(textchunk.Count(text, chunkSpec))
 	body := chatBody(t, map[string]string{"role": "user", "content": text})
 	p := New(adapter.NewRegistry(), nil)
@@ -271,28 +275,31 @@ func TestAnEnforceBlockStopsTheChunksThatHaveNotStarted(t *testing.T) {
 	assert.Equal(t, total, observeCalls.Load(), "observe screens every chunk")
 }
 
-// Chunks that never reached Azure because the request's own earlier chunks used
-// the budget are the request's size, not Azure's availability.
-func TestChunksThatNeverStartedWithinTheBudgetAreInput(t *testing.T) {
+// Every call hangs past the budget: the provider is down or slow, and the chunks
+// that never started because its calls used the time are not the request's size.
+func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Hate","severity":0}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	p := New(adapter.NewRegistry(), nil)
-	p.budget = 100 * time.Millisecond
+	p.budget = 800 * time.Millisecond
+	text := strings.Repeat("a", 50000)
+	require.Equal(t, 6, textchunk.Count(text, chunkSpec))
+	require.GreaterOrEqual(t, textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.budget), 6)
 
-	_, data, err := run(t, p, policy.ModeEnforce, srv.URL,
-		chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 300000)}))
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok, "got %v", err)
-	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
-	assert.Equal(t, appplugins.DetailChunkBudget, data.FailureDetail)
+	res, data, err := run(t, p, policy.ModeEnforce, srv.URL, chatBody(t, map[string]string{"role": "user", "content": text}))
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "availability", data.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
 }
 
 func TestTheWindowTelemetryIsGone(t *testing.T) {
@@ -385,14 +392,14 @@ func TestConcurrentConversationsThrottledInTheFirstRoundFailOpen(t *testing.T) {
 }
 
 // A parent whose deadline passes is not a client that left: the time ran out, so
-// the budget rule reads it, and the chunks that never started are the request's
-// own size.
+// the budget rule reads it, and calls that hung until it are the provider being
+// slow.
 func TestAParentDeadlineFollowsTheBudgetRule(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Hate","severity":0}]}`))
@@ -401,17 +408,16 @@ func TestAParentDeadlineFollowsTheBudgetRule(t *testing.T) {
 	p := New(adapter.NewRegistry(), nil)
 	event, span := eventFor(t)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(srv.URL, map[string]int{CategoryHate: 2}),
-		requestContext(chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 300000)})))
+		requestContext(chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 100000)})))
 	in.Event = event
-	parent, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	parent, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
 	t.Cleanup(cancel)
 
-	_, err := p.Execute(parent, in)
+	res, err := p.Execute(parent, in)
 
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok, "got %v", err)
-	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	require.NoError(t, err)
+	require.NotNil(t, res)
 	extras, _ := span.PluginAttrsCopy().Extras.(*Data)
 	require.NotNil(t, extras)
-	assert.Equal(t, appplugins.DetailChunkBudget, extras.FailureDetail)
+	assert.Equal(t, "availability", extras.FailureClass)
 }
