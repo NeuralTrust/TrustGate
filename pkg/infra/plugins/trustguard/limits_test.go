@@ -220,13 +220,10 @@ func TestAVerdictFromTheRetryWithoutTheURLIsStillApplied(t *testing.T) {
 	assert.Equal(t, 1, extras.AttachmentsNotFetched)
 }
 
-func TestTheRetryKeepsItsShareOfTheBudget(t *testing.T) {
+func TestTheRetryNeedsItsMinimumShareOfTheBudget(t *testing.T) {
 	t.Parallel()
 	start := time.Unix(1_700_000_000, 0)
 	budget := 4 * time.Second
-
-	assert.Equal(t, start.Add(budget), firstCallDeadline(start, budget, false), "no URL attachment, the whole budget")
-	assert.Equal(t, start.Add(3*time.Second), firstCallDeadline(start, budget, true), "a quarter is held back for the retry")
 
 	deadline := start.Add(budget)
 	assert.True(t, retryHasBudget(start.Add(3*time.Second), deadline, budget))
@@ -328,4 +325,25 @@ func TestReasonOfErrorMapsEveryFailureOfTheEvaluateCall(t *testing.T) {
 	cancel()
 	assert.Equal(t, failureReasonTransport, reasonOfError(cancelled, context.DeadlineExceeded),
 		"a deadline the caller's own context ended is not the guard running out of time")
+}
+
+// The first call has the whole budget whatever the request carries: a slow answer
+// that comes back inside the budget is applied, not cut at three quarters of it
+// to keep a share for a retry that may never be needed.
+func TestASlowSuccessfulFirstCallWithAURLAttachmentIsNotCutEarly(t *testing.T) {
+	t.Parallel()
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}, delay: testTimeout * 17 / 20}
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+	req := requestWith(t, "what is in this picture?", "https://cdn.example.com/slow.png")
+	event, span := newEvent()
+
+	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event))
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 1, f.count())
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	assert.Equal(t, decisionAllowed, extras.Decision)
+	assert.Empty(t, extras.FailureReason, "the answer was not cut")
 }
