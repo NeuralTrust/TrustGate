@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -63,6 +64,17 @@ func (p *Plugin) inspectSegment(
 	}
 	if in.Request == nil || in.Request.Provider == "" || strings.TrimSpace(in.Request.GatewayID) == "" {
 		return segmentAllow(), nil
+	}
+
+	// The executor never splits a block for this plugin and the entry's window
+	// never cuts the block's own text, so nothing else bounds what one evaluate
+	// carries: a block above the window that evaluate accepts is refused here,
+	// before any call, as the request's own size.
+	if len(seg.Accumulated) > maxStreamWindowBytes {
+		return p.segmentFailureOf(ctx, in, seg, failureReasonPayloadTooLarge,
+			appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit, nil,
+			fmt.Errorf("trustguard: a stream block of %d bytes is above the %d one evaluate carries",
+				len(seg.Accumulated), maxStreamWindowBytes))
 	}
 
 	payload, ok := p.segmentPayload(ctx, in, seg)
@@ -361,8 +373,23 @@ func (p *Plugin) segmentGuardFailureOf(
 	block *appplugins.SegmentVerdict,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
-	recordEvaluateFailure(ctx, reason)
 	sharedReason, detail := sharedFailure(reason, transformReason)
+	return p.segmentFailureOf(ctx, in, seg, reason, sharedReason, detail, block, err)
+}
+
+// segmentFailureOf is segmentGuardFailureOf for a failure whose shared reason
+// and detail are already known.
+func (p *Plugin) segmentFailureOf(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+	reason string,
+	sharedReason appplugins.FailureReason,
+	detail string,
+	block *appplugins.SegmentVerdict,
+	err error,
+) (*appplugins.SegmentVerdict, error) {
+	recordEvaluateFailure(ctx, reason)
 	verdict, _ := appplugins.ExternalStreamOutcome(PluginName, in.Mode, sharedReason, detail, block, err)
 	if verdict != nil && verdict.Block {
 		p.warn(ctx, "trustguard could not inspect stream segment, cutting the stream",

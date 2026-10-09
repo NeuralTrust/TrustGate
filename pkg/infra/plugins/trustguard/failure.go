@@ -89,6 +89,8 @@ func failureOfCut(r appplugins.StreamReport) (reason, class string) {
 		reason = failureReasonTransformFailed
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailPayloadTooLarge:
 		reason = failureReasonPayloadTooLarge
+	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailChunkLimit:
+		reason = failureReasonPayloadTooLarge
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailAnswerTooLarge:
 		reason = failureReasonResponseTooLarge
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailProviderRejectedInput:
