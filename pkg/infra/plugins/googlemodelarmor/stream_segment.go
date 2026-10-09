@@ -108,7 +108,7 @@ func (p *Plugin) InspectSegment(
 		// Resolved by the guard, not here: only it knows whether the status is
 		// still uncommitted, which decides whether the held text is
 		// released; a guardrail that fails is always released.
-		reason, detail := failureOf(err)
+		reason, detail := pluginutil.FailureOfError(err)
 		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
 	}
