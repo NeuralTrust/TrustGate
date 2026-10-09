@@ -241,11 +241,17 @@ type SegmentOutcome struct {
 	// they were retired. The guard cannot see an absorbed failure, so this is
 	// how GuardCalls stays the number of blocks that got every verdict.
 	FailedEntries int
-	Block         bool
-	Type          string
-	Message       string
-	HasTransform  bool
-	Transformed   string
+	// WindowedEntries counts the entries that were handed only the tail of
+	// Accumulated because their own streaming.max_accumulated_bytes is smaller
+	// than the text produced. The guard's own Truncated flag cannot see this: the
+	// narrowing happens per entry, on a copy. An entry that saw a tail never
+	// evaluated the whole response.
+	WindowedEntries int
+	Block           bool
+	Type            string
+	Message         string
+	HasTransform    bool
+	Transformed     string
 	// MaskFailureBlock says an entry whose transform is in this outcome asked, with
 	// on_mask_failure, for the stream to end when its mask cannot be applied.
 	MaskFailureBlock bool

@@ -191,6 +191,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			call.ReportsStream = reporters[spanKey(seg, entry)]
 		} else {
 			call, head = segmentWithin(call, entry.streamWindow)
+			if head != "" {
+				outcome.WindowedEntries++
+			}
 		}
 		started := e.clock()
 		verdict, err := inspector.InspectSegment(ctx, ExecInput{

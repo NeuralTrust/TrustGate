@@ -282,6 +282,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	stream iter.Seq2[[]byte, error],
 	gate func() <-chan struct{},
 	cut func() bool,
+	finalInspected func() bool,
 	view func(frame []byte) [][]byte,
 ) iter.Seq2[[]byte, error] {
 	if f.executor == nil || !hasPostResponse(plan) {
@@ -327,6 +328,10 @@ func (f *forwarder) wrapStreamWithPostResponse(
 		// Set here, from the guard's own state, and nowhere else: post_response
 		// reads it to skip the truncated body of a stream the guard cut.
 		resp.StreamCut = cut != nil && cut()
+		// Same source and same rule: set from the guard's own state so
+		// post_response can skip a second full-text pass over a stream whose
+		// final block was already evaluated in full.
+		resp.StreamFinalInspected = finalInspected != nil && finalInspected()
 		// gate is consulted here rather than captured above because a cut
 		// decides mid-stream: the guard installs the barrier on the goroutine
 		// this loop has just finished draining, so it is readable now and was

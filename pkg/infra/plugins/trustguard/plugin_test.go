@@ -891,6 +891,36 @@ func TestExecutePostResponseAfterStreamCutIsSkipped(t *testing.T) {
 	}
 }
 
+// ENG-1738: once the stream guard evaluated the final block in full under this
+// policy entry, the drained body is the same text; a second evaluation would
+// only add a duplicate output row to Activity.
+func TestExecutePostResponseAfterFinalBlockInspectedIsSkipped(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-final"}}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"the \"}}]}\n"
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, StreamFinalInspected: true, Body: []byte(sse)}
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePostResponse, policy.ModeEnforce, settings(""), requestContext(), resp, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("a stream whose final block was inspected must not be evaluated again, got %d guard calls", f.count())
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	if !ok || !extras.Skipped || extras.SkipReason != skipReasonStreamFinalInspected || extras.Decision != "" {
+		t.Fatalf("extras = %+v, want skipped with %q and no decision", span.PluginAttrsCopy().Extras, skipReasonStreamFinalInspected)
+	}
+}
+
 func TestExecutePostResponseStreamingInspectsReasoningAndToolCalls(t *testing.T) {
 	t.Parallel()
 
@@ -2118,6 +2148,8 @@ func TestOutputInspectSkipReason(t *testing.T) {
 		{"post-response handles the stream", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true}, true, ""},
 		{"post-response streamed with nothing drained is an empty body", policy.StagePostResponse, &infracontext.ResponseContext{Streaming: true}, true, skipReasonEmptyResponseBody},
 		{"post-response after a stream cut is stream_cut", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true, StreamCut: true}, true, skipReasonStreamCut},
+		{"post-response after a final block inspected in full is stream_final_inspected", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true, StreamFinalInspected: true}, true, skipReasonStreamFinalInspected},
+		{"post-response keeps the audit when the policy entry is not stream-guarded", policy.StagePostResponse, &infracontext.ResponseContext{Body: body, Streaming: true, StreamFinalInspected: true}, false, ""},
 		{"post-response does not handle the non-streaming leg", policy.StagePostResponse, &infracontext.ResponseContext{Body: body}, true, skipReasonStreamingMismatch},
 		{"a request stage never inspects output", policy.StagePreRequest, &infracontext.ResponseContext{Body: body}, false, skipReasonStreamingMismatch},
 	}
@@ -2427,5 +2459,43 @@ func TestExecuteTransportErrorStillFailsOpenUnderTimeoutDefault(t *testing.T) {
 	}
 	if res == nil || res.StopUpstream {
 		t.Fatalf("expected pass-through, got %+v", res)
+	}
+}
+
+// ENG-1738: the skip is decided per policy entry, from that entry's own
+// settings. Two trustguard entries on one route share the response context, so
+// the stream-guarded one skips while the one that opted out of per-block
+// inspection still audits the drained body: nothing else evaluated it.
+func TestExecutePostResponseFinalInspectedSkipIsPerPolicyEntry(t *testing.T) {
+	t.Parallel()
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"the \"}}]}\n"
+	cases := []struct {
+		name      string
+		streaming map[string]any
+		wantCalls int
+	}{
+		{"stream-guarded entry skips", map[string]any{"enabled": true}, 0},
+		{"entry with streaming disabled keeps its audit", map[string]any{"enabled": false}, 1},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-entry"}}
+			srv := newServer(t, f)
+			p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+			set := settings("")
+			set["streaming"] = tc.streaming
+			resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, StreamFinalInspected: true, Body: []byte(sse)}
+			event, _ := newEvent()
+			in := execInputWithEvent(policy.StagePostResponse, policy.ModeEnforce, set, requestContext(), resp, event)
+			if _, err := p.Execute(context.Background(), in); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if f.count() != tc.wantCalls {
+				t.Fatalf("guard calls = %d, want %d", f.count(), tc.wantCalls)
+			}
+		})
 	}
 }
