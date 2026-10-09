@@ -228,7 +228,7 @@ func TestStreamGuard_GuardrailProviderErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// streaming.on_error and streaming.guard_timeout were removed: a policy stored
+// streaming.on_error and streaming.guard_timeout are not guardrail settings: a policy stored
 // with them keeps loading and fails open in every mode, at the head and after
 // it, under the default guard timeout.
 func TestStreamGuard_GuardrailStoredStreamFailureKeysAreIgnored(t *testing.T) {

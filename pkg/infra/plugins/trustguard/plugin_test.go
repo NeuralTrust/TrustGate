@@ -2406,7 +2406,7 @@ func TestExecuteTokenLegIsBoundedByDeploymentTimeout(t *testing.T) {
 	assert.Zero(t, f.count(), "no evaluate call without a token")
 }
 
-// removedKeys is a stored policy carrying every setting that no longer exists.
+// removedKeys is a stored policy carrying every key the plugin ignores.
 func removedKeys(set map[string]any) map[string]any {
 	set["on_error"] = "fail_closed"
 	set["on_timeout"] = "fail_closed"

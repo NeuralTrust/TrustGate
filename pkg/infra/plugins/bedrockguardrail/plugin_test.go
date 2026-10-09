@@ -664,8 +664,8 @@ func withRemovedKeys(set map[string]any) map[string]any {
 	return set
 }
 
-// on_error, streaming.on_error and streaming.guard_timeout were removed: a policy
-// stored with them keeps loading, fails open on a client error, and runs its
+// on_error, streaming.on_error and streaming.guard_timeout are not guardrail settings: a
+// policy stored with them keeps loading, fails open on a client error, and runs its
 // stream leg fail open under the default guard timeout.
 func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
@@ -696,7 +696,7 @@ func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	}
 }
 
-// on_mask_failure was removed: a mask that cannot be applied to a native Bedrock
+// on_mask_failure is not a setting: a mask that cannot be applied to a native Bedrock
 // call always fails open. A policy stored with the key keeps loading, whatever
 // its value, and the key changes nothing.
 func TestOnMaskFailureIsIgnored(t *testing.T) {

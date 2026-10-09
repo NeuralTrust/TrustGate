@@ -581,7 +581,7 @@ func TestBedrockNative_StorePathIsNotANativeRoute(t *testing.T) {
 
 // A client can make a mask impossible to apply by putting the value where no mask may
 // rewrite it. The call goes through, as sent, whatever on_mask_failure a stored
-// policy still carries: the setting was removed and is ignored.
+// policy still carries: the setting is ignored.
 func TestBedrockNative_OnMaskFailure(t *testing.T) {
 	defer Track(t, "BedrockNativeOnMaskFailure")()
 	stub := newBedrockRuntimeStub(t)

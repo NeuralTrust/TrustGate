@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// on_mask_failure was removed: a mask that cannot be applied to a native Bedrock
+// on_mask_failure is not a setting: a mask that cannot be applied to a native Bedrock
 // call always fails open. A policy stored with the key keeps loading, whatever
 // its value, and the key changes nothing.
 func TestOnMaskFailureIsIgnored(t *testing.T) {

@@ -49,8 +49,8 @@ type Settings struct {
 	//
 	// The key name is fixed by the policy catalog. Its values are legs, not the
 	// input/output direction reported to TrustGuard per evaluate call.
-	Direction   string            `mapstructure:"direction"`
-	CollectorID string            `mapstructure:"collector_id"`
+	Direction   string                       `mapstructure:"direction"`
+	CollectorID string                       `mapstructure:"collector_id"`
 	Streaming   pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
