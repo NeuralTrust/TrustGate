@@ -141,6 +141,11 @@ func streamChunkSpec(window int) textchunk.Spec {
 // that spaces its pieces (StreamPieceSpacing) has the spacing wait run before each
 // piece, outside the time the call is measured by.
 //
+// A piece of the first round that is throttled is sent once more after a short
+// backoff, as the buffered legs do, unless the inspector says its pieces are
+// spaced under its quota (StreamThrottleAttribution): a throttle there is other
+// traffic and a retry would only add to it.
+//
 // Only the chunk that reaches the end of call.Accumulated carries Final, and
 // every piece shares the block's Seq and says which it is (Part of Parts), so an
 // inspector that keys on the block position sees it once per piece and the end
@@ -174,6 +179,7 @@ func (e *executor) inspectChunked(
 		space = s.SpaceStreamPieces(in)
 	}
 
+	retryable := !throttleIsOtherTraffic(entry.plugin)
 	verdicts := make([]*SegmentVerdict, len(chunks))
 	outs := textchunk.Run(blockCtx, chunks, textchunk.RunOptions{
 		Parallel: parallel,
@@ -196,6 +202,11 @@ func (e *executor) inspectChunked(
 		piece.Final = call.Final && c.End == len(call.Accumulated)
 		piece.Part, piece.Parts = i+1, len(chunks)
 		verdict, err := inspector.InspectSegment(ctx, in, piece)
+		if retryable && i < parallel && pieceThrottled(verdict, err) {
+			if textchunk.Pause(ctx, pieceRetryWait(ctx)) {
+				verdict, err = inspector.InspectSegment(ctx, in, piece)
+			}
+		}
 		verdicts[i] = verdict
 		return struct{}{}, err
 	})
@@ -203,6 +214,32 @@ func (e *executor) inspectChunked(
 		return nil, ctx.Err()
 	}
 	return mergeChunkVerdicts(entry, call.Accumulated, chunks, verdicts, outs, SlowCall(slow))
+}
+
+// pieceRetryBackoff is the wait before a throttled piece is sent again.
+const pieceRetryBackoff = 250 * time.Millisecond
+
+// pieceThrottled reports that a piece's call ended on a throttle, whether the
+// inspector returned it as the error or as a blocking verdict that carries it.
+func pieceThrottled(v *SegmentVerdict, err error) bool {
+	if err != nil {
+		var typed *ExternalStreamFailure
+		return errors.As(err, &typed) && typed.Detail == DetailThrottled
+	}
+	return v != nil && v.Block && v.Failure != nil && v.Failure.Detail == DetailThrottled
+}
+
+// pieceRetryWait is the backoff before a piece is retried: never more than a
+// quarter of the time the block has left or than the run's reserve.
+func pieceRetryWait(ctx context.Context) time.Duration {
+	wait := pieceRetryBackoff
+	if deadline, ok := ctx.Deadline(); ok {
+		wait = min(wait, time.Until(deadline)/4)
+	}
+	if limit := textchunk.PauseCap(ctx); limit > 0 {
+		wait = min(wait, limit)
+	}
+	return max(wait, 0)
 }
 
 // mergeChunkVerdicts reads the chunks through the same precedence table the

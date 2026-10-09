@@ -340,3 +340,47 @@ func TestRunStreamSegment_AThrottleOnAPieceBehindTheFirstIsInputAndOnTheFirstIsN
 	assert.False(t, out.Block, "a throttle on the first piece is the provider's load and fails open")
 	assert.Equal(t, 1, out.FailedEntries)
 }
+
+// A throttle on a piece of the first round that the retry clears is not a
+// failure: the block is screened as if it had not happened.
+func TestRunStreamSegment_AThrottledPieceThatRecoversOnRetryGivesTheNormalVerdict(t *testing.T) {
+	t.Parallel()
+	const window = 8192
+	var b strings.Builder
+	for i := 0; b.Len() < 40000; i++ {
+		fmt.Fprintf(&b, "w%06d ", i)
+	}
+	text := b.String()
+	second := textchunk.Split(text, streamChunkSpec(window))[1].Text
+	var calls atomic.Int32
+	pick := func(seg StreamSegment) (*SegmentVerdict, error) {
+		if seg.Accumulated == second && calls.Add(1) == 1 {
+			return nil, newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
+		}
+		return &SegmentVerdict{}, nil
+	}
+	exec, in, _ := chunkChain(t, policy.ModeEnforce, window, pick)
+
+	out, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+
+	require.NoError(t, err)
+	assert.False(t, out.Block)
+	assert.Zero(t, out.FailedEntries)
+	assert.EqualValues(t, 2, calls.Load(), "the piece was sent twice")
+}
+
+// Every piece throttled, the first included, is the provider's load from traffic
+// that is not the block's: the stream is not cut.
+func TestRunStreamSegment_EveryPieceThrottledFailsOpen(t *testing.T) {
+	t.Parallel()
+	text := words(40000)
+	exec, in, _ := chunkChain(t, policy.ModeEnforce, 8192, func(StreamSegment) (*SegmentVerdict, error) {
+		return nil, newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
+	})
+
+	out, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+
+	require.NoError(t, err)
+	assert.False(t, out.Block)
+	assert.Equal(t, 1, out.FailedEntries)
+}
