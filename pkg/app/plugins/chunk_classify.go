@@ -140,15 +140,16 @@ func ClassifyChunks[T any](
 // (throttled_oversize); and last a failure that is availability. An evaluation
 // with no verdict and no failure is allowed.
 //
-// One invariant decides a throttle: it is the request's own doing when the
-// request had calls in flight or behind it, that is a chunk other than the first
-// of an evaluation of several chunks, whether it waited for a slot or was sent in
-// the first round beside its siblings, unless the failure says OtherTraffic (the
-// calls were spaced under the provider's quota, so only other traffic can have
-// caused it). A throttle on the first chunk or on an evaluation of one chunk is
-// availability, and so is a provider quota that is configuration (an exhausted or
-// unbilled account): those are recorded as config_invalid and never carry the
-// throttled detail.
+// One invariant decides a throttle: it is the request's own doing only when the
+// first chunk answered without a throttle and a later chunk was throttled, whether
+// it waited for a slot or was sent in the first round beside its siblings, unless
+// the failure says OtherTraffic (the calls were spaced under the provider's
+// quota, so only other traffic can have caused it). When the first chunk, or the
+// only chunk, is itself throttled after its retry, the provider is throttling by
+// traffic that is not the request's, so every throttle of the evaluation is
+// availability. A provider quota that is configuration (an exhausted or unbilled
+// account) is availability too: it is recorded as config_invalid and never
+// carries the throttled detail.
 func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 	d := ChunkDecision{Index: -1}
 	for _, st := range states {
@@ -175,10 +176,12 @@ func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 			return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailChunkBudget)
 		}
 	}
-	for i, st := range states {
-		if st.Started && st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic &&
-			(st.Waited || (len(states) > 1 && i > 0)) {
-			return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailThrottledOversize)
+	if !firstChunkThrottled(states) {
+		for i, st := range states {
+			if st.Started && st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic &&
+				(st.Waited || (len(states) > 1 && i > 0)) {
+				return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailThrottledOversize)
+			}
 		}
 	}
 	for i, st := range states {
@@ -210,4 +213,11 @@ func cancelledChunks(d ChunkDecision, states []ChunkState) ChunkDecision {
 func failedChunk(d ChunkDecision, kind ChunkOutcomeKind, i int, reason FailureReason, detail string) ChunkDecision {
 	d.Kind, d.Index, d.Reason, d.Detail = kind, i, reason, detail
 	return d
+}
+
+// firstChunkThrottled reports that chunk 0 was sent and failed with a throttle
+// that is not a configuration quota: a throttle that no sibling call can have
+// caused, since chunk 0 is the first call of the evaluation.
+func firstChunkThrottled(states []ChunkState) bool {
+	return len(states) > 0 && states[0].Started && states[0].Failure != nil && states[0].Failure.Detail == DetailThrottled
 }
