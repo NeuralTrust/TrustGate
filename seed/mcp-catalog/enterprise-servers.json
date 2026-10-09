@@ -558,45 +558,6 @@
       "relevance": 55
     },
     {
-      "name": "dev.arcade/mcp",
-      "vendor": "Arcade",
-      "category": "Automation",
-      "description": "Arcade MCP Gateway: tool calls across integrations (Bearer key + Arcade-User-ID).",
-      "capabilities": [
-        "Call tools across integrations",
-        "Run automation actions",
-        "Connect business apps"
-      ],
-      "transport": "streamable-http",
-      "server_url": "https://api.arcade.dev/mcp/{gateway_slug}",
-      "url_variables": [
-        {
-          "name": "gateway_slug",
-          "description": "Your Arcade MCP gateway slug (appended to the base endpoint).",
-          "required": true
-        }
-      ],
-      "requires_auth": true,
-      "self_service": false,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <Arcade API key>.",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        },
-        {
-          "name": "Arcade-User-ID",
-          "description": "End-user ID for tool authorization.",
-          "required": true,
-          "secret": false,
-          "scheme": "raw"
-        }
-      ],
-      "relevance": 55
-    },
-    {
       "name": "com.asana/mcp",
       "vendor": "Asana",
       "category": "Project Management",
