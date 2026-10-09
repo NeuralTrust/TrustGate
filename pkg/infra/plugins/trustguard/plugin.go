@@ -321,6 +321,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted})
 			return nil, rateLimitError(limited)
 		}
+		var tooBig *pluginutil.AnswerTooLargeError
+		if errors.As(err, &tooBig) {
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonResponseTooLarge, err)
+		}
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) {
 			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonAttachmentRejected, err)

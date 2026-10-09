@@ -342,8 +342,9 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 const maxBufferedTextBytes = 512 << 10
 
 // refuseOversize reports, with the outcome to return, that text is above
-// maxBufferedTextBytes. A response that exceeds maxResponseBytes on a text under
-// the bound is the provider's and stays a transport failure.
+// maxBufferedTextBytes. A de-identify answer that still exceeds maxResponseBytes
+// on a text under the bound is input too (pluginutil.AnswerTooLargeError): the
+// client chose a text that grows past it when escaped.
 func (p *Plugin) refuseOversize(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string) (*appplugins.Result, error, bool) {
 	if len(text) <= maxBufferedTextBytes {
 		return nil, nil, false

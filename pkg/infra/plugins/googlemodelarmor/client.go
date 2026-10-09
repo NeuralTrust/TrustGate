@@ -387,7 +387,7 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	// Say "too large" rather than letting a truncated payload surface as a
 	// decode failure and send whoever debugs it hunting for malformed JSON.
 	if len(raw) >= maxResponseBytes {
-		return nil, fmt.Errorf("model_armor: %s response exceeds %d bytes", action, maxResponseBytes)
+		return nil, &pluginutil.AnswerTooLargeError{Provider: "model_armor " + action, Limit: maxResponseBytes}
 	}
 	var out sanitizeResponse
 	if err := json.Unmarshal(raw, &out); err != nil {

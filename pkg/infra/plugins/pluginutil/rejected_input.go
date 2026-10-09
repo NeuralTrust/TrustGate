@@ -16,6 +16,7 @@ package pluginutil
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -52,10 +53,30 @@ type Rejection interface {
 	Rejection() (status int, configShaped bool)
 }
 
+// AnswerTooLargeError is a provider answering 2xx with a body above what the
+// client reads. Where the answer carries the request's text back (a mask), the
+// request chose its size: JSON escaping alone grows a text of '<' six-fold, so a
+// client can make the answer outgrow the limit and have the unmasked original
+// forwarded as if the provider were down. It is therefore the input's, not the
+// provider's availability.
+type AnswerTooLargeError struct {
+	Provider string
+	Limit    int
+}
+
+func (e *AnswerTooLargeError) Error() string {
+	return fmt.Sprintf("%s: response exceeds %d bytes", e.Provider, e.Limit)
+}
+
 // FailureOfError maps what a provider answered to the shared failure
-// vocabulary: a Rejection is read through FailureOfRejection, and every other
-// error (a timeout, a network error, an undecodable answer) is availability.
+// vocabulary: an AnswerTooLargeError is input, a Rejection is read through
+// FailureOfRejection, and every other error (a timeout, a network error, an
+// undecodable answer) is availability.
 func FailureOfError(err error) (appplugins.FailureReason, string) {
+	var tooLarge *AnswerTooLargeError
+	if errors.As(err, &tooLarge) {
+		return appplugins.FailureInputTooLarge, appplugins.DetailAnswerTooLarge
+	}
 	var rejection Rejection
 	if errors.As(err, &rejection) {
 		return FailureOfRejection(rejection.Rejection())

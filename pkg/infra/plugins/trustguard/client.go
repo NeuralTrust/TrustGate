@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 const (
@@ -203,6 +204,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("trustguard: unexpected status %d", res.StatusCode)
+	}
+	if len(raw) >= maxResponseBytes {
+		return nil, &pluginutil.AnswerTooLargeError{Provider: "trustguard", Limit: maxResponseBytes}
 	}
 	var out GuardResponse
 	if err := json.Unmarshal(raw, &out); err != nil {

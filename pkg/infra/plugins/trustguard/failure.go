@@ -24,10 +24,11 @@ const decisionFailedClosed = appplugins.DecisionFailedClosed
 // this plugin adds later and does not map is availability, so it cannot start
 // refusing traffic by omission.
 //
-// Only four of its reasons say something about the request itself. A payload
+// Only five of its reasons say something about the request itself. A payload
 // this plugin could not build is a body it could not read (decode_failed). A 413
 // is the body TrustGuard refused for its size, and a 400 "invalid attachment" is
-// an attachment it could not fetch or decode. A transform it cannot write back
+// an attachment it could not fetch or decode. An answer above the size the
+// client reads is the request's too: the mask echoes its text back. A transform it cannot write back
 // is a mask over a finding TrustGuard confirmed, which the detail says.
 func sharedFailure(reason, transformReason string) (appplugins.FailureReason, string) {
 	switch reason {
@@ -35,6 +36,8 @@ func sharedFailure(reason, transformReason string) (appplugins.FailureReason, st
 		return appplugins.FailureDecodeFailed, ""
 	case failureReasonPayloadTooLarge:
 		return appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge
+	case failureReasonResponseTooLarge:
+		return appplugins.FailureInputTooLarge, appplugins.DetailAnswerTooLarge
 	case failureReasonAttachmentRejected:
 		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 	case failureReasonTransformFailed:
@@ -76,6 +79,8 @@ func failureOfCut(r appplugins.StreamReport) (reason, class string) {
 		reason = failureReasonTransformFailed
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailPayloadTooLarge:
 		reason = failureReasonPayloadTooLarge
+	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailAnswerTooLarge:
+		reason = failureReasonResponseTooLarge
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailProviderRejectedInput:
 		reason = failureReasonAttachmentRejected
 	default:

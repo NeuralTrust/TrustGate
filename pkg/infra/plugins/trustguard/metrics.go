@@ -44,6 +44,9 @@ const (
 	// failureReasonAttachmentRejected is TrustGuard answering 400 "invalid
 	// attachment": it could not fetch or decode an attachment it was sent.
 	failureReasonAttachmentRejected = "attachment_rejected"
+	// failureReasonResponseTooLarge is an answer above what the client reads:
+	// the mask echoes the request's text, so the request chose its size.
+	failureReasonResponseTooLarge = "response_too_large"
 	// failureReasonTransformFailed is TrustGuard asking for a mask this plugin
 	// could not write back; degraded_reason on the span says which step failed.
 	failureReasonTransformFailed = "transform_failed"
