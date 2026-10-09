@@ -219,7 +219,10 @@ func TestStreamSettingsDefaultWindowFitsTheSmallestQuota(t *testing.T) {
 		"25 text units of 1,000 characters is the default per-request quota in eu-west-3")
 
 	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 524288}))
-	assert.Equal(t, 524288, opts.MaxAccumulatedBytes, "the quota is adjustable, so an explicit window is honoured")
+	assert.Equal(t, maxStreamWindowBytes, opts.MaxAccumulatedBytes, "a larger window is capped so every evaluation fits the smallest quota")
+
+	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 4096}))
+	assert.Equal(t, 4096, opts.MaxAccumulatedBytes, "a smaller window is honoured")
 }
 
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
