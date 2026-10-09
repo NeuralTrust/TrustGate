@@ -1056,3 +1056,64 @@ func TestProviderInvokeStream_ResponsesToAzureChatCarriesKeyAndRetention(t *test
 	assert.JSONEq(t, `"k1"`, string(got["prompt_cache_key"]))
 	assert.JSONEq(t, `"24h"`, string(got["prompt_cache_retention"]))
 }
+
+// Claude Code sends context_management in the body with the beta that allows
+// it in anthropic-beta. On an Anthropic-to-Anthropic passthrough the body
+// reaches Anthropic as written, so the opt-in must travel with it, or the
+// request is refused with "context_management: Extra inputs are not permitted".
+func TestProviderInvoke_AnthropicPassthroughCarriesBetaOptIn(t *testing.T) {
+	var sent *providers.Config
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, cfg *providers.Config, _ []byte) ([]byte, error) {
+			sent = cfg
+			return []byte(anthropicResponseBody), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{
+		Body:         []byte(anthropicRequestBody),
+		SourceFormat: string(adapter.FormatAnthropic),
+		Headers: map[string][]string{
+			"Anthropic-Beta": {"context-management-2025-06-27, claude-code-20250219", "bad flag;drop"},
+		},
+	}
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, sent)
+	assert.Equal(t, "context-management-2025-06-27,claude-code-20250219", sent.AnthropicBeta)
+}
+
+// A body adapted from another wire format is the gateway's, not the caller's:
+// no beta field of theirs is in it, and their opt-in does not go upstream.
+func TestProviderInvoke_CrossFormatSendsNoBetaOptIn(t *testing.T) {
+	var sent *providers.Config
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, cfg *providers.Config, _ []byte) ([]byte, error) {
+			sent = cfg
+			return []byte(anthropicResponseBody), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{
+		Body:    []byte(openaiRequestBody),
+		Headers: map[string][]string{"anthropic-beta": {"context-management-2025-06-27"}},
+	}
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, sent)
+	assert.Empty(t, sent.AnthropicBeta)
+}

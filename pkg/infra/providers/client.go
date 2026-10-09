@@ -55,6 +55,10 @@ type Config struct {
 	// mapped by the gateway and a client may drop it when the provider
 	// rejects it. A key the caller sent on a passthrough is never dropped.
 	CacheRetentionMapped bool `json:"-"`
+	// AnthropicBeta is the caller's anthropic-beta flags, comma-joined, on an
+	// Anthropic-to-Anthropic passthrough: the body carries the beta fields as
+	// the caller wrote them, and Anthropic only accepts them with the opt-in.
+	AnthropicBeta string `json:"-"`
 }
 
 type Credentials struct {
