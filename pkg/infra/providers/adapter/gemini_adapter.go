@@ -46,6 +46,24 @@ type geminiPart struct {
 	FunctionCall     *geminiFunctionCall `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFuncResponse `json:"functionResponse,omitempty"`
 	ThoughtSignature string              `json:"thoughtSignature,omitempty"`
+	InlineData       *geminiBlob         `json:"inlineData,omitempty"`
+	FileData         *geminiFileData     `json:"fileData,omitempty"`
+	// The API also accepts the proto field names; they are read, never written.
+	InlineDataSnake *geminiBlob     `json:"inline_data,omitempty"`
+	FileDataSnake   *geminiFileData `json:"file_data,omitempty"`
+}
+
+type geminiBlob struct {
+	MimeType      string `json:"mimeType,omitempty"`
+	MimeTypeSnake string `json:"mime_type,omitempty"`
+	Data          string `json:"data"`
+}
+
+type geminiFileData struct {
+	MimeType      string `json:"mimeType,omitempty"`
+	MimeTypeSnake string `json:"mime_type,omitempty"`
+	FileURI       string `json:"fileUri,omitempty"`
+	FileURISnake  string `json:"file_uri,omitempty"`
 }
 
 type geminiFunctionCall struct {
@@ -158,10 +176,16 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	// contents → messages (Gemini "user" with functionResponse must become canonical "tool" for OpenAI)
 	for _, c := range req.Contents {
 		role := c.Role
-		if role == "model" {
+		switch role {
+		case "model":
 			role = "assistant"
+		case "":
+			role = "user"
 		}
 		var textParts []string
+		var images []CanonicalImage
+		var documents []CanonicalDocument
+		documentsFirst := false
 		var toolCalls []CanonicalToolCall
 		var toolResults []CanonicalMessage
 		for _, p := range c.Parts {
@@ -170,6 +194,11 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 			}
 			if p.Text != "" {
 				textParts = append(textParts, p.Text)
+			}
+			if role == "user" {
+				before := len(documents)
+				images, documents = appendGeminiMedia(p, images, documents)
+				documentsFirst = documentsFirst || (before == 0 && len(documents) > 0 && len(textParts) == 0)
 			}
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
@@ -195,10 +224,13 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 				Content:   strings.Join(textParts, "\n"),
 				ToolCalls: toolCalls,
 			})
-		} else if len(textParts) > 0 {
+		} else if len(textParts) > 0 || len(images) > 0 || len(documents) > 0 {
 			cr.Messages = append(cr.Messages, CanonicalMessage{
-				Role:    role,
-				Content: strings.Join(textParts, "\n"),
+				Role:           role,
+				Content:        strings.Join(textParts, "\n"),
+				Images:         images,
+				Documents:      documents,
+				DocumentsFirst: documentsFirst,
 			})
 		}
 		// Emit tool result messages so OpenAI gets role "tool" after assistant tool_calls.
@@ -232,6 +264,71 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	return cr, nil
 }
 
+func appendGeminiMedia(p geminiPart, images []CanonicalImage, documents []CanonicalDocument) ([]CanonicalImage, []CanonicalDocument) {
+	if blob := firstNonNil(p.InlineData, p.InlineDataSnake); blob != nil && blob.Data != "" {
+		mt := firstNonEmptyString(blob.MimeType, blob.MimeTypeSnake)
+		if strings.HasPrefix(strings.ToLower(mt), "image/") {
+			images = append(images, CanonicalImage{MediaType: normalizeImageMediaType(mt), Data: blob.Data})
+		} else {
+			documents = append(documents, CanonicalDocument{MediaType: normalizeDocumentMediaType(mt, ""), Data: blob.Data})
+		}
+	}
+	if fd := firstNonNil(p.FileData, p.FileDataSnake); fd != nil {
+		mt := firstNonEmptyString(fd.MimeType, fd.MimeTypeSnake)
+		uri := firstNonEmptyString(fd.FileURI, fd.FileURISnake)
+		if uri == "" {
+			return images, documents
+		}
+		if strings.HasPrefix(strings.ToLower(mt), "image/") {
+			images = append(images, CanonicalImage{MediaType: normalizeImageMediaType(mt), URL: uri})
+		} else {
+			documents = append(documents, CanonicalDocument{MediaType: inferDocumentMediaType(mt, urlPath(uri)), URL: uri})
+		}
+	}
+	return images, documents
+}
+
+func geminiMediaParts(m CanonicalMessage) (images, documents []geminiPart, err error) {
+	for _, img := range m.Images {
+		if img.Data != "" {
+			images = append(images, geminiPart{InlineData: &geminiBlob{MimeType: img.MediaType, Data: img.Data}})
+			continue
+		}
+		images = append(images, geminiPart{FileData: &geminiFileData{MimeType: firstNonEmptyString(img.MediaType, imageMediaTypeFromURL(img.URL)), FileURI: img.URL}})
+	}
+	for _, doc := range m.Documents {
+		switch {
+		case doc.Data != "":
+			documents = append(documents, geminiPart{InlineData: &geminiBlob{MimeType: doc.MediaType, Data: doc.Data}})
+		case isHTTPImageURL(doc.URL) || strings.HasPrefix(doc.URL, "gs://"):
+			documents = append(documents, geminiPart{FileData: &geminiFileData{MimeType: doc.MediaType, FileURI: doc.URL}})
+		case doc.URL != "":
+			return nil, nil, &UnsupportedContentError{Reason: "document must be inline base64 data, an http(s) URL or a Cloud Storage URI"}
+		default:
+			return nil, nil, &UnsupportedContentError{Reason: "file references are not supported by the target; send inline base64 file data"}
+		}
+	}
+	return images, documents, nil
+}
+
+func firstNonNil[T any](vals ...*T) *T {
+	for _, v := range vals {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyString(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // ---------------------------------------------------------------------------
 // Request: Encode (Canonical → Gemini)
 // ---------------------------------------------------------------------------
@@ -257,10 +354,17 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		if role == "tool" {
 			role = "user"
 		}
-		var parts []geminiPart
+		var parts, text, docs []geminiPart
 		if m.Content != "" && m.ToolCallID == "" {
-			parts = append(parts, geminiPart{Text: m.Content})
+			text = []geminiPart{{Text: m.Content}}
 		}
+		if m.Role == "user" {
+			var err error
+			if parts, docs, err = geminiMediaParts(m); err != nil {
+				return nil, err
+			}
+		}
+		parts = append(parts, inClientOrder(m.DocumentsFirst, docs, text)...)
 		// Tool calls from assistant → functionCall parts
 		for _, tc := range m.ToolCalls {
 			var args map[string]interface{}

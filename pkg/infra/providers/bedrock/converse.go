@@ -210,6 +210,8 @@ func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock,
 		return &bedrockTypes.ContentBlockMemberReasoningContent{Value: sdkReasoning(b.ReasoningContent)}, nil
 	case b.Image != nil:
 		return sdkImage(b.Image), nil
+	case b.Document != nil:
+		return sdkDocumentBlock(b.Document), nil
 	case b.Text != "":
 		return &bedrockTypes.ContentBlockMemberText{Value: b.Text}, nil
 	default:
@@ -224,6 +226,23 @@ func sdkImage(img *adapter.ConverseImageBlock) bedrockTypes.ContentBlock {
 	return &bedrockTypes.ContentBlockMemberImage{Value: bedrockTypes.ImageBlock{
 		Format: bedrockTypes.ImageFormat(img.Format),
 		Source: &bedrockTypes.ImageSourceMemberBytes{Value: img.Source.Bytes},
+	}}
+}
+
+func sdkDocumentBlock(doc *adapter.ConverseDocumentBlock) bedrockTypes.ContentBlock {
+	var source bedrockTypes.DocumentSource
+	switch {
+	case len(doc.Source.Bytes) > 0:
+		source = &bedrockTypes.DocumentSourceMemberBytes{Value: doc.Source.Bytes}
+	case doc.Source.Text != "":
+		source = &bedrockTypes.DocumentSourceMemberText{Value: doc.Source.Text}
+	default:
+		return nil
+	}
+	return &bedrockTypes.ContentBlockMemberDocument{Value: bedrockTypes.DocumentBlock{
+		Format: bedrockTypes.DocumentFormat(doc.Format),
+		Name:   aws.String(doc.Name),
+		Source: source,
 	}}
 }
 

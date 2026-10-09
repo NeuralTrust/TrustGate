@@ -48,13 +48,32 @@ type CanonicalImage struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
+// CanonicalDocument is one non-image file attached to a message: a PDF, a text
+// file, an office document or anything else the client sent. Exactly one of
+// Data, URL or FileID is set; Data is standard base64. FileOwner is the format
+// whose files API issued FileID, the only target able to resolve it. The
+// gateway forwards every document whatever its type and leaves acceptance to
+// the upstream.
+type CanonicalDocument struct {
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+	FileOwner Format `json:"file_owner,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
 // CanonicalMessage represents a single turn in the conversation.
 type CanonicalMessage struct {
-	Role       string              `json:"role"`
-	Content    string              `json:"content"`
-	Images     []CanonicalImage    `json:"images,omitempty"`
-	ToolCalls  []CanonicalToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Role      string              `json:"role"`
+	Content   string              `json:"content"`
+	Images    []CanonicalImage    `json:"images,omitempty"`
+	Documents []CanonicalDocument `json:"documents,omitempty"`
+	// DocumentsFirst keeps the client's order of documents and text: some
+	// models only read a text document that follows the question.
+	DocumentsFirst bool                `json:"documents_first,omitempty"`
+	ToolCalls      []CanonicalToolCall `json:"tool_calls,omitempty"`
+	ToolCallID     string              `json:"tool_call_id,omitempty"`
 }
 
 // CanonicalToolKind distinguishes the tool shapes the gateway can represent.
