@@ -256,22 +256,29 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // Only the last user message of a request (or the whole response) is sent.
 //
 // A text that splits into more than maxBufferedChunks is refused before any
-// call, and the chunks are sent one at a time, spaced at the region's quota
-// floor (spacing.go), inside bufferedBudget for the whole evaluation. A request
-// whose waits and calls cannot fit the budget is refused before any call as
-// chunk_budget, so padding cannot push its last chunk to the deadline. Since the
-// request's own calls stay under the floor, a throttle AWS still returns is other
-// traffic and is availability, unlike on the guardrails that cannot space their
-// calls, where a throttle on several chunks is input. A chunk cut by the budget
-// after waiting on the request's own chunks is chunk_budget.
+// call, and the chunks are sent one at a time, spaced at the region's quota floor
+// (spacing.go), inside bufferedBudget for the whole evaluation. Every call is
+// reserved callReserve, and in every region the quota refills more than a chunk
+// uses in that time (25 units a second give 37 in 1.5 s against 24 a chunk), so
+// the time of a request is its chunks times callReserve and the ceiling is the
+// same everywhere: maxBufferedChunks chunks, which is chunkBytes plus
+// (maxBufferedChunks-1) steps of chunkBytes-chunkOverlap bytes, about 203 KB.
+// A request whose estimate exceeds the budget is refused before any call as
+// chunk_budget (the budget can be set lower than the default, which is when that
+// refusal is reached), so padding cannot push its last chunk to the deadline.
+// Once the estimate admits a request, a chunk that the budget cuts or that has
+// too little time left to start is the provider being slower than the estimate,
+// and fails open as availability. Since the request's own calls stay under the
+// floor, a throttle AWS still returns is other traffic and is availability too,
+// unlike on the guardrails that cannot space their calls.
 // https://aws.amazon.com/blogs/machine-learning/use-the-applyguardrail-api-with-long-context-inputs-and-streaming-outputs-in-amazon-bedrock/
 const (
 	chunkBytes        = 24000
 	chunkOverlap      = 4096
-	maxBufferedChunks = 32
 	chunkParallel     = 1
-	bufferedBudget    = 10 * time.Second
+	bufferedBudget    = 15 * time.Second
 	callReserve       = 1500 * time.Millisecond
+	maxBufferedChunks = int(bufferedBudget / callReserve)
 )
 
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
@@ -325,7 +332,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		}
 		return evals[i].state()
 	}
-	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.AdmittedByEstimate())
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
