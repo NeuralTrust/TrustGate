@@ -988,7 +988,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "endpoint",
 					Label:       "Endpoint",
 					Type:        FieldTypeString,
-					Description: "Absolute Analyze Text endpoint URL for the Azure Content Safety resource.",
+					Description: "Absolute Analyze Text endpoint URL for the Azure Content Safety resource, including its api-version query parameter.",
 					Required:    true,
 				},
 				{

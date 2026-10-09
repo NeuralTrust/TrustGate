@@ -34,6 +34,9 @@ const (
 
 type errModeration struct {
 	status int
+	// configShaped is set from the error envelope when a 400 is about the
+	// policy's model or key and not about the input.
+	configShaped bool
 }
 
 func (e *errModeration) Error() string {
@@ -80,7 +83,7 @@ func (c *client) Moderate(ctx context.Context, baseURL, apiKey string, body mode
 		return nil, fmt.Errorf("openai_moderation: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &errModeration{status: res.StatusCode}
+		return nil, &errModeration{status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw)}
 	}
 
 	var out moderationResponse
@@ -88,4 +91,37 @@ func (c *client) Moderate(ctx context.Context, baseURL, apiKey string, body mode
 		return nil, fmt.Errorf("openai_moderation: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+type errorEnvelope struct {
+	Error struct {
+		Param string `json:"param"`
+		Code  string `json:"code"`
+	} `json:"error"`
+}
+
+// configurationCodes are the error codes of a rejection that is about the
+// policy's model or key and not about the input.
+var configurationCodes = map[string]struct{}{
+	"model_not_found": {}, "invalid_api_key": {}, "invalid_model": {},
+}
+
+// rejectsConfiguration reports whether a 400 in OpenAI's error envelope names
+// the model or the key: its param is the model, or its code says the model or
+// key is unusable. Anything else, an input param above all and any shape this
+// does not recognise, is read as the content's, so an unknown error cannot be
+// used to skip the guardrail.
+func rejectsConfiguration(status int, body []byte) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	var env errorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	if env.Error.Param == "model" {
+		return true
+	}
+	_, ok := configurationCodes[env.Error.Code]
+	return ok
 }

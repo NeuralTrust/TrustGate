@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -70,6 +71,10 @@ type analyzeResponse struct {
 // body can echo the text that was analysed, and an error string ends up in logs.
 type statusError struct {
 	status int
+	// configShaped is set from the error envelope when a 400 is about the
+	// call's configuration (api-version, categories, output type) and not about
+	// the text.
+	configShaped bool
 }
 
 func (e *statusError) Error() string {
@@ -97,11 +102,45 @@ func (c *client) Analyze(ctx context.Context, endpoint, apiKey string, body anal
 		return nil, fmt.Errorf("azure_content_safety: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &statusError{status: res.StatusCode}
+		return nil, &statusError{status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw)}
 	}
 	var out analyzeResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("azure_content_safety: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+type errorEnvelope struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Target  string `json:"target"`
+	} `json:"error"`
+}
+
+// configurationTargets are the request members that come from the policy and
+// not from the text: the api-version of the endpoint and the categories and
+// output type the plugin requests.
+var configurationTargets = map[string]struct{}{
+	"api-version": {}, "apiversion": {}, "categories": {}, "outputtype": {},
+}
+
+// rejectsConfiguration reports whether a 400 in Azure's error envelope names
+// the call's configuration: a target that is not the text, or an api-version
+// code. Anything else, including a shape this does not recognise, is read as
+// the content's, so an unknown error cannot be used to skip the guardrail.
+func rejectsConfiguration(status int, body []byte) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	var env errorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	if _, ok := configurationTargets[strings.ToLower(env.Error.Target)]; ok {
+		return true
+	}
+	code := strings.ToLower(env.Error.Code)
+	return strings.Contains(code, "apiversion") || strings.Contains(code, "api-version")
 }

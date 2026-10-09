@@ -77,7 +77,7 @@ func TestPluginE2E_AzureContentSafety_Enforce(t *testing.T) {
 	azure := newAzureContentSafetyStub(t, "bomb")
 	up := newJSONUpstream(t, "azure-allowed")
 	apiKey, path := setupPolicyRoute(t, up,
-		policyPlugin("azure_content_safety", azureContentSafetySettings(azure.URL())),
+		policyPlugin("azure_content_safety", azureContentSafetySettings(azure.URL()+"?api-version=2023-10-01")),
 	)
 
 	t.Run("benign content passes through", func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestPluginE2E_AzureContentSafety_ObserveNeverBlocks(t *testing.T) {
 
 	azure := newAzureContentSafetyStub(t, "bomb")
 	up := newJSONUpstream(t, "azure-observe")
-	entry := policyPlugin("azure_content_safety", azureContentSafetySettings(azure.URL()))
+	entry := policyPlugin("azure_content_safety", azureContentSafetySettings(azure.URL()+"?api-version=2023-10-01"))
 	entry["mode"] = "observe"
 	apiKey, path := setupPolicyRoute(t, up, entry)
 
