@@ -393,7 +393,8 @@ func DiffText(before, after string) ([]TextHunk, bool) {
 // end up empty. The concatenation of the result is the concatenation of texts
 // with the hunks applied.
 func DistributeHunks(texts []string, hunks []TextHunk) []string {
-	starts := make([]int, len(texts)+1)
+	starts := make([]int, len(texts))
+	starts = append(starts, 0)
 	for i, t := range texts {
 		starts[i+1] = starts[i] + len(t)
 	}

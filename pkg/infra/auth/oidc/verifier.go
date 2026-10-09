@@ -170,7 +170,7 @@ func (v *Verifier) keyCandidates(
 	cfg domain.OAuth2Config,
 	refreshJWKS bool,
 ) ([]verificationKey, error) {
-	keys := make([]verificationKey, 0, len(cfg.PublicKeys)+1)
+	keys := make([]verificationKey, 0)
 	includePublicKeys := kid == "" || strings.TrimSpace(cfg.JWKSURL) == ""
 	if includePublicKeys {
 		for _, raw := range cfg.PublicKeys {

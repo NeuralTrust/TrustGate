@@ -211,7 +211,7 @@ func (rb *requestBody) injectSystemBlocks(mode onExistingSystem, content string)
 		if err != nil {
 			return false, reasonEncodeFailed
 		}
-		blocks := make([]json.RawMessage, 0, len(rb.systemBlocks)+1)
+		blocks := make([]json.RawMessage, 0)
 		blocks = append(blocks, rb.systemBlocks...)
 		blocks = append(blocks, block)
 		rb.systemBlocks = blocks

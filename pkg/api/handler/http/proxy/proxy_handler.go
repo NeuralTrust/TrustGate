@@ -353,7 +353,7 @@ func envelopeNativeError(result *appproxy.ForwardResult) {
 		return
 	}
 	extra, body := adapter.BedrockErrorEnvelope(result.StatusCode, result.Body)
-	headers := make(map[string][]string, len(result.Headers)+len(extra))
+	headers := make(map[string][]string)
 	for name, values := range result.Headers {
 		if _, replaced := extra[textproto.CanonicalMIMEHeaderKey(name)]; !replaced {
 			headers[name] = values
