@@ -36,6 +36,9 @@ jobs:
       language: go
       language_version: "1.27"
       lint_enabled: true
+      # v2.13.x cannot load go1.27.2's stdlib export data ("could not import
+      # internal/reflectlite"); v2.14.0 can. Keep in sync with the Makefile.
+      golangci_version: v2.14.0
       coverage_enabled: true
       test_command: |
         go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
@@ -62,8 +65,9 @@ jobs:
         with:
           # v2.12.x bundles honnef.co/go/tools v0.7.0, whose IR builder panics
           # on go1.27 stdlib sources ("unexpected expr: *ast.KeyValueExpr").
-          # v2.13.x bundles v0.8.1, which understands go1.27.
-          version: v2.13.2
+          # v2.13.x bundles v0.8.1, which understands go1.27, but cannot load
+          # go1.27.2's stdlib export data; v2.14.0 can.
+          version: v2.14.0
           # Released golangci-lint binaries are built with an older Go than
           # this module's go1.27 directive and refuse to lint it; goinstall
           # recompiles it with the active setup-go toolchain so they match.
@@ -191,7 +195,10 @@ jobs:
       # gosec <= 2.22.x ships a golang.org/x/tools that cannot type-check
       # go1.27 packages and aborts with "package ... without types was
       # imported from command-line-arguments" before reporting anything.
-      gosec_version: "2.29.0"
+      # 2.29.0 (x/tools v0.49.0) cannot read go1.27.2 export data ("export
+      # data version 5 is greater than maximum supported"); gosec master at
+      # d2b649ec (x/tools v0.51.0) can. Move to the next tagged release.
+      gosec_version: "2.29.1-0.20261005092323-d2b649ec0182"
       govulncheck_enabled: true
 
   image-scan:

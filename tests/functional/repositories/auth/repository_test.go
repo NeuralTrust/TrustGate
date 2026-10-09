@@ -417,6 +417,7 @@ func TestRepository_FindByOwnerAndUpdateKeepsOwner(t *testing.T) {
 	ctx := context.Background()
 	gwG, gwH := seedGateway(t, gw, "owner-g"), seedGateway(t, gw, "owner-h")
 	application, owned := validAuth(t, gwG, "application"), ownedAuth(t, gwG, "alice")
+	owned.OwnerEmail = "alice@acme.test"
 	require.NoError(t, r.Save(ctx, application))
 	require.NoError(t, r.Save(ctx, owned))
 
@@ -424,6 +425,7 @@ func TestRepository_FindByOwnerAndUpdateKeepsOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, owned.ID, got.ID)
 	require.Equal(t, owned.KeyHash, got.KeyHash)
+	require.Equal(t, "alice@acme.test", got.OwnerEmail, "a key is created with its owner's email")
 	_, err = r.FindByOwner(ctx, gwH, "alice")
 	require.ErrorIs(t, err, domain.ErrNotFound)
 	_, err = r.FindByOwner(ctx, gwG, "bob")
@@ -600,7 +602,7 @@ func TestRepository_UpdateBudgetWritesOnlyTheBudget(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
-func TestRepository_UpdateOwnerGroupsWritesOnlyTheGroups(t *testing.T) {
+func TestRepository_UpdateOwnerWritesOnlyTheGroupsAndEmail(t *testing.T) {
 	r, gw := setupRepo(t)
 	ctx := context.Background()
 	gwID, otherGW := seedGateway(t, gw, "groups-write"), seedGateway(t, gw, "groups-other")
@@ -618,9 +620,11 @@ func TestRepository_UpdateOwnerGroupsWritesOnlyTheGroups(t *testing.T) {
 
 	stale.Name, stale.Budget, stale.UpdatedAt = "renamed", nil, time.Now().UTC().Truncate(time.Microsecond)
 	stale.OwnerGroups = []string{"engineering", "sre"}
-	stored, err := r.UpdateOwnerGroups(ctx, stale)
+	stale.OwnerEmail = "alice@acme.test"
+	stored, err := r.UpdateOwner(ctx, stale)
 	require.NoError(t, err)
 	require.Equal(t, []string{"engineering", "sre"}, stored.OwnerGroups)
+	require.Equal(t, "alice@acme.test", stored.OwnerEmail)
 	require.Equal(t, rotated.KeyHash, stored.KeyHash, "a concurrent rotation is neither undone nor hidden")
 	require.Equal(t, owned.Name, stored.Name)
 	require.Equal(t, owned.Budget, stored.Budget, "the budget is left alone")
@@ -628,25 +632,28 @@ func TestRepository_UpdateOwnerGroupsWritesOnlyTheGroups(t *testing.T) {
 	byHash, err := r.FindByAPIKeyHash(ctx, rotated.KeyHash)
 	require.NoError(t, err)
 	require.Equal(t, []string{"engineering", "sre"}, byHash.OwnerGroups, "the key lookup the MCP plane uses carries them")
+	require.Equal(t, "alice@acme.test", byHash.OwnerEmail)
 
 	again, err := r.FindByID(ctx, owned.ID)
 	require.NoError(t, err)
 	_, err = again.RotateAPIKey(time.Now())
 	require.NoError(t, err)
-	again.OwnerGroups = nil
+	again.OwnerGroups, again.OwnerEmail = nil, ""
 	require.NoError(t, r.Update(ctx, again))
 	afterRotate, err := r.FindByID(ctx, owned.ID)
 	require.NoError(t, err)
 	require.Equal(t, []string{"engineering", "sre"}, afterRotate.OwnerGroups, "a rotation keeps the groups")
+	require.Equal(t, "alice@acme.test", afterRotate.OwnerEmail, "and the email")
 
-	afterRotate.OwnerGroups = nil
-	cleared, err := r.UpdateOwnerGroups(ctx, afterRotate)
+	afterRotate.OwnerGroups, afterRotate.OwnerEmail = nil, ""
+	cleared, err := r.UpdateOwner(ctx, afterRotate)
 	require.NoError(t, err)
 	require.Nil(t, cleared.OwnerGroups)
+	require.Empty(t, cleared.OwnerEmail)
 
 	foreign := *cleared
 	foreign.GatewayID = otherGW
-	_, err = r.UpdateOwnerGroups(ctx, &foreign)
+	_, err = r.UpdateOwner(ctx, &foreign)
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 

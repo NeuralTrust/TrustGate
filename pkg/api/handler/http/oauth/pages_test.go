@@ -580,11 +580,12 @@ func TestSingleConnectPage_ConnectedStateSaysWhatToDoNext(t *testing.T) {
 		// The task is over, and the panel says so before it says anything else.
 		`class="done"`,
 		"All set",
-		// With nowhere to send them, the window is what they close.
-		"you can close this window",
-		"the new tools appear on their own",
-		// A client that only reads tools/list at session start is why the badge
+		// With nowhere to send them, they go back to where they came from.
+		"go back to your assistant",
+		"Linear is ready to use there",
+		// A client that does not act on tools/list_changed is why the badge
 		// alone is not enough, and the user can act on that.
+		"refresh the connector's tools",
 		"start a new conversation",
 	} {
 		if !strings.Contains(body, want) {
@@ -607,13 +608,13 @@ func TestSingleConnectPage_ResumeLinkReplacesTheCloseInstruction(t *testing.T) {
 			ResumeURL: "cursor://anysphere.cursor-mcp/oauth/callback?code=abc",
 		}, "tk", "", mustMCPCatalog(t))
 	})
-	if strings.Contains(body, "you can close this window") {
-		t.Fatalf("a page offering a way back must not also say to close it, body:\n%s", body)
+	if strings.Contains(body, "go back to your assistant") {
+		t.Fatalf("a page offering a way back must not also point at the assistant, body:\n%s", body)
 	}
 	if !strings.Contains(body, "head back to your app") {
 		t.Fatalf("a page offering a way back must point at it, body:\n%s", body)
 	}
-	if !strings.Contains(body, "the new tools appear on their own") {
+	if !strings.Contains(body, "refresh the connector's tools") {
 		t.Fatalf("the tools guidance holds either way, body:\n%s", body)
 	}
 }
@@ -631,7 +632,7 @@ func TestSingleConnectPage_UnconnectedStateDoesNotSendThemBack(t *testing.T) {
 			}},
 		}, "tk", "", mustMCPCatalog(t))
 	})
-	if strings.Contains(body, "the new tools appear on their own") {
+	if strings.Contains(body, "refresh the connector's tools") {
 		t.Fatalf("an unconnected card must not talk about new tools, body:\n%s", body)
 	}
 }
@@ -725,5 +726,39 @@ func TestSingleConnectPage_DoesNotWaitWhenTheServerIsHere(t *testing.T) {
 	})
 	if strings.Contains(body, `http-equiv="refresh"`) || strings.Contains(body, "Getting Linear ready") {
 		t.Fatal("a server that is here is connected, not waited for")
+	}
+}
+
+// A link handed out in a tool result has nowhere to send the user back to: the
+// assistant is the tab or app underneath. The page the OAuth callback lands on
+// closes itself; opened later it stays, or nobody could reach Disconnect.
+func TestSingleConnectPage_ClosesItselfOnlyRightAfterConnecting(t *testing.T) {
+	t.Parallel()
+	page := func(resume string) *appoauth.ConnectPage {
+		return &appoauth.ConnectPage{
+			ConsumerPath: "/store/mcp",
+			Code:         "app.linear/mcp",
+			ResumeURL:    resume,
+			Providers: []appoauth.ProviderStatus{{
+				Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
+			}},
+		}
+	}
+	render := func(p *appoauth.ConnectPage, justConnected bool, flash string) string {
+		return renderToString(t, func(c *fiber.Ctx) error {
+			return renderConnectPageAfter(c, p, "tk", flash, justConnected, mustMCPCatalog(t))
+		})
+	}
+	if body := render(page(""), true, ""); !strings.Contains(body, "window.close()") {
+		t.Fatalf("the page the callback lands on must close itself, body:\n%s", body)
+	}
+	for name, body := range map[string]string{
+		"opened later":       render(page(""), false, ""),
+		"with a resume link": render(page("https://app.example.com/back"), true, ""),
+		"after an error":     render(page(""), true, "Linear refused the connection."),
+	} {
+		if strings.Contains(body, "window.close()") {
+			t.Fatalf("%s: the page must not close itself, body:\n%s", name, body)
+		}
 	}
 }

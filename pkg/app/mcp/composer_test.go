@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -1016,5 +1017,49 @@ func TestComposer_ApplicationNotConnectedWhenNoUpstreamHasAnAccount(t *testing.T
 	}
 	if errors.Is(err, ErrUpstreamUnavailable) {
 		t.Fatalf("error = %v reads as an unreachable upstream", err)
+	}
+}
+
+// evictingCache is a mapCache that can drop entries by prefix, as the TTL map
+// the gateway wires can.
+type evictingCache struct{ *mapCache }
+
+func (c evictingCache) DeleteByPrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key := range c.m {
+		if strings.HasPrefix(key, prefix) {
+			delete(c.m, key)
+		}
+	}
+}
+
+// A call that finds the account gone drops the server's cached lists, so the
+// next listing says the server needs connecting instead of serving the tools
+// every call to which is now refused.
+func TestComposer_InvokeNeedingAnAccountForgetsTheCachedLists(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://linear.example.com/mcp": {tools: tools("search")}}}
+	creds := &fakeCreds{}
+	c := NewComposer(dialer, creds, evictingCache{newMapCache()}, slog.New(slog.DiscardHandler))
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen}}
+	rc := routable(consumer, reg)
+	ctx := context.Background()
+
+	if _, err := c.ListTools(ctx, rc); err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	target, err := c.Resolve(ctx, rc, namedFor(reg, "search"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	creds.err = &ConsentRequiredError{Provider: "linear", Ticket: "tk", Path: "/store/mcp"}
+	var consentErr *ConsentRequiredError
+	if _, err := c.Invoke(ctx, rc, target, json.RawMessage(`{}`)); !errors.As(err, &consentErr) {
+		t.Fatalf("Invoke error = %v, want ConsentRequiredError", err)
+	}
+	if _, err := c.ListTools(ctx, rc); !errors.As(err, &consentErr) {
+		t.Fatalf("ListTools after a refused call = %v, want ConsentRequiredError, not the cached tools", err)
 	}
 }

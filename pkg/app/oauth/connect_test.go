@@ -35,6 +35,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -1078,7 +1079,8 @@ func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing
 		nil,
 		&stubRegistryLister{items: []*registrydomain.Registry{reg}},
 	)
-	ctx := context.Background()
+	// Alice mints her own link from her Store session.
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice", Claims: map[string]any{"email": "alice@acme.test"}})
 	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
 	ticket, err := svc.CreateServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp", "")
 	if err != nil {
@@ -1089,6 +1091,9 @@ func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing
 	page, err := svc.Page(ctx, ticket)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
+	}
+	if page.Principal.Subject != "alice" || page.Principal.Email != "alice@acme.test" {
+		t.Fatalf("page principal = %+v, want alice named by her email", page.Principal)
 	}
 	if page.Code != "com.notion/mcp" {
 		t.Fatalf("page code = %q, want com.notion/mcp", page.Code)
@@ -1755,5 +1760,41 @@ func TestConnectService_ResumableServerTicketCarriesTheResumeURL(t *testing.T) {
 
 	if _, err := svc.CreateResumableServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp", "", "javascript:alert(1)"); !errors.Is(err, commonerrors.ErrValidation) {
 		t.Fatalf("want a validation error for a script URL, got %v", err)
+	}
+}
+
+// A link names its person by their email only when they minted it themselves:
+// a ticket for someone else must not carry the minter's address.
+func TestConnectService_TicketNamesItsOwnerByTheirOwnEmail(t *testing.T) {
+	t.Parallel()
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: appconsumer.NewData(ids.New[ids.GatewayKind](), nil)},
+		infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil), discardConnectAuditor(), nil, nil, nil, nil)
+	gw := ids.New[ids.GatewayKind]()
+	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
+	alice := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice", Claims: map[string]any{"email": "alice@acme.test"}})
+
+	for name, tc := range map[string]struct {
+		ctx     context.Context
+		subject string
+		want    string
+	}{
+		"her own link":           {ctx: alice, subject: "alice", want: "alice@acme.test"},
+		"someone else's link":    {ctx: alice, subject: "bob"},
+		"no principal":           {ctx: context.Background(), subject: "alice"},
+		"named by the console":   {ctx: oauth.WithTicketOwnerEmail(context.Background(), " carol@acme.test "), subject: "carol", want: "carol@acme.test"},
+		"console names no email": {ctx: oauth.WithTicketOwnerEmail(context.Background(), "carol"), subject: "carol"},
+	} {
+		id, err := svc.CreateServerTicket(tc.ctx, gw, tc.subject, storePath, "com.notion/mcp", "")
+		if err != nil {
+			t.Fatalf("%s: CreateServerTicket: %v", name, err)
+		}
+		ticket, err := store.GetTicket(context.Background(), id)
+		if err != nil || ticket == nil {
+			t.Fatalf("%s: GetTicket: %v", name, err)
+		}
+		if ticket.PrincipalEmail != tc.want {
+			t.Fatalf("%s: principal email = %q, want %q", name, ticket.PrincipalEmail, tc.want)
+		}
 	}
 }

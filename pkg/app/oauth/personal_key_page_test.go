@@ -97,6 +97,7 @@ func (f *fakeSignIn) TakeBrowserSignIn(_ context.Context, proof string) (*Browse
 type fakeIssuer struct {
 	key     *appauth.PersonalKey
 	groups  []string
+	email   string
 	err     error
 	rotated int
 }
@@ -108,7 +109,7 @@ func (f *fakeIssuer) Get(context.Context, ids.GatewayID, string) (*appauth.Perso
 	return f.key, nil
 }
 
-func (f *fakeIssuer) Create(_ context.Context, gw ids.GatewayID, owner string, groups []string) (*appauth.PersonalKey, error) {
+func (f *fakeIssuer) Create(_ context.Context, gw ids.GatewayID, owner appauth.PersonalKeyOwner, groups []string) (*appauth.PersonalKey, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -116,8 +117,9 @@ func (f *fakeIssuer) Create(_ context.Context, gw ids.GatewayID, owner string, g
 		return nil, authdomain.ErrOwnedKeyExists
 	}
 	f.groups = groups
+	f.email = owner.Email
 	expires := time.Now().Add(time.Hour)
-	f.key = &appauth.PersonalKey{Auth: &authdomain.Auth{GatewayID: gw, OwnerID: owner, KeyPrefix: "ag_ab", KeySuffix: "yz", ExpiresAt: &expires}}
+	f.key = &appauth.PersonalKey{Auth: &authdomain.Auth{GatewayID: gw, OwnerID: owner.ID, OwnerEmail: owner.Email, KeyPrefix: "ag_ab", KeySuffix: "yz", ExpiresAt: &expires}}
 	issued := *f.key.Auth
 	issued.RawKey = "ag_secret"
 	return &appauth.PersonalKey{Auth: &issued}, nil
@@ -240,6 +242,7 @@ func TestPersonalKeyPage_CreatesTheKeyOnceAndSpendsTheLink(t *testing.T) {
 	require.True(t, done.Done)
 	require.Equal(t, "ag_ab", done.Key.Prefix)
 	require.Equal(t, []string{"eng"}, fx.issuer.groups)
+	require.Equal(t, "alice@acme.test", fx.issuer.email, "the key records the email the sign-in carried")
 
 	_, _, err = fx.pages.Open(ctx, "https://gw.example", fx.ticket, session)
 	require.ErrorIs(t, err, ErrPersonalKeyLinkGone, "the secret is shown once: the link does not open again")

@@ -43,9 +43,9 @@ type Repository interface {
 	// UpdateBudget writes only the budget and updated_at of a and returns the
 	// stored auth, so it never undoes a concurrent rotation of the secret.
 	UpdateBudget(ctx context.Context, a *Auth) (*Auth, error)
-	// UpdateOwnerGroups writes only the owner groups and updated_at of a and
-	// returns the stored auth, for the same reason as UpdateBudget.
-	UpdateOwnerGroups(ctx context.Context, a *Auth) (*Auth, error)
+	// UpdateOwner writes only the owner groups, owner email and updated_at of
+	// a and returns the stored auth, for the same reason as UpdateBudget.
+	UpdateOwner(ctx context.Context, a *Auth) (*Auth, error)
 	// RotateKey writes the secret and expiry of a rotated key, but only while
 	// the stored secret is still previousHash; otherwise it returns
 	// ErrRotatedConcurrently and the first rotation's secret stands.

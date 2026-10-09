@@ -56,6 +56,11 @@ const ConnectFinishTTL = 2 * time.Minute
 type ConnectTicket struct {
 	GatewayID    string    `json:"gateway_id"`
 	PrincipalSub string    `json:"principal_sub"`
+	// PrincipalEmail is the email of the person PrincipalSub names, taken when
+	// they minted the ticket themselves, so the page shows who an account is
+	// linked to as they know themselves rather than as a user id. Empty when
+	// the minter was not that person or had no email.
+	PrincipalEmail string `json:"principal_email,omitempty"`
 	ConsumerPath string    `json:"consumer_path"`
 	ResumeURL    string    `json:"resume_url,omitempty"`
 	ConsumerID   string    `json:"consumer_id,omitempty"`
@@ -135,6 +140,9 @@ type ConnectPrincipal struct {
 	Application string `json:"application,omitempty"`
 	// EndUser is the end-user id the application named, when Subject is one.
 	EndUser string `json:"end_user,omitempty"`
+	// Email is the person's email when Subject is a person who minted the
+	// ticket themselves.
+	Email string `json:"email,omitempty"`
 }
 
 // ConnectStore keeps the connect flow's short-lived records.

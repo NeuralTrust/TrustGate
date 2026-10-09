@@ -41,19 +41,19 @@ func issuedKey(gatewayID ids.GatewayID, expiresAt time.Time) *appauth.PersonalKe
 // A key issued outside the console lives as long as the Portal's: the 90-day
 // ceiling, less the margin that keeps the request from being refused for
 // asking for exactly the limit.
-func TestPersonalKeyIssuer_CreatesForTheFullLifetimeWithTheOwnersGroups(t *testing.T) {
+func TestPersonalKeyIssuer_CreatesForTheFullLifetimeWithTheOwnersEmailAndGroups(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	keys := mocks.NewPersonalKeys(t)
 	groups := mocks.NewOwnerGroupsSetter(t)
 	want := issuerNow.Add(domain.MaxOwnedKeyLifetime - appauth.PersonalKeyExpiryMargin)
 	key := issuedKey(gw, want)
-	keys.EXPECT().Create(mock.Anything, gw, "alice", want).Return(key, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, want).Return(key, nil).Once()
 	groups.EXPECT().SetOwnerGroups(mock.Anything, appauth.SetOwnerGroupsInput{
 		ID: key.Auth.ID, GatewayID: gw, Groups: []string{"eng", "sre"},
 	}).Return(&domain.Auth{ID: key.Auth.ID, OwnerGroups: []string{"eng", "sre"}}, nil).Once()
 
 	issuer := appauth.NewPersonalKeyIssuer(keys, groups, nil, func() time.Time { return issuerNow })
-	got, err := issuer.Create(context.Background(), gw, "alice", []string{" sre", "eng", "sre"})
+	got, err := issuer.Create(context.Background(), gw, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test "}, []string{" sre", "eng", "sre"})
 
 	require.NoError(t, err)
 	require.Equal(t, "ag_secret", got.Auth.RawKey, "the secret survives the groups write")
@@ -67,10 +67,23 @@ func TestPersonalKeyIssuer_KeepsTheKeyWhenItsGroupsCannotBeRecorded(t *testing.T
 	keys := mocks.NewPersonalKeys(t)
 	groups := mocks.NewOwnerGroupsSetter(t)
 	key := issuedKey(gw, issuerNow.Add(time.Hour))
-	keys.EXPECT().Create(mock.Anything, gw, "alice", mock.Anything).Return(key, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, mock.Anything).Return(key, nil).Once()
 	groups.EXPECT().SetOwnerGroups(mock.Anything, mock.Anything).Return(nil, errors.New("db down")).Once()
 
-	got, err := appauth.NewPersonalKeyIssuer(keys, groups, nil, nil).Create(context.Background(), gw, "alice", []string{"eng"})
+	got, err := appauth.NewPersonalKeyIssuer(keys, groups, nil, nil).Create(context.Background(), gw, appauth.PersonalKeyOwner{ID: "alice"}, []string{"eng"})
+
+	require.NoError(t, err)
+	require.Equal(t, "ag_secret", got.Auth.RawKey)
+}
+
+// A sign-in whose email is not an address costs the key its email, not the
+// key: the console's reconcile records the right one.
+func TestPersonalKeyIssuer_IssuesWithoutAnEmailThatIsNotOne(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	keys := mocks.NewPersonalKeys(t)
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, mock.Anything).Return(issuedKey(gw, issuerNow.Add(time.Hour)), nil).Once()
+
+	got, err := appauth.NewPersonalKeyIssuer(keys, nil, nil, nil).Create(context.Background(), gw, appauth.PersonalKeyOwner{ID: "alice", Email: "Alice <alice@acme.test>"}, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, "ag_secret", got.Auth.RawKey)
@@ -80,9 +93,9 @@ func TestPersonalKeyIssuer_WritesNoGroupsForAnOwnerWithNone(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	keys := mocks.NewPersonalKeys(t)
 	groups := mocks.NewOwnerGroupsSetter(t)
-	keys.EXPECT().Create(mock.Anything, gw, "alice", mock.Anything).Return(issuedKey(gw, issuerNow.Add(time.Hour)), nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, mock.Anything).Return(issuedKey(gw, issuerNow.Add(time.Hour)), nil).Once()
 
-	_, err := appauth.NewPersonalKeyIssuer(keys, groups, nil, nil).Create(context.Background(), gw, "alice", nil)
+	_, err := appauth.NewPersonalKeyIssuer(keys, groups, nil, nil).Create(context.Background(), gw, appauth.PersonalKeyOwner{ID: "alice"}, nil)
 
 	require.NoError(t, err)
 }
@@ -137,7 +150,7 @@ func TestPersonalKeyIssuer_TellsTheConsoleWhatChanged(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	keys := mocks.NewPersonalKeys(t)
 	key := issuedKey(gw, issuerNow.Add(time.Hour))
-	keys.EXPECT().Create(mock.Anything, gw, "alice", mock.Anything).Return(key, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, mock.Anything).Return(key, nil).Once()
 	keys.EXPECT().Get(mock.Anything, gw, "alice").Return(key, nil).Twice()
 	keys.EXPECT().Rotate(mock.Anything, gw, "alice", (*time.Time)(nil)).Return(key, nil).Once()
 	keys.EXPECT().Revoke(mock.Anything, gw, "alice").Return(nil).Once()
@@ -146,7 +159,7 @@ func TestPersonalKeyIssuer_TellsTheConsoleWhatChanged(t *testing.T) {
 		appauth.WithPersonalKeyNotifier(events, tenantGateways{gw: "team-a"}))
 	ctx := context.Background()
 
-	_, err := issuer.Create(ctx, gw, "alice", nil)
+	_, err := issuer.Create(ctx, gw, appauth.PersonalKeyOwner{ID: "alice"}, nil)
 	require.NoError(t, err)
 	created := nextEvent(t, events)
 	require.Equal(t, appauth.PersonalKeyCreated, created.Kind)

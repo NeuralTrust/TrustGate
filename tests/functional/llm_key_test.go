@@ -107,6 +107,38 @@ func TestLLMKey_AdminPlaneOnAnOwnedKey(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status, "the admin revocation removes the owner's key")
 }
 
+// A key is shown under the person who holds it: it records the email their
+// Portal sign-in carries, the console's reconcile fills it in on a key made
+// before, and a rotation keeps it.
+func TestLLMKey_RecordsItsOwnersEmail(t *testing.T) {
+	defer Track(t, "LLMKey")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-email")})
+	owner := uniqueName("erin")
+	status, created := llmKeyRequest(t, http.MethodPost, gwID, userTokenWithEmail(t, functionalTenantID, owner, "erin@acme.test"), "", llmKeyExpiry(llmKeyDay))
+	require.Equal(t, http.StatusCreated, status, "body=%v", created)
+	keyURL := fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, created["id"])
+
+	status, got := sendRequest(t, http.MethodGet, keyURL, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", got)
+	assert.Equal(t, "erin@acme.test", got["owner_email"])
+
+	status, set := sendRequest(t, http.MethodPut, keyURL+"/groups", nil, map[string]any{"groups": []string{"eng"}, "email": "erin@new.acme.test"})
+	require.Equal(t, http.StatusOK, status, "body=%v", set)
+	assert.Equal(t, "erin@new.acme.test", set["owner_email"])
+	status, set = sendRequest(t, http.MethodPut, keyURL+"/groups", nil, map[string]any{"groups": []string{"eng", "sre"}})
+	require.Equal(t, http.StatusOK, status, "body=%v", set)
+	assert.Equal(t, "erin@new.acme.test", set["owner_email"], "a body without an email leaves it")
+	status, set = sendRequest(t, http.MethodPut, keyURL+"/groups", nil, map[string]any{"groups": []string{"eng"}, "email": "erin"})
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", set)
+
+	status, rotated := RotateLLMKey(t, gwID, owner, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", rotated)
+	status, got = sendRequest(t, http.MethodGet, keyURL, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", got)
+	assert.Equal(t, "erin@new.acme.test", got["owner_email"], "a rotation keeps it")
+	assert.Equal(t, []any{"eng", "sre"}, got["owner_groups"])
+}
+
 func TestLLMKey_AdminBudgetAndOwnedList(t *testing.T) {
 	defer Track(t, "LLMKey")()
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-budget")})

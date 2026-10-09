@@ -23,7 +23,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -64,7 +66,7 @@ func (h *LLMKeyHandler) Get(c *fiber.Ctx) error {
 
 // Create godoc
 // @Summary      Create your personal LLM key
-// @Description  Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored.
+// @Description  Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored. The key records the email the caller's token carries, which every call it makes is shown under.
 // @Tags         store
 // @Accept       json
 // @Produce      json
@@ -92,7 +94,7 @@ func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	key, err := h.keys.Create(c.UserContext(), gatewayID, owner, expiresAt)
+	key, err := h.keys.Create(c.UserContext(), gatewayID, appauth.PersonalKeyOwner{ID: owner, Email: callerEmail(c)}, expiresAt)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
@@ -158,6 +160,17 @@ func (h *LLMKeyHandler) Revoke(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteNoContent(c)
+}
+
+// callerEmail is the signed-in user's email, which their key's calls are shown
+// under; empty when the token carries none, or nothing that is an address.
+func callerEmail(c *fiber.Ctx) string {
+	email, _ := c.Locals(string(infracontext.UserEmailContextKey)).(string)
+	normalized, err := authdomain.NormalizeOwnerEmail(email)
+	if err != nil {
+		return ""
+	}
+	return normalized
 }
 
 func selfScope(c *fiber.Ctx) (ids.GatewayID, string, error) {

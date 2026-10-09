@@ -107,6 +107,21 @@ func TestChain_PersonalKeyWithoutGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "alice", got.Principal.Subject)
 	require.Empty(t, got.Principal.Groups())
+	require.Empty(t, got.Principal.Email(), "no email recorded, none claimed")
+}
+
+// The owner's email rides on the principal as a session's does, so requests
+// and traces show the person behind the key and not their user id.
+func TestChain_PersonalKeyCarriesItsOwnersEmail(t *testing.T) {
+	key := personalKey(t, "83ca2fa4-9660-4be1-a1b2-3c4d5e6f7a8b", "engineering")
+	key.OwnerEmail = "alice@acme.test"
+
+	got, err := storeChain(t, key, "/store/mcp", nil, map[string]string{apiresolver.HeaderAPIKey: key.RawKey})
+
+	require.NoError(t, err)
+	require.Equal(t, "83ca2fa4-9660-4be1-a1b2-3c4d5e6f7a8b", got.Principal.Subject, "the subject stays the owner's user id")
+	require.Equal(t, "alice@acme.test", got.Principal.Email())
+	require.Equal(t, []string{"engineering"}, got.Principal.Groups())
 }
 
 func TestChain_PersonalKeyIsRefused(t *testing.T) {
