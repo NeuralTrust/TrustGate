@@ -17,7 +17,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
 	"iter"
 	"net/http"
@@ -125,8 +124,7 @@ var _ NativeBodyMasker = adapter.NativeMasker{}
 // carryNativeMask is the one place that decides what becomes of a change a policy
 // made to a native call. A change no plugin declared as a mask is not one, and is
 // refused. A mask is carried onto the original bytes; if that cannot be done
-// safely the call goes through as it was, recorded as failed open with its cause,
-// unless a policy that masked asked for on_mask_failure: block, which refuses it.
+// safely the call goes through as it was, recorded as failed open with its cause.
 func (f *forwarder) carryNativeMask(
 	ctx context.Context,
 	stage policydomain.Stage,
@@ -142,22 +140,8 @@ func (f *forwarder) carryNativeMask(
 	if cause == "" {
 		return masked, nil
 	}
-	for _, source := range sources {
-		if source.OnFailure == appplugins.MaskFailureBlock {
-			return nil, appplugins.WithBlockDirection(
-				nativeMaskBlocked(source.Plugin, cause), appplugins.BlockDirectionForStage(stage))
-		}
-	}
 	appplugins.RecordNativeMaskNotApplied(ctx, f.logger, stage, cause, false)
 	return original, nil
-}
-
-func nativeMaskBlocked(plugin string, cause adapter.MaskCause) *appplugins.PluginError {
-	return &appplugins.PluginError{
-		StatusCode: http.StatusForbidden,
-		Type:       appplugins.BedrockNativePassthrough,
-		Message:    fmt.Sprintf("policy %s could not mask the call (%s) and is set to block", plugin, cause),
-	}
 }
 
 // resolveNativeModelID names the model behind a native identifier when that can be

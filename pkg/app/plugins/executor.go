@@ -275,9 +275,6 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			verdict = &SegmentVerdict{Block: true, Type: BedrockNativePassthrough, Message: NativeRewriteRefusal(entry.plugin.Name(), policy.StagePreResponse).Message}
 		}
 		stop := e.mergeVerdict(outcome, verdict, entry)
-		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && MaskFailureOf(entry.config.Settings) == MaskFailureBlock {
-			outcome.MaskFailureBlock = true
-		}
 		// Hand-off mirrors mergeVerdict: only a transform from an entry that
 		// blocks is applied to what the client receives, so only that one
 		// changes what the entries behind it see. An observe transform is
@@ -573,9 +570,8 @@ func nativeRewriteVerdict(
 		return NativeRewriteRefusal(entry.plugin.Name(), stage)
 	}
 	req.NativeMask.Add(infracontext.NativeMaskSource{
-		Plugin:    entry.plugin.Name(),
-		Stage:     stage,
-		OnFailure: MaskFailureOf(entry.config.Settings),
+		Plugin: entry.plugin.Name(),
+		Stage:  stage,
 	})
 	return nil
 }

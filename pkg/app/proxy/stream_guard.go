@@ -1817,19 +1817,16 @@ func (g *streamGuard) cannotMask(cause adapter.MaskCause) bool {
 }
 
 // applyTransform applies a transform verdict. On a native Bedrock stream a mask
-// that cannot be applied never cuts, unless the policy asked for it with
-// on_mask_failure: block: the held frames are released as they came,
+// that cannot be applied never cuts: the held frames are released as they came,
 // the stream goes on and later segments are inspected as usual, and the outcome
 // is recorded as a failed-open policy result with its cause. Anywhere else a mask
-// that cannot be applied ends the stream, as it always did.
+// that cannot be applied ends the stream.
 func (g *streamGuard) applyTransform(ctx context.Context, outcome *appplugins.SegmentOutcome) bool {
 	g.maskCause = ""
 	if g.rewrite(outcome) {
 		return true
 	}
-	if !g.native || outcome.MaskFailureBlock {
-		// A policy that asked for on_mask_failure: block ends the stream like a
-		// block verdict.
+	if !g.native {
 		return false
 	}
 	g.maskFailedOpen(ctx, g.maskCause)

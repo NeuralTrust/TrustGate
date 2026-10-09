@@ -21,7 +21,6 @@ import (
 	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -42,8 +41,7 @@ const BedrockNativePassthrough = "native_bedrock_passthrough"
 //     is a rewrite for enforcement (a tool filter, a model downgrade, a limit that
 //     strips a tool): it cannot be carried out, and the call is refused;
 //   - masks: a plugin that masks text runs, and its change is carried onto the bytes
-//     the client sent; if that cannot be done safely the mask fails open or blocks,
-//     as the policy's on_mask_failure says;
+//     the client sent; if that cannot be done safely the mask fails open, recorded with its cause;
 //   - skips: a plugin that transforms the request (a template, an injected tool, a
 //     compressed prompt, a cache) has nowhere to write and is not run.
 type BedrockNativeBehavior string
@@ -75,51 +73,6 @@ func BedrockNativeOf(d PluginDescriptor) BedrockNativeBehavior {
 		return a.BedrockNative()
 	}
 	return BedrockNativeRuns
-}
-
-// SettingOnMaskFailure is the setting every plugin that masks text carries.
-const SettingOnMaskFailure = "on_mask_failure"
-
-// The two values of the on_mask_failure setting.
-const (
-	MaskFailurePass  = infracontext.MaskFailurePass
-	MaskFailureBlock = infracontext.MaskFailureBlock
-)
-
-// MaskFailureOf reads the on_mask_failure setting. A value the registry would have
-// refused on write reads as pass.
-func MaskFailureOf(settings map[string]any) infracontext.MaskFailure {
-	if v, ok := settings[SettingOnMaskFailure].(string); ok && v == string(MaskFailureBlock) {
-		return MaskFailureBlock
-	}
-	return MaskFailurePass
-}
-
-func ValidateMaskFailure(settings map[string]any) error {
-	v, present := settings[SettingOnMaskFailure]
-	if !present || v == nil {
-		return nil
-	}
-	s, ok := v.(string)
-	if !ok || (s != string(MaskFailurePass) && s != string(MaskFailureBlock)) {
-		return fmt.Errorf("%s must be %q or %q", SettingOnMaskFailure, MaskFailurePass, MaskFailureBlock)
-	}
-	return nil
-}
-
-func MaskFailureField() Field {
-	return Field{
-		Key:   SettingOnMaskFailure,
-		Label: "When a mask cannot be applied",
-		Type:  FieldTypeEnum,
-		Description: "Applies to native Amazon Bedrock Runtime calls, which are relayed as the client sent them. " +
-			"Pass lets the call through unmasked and records the outcome as failed open; block refuses the call instead.",
-		Enum: []EnumOption{
-			{Value: string(MaskFailurePass), Label: "Let the call through (recorded as failed open)"},
-			{Value: string(MaskFailureBlock), Label: "Block the call"},
-		},
-		Default: string(MaskFailurePass),
-	}
 }
 
 // skippedData is the extras of a leg the plugin did not run on. The console
