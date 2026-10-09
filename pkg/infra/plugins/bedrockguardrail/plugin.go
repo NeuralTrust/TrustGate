@@ -82,6 +82,16 @@ type Plugin struct {
 	budget time.Duration
 	// reserve is the time one buffered call is reserved; zero means callReserve.
 	reserve time.Duration
+	// callTimeout is how long one buffered chunk's call may take; zero means
+	// bufferedCallTimeout.
+	callTimeout time.Duration
+}
+
+func (p *Plugin) bufferedCallTimeout() time.Duration {
+	if p.callTimeout > 0 {
+		return p.callTimeout
+	}
+	return bufferedCallTimeout
 }
 
 func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
@@ -281,7 +291,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // is reserved callReserve. A text is admitted when its estimate (the chunks
 // times callReserve, plus any wait the quota adds) is at most half of the
 // budget, which is maxBufferedChunks chunks at the defaults: chunkBytes plus
-// (maxBufferedChunks-1) steps of chunkBytes-chunkOverlap bytes, about 101 KB. A
+// (maxBufferedChunks-1) steps of chunkBytes-chunkOverlap bytes, about 203 KB. A
 // text above that is refused before any call as chunk_limit, or as chunk_budget
 // when the quota's waits are what push its estimate over. The same ceiling holds
 // in every region: in the smallest quota the refill during a call (37 units in
@@ -295,12 +305,16 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // unlike on the guardrails that cannot space their calls.
 // https://aws.amazon.com/blogs/machine-learning/use-the-applyguardrail-api-with-long-context-inputs-and-streaming-outputs-in-amazon-bedrock/
 const (
-	chunkBytes        = 24000
-	chunkOverlap      = 4096
-	chunkParallel     = 1
-	bufferedBudget    = 15 * time.Second
-	callReserve       = 1500 * time.Millisecond
-	maxBufferedChunks = int(bufferedBudget / 2 / callReserve)
+	chunkBytes     = 24000
+	chunkOverlap   = 4096
+	chunkParallel  = 1
+	bufferedBudget = 30 * time.Second
+	// bufferedCallTimeout is how long one chunk's call, with its throttle
+	// retries, may take. It is not the evaluation's budget: a provider that
+	// hangs fails the evaluation open after about one call.
+	bufferedCallTimeout = 15 * time.Second
+	callReserve         = 1500 * time.Millisecond
+	maxBufferedChunks   = int(bufferedBudget / 2 / callReserve)
 )
 
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
@@ -338,6 +352,8 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 		Before:   func(ctx context.Context, _ int, c textchunk.Chunk) error { return pace.wait(ctx, len(c.Text)) },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
+		ctx, cancelCall := context.WithTimeout(ctx, p.bufferedCallTimeout())
+		defer cancelCall()
 		out, err := p.guardrails.ApplyWithBackoff(ctx, creds, buildApplyInput(cfg, c.Text, source), callLimitsFor(len(c.Text)))
 		if err != nil {
 			return struct{}{}, err
