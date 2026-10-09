@@ -49,16 +49,21 @@ const (
 //
 // Once a policy opts in, the stream leg fails open by default and the window
 // each evaluation sends is capped at maxStreamWindowBytes whatever
-// streaming.max_accumulated_bytes asks for: ApplyGuardrail caps the input per
-// policy at a number of text units (1 unit = up to 1000 characters) that
-// depends on region and tier, and the smallest default is 25 units
-// (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
-// tier). Bytes are never fewer than characters, so 24576 bytes fits in 25
-// units, and it keeps the call inside the per-block deadline. Past it this
-// policy is sent only the tail window, whatever window the rest of the stream
-// keeps.
+// streaming.max_accumulated_bytes asks for. ApplyGuardrail caps the input per
+// policy type at a number of text units per second (1 unit = up to 1000
+// characters) that depends on region and tier, and the smallest default is 25
+// units (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
+// tier). Bytes are never fewer than characters, so a block of 8192 bytes is at
+// most 9 units: a little over a third of that quota. The headroom is the point:
+// every block resends its whole window, so concurrent streams, or traffic
+// aimed at the account, throttle it, and a throttled block is released
+// uninspected. A window the size of the whole quota (24 KiB) would let one block
+// use all 25 units; at 8192, two concurrent blocks still fit a second and a
+// retry after a throttle has quota to land in. The cost is that a topic or word
+// spread over more than the last 8 KiB of a response is judged on that tail
+// alone.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
-const maxStreamWindowBytes = 24576
+const maxStreamWindowBytes = 8192
 
 var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,

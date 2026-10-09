@@ -93,7 +93,7 @@ func (p *Plugin) InspectSegment(
 	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
-	out, err := p.guardrails.ApplyGuardrail(
+	out, err := p.guardrails.ApplyWithBackoff(
 		callCtx,
 		credentialsFromConfig(cfg.Credentials),
 		buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput),

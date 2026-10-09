@@ -244,7 +244,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 			fmt.Errorf("bedrock_guardrail: text exceeds the %d characters a buffered leg sends", maxBufferedTextChars))
 	}
 	start := time.Now()
-	out, err := p.guardrails.ApplyGuardrail(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
+	out, err := p.guardrails.ApplyWithBackoff(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		reason, detail := classifyApplyErr(err)

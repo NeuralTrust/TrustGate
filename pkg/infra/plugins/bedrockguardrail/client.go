@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -133,6 +134,47 @@ func (g *cachedGuardrailClient) ApplyGuardrail(
 	return client.ApplyGuardrail(ctx, in)
 }
 
+const (
+	// maxApplyAttempts bounds how often one call is tried when the quota
+	// throttles it. The SDK's own retryer is off (RetryMaxAttempts 1) so the
+	// attempts here are the only ones: a stacked retryer would multiply the
+	// load on the very quota that is throttling.
+	maxApplyAttempts = 3
+	// throttleBackoff is the first wait before a retry; it doubles each attempt
+	// and carries up to as much jitter again, so concurrent blocks do not retry
+	// in step.
+	throttleBackoff = 100 * time.Millisecond
+)
+
+// ApplyWithBackoff is ApplyGuardrail that retries a throttled call with
+// exponential backoff and jitter, and only inside ctx's deadline: a wait that
+// would run past it is not taken, the throttle is returned as it is, and the
+// caller resolves it as an availability failure.
+func (g *cachedGuardrailClient) ApplyWithBackoff(
+	ctx context.Context,
+	creds awsCredentials,
+	in *bedrockruntime.ApplyGuardrailInput,
+) (*bedrockruntime.ApplyGuardrailOutput, error) {
+	for attempt := 1; ; attempt++ {
+		out, err := g.ApplyGuardrail(ctx, creds, in)
+		if err == nil || attempt >= maxApplyAttempts || !isThrottled(err) {
+			return out, err
+		}
+		wait := throttleBackoff << (attempt - 1)
+		wait += time.Duration(rand.Int63n(int64(wait))) //nolint:gosec // jitter, not a secret
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= wait {
+			return out, err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return out, err
+		case <-timer.C:
+		}
+	}
+}
+
 func buildRuntimeClient(ctx context.Context, creds awsCredentials) (guardrailClient, error) {
 	region := creds.region
 	if region == "" {
@@ -171,5 +213,7 @@ func buildRuntimeClient(ctx context.Context, creds awsCredentials) (guardrailCli
 		})
 	}
 
-	return bedrockruntime.NewFromConfig(cfg), nil
+	return bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
+		o.RetryMaxAttempts = 1
+	}), nil
 }
