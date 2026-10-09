@@ -241,23 +241,11 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		assert.Equal(t, 1, streams[0].Seq)
 		assert.Contains(t, trustGuardInspectText(payloads[0]), trustGuardStreamMarkers[0])
 
-		// post_response used to fire from its own detached goroutine after the
-		// response was sent, carrying no stream envelope; it is now skipped once the
-		// final block was inspected, which is asserted below. With the default
-		// min_chars_between_evals the pre_response leg alone makes two
-		// in-stream calls (head seq 1, forced final seq 2), so GuardHits()>=2
-		// is satisfied before post_response lands and does not wait for it.
-		// Waiting on this request's own trace id instead — the gateway trace
-		// id the proxy echoes as X-AG-Trace-Id, which the plugin also forwards
-		// to the guard as X-Trace-ID on every call — cannot be satisfied by a
-		// call belonging to a different request.
-		traceID := headers.Get(traceIDHeader)
-		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
-		require.Eventually(t, func() bool {
-			return tg.BufferedHitsForTrace(traceID) >= 1
-		}, 5*time.Second, 20*time.Millisecond, "expected the request leg")
-		// Whether post_response re-evaluates is asserted, with a positive
-		// control, in TestPluginE2E_TrustGuard_StreamFinalBlockSkipsPostResponse.
+		// This route is response-only, so no buffered call belongs to it: the
+		// post_response pass is skipped once the final block was inspected. That
+		// skip is asserted, with a positive control, in
+		// TestPluginE2E_TrustGuard_StreamFinalBlockSkipsPostResponse.
+		require.NotEmpty(t, headers.Get(traceIDHeader), "the proxy must echo the trace id the guard was called with")
 	})
 
 	t.Run("a blocked head is a 403 carrying none of the response", func(t *testing.T) {
@@ -968,8 +956,8 @@ func anthropicEventData(t *testing.T, body, eventType string) string {
 // A count that stays put proves nothing until the leg has demonstrably been
 // decided, so the positive control comes first: the stored trace carries a
 // post_response entry once that leg ran, and it says why it did not evaluate.
-// Only then is the stub's buffered-call count read, and it is exactly the
-// request leg.
+// Only then is the stub's buffered-call count read: the policy is
+// response-only, so there is no request leg and the count is zero.
 func TestPluginE2E_TrustGuard_StreamFinalBlockSkipsPostResponse(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
@@ -1011,8 +999,8 @@ func TestPluginE2E_TrustGuard_StreamFinalBlockSkipsPostResponse(t *testing.T) {
 			assert.Equal(t, "stream_final_inspected", entry.Extras.SkipReason)
 		}
 	}
-	assert.Equal(t, 1, tg.BufferedHitsForTrace(traceID),
-		"only the request leg is a buffered call; the stream was evaluated by its own blocks")
+	assert.Equal(t, 0, tg.BufferedHitsForTrace(traceID),
+		"a response-only policy has no request leg, and the stream was evaluated by its own blocks")
 	streams, _ := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
 	assert.NotEmpty(t, streams, "the stream blocks reached the guard")
 }
