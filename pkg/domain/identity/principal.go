@@ -76,6 +76,11 @@ const (
 	// ClaimEmail is the claim carrying the principal's email, which requests
 	// and traces show them under.
 	ClaimEmail = "email"
+	// ClaimMCPClient is the OAuth client a Store session was issued to by the
+	// gateway's own authorization server, which names the app the person is
+	// working in. It is not client_id or azp: those are what auth bindings
+	// match a consumer's allowed clients against.
+	ClaimMCPClient = "mcp_client"
 	// ClaimStoreAccess is the claim carrying the principal's per-principal MCP
 	// Store access level: "open" (the whole Store), "curated" (only servers the
 	// admin granted them), or "none" (closed). Minted by the control plane from

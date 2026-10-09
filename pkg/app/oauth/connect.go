@@ -58,8 +58,26 @@ type connectService struct {
 	urlValues   URLValueSource
 	// handoff decides where a connection may be started from.
 	handoff ConnectHandoff
+	// clients names the app a ticket's minter works in; nil names none.
+	clients GatewayClientReader
 	now     func() time.Time
 }
+
+// GatewayClientReader reads an OAuth client the gateway registered. FlowStore
+// satisfies it.
+type GatewayClientReader interface {
+	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
+}
+
+// WithConnectClients lets a ticket name the app its minter works in, from the
+// OAuth client their Store session was issued to.
+func WithConnectClients(c GatewayClientReader) ConnectOption {
+	return func(s *connectService) { s.clients = c }
+}
+
+// maxClientNameLen bounds a client name a page shows: it is whatever the client
+// registered itself as.
+const maxClientNameLen = 48
 
 // URLValueSource returns a principal's values for a registry's URL
 // placeholders — the same ones the dial path substitutes. appmcp's
@@ -239,6 +257,9 @@ func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (strin
 	if t.PrincipalEmail == "" {
 		t.PrincipalEmail = minterEmail(ctx, t.PrincipalSub)
 	}
+	if t.ClientName == "" {
+		t.ClientName = s.minterClientName(ctx, t.PrincipalSub)
+	}
 	id, err := randomToken()
 	if err != nil {
 		return "", err
@@ -267,6 +288,7 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		Code:         ticket.Code,
 		Instance:     ticket.InstanceID,
 		Principal:    connectPrincipal(ticket, rc),
+		ClientName:   ticket.ClientName,
 	}
 	// A ticket pinned to one provider is the one-server case, so it gets the
 	// focused card rather than a picker with a single entry in it: the user was
@@ -453,6 +475,31 @@ func minterEmail(ctx context.Context, subject string) string {
 		return p.Email()
 	}
 	return ""
+}
+
+// minterClientName is the name of the app the person minting their own ticket
+// works in: the OAuth client their Store session was issued to.
+func (s *connectService) minterClientName(ctx context.Context, subject string) string {
+	if s.clients == nil {
+		return ""
+	}
+	p := identity.PrincipalFromContext(ctx)
+	if p == nil || subject == "" || p.Subject != subject {
+		return ""
+	}
+	clientID, _ := p.Claims[identity.ClaimMCPClient].(string)
+	if strings.TrimSpace(clientID) == "" {
+		return ""
+	}
+	client, err := s.clients.GetGatewayClient(ctx, clientID)
+	if err != nil || client == nil {
+		return ""
+	}
+	name := strings.TrimSpace(client.ClientName)
+	if r := []rune(name); len(r) > maxClientNameLen {
+		name = strings.TrimSpace(string(r[:maxClientNameLen]))
+	}
+	return name
 }
 
 // connectPrincipal describes the ticket's principal for the page that asks
