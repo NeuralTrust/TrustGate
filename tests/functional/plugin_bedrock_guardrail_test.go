@@ -72,7 +72,7 @@ var bedrockPIIAnonymizeResponse = fmt.Sprintf(
 
 func bedrockGuardrailSettings(piiAction string) map[string]any {
 	return map[string]any{
-		"guardrail_id": "test-guardrail",
+		"guardrail_id": "testguardrail",
 		"version":      "DRAFT",
 		"pii_action":   piiAction,
 		"message":      "Request blocked by guardrail.",
