@@ -15,60 +15,62 @@
 package pluginutil_test
 
 import (
-	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/pluginutiltest"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-// The decision is read from the error the real registry returns for each body,
-// not from a hand-built error.
-func TestRequestDecodeFailure(t *testing.T) {
+func newEvent(t *testing.T) (*metrics.EventContext, *trace.Span) {
+	t.Helper()
+	span := trace.New("t", trace.Metadata{}).StartSpan(trace.SpanPlugin, "plugin")
+	return metrics.NewEventContext(span), span
+}
+
+// A request that does not decode is a skip only on a route that carries no
+// chat; the route decides, from the capability or, when unset, the format.
+func TestSkipNonChatRoute(t *testing.T) {
 	t.Parallel()
-	registry := adapter.NewRegistry()
-	decode := func(body []byte, format string) error {
-		_, err := registry.DecodeRequestFor(body, adapter.Format(format))
-		return err
-	}
-
-	malformed := decode(pluginutiltest.MalformedChatBody, "openai")
-	require.Error(t, malformed)
-
 	cases := []struct {
 		name       string
-		err        error
 		capability string
 		format     adapter.Format
 		want       bool
 	}{
-		{"malformed chat body on a chat route", malformed, "chat", adapter.FormatOpenAI, true},
-		{"malformed chat body, capability unset, chat format", malformed, "", adapter.FormatOpenAI, true},
-		{"malformed body on the native bedrock route", malformed, "bedrock_native", adapter.FormatBedrockNative, true},
-		{"malformed body on an images route", malformed, "images", adapter.FormatOpenAIImages, false},
-		{"malformed body, capability unset, audio format", malformed, "", adapter.FormatOpenAIAudio, false},
-		{"an error that is not a decode error on a chat route", errors.New("no adapter"), "chat", adapter.FormatOpenAI, false},
-		{"no error", nil, "chat", adapter.FormatOpenAI, false},
+		{"chat route", "chat", adapter.FormatOpenAI, false},
+		{"chat format, capability unset", "", adapter.FormatOpenAI, false},
+		{"native bedrock route", "bedrock_native", adapter.FormatBedrockNative, false},
+		{"images route", "images", adapter.FormatOpenAIImages, true},
+		{"audio format, capability unset", "", adapter.FormatOpenAIAudio, true},
 	}
 	for _, route := range pluginutiltest.NonChatRoutes(t) {
 		cases = append(cases, struct {
 			name       string
-			err        error
 			capability string
 			format     adapter.Format
 			want       bool
-		}{route.Name + " is never a failure", decode(route.Body, route.Format), route.Capability, adapter.Format(route.Format), false})
+		}{route.Name, route.Capability, adapter.Format(route.Format), true})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, pluginutil.RequestDecodeFailure(tc.err, tc.capability, tc.format))
+			event, span := newEvent(t)
+			assert.Equal(t, tc.want, pluginutil.SkipNonChatRoute(event, "pre_request", tc.capability, tc.format))
+			extras := span.PluginAttrsCopy().Extras
+			if !tc.want {
+				assert.Nil(t, extras, "a chat route records nothing")
+				return
+			}
+			skipped, reason := pluginutiltest.SkipOf(t, extras)
+			assert.True(t, skipped)
+			assert.Equal(t, pluginutil.SkipReasonNoInspectableInput, reason)
 		})
 	}
 }
@@ -98,7 +100,15 @@ func TestResponseCarriesCompletion(t *testing.T) {
 
 func TestSkipWithoutCompletionRecordsTheSkip(t *testing.T) {
 	t.Parallel()
-	assert.False(t, pluginutil.SkipWithoutCompletion(nil, "pre_response", &infracontext.ResponseContext{StatusCode: http.StatusOK}))
+	event, span := newEvent(t)
+	assert.False(t, pluginutil.SkipWithoutCompletion(event, "pre_response", &infracontext.ResponseContext{StatusCode: http.StatusOK}))
+	assert.Nil(t, span.PluginAttrsCopy().Extras, "a completion records nothing")
+
+	assert.True(t, pluginutil.SkipWithoutCompletion(event, "pre_response", &infracontext.ResponseContext{StatusCode: http.StatusBadGateway}))
+	skipped, reason := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
+	assert.True(t, skipped)
+	assert.Equal(t, pluginutil.SkipReasonNoInspectableOutput, reason)
+
 	assert.True(t, pluginutil.SkipWithoutCompletion(nil, "pre_response", &infracontext.ResponseContext{StatusCode: http.StatusBadGateway}),
 		"a response without a completion is reported as skipped even with no event to record on")
 }

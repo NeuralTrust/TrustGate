@@ -48,7 +48,7 @@ func TestNonChatRoutesAreSkippedWithTheSharedReason(t *testing.T) {
 			assert.NoError(t, halt.err)
 			skipped, reason := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
 			assert.True(t, skipped)
-			assert.Equal(t, pluginutil.SkipReasonNonChatRoute, reason)
+			assert.Equal(t, pluginutil.SkipReasonNoInspectableInput, reason)
 		})
 	}
 }

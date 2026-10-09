@@ -23,31 +23,35 @@ import (
 )
 
 // Skip reasons of the legs an external guardrail did not inspect because what
-// reached it is not content it was asked to judge.
+// reached it is not content it was asked to judge. They are the tokens the
+// console already labels for every plugin.
 const (
-	// SkipReasonUpstreamStatus is a response the upstream answered with a
-	// non-2xx status: an error envelope, an error page from a proxy in front of
-	// it, a throttle. It carries no completion.
-	SkipReasonUpstreamStatus = "upstream_error_status"
+	// SkipReasonNoInspectableInput is a request with no chat text to judge: a
+	// route that carries no chat (image, audio, file and multipart routes).
+	SkipReasonNoInspectableInput = "no_inspectable_input"
+	// SkipReasonNoInspectableOutput is a response with no completion to judge:
+	// one the upstream answered with a non-2xx status (an error envelope, an
+	// error page from a proxy in front of it, a throttle).
+	SkipReasonNoInspectableOutput = "no_inspectable_output"
 	// SkipReasonUndecodableResponse is a 2xx response whose body no adapter
 	// reads as a completion, such as the audio bytes of a speech route.
 	SkipReasonUndecodableResponse = "undecodable_response"
-	// SkipReasonNonChatRoute is a request the route does not carry as chat JSON
-	// (image, audio, file and multipart routes): there is no text for the
-	// guardrail to judge.
-	SkipReasonNonChatRoute = "non_chat_route"
 )
 
-// RequestDecodeFailure reports whether a request body that could not be turned
-// into the canonical request an external guardrail reads is a failure of the
-// input: a body the route promises to be chat JSON that does not parse as one
-// is a client steering the call past the guardrail, so a blocking mode refuses
-// it (decode_failed). Anything else is the route's own shape (an image, audio or
-// file route has no chat decoder, and a multipart upload is not JSON): nothing
-// the client got wrong and nothing for the guardrail to judge, so the leg is a
-// recorded skip (SkipReasonNonChatRoute) and not a failure.
-func RequestDecodeFailure(err error, capability string, format adapter.Format) bool {
-	return adapter.IsRequestDecodeError(err) && adapter.IsChatRequest(capability, format)
+// SkipNonChatRoute records, and reports, that a request body that could not be
+// decoded belongs to a route that carries no chat (an image, audio or file
+// route has no chat decoder, and a multipart upload is not JSON). That is
+// nothing the client got wrong and nothing for the guardrail to judge, so the
+// leg is a recorded skip and not a failure. On a chat route it records nothing
+// and reports false: a body that does not parse there is a client steering the
+// call past the guardrail (adapter.IsRequestDecodeError), and any other
+// decoding error is the gateway's own.
+func SkipNonChatRoute(event *metrics.EventContext, stage, capability string, format adapter.Format) bool {
+	if adapter.IsChatRequest(capability, format) {
+		return false
+	}
+	RecordSkipped(event, stage, SkipReasonNoInspectableInput)
+	return true
 }
 
 // ResponseCarriesCompletion reports whether a buffered response is one a
@@ -65,7 +69,7 @@ func SkipWithoutCompletion(event *metrics.EventContext, stage string, resp *infr
 	if ResponseCarriesCompletion(resp) {
 		return false
 	}
-	RecordSkipped(event, stage, SkipReasonUpstreamStatus)
+	RecordSkipped(event, stage, SkipReasonNoInspectableOutput)
 	return true
 }
 

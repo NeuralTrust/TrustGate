@@ -179,9 +179,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if decErr != nil {
-		if !pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format) {
-			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonNonChatRoute)
+		if pluginutil.SkipNonChatRoute(in.Event, string(in.Stage), in.Request.ProxyCapability, format) {
 			return passThrough(), nil
+		}
+		if !adapter.IsRequestDecodeError(decErr) {
+			return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, decErr)
 		}
 		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", decErr)
 	}
@@ -193,6 +195,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
+	// The limit is in code points, not bytes, so a multibyte conversation is
+	// measured by the characters Azure counts and not by its UTF-8 length.
 	if utf8.RuneCountInString(text) > maxTextCodePoints {
 		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
 			fmt.Errorf("azure_content_safety: conversation exceeds the %d characters text:analyze accepts", maxTextCodePoints))

@@ -57,7 +57,7 @@ func TestNonChatRoutesAreSkippedNotRefused(t *testing.T) {
 				assert.Zero(t, f.count())
 				skipped, reason := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
 				assert.True(t, skipped)
-				assert.Equal(t, pluginutil.SkipReasonNonChatRoute, reason)
+				assert.Equal(t, pluginutil.SkipReasonNoInspectableInput, reason)
 			})
 		}
 	}
@@ -106,6 +106,37 @@ func TestUninspectableResponsesAreSkippedNotRefused(t *testing.T) {
 			skipped, reason := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
 			assert.True(t, skipped)
 			assert.Equal(t, tc.SkipReason, reason)
+		})
+	}
+}
+
+// A chat route whose format has no adapter is the gateway's own gap: it is
+// config_invalid/unsupported_format and fails open, not a skip made for a route
+// that carries no chat.
+func TestChatRouteWithoutAnAdapterIsConfigInvalidNotASkip(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeModerator{response: flaggedHateResponse()}
+			srv := newModeratorServer(t, f)
+			p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+			req := requestContext()
+			req.SourceFormat = "no_such_format"
+			req.ProxyCapability = "chat"
+			event, span := newEvent()
+			in := execInput(policy.StagePreRequest, mode, blockSettings(), req, nil, event)
+
+			res, err := p.Execute(context.Background(), in)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+			assert.Zero(t, f.count())
+			skipped, _ := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
+			assert.False(t, skipped)
+			reason, detail := pluginutiltest.FailureOf(t, span.PluginAttrsCopy().Extras)
+			assert.Equal(t, string(appplugins.FailureConfigInvalid), reason)
+			assert.Equal(t, appplugins.DetailUnsupportedFormat, detail)
 		})
 	}
 }

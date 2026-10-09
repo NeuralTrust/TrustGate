@@ -89,9 +89,9 @@ type UninspectableResponse struct {
 func UninspectableResponses() []UninspectableResponse {
 	mp3 := []byte("ID3\x03\x00\x00\x00\x00\x00\x21\xff\xfb\x90\x64")
 	return []UninspectableResponse{
-		{"html 503", http.StatusServiceUnavailable, "openai", []byte("<html><body><h1>503 Service Unavailable</h1></body></html>"), pluginutil.SkipReasonUpstreamStatus},
-		{"plain text envoy error", http.StatusServiceUnavailable, "openai", []byte("upstream connect error or disconnect/reset before headers. reset reason: connection failure"), pluginutil.SkipReasonUpstreamStatus},
-		{"cohere 429", http.StatusTooManyRequests, "cohere", []byte(`{"message":"You are using a Trial key, which is limited to 40 API calls / minute."}`), pluginutil.SkipReasonUpstreamStatus},
+		{"html 503", http.StatusServiceUnavailable, "openai", []byte("<html><body><h1>503 Service Unavailable</h1></body></html>"), pluginutil.SkipReasonNoInspectableOutput},
+		{"plain text envoy error", http.StatusServiceUnavailable, "openai", []byte("upstream connect error or disconnect/reset before headers. reset reason: connection failure"), pluginutil.SkipReasonNoInspectableOutput},
+		{"cohere 429", http.StatusTooManyRequests, "cohere", []byte(`{"message":"You are using a Trial key, which is limited to 40 API calls / minute."}`), pluginutil.SkipReasonNoInspectableOutput},
 		{"speech mp3 on the audio format", http.StatusOK, "openai_audio", mp3, pluginutil.SkipReasonUndecodableResponse},
 		{"speech mp3 on a chat format", http.StatusOK, "openai", mp3, pluginutil.SkipReasonUndecodableResponse},
 	}
@@ -110,4 +110,18 @@ func SkipOf(t *testing.T, extras any) (skipped bool, reason string) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &wire))
 	return wire.Skipped, wire.SkipReason
+}
+
+// FailureOf reads, from the extras a plugin recorded on its span, the failure
+// reason and detail the console receives.
+func FailureOf(t *testing.T, extras any) (reason, detail string) {
+	t.Helper()
+	raw, err := json.Marshal(extras)
+	require.NoError(t, err)
+	var wire struct {
+		Reason string `json:"failure_reason"`
+		Detail string `json:"failure_detail"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &wire))
+	return wire.Reason, wire.Detail
 }

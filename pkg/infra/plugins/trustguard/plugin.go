@@ -504,10 +504,10 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		request, decodeErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 		if decodeErr != nil {
-			if pluginutil.RequestDecodeFailure(decodeErr, in.Request.ProxyCapability, format) {
+			if adapter.IsRequestDecodeError(decodeErr) && adapter.IsChatRequest(in.Request.ProxyCapability, format) {
 				return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard request body decode failed", decodeErr)
 			}
-			return p.skipInspection(ctx, in, tgt, direction, pluginutil.SkipReasonNonChatRoute)
+			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		if request != nil && request.DroppedInputItems > 0 {
 			p.debug(ctx, "trustguard request input items left out of inspection",
