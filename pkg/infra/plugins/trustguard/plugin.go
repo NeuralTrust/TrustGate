@@ -317,24 +317,43 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// call that runs out of time is reported as a timeout rather than as an
 	// indistinguishable transport error. The client's own Timeout is only a
 	// backstop above this deadline.
-	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
-	resp, err := p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+	//
+	// A request that sends a URL attachment may need a second call without it
+	// (below), so the first call is held to what is left of the budget after the
+	// share the second needs, and the second runs under the deadline of the whole
+	// evaluation, never past it.
+	started := time.Now()
+	deadline := started.Add(p.timeout)
+	firstCtx, cancelFirst := context.WithDeadline(ctx, firstCallDeadline(started, p.timeout, tgt.urlAttachments > 0))
+	defer cancelFirst()
+	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
 	if err != nil {
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
 			// TrustGuard answers "invalid attachment" for every attachment it
 			// cannot resolve, a URL it could not fetch included, which is the
-			// URL's availability and not this request's content. The text is
-			// evaluated again with the URL attachments left out, and what was
-			// left out is recorded. A rejection on that second call comes from
-			// an attachment sent as data, which is the content's.
+			// URL's availability and not this request's content: a CDN that is
+			// down must not block legitimate traffic. The text is evaluated again
+			// with the URL attachments left out, in a deadline slice of its own,
+			// and a verdict that comes back is applied. The call is recorded as a
+			// failure that alerts (verdict_incomplete, attachment_not_fetched),
+			// because part of what the request carried was never inspected. When
+			// less than the minimum share of the budget is left there is no
+			// second call, and the request goes through uninspected as the same
+			// availability failure. A rejection on the second call comes from an
+			// attachment sent as data, which is the content's.
+			if !retryHasBudget(time.Now(), deadline, p.timeout) {
+				return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonVerdictIncomplete,
+					fmt.Errorf("trustguard: a URL attachment could not be fetched and too little of the budget is left to evaluate without it"))
+			}
 			if without, buildErr := tgt.withoutURLAttachments(); buildErr == nil {
 				body.Payload = without
 				tgt.attachmentsOmitted += tgt.urlAttachments
 				tgt.attachmentsNotFetched += tgt.urlAttachments
 				tgt.urlAttachments = 0
-				resp, err = p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+				retryCtx, cancelRetry := context.WithDeadline(ctx, deadline)
+				defer cancelRetry()
+				resp, err = p.guard(retryCtx, baseURL, cfg.CollectorID, traceID, body, playground)
 			}
 		}
 	}
@@ -356,6 +375,12 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		RequestID:               resp.RequestID,
 		FindingsCount:           len(resp.Findings),
 		Findings:                resp.Findings,
+	}
+	if tgt.attachmentsNotFetched > 0 {
+		data.FailureReason = failureReasonVerdictIncomplete
+		data.FailureDetail = appplugins.DetailAttachmentNotFetched
+		data.FailureClass = string(appplugins.ClassOf(appplugins.FailureVerdictIncomplete, appplugins.DetailAttachmentNotFetched))
+		recordEvaluateFailure(ctx, failureReasonVerdictIncomplete)
 	}
 
 	if resp.Status == statusTransform {
@@ -942,7 +967,7 @@ func (p *Plugin) guardFailureOmitting(
 		Logger: p.logger,
 		Event:  in.Event,
 	})
-	recordGuardOutcome(in.Event, guardData{
+	failure := guardData{
 		Direction:               direction,
 		Decision:                outcome.Decision,
 		FailedOpen:              outcome.Decision == decisionFailedOpen,
@@ -950,11 +975,36 @@ func (p *Plugin) guardFailureOmitting(
 		FailureReason:           reason,
 		FailureClass:            string(outcome.Class),
 		AttachmentsNotInspected: attachmentsOmitted,
-	})
+	}
+	if reason == failureReasonVerdictIncomplete {
+		failure.FailureDetail = detail
+	}
+	recordGuardOutcome(in.Event, failure)
 	if outcome.Err != nil {
 		return nil, outcome.Err
 	}
 	return outcome.Result, nil
+}
+
+// retryMinShare is the share of the evaluation's budget (one part in this many)
+// that a second call, without the attachments TrustGuard could not fetch, needs
+// to be worth making.
+const retryMinShare = 4
+
+// retryHasBudget reports whether the second call has its minimum share of the
+// budget left at now.
+func retryHasBudget(now, deadline time.Time, budget time.Duration) bool {
+	return deadline.Sub(now) >= budget/retryMinShare
+}
+
+// firstCallDeadline is when the first evaluate call must end. A request that
+// sends a URL attachment holds back the minimum share a second call needs, so a
+// first call that is slow to say "invalid attachment" cannot leave none.
+func firstCallDeadline(start time.Time, budget time.Duration, mayRetry bool) time.Time {
+	if !mayRetry {
+		return start.Add(budget)
+	}
+	return start.Add(budget - budget/retryMinShare)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {

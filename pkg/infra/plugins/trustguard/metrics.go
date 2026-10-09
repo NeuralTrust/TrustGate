@@ -50,6 +50,11 @@ const (
 	// failureReasonTransformFailed is TrustGuard asking for a mask this plugin
 	// could not write back; degraded_reason on the span says which step failed.
 	failureReasonTransformFailed = "transform_failed"
+	// failureReasonVerdictIncomplete is an evaluation that ran without part of
+	// what the request carried: an attachment sent as a URL that TrustGuard could
+	// not fetch. The shared reason of the same name, with the detail
+	// attachment_not_fetched; availability.
+	failureReasonVerdictIncomplete = "verdict_incomplete"
 )
 
 var (

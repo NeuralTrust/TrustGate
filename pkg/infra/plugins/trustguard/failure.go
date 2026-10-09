@@ -35,7 +35,9 @@ const decisionFailedClosed = appplugins.DecisionFailedClosed
 // is the body TrustGuard refused for its size, and a 400 "invalid attachment" is
 // an attachment it could not fetch or decode. An answer above the size the
 // client reads is the request's too: the mask echoes its text back. A transform it cannot write back
-// is a mask over a finding TrustGuard confirmed, which the detail says.
+// is a mask over a finding TrustGuard confirmed, which the detail says. An
+// attachment sent as a URL that it could not fetch is verdict_incomplete, which
+// is availability: the text was evaluated, the attachment was not.
 func sharedFailure(reason, transformReason string) (appplugins.FailureReason, string) {
 	switch reason {
 	case failureReasonPayloadUnreadable:
@@ -48,6 +50,8 @@ func sharedFailure(reason, transformReason string) (appplugins.FailureReason, st
 		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 	case failureReasonTransformFailed:
 		return appplugins.FailureVerdictIncomplete, maskDetailOf(transformReason)
+	case failureReasonVerdictIncomplete:
+		return appplugins.FailureVerdictIncomplete, appplugins.DetailAttachmentNotFetched
 	default:
 		return appplugins.FailureTransport, ""
 	}
