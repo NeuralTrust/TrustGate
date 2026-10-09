@@ -483,9 +483,9 @@ need more than 8 chunks is a failure of the content: a mode that blocks cuts the
 stream (`input_too_large` / `chunk_limit`) and observe releases the block. The
 chunks are read through the same rules as a buffered evaluation: a chunk that
 blocks wins, a failure that is the content's cuts, a throttle on any piece but the
-first is the content's too (the block's own pieces beside or before it may have
-caused it; one on the first piece is the provider's load and fails open, and so
-is every throttle on `bedrock_guardrail`, whose pieces are spaced), a mask from any chunk is applied, and an
+first is the content's too when the first piece answered without a throttle (the block's own pieces beside or before it may have
+caused it; one on the first piece is the provider's load, which makes every throttle of the block fail open, and so
+is every throttle on `bedrock_guardrail`, whose pieces are spaced so a throttle is attributed to traffic outside the block). A throttled piece of the first round is sent once more after a short backoff. A mask from any chunk is applied, and an
 availability failure releases the block unless a mask or a finding can still be
 used. A block is held for at most one piece timeout per round of pieces and never
 more than four, whatever the provider does. A piece that was not started or was
@@ -530,6 +530,21 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   deadline.
 - `trustguard`: 64 KiB, and never more, fitted to the 2 second deadline that
   covers the token and the evaluate call.
+
+A buffered request (the whole prompt or response, not a stream block) is split
+too, and the text a guardrail screens is bounded by what half of its 30 second
+evaluation budget admits, which is separate from the timeout of each call (a
+provider that hangs fails open after about one call, not after the budget). A
+text above the ceiling is refused before any call as `input_too_large` /
+`chunk_limit` in a mode that blocks. The ceilings, in characters or bytes and
+in tokens at about four characters a token:
+
+| Guardrail | Chunks | Text | Tokens |
+|---|---|---|---|
+| `azure_content_safety` | 60 | about 482,000 UTF-16 units | about 120,000 |
+| `openai_moderation` | 28 | about 807,000 bytes | about 200,000 |
+| `bedrock_guardrail` | 10 | about 203,000 bytes | about 50,000 |
+| `google_model_armor` | 16 | about 856,000 bytes | about 210,000 |
 
 ## Deny pattern: "only group X may call this tool"
 

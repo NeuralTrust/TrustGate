@@ -342,8 +342,9 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // which maxBufferedChunks calls cannot exhaust alone. A chunk that is not started
 // or is cut by the budget is availability only when some call took longer than
 // twice callReserve, and otherwise chunk_budget, input. A throttle on a chunk of
-// the first round is retried once; if it persists it is availability on the first
-// chunk or on a single-chunk text, and input (throttled_oversize) on any other.
+// the first round is retried once; if it persists on the first chunk or on a
+// single-chunk text it is availability, with every other throttle of the
+// evaluation, and otherwise input (throttled_oversize) on a later chunk.
 const (
 	chunkBytes        = maxSanitizeBytes
 	chunkOverlap      = 4096
