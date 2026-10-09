@@ -269,10 +269,10 @@ func TestExecutePartialOnlyBlocksThroughASkippedBlockOnFilter(t *testing.T) {
 	assertPassThrough(t, res, err)
 }
 
-// A text above the local ceiling is refused as the input's before any call: a
-// blocking mode refuses it and observe records it. A text under it reaches
-// Model Armor whole.
-func TestBufferedLegsRefuseTextAboveTheCeilingLocally(t *testing.T) {
+// A text that splits into more chunks than are evaluated is refused as the
+// input's before any call: a blocking mode refuses it and observe records it. A
+// text of one chunk reaches Model Armor whole.
+func TestBufferedLegsRefuseTextAboveTheChunkLimitLocally(t *testing.T) {
 	t.Parallel()
 	body := func(text string) []byte {
 		return []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + text + `"}]}`)
@@ -282,12 +282,12 @@ func TestBufferedLegsRefuseTextAboveTheCeilingLocally(t *testing.T) {
 	}
 	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
 		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
-			t.Run(string(stage)+" "+string(mode)+" 600 KiB", func(t *testing.T) {
+			t.Run(string(stage)+" "+string(mode)+" 2 MiB", func(t *testing.T) {
 				t.Parallel()
 				stub := newModelArmorStub(t, http.StatusOK, allowResponse)
 				p := pluginWithStub(stub)
 				event, span := newStreamEvent()
-				big := strings.Repeat("a", 600<<10)
+				big := strings.Repeat("a", 2<<20)
 				var in appplugins.ExecInput
 				if stage == policy.StagePreRequest {
 					in = execInput(stage, mode, modelArmorSettings(), reqCtx(body(big)), nil)
@@ -313,15 +313,15 @@ func TestBufferedLegsRefuseTextAboveTheCeilingLocally(t *testing.T) {
 				}
 				data, ok := span.PluginAttrsCopy().Extras.(*Data)
 				if !ok || data.Decision != wantDecision || data.FailureClass != "input" ||
-					data.FailureReason != string(appplugins.FailureInputTooLarge) || data.FailureDetail != appplugins.DetailPayloadTooLarge {
+					data.FailureReason != string(appplugins.FailureInputTooLarge) || data.FailureDetail != appplugins.DetailChunkLimit {
 					t.Fatalf("extras = %+v, ok=%v", data, ok)
 				}
 			})
-			t.Run(string(stage)+" "+string(mode)+" 100 KiB", func(t *testing.T) {
+			t.Run(string(stage)+" "+string(mode)+" one chunk", func(t *testing.T) {
 				t.Parallel()
 				stub := newModelArmorStub(t, http.StatusOK, allowResponse)
 				p := pluginWithStub(stub)
-				text := strings.Repeat("a", 100<<10)
+				text := strings.Repeat("a", chunkBytes)
 				var in appplugins.ExecInput
 				if stage == policy.StagePreRequest {
 					in = execInput(stage, mode, modelArmorSettings(), reqCtx(body(text)), nil)

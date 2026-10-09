@@ -81,9 +81,10 @@ type Credentials struct {
 // client sets stream: true is not a guardrail. A policy opts out with
 // streaming.enabled: false.
 //
-// MaxAccumulatedBytes is maxSanitizeBytes, below Model Armor's documented
-// screening limit of 65,536 tokens for the prompt injection, Responsible AI and
-// CSAM filters. Past it a filter answers EXECUTION_SKIPPED.
+// MaxAccumulatedBytes is maxSanitizeBytes, which together with the correlation
+// prompt stays within Model Armor's documented screening limit of 65,536 tokens
+// for the prompt injection, Responsible AI and CSAM filters. Past it a filter
+// answers EXECUTION_SKIPPED.
 // https://docs.cloud.google.com/model-armor/quotas
 var streamingDefaults = pluginutil.StreamingDefaults{
 	EnabledByDefault:     true,
@@ -94,15 +95,17 @@ var streamingDefaults = pluginutil.StreamingDefaults{
 	GuardTimeout:         2 * time.Second,
 }
 
-// maxSanitizeBytes caps the streaming window. Model Armor screens at most
-// 65,536 tokens and skips a filter above that, which this plugin counts as a
-// filter that did not run: a longer payload is
-// released uninspected. About 262,144 characters of English fit in
-// 65,536 tokens, but code and most other languages take more tokens per byte; a
-// token covers at least one byte, so 64 KiB stays under the limit in any
-// language. The limit is Google's and cannot be raised. Only a block whose own
-// new text exceeds it is sent larger (segmentWithin).
-const maxSanitizeBytes = 65536
+// maxSanitizeBytes caps one sanitize call's text: the streaming window and a
+// buffered chunk. Model Armor screens at most 65,536 tokens and skips a filter
+// above that, which this plugin counts as a filter that did not run. The limit
+// is Google's and cannot be raised. About 262,144 characters of English fit in
+// 65,536 tokens, but code and most other languages take more tokens per byte,
+// and a token covers at least one byte (an assumption: Google does not document
+// it). The call also carries the correlation prompt of a response, at most
+// maxCorrelationPromptBytes (8 KiB), and counts against the same limit, so the
+// text is 65,536 minus that: 57,344 bytes. A stream block whose own new text
+// exceeds the window is split by the stream executor.
+const maxSanitizeBytes = 57344
 
 type Settings struct {
 	Project     string      `mapstructure:"project"`

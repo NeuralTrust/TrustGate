@@ -33,9 +33,12 @@ type Data struct {
 	// deliberately — it is a public contract — so without these two the
 	// difference between a borderline block and an unambiguous one is
 	// invisible to anyone tuning thresholds after the fact.
-	Confidence     string `json:"confidence,omitempty"`
-	Category       string `json:"category,omitempty"`
-	LatencyMS      int64  `json:"latency_ms,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
+	Category   string `json:"category,omitempty"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	// ChunkCount is how many sanitize calls the text was split into; it is set
+	// only when that is more than one.
+	ChunkCount     int    `json:"chunk_count,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
 	// FailureReason is one of appplugins.FailureReason (transport,

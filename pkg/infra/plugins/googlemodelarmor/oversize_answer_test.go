@@ -26,22 +26,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-// deidentifyingStub answers a sanitize call the way an SDP de-identify template
-// does: the text comes back once more, in the answer's JSON, with every email
-// replaced by its info type. The JSON encoder writes '<' as <, so a text of
-// angle brackets comes back six times its size.
-func deidentifyingStub(t *testing.T) *modelArmorStub {
+// oversizeAnswerStub answers a sanitize call with a de-identify result above the
+// 1 MiB the client reads. A chunk is at most 57,344 bytes and JSON escaping
+// grows it at most six-fold, so only a provider answering with more than it was
+// sent can do this, and the client cannot tell that from a text chosen to grow.
+func oversizeAnswerStub(t *testing.T) *modelArmorStub {
 	t.Helper()
 	s := &modelArmorStub{}
-	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			UserPromptData struct {
-				Text string `json:"text"`
-			} `json:"userPromptData"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		masked := strings.ReplaceAll(req.UserPromptData.Text, "victim@example.com", "[EMAIL_ADDRESS]")
-		text, _ := json.Marshal(masked)
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		text, _ := json.Marshal(strings.Repeat("x", 2<<20))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(sanitizeOpen +
 			`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":` + string(text) + `}}}}` +
@@ -51,14 +44,12 @@ func deidentifyingStub(t *testing.T) *modelArmorStub {
 	return s
 }
 
-// A provider answer above the response limit on a request under the text
-// ceiling is the request's own doing, since the client chose a text that grows
-// six-fold on the way back. Letting it through as an outage would hand the
-// client a way to have its email forwarded unmasked, so a mode that blocks
-// refuses it and observe records it.
-func TestAnAnswerAboveTheLimitOnAPaddedTextIsInput(t *testing.T) {
+// A provider answer above the response limit is read as input, not as an
+// outage: letting it through would hand the client a way to have its email
+// forwarded unmasked, so a mode that blocks refuses it and observe records it.
+func TestAnAnswerAboveTheLimitIsInput(t *testing.T) {
 	t.Parallel()
-	text := strings.Repeat("<", 180<<10) + " victim@example.com"
+	text := "reach me at victim@example.com"
 	raw, err := json.Marshal(map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": text}}})
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +57,7 @@ func TestAnAnswerAboveTheLimitOnAPaddedTextIsInput(t *testing.T) {
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			stub := deidentifyingStub(t)
+			stub := oversizeAnswerStub(t)
 			p := pluginWithStub(stub)
 			event, span := newStreamEvent()
 			settings := modelArmorSettings()
