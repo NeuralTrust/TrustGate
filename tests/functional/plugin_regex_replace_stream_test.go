@@ -65,18 +65,23 @@ func TestPluginE2E_RegexReplace_StreamedResponseIsMaskedByDefault(t *testing.T) 
 		assert.Contains(t, body, "[DONE]")
 	})
 
-	t.Run("a policy that disables streaming leaves the stream alone", func(t *testing.T) {
+	// streaming.enabled cannot turn per-block rewriting off, so a write that
+	// sets it to false is refused rather than stored and ignored (RUN-1661).
+	t.Run("a new streaming.enabled false is refused", func(t *testing.T) {
 		off := regexReplaceSettings("response", []map[string]any{
 			{"pattern": regexStreamCardPattern, "replacement": "[CARD]"},
 		})
 		off["streaming"] = map[string]any{"enabled": false}
-		up := newPacedStreamUpstream(t, regexStreamEvents(), 5*time.Millisecond)
-		apiKey, path := setupPolicyRoute(t, up, regexReplacePolicy(off, "pre_response"))
+		payload := regexReplacePolicy(off, "pre_response")
+		payload["name"] = uniqueName("pol")
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("plugin-gw")})
 
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, regexStreamRequest(true)))
+		status, body := sendRequest(t, http.MethodPost,
+			fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gatewayID), nil, payload)
 
-		require.Equal(t, http.StatusOK, status, "body: %s", raw)
-		assert.NotContains(t, string(raw), "[CARD]", "an explicit opt-out must keep today's behaviour")
+		require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+		assert.Equal(t, "validation_failed", body["error"])
+		assert.Contains(t, body["message"], "streaming.enabled cannot turn it off")
 	})
 
 	t.Run("a buffered response is masked as before", func(t *testing.T) {

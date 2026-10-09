@@ -66,17 +66,13 @@ func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.G
 // second and parallel pieces would spend it together.
 func (p *Plugin) StreamChunkParallel() int { return chunkParallel }
 
-// StreamSettings reports whether these policy settings ask for per-block
-// inspection of the response leg, and the options the block loop must run
-// under. Implementing InspectSegment is not the opt-in on its own: this plugin
-// is on every pre_response chain that names it, so this is what keeps the head
-// gate off for a policy that opted out with streaming.enabled: false.
-func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+// StreamSettings reports whether a policy with these settings inspects a
+// streamed response block by block, and the options the block loop must run
+// under. Every policy that parses does: the guardrail applies to the response
+// leg whatever the policy says about streaming (RUN-1661).
+func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
 	cfg, err := parseConfig(settings)
 	if err != nil {
-		return false, appplugins.StreamOptions{}
-	}
-	if !cfg.Streaming.IsEnabled() {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
@@ -103,9 +99,6 @@ func (p *Plugin) InspectSegment(
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
-	}
-	if !cfg.Streaming.IsEnabled() {
-		return segmentAllow(), nil
 	}
 	if seg.Closing {
 		p.recordStreamOutcome(ctx, in, cfg, seg)

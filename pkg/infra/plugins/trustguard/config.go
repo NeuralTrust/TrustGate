@@ -59,13 +59,11 @@ type Settings struct {
 	Streaming   pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
-// streamingDefaults enables per-block inspection when the policy does not say
-// otherwise: a policy whose direction includes the response has to inspect a
-// streamed response too, or "Request & Response" silently means "request only"
-// on the traffic that streams, which for chat is most of it. An explicit
-// streaming.enabled: false is the opt-out.
+// streamingDefaults is the cadence of a policy that does not set its own. A
+// policy whose direction includes the response inspects a streamed response
+// block by block whatever its streaming block says (RUN-1661), or "Request &
+// Response" would silently mean "request only" on the traffic that streams.
 var streamingDefaults = pluginutil.StreamingDefaults{
-	EnabledByDefault:     true,
 	HeadChars:            defaultStreamingHeadChars,
 	MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
 	MaxHoldMS:            defaultStreamingMaxHoldMS,

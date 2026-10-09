@@ -511,7 +511,7 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   stream sends an 8 KiB correlation prompt with each block, and 57,344 bytes
   plus that prompt is 65,536. Google does not raise this limit, so a higher
   setting is treated as 56 KiB.
-- `bedrock_guardrail` (streaming is opt-in): 8 KiB, and never more. AWS bounds
+- `bedrock_guardrail`: 8 KiB, and never more. AWS bounds
   each `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
   characters, at a number of units per second that goes as low as 25 (for
   example in eu-west-3, eu-south-1 and sa-east-1). A block of 8 KiB is at most

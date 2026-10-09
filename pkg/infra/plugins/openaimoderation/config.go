@@ -39,10 +39,6 @@ const (
 // trustguard's, which buys a smaller window between the text being produced and
 // being cleared.
 //
-// It is on by default: a guardrail that silently stops guarding the moment a
-// client sets stream: true is not a guardrail. A policy opts out with
-// streaming.enabled: false.
-//
 // Each block sends at most maxStreamWindowBytes of the accumulated text. OpenAI
 // documents no input size limit for the moderations endpoint, so the window is
 // fitted to the deadline instead: the classifier's latency grows with the text,
@@ -50,7 +46,6 @@ const (
 // stays above 30 blocks of the default cadence, so the text that straddles two
 // blocks is always inside the window.
 var streamingDefaults = pluginutil.StreamingDefaults{
-	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 1024,
 	MaxHoldMS:            500,
@@ -68,8 +63,7 @@ type Settings struct {
 	Thresholds     map[string]float64 `mapstructure:"thresholds"`
 	BlockOnFlagged bool               `mapstructure:"block_on_flagged"`
 	Action         ActionSettings     `mapstructure:"action"`
-	// Streaming tunes the per-block inspection of the pre_response leg. It is on
-	// when the block is absent; streaming.enabled: false opts out.
+	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 

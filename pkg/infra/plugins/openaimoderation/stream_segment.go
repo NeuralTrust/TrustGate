@@ -39,17 +39,17 @@ var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
 // made of the same time.
 func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
 
-// StreamSettings reports whether these policy settings ask for per-block
-// moderation of the response leg, and the options the block loop must run
-// under. Implementing InspectSegment is not the opt-in on its own: this plugin
-// is on every pre_response chain that names it, so this is what keeps the head
-// gate off for a policy that opted out with streaming.enabled: false.
-func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+// StreamSettings reports whether a policy with these settings moderates a
+// streamed response block by block, and the options the block loop must run
+// under. Every policy that selects the pre_response stage does, whatever it
+// says about streaming (RUN-1661); one that moderates only the request is not
+// on the response leg at all.
+func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
@@ -71,9 +71,6 @@ func (p *Plugin) InspectSegment(
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
 	p.warnUnknownConfig(ctx, in, cfg)
-	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
-		return segmentAllow(), nil
-	}
 	if seg.Closing {
 		p.recordStreamOutcome(ctx, in, cfg, seg)
 		return segmentAllow(), nil

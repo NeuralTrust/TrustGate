@@ -41,15 +41,11 @@ type segmentRunner interface {
 	RunStreamSegment(context.Context, appplugins.StageInput, appplugins.StreamSegment) (*appplugins.SegmentOutcome, error)
 }
 
-func maskedRegexSettings(streaming bool) map[string]any {
-	set := map[string]any{
+func maskedRegexSettings() map[string]any {
+	return map[string]any{
 		"target": "response",
 		"rules":  []map[string]any{{"pattern": `\d{16}`, "replacement": "[CARD]"}},
 	}
-	if streaming {
-		set["streaming"] = map[string]any{"enabled": true}
-	}
-	return set
 }
 
 func orderedPolicies(regexSet, armorSet map[string]any) []*policy.Policy {
@@ -104,7 +100,7 @@ func TestModelArmorAfterRegexReplaceOnTheBufferedResponse(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, allowResponse)
 	reg, exec := orderedExecutor(t, stub)
-	pols := orderedPolicies(maskedRegexSettings(false), modelArmorSettings())
+	pols := orderedPolicies(maskedRegexSettings(), modelArmorSettings())
 
 	resp := respCtx([]byte(`{"id":"r1","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"`+rawCard+`"},"finish_reason":"stop"}]}`), false)
 	_, err := exec.RunStage(context.Background(), appplugins.StageInput{
@@ -129,7 +125,7 @@ func TestModelArmorAfterRegexReplaceOnAStreamedSegment(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, allowResponse)
 	reg, exec := orderedExecutor(t, stub)
-	pols := orderedPolicies(maskedRegexSettings(true), streamSettings(nil))
+	pols := orderedPolicies(maskedRegexSettings(), streamSettings(nil))
 	streamer, ok := exec.(segmentRunner)
 	if !ok {
 		t.Fatal("the executor does not run stream segments")
