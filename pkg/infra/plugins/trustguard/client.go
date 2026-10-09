@@ -66,6 +66,17 @@ func (e *payloadTooLargeError) Error() string {
 	return "trustguard: payload too large"
 }
 
+// attachmentRejectedError is TrustGuard answering 400 "invalid attachment": the
+// resolver could not fetch or decode an attachment this request carried. Like a
+// 413 it is a verdict on the request's own content, so it is classified as
+// input. A 400 with any other body says the call itself was malformed, which no
+// client input can cause and is not this error.
+type attachmentRejectedError struct{}
+
+func (e *attachmentRejectedError) Error() string {
+	return "trustguard: invalid attachment"
+}
+
 type rateLimitedError struct {
 	headers map[string][]string
 	body    []byte
@@ -184,6 +195,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if res.StatusCode == http.StatusRequestEntityTooLarge {
 		return nil, &payloadTooLargeError{}
 	}
+	if res.StatusCode == http.StatusBadRequest && isInvalidAttachment(raw) {
+		return nil, &attachmentRejectedError{}
+	}
 	if res.StatusCode == http.StatusServiceUnavailable {
 		return nil, &entitlementsUnavailableError{body: append([]byte(nil), raw...)}
 	}
@@ -195,6 +209,15 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 		return nil, fmt.Errorf("trustguard: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+const invalidAttachmentMessage = "invalid attachment"
+
+func isInvalidAttachment(body []byte) bool {
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &envelope) == nil && envelope.Error == invalidAttachmentMessage
 }
 
 func copyRateLimitHeaders(h http.Header) map[string][]string {

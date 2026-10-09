@@ -36,6 +36,9 @@ type transformTarget struct {
 	// the masked values are lifted straight out of it by position. Tried before
 	// apply, which stays as the fallback for a string-shaped payload.
 	applyPayload func(payload map[string]any) ([]byte, bool)
+	// attachmentsOmitted counts the attachments of the request that were left
+	// out of the evaluate because TrustGuard cannot resolve them.
+	attachmentsOmitted int
 }
 
 // transformedInput extracts the masked string TrustGuard returns for rewrite.

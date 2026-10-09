@@ -375,7 +375,7 @@ member path and the Model Armor resource prefix.
 | `google_model_armor` | A 400 or 413 about the content; a filter selected in `block_on` that ends `EXECUTION_SKIPPED` (above its token limit), which is also what a `PARTIAL` invocation blocks on. A long buffered text is sent whole and Model Armor's own `EXECUTION_SKIPPED` decides | A 400 whose `google.rpc.BadRequest` field violation names the resource (`name`, `parent`) or whose message opens by calling the resource name, location or template invalid (configuration); `FAILURE`; a filter the template does not enable (`filter_not_in_template`); `EXECUTION_STATE_UNSPECIFIED` and any other state that is not a skip (`filter_state_unspecified`); a `PARTIAL` invocation in which every `block_on` filter ran; credentials, throttling and 5xx |
 | `azure_content_safety` | A 400 in the `{"error":{"code","message","target"}}` envelope that does not name the call's configuration, a 413. The whole conversation is analysed, the system prompt and every message, so content in an earlier turn is screened; one that does not fit Azure's 10,000 characters is `input`, decided locally by counting code points before the call (Azure's own 400 for it stays `input` too) | A 400 whose target is `api-version`, `categories` or `outputType`, or whose code names the api-version; 401, 403, 408, 429 and 5xx; the endpoint must carry an `api-version` when it is written or changed |
 | `openai_moderation` | A 400 or 413 that does not name the model or the key | A 400 whose `param` is `model`, or whose `code` is `model_not_found`, `invalid_model` or `invalid_api_key`; 401, 403, 408, 429 and 5xx |
-| `trustguard` | 413, an unreadable payload, a transform that cannot be applied (below) | Everything else |
+| `trustguard` | 413, a 400 `invalid attachment` (an attachment TrustGuard could not fetch or decode), an unreadable payload, a transform that cannot be applied (below) | Everything else, a 400 with any other body included |
 
 A streamed response leg classifies the same way. A failure of the `availability` class
 records `failed_open` and releases the held text; an `input` failure in a mode that blocks cuts
@@ -615,6 +615,14 @@ failure is never refused. A mask that could not be applied is recorded `blocked`
 refused with the finding's own block, not `failed_closed`. Events written before the change still
 carry the refusals.
 
+An attachment TrustGuard cannot resolve is never sent, because it would turn the whole evaluate
+into a 400 before any detector ran. The resolver takes exactly one of `data` (standard base64) or
+`url` (`http` or `https`); a `file_id`, a `gs://` or `s3://` URI, a data URL that is not base64
+and a part with no content are left out. The text beside them is still inspected, and
+`extras.attachments_not_inspected` (additive, absent when nothing was left out) counts the
+attachments that were not. A request whose only content is such an attachment is recorded as
+skipped (`skip_reason: no_inspectable_input`) with the same count.
+
 `extras.failed_open` (or `extras.failed_closed`) is set to match, `extras.failure_class` says
 whose failure it was, and `extras.failure_reason` names the cause. A streamed block waits for the
 shorter of the deployment timeout and the stream guard timeout, and each streamed evaluation sends
@@ -630,6 +638,7 @@ at most a 64 KiB tail window, so a timeout is not driven by the length of the re
 | `base_url_missing` | The gateway has no `TRUSTGUARD_BASE_URL` |
 | `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed (`transform_no_payload`, `transform_unsupported_path`, `transform_encode_failed`). `failure_class: input`: a mode that blocks refuses the call, and a stream is cut (`decision: blocked`). Observe applies no transform and never reaches it |
 | `payload_too_large` | `/v1/evaluate` answered 413: TrustGuard refused the body for its size. `failure_class: input` |
+| `attachment_rejected` | `/v1/evaluate` answered 400 with the error `invalid attachment`: TrustGuard could not fetch or decode an attachment the request carried. `failure_class: input` |
 | `config_invalid` | The stored settings could not be parsed. Always `failed_open` |
 | `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
 | `payload_unreadable` | The gateway could not read the body. `failure_class: input` |

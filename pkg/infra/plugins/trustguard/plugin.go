@@ -277,10 +277,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// count is the traffic that actually went through uninspected.
 	baseURL := p.baseURL
 	if baseURL == "" {
-		return p.guardFailure(ctx, in, direction, failureReasonBaseURLMissing, nil)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonBaseURLMissing, nil)
 	}
 	if !p.tokens.configured() {
-		return p.guardFailure(ctx, in, direction, failureReasonCredentialsMissing, nil)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonCredentialsMissing, nil)
 	}
 
 	protocol := protocolFor(in.Request.ConsumerType)
@@ -318,39 +318,44 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
-			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted})
 			return nil, rateLimitError(limited)
+		}
+		var rejected *attachmentRejectedError
+		if errors.As(err, &rejected) {
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonAttachmentRejected, err)
 		}
 		var tooLarge *payloadTooLargeError
 		if errors.As(err, &tooLarge) {
-			return p.guardFailure(ctx, in, direction, failureReasonPayloadTooLarge, err)
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonPayloadTooLarge, err)
 		}
 		var unavailable *entitlementsUnavailableError
 		if errors.As(err, &unavailable) {
-			return p.guardFailure(ctx, in, direction, failureReasonEntitlementsUnavailable, err)
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonEntitlementsUnavailable, err)
 		}
 		var auth *authRejectedError
 		if errors.As(err, &auth) {
-			return p.guardFailure(ctx, in, direction, failureReasonUnauthorized, err)
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonUnauthorized, err)
 		}
 		if errors.Is(err, errUnauthorized) {
-			return p.guardFailure(ctx, in, direction, failureReasonUnauthorized, err)
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonUnauthorized, err)
 		}
 		// The caller's own cancellation is not ours to reinterpret: only a
 		// deadline this call imposed counts as the guard running out of time.
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-			return p.guardFailure(ctx, in, direction, failureReasonTimeout, err)
+			return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonTimeout, err)
 		}
-		return p.guardFailure(ctx, in, direction, failureReasonTransport, err)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonTransport, err)
 	}
 
 	data := guardData{
-		Direction:     direction,
-		Status:        resp.Status,
-		TraceID:       resp.TraceID,
-		RequestID:     resp.RequestID,
-		FindingsCount: len(resp.Findings),
-		Findings:      resp.Findings,
+		Direction:               direction,
+		AttachmentsNotInspected: tgt.attachmentsOmitted,
+		Status:                  resp.Status,
+		TraceID:                 resp.TraceID,
+		RequestID:               resp.RequestID,
+		FindingsCount:           len(resp.Findings),
+		Findings:                resp.Findings,
 	}
 
 	if resp.Status == statusTransform {
@@ -515,7 +520,8 @@ func (p *Plugin) llmInspectionPayload(
 				slog.Int("dropped_items", request.DroppedInputItems),
 			)
 		}
-		attachments := extractPayloadAttachments(in.Request.Body)
+		attachments, omitted := partitionAttachments(extractPayloadAttachments(in.Request.Body))
+		tgt.attachmentsOmitted = omitted
 		if request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
@@ -598,7 +604,7 @@ func (p *Plugin) skipInspection(
 		slog.String("direction", direction),
 		slog.String("reason", reason),
 	)
-	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason})
+	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason, AttachmentsNotInspected: tgt.attachmentsOmitted})
 	return nil, tgt, &inspectionHalt{result: passThrough()}
 }
 
@@ -890,6 +896,19 @@ func (p *Plugin) guardFailure(
 	reason string,
 	err error,
 ) (*appplugins.Result, error) {
+	return p.guardFailureOmitting(ctx, in, direction, 0, reason, err)
+}
+
+// guardFailureOmitting is guardFailure for a call that left attachments out of
+// the evaluate, so the failure's event still says so.
+func (p *Plugin) guardFailureOmitting(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	direction string,
+	attachmentsOmitted int,
+	reason string,
+	err error,
+) (*appplugins.Result, error) {
 	recordEvaluateFailure(ctx, reason)
 	sharedReason, detail := sharedFailure(reason, "")
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
@@ -904,12 +923,13 @@ func (p *Plugin) guardFailure(
 		Event:  in.Event,
 	})
 	recordGuardOutcome(in.Event, guardData{
-		Direction:     direction,
-		Decision:      outcome.Decision,
-		FailedOpen:    outcome.Decision == decisionFailedOpen,
-		FailedClosed:  outcome.Decision == decisionFailedClosed,
-		FailureReason: reason,
-		FailureClass:  string(outcome.Class),
+		Direction:               direction,
+		Decision:                outcome.Decision,
+		FailedOpen:              outcome.Decision == decisionFailedOpen,
+		FailedClosed:            outcome.Decision == decisionFailedClosed,
+		FailureReason:           reason,
+		FailureClass:            string(outcome.Class),
+		AttachmentsNotInspected: attachmentsOmitted,
 	})
 	if outcome.Err != nil {
 		return nil, outcome.Err

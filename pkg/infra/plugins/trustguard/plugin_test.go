@@ -180,6 +180,10 @@ type fakeGuard struct {
 	tokenHits     int
 	// tokenDelay stalls the token leg the way delay stalls the evaluate leg.
 	tokenDelay time.Duration
+	// preflight, when set, answers before the verdict the way the engine does
+	// for a request it refuses outright: a non-zero status ends the call with
+	// that status and raw as its body.
+	preflight func(GuardRequest) (status int, raw string)
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
@@ -231,6 +235,14 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.lastBody = body
 		f.directions = append(f.directions, body.Direction)
+		if f.preflight != nil {
+			if refusal, raw := f.preflight(body); refusal != 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(refusal)
+				_, _ = w.Write([]byte(raw))
+				return
+			}
+		}
 		status := f.status
 		if status == 0 {
 			status = http.StatusOK
