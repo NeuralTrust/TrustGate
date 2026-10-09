@@ -186,9 +186,11 @@ func (s Settings) isResponseLeg() bool {
 // ignores them, so a stored value would read as behaviour the policy does not
 // have.
 // streaming.on_error is not among them: regex_replace is a rewriter and its
-// stream leg fails closed on it.
+// stream leg fails closed on it. streaming.guard_timeout is: the stream leg runs
+// under the plugin's default guard timeout.
 func (p *Plugin) RetiredSettings() []string {
 	return []string{
 		pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingGuardTimeout,
 	}
 }

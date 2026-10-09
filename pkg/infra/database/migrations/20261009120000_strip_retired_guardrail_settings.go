@@ -38,7 +38,7 @@ import (
 //	google_model_armor    on_error, on_mask_failure, streaming.on_error, streaming.guard_timeout
 //	openai_moderation     on_error, streaming.on_error, streaming.guard_timeout
 //	azure_content_safety  on_error
-//	regex_replace         on_mask_failure (its streaming.on_error stays: it is a rewriter)
+//	regex_replace         on_mask_failure, streaming.guard_timeout (its streaming.on_error stays: it is a rewriter)
 //
 // Slugs are the plugin names; no alias is stored as a slug. Keys are matched on
 // lower(key) because settings are decoded with mapstructure, which matches key
@@ -88,7 +88,7 @@ func upStripRetiredGuardrailSettings(ctx context.Context, tx pgx.Tx) error {
 				 ARRAY[]::text[]),
 				('regex_replace',
 				 ARRAY['on_mask_failure'],
-				 ARRAY[]::text[])
+				 ARRAY['guard_timeout'])
 		)
 		UPDATE policies p
 		   SET settings = (
