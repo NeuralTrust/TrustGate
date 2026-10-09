@@ -61,20 +61,21 @@ const (
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
 	skipReasonUndecodableResponse = "undecodable_response"
 	skipReasonObserveMode         = "observe_mode"
-	// skipReasonProviderNotStreaming marks a response leg that opted into
-	// per-block inspection and never got a block to inspect: the provider
+	// skipReasonProviderNotStreaming marks a response leg handed to per-block
+	// inspection that never got a block to inspect: the provider
 	// produced no stream the guard could close a block on. Without it the
 	// event is indistinguishable from a stream that was inspected and found
 	// clean, which is the same gap skipReasonEmptyResponseBody closed on the
 	// buffered leg.
 	skipReasonProviderNotStreaming = "provider_not_streaming"
 	// skipReasonInspectedAsStream marks the pre_response leg of a streamed
-	// LLM response whose policy opted into per-block inspection, decided from
-	// the policy settings at pre_response time. That leg runs when only the
+	// LLM response whose policy inspects it block by block, decided from the
+	// policy settings at pre_response time. That leg runs when only the
 	// headers have arrived, so it has nothing to read by design: the response
-	// is handed to the stream guard, which writes its own entry, and is
-	// audited once more after the drain. It is not a coverage gap, and it must
-	// not read as one ("the response had no body").
+	// is handed to the stream guard, which writes its own entry. It is audited
+	// once more after the drain only when the final block was not evaluated in
+	// full (see skipReasonStreamFinalInspected). It is not a coverage gap, and
+	// it must not read as one ("the response had no body").
 	//
 	// Residual gap, dormant: if an earlier pre_response plugin errors or
 	// short-circuits a streamed leg, finalizeStream drains without building
@@ -183,7 +184,9 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 func (p *Plugin) Name() string { return PluginName }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
-	// Streaming responses become inspectable only after the client drain.
+	// post_response audits a streamed response after the drain only when its
+	// final block was not evaluated in full (degraded, failed call,
+	// accumulation cap or tail window); otherwise the stream guard already did.
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
@@ -229,10 +232,11 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 
 var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
-// ValidateSettingsWrite rejects a new streaming.final_pass: false, which the
-// block loop cannot honour (pluginutil.ValidateFinalPassWrite).
+// ValidateSettingsWrite rejects a new streaming.final_pass: false or
+// streaming.enabled: false, which the block loop cannot honour
+// (pluginutil.ValidateStreamingWrite).
 func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
-	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
+	return pluginutil.ValidateStreamingWrite(PluginName, settings, previous)
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
@@ -402,26 +406,24 @@ func (p *Plugin) InspectSegment(
 	return p.inspectSegment(ctx, in, seg)
 }
 
-// StreamSettings reports whether these policy settings enable per-block
-// inspection of the response leg, and the options the caller must run the
-// stream under. Implementing InspectSegment is not the opt-in on its own: this
-// plugin is on every pre_response chain that names it, and a policy can opt
-// out with streaming.enabled: false or by not selecting the response leg, so
-// without this the head gate would be built for policies that turned it off.
+// StreamSettings reports whether a policy with these settings inspects a
+// streamed response block by block, and the options the caller must run the
+// stream under. Every policy whose direction includes the response does,
+// whatever it says about streaming (RUN-1661); a request-only policy is not on
+// the response leg at all.
 //
-// head_chars and streaming.on_error come back with the opt-in because this
+// head_chars and streaming.on_error come back with the answer because this
 // settings map is this plugin's schema. Settings that fail to parse disable
 // the stream leg here; the buffered legs surface the same error where they
 // already do.
-func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
-	// No shortcut on an absent "streaming" key: absent means on, with the
-	// defaults. p.config is cached by a digest of the settings map, so the
-	// repeat cost on every streamed request is one digest, not a parse.
+func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
+	// p.config is cached by a digest of the settings map, so the repeat cost
+	// on every streamed request is one digest, not a parse.
 	cfg, err := p.config(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, appplugins.StreamOptions{
@@ -436,8 +438,8 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 // streamGuardOwns reports whether this policy's streamed response is inspected
 // block by block, so its header-only pre_response leg has nothing left to do.
 func (p *Plugin) streamGuardOwns(in appplugins.ExecInput) bool {
-	enabled, _ := p.StreamSettings(in.Config.Settings)
-	return enabled
+	participates, _ := p.StreamSettings(in.Config.Settings)
+	return participates
 }
 
 func (p *Plugin) inspectionPayload(
@@ -959,8 +961,8 @@ func protocolFor(consumerType string) string {
 // whoever reads the trace: there was no body at all, this stage does not handle
 // this streaming mode, or the response is being inspected by another leg.
 //
-// streamGuard says the policy opted into per-block inspection of the response
-// (see StreamSettings), so the leg is handed to the stream guard. It is a
+// streamGuard says the policy inspects a streamed response block by block (see
+// StreamSettings), so the leg is handed to the stream guard. It is a
 // decision from settings, not proof the guard ran; see
 // skipReasonInspectedAsStream for the dormant case where it does not. The stage/mode check runs before the empty-body check
 // on purpose: a streamed pre_response leg runs when only the headers have

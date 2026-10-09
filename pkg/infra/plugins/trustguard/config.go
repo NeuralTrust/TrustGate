@@ -105,13 +105,13 @@ type Settings struct {
 // StreamingSettings configures per-block inspection of a streaming response
 // leg. There is no max_inflight key: exactly one guard call is in flight by
 // construction, which is what makes the contiguous-prefix invariant hold.
+//
+// There is no enabled key either: a policy whose direction includes the
+// response inspects a streamed response block by block, or "Request &
+// Response" would silently mean "request only" on the traffic that streams
+// (RUN-1661). Stored policies that still carry one decode because unknown keys
+// are ignored, and the value has no effect.
 type StreamingSettings struct {
-	// Enabled defaults to true: a policy whose direction includes the
-	// response has to inspect a streamed response too, or "Request &
-	// Response" silently means "request only" on the traffic that streams,
-	// which for chat is most of it. It is a pointer so an explicit false,
-	// the opt-out, is distinguishable from an absent key.
-	Enabled              *bool  `mapstructure:"enabled"`
 	HeadChars            int    `mapstructure:"head_chars"`
 	MinCharsBetweenEvals int    `mapstructure:"min_chars_between_evals"`
 	MaxHoldMS            int    `mapstructure:"max_hold_ms"`
@@ -252,10 +252,6 @@ func (s StreamingSettings) validate() error {
 		return fmt.Errorf("trustguard: streaming.on_error must be one of fail_open, fail_closed")
 	}
 	return nil
-}
-
-func (s StreamingSettings) enabled() bool {
-	return s.Enabled == nil || *s.Enabled
 }
 
 func (s StreamingSettings) guardTimeout() time.Duration {

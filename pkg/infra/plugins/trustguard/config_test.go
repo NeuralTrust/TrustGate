@@ -160,7 +160,6 @@ func TestConfigCacheSeesEditsToAnySetting(t *testing.T) {
 		return map[string]any{
 			"collector_id": testCollectorID,
 			"streaming": map[string]any{
-				"enabled":    true,
 				"head_chars": headChars,
 			},
 		}
@@ -193,8 +192,6 @@ func TestStreamingDefaults(t *testing.T) {
 	cfg, err := parseConfig(map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed})
 	require.NoError(t, err)
 
-	assert.True(t, cfg.Streaming.enabled(),
-		"a policy that says nothing about streaming inspects streamed responses: RUN-1712")
 	assert.Equal(t, defaultStreamingHeadChars, cfg.Streaming.HeadChars)
 	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, defaultStreamingMaxHoldMS, cfg.Streaming.MaxHoldMS)
@@ -221,7 +218,6 @@ func TestStreamingExplicitValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.True(t, cfg.Streaming.enabled())
 	assert.Equal(t, 1024, cfg.Streaming.HeadChars)
 	assert.Equal(t, 4096, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, 1500, cfg.Streaming.MaxHoldMS)

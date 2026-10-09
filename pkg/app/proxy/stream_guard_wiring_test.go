@@ -114,12 +114,12 @@ func wiringDTO(plan *appplugins.StagePlan) *forwardRequestDTO {
 	}
 }
 
-// TestForwarder_StreamGuardIsNotBuiltWithoutAnEnabledInspector is the wiring
-// AC: with nothing opted in there is no wrapper at all, not a wrapper that
-// happens to pass through. A policy carrying the plugin but with
-// streaming.enabled false is the common case — every existing trustguard
-// policy is one — and it must build no guard either.
-func TestForwarder_StreamGuardIsNotBuiltWithoutAnEnabledInspector(t *testing.T) {
+// TestForwarder_StreamGuardIsNotBuiltWithoutAParticipatingInspector is the
+// wiring AC: with no participant there is no wrapper at all, not a wrapper that
+// happens to pass through. A policy carrying the plugin but kept off the
+// response leg by its own settings (a request-only policy) must build no guard
+// either.
+func TestForwarder_StreamGuardIsNotBuiltWithoutAParticipatingInspector(t *testing.T) {
 	t.Parallel()
 	resp := &infracontext.ResponseContext{}
 	enabledPlan := inspectorPlan(t, map[string]any{"enabled": true})
@@ -151,7 +151,7 @@ func TestForwarder_StreamGuardIsNotBuiltWithoutAnEnabledInspector(t *testing.T) 
 			dto:  wiringDTO(enabledPlan),
 		},
 		{
-			name: "policy with streaming disabled",
+			name: "policy not on the response leg",
 			fwd:  &forwarder{executor: &segmentExecutor{}, codec: adapter.NewRegistry(), logger: newGuardLogger()},
 			dto:  wiringDTO(disabledPlan),
 		},

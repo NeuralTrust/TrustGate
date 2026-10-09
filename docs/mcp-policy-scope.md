@@ -477,7 +477,7 @@ providers' per-request limits:
   a larger payload would cut a `fail_closed` stream or release the block
   uninspected on `fail_open`. Google does not raise this limit, so a higher
   setting is treated as 64 KiB.
-- `bedrock_guardrail` (streaming is opt-in): 24 KiB. AWS bounds each
+- `bedrock_guardrail`: 24 KiB. AWS bounds each
   `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
   characters. The defaults go as low as 25 units (for example in eu-west-3,
   eu-south-1 and sa-east-1) and AWS does not document what a larger input gets. The quotas are adjustable, so a

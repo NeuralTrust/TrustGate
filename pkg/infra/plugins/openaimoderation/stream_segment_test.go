@@ -31,7 +31,7 @@ import (
 )
 
 func streamSettings(over map[string]any) map[string]any {
-	stream := map[string]any{"enabled": true}
+	stream := map[string]any{}
 	for k, v := range over {
 		stream[k] = v
 	}
@@ -52,7 +52,7 @@ func block(seq int, accumulated string) appplugins.StreamSegment {
 	return appplugins.StreamSegment{StreamID: "s-1", Seq: seq, Accumulated: accumulated}
 }
 
-func TestStreamSettingsOptIn(t *testing.T) {
+func TestStreamSettingsParticipation(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
 
@@ -61,17 +61,18 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block: on by default", map[string]any{"api_key": "k"}, true},
-		{"explicitly disabled", map[string]any{"api_key": "k", "streaming": map[string]any{"enabled": false}}, false},
-		{"enabled", streamSettings(nil), true},
+		{"absent block", map[string]any{"api_key": "k"}, true},
+		{"empty block", streamSettings(nil), true},
+		{"stored enabled: true", streamSettings(map[string]any{"enabled": true}), true},
+		{"stored enabled: false is ignored", map[string]any{"api_key": "k", "streaming": map[string]any{"enabled": false}}, true},
 		{
-			"enabled but the response stage is not selected",
+			"the response stage is not selected",
 			map[string]any{"api_key": "k", "stages": []string{"pre_request"},
 				"streaming": map[string]any{"enabled": true}},
 			false,
 		},
 		{
-			"enabled but the settings do not parse",
+			"settings that do not parse",
 			map[string]any{"streaming": map[string]any{"enabled": true}},
 			false,
 		},
@@ -109,7 +110,7 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
 
 	for name, set := range map[string]map[string]any{
-		"enabled, nothing else": streamSettings(nil),
+		"empty streaming block": streamSettings(nil),
 		"no streaming block":    blockSettings(),
 	} {
 		on, opts := p.StreamSettings(set)
@@ -264,18 +265,25 @@ func TestInspectSegmentHonoursTheGuardTimeout(t *testing.T) {
 		"the client is holding bytes; the block deadline must win over the plugin's own")
 }
 
-func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
+func TestInspectSegmentModeratesWhateverStreamingSays(t *testing.T) {
 	t.Parallel()
-	f := &fakeModerator{response: flaggedHateResponse()}
-	p := streamPlugin(t, f)
+	noBlock := streamSettings(nil)
+	delete(noBlock, "streaming")
+	for name, set := range map[string]map[string]any{
+		"no streaming block":               noBlock,
+		"stored enabled: false is ignored": streamSettings(map[string]any{"enabled": false}),
+	} {
+		f := &fakeModerator{response: flaggedHateResponse()}
+		p := streamPlugin(t, f)
 
-	got, err := p.InspectSegment(context.Background(),
-		execInput(policy.StagePreResponse, policy.ModeEnforce, streamSettings(map[string]any{"enabled": false}), requestContext(), nil, nil),
-		block(1, "hateful answer"))
+		got, err := p.InspectSegment(context.Background(),
+			execInput(policy.StagePreResponse, policy.ModeEnforce, set, requestContext(), nil, nil),
+			block(1, "hateful answer"))
 
-	require.NoError(t, err)
-	assert.False(t, got.Block)
-	assert.Zero(t, f.count(), "a policy that opted out must cost no call")
+		require.NoError(t, err, name)
+		assert.True(t, got.Block, name)
+		assert.Equal(t, 1, f.count(), name)
+	}
 }
 
 func TestClosingSegmentPublishesTheStreamAccount(t *testing.T) {

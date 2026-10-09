@@ -34,22 +34,23 @@ var _ appplugins.StreamInspector = (*Plugin)(nil)
 // OwnsStreamOptions is false: this plugin is a local rewriter that rides on
 // whatever head gate, cadence and failure direction the stream's other
 // participants chose, and only supplies its own when it is alone. Owning them
-// would let a default-on regex policy that sorts first turn a fail_open
-// guardrail's stream fail_closed.
+// would let a regex policy that sorts first turn a fail_open guardrail's stream
+// fail_closed.
 func (p *Plugin) OwnsStreamOptions() bool { return false }
 
 var _ appplugins.StreamOptionsOwner = (*Plugin)(nil)
 
-// StreamSettings reports whether these policy settings ask for per-block
-// rewriting of the response leg, and the options the block loop must run
-// under. A policy targeting the request is not on the response leg at all, so
-// it never opts in however its streaming block is filled.
-func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+// StreamSettings reports whether a policy with these settings rewrites a
+// streamed response block by block, and the options the block loop must run
+// under. Every policy that targets the response does, whatever it says about
+// streaming (RUN-1661); one targeting the request is not on the response leg
+// at all.
+func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
 	cfg, err := p.config(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.IsEnabled() || cfg.Target != targetResponse {
+	if cfg.Target != targetResponse {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, cfg.Streaming.Options()
@@ -75,9 +76,6 @@ func (p *Plugin) InspectSegment(
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("regex_replace: %w", err)
-	}
-	if !cfg.Streaming.IsEnabled() || cfg.Target != targetResponse {
-		return segmentAllow(), nil
 	}
 	if seg.Closing {
 		p.recordStreamOutcome(ctx, in, cfg, seg)

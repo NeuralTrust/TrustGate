@@ -77,16 +77,11 @@ type Credentials struct {
 // against the text, so it is closer to bedrock's guardrail than to a single
 // classifier and the block loop calls it at the same cadence.
 //
-// It is on by default: a guardrail that silently stops guarding the moment a
-// client sets stream: true is not a guardrail. A policy opts out with
-// streaming.enabled: false.
-//
 // MaxAccumulatedBytes is maxSanitizeBytes, below Model Armor's documented
 // screening limit of 65,536 tokens for the prompt injection, Responsible AI and
 // CSAM filters. Past it a filter answers EXECUTION_SKIPPED.
 // https://docs.cloud.google.com/model-armor/quotas
 var streamingDefaults = pluginutil.StreamingDefaults{
-	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
@@ -116,8 +111,7 @@ type Settings struct {
 	// verdict on its buffered leg: fail_open (the default) lets it through and
 	// records failed_open, fail_closed refuses it in a mode that blocks.
 	OnError string `mapstructure:"on_error"`
-	// Streaming tunes the per-block inspection of the pre_response leg. It is on
-	// when the block is absent; streaming.enabled: false opts out.
+	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 

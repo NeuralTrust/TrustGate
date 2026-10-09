@@ -185,12 +185,12 @@ const (
 	streamOnErrorFailClosed = "fail_closed"
 )
 
-// StreamPlan reports whether any entry of the stage opted into per-segment
-// inspection *and* has it enabled, and yields the options that entry runs
-// under. The stream guard is built only when it reports true, so a gateway
-// whose policies do not participate pays nothing for the feature.
+// StreamPlan reports whether any entry of the stage takes part in per-segment
+// inspection, and yields the options that entry runs under. The stream guard
+// is built only when it reports true, so a gateway whose policies do not
+// participate pays nothing for the feature.
 //
-// The opt-in and its configuration are answered together because only the
+// Participation and its configuration are answered together because only the
 // plugin can parse its own settings: split apart, a plan that says "yes" would
 // hand the caller no head_chars and no on_error, and the caller would run on
 // defaults an operator never asked for.
@@ -201,7 +201,7 @@ const (
 // Merging those would invent a cadence no operator asked for.
 //
 // Two options are merged instead, because "first wins" let a policy with no
-// streaming block, which is now a participant, override another participant's
+// streaming block, which is a participant, override another participant's
 // explicit choice or run its provider over a payload it cannot take:
 //
 //   - on_error is fail_closed when any ENFORCING owner resolved fail_closed,
@@ -239,8 +239,8 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		if !ok {
 			continue
 		}
-		enabled, opts := inspector.StreamSettings(entry.config.Settings)
-		if !enabled {
+		participates, opts := inspector.StreamSettings(entry.config.Settings)
+		if !participates {
 			continue
 		}
 		maxBytes = max(maxBytes, opts.MaxAccumulatedBytes)
@@ -369,14 +369,14 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 }
 
 // streamParticipants keeps the entries that take part in per-segment
-// inspection: their plugin implements StreamInspector and their settings opt
-// in. An entry that opted out has nothing to say about a block, yet walking it
-// cost a span with no decision on every stream (RUN-1745 F5), could leave the
-// stream's per-response instruments to an entry that records none, and let a
-// policy whose settings no longer parse fail every block of a stream another
-// policy opted into (F8). The opt-in reads only the policy's settings, so it
-// is answered once when the plan is built, together with the entry's own
-// window. The result is never nil.
+// inspection: their plugin implements StreamInspector and their settings put
+// them on the response leg. Any other entry has nothing to say about a block,
+// yet walking it cost a span with no decision on every stream (RUN-1745 F5),
+// could leave the stream's per-response instruments to an entry that records
+// none, and let a policy whose settings no longer parse fail every block of a
+// stream another policy inspects (F8). Participation reads only the policy's
+// settings, so it is answered once when the plan is built, together with the
+// entry's own window. The result is never nil.
 func streamParticipants(entries []chainEntry) []chainEntry {
 	out := make([]chainEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -384,7 +384,7 @@ func streamParticipants(entries []chainEntry) []chainEntry {
 		if !ok {
 			continue
 		}
-		if enabled, opts := inspector.StreamSettings(entry.config.Settings); enabled {
+		if participates, opts := inspector.StreamSettings(entry.config.Settings); participates {
 			entry.streamWindow = opts.MaxAccumulatedBytes
 			out = append(out, entry)
 		}

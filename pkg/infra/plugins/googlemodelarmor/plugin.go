@@ -134,7 +134,8 @@ var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
 // ValidateSettingsWrite rejects a service_account_json that names a non-Google
 // token endpoint, a custom universe or a non-service_account type, and a new
-// streaming.final_pass: false (pluginutil.ValidateFinalPassWrite). This cannot
+// streaming.final_pass: false or streaming.enabled: false
+// (pluginutil.ValidateStreamingWrite). This cannot
 // live in parseConfig, which runs on every request: a policy stored before the
 // rule existed would turn into a run-time config_invalid failure. The runtime
 // instead pins the token endpoint (gcpauth.ServiceAccountCache), so an
@@ -149,7 +150,7 @@ func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error 
 			return fmt.Errorf("google_model_armor: credentials.service_account_json: %s", err.Error())
 		}
 	}
-	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
+	return pluginutil.ValidateStreamingWrite(PluginName, settings, previous)
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
@@ -271,13 +272,8 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	// A streamed response is inspected block by block by the stream guard when
-	// streaming is enabled for this policy. When it is not, the response goes
-	// out uninspected and the trace says so, rather than omitting the policy.
+	// A streamed response is inspected block by block by the stream guard.
 	if in.Response.Streaming {
-		if !cfg.Streaming.IsEnabled() {
-			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
-		}
 		return passThrough(), nil
 	}
 	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {

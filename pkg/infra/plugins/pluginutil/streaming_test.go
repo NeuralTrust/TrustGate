@@ -35,8 +35,7 @@ func testDefaults() StreamingDefaults {
 }
 
 func validSettings() StreamingSettings {
-	on := true
-	s := StreamingSettings{Enabled: &on}
+	var s StreamingSettings
 	s.ApplyDefaults(testDefaults(), StreamOnErrorFailOpen)
 	return s
 }
@@ -90,14 +89,17 @@ func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
 	}
 }
 
-func TestValidateFinalPassWrite(t *testing.T) {
+func TestValidateStreamingWrite(t *testing.T) {
 	t.Parallel()
-	finalPass := func(v any) map[string]any {
-		return map[string]any{"streaming": map[string]any{"final_pass": v}}
+	streaming := func(key string, v any) map[string]any {
+		return map[string]any{"streaming": map[string]any{key: v}}
 	}
+	finalPass := func(v any) map[string]any { return streaming("final_pass", v) }
+	enabled := func(v any) map[string]any { return streaming("enabled", v) }
 	const (
-		optOut   = "cannot be false"
-		decoding = "invalid settings"
+		finalPassOptOut = "streaming.final_pass cannot be false"
+		enabledOptOut   = "streaming.enabled cannot turn it off"
+		decoding        = "invalid settings"
 	)
 	tests := []struct {
 		name     string
@@ -105,29 +107,38 @@ func TestValidateFinalPassWrite(t *testing.T) {
 		previous map[string]any
 		wantErr  string
 	}{
-		{name: "absent key", settings: map[string]any{"streaming": map[string]any{"enabled": true}}},
 		{name: "no streaming block", settings: map[string]any{}},
-		{name: "explicit true", settings: finalPass(true)},
-		{name: "false on create", settings: finalPass(false), wantErr: optOut},
-		{name: "false as a string", settings: finalPass("false"), wantErr: optOut},
-		{name: "zero", settings: finalPass(0), wantErr: optOut},
-		{name: "false newly added on update", settings: finalPass(false), previous: finalPass(true), wantErr: optOut},
-		{name: "false already stored", settings: finalPass(false), previous: finalPass(false)},
-		{name: "false already stored as a string", settings: finalPass(false), previous: finalPass("false")},
-		{name: "unparseable value", settings: finalPass([]any{1}), wantErr: decoding},
+		{name: "final_pass absent", settings: map[string]any{"streaming": map[string]any{"head_chars": 100}}},
+		{name: "final_pass true", settings: finalPass(true)},
+		{name: "final_pass false on create", settings: finalPass(false), wantErr: finalPassOptOut},
+		{name: "final_pass false as a string", settings: finalPass("false"), wantErr: finalPassOptOut},
+		{name: "final_pass zero", settings: finalPass(0), wantErr: finalPassOptOut},
+		{name: "final_pass false newly added on update", settings: finalPass(false), previous: finalPass(true), wantErr: finalPassOptOut},
+		{name: "final_pass false already stored", settings: finalPass(false), previous: finalPass(false)},
+		{name: "final_pass false already stored as a string", settings: finalPass(false), previous: finalPass("false")},
+		{name: "final_pass unparseable", settings: finalPass([]any{1}), wantErr: decoding},
+		{name: "enabled true", settings: enabled(true)},
+		{name: "enabled null", settings: enabled(nil)},
+		{name: "enabled false on create", settings: enabled(false), wantErr: enabledOptOut},
+		{name: "enabled false as a string", settings: enabled("false"), wantErr: enabledOptOut},
+		{name: "enabled false newly added on update", settings: enabled(false), previous: enabled(true), wantErr: enabledOptOut},
+		{name: "enabled false already stored", settings: enabled(false), previous: enabled(false)},
+		{name: "enabled false already stored as a string", settings: enabled("false"), previous: enabled(false)},
+		{name: "enabled false stored, then removed", settings: map[string]any{}, previous: enabled(false)},
+		{name: "enabled unparseable", settings: enabled([]any{1}), wantErr: decoding},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := ValidateFinalPassWrite("acme", tt.settings, tt.previous)
+			err := ValidateStreamingWrite("acme", tt.settings, tt.previous)
 			if tt.wantErr == "" {
 				if err != nil {
-					t.Fatalf("ValidateFinalPassWrite() = %v, want nil", err)
+					t.Fatalf("ValidateStreamingWrite() = %v, want nil", err)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("ValidateFinalPassWrite() = nil, want an error containing %q", tt.wantErr)
+				t.Fatalf("ValidateStreamingWrite() = nil, want an error containing %q", tt.wantErr)
 			}
 			if !strings.HasPrefix(err.Error(), "acme: ") || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("error %q must name the plugin and contain %q", err, tt.wantErr)
@@ -450,9 +461,6 @@ func TestStreamingDecodesFromASettingsMap(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	s := cfg.Streaming
-	if s.Enabled == nil || !*s.Enabled {
-		t.Error("enabled did not decode")
-	}
 	if s.HeadChars != 200 || s.MinCharsBetweenEvals != 512 || s.MaxHoldMS != 300 ||
 		s.MaxAccumulatedBytes != 8192 {
 		t.Errorf("numeric keys did not decode: %+v", s)
@@ -465,72 +473,32 @@ func TestStreamingDecodesFromASettingsMap(t *testing.T) {
 	}
 }
 
-func TestAbsentStreamingBlockIsDisabled(t *testing.T) {
+// A stored streaming.enabled keeps decoding and validating, and whatever it
+// says does not change the options the stream runs under (RUN-1661).
+func TestStoredEnabledKeyIsIgnored(t *testing.T) {
 	t.Parallel()
-	cfg, err := Parse[hostSettings](map[string]any{})
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if cfg.Streaming.Enabled != nil {
-		t.Error("an absent streaming block must decode to an absent enabled key")
-	}
-	cfg.Streaming.ApplyDefaults(testDefaults(), StreamOnErrorFailClosed)
-	if cfg.Streaming.IsEnabled() {
-		t.Error("a plugin that does not default streaming on must not enable per-block inspection for an absent key")
-	}
-}
-
-func TestIsEnabledResolvesAbsentKeyFromPluginDefault(t *testing.T) {
-	t.Parallel()
-	yes, no := true, false
-	cases := []struct {
-		name      string
-		enabled   *bool
-		defaultOn bool
-		want      bool
-	}{
-		{"absent, default off", nil, false, false},
-		{"absent, default on", nil, true, true},
-		{"explicit false beats default on", &no, true, false},
-		{"explicit true beats default off", &yes, false, true},
-		{"explicit true, default on", &yes, true, true},
-		{"explicit false, default off", &no, false, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			s := StreamingSettings{Enabled: tc.enabled}
-			d := testDefaults()
-			d.EnabledByDefault = tc.defaultOn
-			s.ApplyDefaults(d, StreamOnErrorFailClosed)
-			if got := s.IsEnabled(); got != tc.want {
-				t.Errorf("IsEnabled() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestIsEnabledFromDecodedSettings(t *testing.T) {
-	t.Parallel()
-	d := testDefaults()
-	d.EnabledByDefault = true
-	for name, tc := range map[string]struct {
-		settings map[string]any
-		want     bool
-	}{
-		"no streaming key": {map[string]any{}, true},
-		"empty streaming":  {map[string]any{"streaming": map[string]any{}}, true},
-		"explicit false":   {map[string]any{"streaming": map[string]any{"enabled": false}}, false},
-		"explicit true":    {map[string]any{"streaming": map[string]any{"enabled": true}}, true},
-		"tuning keys only": {map[string]any{"streaming": map[string]any{"head_chars": 100}}, true},
-	} {
-		cfg, err := Parse[hostSettings](tc.settings)
+	options := func(settings map[string]any) appplugins.StreamOptions {
+		t.Helper()
+		cfg, err := Parse[hostSettings](settings)
 		if err != nil {
-			t.Fatalf("%s: decode: %v", name, err)
+			t.Fatalf("decode %v: %v", settings, err)
 		}
-		cfg.Streaming.ApplyDefaults(d, StreamOnErrorFailClosed)
-		if got := cfg.Streaming.IsEnabled(); got != tc.want {
-			t.Errorf("%s: IsEnabled() = %v, want %v", name, got, tc.want)
+		cfg.Streaming.ApplyDefaults(testDefaults(), StreamOnErrorFailClosed)
+		if err := cfg.Streaming.Validate("acme"); err != nil {
+			t.Fatalf("validate %v: %v", settings, err)
+		}
+		return cfg.Streaming.Options()
+	}
+	want := options(map[string]any{"streaming": map[string]any{"head_chars": 100}})
+	for name, enabled := range map[string]any{
+		"false":        false,
+		"true":         true,
+		"null":         nil,
+		"string false": "false",
+	} {
+		got := options(map[string]any{"streaming": map[string]any{"enabled": enabled, "head_chars": 100}})
+		if got != want {
+			t.Errorf("%s: Options() = %+v, want %+v", name, got, want)
 		}
 	}
 }

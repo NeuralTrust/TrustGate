@@ -113,10 +113,11 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 
 var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
-// ValidateSettingsWrite rejects a new streaming.final_pass: false, which the
-// block loop cannot honour (pluginutil.ValidateFinalPassWrite).
+// ValidateSettingsWrite rejects a new streaming.final_pass: false or
+// streaming.enabled: false, which the block loop cannot honour
+// (pluginutil.ValidateStreamingWrite).
 func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
-	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
+	return pluginutil.ValidateStreamingWrite(PluginName, settings, previous)
 }
 
 // CredentialPaths declares the settings paths that hold secrets, so the policy
@@ -176,13 +177,8 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	// A streamed response is inspected block by block by the stream guard when
-	// streaming is enabled for this policy. When it is not, the response goes
-	// out uninspected and the trace says so, rather than omitting the policy.
+	// A streamed response is inspected block by block by the stream guard.
 	if in.Response.Streaming {
-		if !cfg.Streaming.IsEnabled() {
-			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
-		}
 		return passThrough(), nil
 	}
 	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
@@ -298,9 +294,11 @@ func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message 
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.HandleExternalFailure: on the buffered leg it always fails
-// open (pass through, decision failed_open), in every mode and for every
-// reason (RUN-1792). It builds this plugin's own Data so
+// shared appplugins.HandleExternalFailure: on the buffered leg it fails open
+// by default (pass through, decision failed_open), in every mode and for every
+// reason (RUN-1792); with on_error: fail_closed in a mode that blocks it
+// refuses the request with a 502 guardrail_unavailable (decision
+// failed_closed). It builds this plugin's own Data so
 // failure_reason/failure_detail travel in the same shape as every other
 // external guardrail.
 func (p *Plugin) externalFailure(

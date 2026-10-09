@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -79,7 +80,7 @@ func (d *duplicator) Duplicate(ctx context.Context, gatewayID ids.GatewayID, id 
 			Enabled:     src.Enabled,
 			Priority:    src.Priority,
 			Parallel:    src.Parallel,
-			Settings:    cloneSettings(src.Settings),
+			Settings:    withoutStreamingOptOuts(cloneSettings(src.Settings)),
 			Stages:      cloneStages(src.Stages),
 			Mode:        src.Mode,
 			MCPScope:    cloneMCPScope(src.MCPScope),
@@ -176,6 +177,49 @@ func cloneSettings(in map[string]any) map[string]any {
 		out[k] = cloneValue(v)
 	}
 	return out
+}
+
+// inertStreamingOptOuts are the streaming keys whose false has no effect: the
+// end of a stream and every streamed block are always inspected (RUN-1745,
+// RUN-1661). A plugin refuses a new write that sets either to false, and a
+// duplicate is a new write, so the copy drops the false and keeps the rest.
+var inertStreamingOptOuts = []string{"enabled", "final_pass"}
+
+func withoutStreamingOptOuts(settings map[string]any) map[string]any {
+	streaming, ok := settings["streaming"].(map[string]any)
+	if !ok {
+		return settings
+	}
+	for _, key := range inertStreamingOptOuts {
+		if v, present := streaming[key]; present && isFalsy(v) {
+			delete(streaming, key)
+		}
+	}
+	return settings
+}
+
+// isFalsy mirrors the weakly typed bool decoding plugins apply to settings, so
+// every value a plugin would read as false is dropped.
+func isFalsy(v any) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Bool:
+		return !rv.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return rv.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return rv.Float() == 0
+	case reflect.String:
+		if rv.String() == "" {
+			return true
+		}
+		b, err := strconv.ParseBool(rv.String())
+		return err == nil && !b
+	default:
+		return false
+	}
 }
 
 func cloneValue(v any) any {

@@ -16,6 +16,7 @@ package regexreplace
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func withStreaming(set map[string]any, streaming map[string]any) map[string]any 
 
 func streamSettings(target string, rules ...map[string]any) map[string]any {
 	set := settings(target, rules...)
-	set["streaming"] = map[string]any{"enabled": true}
+	set["streaming"] = map[string]any{}
 	return set
 }
 
@@ -58,7 +59,7 @@ func streamInput(mode policy.Mode, set map[string]any, event *metrics.EventConte
 	return execInput(policy.StagePreResponse, mode, set, nil, nil, event)
 }
 
-func TestStreamSettingsOptIn(t *testing.T) {
+func TestStreamSettingsParticipation(t *testing.T) {
 	t.Parallel()
 	p := New(nil, nil)
 	cases := []struct {
@@ -66,22 +67,18 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block is on by default", settings(targetResponse, cardRule()), true},
-		{"empty block is on by default", withStreaming(settings(targetResponse, cardRule()), map[string]any{}), true},
-		{"tuning keys alone keep the default", withStreaming(settings(targetResponse, cardRule()), map[string]any{"head_chars": 100}), true},
-		{"absent block on a request policy", settings(targetRequest, cardRule()), false},
-		{"enabled on the response", streamSettings(targetResponse, cardRule()), true},
+		{"absent block", settings(targetResponse, cardRule()), true},
+		{"empty block", streamSettings(targetResponse, cardRule()), true},
+		{"tuning keys only", withStreaming(settings(targetResponse, cardRule()), map[string]any{"head_chars": 100}), true},
+		{"stored enabled: true", withStreaming(settings(targetResponse, cardRule()), map[string]any{"enabled": true}), true},
 		{
-			"enabled on the request",
-			streamSettings(targetRequest, cardRule()),
-			false,
-		},
-		{
-			"explicitly disabled",
+			"stored enabled: false is ignored",
 			map[string]any{"target": targetResponse, "rules": []map[string]any{cardRule()},
 				"streaming": map[string]any{"enabled": false}},
-			false,
+			true,
 		},
+		{"absent block on a request policy", settings(targetRequest, cardRule()), false},
+		{"streaming block on a request policy", streamSettings(targetRequest, cardRule()), false},
 		{
 			"absent block but the rules do not parse",
 			map[string]any{"target": targetResponse, "rules": []map[string]any{{"pattern": "(", "replacement": "x"}}},
@@ -93,7 +90,7 @@ func TestStreamSettingsOptIn(t *testing.T) {
 			false,
 		},
 		{
-			"enabled but the settings do not parse",
+			"settings that do not parse",
 			map[string]any{"streaming": map[string]any{"enabled": true}},
 			false,
 		},
@@ -177,7 +174,7 @@ func TestInspectSegmentReportsNoTransformWhenNothingMatched(t *testing.T) {
 	}
 }
 
-func TestInspectSegmentIsInertWhenStreamingIsDisabled(t *testing.T) {
+func TestInspectSegmentRewritesWhenStoredStreamingSaysOff(t *testing.T) {
 	t.Parallel()
 	p := New(nil, nil)
 
@@ -188,44 +185,8 @@ func TestInspectSegmentIsInertWhenStreamingIsDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectSegment: %v", err)
 	}
-	if got.HasTransform || got.Block {
-		t.Errorf("a policy that opted out must do nothing, got %+v", got)
-	}
-}
-
-// A request-only policy has no business on the response, and streaming being on
-// by default must not change that, with or without the key.
-func TestInspectSegmentIgnoresARequestTargetedPolicy(t *testing.T) {
-	t.Parallel()
-	p := New(nil, nil)
-
-	for name, set := range map[string]map[string]any{
-		"streaming enabled explicitly": streamSettings(targetRequest, cardRule()),
-		"streaming absent":             settings(targetRequest, cardRule()),
-	} {
-		got, err := p.InspectSegment(context.Background(),
-			streamInput(policy.ModeEnforce, set, nil),
-			segment(1, "the card is 4111111111111111"))
-		if err != nil {
-			t.Fatalf("%s: InspectSegment: %v", name, err)
-		}
-		if got.HasTransform {
-			t.Errorf("%s: a request-targeted policy must not rewrite the response", name)
-		}
-	}
-	if ok, _ := p.StreamSettings(settings(targetRequest, cardRule())); ok {
-		t.Error("a request-targeted policy must not join a stream guard")
-	}
-
-	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, streamSettings(targetRequest, cardRule()), nil),
-		segment(1, "the card is 4111111111111111"))
-
-	if err != nil {
-		t.Fatalf("InspectSegment: %v", err)
-	}
-	if got.HasTransform {
-		t.Error("a request-targeted policy must not rewrite the response")
+	if !got.HasTransform || strings.Contains(got.Transformed, "4111111111111111") {
+		t.Errorf("a stored enabled: false must not leave the card unmasked, got %+v", got)
 	}
 }
 

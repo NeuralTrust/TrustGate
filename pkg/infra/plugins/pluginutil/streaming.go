@@ -54,20 +54,20 @@ const (
 )
 
 // StreamingSettings is the streaming block a plugin adds to its own settings
-// schema to opt into per-block inspection of a streamed response leg. It is
-// shared so that the same key means the same thing in every plugin that
-// implements appplugins.StreamInspector, and so that an operator who has
-// configured one has configured them all.
+// schema to tune per-block inspection of a streamed response leg. It is shared
+// so that the same key means the same thing in every plugin that implements
+// appplugins.StreamInspector, and so that an operator who has configured one
+// has configured them all.
+//
+// There is no enabled key: whether a response streams is the client's call,
+// and a streamed response is always inspected block by block by every policy
+// that acts on it (RUN-1661). Stored policies that still carry one decode
+// because unknown keys are ignored, and the value has no effect.
 //
 // There is deliberately no max_inflight key: exactly one inspection call is in
 // flight by construction, which is what makes each payload a contiguous prefix
 // of the produced text.
 type StreamingSettings struct {
-	// Enabled is a pointer so an explicit false, the opt-out, is
-	// distinguishable from an absent key. What an absent key means is the
-	// plugin's call (StreamingDefaults.EnabledByDefault); read the resolved
-	// value through IsEnabled, never by dereferencing this.
-	Enabled              *bool  `mapstructure:"enabled"`
 	HeadChars            int    `mapstructure:"head_chars"`
 	MinCharsBetweenEvals int    `mapstructure:"min_chars_between_evals"`
 	MaxHoldMS            int    `mapstructure:"max_hold_ms"`
@@ -77,11 +77,6 @@ type StreamingSettings struct {
 	// on_error when unset, so the stream leg cannot be made stricter or laxer
 	// than the rest of the plugin by accident.
 	OnError string `mapstructure:"on_error"`
-
-	// defaultOn is what an absent Enabled means for the plugin that parsed
-	// these settings. It is set by ApplyDefaults and never read from the
-	// stored settings.
-	defaultOn bool
 }
 
 // StreamingDefaults is what a plugin fills an absent key with. They are the
@@ -89,9 +84,6 @@ type StreamingSettings struct {
 // inspection costs: a local regex pass and a remote classifier do not want the
 // same cadence.
 type StreamingDefaults struct {
-	// EnabledByDefault is what a policy that does not mention streaming.enabled
-	// gets. An explicit enabled: false always wins over it.
-	EnabledByDefault     bool
 	HeadChars            int
 	MinCharsBetweenEvals int
 	MaxHoldMS            int
@@ -102,7 +94,6 @@ type StreamingDefaults struct {
 // ApplyDefaults fills every absent key from d, and inherits onError for the
 // stream leg when the block does not override it.
 func (s *StreamingSettings) ApplyDefaults(d StreamingDefaults, onError string) {
-	s.defaultOn = d.EnabledByDefault
 	if s.HeadChars == 0 {
 		s.HeadChars = d.HeadChars
 	}
@@ -173,57 +164,57 @@ func (s StreamingSettings) Validate(plugin string) error {
 	return nil
 }
 
-// IsEnabled reports whether a streamed response leg is inspected: the explicit
-// setting when there is one, otherwise the plugin's default. ApplyDefaults must
-// have run first, or an absent key reads as off.
-func (s StreamingSettings) IsEnabled() bool {
-	if s.Enabled != nil {
-		return *s.Enabled
-	}
-	return s.defaultOn
-}
-
-// finalPassSettings decodes only streaming.final_pass. StreamingSettings has
-// no such field because the block loop always inspects the end of a stream;
-// ValidateFinalPassWrite reads it only to refuse an opt-out.
-type finalPassSettings struct {
+// streamingOptOutSettings decodes only the keys a write may not set to false.
+// StreamingSettings has neither field: the block loop always inspects the end
+// of a stream and always inspects a streamed response block by block, so
+// ValidateStreamingWrite reads them only to refuse an opt-out.
+type streamingOptOutSettings struct {
 	Streaming struct {
 		FinalPass *bool `mapstructure:"final_pass"`
+		Enabled   *bool `mapstructure:"enabled"`
 	} `mapstructure:"streaming"`
 }
 
-// ValidateFinalPassWrite rejects a write that sets streaming.final_pass to
-// false. The block loop inspects the end of every stream and has no way to
-// release the tail unread, so a false would be stored and silently ignored
-// (RUN-1745). A policy already stored with false stays editable while it
-// keeps the value: it never changed what the stream did, and refusing it would
-// block every later edit of that policy.
-func ValidateFinalPassWrite(plugin string, settings, previous map[string]any) error {
-	optOut, err := finalPassOptOut(settings)
+// ValidateStreamingWrite rejects a write that sets streaming.final_pass or
+// streaming.enabled to false. The block loop inspects the end of every stream
+// (RUN-1745) and inspects every streamed response block by block (RUN-1661),
+// so a false would be stored and silently ignored. A policy already stored
+// with the same false stays editable while it keeps the value: it never changed
+// what the stream did, and refusing it would block every later edit of that
+// policy.
+func ValidateStreamingWrite(plugin string, settings, previous map[string]any) error {
+	cur, err := streamingOptOuts(settings)
 	if err != nil {
 		return fmt.Errorf("%s: %w", plugin, err)
 	}
-	if !optOut {
-		return nil
+	stored, err := streamingOptOuts(previous)
+	if err != nil {
+		stored = streamingOptOutSettings{}
 	}
-	if stored, err := finalPassOptOut(previous); err == nil && stored {
-		return nil
+	if isFalse(cur.Streaming.FinalPass) && !isFalse(stored.Streaming.FinalPass) {
+		return fmt.Errorf(
+			"%s: streaming.final_pass cannot be false: the end of a streamed response is always inspected",
+			plugin,
+		)
 	}
-	return fmt.Errorf(
-		"%s: streaming.final_pass cannot be false: the end of a streamed response is always inspected",
-		plugin,
-	)
+	if isFalse(cur.Streaming.Enabled) && !isFalse(stored.Streaming.Enabled) {
+		return fmt.Errorf(
+			"%s: streamed responses are always inspected block by block; streaming.enabled cannot turn it off",
+			plugin,
+		)
+	}
+	return nil
 }
 
-func finalPassOptOut(settings map[string]any) (bool, error) {
+func streamingOptOuts(settings map[string]any) (streamingOptOutSettings, error) {
 	if settings == nil {
-		return false, nil
+		return streamingOptOutSettings{}, nil
 	}
-	cfg, err := Parse[finalPassSettings](settings)
-	if err != nil {
-		return false, err
-	}
-	return cfg.Streaming.FinalPass != nil && !*cfg.Streaming.FinalPass, nil
+	return Parse[streamingOptOutSettings](settings)
+}
+
+func isFalse(v *bool) bool {
+	return v != nil && !*v
 }
 
 // Timeout is the parsed guard_timeout, falling back to d when the value cannot
@@ -367,7 +358,7 @@ func StreamFingerprints(findings []appplugins.StreamFinding) []string {
 }
 
 // Options is what StreamSettings hands back to the block loop. The knobs
-// travel with the opt-in rather than being re-read by a caller that cannot
+// travel with the answer rather than being re-read by a caller that cannot
 // parse the plugin's schema, so an operator who asked for fail_closed does not
 // silently get fail_open.
 func (s StreamingSettings) Options() appplugins.StreamOptions {
