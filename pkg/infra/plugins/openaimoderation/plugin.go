@@ -42,7 +42,7 @@ const (
 
 // The moderation endpoint documents no input size or token limit and no
 // maximum array length, so a text is split into requests of chunkBytes, the
-// window the stream leg already sends in production, one text per request: what
+// size the stream leg sends, one text per request: what
 // an array of texts yields (one combined result or one per item) is
 // undocumented. Bytes are never fewer than characters or tokens. The
 // overlap is 4,096 bytes, enough for a long secret (a PEM key, a service-account

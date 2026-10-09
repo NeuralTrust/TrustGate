@@ -474,20 +474,30 @@ policy's setting bounds what its provider receives whatever policy owns the
 stream, and a provider with a small limit never shrinks what another policy
 inspects. A rewrite over that tail is put back behind the text the entry did
 not see. The one exception is a block whose new text alone is larger than the
-window: it is sent whole, because that text is about to reach the client, and
-if the provider refuses or skips it, that is a failure of the content, so a mode
-that blocks cuts the stream and observe releases the block. Every other
-evaluation sends at most the entry's window, which a provider ceiling caps whatever the
-setting asks for, so the time of a block does not grow with the response and a
-long preamble cannot push the blocks that follow past the per-block deadline. The
+window: that text is about to reach the client, so it is screened in full, in
+chunks of the window (at most 8 per block, four in flight) that share an
+overlap of 4,096 bytes where the window is 32 KiB or more, and an eighth of the
+window below that, so a long secret lies whole in one chunk. A block that would
+need more than 8 chunks is a failure of the content: a mode that blocks cuts the
+stream (`input_too_large` / `chunk_limit`) and observe releases the block. The
+chunks are read through the same rules as a buffered evaluation: a chunk that
+blocks wins, a failure that is the content's cuts, a throttle on a block of
+several chunks is the content's too, a mask from any chunk is applied, and an
+availability failure releases the block unless a mask or a finding can still be
+used. `trustguard` is not split: it bounds its own payload and is sent the block
+whole. Every other evaluation sends at most the entry's window, which a provider
+ceiling caps whatever the setting asks for, so the time of a block does not grow
+with the response and a long preamble cannot push the blocks that follow past
+the per-block deadline. The
 ceilings follow the providers' per-request limits and deadlines, and a larger
 `streaming.max_accumulated_bytes` is capped to them:
 
-- `google_model_armor`: 64 KiB, and never more. Model Armor skips its filters
-  above 65,536 tokens, which the plugin counts as a filter that did not run, so
-  a larger payload would release the block
-  uninspected. Google does not raise this limit, so a higher
-  setting is treated as 64 KiB.
+- `google_model_armor`: 56 KiB (57,344 bytes), and never more. Model Armor
+  skips its filters above 65,536 tokens, which the plugin counts as a filter
+  that did not run, so a larger payload would release the block uninspected. The
+  stream sends an 8 KiB correlation prompt with each block, and 57,344 bytes
+  plus that prompt is 65,536. Google does not raise this limit, so a higher
+  setting is treated as 56 KiB.
 - `bedrock_guardrail` (streaming is opt-in): 8 KiB, and never more. AWS bounds
   each `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
   characters, at a number of units per second that goes as low as 25 (for

@@ -229,7 +229,8 @@ func finalPassOptOut(settings map[string]any) (bool, error) {
 //
 // The fields carry no omitempty on purpose: once the block is present a zero is
 // an answer ("no cut", "no degradation"), and dropping it would make the absent
-// key ambiguous with a leg that never reported at all.
+// key ambiguous with a leg that never reported at all. There are two exceptions,
+// ChunkedBlocks and Findings, whose zero and absence say the same thing.
 type StreamData struct {
 	Enabled             bool   `json:"enabled"`
 	StreamID            string `json:"stream_id"`
@@ -242,14 +243,15 @@ type StreamData struct {
 	GuardLatencyMsMax   int64  `json:"guard_latency_ms_max"`
 	AddedLatencyMs      int64  `json:"added_latency_ms"`
 	// ChunkedBlocks counts the blocks larger than the entry's window that were
-	// screened in chunks of it; it is omitted when there were none.
+	// screened in chunks of it. It is the first exception to the rule above: no
+	// chunked block and an entry that never chunks are the same thing, so a zero
+	// is omitted.
 	ChunkedBlocks  int    `json:"chunked_blocks,omitempty"`
 	DegradedReason string `json:"degraded_reason"`
 	FallbackReason string `json:"fallback_reason"`
-	// Findings is the one exception to the rule above: an absent key and an
+	// Findings is the second exception to the rule above: an absent key and an
 	// empty list both say the stream reported nothing, so there is no zero to
-	// preserve, and omitting it keeps a stream with no findings emitting the
-	// event it emitted before the field existed.
+	// preserve.
 	//
 	// It holds fingerprints and never a finding's own fields, which are
 	// free-form and can carry flagged response text.
