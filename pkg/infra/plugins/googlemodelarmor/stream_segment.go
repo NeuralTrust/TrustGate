@@ -121,21 +121,28 @@ func (p *Plugin) InspectSegment(
 
 	res := inspect(result, cfg)
 	// Same rule as the buffered leg: a block_on filter that produced no
-	// verdict is not a clean one. It goes to the guard as an error, so
-	// it fails open, and a real match on another filter still
-	// wins because it is a verdict. A usable mask in a blocking mode is the
-	// exception: the de-identified text is already in hand, and releasing the
+	// verdict is not a clean one, and a real match on another filter still
+	// wins because it is a verdict. A filter that was skipped (or an invocation
+	// that came back PARTIAL) is the content's, so a mode that blocks cuts. A
+	// filter the template never enabled is the customer's configuration: it is
+	// released as a failed inspection, except for a usable mask in a blocking
+	// mode, where the de-identified text is already in hand and releasing the
 	// original would send the raw PII, so the mask is applied and the incomplete
 	// verdict rides along on it.
 	var incomplete error
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			failure := appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, f,
-				fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason))
-			if _, usable := maskedText(result); res.anonymize == nil || !usable || !appplugins.Blocks(in.Mode) {
-				return nil, failure
+			cause := fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason)
+			_, usable := maskedText(result)
+			if res.anonymize != nil && usable && appplugins.Blocks(in.Mode) &&
+				appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability {
+				incomplete = appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, reason, cause)
+			} else {
+				return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reason, nil, cause)
 			}
-			incomplete = failure
+		} else if result.InvocationResult == invocationResultPartial {
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailInvocationPartial, nil,
+				fmt.Errorf("stream block %d: invocationResult PARTIAL", seg.Seq))
 		}
 	}
 	switch {

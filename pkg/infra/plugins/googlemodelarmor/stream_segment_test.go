@@ -315,18 +315,15 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 }
 
 // RUN-1667 on the streaming leg: a block_on filter absent from the response
-// (a template that never enabled it) or present but not executed must reach
-// the executor as an error, which fails open and is recorded, instead of releasing
-// the block as clean.
-func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
+// (a template that never enabled it) or an invocation that failed outright must
+// reach the executor as an error, which fails open and is recorded, instead of
+// releasing the block as clean.
+func TestInspectSegmentFailsOpenWhenABlockOnFilterProducedNoVerdictForAvailability(t *testing.T) {
 	t.Parallel()
-	notExecuted := sanitizeOpen + noMatchSDP + `,` +
-		`"rai":{"raiFilterResult":{"executionState":"EXECUTION_SKIPPED","matchState":"NO_MATCH_FOUND"}}` + sanitizeClose
 	cases := []struct {
 		name, body, want string
 	}{
 		{"absent from template", sdpOnlyAllow, reasonFilterNotInTemplate},
-		{"not executed", notExecuted, reasonFilterNotExecuted},
 		{"invocation failure", invocationFailureResponse, "invocationResult FAILURE"},
 	}
 	for _, tc := range cases {
@@ -350,15 +347,16 @@ func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
 	}
 }
 
-// A mask in hand outranks an unevaluated block_on filter in a blocking mode, as
-// on the buffered leg: releasing the original text would send the raw PII the
-// mask exists to hide. The incomplete verdict travels on the transform.
-func TestInspectSegmentMasksWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
+// A mask in hand outranks a block_on filter the template never enabled in a
+// blocking mode, as on the buffered leg: releasing the original text would send
+// the raw PII the mask exists to hide, and the missing filter is the customer's
+// configuration, not the content's. The incomplete verdict travels on the
+// transform.
+func TestInspectSegmentMasksWhenABlockOnFilterIsAbsentFromTheTemplate(t *testing.T) {
 	t.Parallel()
-	skippedRAI := `"rai":{"raiFilterResult":{"executionState":"EXECUTION_SKIPPED","matchState":"NO_MATCH_FOUND"}}`
 	body := sanitizeOpen +
-		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"write to [EMAIL] soon"}}}},` +
-		skippedRAI + sanitizeClose
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"write to [EMAIL] soon"}}}}` +
+		sanitizeClose
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, body))
 
 	got, err := p.InspectSegment(context.Background(),
@@ -371,8 +369,8 @@ func TestInspectSegmentMasksWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
 		t.Fatalf("verdict = %+v, want the masked prefix as a transform", got)
 	}
 	var failure *appplugins.ExternalStreamFailure
-	if !errors.As(got.Incomplete, &failure) || failure.Reason != appplugins.FailureVerdictIncomplete || failure.Detail == "" {
-		t.Fatalf("Incomplete = %v, want a typed verdict_incomplete naming the filter", got.Incomplete)
+	if !errors.As(got.Incomplete, &failure) || failure.Reason != appplugins.FailureVerdictIncomplete || failure.Detail != reasonFilterNotInTemplate {
+		t.Fatalf("Incomplete = %v, want a typed verdict_incomplete/%s", got.Incomplete, reasonFilterNotInTemplate)
 	}
 
 	observed, err := p.InspectSegment(context.Background(),
