@@ -283,6 +283,7 @@ func (r *PluginRunner) PreResponseDiscovery(
 	reqCtx := &infracontext.RequestContext{
 		GatewayID:    rc.Consumer.GatewayID.String(),
 		ConsumerID:   rc.Consumer.ID.String(),
+		ConsumerName: rc.Consumer.Name,
 		ConsumerType: string(rc.Consumer.Type),
 		MCP:          true,
 		Body:         []byte(`{}`),
@@ -391,6 +392,7 @@ func (r *PluginRunner) buildRequestContext(
 	reqCtx := &infracontext.RequestContext{
 		GatewayID:      rc.Consumer.GatewayID.String(),
 		ConsumerID:     rc.Consumer.ID.String(),
+		ConsumerName:   rc.Consumer.Name,
 		ConsumerType:   string(rc.Consumer.Type),
 		SessionID:      "",
 		Provider:       "",

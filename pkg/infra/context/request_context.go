@@ -132,8 +132,11 @@ func (l *NativeMaskLog) Sources(stage policy.Stage) []NativeMaskSource {
 }
 
 type RequestContext struct {
-	GatewayID          string
-	ConsumerID         string
+	GatewayID  string
+	ConsumerID string
+	// ConsumerName is the consumer's name, for the places an id alone reads as
+	// nothing: a guard that shows the application a request came from.
+	ConsumerName       string
 	AuthID             string
 	OwnerID            string
 	ConsumerType       string
