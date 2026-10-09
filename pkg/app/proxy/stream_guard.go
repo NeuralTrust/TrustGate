@@ -130,7 +130,7 @@ const (
 	cutDrainDeadline = 30 * time.Second
 	// abortFinalDeadline bounds the final evaluation a client disconnect still
 	// owes the chain. Each entry also bounds its own call with
-	// streaming.guard_timeout; this is the ceiling over the whole chain, so the
+	// the guard timeout of its plugin; this is the ceiling over the whole chain, so the
 	// detached call can never outlive the stream by more than a fixed amount.
 	abortFinalDeadline = 15 * time.Second
 )
@@ -492,8 +492,8 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	return nil
 }
 
-// headFailure resolves streaming.on_error. The plugin hands a configurable
-// failure back as an error precisely so that it is resolved here: only the
+// headFailure resolves the stream's on_error. The plugin hands a failure that
+// is not its to absorb back as an error precisely so that it is resolved here: only the
 // guard knows that at the head nothing is committed, which is what makes
 // fail_closed a clean status code instead of a truncated body.
 func (g *streamGuard) headFailure(ctx context.Context, err error, partial *appplugins.SegmentOutcome) *appplugins.PluginError {
@@ -1181,7 +1181,7 @@ func tailWithin(s string, limit int) (string, bool) {
 	return tail, true
 }
 
-// blockFailure resolves streaming.on_error for a block the client is already
+// blockFailure resolves the stream's on_error for a block the client is already
 // reading. fail_closed can no longer be a clean status code, so it is the same
 // stop a block verdict is; fail_open releases and counts, because a guard that
 // is failing is not a reason to hold text indefinitely.

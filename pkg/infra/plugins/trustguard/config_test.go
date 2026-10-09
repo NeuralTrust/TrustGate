@@ -33,19 +33,16 @@ func TestParseConfig(t *testing.T) {
 		settings      map[string]any
 		wantErr       bool
 		wantDirection string
-		wantOnError   string
 	}{
 		{
 			name:          "valid minimal config defaults direction",
 			settings:      map[string]any{"collector_id": testCollectorID},
 			wantDirection: legRequestResponse,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
 			name:          "direction request accepted",
 			settings:      map[string]any{"direction": legRequest, "collector_id": testCollectorID},
 			wantDirection: legRequest,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
 			// The legacy key is no longer read at all. It used to be resolved
@@ -58,7 +55,6 @@ func TestParseConfig(t *testing.T) {
 				"collector_id": testCollectorID,
 			},
 			wantDirection: legRequestResponse,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
 			// Nothing reads the legacy key, so a policy that stores only it
@@ -67,25 +63,24 @@ func TestParseConfig(t *testing.T) {
 			name:          "legacy inspect key alone falls back to the default",
 			settings:      map[string]any{"inspect": legRequest, "collector_id": testCollectorID},
 			wantDirection: legRequestResponse,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
 			name:          "direction response accepted",
 			settings:      map[string]any{"direction": legResponse, "collector_id": testCollectorID},
 			wantDirection: legResponse,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
 			name:          "direction request_response accepted",
 			settings:      map[string]any{"direction": legRequestResponse, "collector_id": testCollectorID},
 			wantDirection: legRequestResponse,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:          "on_error fail_closed accepted",
-			settings:      map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed},
+			name: "every removed failure key is accepted whatever its value",
+			settings: map[string]any{
+				"collector_id": testCollectorID, "on_error": "panic", "on_timeout": "fail_closed",
+				"timeout": "1ms", "on_mask_failure": "block",
+			},
 			wantDirection: legRequestResponse,
-			wantOnError:   onErrorFailClosed,
 		},
 		{
 			name:     "invalid direction",
@@ -93,15 +88,9 @@ func TestParseConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:     "invalid on_error",
-			settings: map[string]any{"collector_id": testCollectorID, "on_error": "panic"},
-			wantErr:  true,
-		},
-		{
 			name:          "legacy base_url in settings ignored",
 			settings:      map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
 			wantDirection: legRequestResponse,
-			wantOnError:   onErrorFailOpen,
 		},
 		{
 			name:     "missing collector_id rejected",
@@ -123,7 +112,6 @@ func TestParseConfig(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantDirection, cfg.Direction)
-			assert.Equal(t, tt.wantOnError, cfg.OnError)
 		})
 	}
 }
@@ -190,7 +178,7 @@ func TestConfigCacheSeesEditsToAnySetting(t *testing.T) {
 }
 
 func TestStreamingDefaults(t *testing.T) {
-	cfg, err := parseConfig(map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed})
+	cfg, err := parseConfig(map[string]any{"collector_id": testCollectorID})
 	require.NoError(t, err)
 
 	assert.True(t, cfg.Streaming.enabled(),
@@ -200,14 +188,11 @@ func TestStreamingDefaults(t *testing.T) {
 	assert.Equal(t, defaultStreamingMaxHoldMS, cfg.Streaming.MaxHoldMS)
 	assert.Equal(t, defaultStreamingMaxAccumulatedBytes, cfg.Streaming.MaxAccumulatedBytes)
 	assert.Equal(t, defaultStreamingGuardTimeout, cfg.Streaming.guardTimeout())
-	assert.Equal(t, onErrorFailClosed, cfg.Streaming.OnError,
-		"streaming.on_error inherits the policy on_error when unset")
 }
 
 func TestStreamingExplicitValues(t *testing.T) {
 	cfg, err := parseConfig(map[string]any{
 		"collector_id": testCollectorID,
-		"on_error":     onErrorFailClosed,
 		"streaming": map[string]any{
 			"enabled":                 true,
 			"head_chars":              1024,
@@ -216,7 +201,7 @@ func TestStreamingExplicitValues(t *testing.T) {
 			"max_accumulated_bytes":   524288,
 			"final_pass":              false,
 			"guard_timeout":           "3s",
-			"on_error":                onErrorFailOpen,
+			"on_error":                "fail_closed",
 		},
 	})
 	require.NoError(t, err)
@@ -226,9 +211,8 @@ func TestStreamingExplicitValues(t *testing.T) {
 	assert.Equal(t, 4096, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, 1500, cfg.Streaming.MaxHoldMS)
 	assert.Equal(t, 524288, cfg.Streaming.MaxAccumulatedBytes)
-	assert.Equal(t, 3*time.Second, cfg.Streaming.guardTimeout())
-	assert.Equal(t, onErrorFailOpen, cfg.Streaming.OnError,
-		"an explicit streaming.on_error overrides the policy on_error")
+	assert.Equal(t, defaultStreamingGuardTimeout, cfg.Streaming.guardTimeout(),
+		"a stored streaming.guard_timeout is ignored")
 }
 
 func TestStreamingRanges(t *testing.T) {
@@ -257,14 +241,8 @@ func TestStreamingRanges(t *testing.T) {
 		{name: "max_accumulated_bytes below the floor", streaming: map[string]any{"max_accumulated_bytes": minStreamingMaxAccumulatedBytes - 1}, wantErr: true},
 		{name: "max_accumulated_bytes above 1 MiB", streaming: map[string]any{"max_accumulated_bytes": maxStreamingMaxAccumulatedBytes + 1}, wantErr: true},
 
-		{name: "guard_timeout at the floor", streaming: map[string]any{"guard_timeout": minStreamingGuardTimeout.String()}},
-		{name: "guard_timeout at the ceiling", streaming: map[string]any{"guard_timeout": maxStreamingGuardTimeout.String()}},
-		{name: "guard_timeout below the floor", streaming: map[string]any{"guard_timeout": "249ms"}, wantErr: true},
-		{name: "guard_timeout above the ceiling", streaming: map[string]any{"guard_timeout": "10s1ms"}, wantErr: true},
-		{name: "guard_timeout unparseable", streaming: map[string]any{"guard_timeout": "soon"}, wantErr: true},
-
-		{name: "streaming on_error fail_closed", streaming: map[string]any{"on_error": onErrorFailClosed}},
-		{name: "streaming on_error invalid", streaming: map[string]any{"on_error": "panic"}, wantErr: true},
+		{name: "stored guard_timeout is ignored whatever its value", streaming: map[string]any{"guard_timeout": "soon"}},
+		{name: "stored streaming on_error is ignored whatever its value", streaming: map[string]any{"on_error": "panic"}},
 
 		// pluginutil.Parse uses ErrorUnused: false, so a misspelled key is
 		// accepted and simply does nothing.
@@ -316,35 +294,6 @@ func TestSelectsStage(t *testing.T) {
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
 			assert.Equal(t, tt.wantPostResponse, s.selectsStage(policy.StagePostResponse))
 		})
-	}
-}
-
-// An unset on_timeout inherits on_error, so a policy that asked for fail_closed
-// does not quietly fail open on the one failure a caller can bring about, and
-// the default for both stays fail_open.
-func TestOnTimeoutInheritsOnError(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		settings map[string]any
-		want     string
-	}{
-		{map[string]any{}, onErrorFailOpen},
-		{map[string]any{"on_error": onErrorFailClosed}, onErrorFailClosed},
-		{map[string]any{"on_error": onErrorFailClosed, "on_timeout": onErrorFailOpen}, onErrorFailOpen},
-		{map[string]any{"on_timeout": onErrorFailClosed}, onErrorFailClosed},
-	} {
-		set := map[string]any{"collector_id": testCollectorID}
-		for k, v := range tc.settings {
-			set[k] = v
-		}
-		cfg, err := parseConfig(set)
-		if err != nil {
-			t.Fatalf("parseConfig(%v): %v", tc.settings, err)
-		}
-		if cfg.OnTimeout != tc.want {
-			t.Fatalf("on_timeout for %v = %q, want %q", tc.settings, cfg.OnTimeout, tc.want)
-		}
 	}
 }
 

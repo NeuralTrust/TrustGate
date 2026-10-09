@@ -152,8 +152,8 @@ func TestExecutePreRequestTransformMessagesKeepsSystemWhitespace(t *testing.T) {
 }
 
 // A messages[] echo that does not line up with what was sent is ambiguous, so
-// the mask cannot be applied. That is a failure on our side and follows
-// on_error: by default the request goes on unmasked and the span says why.
+// the mask cannot be applied. That is a failure on our side and fails open: the
+// request goes on unmasked and the span says why.
 func TestExecutePreRequestTransformMessagesMismatchFailsOpen(t *testing.T) {
 	t.Parallel()
 	cases := map[string][]any{

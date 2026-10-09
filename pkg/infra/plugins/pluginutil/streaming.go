@@ -24,8 +24,9 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
-// Stream error policies. They bound the per-block inspection call only, so a
-// plugin's buffered legs keep whatever the policy's own on_error says.
+// Stream error policies: what the block loop does with held text when a
+// per-block inspection call fails. Guardrails always fail open; a rewriter
+// whose failure would release text it was meant to mask asks for fail_closed.
 const (
 	StreamOnErrorFailOpen   = "fail_open"
 	StreamOnErrorFailClosed = "fail_closed"
@@ -48,9 +49,6 @@ const (
 	// Detection backends stop inspecting above 1 MiB and say nothing about it,
 	// so a payload larger than this is unguarded rather than merely expensive.
 	maxStreamMaxAccumulatedBytes = 1048576
-
-	minStreamGuardTimeout = 250 * time.Millisecond
-	maxStreamGuardTimeout = 10 * time.Second
 )
 
 // StreamingSettings is the streaming block a plugin adds to its own settings
@@ -58,6 +56,12 @@ const (
 // shared so that the same key means the same thing in every plugin that
 // implements appplugins.StreamInspector, and so that an operator who has
 // configured one has configured them all.
+//
+// There is deliberately no guard_timeout or on_error key: the per-block call runs
+// under StreamingDefaults.GuardTimeout and a failed call fails open, so a policy
+// cannot lengthen the wait on the stream or turn a provider outage into a cut. A
+// plugin whose failure must stop the stream adds its own on_error beside this
+// struct (regex_replace does).
 //
 // There is deliberately no max_inflight key: exactly one inspection call is in
 // flight by construction, which is what makes each payload a contiguous prefix
@@ -67,16 +71,11 @@ type StreamingSettings struct {
 	// distinguishable from an absent key. What an absent key means is the
 	// plugin's call (StreamingDefaults.EnabledByDefault); read the resolved
 	// value through IsEnabled, never by dereferencing this.
-	Enabled              *bool  `mapstructure:"enabled"`
-	HeadChars            int    `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int    `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int    `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int    `mapstructure:"max_accumulated_bytes"`
-	GuardTimeout         string `mapstructure:"guard_timeout"`
-	// OnError bounds the per-block call only. It inherits the policy's own
-	// on_error when unset, so the stream leg cannot be made stricter or laxer
-	// than the rest of the plugin by accident.
-	OnError string `mapstructure:"on_error"`
+	Enabled              *bool `mapstructure:"enabled"`
+	HeadChars            int   `mapstructure:"head_chars"`
+	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
+	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
+	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
 
 	// defaultOn is what an absent Enabled means for the plugin that parsed
 	// these settings. It is set by ApplyDefaults and never read from the
@@ -99,9 +98,8 @@ type StreamingDefaults struct {
 	GuardTimeout         time.Duration
 }
 
-// ApplyDefaults fills every absent key from d, and inherits onError for the
-// stream leg when the block does not override it.
-func (s *StreamingSettings) ApplyDefaults(d StreamingDefaults, onError string) {
+// ApplyDefaults fills every absent key from d.
+func (s *StreamingSettings) ApplyDefaults(d StreamingDefaults) {
 	s.defaultOn = d.EnabledByDefault
 	if s.HeadChars == 0 {
 		s.HeadChars = d.HeadChars
@@ -114,13 +112,6 @@ func (s *StreamingSettings) ApplyDefaults(d StreamingDefaults, onError string) {
 	}
 	if s.MaxAccumulatedBytes == 0 {
 		s.MaxAccumulatedBytes = d.MaxAccumulatedBytes
-	}
-	s.GuardTimeout = strings.TrimSpace(s.GuardTimeout)
-	if s.GuardTimeout == "" {
-		s.GuardTimeout = d.GuardTimeout.String()
-	}
-	if s.OnError == "" {
-		s.OnError = onError
 	}
 }
 
@@ -154,21 +145,6 @@ func (s StreamingSettings) Validate(plugin string) error {
 			"%s: streaming.max_accumulated_bytes must be between %d and %d, got %d",
 			plugin, minStreamMaxAccumulatedBytes, maxStreamMaxAccumulatedBytes, s.MaxAccumulatedBytes,
 		)
-	}
-	d, err := time.ParseDuration(s.GuardTimeout)
-	if err != nil {
-		return fmt.Errorf("%s: streaming.guard_timeout must be a duration such as 2s: %w", plugin, err)
-	}
-	if d < minStreamGuardTimeout || d > maxStreamGuardTimeout {
-		return fmt.Errorf(
-			"%s: streaming.guard_timeout must be between %s and %s, got %s",
-			plugin, minStreamGuardTimeout, maxStreamGuardTimeout, d,
-		)
-	}
-	switch s.OnError {
-	case StreamOnErrorFailOpen, StreamOnErrorFailClosed:
-	default:
-		return fmt.Errorf("%s: streaming.on_error must be one of fail_open, fail_closed", plugin)
 	}
 	return nil
 }
@@ -224,22 +200,6 @@ func finalPassOptOut(settings map[string]any) (bool, error) {
 		return false, err
 	}
 	return cfg.Streaming.FinalPass != nil && !*cfg.Streaming.FinalPass, nil
-}
-
-// Timeout is the parsed guard_timeout, falling back to d when the value cannot
-// be parsed. Validate rejects such a value, so the fallback only covers a
-// caller that reads the settings without validating them.
-func (s StreamingSettings) Timeout(d time.Duration) time.Duration {
-	parsed, err := time.ParseDuration(s.GuardTimeout)
-	if err != nil {
-		return d
-	}
-	return parsed
-}
-
-// FailClosed reports whether a failed inspection call stops the stream.
-func (s StreamingSettings) FailClosed() bool {
-	return s.OnError == StreamOnErrorFailClosed
 }
 
 // StreamData is the per-stream aggregate one streamed response leg publishes,
@@ -368,12 +328,12 @@ func StreamFingerprints(findings []appplugins.StreamFinding) []string {
 
 // Options is what StreamSettings hands back to the block loop. The knobs
 // travel with the opt-in rather than being re-read by a caller that cannot
-// parse the plugin's schema, so an operator who asked for fail_closed does not
-// silently get fail_open.
+// parse the plugin's schema. A failed inspection call fails open; a plugin that
+// needs otherwise overrides OnError on the result.
 func (s StreamingSettings) Options() appplugins.StreamOptions {
 	return appplugins.StreamOptions{
 		HeadChars:            s.HeadChars,
-		OnError:              s.OnError,
+		OnError:              StreamOnErrorFailOpen,
 		MinCharsBetweenEvals: s.MinCharsBetweenEvals,
 		MaxHoldMS:            s.MaxHoldMS,
 		MaxAccumulatedBytes:  s.MaxAccumulatedBytes,
@@ -395,19 +355,6 @@ func (s StreamingSettings) Options() appplugins.StreamOptions {
 // blocks that failed.
 func StreamFailedOpen(r appplugins.StreamReport) bool {
 	return r.CutAtEval == 0 && r.FailedEvals > 0
-}
-
-// StreamFailedClosed reports whether the stream was cut because THIS entry's
-// own call failed and the guard resolved that failure as fail_closed. The
-// executor narrows CutOnFailure per entry for a claimed cut, but an UNCLAIMED
-// one (the guard's tool-inspection failure names no entry) leaves it on every
-// blocking entry, so it also requires that this entry's own call failed
-// (FailedEvals, counted by the executor when the error is handed back). The
-// closing decision is then failed_closed, not blocked, because the guardrail
-// never gave a verdict; an entry whose calls all returned keeps reading blocked.
-// It outranks every other outcome, as a cut outranks the rest.
-func StreamFailedClosed(r appplugins.StreamReport) bool {
-	return r.CutOnFailure && r.CutAtEval > 0 && r.FailedEvals > 0
 }
 
 // StreamFailure is the reason and detail of the entry's first failed block, for

@@ -729,7 +729,7 @@ func newGuardrailStylePlugin(name string) *fakePlugin {
 				Reason: FailureTransport,
 				Err:    context.DeadlineExceeded,
 			})
-			return outcome.Result, outcome.Err
+			return outcome.Result, nil
 		},
 	}
 }

@@ -99,7 +99,7 @@ func (p *Plugin) InspectSegment(
 	// The deadline is enforced here because the caller is holding a client's
 	// bytes for the length of this call, and the knob is in this plugin's
 	// schema.
-	callCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.Timeout(streamingDefaults.GuardTimeout))
+	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
 	result, err := cl.SanitizeModelResponse(
@@ -108,8 +108,8 @@ func (p *Plugin) InspectSegment(
 	)
 	if err != nil {
 		// Resolved by the guard, not here: only it knows whether the status is
-		// still uncommitted, which is what makes streaming.on_error a clean 403
-		// at the head and a terminator after it.
+		// still uncommitted, which decides whether the held text is
+		// released; a guardrail that fails is always released.
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
 			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
 	}
@@ -122,7 +122,7 @@ func (p *Plugin) InspectSegment(
 	res := inspect(result, cfg)
 	// Same rule as the buffered leg: a block_on filter that produced no
 	// verdict is not a clean one. It goes to the guard as an error, so
-	// streaming.on_error decides, and a real match on another filter still
+	// it fails open, and a real match on another filter still
 	// wins because it is a verdict.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
@@ -200,10 +200,6 @@ func (p *Plugin) recordStreamOutcome(
 		Streaming: stream,
 	}
 	switch {
-	// A cut that resolved this entry's own failed call as fail_closed is a
-	// failure, not a block: the guardrail gave no verdict.
-	case pluginutil.StreamFailedClosed(seg.Report):
-		data.Decision = appplugins.DecisionFailedClosed
 	case seg.Report.CutAtEval > 0:
 		data.Decision = decisionBlocked
 	case seg.Report.MaskedEvals > 0:

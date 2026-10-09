@@ -223,13 +223,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			if !cancelled {
 				spans.noteFailure(spanKey(seg, entry), err)
 			}
-			// Observe never blocks, and streaming.on_error is the stream's
-			// answer for entries that can: an observe entry that could not
+			// Observe never blocks, and the stream's on_error is the answer
+			// for entries that can: an observe entry that could not
 			// inspect a segment records that it failed open and lets the
 			// rest of the chain carry on, as its buffered leg does.
 			//
-			// An enforcing entry whose own streaming.on_error resolved to
-			// fail_open is handled the same way. The stream carries ONE on_error
+			// An enforcing entry whose own stream options say fail_open
+			// (every guardrail) is handled the same way. The stream carries ONE on_error
 			// for the whole chain, so returning its error to the guard would
 			// apply another policy's fail_closed to it (and blame it for the
 			// cut), and would end the walk, blinding every entry behind it on
@@ -301,8 +301,8 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	return outcome, nil
 }
 
-// entryFailsOpen reports whether the entry's own settings resolved
-// streaming.on_error to fail_open. An empty or unparseable answer is not an
+// entryFailsOpen reports whether the entry's own stream options say
+// fail_open. An empty or unparseable answer is not an
 // opt-in to swallowing: the error then goes to the guard, which resolves it with
 // the stream's on_error as it always did.
 func entryFailsOpen(inspector StreamInspector, entry chainEntry) bool {
@@ -327,7 +327,7 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 //
 // The block's own text is never cut: it is about to be released, and text this
 // entry never saw would reach the client uninspected. A block larger than the
-// window is sent whole, so the provider refuses it and on_error decides.
+// window is sent whole, so the provider refuses it and the call fails open.
 func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
 	if window <= 0 {
 		return seg, ""

@@ -17,7 +17,6 @@ package azurecontentsafety
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -463,29 +462,45 @@ func TestValidateSettingsWriteAcceptsMatchingKeys(t *testing.T) {
 	}
 }
 
-func TestExecuteAzureErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
+func withRemovedKeys(set map[string]any) map[string]any {
+	set["on_error"] = "fail_closed"
+	set["on_timeout"] = "fail_closed"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+	set["streaming"] = map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}
+	return set
+}
+
+// on_error was removed: a policy stored with it, or with any of the other removed
+// failure keys, keeps loading and fails open on a transport error.
+func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
+
+	p := New(adapter.NewRegistry(), nil)
+	if err := p.ValidateConfig(withRemovedKeys(settings("https://example.test", map[string]int{CategoryHate: 2}))); err != nil {
+		t.Fatalf("a stored policy with removed keys must keep loading, got %v", err)
+	}
+	set := settings("https://example.test", map[string]int{CategoryHate: 2})
+	set["on_error"] = "retry"
+	if err := p.ValidateConfig(set); err != nil {
+		t.Fatalf("a stored invalid on_error must not reject a write, got %v", err)
+	}
+
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	addr := srv.URL
 	srv.Close()
-	settings := settings(addr, map[string]int{CategoryHate: 2})
-	settings["on_error"] = "fail_closed"
-
-	p := New(adapter.NewRegistry(), nil)
-	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, requestContext(openAIRequestBody())))
-
-	var pluginErr *appplugins.PluginError
-	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
-		t.Fatalf("err = %v, want a 502 refusal", err)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, withRemovedKeys(settings(addr, map[string]int{CategoryHate: 2})), requestContext(openAIRequestBody()))
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a stored on_error: fail_closed must not refuse the request, got %v", err)
 	}
-}
-
-func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
-	t.Parallel()
-	settings := settings("https://example.test", map[string]int{CategoryHate: 2})
-	settings["on_error"] = "retry"
-
-	if _, err := parseConfig(settings); err == nil {
-		t.Fatal("expected an error for on_error: retry")
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_open", extras, ok)
 	}
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -71,10 +70,10 @@ func (p *Plugin) inspectSegment(
 		return segmentAllow(), nil
 	}
 	if p.baseURL == "" {
-		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonBaseURLMissing, errors.New("trustguard: base url not configured"))
+		return p.segmentGuardFailure(ctx, in, seg, failureReasonBaseURLMissing, errors.New("trustguard: base url not configured"))
 	}
 	if !p.tokens.configured() {
-		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
+		return p.segmentGuardFailure(ctx, in, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
 	}
 	traceID := gatewayTraceID(ctx)
 	// Counted here, after every check that can skip the call, so the position is
@@ -104,7 +103,7 @@ func (p *Plugin) inspectSegment(
 	// The deadline covers the token leg as well as the evaluate call, which is
 	// why the call goes through guardWith and tokenWithin rather than guard: a
 	// block that has to wait for a cold token still has to answer inside
-	// streaming.guard_timeout, because the caller is holding bytes for it.
+	// the stream guard timeout, because the caller is holding bytes for it.
 	blockCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.guardTimeout())
 	defer cancel()
 	resp, err := p.guardWith(
@@ -122,7 +121,7 @@ func (p *Plugin) inspectSegment(
 	p.streamRecovered(ctx, in, seg)
 	verdict, err := segmentVerdict(seg, resp)
 	if err != nil {
-		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonTransformFailed, err)
+		return p.segmentGuardFailure(ctx, in, seg, failureReasonTransformFailed, err)
 	}
 	fingerprints, unidentified := streamFingerprints(in.Mode, resp.Findings)
 	verdict.Fingerprints = fingerprints
@@ -332,36 +331,28 @@ func (p *Plugin) segmentFailure(
 	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
 		reason = failureReasonTimeout
 	}
-	return p.segmentGuardFailure(ctx, in, cfg, seg, reason, err)
+	return p.segmentGuardFailure(ctx, in, seg, reason, err)
 }
 
-// segmentGuardFailure is guardFailure for one streamed block. Under the
-// default streaming.on_error (fail_open) it allows the block and remembers why,
-// so the closing segment publishes failed_open and the reason on the stream's
-// span; the rest of the chain keeps inspecting the block and the stream guard
-// never retires on our account. Under fail_closed the failure goes back as an
-// error for the caller to cut on.
+// segmentGuardFailure is guardFailure for one streamed block. It allows the
+// block and remembers why, so the closing segment publishes failed_open and the
+// reason on the stream's span; the rest of the chain keeps inspecting the block
+// and the stream guard never retires on our account.
 func (p *Plugin) segmentGuardFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
-	cfg Settings,
 	seg appplugins.StreamSegment,
 	reason string,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
 	recordEvaluateFailure(ctx, reason)
-	attrs := []any{
+	p.warn(ctx, "trustguard could not inspect stream segment, failing open",
 		slog.String("plugin", PluginName),
 		slog.String("direction", directionOutput),
 		slog.Int("seq", seg.Seq),
 		slog.String("reason", reason),
 		slog.Any("error", err),
-	}
-	if cfg.Streaming.OnError == onErrorFailClosed {
-		p.error(ctx, "trustguard could not inspect stream segment, failing closed", attrs...)
-		return nil, fmt.Errorf("trustguard: inspecting stream segment %d: %w", seg.Seq, err)
-	}
-	p.warn(ctx, "trustguard could not inspect stream segment, failing open", attrs...)
+	)
 	p.streamFailed(ctx, in, seg, reason)
 	return segmentAllow(), nil
 }
@@ -378,7 +369,7 @@ const (
 	// streamRetireAfter failed blocks in a row stop this policy calling the
 	// guard for the rest of the stream, as the stream guard does for failures
 	// it sees. Failing open hides them from it, and without this a guard that
-	// hangs would hold every block of every stream for guard_timeout.
+	// hangs would hold every block of every stream for the guard timeout.
 	streamRetireAfter = 3
 	// streamFailureTTL bounds an entry whose closing segment never came.
 	streamFailureTTL = 10 * time.Minute

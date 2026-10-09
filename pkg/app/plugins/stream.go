@@ -181,8 +181,8 @@ type SegmentVerdict struct {
 // StreamOptions is the streaming configuration of the entry that opted in.
 // HeadChars and OnError live in the plugin's own settings schema, so they
 // travel with the opt-in rather than being re-read by a caller that cannot
-// parse them: an operator who sets streaming.on_error to fail_closed must not
-// silently get fail_open. The block-loop knobs travel the same way and for the
+// parse them: a rewriter that asks for fail_closed must not silently get
+// fail_open. The block-loop knobs travel the same way and for the
 // same reason: MinCharsBetweenEvals floors how often a block closes,
 // MaxHoldMS ceilings how long one may be held, and MaxAccumulatedBytes bounds
 // what a single call carries before the payload degrades to a tail window.
@@ -218,7 +218,7 @@ type StreamInspector interface {
 // stream-wide options. One stream carries one head gate, one cadence and one
 // failure direction, so whichever entry owns them decides how every other
 // participant's stream behaves. A local rewriter that owned them would flip a
-// third-party guardrail's chosen on_error and cadence just by sorting first.
+// third-party guardrail's on_error and cadence just by sorting first.
 //
 // An inspector that does not implement it owns its options.
 type StreamOptionsOwner interface {
@@ -411,8 +411,8 @@ func (s *streamSpans) noteFailure(key string, err error) {
 
 // closingFailure gives an entry whose closing segment itself failed the
 // decision its plugin could not write, so the span does not end with none.
-// failsOpen is the entry's own answer (observe, or streaming.on_error
-// fail_open): it records failed_open. Otherwise the stream's on_error decided
+// failsOpen is the entry's own answer (observe, or a stream
+// on_error of fail_open): it records failed_open. Otherwise the stream's on_error decided
 // for it, and the guard's answer is in the report it was handed: a cut it
 // resolved on this entry's failed call is failed_closed, anything else is a
 // release, so failed_open. The guard's on_error is not visible from here, so a

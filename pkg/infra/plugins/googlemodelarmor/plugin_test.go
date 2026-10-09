@@ -758,26 +758,43 @@ func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
 	}
 }
 
-func TestExecuteClientErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
-	t.Parallel()
-	p := pluginWithClientError(errors.New("boom"))
-	settings := modelArmorSettings()
-	settings["on_error"] = "fail_closed"
-
-	res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil))
-
-	var pluginErr *appplugins.PluginError
-	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
-		t.Fatalf("res = %+v, err = %v, want a 502 refusal", res, err)
-	}
+func withRemovedKeys(set map[string]any) map[string]any {
+	set["on_error"] = "fail_closed"
+	set["on_timeout"] = "fail_closed"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+	set["streaming"] = map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}
+	return set
 }
 
-func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
+// on_error, streaming.on_error and streaming.guard_timeout were removed: a policy
+// stored with them keeps loading, fails open on a client error, and runs its
+// stream leg fail open under the default guard timeout.
+func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
-	settings := modelArmorSettings()
-	settings["on_error"] = "retry"
+	p := pluginWithClientError(errors.New("boom"))
 
-	if _, err := parseConfig(settings); err == nil {
-		t.Fatal("expected an error for on_error: retry")
+	if err := p.ValidateConfig(withRemovedKeys(modelArmorSettings())); err != nil {
+		t.Fatalf("a stored policy with removed keys must keep loading, got %v", err)
+	}
+	invalid := modelArmorSettings()
+	invalid["on_error"] = "retry"
+	if err := p.ValidateConfig(invalid); err != nil {
+		t.Fatalf("a stored invalid on_error must not reject a write, got %v", err)
+	}
+
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, withRemovedKeys(modelArmorSettings()), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" {
+		t.Fatalf("extras = %+v, ok=%v, want failed_open", extras, ok)
+	}
+
+	on, opts := p.StreamSettings(withRemovedKeys(modelArmorSettings()))
+	if !on || opts.OnError != "fail_open" {
+		t.Fatalf("stream opt-in = %v, on_error = %q, want fail_open", on, opts.OnError)
 	}
 }

@@ -97,7 +97,8 @@ func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
 // left in place with an empty input; nothing of the call is released before its
 // stop frame. A block verdict, or a mask that cannot be written back and checked,
 // stops the stream. A call whose inspection fails follows the stream's on_error:
-// fail_closed stops the stream, anything else releases the call as it came.
+// fail_closed (a rewriter's) stops the stream, anything else releases the call
+// as it came.
 //
 // Every other family, and any call the hold could not cover, is not understood
 // well enough to edit, so a mask on a window that holds one fails open as any mask

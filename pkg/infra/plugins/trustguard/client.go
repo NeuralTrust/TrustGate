@@ -111,17 +111,16 @@ func withBaseTransport(base http.RoundTripper) clientOption {
 }
 
 // newClient builds the evaluate client. Its Timeout is only a backstop:
-// every call brings its own deadline — the policy's timeout or
-// streaming.guard_timeout — and a shorter client timeout would cap it without
-// saying so. The backstop never sits below timeout, the deadline a policy
-// without its own inherits.
+// every call brings its own deadline, the deployment-wide timeout or the stream
+// guard timeout, and a shorter client timeout would cap it without saying so.
+// The backstop never sits below either.
 func newClient(timeout time.Duration, opts ...clientOption) *client {
 	cfg := clientConfig{baseTransport: http.DefaultTransport}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return &client{http: &http.Client{
-		Timeout:   max(maxPolicyTimeout, timeout),
+		Timeout:   max(defaultStreamingGuardTimeout, timeout),
 		Transport: o11y.InternalTransportOver(cfg.baseTransport, peerService, evaluateSpanName),
 	}}
 }

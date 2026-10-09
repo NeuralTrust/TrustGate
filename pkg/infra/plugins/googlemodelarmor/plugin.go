@@ -479,16 +479,15 @@ func (p *Plugin) externalFailure(
 	fi failureInfo,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:        ctx,
-		Plugin:     PluginName,
-		Stage:      in.Stage,
-		Mode:       in.Mode,
-		FailClosed: cfg.OnError == pluginutil.OnErrorFailClosed,
-		Reason:     fi.reason,
-		Detail:     fi.filter,
-		Err:        fi.err,
-		Logger:     p.logger,
-		Event:      in.Event,
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: fi.reason,
+		Detail: fi.filter,
+		Err:    fi.err,
+		Logger: p.logger,
+		Event:  in.Event,
 	})
 	data := newData(in, cfg, latencyMS)
 	data.Decision = outcome.Decision
@@ -497,7 +496,7 @@ func (p *Plugin) externalFailure(
 	data.Filter = fi.filter
 	data.FilterVersion = fi.filterVersion
 	setExtras(in.Event, data)
-	return outcome.Result, outcome.Err
+	return outcome.Result, nil
 }
 
 func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {

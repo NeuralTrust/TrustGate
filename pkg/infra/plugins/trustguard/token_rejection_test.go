@@ -34,8 +34,9 @@ import (
 
 // The token endpoint refusing the gateway's credentials is the same failure as
 // /v1/evaluate refusing its token, and the likelier one: a bad secret shows up
-// at the token leg first. Like every failure of the guard it follows on_error:
-// by default the request carries on and the span says why.
+// at the token leg first. Like every failure of the guard it fails open: the
+// request carries on and the span says why, whatever on_error a stored policy
+// still carries.
 
 func TestTokenFetchSortsRejectionsFromTransientFailures(t *testing.T) {
 	t.Parallel()
@@ -100,7 +101,7 @@ func TestOAuthErrorCodeKeepsOnlyWellFormedCodes(t *testing.T) {
 	}
 }
 
-func TestExecuteTokenRejectionFollowsOnError(t *testing.T) {
+func TestExecuteTokenRejectionFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden} {
@@ -116,35 +117,23 @@ func TestExecuteTokenRejectionFollowsOnError(t *testing.T) {
 			assertFailedOpen(t, res, span, failureReasonUnauthorized)
 			assert.Zero(t, f.count(), "evaluate is never reached without a token")
 		})
-		t.Run(http.StatusText(status)+"/"+onErrorFailClosed, func(t *testing.T) {
+		t.Run(http.StatusText(status)+"/stored fail_closed", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{tokenStatuses: []int{status}, response: GuardResponse{Status: statusAllow}}
 			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 
 			set := settings("")
-			set["on_error"] = onErrorFailClosed
+			set["on_error"] = "fail_closed"
 			event, span := newEvent()
 			in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
 			res, err := p.Execute(context.Background(), in)
-
-			assert.Nil(t, res)
-			pe, ok := appplugins.AsPluginError(err)
-			require.True(t, ok, "a token rejection must fail closed when opted in, got %v", err)
-			assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
-			assert.Equal(t, typeUnauthorized, pe.Type)
-			var body map[string]any
-			require.NoError(t, json.Unmarshal(pe.Body, &body))
-			assert.EqualValues(t, status, body["upstream_status"], "the caller sees which status the token leg answered")
-
-			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-			require.True(t, ok)
-			assert.True(t, extras.FailedClosed)
-			assert.Equal(t, failureReasonUnauthorized, extras.FailureReason)
+			require.NoError(t, err)
+			assertFailedOpen(t, res, span, failureReasonUnauthorized)
 		})
 	}
 }
 
-func TestExecuteTokenTransientFailureFollowsOnError(t *testing.T) {
+func TestExecuteTokenTransientFailureFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable} {
@@ -159,29 +148,28 @@ func TestExecuteTokenTransientFailureFollowsOnError(t *testing.T) {
 			require.NoError(t, err)
 			assertFailedOpen(t, res, span, failureReasonTransport)
 		})
-		t.Run(http.StatusText(status)+"/"+onErrorFailClosed, func(t *testing.T) {
+		t.Run(http.StatusText(status)+"/stored fail_closed", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{tokenStatuses: []int{status}}
 			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 
 			set := settings("")
-			set["on_error"] = onErrorFailClosed
-			in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil)
-			_, err := p.Execute(context.Background(), in)
-			pe, ok := appplugins.AsPluginError(err)
-			require.True(t, ok)
-			assert.Equal(t, typeGuardError, pe.Type, "a transient failure is a backend error, not an auth rejection")
+			set["on_error"] = "fail_closed"
+			event, span := newEvent()
+			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
+			require.NoError(t, err)
+			assertFailedOpen(t, res, span, failureReasonTransport)
 		})
 	}
 }
 
-// TestExecuteTokenRejectionOnRefreshFollowsOnError covers guard's second token
+// TestExecuteTokenRejectionOnRefreshFailsOpen covers guard's second token
 // fetch: evaluate refuses the cached token, guard invalidates it and asks for
 // another, and the token endpoint now refuses the credentials outright.
-func TestExecuteTokenRejectionOnRefreshFollowsOnError(t *testing.T) {
+func TestExecuteTokenRejectionOnRefreshFailsOpen(t *testing.T) {
 	t.Parallel()
 
-	for _, onError := range []string{onErrorFailOpen, onErrorFailClosed} {
+	for _, onError := range []string{"fail_open", "fail_closed"} {
 		t.Run(onError, func(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{status: http.StatusUnauthorized, tokenStatuses: []int{http.StatusOK, http.StatusUnauthorized}}
@@ -191,14 +179,8 @@ func TestExecuteTokenRejectionOnRefreshFollowsOnError(t *testing.T) {
 			set["on_error"] = onError
 			event, span := newEvent()
 			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
-			if onError == onErrorFailOpen {
-				require.NoError(t, err)
-				assertFailedOpen(t, res, span, failureReasonUnauthorized)
-			} else {
-				pe, ok := appplugins.AsPluginError(err)
-				require.True(t, ok, "a refused refetch must fail closed when opted in, got %v", err)
-				assert.Equal(t, typeUnauthorized, pe.Type)
-			}
+			require.NoError(t, err)
+			assertFailedOpen(t, res, span, failureReasonUnauthorized)
 			assert.Equal(t, 1, f.count(), "one evaluate before the refetch, none after it")
 		})
 	}
@@ -225,10 +207,10 @@ func TestExecuteTokenRejectionIsNotCached(t *testing.T) {
 	assert.Equal(t, 1, f.count())
 }
 
-// TestExecuteNotConfiguredFollowsOnError: a pod with no TrustGuard URL or no
+// TestExecuteNotConfiguredFailsOpen: a pod with no TrustGuard URL or no
 // credentials cannot call the guard. That is a failure of the guard, not a
-// finding, so it follows on_error like any other.
-func TestExecuteNotConfiguredFollowsOnError(t *testing.T) {
+// finding, so it fails open like any other.
+func TestExecuteNotConfiguredFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]struct {
@@ -254,28 +236,17 @@ func TestExecuteNotConfiguredFollowsOnError(t *testing.T) {
 			assertFailedOpen(t, res, span, tc.reason)
 			assert.Zero(t, f.count())
 		})
-		t.Run(name+"/"+onErrorFailClosed, func(t *testing.T) {
+		t.Run(name+"/stored fail_closed", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 			p := tc.build(t, newServer(t, f).URL)
 
 			set := settings("")
-			set["on_error"] = onErrorFailClosed
+			set["on_error"] = "fail_closed"
 			event, span := newEvent()
 			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
-			assert.Nil(t, res)
-			pe, ok := appplugins.AsPluginError(err)
-			require.True(t, ok, "fail_closed must refuse, got %v", err)
-			assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
-			assert.Equal(t, typeUnauthorized, pe.Type)
-			var body map[string]any
-			require.NoError(t, json.Unmarshal(pe.Body, &body))
-			assert.NotContains(t, body, "upstream_status", "TrustGuard was never asked, so there is no upstream status to report")
-
-			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-			require.True(t, ok)
-			assert.True(t, extras.FailedClosed)
-			assert.Equal(t, tc.reason, extras.FailureReason)
+			require.NoError(t, err)
+			assertFailedOpen(t, res, span, tc.reason)
 		})
 	}
 }
@@ -290,22 +261,21 @@ func TestExecuteNotConfiguredLeavesUninspectedTrafficAlone(t *testing.T) {
 	req := requestContext()
 	req.GatewayID = ""
 	set := settings("")
-	set["on_error"] = onErrorFailClosed
 	event, span := newEvent()
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, req, nil, event))
 	require.NoError(t, err)
 	assertFailedOpen(t, res, span, failureReasonGatewayIDMissing)
 }
 
-// TestExecuteUnparseableSettingsFailOpen: settings that do not parse carry no
-// on_error to honour, and must not cut the request either.
+// TestExecuteUnparseableSettingsFailOpen: settings that do not parse must not cut
+// the request.
 func TestExecuteUnparseableSettingsFailOpen(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
 	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 	set := settings("")
-	set["on_error"] = "sometimes"
+	set["direction"] = "sideways"
 	event, span := newEvent()
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
 	require.NoError(t, err)
@@ -313,10 +283,10 @@ func TestExecuteUnparseableSettingsFailOpen(t *testing.T) {
 	assert.Zero(t, f.count())
 }
 
-// On the streaming path a failure of the guard follows streaming.on_error: by
-// default the block is allowed, so the rest of the chain still inspects it, and
-// under fail_closed it goes back as an error for the caller to cut on.
-func TestInspectSegmentFailuresFollowStreamingOnError(t *testing.T) {
+// On the streaming path a failure of the guard allows the block, so the rest of
+// the chain still inspects it, whatever streaming.on_error a stored policy
+// still carries.
+func TestInspectSegmentFailuresFailOpen(t *testing.T) {
 	t.Parallel()
 
 	type build func(t *testing.T, g *segmentGuard) *Plugin
@@ -340,7 +310,7 @@ func TestInspectSegmentFailuresFollowStreamingOnError(t *testing.T) {
 		"token 500": withTokenStatus(http.StatusInternalServerError),
 	}
 	for name, newPlugin := range cases {
-		for _, onError := range []string{onErrorFailOpen, onErrorFailClosed} {
+		for _, onError := range []string{"fail_open", "fail_closed"} {
 			t.Run(name+"/"+onError, func(t *testing.T) {
 				t.Parallel()
 				g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
@@ -349,11 +319,6 @@ func TestInspectSegmentFailuresFollowStreamingOnError(t *testing.T) {
 				verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 					appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
 				assert.Empty(t, g.calls(), "evaluate is never reached")
-				if onError == onErrorFailClosed {
-					require.Error(t, err)
-					assert.Nil(t, verdict)
-					return
-				}
 				require.NoError(t, err)
 				require.NotNil(t, verdict)
 				assert.False(t, verdict.Block)
@@ -463,7 +428,7 @@ func TestInspectSegmentUnparseableSettingsAllow(t *testing.T) {
 	g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
 	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
 	set := streamingSettings(nil)
-	set["on_error"] = "sometimes"
+	set["direction"] = "sideways"
 	for _, closing := range []bool{false, true} {
 		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world", Closing: closing})
