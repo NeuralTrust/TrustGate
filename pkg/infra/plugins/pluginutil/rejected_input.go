@@ -28,6 +28,21 @@ func StatusRejectsInput(status int) bool {
 	return status == http.StatusBadRequest || status == http.StatusRequestEntityTooLarge
 }
 
+// FailureOfRejection is FailureOfStatus for a provider whose error body says
+// whether a 400 is about the content or about the call's own configuration (the
+// model, the API version, the resource the policy names). A configuration
+// rejection is config_invalid, which is availability: no request can change it,
+// so refusing traffic for it would turn one bad setting into a 403 on every
+// call. A 400 whose body is not recognised as configuration stays input, since
+// letting an unknown shape through would hand a client a way round the
+// guardrail. A 413 is always the content's.
+func FailureOfRejection(status int, configShaped bool) (appplugins.FailureReason, string) {
+	if status == http.StatusBadRequest && configShaped {
+		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
+	}
+	return FailureOfStatus(status)
+}
+
 // FailureOfStatus maps a non-2xx provider status to the shared failure
 // vocabulary: input when the provider refused the content, transport otherwise.
 func FailureOfStatus(status int) (appplugins.FailureReason, string) {
