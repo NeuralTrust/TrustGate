@@ -21,6 +21,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
+// TestConnection probes the resource's deployments listing, the same request
+// the model picker depends on. It does not exercise the registry's api_version:
+// inference is the only route that reads it.
 func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {
 	if config.Credentials.Azure == nil || config.Credentials.Azure.Endpoint == "" {
 		return providers.ProbeResult{
@@ -30,11 +33,23 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 		}
 	}
 
-	deploymentsURL, err := deploymentsListURL(config)
+	deploymentsURL, _, err := deploymentsListURL(config)
 	if err != nil {
 		return providers.ProbeResult{OK: false, Stage: providers.StageConnectivity, Message: err.Error()}
 	}
-	auth, err := c.resolveAuth(ctx, config)
+	result := c.probe(ctx, config, providers.AzureAPIDeployments, deploymentsURL)
+	if result.StatusCode != http.StatusNotFound {
+		return result
+	}
+	// A gateway in front of the resource (API Management, a private proxy) may
+	// expose only the v1 surface. The listing still needs the deployments
+	// route, but reachability and credentials can be proven without it.
+	modelsURL := azureConfiguredEndpoint(config.Credentials.Azure.Endpoint) + "/openai/v1/models"
+	return c.probe(ctx, config, providers.AzureAPIOpenAIV1, modelsURL)
+}
+
+func (c *client) probe(ctx context.Context, config *providers.Config, api, target string) providers.ProbeResult {
+	auth, err := c.resolveAuthForAPI(ctx, config, api)
 	if err != nil {
 		return providers.ProbeResult{
 			OK:      false,
@@ -42,8 +57,7 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 			Message: err.Error(),
 		}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, deploymentsURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return providers.ProbeResult{OK: false, Stage: providers.StageConnectivity, Message: err.Error()}
 	}
@@ -56,11 +70,13 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 // the model every surface sends. Azure serves this route only on
 // deploymentsListAPIVersion and older, so the registry's api_version cannot be
 // used here, and /openai/v1/models is no substitute because it lists every
-// model the region offers rather than what this resource deployed (RUN-1144).
-func deploymentsListURL(config *providers.Config) (string, error) {
-	if _, err := providers.DecodeAzureOptions(config.Options); err != nil {
-		return "", err
+// model the region offers rather than what this resource deployed. It also
+// returns the registry's API surface.
+func deploymentsListURL(config *providers.Config) (string, string, error) {
+	opts, err := providers.DecodeAzureOptions(config.Options)
+	if err != nil {
+		return "", "", err
 	}
 	endpoint := azureRESTEndpoint(config.Credentials.Azure.Endpoint)
-	return endpoint + "/openai/deployments?api-version=" + deploymentsListAPIVersion, nil
+	return endpoint + "/openai/deployments?api-version=" + deploymentsListAPIVersion, opts.API, nil
 }

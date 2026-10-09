@@ -17,6 +17,7 @@ package catalog_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -39,6 +40,10 @@ type stubLiveModelSource struct {
 }
 
 func (s *stubLiveModelSource) Supports(string) bool { return !s.unsupported }
+
+func (s *stubLiveModelSource) Authoritative(providerCode string) bool {
+	return providerCode == providers.ProviderAzure
+}
 
 func (s *stubLiveModelSource) List(context.Context, string, *registrydomain.TargetAuth, map[string]any) ([]appcatalog.LiveModel, error) {
 	s.calls++
@@ -281,6 +286,66 @@ func TestLiveAvailabilityFilter_AzureListsDeploymentsWithoutCatalogRows(t *testi
 	require.Len(t, got, 1)
 	assert.Equal(t, "gpt-6-luna", got[0].Slug)
 	assert.True(t, got[0].Enabled)
+}
+
+func TestLiveAvailabilityFilter_AzureRejectedCredentialsAreAConfigError(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{err: fmt.Errorf("%w: provider returned status 401", appcatalog.ErrLiveListingMisconfigured)}
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(apiKeyAuth("rotated-key")), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	_, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+	})
+
+	require.ErrorIs(t, err, commonerrors.ErrInvalidConfig)
+	assert.NotErrorIs(t, err, commonerrors.ErrUpstreamUnavailable)
+}
+
+func TestLiveAvailabilityFilter_AzureWithoutAListerIsNotBlamedOnTheProvider(t *testing.T) {
+	t.Parallel()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(regmocks.NewFinder(t), &stubLiveModelSource{unsupported: true}, discardLogger())
+	_, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    ids.New[ids.GatewayKind](),
+		RegistryID:   ids.New[ids.RegistryKind](),
+	})
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, commonerrors.ErrUpstreamUnavailable)
+	assert.NotErrorIs(t, err, commonerrors.ErrInvalidConfig)
+}
+
+func TestLiveAvailabilityFilter_AzureLeavesOutPendingDeployments(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{models: []appcatalog.LiveModel{
+		{ID: "gpt-6-luna", ProviderModel: "gpt-6-luna"},
+		{ID: "gpt-6-sol", ProviderModel: "gpt-6-sol", Pending: true},
+	}}
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(apiKeyAuth("azure-key")), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gpt-6-luna"}, slugsOf(got))
 }
 
 func TestLiveAvailabilityFilter_AzureWithNoDeploymentsListsNothing(t *testing.T) {
