@@ -85,7 +85,7 @@ func TestCanonicalSmartRoutingMigrationPreflightWritesNothing(t *testing.T) {
 	if _, err := tx.Exec(ctx, `
 		UPDATE consumers SET lb_config = jsonb_set(
 		    jsonb_set(lb_config, '{enabled}', 'false'),
-		    '{smart_routing,tiers}', jsonb_build_array(lb_config->'smart_routing'->'tiers'->0))
+		    '{smart_routing,tiers}', '[]'::jsonb)
 		WHERE id = $1::uuid`, migrationConsumerTwo); err != nil {
 		t.Fatal(err)
 	}

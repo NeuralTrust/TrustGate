@@ -31,6 +31,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCodecRetainsMigratedLegacyLadder(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		gw, id := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+		c := consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gw, RegistryIDs: []ids.RegistryID{id},
+			ModelPolicies: consumerdomain.ModelPolicies{id: {Allowed: []string{"low", "middle", "upper", "high"}}},
+			LBConfig: &consumerdomain.LBConfig{Enabled: enabled, Algorithm: algorithm.SmartRouting,
+				SmartRouting: &registrydomain.SmartRoutingConfig{LegacyThresholds: true, SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300}}}}
+		for i, cut := range []float64{.72, .12, .97, .34} {
+			model := []string{"upper", "low", "high", "middle"}[i]
+			c.LBConfig.Members = append(c.LBConfig.Members, consumerdomain.LBPoolMember{RegistryID: id, Model: model})
+			c.LBConfig.SmartRouting.Tiers = append(c.LBConfig.SmartRouting.Tiers, registrydomain.SmartRoutingTier{RegistryID: id, Model: model, MinScore: cut})
+		}
+		codec := configsnapshot.NewCodec()
+		data := readmodel.Data{Gateways: []gatewaydomain.Gateway{{ID: gw, Slug: "gateway", Entitlements: gatewaydomain.DefaultEntitlements()}},
+			Consumers: []consumerdomain.Consumer{c}, Registries: []registrydomain.Registry{{ID: id, GatewayID: gw}}}
+		raw, err := codec.Encode(readmodel.Build(data))
+		require.NoError(t, err)
+		snapshot, err := codec.Decode(raw)
+		require.NoError(t, err)
+		got, ok := snapshot.ConsumerByID(c.ID)
+		require.True(t, ok)
+		assert.Equal(t, c.LBConfig, got.LBConfig)
+		reraw, err := codec.Encode(snapshot)
+		require.NoError(t, err)
+		assert.Equal(t, raw, reraw)
+	}
+}
+
 func TestCodecQuarantinesInvalidSmartRoutingAndPreservesRepositoryReads(t *testing.T) {
 	for _, kind := range []string{"one rung", "four rungs", "ambiguous pin", "invalid explicit cuts"} {
 		t.Run(kind, func(t *testing.T) {

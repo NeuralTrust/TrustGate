@@ -58,6 +58,7 @@ func TestCanonicalSmartRoutingJSONResolvesOnlyDeclaredPins(t *testing.T) {
 			if tc.duplicate {
 				cfg.Members = append(cfg.Members, consumer.LBPoolMember{RegistryID: low, Model: "other"})
 			}
+			cfg.SmartRouting.LegacyThresholds = true
 			raw := migrationTestJSON(t, cfg)
 			before := string(raw)
 			policies := migrationTestJSON(t, consumer.ModelPolicies{low: tc.policy, high: {Allowed: []string{"high"}}})
@@ -84,7 +85,7 @@ func TestCanonicalSmartRoutingJSONResolvesOnlyDeclaredPins(t *testing.T) {
 			if migrated.SmartRouting.Tiers[0].RegistryID != high || migrated.SmartRouting.Tiers[0].MinScore != .45 || migrated.SmartRouting.Tiers[1].RegistryID != low || migrated.SmartRouting.Tiers[1].MinScore != 0 {
 				t.Fatal("array order or score rank changed")
 			}
-			if migrated.Members[0].Model != tc.wantModel || migrated.SmartRouting.Tiers[1].Model != tc.wantModel || migrated.SmartRouting.SR1.EscapeHatchEnabled || migrated.SmartRouting.SR1.CacheTTLSeconds != 300 {
+			if migrated.Members[0].Model != tc.wantModel || migrated.SmartRouting.Tiers[1].Model != tc.wantModel || migrated.SmartRouting.LegacyThresholds || migrated.SmartRouting.SR1.EscapeHatchEnabled || migrated.SmartRouting.SR1.CacheTTLSeconds != 300 {
 				t.Fatal("incorrect pins or legacy defaults")
 			}
 			again, err := canonicalSmartRoutingJSON(got, policies, known)
@@ -148,7 +149,7 @@ func TestCanonicalSmartRoutingJSONRejectsUnresolvedEnabledAndDisabled(t *testing
 	id := ids.New[ids.RegistryKind]()
 	policies := migrationTestJSON(t, consumer.ModelPolicies{id: {Allowed: []string{"low", "high"}}})
 	for _, enabled := range []bool{true, false} {
-		for _, n := range []int{1, 4} {
+		for _, n := range []int{0, 4} {
 			cfg := consumer.LBConfig{Enabled: enabled, Algorithm: algorithm.SmartRouting, Members: []consumer.LBPoolMember{{RegistryID: id, Model: "low"}, {RegistryID: id, Model: "high"}}, SmartRouting: &registry.SmartRoutingConfig{}}
 			for i := 0; i < n; i++ {
 				cfg.SmartRouting.Tiers = append(cfg.SmartRouting.Tiers, registry.SmartRoutingTier{RegistryID: id, Model: "low", MinScore: float64(i) / 10})

@@ -90,6 +90,9 @@ func NewCreator(
 const maxSlugCollisionRetries = 3
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
+	if err := validateLegacyRoutingWrite(in.LBConfig, nil); err != nil {
+		return nil, err
+	}
 	cons, err := domain.New(domain.CreateParams{
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,

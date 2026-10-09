@@ -646,6 +646,33 @@ func TestUpdaterExplicitDisabledSmartRoutingUsesEffectivePolicy(t *testing.T) {
 	}
 }
 
+func TestUpdaterRetainsMigratedLadderWithoutClientMarker(t *testing.T) {
+	gw, id := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gw, id)
+	existing.ModelPolicies = domain.ModelPolicies{id: {Allowed: []string{"low", "middle", "upper", "high"}}}
+	existing.LBConfig = &domain.LBConfig{Enabled: true, Algorithm: "smart-routing", SmartRouting: &registrydomain.SmartRoutingConfig{LegacyThresholds: true, SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300}}}
+	for i, cut := range []float64{.12, .34, .72, .97} {
+		model := []string{"low", "middle", "upper", "high"}[i]
+		existing.LBConfig.Members = append(existing.LBConfig.Members, domain.LBPoolMember{RegistryID: id, Model: model})
+		existing.LBConfig.SmartRouting.Tiers = append(existing.LBConfig.SmartRouting.Tiers, registrydomain.SmartRoutingTier{RegistryID: id, Model: model, MinScore: cut})
+	}
+	next := *existing.LBConfig
+	shape := *next.SmartRouting
+	shape.LegacyThresholds = false
+	next.SmartRouting = &shape
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+		return c.LBConfig.SmartRouting.LegacyThresholds && len(c.LBConfig.SmartRouting.Tiers) == 4 && c.LBConfig.SmartRouting.Tiers[3].MinScore == .97
+	}), (*domain.RegistryBindings)(nil), (*[]ids.AuthID)(nil)).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gw.String()}).Return(nil).Once()
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{ID: existing.ID, LBConfig: &next}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUpdaterOmittedDisabledLegacyRoutingAllowsNameEdit(t *testing.T) {
 	gw, id, unknown := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	existing := existingConsumer(gw, id)

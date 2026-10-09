@@ -77,6 +77,18 @@ func (c *Consumer) pruneLBConfig(registryID ids.RegistryID, prune *registry.Cons
 	if !tiersChanged {
 		return
 	}
+	if ladderSurvives && c.LBConfig.SmartRouting.LegacyThresholds && len(tiers) == 1 {
+		for _, member := range members {
+			if member.RegistryID == tiers[0].RegistryID && member.RouteModel() == tiers[0].RouteModel() {
+				c.LBConfig.Members = []LBPoolMember{member}
+				c.LBConfig.SmartRouting = nil
+				c.LBConfig.Algorithm = algorithm.RoundRobin
+				prune.Nulled = append(prune.Nulled, registry.PrunedSmartRouting)
+				return
+			}
+		}
+		ladderSurvives = false
+	}
 	if !ladderSurvives {
 		c.LBConfig.SmartRouting = nil
 		if c.LBConfig.Algorithm == algorithm.SmartRouting {
@@ -110,6 +122,9 @@ func (c *Consumer) prunedTiers(
 	}
 	remaining := *c.LBConfig.SmartRouting
 	remaining.Tiers = tiers
+	if remaining.LegacyThresholds && len(tiers) == 1 {
+		return tiers, true, true
+	}
 	return tiers, true, remaining.Validate() == nil
 }
 

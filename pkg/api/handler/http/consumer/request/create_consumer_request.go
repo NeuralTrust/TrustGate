@@ -428,6 +428,11 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 			policies[member.RegistryID] = policy
 		}
 		validation := *config
+		if smartRouting != nil {
+			shape := *smartRouting
+			shape.LegacyThresholds = true
+			validation.SmartRouting = &shape
+		}
 		validation.Enabled = true
 		if err := validation.ValidateTierRegistries(known); err != nil {
 			return nil, fmt.Errorf("lb_config: %w: %w", commonerrors.ErrValidation, err)
