@@ -133,3 +133,13 @@ func (s *Settings) validate() error {
 	}
 	return s.Streaming.Validate(PluginName)
 }
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError, pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
+	}
+}

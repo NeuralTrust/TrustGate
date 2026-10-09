@@ -143,8 +143,8 @@ func TestCreator_Create_MCPScope_UnknownPluginIsLeftToPluginValidation(t *testin
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	// Twice: the credential rule looks the plugin up, then the scope check does.
-	reg.EXPECT().Get(mock.Anything).Return(nil, false).Twice()
+	// Three lookups: the retired-settings strip, the credential rule, then the scope check.
+	reg.EXPECT().Get(mock.Anything).Return(nil, false).Times(3)
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 

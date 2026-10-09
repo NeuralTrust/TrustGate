@@ -185,3 +185,14 @@ func (s Settings) selectsStage(stage policy.Stage) bool {
 		return false
 	}
 }
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+// on_timeout and timeout are the TrustGuard-specific failure and deadline keys: a failed call fails open and the deadline is the deployment-wide TRUSTGUARD_TIMEOUT.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError, "on_timeout", "timeout", pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
+	}
+}

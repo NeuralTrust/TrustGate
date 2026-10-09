@@ -155,3 +155,13 @@ func (s Settings) unknownAgainstModel() (modelUnknown bool, thresholds, categori
 	sort.Strings(categories)
 	return false, thresholds, categories
 }
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
+	}
+}

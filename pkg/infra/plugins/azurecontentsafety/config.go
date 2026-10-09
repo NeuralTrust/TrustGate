@@ -190,3 +190,12 @@ func isSupportedCategory(category string) bool {
 	}
 	return false
 }
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError,
+	}
+}

@@ -32,6 +32,17 @@ const (
 	StreamOnErrorFailClosed = "fail_closed"
 )
 
+// Settings keys a guardrail ignores. A guardrail always fails open, takes the
+// deployment-wide timeout and never blocks on a mask it cannot apply, so a stored
+// value for one of these would read as behaviour the policy does not have. Each
+// guardrail returns the keys it carries from its RetiredSettings.
+const (
+	SettingOnError               = "on_error"
+	SettingOnMaskFailure         = "on_mask_failure"
+	SettingStreamingOnError      = "streaming.on_error"
+	SettingStreamingGuardTimeout = "streaming.guard_timeout"
+)
+
 // The bounds are the engine's, not any one plugin's: they come from what the
 // block loop and the detection backends can actually honour, so a plugin
 // choosing its own defaults still validates against these.
