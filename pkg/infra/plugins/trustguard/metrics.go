@@ -41,6 +41,9 @@ const (
 	// failureReasonPayloadTooLarge is TrustGuard refusing the body for its size
 	// (HTTP 413): what the request carries, not the engine being unavailable.
 	failureReasonPayloadTooLarge = "payload_too_large"
+	// failureReasonAttachmentRejected is TrustGuard answering 400 "invalid
+	// attachment": it could not fetch or decode an attachment it was sent.
+	failureReasonAttachmentRejected = "attachment_rejected"
 	// failureReasonTransformFailed is TrustGuard asking for a mask this plugin
 	// could not write back; degraded_reason on the span says which step failed.
 	failureReasonTransformFailed = "transform_failed"

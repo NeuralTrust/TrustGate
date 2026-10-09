@@ -332,9 +332,12 @@ func (p *Plugin) segmentFailure(
 	var unavailable *entitlementsUnavailableError
 	var auth *authRejectedError
 	var tooLarge *payloadTooLargeError
+	var rejected *attachmentRejectedError
 	switch {
 	case errors.As(err, &tooLarge):
 		reason = failureReasonPayloadTooLarge
+	case errors.As(err, &rejected):
+		reason = failureReasonAttachmentRejected
 	case errors.As(err, &unavailable):
 		reason = failureReasonEntitlementsUnavailable
 	case errors.As(err, &auth), errors.Is(err, errUnauthorized):
