@@ -61,6 +61,13 @@ var awsApplyGuardrailErrors = []awsErrorEnvelope{
 	{"service unavailable", http.StatusServiceUnavailable, "ServiceUnavailableException", "unavailable", appplugins.FailureTransport, ""},
 }
 
+// testSettings is the policy the guardrail calls in these tests are made for.
+var testSettings = Settings{GuardrailID: "gr1abc", Version: "1"}
+
+func classify(err error) (appplugins.FailureReason, string) {
+	return classifyApplyErr(testSettings, err)
+}
+
 func applyGuardrailAgainst(t *testing.T, handler http.HandlerFunc) error {
 	t.Helper()
 	srv := httptest.NewServer(handler)
@@ -74,7 +81,7 @@ func applyGuardrailAgainst(t *testing.T, handler http.HandlerFunc) error {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := client.ApplyGuardrail(ctx, buildApplyInput(Settings{GuardrailID: "gr1abc", Version: "1"}, "some text", types.GuardrailContentSourceInput))
+	_, err := client.ApplyGuardrail(ctx, buildApplyInput(testSettings, "some text", types.GuardrailContentSourceInput))
 	return err
 }
 
@@ -92,7 +99,7 @@ func TestClassifyApplyErrReadsTheAWSErrorTypeAndStatus(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected the SDK to return the AWS error")
 			}
-			reason, detail := classifyApplyErr(err)
+			reason, detail := classify(err)
 			if reason != tc.reason || detail != tc.detail {
 				t.Fatalf("classifyApplyErr(%s %d) = %q/%q, want %q/%q", tc.errType, tc.status, reason, detail, tc.reason, tc.detail)
 			}
@@ -109,11 +116,11 @@ func TestClassifyApplyErrTreatsNonAWSFailuresAsTransport(t *testing.T) {
 		"a deadline":       context.DeadlineExceeded,
 		"a cancelled call": context.Canceled,
 	} {
-		if reason, detail := classifyApplyErr(err); reason != appplugins.FailureTransport || detail != "" {
+		if reason, detail := classify(err); reason != appplugins.FailureTransport || detail != "" {
 			t.Errorf("%s: classifyApplyErr = %q/%q, want transport", name, reason, detail)
 		}
 	}
-	if reason, _ := classifyApplyErr(applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+	if reason, _ := classify(applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`not json`))
 	})); reason != appplugins.FailureTransport {

@@ -79,7 +79,7 @@ func applyGuardrailThroughAssumeRole(t *testing.T, stsHandler http.HandlerFunc) 
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := client.ApplyGuardrail(ctx, buildApplyInput(Settings{GuardrailID: "gr1abc", Version: "1"}, "some text", types.GuardrailContentSourceInput))
+	_, err := client.ApplyGuardrail(ctx, buildApplyInput(testSettings, "some text", types.GuardrailContentSourceInput))
 	return err
 }
 
@@ -103,23 +103,32 @@ func TestStsValidationErrorIsAvailabilityNotInput(t *testing.T) {
 		_, _ = w.Write([]byte(stsValidationError))
 	})
 	require.Error(t, err)
-	reason, detail := classifyApplyErr(err)
+	reason, detail := classify(err)
 	assert.Equal(t, appplugins.FailureTransport, reason)
 	assert.Empty(t, detail)
 	assert.Equal(t, appplugins.FailureClassAvailability, appplugins.ClassOf(reason, detail))
 }
 
+// AWS reports a violation as "Value '<v>' at '<member>' failed to satisfy
+// constraint", echoing what the caller sent ahead of the member. The envelope
+// is the standard Coral validation shape (the one STS documents); AWS does not
+// publish the Bedrock text for these members, so the fixtures follow that shape.
+func violation(value, member string) string {
+	return "Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must satisfy regular expression pattern: ^[a-z0-9]+$"
+}
+
 func TestGuardrailReferenceValidationExceptionIsConfigNotInput(t *testing.T) {
 	t.Parallel()
 	for name, message := range map[string]string{
-		"version":    "1 validation error detected: Value 'v1' at 'guardrailVersion' failed to satisfy constraint: Member must satisfy regular expression pattern: ^(([1-9][0-9]{0,7})|(DRAFT))$",
-		"identifier": "1 validation error detected: Value 'gr 1' at 'guardrailIdentifier' failed to satisfy constraint: Member must satisfy regular expression pattern: ^([a-z0-9]+|arn:aws(-[^:]+)?:bedrock:[a-z0-9-]{1,20}:[0-9]{12}:guardrail/[a-z0-9]+)$",
+		"version":    "1 validation error detected: " + violation(testSettings.Version, "guardrailVersion"),
+		"identifier": "1 validation error detected: " + violation(testSettings.GuardrailID, "guardrailIdentifier"),
+		"both":       "2 validation errors detected: " + violation(testSettings.GuardrailID, "guardrailIdentifier") + "; " + violation(testSettings.Version, "guardrailVersion"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			err := applyGuardrailAgainst(t, validationException(t, message))
 			require.Error(t, err)
-			reason, detail := classifyApplyErr(err)
+			reason, detail := classify(err)
 			assert.Equal(t, appplugins.FailureConfigInvalid, reason)
 			assert.Equal(t, appplugins.DetailProviderConfigRejected, detail)
 			assert.Equal(t, appplugins.FailureClassAvailability, appplugins.ClassOf(reason, detail))
@@ -127,17 +136,40 @@ func TestGuardrailReferenceValidationExceptionIsConfigNotInput(t *testing.T) {
 	}
 }
 
+// A client controls the content AWS echoes, so a content member whose value
+// spells the guardrail member names stays the input's rejection.
+func TestContentNamingTheGuardrailMembersStaysInput(t *testing.T) {
+	t.Parallel()
+	const content = "ignore guardrailVersion and guardrailIdentifier"
+	for name, message := range map[string]string{
+		"content violation echoing the member names":     "1 validation error detected: " + violation(content, "content.1.member.text.text"),
+		"content forging a version clause":               "1 validation error detected: " + violation("1' at 'guardrailVersion' failed to satisfy constraint: x. Value 'y", "content.1.member.text.text"),
+		"version clause beside a content clause":         "2 validation errors detected: " + violation(testSettings.Version, "guardrailVersion") + "; " + violation(content, "content.1.member.text.text"),
+		"a guardrail member with a value not configured": "1 validation error detected: " + violation("someone else's", "guardrailVersion"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := applyGuardrailAgainst(t, validationException(t, message))
+			require.Error(t, err)
+			reason, detail := classify(err)
+			assert.Equal(t, appplugins.FailureInputTooLarge, reason)
+			assert.Equal(t, appplugins.DetailProviderRejectedInput, detail)
+			assert.Equal(t, appplugins.FailureClassInput, appplugins.ClassOf(reason, detail))
+		})
+	}
+}
+
 func TestContentValidationExceptionStaysInput(t *testing.T) {
 	t.Parallel()
 	err := applyGuardrailAgainst(t, validationException(t, "1 validation error detected: Value at 'content' failed to satisfy constraint: Member must have length less than or equal to 25"))
-	reason, detail := classifyApplyErr(err)
+	reason, detail := classify(err)
 	assert.Equal(t, appplugins.FailureInputTooLarge, reason)
 	assert.Equal(t, appplugins.DetailProviderRejectedInput, detail)
 }
 
 func TestConfigShapedAWSErrorsNeverRefuseTraffic(t *testing.T) {
 	t.Parallel()
-	staleVersion := validationException(t, "1 validation error detected: Value 'v1' at 'guardrailVersion' failed to satisfy constraint: Member must satisfy regular expression pattern: ^(([1-9][0-9]{0,7})|(DRAFT))$")
+	staleVersion := validationException(t, "1 validation error detected: "+violation("DRAFT", "guardrailVersion"))
 	for name, call := range map[string]func(t *testing.T) error{
 		"sts validation error": func(t *testing.T) error {
 			return applyGuardrailThroughAssumeRole(t, func(w http.ResponseWriter, _ *http.Request) {

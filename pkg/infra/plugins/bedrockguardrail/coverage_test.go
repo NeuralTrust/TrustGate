@@ -51,7 +51,7 @@ func applyGuardrailAnswering(t *testing.T, body string) *bedrockruntime.ApplyGua
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := client.ApplyGuardrail(ctx, buildApplyInput(Settings{GuardrailID: "gr1abc", Version: "1"}, "some text", types.GuardrailContentSourceInput))
+	out, err := client.ApplyGuardrail(ctx, buildApplyInput(testSettings, "some text", types.GuardrailContentSourceInput))
 	require.NoError(t, err)
 	return out
 }
@@ -158,26 +158,23 @@ func TestALongTextIsSentWhole(t *testing.T) {
 	}
 }
 
-// ServiceQuotaExceededException is the account's quota and not the request, so
-// it fails open; one whose message says the text units were exceeded is the
-// text's size and is input.
-func TestServiceQuotaClassification(t *testing.T) {
+// ServiceQuotaExceededException is the account's quota and never the request,
+// whatever its message says: the on-demand quota is counted in text units per
+// second, so its wording can mention text units without the text being at fault.
+// Oversize is reported by GuardrailCoverage and by ValidationException.
+func TestServiceQuotaIsAlwaysAvailability(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		message string
-		reason  appplugins.FailureReason
-		detail  string
-	}{
-		{"account quota", "You have exceeded the quota for this operation.", appplugins.FailureTransport, ""},
-		{"text units", "The number of text units exceeds the quota for ApplyGuardrail.", appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
+	for _, tc := range []struct{ name, message string }{
+		{"account quota", "You have exceeded the quota for this operation."},
+		{"account quota naming text units", "Your account has exceeded the allowed text units per second for ApplyGuardrail."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := applyGuardrailAgainst(t, validationLikeException(t, "ServiceQuotaExceededException", tc.message))
-			reason, detail := classifyApplyErr(err)
-			assert.Equal(t, tc.reason, reason)
-			assert.Equal(t, tc.detail, detail)
+			reason, detail := classify(err)
+			assert.Equal(t, appplugins.FailureTransport, reason)
+			assert.Empty(t, detail)
+			assert.Equal(t, appplugins.FailureClassAvailability, appplugins.ClassOf(reason, detail))
 		})
 	}
 }
