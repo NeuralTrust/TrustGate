@@ -70,10 +70,11 @@ type Plugin struct {
 	registry   *adapter.Registry
 	guardrails *cachedGuardrailClient
 	logger     *slog.Logger
-	// throttledStreams maps the streams whose first throttled block has been
-	// seen to when it was, so a sustained throttle does not add a backoff to
-	// every later block. A stream's closing segment removes its entry, and one a
-	// closing never reached expires after throttledStreamTTL.
+	// throttledStreams maps the streams that have had a throttled block to when
+	// the last one was, so a sustained throttle does not add a backoff to every
+	// later block. A stream's closing segment removes its entry, and one a
+	// closing never reached expires after throttledStreamTTL, swept at most once
+	// a minute by any read or write of the map.
 	throttledStreams sync.Map
 	throttledSweptAt atomic.Int64
 	// budget is the time one buffered evaluation has for all of its chunks;

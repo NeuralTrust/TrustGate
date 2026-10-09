@@ -266,6 +266,7 @@ const throttledStreamTTL = 10 * time.Minute
 // streamThrottled reports whether an earlier block of this stream was throttled,
 // so a sustained throttle does not add a backoff to every later block.
 func (p *Plugin) streamThrottled(id string) bool {
+	p.sweepThrottledStreams(time.Now())
 	if id == "" {
 		return false
 	}
@@ -273,14 +274,25 @@ func (p *Plugin) streamThrottled(id string) bool {
 	return ok
 }
 
-// markStreamThrottled records the stream's first throttled block, and sweeps the
-// entries older than throttledStreamTTL at most once a minute, so a stream whose
-// closing segment never arrived cannot grow the map.
+// markStreamThrottled records when the stream's last block was throttled.
 func (p *Plugin) markStreamThrottled(id string, now time.Time) {
-	if id == "" {
-		return
+	if id != "" {
+		p.throttledStreams.Store(id, now)
 	}
-	p.throttledStreams.Store(id, now)
+	p.sweepThrottledStreams(now)
+}
+
+func (p *Plugin) forgetStreamThrottle(id string) {
+	if id != "" {
+		p.throttledStreams.Delete(id)
+	}
+	p.sweepThrottledStreams(time.Now())
+}
+
+// sweepThrottledStreams drops the entries older than throttledStreamTTL, at most
+// once a minute, so a stream whose closing segment never arrived cannot grow the
+// map whichever of the three operations on it runs.
+func (p *Plugin) sweepThrottledStreams(now time.Time) {
 	last := p.throttledSweptAt.Load()
 	if now.UnixNano()-last < int64(time.Minute) || !p.throttledSweptAt.CompareAndSwap(last, now.UnixNano()) {
 		return
@@ -291,10 +303,4 @@ func (p *Plugin) markStreamThrottled(id string, now time.Time) {
 		}
 		return true
 	})
-}
-
-func (p *Plugin) forgetStreamThrottle(id string) {
-	if id != "" {
-		p.throttledStreams.Delete(id)
-	}
 }
