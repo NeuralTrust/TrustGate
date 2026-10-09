@@ -25,11 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAnthropicConnectionProbeUsesSharedModelsSurface(t *testing.T) {
+func TestAnthropicConnectionProbeListsDeployments(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		assert.Equal(t, "/openai/v1/models", request.URL.Path)
+		assert.Equal(t, "/openai/deployments", request.URL.Path)
+		assert.Equal(t, deploymentsListAPIVersion, request.URL.Query().Get("api-version"))
 		assert.Equal(t, "foundry-key", request.Header.Get("api-key"))
 		assert.Empty(t, request.Header.Get("x-api-key"))
 		w.WriteHeader(http.StatusOK)
@@ -57,63 +58,51 @@ func TestParseAzureDeploymentListKeepsDeploymentAsID(t *testing.T) {
 		"data": [
 			{"id":"sonnet-prod","model":"claude-sonnet-4-6"},
 			{"id":"codex-prod","model":"gpt-5-codex"},
-			{"id":"sonnet-prod","model":"claude-sonnet-4-6"}
+			{"id":"sonnet-prod","model":"claude-sonnet-4-6"},
+			{"id":"draining","model":"gpt-4o","status":"deleting"},
+			{"id":"mini-prod","model":"gpt-5.4-mini","status":"succeeded"}
 		]
 	}`))
 	require.NoError(t, err)
 	assert.Equal(t, []providers.LiveModel{
 		{ID: "sonnet-prod", DisplayName: "sonnet-prod", ProviderModel: "claude-sonnet-4-6"},
 		{ID: "codex-prod", DisplayName: "codex-prod", ProviderModel: "gpt-5-codex"},
+		{ID: "mini-prod", DisplayName: "mini-prod", ProviderModel: "gpt-5.4-mini"},
 	}, models)
 }
 
-func TestBuildModelsURL(t *testing.T) {
+func TestDeploymentsListURLIgnoresSurfaceAndAPIVersion(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		api     string
-		wantURL string
-		wantAPI string
-	}{
-		{
-			name:    "deployments",
-			api:     providers.AzureAPIDeployments,
-			wantURL: "https://x.services.ai.azure.com/openai/deployments?api-version=2024-10-21",
-			wantAPI: providers.AzureAPIDeployments,
-		},
-		{
-			name:    "OpenAI v1",
-			api:     providers.AzureAPIOpenAIV1,
-			wantURL: "https://x.services.ai.azure.com/api/projects/project-a/openai/v1/models",
-			wantAPI: providers.AzureAPIOpenAIV1,
-		},
-		{
-			name:    "Responses",
-			api:     providers.AzureAPIResponses,
-			wantURL: "https://x.services.ai.azure.com/api/projects/project-a/openai/v1/models",
-			wantAPI: providers.AzureAPIResponses,
-		},
-		{
-			name:    "Anthropic",
-			api:     providers.AzureAPIAnthropic,
-			wantURL: "https://x.services.ai.azure.com/api/projects/project-a/openai/v1/models",
-			wantAPI: providers.AzureAPIOpenAIV1,
-		},
-	}
+	const want = "https://x.services.ai.azure.com/openai/deployments?api-version=2023-03-15-preview"
+	for _, api := range []string{
+		providers.AzureAPIDeployments,
+		providers.AzureAPIOpenAIV1,
+		providers.AzureAPIResponses,
+		providers.AzureAPIAnthropic,
+	} {
+		t.Run(api, func(t *testing.T) {
+			t.Parallel()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &providers.Config{
-				Options: map[string]any{"api": tt.api},
+			got, err := deploymentsListURL(&providers.Config{
+				Options: map[string]any{"api": api},
 				Credentials: providers.Credentials{Azure: &providers.Azure{
-					Endpoint: "https://x.services.ai.azure.com/api/projects/project-a",
+					Endpoint:   "https://x.services.ai.azure.com/api/projects/project-a/",
+					ApiVersion: "2025-04-01-preview",
 				}},
-			}
-			gotURL, gotAPI, err := (&client{}).buildModelsURL(config)
+			})
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantURL, gotURL)
-			assert.Equal(t, tt.wantAPI, gotAPI)
+			assert.Equal(t, want, got)
 		})
 	}
+}
+
+func TestDeploymentsListURLRejectsUnknownSurface(t *testing.T) {
+	t.Parallel()
+
+	_, err := deploymentsListURL(&providers.Config{
+		Options:     map[string]any{"api": "assistants"},
+		Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: "https://x.openai.azure.com"}},
+	})
+	require.Error(t, err)
 }

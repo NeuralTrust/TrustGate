@@ -28,28 +28,25 @@ func (c *client) ListLiveModels(ctx context.Context, config *providers.Config) (
 	if config.Credentials.Azure == nil || config.Credentials.Azure.Endpoint == "" {
 		return nil, fmt.Errorf("%w: azure endpoint is required", providers.ErrModelListingFailed)
 	}
-	targetURL, api, err := c.buildModelsURL(config)
+	targetURL, err := deploymentsListURL(config)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", providers.ErrModelListingFailed, err.Error())
 	}
-	auth, err := c.resolveAuthForAPI(ctx, config, api)
+	auth, err := c.resolveAuth(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", providers.ErrModelListingFailed, err.Error())
-	}
-	parse := providers.ParseOpenAIModelList
-	if api == providers.AzureAPIDeployments {
-		parse = parseAzureDeploymentList
 	}
 	return providers.ListModelsGET(ctx, providers.ProviderAzure, targetURL, func(req *http.Request) {
 		auth.apply(req)
-	}, parse)
+	}, parseAzureDeploymentList)
 }
 
 func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
 	var payload struct {
 		Data []struct {
-			ID    string `json:"id"`
-			Model string `json:"model"`
+			ID     string `json:"id"`
+			Model  string `json:"model"`
+			Status string `json:"status"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -59,7 +56,7 @@ func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
 	models := make([]providers.LiveModel, 0, len(payload.Data))
 	for _, item := range payload.Data {
 		deployment := strings.TrimSpace(item.ID)
-		if deployment == "" {
+		if deployment == "" || !deploymentServes(item.Status) {
 			continue
 		}
 		if _, dup := seen[deployment]; dup {
@@ -73,4 +70,11 @@ func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
 		})
 	}
 	return models, nil
+}
+
+// deploymentServes reports whether a deployment in this state accepts
+// requests. A listing that omits the status is trusted as serving.
+func deploymentServes(status string) bool {
+	status = strings.TrimSpace(status)
+	return status == "" || strings.EqualFold(status, "succeeded")
 }
