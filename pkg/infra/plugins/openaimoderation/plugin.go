@@ -44,8 +44,11 @@ const (
 // maximum array length, so a text is split into requests of chunkBytes, the
 // window the stream leg already sends in production, one text per request: what
 // an array of texts yields (one combined result or one per item) is
-// undocumented. Bytes are never fewer than characters or tokens. A text that
-// splits into more than maxChunks requests is refused before any call, and at
+// undocumented. Bytes are never fewer than characters or tokens. The
+// overlap is 4,096 bytes, enough for a long secret (a PEM key, a service-account
+// JSON of about 3.5 KB) to lie whole in one chunk; a pattern longer than it, or
+// a context that a cut separates by more than it, can still be cut in two. A
+// text that splits into more than maxChunks requests is refused before any call, and at
 // most evalParallel run at once, inside the client's timeout for the whole
 // evaluation. A chunk that would have to wait for a slot is not started with
 // less than callReserve of the budget left, about twice a call's usual latency:
@@ -58,7 +61,7 @@ const (
 // https://developers.openai.com/api/docs/guides/moderation
 const (
 	chunkBytes   = 32768
-	chunkOverlap = 2048
+	chunkOverlap = 4096
 	maxChunks    = 32
 	evalParallel = 4
 	callReserve  = 2 * time.Second

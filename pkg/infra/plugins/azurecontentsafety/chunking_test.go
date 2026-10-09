@@ -314,3 +314,35 @@ func TestA429IsRecordedAsThrottled(t *testing.T) {
 	assert.Equal(t, string(appplugins.FailureTransport), data.FailureReason)
 	assert.Equal(t, appplugins.DetailThrottled, data.FailureDetail)
 }
+
+// A secret that a cut falls inside is seen whole in the next chunk when the
+// overlap holds it: here 1,500 of its 1,900 units are in the first chunk.
+func TestASecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("SECRET-BEGIN\n")
+	for b.Len() < 1900-len("SECRET-END") {
+		b.WriteString(strings.Repeat("k", 63) + "\n")
+	}
+	b.WriteString("SECRET-END")
+	secret := b.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body analyzeRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		severity := 0
+		if strings.Contains(body.Text, "SECRET-BEGIN") && strings.Contains(body.Text, "SECRET-END") {
+			severity = 4
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"categoriesAnalysis":[{"category":"Hate","severity":%d}]}`, severity)
+	}))
+	t.Cleanup(srv.Close)
+	p := New(adapter.NewRegistry(), nil)
+	text := strings.Repeat("an ordinary word ", 600)[:chunkUnits-1500] + " " + secret + " " + strings.Repeat("an ordinary word ", 200)
+
+	_, _, err := run(t, p, policy.ModeEnforce, srv.URL, chatBody(t, map[string]string{"role": "user", "content": text}))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+}

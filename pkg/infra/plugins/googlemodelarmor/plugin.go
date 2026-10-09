@@ -331,14 +331,16 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // least one byte, which Google does not document and is an assumption of this
 // plugin, so a call of at most 65,536 bytes is within every limit: the chunk
 // plus the correlation prompt a response carries (maxCorrelationPromptBytes)
-// fills exactly that. The overlap keeps a pattern that straddles a cut whole in
-// one chunk. A text that splits into more than maxBufferedChunks is refused
+// fills exactly that. The overlap is 4,096 bytes, enough for a long secret (a PEM
+// key, a service-account JSON of about 3.5 KB) to lie whole in one chunk; a
+// pattern longer than it, or a context that a cut separates by more than it,
+// can still be cut in two. A text that splits into more than maxBufferedChunks is refused
 // before any call, and at most chunkParallel run at once inside the client's
 // timeout for the whole evaluation. The project's quota is 1,200 requests a
 // minute, which maxBufferedChunks calls cannot exhaust alone.
 const (
 	chunkBytes        = maxSanitizeBytes
-	chunkOverlap      = 2048
+	chunkOverlap      = 4096
 	maxBufferedChunks = 16
 	chunkParallel     = 4
 	// callReserve is the budget a chunk that has to wait for a slot needs left

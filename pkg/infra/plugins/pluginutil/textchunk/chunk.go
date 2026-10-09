@@ -70,8 +70,16 @@ func (u Unit) of(r rune, size int) int {
 // walks it with utf8.DecodeRuneInString. A chunk ends at the last '\n', else
 // the last Unicode space, in the final eighth of its window, else at the last
 // rune boundary under Max. The next chunk starts Overlap units before that
-// end, moved back to a rune start. Text of at most Max units is one chunk. It
-// panics when Max <= Overlap or Max < 1, which is a programmer error.
+// end, moved back to a rune start. Text of at most Max units is one chunk.
+//
+// The overlap guarantee (every substring of at most Overlap units lies whole in
+// at least one chunk) holds when Overlap <= MaxOverlap(Max): a chunk is never
+// shorter than its window less the eighth a space may cut off, and the start of
+// the next one moves back by up to one rune (4 units) more than Overlap, so the
+// next chunk must still start after this one does. Split panics on a Spec that
+// breaks that, which is a programmer error. It does not promise more: a pattern
+// longer than Overlap, or a context that a cut separates by more than Overlap,
+// can be cut in two.
 func Split(text string, s Spec) []Chunk {
 	checkSpec(s)
 	if text == "" {
@@ -98,9 +106,19 @@ func Count(text string, s Spec) int {
 	return n
 }
 
+// MaxOverlap is the largest Overlap a window of window units can promise, and zero
+// for a window too small to promise any. The shortest chunk is the window less
+// its last eighth, or window-3 when no space is there to cut at (a rune of 4 bytes
+// that does not fit leaves up to 3 unused); the next start moves back by
+// Overlap plus up to 3 more units to reach a rune start; and the next chunk must
+// start after this one, which is 4 units of slack in all.
+func MaxOverlap(window int) int {
+	return max(0, min(window-window/8, window-3)-4)
+}
+
 func checkSpec(s Spec) {
-	if s.Max < 1 || s.Overlap < 0 || s.Max <= s.Overlap {
-		panic("textchunk: Max must be positive and greater than Overlap")
+	if s.Max < 1 || s.Overlap < 0 || s.Overlap > MaxOverlap(s.Max) {
+		panic("textchunk: Overlap must not exceed the window less its last eighth and 4 units")
 	}
 }
 

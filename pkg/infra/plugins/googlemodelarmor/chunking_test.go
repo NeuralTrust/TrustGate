@@ -373,3 +373,36 @@ func TestAThrottleOnALongTextIsInput(t *testing.T) {
 		})
 	}
 }
+
+// pemLike is a secret as long as a PEM key or a service-account JSON, with the
+// line breaks such text has: a chunk may end at one of them, inside the secret.
+func pemLike(bytes int) string {
+	var b strings.Builder
+	b.WriteString("SECRET-BEGIN\n")
+	for b.Len() < bytes-len("SECRET-END") {
+		b.WriteString(strings.Repeat("k", 63) + "\n")
+	}
+	b.WriteString("SECRET-END")
+	return b.String()
+}
+
+// The overlap is what lets a secret that a cut falls inside be seen whole in the
+// next chunk: here 3,000 of its 3,500 bytes are in the first chunk.
+func TestALongSecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(_ int, text string) (int, string) {
+		if strings.Contains(text, "SECRET-BEGIN") && strings.Contains(text, "SECRET-END") {
+			return http.StatusOK, raiBlockResponse
+		}
+		return http.StatusOK, allowResponse
+	})
+	p := pluginWithStub(s.modelArmorStub)
+	text := armorPlain(chunkBytes-3000) + " " + pemLike(3500) + " " + armorPlain(5000)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, text)), nil)
+
+	_, err := p.Execute(context.Background(), in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+}
