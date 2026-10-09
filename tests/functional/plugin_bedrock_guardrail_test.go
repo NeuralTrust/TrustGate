@@ -131,6 +131,17 @@ func TestPluginE2E_BedrockGuardrail_Enforce(t *testing.T) {
 		assert.Equal(t, hitsBefore, up.Hits(), "a blocked request must not reach the upstream")
 	})
 
+	t.Run("a long prompt is screened in chunks and forwarded", func(t *testing.T) {
+		up := newJSONUpstream(t, "bedrock-long")
+		apiKey, path := setupPolicyRoute(t, up, bedrockGuardrailPolicy("block", "pre_request"))
+
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil,
+			mustJSON(t, bedrockChatRequest(strings.Repeat("an ordinary sentence about nothing. ", 3000))),
+		)
+		assert.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.Contains(t, string(raw), "bedrock-long")
+	})
+
 	t.Run("PII anonymize rewrites the forwarded request body", func(t *testing.T) {
 		up := newJSONUpstream(t, "bedrock-anonymized")
 		apiKey, path := setupPolicyRoute(t, up, bedrockGuardrailPolicy("anonymize", "pre_request"))
