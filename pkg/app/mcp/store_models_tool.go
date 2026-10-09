@@ -118,7 +118,7 @@ func (t *storeTool) models(ctx context.Context, baseURL string) (json.RawMessage
 	structured := map[string]any{"available": true, "has_key": true, "key_active": true, "providers": providers}
 	if len(providers) == 0 {
 		return marshalToolResult(
-			"The user's personal key reaches no models yet. An administrator gives access in Access, or the user requests a provider's models from the Portal.",
+			"The user's personal key reaches no models yet. An administrator gives access in Access, or the user requests a provider's models "+t.requestModelsHow()+".",
 			structured,
 		)
 	}
@@ -140,7 +140,17 @@ func (t *storeTool) models(ctx context.Context, baseURL string) (json.RawMessage
 	for _, p := range providers {
 		fmt.Fprintf(&b, "\n- %s: %s", p.Provider, strings.Join(p.Models, ", "))
 	}
+	fmt.Fprintf(&b, "\nFor a provider not listed here, the user can ask for its models %s.", t.requestModelsHow())
 	return marshalToolResult(b.String(), structured)
+}
+
+// requestModelsHow says where a user asks for a provider's models: the request
+// tool when the Store offers it, the Portal otherwise.
+func (t *storeTool) requestModelsHow() string {
+	if t.modelRequests != nil && t.modelRequestLinks != nil {
+		return "with " + StoreRequestModelsToolName
+	}
+	return "from the Portal"
 }
 
 // groupStoreModels groups models by provider, providers and models sorted.

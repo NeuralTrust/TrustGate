@@ -41,6 +41,7 @@ type mcpRouter struct {
 	jwksHandler                *oauthhttp.JWKSHandler
 	whoAmIHandler              *mcphttp.WhoAmIHandler
 	personalKeyHandler         *oauthhttp.PersonalKeyHandler
+	modelRequestHandler        *oauthhttp.ModelRequestHandler
 }
 
 // MCPRouterOption adds an optional page to the MCP router.
@@ -49,6 +50,11 @@ type MCPRouterOption func(*mcpRouter)
 // WithPersonalKeyHandler serves the MCP Store's personal key page.
 func WithPersonalKeyHandler(h *oauthhttp.PersonalKeyHandler) MCPRouterOption {
 	return func(r *mcpRouter) { r.personalKeyHandler = h }
+}
+
+// WithModelRequestHandler serves the MCP Store's model request page.
+func WithModelRequestHandler(h *oauthhttp.ModelRequestHandler) MCPRouterOption {
+	return func(r *mcpRouter) { r.modelRequestHandler = h }
 }
 
 func NewMCPRouter(
@@ -158,6 +164,11 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 		app.Get(appoauth.PersonalKeyReturnPath, r.personalKeyHandler.Return)
 		app.Get(appoauth.PersonalKeyPagePath, r.personalKeyHandler.Page)
 		app.Post(appoauth.PersonalKeyPagePath, r.personalKeyHandler.Act)
+	}
+	// So is the model request page: a Store link alone, like the MCP request form.
+	if r.modelRequestHandler != nil {
+		app.Get(appoauth.ModelRequestPagePath, r.modelRequestHandler.Page)
+		app.Post(appoauth.ModelRequestPagePath, r.modelRequestHandler.Submit)
 	}
 
 	// The streamable-HTTP notification stream is a GET, so it has to be

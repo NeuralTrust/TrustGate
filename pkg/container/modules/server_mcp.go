@@ -84,6 +84,8 @@ type mcpRouterParams struct {
 	WhoAmIHandler *mcphttp.WhoAmIHandler `optional:"true"`
 	// PersonalKeyHandler is nil on a plane that cannot issue personal keys.
 	PersonalKeyHandler *oauthhttp.PersonalKeyHandler `optional:"true"`
+	// ModelRequestHandler is nil where the console takes no model requests.
+	ModelRequestHandler *oauthhttp.ModelRequestHandler `optional:"true"`
 }
 
 type mcpServerParams struct {
@@ -121,6 +123,7 @@ func ServerMCP(c *container.Container) error {
 				p.WhoAmIHandler,
 				ops,
 				router.WithPersonalKeyHandler(p.PersonalKeyHandler),
+				router.WithModelRequestHandler(p.ModelRequestHandler),
 			)
 		},
 		dig.Name("mcp"),
