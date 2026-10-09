@@ -24,11 +24,9 @@ type Data struct {
 	Decision   string         `json:"decision,omitempty"`
 	Mode       string         `json:"mode,omitempty"`
 	LatencyMS  int64          `json:"latency_ms,omitempty"`
-	// PartialWindow marks a conversation above text:analyze's limit, of which
-	// only a window was analysed; CharsNotInspected is how many code points of
-	// it were left out.
-	PartialWindow     bool `json:"partial_window,omitempty"`
-	CharsNotInspected int  `json:"chars_not_inspected,omitempty"`
+	// ChunkCount is how many text:analyze calls the conversation was split
+	// into; it is set only when that is more than one.
+	ChunkCount int `json:"chunk_count,omitempty"`
 	// FailureReason and FailureDetail are set only on a failed_open
 	// decision: FailureReason is one of appplugins.FailureReason (transport,
 	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names

@@ -27,6 +27,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -38,13 +39,26 @@ const (
 	decisionAllowed  = "allowed"
 )
 
-// maxTextCodePoints is the length text:analyze accepts for one text, counted in
-// Unicode code points. A conversation above it is analysed over a window of its
-// most recent content (windowOf) until it is split across calls; a last user
-// message that alone exceeds it cannot be windowed and is the input's doing,
-// not Azure's availability.
-// https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#input-requirements
-const maxTextCodePoints = 10000
+// The text:analyze limit is "10K characters (split longer texts as needed)".
+// What a character is stays undocumented, so a chunk is capped in UTF-16 code
+// units, which are never fewer than code points or characters. The overlap
+// keeps a pattern that straddles a cut whole in one chunk. A conversation above
+// maxChunks is refused before any call, so a padded request costs nothing at
+// Azure. At most evalParallel calls run at once, inside one evaluationBudget
+// for the whole conversation. The free tier (F0) allows 5 requests a second,
+// so a long conversation can throttle itself there, and a throttle is
+// availability: F0 gives incomplete coverage of long conversations.
+// https://learn.microsoft.com/en-us/azure/ai-services/content-safety/region-availability#service-limits
+// https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#query-rates
+const (
+	chunkUnits       = 10000
+	chunkOverlap     = 500
+	maxChunks        = 64
+	evalParallel     = 8
+	evaluationBudget = defaultTimeout
+)
+
+var chunkSpec = textchunk.Spec{Max: chunkUnits, Overlap: chunkOverlap, Unit: textchunk.UTF16}
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -52,6 +66,7 @@ type Plugin struct {
 	registry *adapter.Registry
 	client   *client
 	logger   *slog.Logger
+	budget   time.Duration
 }
 
 func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
@@ -59,6 +74,7 @@ func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
 		registry: registry,
 		client:   newClient(),
 		logger:   logger,
+		budget:   evaluationBudget,
 	}
 }
 
@@ -164,7 +180,7 @@ func (p *Plugin) CredentialDestinations() []string {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, "", err)
 	}
 
 	if in.Stage != policy.StagePreRequest {
@@ -176,7 +192,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if decErr != nil {
@@ -184,43 +200,67 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			return passThrough(), nil
 		}
 		if !adapter.IsRequestDecodeError(decErr) {
-			return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, decErr)
+			return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, decErr)
 		}
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", decErr)
+		return p.externalFailure(ctx, in, cfg, 0, 0, appplugins.FailureDecodeFailed, "", decErr)
 	}
 	if creq == nil {
 		return passThrough(), nil
 	}
-	window := windowOf(creq)
-	if window.Text == "" && !window.LastUserTooLarge {
+	text := conversationText(creq)
+	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	if window.LastUserTooLarge {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
-			fmt.Errorf("azure_content_safety: last user message exceeds the %d characters text:analyze accepts", maxTextCodePoints))
+	if n := textchunk.Count(text, chunkSpec); n > maxChunks {
+		return p.externalFailure(ctx, in, cfg, 0, n, appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
+			fmt.Errorf("azure_content_safety: the conversation splits into %d chunks, above the %d evaluated", n, maxChunks))
 	}
-	if strings.TrimSpace(window.Text) == "" {
-		return passThrough(), nil
-	}
+	chunks := textchunk.Split(text, chunkSpec)
 
 	start := time.Now()
-	resp, err := p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
-		Text:       window.Text,
-		Categories: cfg.requestCategories(),
-		OutputType: cfg.OutputType,
+	budget, cancel := context.WithTimeout(ctx, p.budget)
+	defer cancel()
+	evals := make([]chunkEval, len(chunks))
+	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
+		Parallel: evalParallel,
+		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(evals[i].breaches) > 0 },
+	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
+		resp, err := p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
+			Text:       c.Text,
+			Categories: cfg.requestCategories(),
+			OutputType: cfg.OutputType,
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		evals[i].severities, evals[i].breaches, evals[i].missing = evaluate(resp, cfg)
+		return struct{}{}, nil
 	})
 	latency := time.Since(start).Milliseconds()
-	if err != nil {
-		reason, detail := pluginutil.FailureOfError(err)
-		return p.externalFailure(ctx, in, cfg, latency, reason, detail, err)
+	count := len(chunks)
+
+	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{},
+		func(i int, _ struct{}, err error) pluginutil.ChunkState {
+			if err != nil {
+				reason, detail := pluginutil.FailureOfError(err)
+				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
+			}
+			if len(evals[i].breaches) > 0 {
+				return pluginutil.ChunkState{Blocks: true}
+			}
+			if evals[i].missing != "" {
+				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{
+					Reason: appplugins.FailureVerdictIncomplete, Detail: evals[i].missing,
+				}}
+			}
+			return pluginutil.ChunkState{}
+		})
+	if decision.Kind == pluginutil.ChunkInputFailure || decision.Kind == pluginutil.ChunkAvailabilityFailure {
+		return p.externalFailure(ctx, in, cfg, latency, count, decision.Reason, decision.Detail,
+			fmt.Errorf("azure_content_safety: chunk %d of %d: %s", decision.Index+1, count, failureText(decision, outs)))
 	}
 
-	severities, breaches, missing := evaluate(resp, cfg)
-	if len(breaches) == 0 && missing != "" {
-		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, missing,
-			fmt.Errorf("azure_content_safety: thresholded category %q missing from response", missing))
-	}
-
+	severities, breaches := mergeEvals(evals, outs)
 	data := &Data{
 		Endpoint:   cfg.Endpoint,
 		OutputType: cfg.OutputType,
@@ -228,9 +268,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Mode:       string(in.Mode),
 		LatencyMS:  latency,
 	}
-	if window.LeftOut > 0 {
-		data.PartialWindow = true
-		data.CharsNotInspected = window.LeftOut
+	if count > 1 {
+		data.ChunkCount = count
 	}
 
 	if len(breaches) > 0 && appplugins.Blocks(in.Mode) {
@@ -256,6 +295,51 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	return passThrough(), nil
 }
 
+// chunkEval is what Azure said about one chunk.
+type chunkEval struct {
+	severities map[string]int
+	breaches   []breachedCategory
+	missing    string
+}
+
+// mergeEvals is the highest severity Azure gave each category in any chunk, and
+// each breached category once, at its highest severity.
+func mergeEvals(evals []chunkEval, outs []textchunk.Outcome[struct{}]) (map[string]int, []breachedCategory) {
+	severities := map[string]int{}
+	worst := map[string]breachedCategory{}
+	for i, ev := range evals {
+		if !outs[i].Started || outs[i].Err != nil {
+			continue
+		}
+		for category, severity := range ev.severities {
+			if cur, ok := severities[category]; !ok || severity > cur {
+				severities[category] = severity
+			}
+		}
+		for _, b := range ev.breaches {
+			if cur, ok := worst[b.Category]; !ok || b.Severity > cur.Severity {
+				worst[b.Category] = b
+			}
+		}
+	}
+	if len(severities) == 0 {
+		severities = nil
+	}
+	breaches := make([]breachedCategory, 0, len(worst))
+	for _, b := range worst {
+		breaches = append(breaches, b)
+	}
+	sort.Slice(breaches, func(i, j int) bool { return breaches[i].Category < breaches[j].Category })
+	return severities, breaches
+}
+
+func failureText(d pluginutil.ChunkDecision, outs []textchunk.Outcome[struct{}]) string {
+	if d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil {
+		return outs[d.Index].Err.Error()
+	}
+	return d.Detail
+}
+
 // externalFailure turns a failed guardrail call into a plugin outcome via
 // the shared appplugins.HandleExternalFailure, which owns the class and the
 // mode: an availability failure passes through as failed_open, and an input
@@ -267,6 +351,7 @@ func (p *Plugin) externalFailure(
 	in appplugins.ExecInput,
 	cfg Settings,
 	latencyMS int64,
+	chunks int,
 	reason appplugins.FailureReason,
 	detail string,
 	err error,
@@ -283,7 +368,7 @@ func (p *Plugin) externalFailure(
 		Logger:  p.logger,
 		Event:   in.Event,
 	})
-	setExtras(in.Event, &Data{
+	data := &Data{
 		Endpoint:      cfg.Endpoint,
 		OutputType:    cfg.OutputType,
 		Mode:          string(in.Mode),
@@ -292,7 +377,11 @@ func (p *Plugin) externalFailure(
 		FailureReason: string(reason),
 		FailureDetail: detail,
 		FailureClass:  string(outcome.Class),
-	})
+	}
+	if chunks > 1 {
+		data.ChunkCount = chunks
+	}
+	setExtras(in.Event, data)
 	if outcome.Err != nil {
 		return nil, outcome.Err
 	}
