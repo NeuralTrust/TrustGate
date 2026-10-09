@@ -53,10 +53,20 @@ type GuardAttachment struct {
 }
 
 type GuardAttributes struct {
-	ContentType string       `json:"content_type"`
-	Model       GuardModel   `json:"model"`
-	User        *GuardUser   `json:"user,omitempty"`
-	Stream      *GuardStream `json:"stream,omitempty"`
+	ContentType string         `json:"content_type"`
+	Model       GuardModel     `json:"model"`
+	User        *GuardUser     `json:"user,omitempty"`
+	Consumer    *GuardConsumer `json:"consumer,omitempty"`
+	Stream      *GuardStream   `json:"stream,omitempty"`
+}
+
+// GuardConsumer names the application a request came from. TrustGuard stores
+// the name with the event only when it is sent here, and the console's Activity
+// otherwise has the id alone for a consumer it cannot look up — the MCP Store's,
+// which is synthetic, and one deleted since.
+type GuardConsumer struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // GuardStream correlates the evaluate calls of a single streamed response so

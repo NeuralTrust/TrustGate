@@ -54,13 +54,17 @@ const ConnectStateTTL = 10 * time.Minute
 const ConnectFinishTTL = 2 * time.Minute
 
 type ConnectTicket struct {
-	GatewayID    string    `json:"gateway_id"`
-	PrincipalSub string    `json:"principal_sub"`
+	GatewayID    string `json:"gateway_id"`
+	PrincipalSub string `json:"principal_sub"`
 	// PrincipalEmail is the email of the person PrincipalSub names, taken when
 	// they minted the ticket themselves, so the page shows who an account is
 	// linked to as they know themselves rather than as a user id. Empty when
 	// the minter was not that person or had no email.
 	PrincipalEmail string `json:"principal_email,omitempty"`
+	// ClientName is the app the person minted the ticket from (the name its
+	// OAuth client registered with), so the page can say where to go back.
+	// Empty when the minter is not that person or no app is known.
+	ClientName   string    `json:"client_name,omitempty"`
 	ConsumerPath string    `json:"consumer_path"`
 	ResumeURL    string    `json:"resume_url,omitempty"`
 	ConsumerID   string    `json:"consumer_id,omitempty"`
@@ -195,6 +199,8 @@ type ConnectPage struct {
 	Instance string
 	// Principal is who the accounts connected from this page are linked to.
 	Principal ConnectPrincipal
+	// ClientName is the app the link came from, empty when unknown.
+	ClientName string
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
