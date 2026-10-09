@@ -334,14 +334,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	if n := textchunk.Count(text, chunkSpec); n > maxChunks {
+	limit := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.client.timeout)
+	if n := textchunk.Count(text, chunkSpec); n > limit {
 		return p.externalFailure(ctx, in, cfg, n, appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
-			fmt.Errorf("openai_moderation: the text splits into %d chunks, above the %d evaluated", n, maxChunks))
+			fmt.Errorf("openai_moderation: the text splits into %d chunks, above the %d evaluated", n, limit))
 	}
 	chunks := textchunk.Split(text, chunkSpec)
 
 	budget, cancel := context.WithTimeout(ctx, p.client.timeout)
 	defer cancel()
+	slow := textchunk.SlowCallOf(budget, callReserve)
 	verdicts := make([]chunkVerdict, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
 		Parallel: evalParallel,
@@ -372,7 +374,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 		return appplugins.ChunkState{}
 	}
-	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState,
+		appplugins.SlowCall(slow))
 	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
 		return p.externalFailure(ctx, in, cfg, len(chunks), decision.Reason, decision.Detail,
 			fmt.Errorf("openai_moderation: chunk %d of %d: %s", decision.Index+1, len(chunks), failureText(decision, outs)))

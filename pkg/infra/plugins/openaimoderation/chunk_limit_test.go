@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -112,5 +114,48 @@ func TestBufferedLegsRefuseATextAboveTheChunkLimitLocally(t *testing.T) {
 				assert.Equal(t, 1, f.hits)
 			})
 		}
+	}
+}
+
+// The ceiling is what half of the budget admits: with the default 15 s budget,
+// 4 parallel calls and a 2 s reserve, three rounds, so 12 chunks. A text of 12
+// chunks is moderated, and one byte more is refused before any call.
+func TestTheChunkCeilingKeepsHalfTheBudgetInHand(t *testing.T) {
+	t.Parallel()
+	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, 15*time.Second)
+	require.Equal(t, 12, ceiling)
+	atCeiling := chunkBytes + (ceiling-1)*(chunkBytes-chunkOverlap)
+	require.Equal(t, ceiling, textchunk.Count(strings.Repeat("a", atCeiling), chunkSpec))
+
+	for _, tc := range []struct {
+		name   string
+		size   int
+		failed bool
+	}{{"at the ceiling", atCeiling, false}, {"one byte above", atCeiling + 1, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeModerator{response: moderationResponse{ID: "m", Results: []moderationResult{{
+				Categories: map[string]bool{"hate": false}, CategoryScores: map[string]float64{"hate": 0.01},
+			}}}}
+			srv := newModeratorServer(t, f)
+			p := New(adapter.NewRegistry(), srv.URL, 15*time.Second, nil)
+			event, span := newEvent()
+			in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, strings.Repeat("a", tc.size)), nil, event)
+
+			_, err := p.Execute(context.Background(), in)
+
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if !tc.failed {
+				require.NoError(t, err)
+				assert.Equal(t, ceiling, f.hits)
+				return
+			}
+			require.Error(t, err)
+			assert.Zero(t, f.hits)
+			extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+			require.True(t, ok)
+			assert.Equal(t, appplugins.DetailChunkLimit, extras.FailureDetail)
+		})
 	}
 }

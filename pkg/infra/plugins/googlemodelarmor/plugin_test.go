@@ -74,13 +74,17 @@ func (s *modelArmorStub) path() string {
 	return s.lastPath
 }
 
+// defaultTestTimeout is the timeout of the production default (15 s), which
+// sets the chunk ceiling a long text meets.
+const defaultTestTimeout = 15 * time.Second
+
 func pluginWithStub(s *modelArmorStub) *Plugin {
 	return &Plugin{
 		registry:             adapter.NewRegistry(),
 		allowAmbientIdentity: true,
 		clients: &clientCache{
 			build: func(modelArmorCredentials) (*client, error) {
-				return newClientWithTokenSource(s.server.URL, time.Second, staticTokenSource("test-token", nil)), nil
+				return newClientWithTokenSource(s.server.URL, defaultTestTimeout, staticTokenSource("test-token", nil)), nil
 			},
 		},
 	}

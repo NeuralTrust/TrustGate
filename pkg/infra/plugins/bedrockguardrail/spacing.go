@@ -62,22 +62,24 @@ func textUnits(n int) int { return (n + 999) / 1000 }
 // that still comes back is other traffic, which is availability.
 //
 // Because the waits and the calls are known before the first call, the request is
-// refused when they cannot fit the evaluation's budget, so a client cannot pad a
-// message until its last chunk is paced to the deadline. Once the estimate admits
-// a request, a chunk that the budget cuts or that has no time left to start is
-// the provider being slower than the estimate: availability, never the request's
-// size.
+// refused when they cannot fit half of the evaluation's budget, so a client cannot
+// pad a message until its last chunk is paced to the deadline, and a provider
+// that answers up to twice as slowly as the estimate assumes still fits the
+// budget. After that a chunk that the budget cuts or that has no time left to
+// start is the provider being slow, availability, only when a call took longer
+// than twice the reserve; otherwise the request's own size used the time and it
+// is chunk_budget.
 
 // estimateDuration is the time the chunks need. Each call is reserved
-// callReserve, and the quota refills while it runs, so a chunk waits only for
-// what that refill did not cover: a chunk costs the longer of callReserve and the
+// reserve, and the quota refills while it runs, so a chunk waits only for
+// what that refill did not cover: a chunk costs the longer of the reserve and the
 // time its units need.
-func estimateDuration(chunks []textchunk.Chunk, q regionQuota) time.Duration {
+func estimateDuration(chunks []textchunk.Chunk, q regionQuota, reserve time.Duration) time.Duration {
 	tokens := float64(q.burst)
 	var total time.Duration
 	for i, c := range chunks {
 		if i > 0 {
-			tokens = min(float64(q.burst), tokens+callReserve.Seconds()*float64(q.unitsPerSecond))
+			tokens = min(float64(q.burst), tokens+reserve.Seconds()*float64(q.unitsPerSecond))
 		}
 		u := float64(min(textUnits(len(c.Text)), q.burst))
 		var wait time.Duration
@@ -86,7 +88,7 @@ func estimateDuration(chunks []textchunk.Chunk, q regionQuota) time.Duration {
 			tokens = u
 		}
 		tokens -= u
-		total += callReserve + wait
+		total += reserve + wait
 	}
 	return total
 }

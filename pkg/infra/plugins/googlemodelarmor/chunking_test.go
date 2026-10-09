@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -430,4 +431,30 @@ func TestAThrottleOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
 	assert.Equal(t, appplugins.DetailThrottled, data.FailureDetail)
 	assert.Equal(t, "availability", data.FailureClass)
 	assertPassThrough(t, res, err)
+}
+
+// Every call hangs past the budget: Model Armor is slow or down, so the chunks that
+// never started are not the request's size and the request fails open.
+func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(int, string) (int, string) {
+		time.Sleep(1500 * time.Millisecond)
+		return http.StatusOK, allowResponse
+	})
+	p := pluginWithStub(s.modelArmorStub)
+	p.clients = &clientCache{build: func(modelArmorCredentials) (*client, error) {
+		return newClientWithTokenSource(s.server.URL, 800*time.Millisecond, staticTokenSource("test-token", nil)), nil
+	}}
+	event, span := newStreamEvent()
+	text := armorPlain(300 << 10)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, text)), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, "availability", data.FailureClass)
+	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
 }

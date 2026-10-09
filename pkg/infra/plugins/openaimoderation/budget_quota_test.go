@@ -97,10 +97,9 @@ func TestAnExhaustedQuotaIsConfigurationNotAThrottle(t *testing.T) {
 }
 
 // The chunks after the first round wait for this request's own earlier chunks.
-// One that is cut by the evaluation's budget was kept from running by the
-// request's size and is input; the provider being slow on a chunk of the first
-// round is availability.
-func TestAChunkCutByTheBudgetAfterWaitingOnTheRequestsOwnChunksIsInput(t *testing.T) {
+// A provider that hangs on one of them ran the budget out with its own time, so
+// the cut is availability, not the request's size.
+func TestAProviderHangOnAChunkThatWaitedIsAvailability(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -116,21 +115,15 @@ func TestAChunkCutByTheBudgetAfterWaitingOnTheRequestsOwnChunksIsInput(t *testin
 			})
 			p := New(adapter.NewRegistry(), srv.URL, 3*time.Second, nil)
 			event, span := newEvent()
-			in := execInput(policy.StagePreRequest, mode, blockSettings(), chatRequestOf(t, withMarker(benignText(300), 150<<10)), nil, event)
+			in := execInput(policy.StagePreRequest, mode, blockSettings(), chatRequestOf(t, withMarker(benignText(150), 130<<10)), nil, event)
 
 			res, err := p.Execute(context.Background(), in)
 
+			require.NoError(t, err, "a hang is availability and fails open")
+			require.NotNil(t, res)
 			extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 			require.True(t, ok)
-			assert.Equal(t, "input", extras.FailureClass)
-			assert.Equal(t, appplugins.DetailChunkBudget, extras.FailureDetail)
-			if mode == policy.ModeEnforce {
-				pe, isPE := appplugins.AsPluginError(err)
-				require.True(t, isPE, "got res=%v err=%v", res, err)
-				assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
-				return
-			}
-			require.NoError(t, err)
+			assert.Equal(t, "availability", extras.FailureClass)
 			assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
 		})
 	}
@@ -171,7 +164,7 @@ func TestAClientThatLeavesIsNeverInput(t *testing.T) {
 	})
 	p := New(adapter.NewRegistry(), srv.URL, 5*time.Second, nil)
 	event, span := newEvent()
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(300)), nil, event)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(150)), nil, event)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	time.AfterFunc(400*time.Millisecond, cancel)

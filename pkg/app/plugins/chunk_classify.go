@@ -15,6 +15,8 @@
 package plugins
 
 import (
+	"time"
+
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
 
@@ -73,22 +75,23 @@ type ChunkDecision struct {
 // ClassifyOption changes how ClassifyChunks reads a time cut.
 type ClassifyOption func(*classifyConfig)
 
-type classifyConfig struct{ admitted bool }
+type classifyConfig struct{ slow time.Duration }
 
-// AdmittedByEstimate is for an evaluation whose time the plugin estimated before
-// the first call and found to fit its budget. A chunk that the budget then cut,
-// or that was not started for lack of reserve, is the provider being slower than
-// the estimate, which is availability: the request's size was already accepted.
-// Without it the generic rule applies, where size is what used the time.
-func AdmittedByEstimate() ClassifyOption {
-	return func(c *classifyConfig) { c.admitted = true }
+// SlowCall sets how long a started chunk's call has to take to count as the
+// provider being slow (textchunk.SlowCall). Without it no call counts as slow,
+// and a time cut is always the request's own size.
+func SlowCall(d time.Duration) ClassifyOption {
+	return func(c *classifyConfig) { c.slow = d }
 }
 
 // ClassifyChunks reads the outcomes of one chunked evaluation through the one
-// precedence table every guardrail shares (DecideChunks). A started chunk whose
-// call was cut by the evaluation's budget after waiting on the request's own
-// earlier chunks is chunk_budget, whatever of says: the request's size used the
-// time, the provider was not slow. of maps every other started chunk.
+// precedence table every guardrail shares (DecideChunks), after applying the
+// one rule for a time cut: a chunk that was never started, or that waited behind
+// the request's own chunks and was cut by the evaluation's budget, is
+// availability only when a started chunk's call took longer than the SlowCall
+// threshold (the provider was slow, and its time ran the budget out), and is
+// chunk_budget, input, otherwise (the request's own size used the budget while
+// every call answered at its usual pace). of maps every other started chunk.
 //
 // cancelled is the client having left (the caller's context was cancelled), which
 // the caller reads as errors.Is(ctx.Err(), context.Canceled). Nothing in the
@@ -104,15 +107,21 @@ func ClassifyChunks[T any](
 	for _, o := range opts {
 		o(&cfg)
 	}
+	slow := false
+	for _, out := range outs {
+		if out.Started && cfg.slow > 0 && out.Took > cfg.slow {
+			slow = true
+		}
+	}
 	states := make([]ChunkState, len(outs))
 	for i, out := range outs {
 		if !out.Started {
-			if cfg.admitted {
+			if slow {
 				states[i] = ChunkState{Started: true, Failure: &ChunkFailure{Reason: FailureTransport}}
 			}
 			continue
 		}
-		if out.Err != nil && out.BudgetCut && out.Waited && !cancelled && !cfg.admitted {
+		if out.Err != nil && out.BudgetCut && out.Waited && !cancelled && !slow {
 			states[i] = ChunkState{Started: true, Waited: true, Failure: &ChunkFailure{Reason: FailureInputTooLarge, Detail: DetailChunkBudget}}
 			continue
 		}

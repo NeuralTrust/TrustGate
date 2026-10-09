@@ -38,6 +38,65 @@ type RunOptions struct {
 	// operator configured shrinks the reserve instead of refusing every request
 	// of more than one round. Zero means no reserve.
 	Reserve time.Duration
+	// Before is called in the chunk's goroutine, once the chunk has a slot and
+	// before its call, to hold a chunk back (spacing a quota, say). Its time is
+	// not part of Outcome.Took, which is the provider's alone, and an error from
+	// it is the chunk's error.
+	Before func(ctx context.Context, i int, c Chunk) error
+}
+
+// EffectiveReserve is the reserve a Run really holds back: Run caps it at a
+// quarter of the budget, so a short budget that an operator configured shrinks
+// the reserve instead of refusing every request of more than one round.
+func EffectiveReserve(reserve, budget time.Duration) time.Duration {
+	return min(reserve, budget/4)
+}
+
+// SlowCall is how long one call has to take before it is the provider being
+// slow and not the request: twice the effective reserve, which is itself about
+// twice a call's usual latency. See ClassifyChunks in the plugins package.
+func SlowCall(reserve, budget time.Duration) time.Duration {
+	return 2 * EffectiveReserve(reserve, budget)
+}
+
+// SlowCallOf is SlowCall for a Run over ctx, whose reserve Run itself caps at a
+// quarter of the time ctx has left: it reads that time from ctx's deadline, so a
+// parent's earlier deadline shortens the threshold with the reserve. It is zero,
+// which no call exceeds, when ctx has no deadline. Call it before Run.
+func SlowCallOf(ctx context.Context, reserve time.Duration) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	return SlowCall(reserve, time.Until(deadline))
+}
+
+// Rounds is how many rounds of at most parallel calls n chunks take.
+func Rounds(n, parallel int) int {
+	return (n + max(1, parallel) - 1) / max(1, parallel)
+}
+
+// Admits reports whether n chunks sent parallel at a time fit a budget with
+// headroom: their estimate, one effective reserve per round, is at most half of
+// it. Half is what lets a provider answer in up to twice the reserve on every
+// round, which SlowCall treats as normal, without the budget cutting a chunk
+// whose time the request's own size used. A single chunk is always admitted.
+func Admits(n, parallel int, reserve, budget time.Duration) bool {
+	if n <= 1 {
+		return true
+	}
+	return time.Duration(Rounds(n, parallel))*EffectiveReserve(reserve, budget) <= budget/2
+}
+
+// MaxChunks is the most chunks Admits for a budget, at most limit and never
+// fewer than one. A ceiling taken from it is the same as the estimate's, so a
+// text above it is refused as chunk_limit and a text at it always fits.
+func MaxChunks(limit, parallel int, reserve, budget time.Duration) int {
+	r := EffectiveReserve(reserve, budget)
+	if r <= 0 {
+		return max(1, limit)
+	}
+	return max(1, min(limit, int((budget/2)/r)*max(1, parallel)))
 }
 
 // Outcome is what evaluating one chunk produced. Started is false when the
@@ -50,12 +109,16 @@ type RunOptions struct {
 // own earlier chunks used up. A chunk of the first round that is cut was the
 // provider being slow, and a call that ended on its own timeout leaves
 // BudgetCut false because ctx's deadline had not passed.
+//
+// Took is how long the call itself ran, without what RunOptions.Before held it
+// back for: the provider's time, which says whether it was slow.
 type Outcome[T any] struct {
 	Value     T
 	Err       error
 	Started   bool
 	Waited    bool
 	BudgetCut bool
+	Took      time.Duration
 }
 
 // Run evaluates fn over chunks in index order with at most o.Parallel calls in
@@ -93,7 +156,16 @@ dispatch:
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			v, err := call(runCtx, i, chunks[i], fn)
+			var v T
+			var err error
+			if o.Before != nil {
+				err = o.Before(runCtx, i, chunks[i])
+			}
+			if err == nil {
+				began := time.Now()
+				v, err = call(runCtx, i, chunks[i], fn)
+				out[i].Took = time.Since(began)
+			}
 			out[i].Value, out[i].Err = v, err
 			out[i].BudgetCut = err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 			if o.StopOn != nil {

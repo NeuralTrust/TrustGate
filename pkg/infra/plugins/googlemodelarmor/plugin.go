@@ -476,12 +476,16 @@ func (p *Plugin) runGuardrail(
 	sanitize func(ctx context.Context, chunk string) (*SanitizationResult, error),
 	span rewriteSpan,
 ) (*appplugins.Result, error) {
-	if n := textchunk.Count(text, chunkSpec); n > maxBufferedChunks {
+	limit := maxBufferedChunks
+	if budget > 0 {
+		limit = textchunk.MaxChunks(maxBufferedChunks, chunkParallel, callReserve, budget)
+	}
+	if n := textchunk.Count(text, chunkSpec); n > limit {
 		return p.externalFailure(ctx, in, cfg, 0, failureInfo{
 			reason:      appplugins.FailureInputTooLarge,
 			armorReason: appplugins.DetailChunkLimit,
 			chunks:      n,
-			err:         fmt.Errorf("model_armor: the text splits into %d chunks, above the %d evaluated", n, maxBufferedChunks),
+			err:         fmt.Errorf("model_armor: the text splits into %d chunks, above the %d evaluated", n, limit),
 		})
 	}
 	chunks := textchunk.Split(text, chunkSpec)
@@ -494,6 +498,7 @@ func (p *Plugin) runGuardrail(
 		runCtx, cancel = context.WithTimeout(ctx, budget)
 		defer cancel()
 	}
+	slow := textchunk.SlowCallOf(runCtx, callReserve)
 	evals := make([]chunkEval, count)
 	outs := textchunk.Run(runCtx, chunks, textchunk.RunOptions{
 		Parallel: chunkParallel,
@@ -515,7 +520,7 @@ func (p *Plugin) runGuardrail(
 		}
 		return evals[i].state()
 	}
-	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState)
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow))
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {

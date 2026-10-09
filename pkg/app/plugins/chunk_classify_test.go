@@ -17,6 +17,7 @@ package plugins
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -213,44 +214,64 @@ func TestAnEvaluationCutByTheCallersContextIsNeverInput(t *testing.T) {
 	assert.Equal(t, ChunkBlocked, ClassifyChunks(blocking, true, pass).Kind, "a finding that was made still decides")
 }
 
-// An evaluation the plugin admitted by its estimate read a time cut as the
-// provider being slower than that estimate, never as the request's size.
-func TestAnAdmittedEvaluationReadsATimeCutAsAvailability(t *testing.T) {
+// A time cut is the provider being slow only when a started chunk's call took
+// longer than the SlowCall threshold; calls at their usual pace that still ran
+// the budget out are the request's own size.
+func TestATimeCutIsAvailabilityOnlyWhenACallWasSlow(t *testing.T) {
 	t.Parallel()
+	const slow = 3 * time.Second
 	pass := func(_ int, v ChunkState, err error) ChunkState {
 		if err != nil {
 			return ChunkState{Failure: fail(FailureTransport, "")}
 		}
 		return v
 	}
-	cases := map[string]func() []textchunk.Outcome[ChunkState]{
-		"a waiting chunk the budget cut": func() []textchunk.Outcome[ChunkState] {
-			o := started(3)
-			o[2].Err, o[2].Waited, o[2].BudgetCut = errors.New("context deadline exceeded"), true, true
-			return o
-		},
-		"chunks never started for lack of reserve": func() []textchunk.Outcome[ChunkState] {
-			o := started(3)
-			o[1].Started, o[2].Started = false, false
-			return o
-		},
+	cut := func(tookFirst time.Duration) map[string]func() []textchunk.Outcome[ChunkState] {
+		return map[string]func() []textchunk.Outcome[ChunkState]{
+			"a waiting chunk the budget cut": func() []textchunk.Outcome[ChunkState] {
+				o := started(3)
+				o[0].Took = tookFirst
+				o[2].Err, o[2].Waited, o[2].BudgetCut = errors.New("context deadline exceeded"), true, true
+				return o
+			},
+			"chunks never started for lack of reserve": func() []textchunk.Outcome[ChunkState] {
+				o := started(3)
+				o[0].Took = tookFirst
+				o[1].Started, o[2].Started = false, false
+				return o
+			},
+		}
 	}
-	for name, build := range cases {
-		t.Run(name, func(t *testing.T) {
+	for name, build := range cut(slow + time.Millisecond) {
+		t.Run("slow/"+name, func(t *testing.T) {
 			t.Parallel()
-			got := ClassifyChunks(build(), false, pass, AdmittedByEstimate())
+			got := ClassifyChunks(build(), false, pass, SlowCall(slow))
 			assert.Equal(t, ChunkAvailabilityFailure, got.Kind)
 			assert.Equal(t, FailureTransport, got.Reason)
 			assert.Empty(t, got.Detail)
-			// the generic rule is unchanged without the option
-			assert.Equal(t, ChunkInputFailure, ClassifyChunks(build(), false, pass).Kind)
 		})
 	}
+	for name, build := range cut(slow) {
+		t.Run("fast/"+name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyChunks(build(), false, pass, SlowCall(slow))
+			assert.Equal(t, ChunkInputFailure, got.Kind)
+			assert.Equal(t, DetailChunkBudget, got.Detail)
+			assert.Equal(t, ChunkInputFailure, ClassifyChunks(build(), false, pass).Kind, "with no threshold no call is slow")
+		})
+	}
+	t.Run("a client that left is never input", func(t *testing.T) {
+		t.Parallel()
+		o := started(3)
+		o[2].Err, o[2].Waited, o[2].BudgetCut = errors.New("context deadline exceeded"), true, true
+		assert.Equal(t, ChunkAvailabilityFailure, ClassifyChunks(o, true, pass, SlowCall(slow)).Kind)
+	})
 	t.Run("a block of an earlier chunk still decides", func(t *testing.T) {
 		t.Parallel()
 		o := started(3)
 		o[0].Value.Blocks = true
+		o[0].Took = 2 * slow
 		o[2].Started = false
-		assert.Equal(t, ChunkBlocked, ClassifyChunks(o, false, pass, AdmittedByEstimate()).Kind)
+		assert.Equal(t, ChunkBlocked, ClassifyChunks(o, false, pass, SlowCall(slow)).Kind)
 	})
 }
