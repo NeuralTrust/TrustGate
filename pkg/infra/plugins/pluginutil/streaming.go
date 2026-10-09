@@ -25,17 +25,21 @@ import (
 )
 
 // Stream error policies: what the block loop does with held text when a
-// per-block inspection call fails. Guardrails always fail open; a rewriter
-// whose failure would release text it was meant to mask asks for fail_closed.
+// per-block inspection call fails. A guardrail's availability failures (a
+// provider outage, a timeout, rejected credentials) fail open, and the failures
+// that depend on the content are the plugin's own to cut on
+// (appplugins.ExternalStreamOutcome); a rewriter whose failure would release text
+// it was meant to mask asks for fail_closed.
 const (
 	StreamOnErrorFailOpen   = "fail_open"
 	StreamOnErrorFailClosed = "fail_closed"
 )
 
-// Settings keys a guardrail ignores. A guardrail always fails open, takes the
-// deployment-wide timeout and never blocks on a mask it cannot apply, so a stored
-// value for one of these would read as behaviour the policy does not have. Each
-// guardrail returns the keys it carries from its RetiredSettings.
+// Settings keys a guardrail ignores. A guardrail's availability failures fail open,
+// it takes the deployment-wide timeout, and a mask it cannot apply blocks in a
+// mode that blocks, none of which a policy chooses, so a stored value for one of
+// these would read as behaviour the policy does not have. Each guardrail returns
+// the keys it carries from its RetiredSettings.
 const (
 	SettingOnError               = "on_error"
 	SettingOnMaskFailure         = "on_mask_failure"
@@ -69,8 +73,9 @@ const (
 // configured one has configured them all.
 //
 // There is deliberately no guard_timeout or on_error key: the per-block call runs
-// under StreamingDefaults.GuardTimeout and a failed call fails open, so a policy
-// cannot lengthen the wait on the stream or turn a provider outage into a cut. A
+// under StreamingDefaults.GuardTimeout and a call that fails for the provider's
+// availability fails open, so a policy cannot lengthen the wait on the stream or
+// turn a provider outage into a cut. A
 // plugin whose failure must stop the stream adds its own on_error beside this
 // struct (regex_replace does).
 //
@@ -339,8 +344,9 @@ func StreamFingerprints(findings []appplugins.StreamFinding) []string {
 
 // Options is what StreamSettings hands back to the block loop. The knobs
 // travel with the opt-in rather than being re-read by a caller that cannot
-// parse the plugin's schema. A failed inspection call fails open; a plugin that
-// needs otherwise overrides OnError on the result.
+// parse the plugin's schema. A failed inspection call is released; a plugin that
+// needs otherwise overrides OnError on the result, and one whose failure depends
+// on the content cuts through appplugins.ExternalStreamOutcome.
 func (s StreamingSettings) Options() appplugins.StreamOptions {
 	return appplugins.StreamOptions{
 		HeadChars:            s.HeadChars,

@@ -298,8 +298,11 @@ fails outright stops the stream too, and that stop is reported the way a verdict
 have blocked. Nothing in `degraded_reason` marks it — fail_closed does not degrade, it
 stops — so the tell is `guard_calls` short of `evals_total` on a leg with a cut. Read
 `cut_at_eval` as "the block at which the stream stopped", not "the block whose verdict
-stopped it". Since RUN-1813 only a rewriter that asks for it (`regex_replace`, whose stream
-leg fails closed by default) can cause such a cut; guardrails always fail open.
+stopped it". Since RUN-1813 a failed call cuts the stream in two cases: a rewriter that asks
+for it (`regex_replace`, whose stream leg fails closed by default), and a guardrail whose
+failure depends on the content of the block (see *External guardrail failures*), which is
+recorded `failed_closed` on the policy that authored the cut. A guardrail whose provider is
+unavailable still fails open.
 
 **`status.reason` does not yet name a mid-stream cut.** It is set on the error path only
 (`writeProxyError`), so a head-of-stream block — which happens before a single byte is
@@ -311,35 +314,61 @@ dialect's content-filter terminator, and on the event the cut is visible only th
 ### External guardrail failures
 
 `azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
-record a failure to reach a verdict the same way. On the buffered (non-streamed) leg they
-**always fail open**, in every mode and for every `failure_reason`: a guardrail the gateway
-could not consult does not refuse the request (RUN-1792). There is no setting to change
-that (RUN-1813). The stream leg fails open too (RUN-1786, RUN-1813). The entry's `decision`
-says what happened to the request:
+record a failure to reach a verdict the same way. Every failure has a **class**, and the class
+decides what it costs. There is no setting to change that (RUN-1813).
 
-| Mode | `decision` | Request |
-|------|------------|---------|
-| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
+| `failure_class` | What it depends on | Examples | Enforce or throttle | Observe |
+|-----------------|--------------------|----------|---------------------|---------|
+| `availability` | The provider, the network or the deployment | The provider is down, a timeout, a 5xx, a 429, missing or rejected credentials (401 or 403), a missing base URL, a stored configuration that cannot be used, a Model Armor template that does not enable a `block_on` filter | `failed_open`: the request is forwarded and the chain carries on | `failed_open` |
+| `input` | The content of the request itself | A body the gateway cannot read, a request the provider refuses for what it carries (a 4xx that is not credentials or throttling), a Model Armor filter skipped or an invocation `PARTIAL`, an intervention the plugin cannot explain, a TrustGuard 413, an anonymize that cannot be applied | `failed_closed`: the request is refused with HTTP 403 and the error type `guardrail_input_uninspectable` (on a native Amazon Bedrock route, an `AccessDeniedException`) | `failed_open`: observe never blocks, the failure is only recorded |
+
+The classification is made in one place, from the `failure_reason` and `failure_detail`
+below. A pair it does not name is `availability`, so a reason added later cannot start refusing
+traffic by omission. It is the request that is classified, not the provider: a client can steer an
+`input` failure (pad a prompt until a filter skips), so letting it through would hand any caller
+a way around the guardrail, while no client can cause an `availability` failure.
+
+A mask that cannot be applied over a finding the provider confirmed is the one `input` failure
+that is not `failed_closed`: a finding exists, so it is refused as the policy's own block and
+recorded `decision: blocked`, `degraded: true`, with the reason in `degraded_reason` (below).
 
 **Changed in RUN-1813.** `on_error` (and, on the stream leg, `streaming.on_error` and
 `streaming.guard_timeout`) used to let a policy opt into `fail_closed`. The settings were
 removed: a policy that still stores them keeps loading and the keys are ignored. A migration
 deletes them from stored policies and the policy API drops them on create and update. The contract is additive, so nothing that shipped is renamed or
-retyped, and the values stay in the vocabulary because `regex_replace` and enforcement
-refusals still record `failed_closed`. What can no longer occur for these four plugins is
-`decision: failed_closed`, the HTTP 502 `guardrail_unavailable` refusal and, on a stream, a
-cut resolved on a failed call. Events written before the change still carry them. A
-guardrail's stream leg runs under the default guard timeout of its plugin.
+retyped. `decision: failed_closed` occurs again for these four plugins, for an `input` failure in
+a mode that blocks and for nothing else, together with the new refusal `guardrail_input_uninspectable`
+(HTTP 403). The HTTP 502 `guardrail_unavailable` refusal of an unavailable provider still cannot
+occur, and neither can a stream cut resolved on a provider that failed. Events written before the
+change still carry them. A guardrail's stream leg runs under the default guard timeout of its
+plugin.
 
-Their `extras` carry two keys:
+Their `extras` carry these keys:
 
 | Key | Meaning |
 |-----|---------|
-| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body) |
-| `failure_detail` | Optional. The category, or the Model Armor sub-reason, that produced no verdict |
+| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body), `input_too_large` (the provider refused the content of the call; the detail says how) |
+| `failure_detail` | Optional. What was incomplete or refused: `filter_not_executed` (a Model Armor filter was skipped), `filter_not_in_template` (the template does not enable it), `invocation_partial` (Model Armor ran only some filters), `intervention_unparsed` (Bedrock intervened and no policy type the plugin reads explains it), `anonymize_no_output`, `anonymize_unsupported_format` or `anonymize_encode_failed` (a mask that could not be applied), `provider_rejected_input` (a 4xx the provider answers for the content), or the category the provider left unanswered |
+| `failure_class` | `availability` or `input` (above). Present on every failure, so one query separates "the provider is down" from "the client padded the input" across all four plugins without knowing their reasons |
+| `failure_policies` | `bedrock_guardrail` only. With `failure_detail: intervention_unparsed`, the policy assessments AWS returned that the plugin does not read (for example `automated_reasoning_policy`) |
 
-A streamed response leg that fails records `failed_open` too, in enforce and in observe, and
-never cuts the stream.
+How each provider's answer is classified. Provider errors are read from the status and the
+error type, never from the message text:
+
+| Provider | `input` | `availability` |
+|----------|---------|----------------|
+| `bedrock_guardrail` | An `ApplyGuardrail` client error (4xx) that is not one of the others, a `ValidationException` above all | Credentials (`AccessDeniedException`, `UnrecognizedClientException`, `ExpiredTokenException` and the signature errors, which AWS answers with a 400 or a 403), throttling and quotas (`ThrottlingException`, `ServiceQuotaExceededException`), `ResourceNotFoundException` (the guardrail the policy names is not there: configuration), a timeout and every 5xx. The exact error AWS returns for an oversize text is not documented, so the class is read from the error type and status |
+| `azure_content_safety` | 400, or 413 | 401, 403, 408, 429 and 5xx |
+| `openai_moderation` | 400, or 413 | 401, 403, 408, 429 and 5xx |
+| `google_model_armor` | A filter selected in `block_on` that ends `EXECUTION_SKIPPED` (above its token limit), an invocation `PARTIAL` | `FAILURE`, a non-2xx, a filter the template does not enable |
+| `trustguard` | 413, an unreadable payload, a transform that cannot be applied (below) | Everything else |
+
+A streamed response leg classifies the same way. A failure of the `availability` class
+records `failed_open` and releases the held text; an `input` failure in a mode that blocks cuts
+the stream, which is recorded `failed_closed` on the policy that authored the cut (`blocked` and
+`degraded` for a mask over a finding), at the head (HTTP 403) and after it. In observe it records
+`failed_open`. An `input` failure is not counted toward retiring a policy for the rest of the
+stream (below): a client padding a stream must not be able to switch its inspection off.
 
 **Changed in RUN-1786.** `google_model_armor` and `openai_moderation` inspect a streamed
 response by default: a policy with no `streaming` block is on, and `streaming.enabled: false`
@@ -349,8 +378,8 @@ accumulated prefix to ApplyGuardrail, whose on-demand quota is per account and r
 units per second in most non-US regions), so inspecting every stream by default would throttle
 the customer's buffered requests too. Until the console exposes the control (RUN-1661) a
 Bedrock policy with no `streaming` block records `skipped` / `streaming_disabled` on a streamed
-response. For all three, the stream leg fails **open** once it takes part, as the
-buffered leg does since RUN-1792: a provider error or timeout on a block
+response. For all three, an `availability` failure on the stream leg fails **open** once it takes
+part, as the buffered leg does since RUN-1792: a provider error or timeout on a block
 releases the held text and does not cut the stream. Since RUN-1813 that is not configurable.
 
 When the stream leg has several participants the stream still runs on one head gate and one
@@ -360,8 +389,8 @@ cadence (the first participant that owns them), but two options are not taken fr
 a failing policy that fails open is recorded `failed_open` and the chain carries on
 with the next policy on the same block, so a failing policy neither cuts the
 stream nor stops the policies behind it from inspecting. A cut resolved on a failed call
-(only a rewriter that asks for `fail_closed`, such as `regex_replace`, can cause one) is
-labelled `failed_closed` on the failing policy (RUN-1710; it used to read `blocked`), at the
+(a rewriter that asks for `fail_closed`, such as `regex_replace`, or a guardrail's `input`
+failure) is labelled `failed_closed` on the failing policy (RUN-1710; it used to read `blocked`), at the
 head (HTTP 403) and after it. Only the policy whose own call failed carries it: the other
 policies on the stream do not, and a cut that is a block verdict, or a mask that could not be
 applied, stays `blocked`.
@@ -371,7 +400,7 @@ its `decision` is `failed_open`, in enforce and in observe alike. The count is p
 two policies of one plugin on the same stream, one with a bad key, label only the bad one.
 Cancellation (a client that left) is not a failure. The `decision` of a stream leg is, in
 order of precedence: a cut that resolved this policy's own failed call as fail_closed
-(`failed_closed`; no guardrail emits it since RUN-1813), any other cut (`blocked`), a mask
+(`failed_closed`: a guardrail's `input` failure, or a rewriter's), any other cut (`blocked`), a mask
 (`anonymized`), a finding (`reported`), a failed block (`failed_open`), otherwise `allowed`; a positive finding is never hidden behind
 a missing inspection. `streaming.degraded_reason` is a different, chain-wide signal and is
 not what the decision is read from: it is one value for the whole stream, overwritten by a
@@ -379,15 +408,16 @@ later size degrade, and the failure of an observe policy, or of an enforcing gua
 never reaches it (the chain absorbs it per policy).
 
 **Streamed failures carry their reason (RUN-1710).** `bedrock_guardrail`, `google_model_armor`
-and `openai_moderation` write `failure_reason` and `failure_detail` (the same vocabulary and keys
+and `openai_moderation` write `failure_reason`, `failure_detail` and `failure_class` (the same vocabulary and keys
 as the buffered leg, above) on the stream entry's `extras`, once, when the stream closes. They
 are present whenever the policy's own call failed on at least one block, whatever the final
 `decision`: a stream whose first block failed and which was later cut by a finding still says
 `decision: blocked` with the failure's `failure_reason`. With several failed blocks the **first
 failure that carries a reason** is kept; later failures, which are usually the same outage
-repeating, do not overwrite it. A failure of a plugin that does not use the shared vocabulary
+repeating, do not overwrite it. The failure that authored a cut is the exception: it replaces an
+earlier one, since the entry's span is about the cut. A failure of a plugin that does not use the shared vocabulary
 carries no reason and is not tracked, so a later one that does carry a reason is the first kept. If the closing call itself fails, the entry still gets a decision (`failed_open`) and, when a
-reason is known, a minimal `extras` of `decision`, `failure_reason` and `failure_detail`. The
+reason is known, a minimal `extras` of `decision`, `failure_reason`, `failure_class` and `failure_detail`. The
 keys are additive: nothing that shipped is renamed or retyped.
 
 A policy absorbed this way whose provider fails on three blocks in a row is not called again
@@ -396,22 +426,26 @@ for the rest of that stream: its span keeps `failed_open` and carries
 block. A retired policy is not retried for the rest of that stream, and from then on it
 lowers `streaming.guard_calls` on every later block (each is a block without its verdict).
 `streaming.guard_calls` counts only the blocks that got every verdict, so an absorbed
-failure leaves it short of `evals_total`.
+failure leaves it short of `evals_total`. Only `availability` failures count toward the three: an
+`input` failure says nothing about the provider.
 
 **Changed in RUN-1792.** An enforce-mode failure used to record `failed_closed` and refuse the
-request with HTTP 502 (`guardrail_unavailable`); it now records `failed_open` and forwards it,
+request with HTTP 502 (`guardrail_unavailable`); an `availability` failure now records `failed_open` and forwards it,
 exactly as observe always did. This replaces the RUN-1672 fail-closed rule. When a usable
-mask is available (Model Armor `sdp_action: anonymize` with a missing `block_on` filter),
-it is still applied: the decision is `anonymized` and the event also carries
-`failure_reason: verdict_incomplete`.
+mask is available (Model Armor `sdp_action: anonymize` with a `block_on` filter the template does
+not enable), it is still applied: the decision is `anonymized` and the event also carries
+`failure_reason: verdict_incomplete` with `failure_detail: filter_not_in_template`. A filter that
+was skipped for the content's size does not keep the mask: the other filters did not judge this
+content, so a mode that blocks refuses it (`failed_closed`).
 
-A mask the gateway cannot apply fails open too. In enforce, when Model Armor or Bedrock flags
+A mask the gateway cannot apply blocks, in a mode that blocks. When Model Armor or Bedrock flags
 sensitive data in an anonymize configuration but the masked text cannot be written back
-(no masked output, a format that cannot be re-encoded, or an encode failure), the request or
-stream goes on unmasked. The entry records `decision: failed_open`, `degraded: true` and
+(no masked output, a format that cannot be re-encoded, or an encode failure), forwarding the
+original would send the data the policy ruled out, so the request is refused with the policy's
+own block (HTTP 403 `guardrail_blocked`, or `model_armor_blocked`) and a stream is cut. The entry records `decision: blocked`, `degraded: true` and
 `degraded_reason` set to `anonymize_no_output`, `anonymize_unsupported_format` or
-`anonymize_encode_failed`, with `failure_reason: verdict_incomplete` and the same value in
-`failure_detail`. A provider block verdict still blocks.
+`anonymize_encode_failed`, with `failure_reason: verdict_incomplete`, the same value in
+`failure_detail`, and `failure_class: input`. Observe applies no mask, so it never reaches this.
 
 **Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
 and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
@@ -430,7 +464,7 @@ rewrite it the way they rewrite a translated one. Three outcomes are recorded in
 | Entry | When | `decision` | Extras |
 |-------|------|------------|--------|
 | A plugin that did not run | `prompt_template`, `tool_injection`, `prompt_compression` and `semantic_cache`, which transform the request and have nowhere to write on a relayed call | none (`skipped: true`) | `stage`, `skipped: true`, `skip_reason: native_bedrock_passthrough` |
-| A mask that could not be applied | A masking policy (`regex_replace`, `trustguard`, `bedrock_guardrail`, `google_model_armor`) changed the text a call carries and the change could not be carried onto the client's bytes safely. The call goes through unmasked, always (RUN-1813) | `failed_open` | `decision: failed_open`, `stage` (`pre_request` or `pre_response`), `mode`, `failure_reason: mask_not_applicable:<cause>`, `streamed: true` on a stream |
+| A mask that could not be applied | A masking policy (`regex_replace`, `trustguard`, `bedrock_guardrail`, `google_model_armor`) changed the text a call carries and the change could not be carried onto the client's bytes safely. The original would carry what the policy asked to mask, so the call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`, and a stream ends with the stream's `validationException` frame (RUN-1813). An AWS error response counts: its body typically echoes the input | `block` | `decision: blocked`, `stage` (`pre_request` or `pre_response`), `mode`, `failure_reason: mask_not_applicable:<cause>`, `failure_class: input`, `degraded: true`, `degraded_reason: <cause>`, `streamed: true` on a stream |
 | A refusal | A policy that does not mask rewrote the call (a tool filter, a per-tool limit that strips a tool, a model downgrade). The call is blocked with HTTP 403 (`AccessDeniedException`) and the error type `native_bedrock_passthrough`. On a stream the stream ends like a block verdict | the policy's own (`block`) | the error of the block |
 
 `failure_reason` is `mask_not_applicable:` followed by one of these causes, which are additive
@@ -456,13 +490,13 @@ tokens:
 | `tool_input_not_maskable` | The mask is not a replacement inside a string of the tool input, or the input is not valid JSON or does not read back exactly |
 | `tool_frames_not_rewritable` | The held frames of a tool call cannot be rewritten |
 
-A failed-open entry is written once per kind of cause on a request, or on a stream.
+A blocked entry is written once per kind of cause on a request, or on a stream. Observe applies
+no transform, so a mask that cannot be applied never arises from an observe policy.
 
 **Changed in RUN-1813.** `on_mask_failure` (`pass` or `block`) was a setting of the policies that
-mask. It was removed: a mask that cannot be applied always fails open, a policy that still
-stores the key keeps loading and the key is ignored; a migration deletes it from stored policies and the policy API drops it on write. What
-can no longer occur is the refusal of a mask that could not be applied; a refusal of a rewrite
-that is not a mask is unchanged.
+mask. It was removed: a mask that cannot be applied always blocks, in a mode that blocks, a policy that still
+stores the key keeps loading and the key is ignored; a migration deletes it from stored policies and the policy API drops it on write. The
+entry's `decision` for a mask that could not be applied is `blocked`; the `failure_reason` values are unchanged.
 
 ### Counter-store (rate-limit / budget) failures
 
@@ -543,14 +577,16 @@ same way a streamed response already handles an observe-mode inspection failure.
 
 ### TrustGuard failures
 
-`trustguard` treats a failure of TrustGuard itself like the providers above: it
-**always fails open**, so a TrustGuard problem never cuts the client's request. There is no
-setting to change that (RUN-1813). A TrustGuard block (a finding) and a 429 rate limit are the
-guard's answers, not failures, and always block.
+`trustguard` classifies a failure like the providers above (`failure_class`, `availability` or
+`input`), so a TrustGuard outage never cuts the client's request but content it cannot inspect
+does. There is no setting to change that (RUN-1813). A TrustGuard block (a finding) and a 429 rate
+limit are the guard's answers, not failures, and always block.
 
 | `decision` | Request |
 |------------|---------|
-| `failed_open` | Forwarded uninspected; the chain carries on |
+| `failed_open` | An `availability` failure in any mode, or an `input` failure in observe: forwarded uninspected; the chain carries on |
+| `failed_closed` | An `input` failure in enforce or throttle: refused with HTTP 403 `guardrail_input_uninspectable`; a stream is cut |
+| `blocked` | A transform TrustGuard confirmed that could not be applied, in enforce or throttle: refused with the finding's own block (`trustguard_blocked`), `degraded: true`, `failure_reason: transform_failed` |
 
 **Changed in RUN-1813.** `on_error`, `on_timeout`, `timeout`, `streaming.on_error` and
 `streaming.guard_timeout` were removed. A stored policy keeps loading, the keys are ignored and
@@ -567,22 +603,27 @@ names the cause. The same token labels `trustguard_evaluate_failures_total{reaso
 
 | `failure_reason` | Cause |
 |------------------|-------|
-| `transport` | The call failed, or returned a non-2xx status other than the ones below |
+| `transport` | The call failed, or returned a non-2xx status other than the ones below. `failure_class: availability` |
 | `timeout` | The call did not answer within the deployment-wide `TRUSTGUARD_TIMEOUT` |
 | `unauthorized` | `/v1/evaluate` answered 401 (after one token refresh) or 403, or `/v1/token` answered 400, 401 or 403 |
 | `entitlements_unavailable` | `/v1/evaluate` answered 503 |
 | `credentials_missing` | The gateway has no `TRUSTGUARD_CLIENT_ID` / `TRUSTGUARD_CLIENT_SECRET` |
 | `base_url_missing` | The gateway has no `TRUSTGUARD_BASE_URL` |
-| `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed. The content is forwarded **unmasked** |
+| `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed (`transform_no_payload`, `transform_unsupported_path`, `transform_encode_failed`). `failure_class: input`: a mode that blocks refuses the call, and a stream is cut (`decision: blocked`). Observe applies no transform and never reaches it |
+| `payload_too_large` | `/v1/evaluate` answered 413: TrustGuard refused the body for its size. `failure_class: input` |
 | `config_invalid` | The stored settings could not be parsed. Always `failed_open` |
 | `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
-| `payload_unreadable` | The gateway could not read the body. Always `failed_open` |
+| `payload_unreadable` | The gateway could not read the body. `failure_class: input` |
 
 On a streamed response leg the plugin resolves a failure itself: it allows the block, so
 later policies in the chain still inspect it, and the
-closing event carries `decision: failed_open` with the last `failure_reason`. After three
+closing event carries `decision: failed_open` with the last `failure_reason`. An `input`
+failure in a mode that blocks (a 413, a transform that cannot be applied) cuts the stream instead
+and the closing event carries `failed_closed` (`blocked` and `degraded` for the transform), with
+the failure's `failure_reason` and `failure_class`. After three
 failed blocks in a row the policy stops calling TrustGuard for the rest of that stream, and
-the closing event also carries `streaming.fallback_reason: segmentation_unavailable`. A block
+the closing event also carries `streaming.fallback_reason: segmentation_unavailable`; a failure of
+the `input` class does not count toward the three. A block
 the guard does answer resets the count. A stream that was cut reports `blocked` even if earlier
 blocks failed open; those still count in `trustguard_evaluate_failures_total`. The
 `trustguard_stream_evals_total` / `trustguard_stream_responses_total` metrics label such a
@@ -593,7 +634,7 @@ each failed block fails open on its own and inspection never retires.
 
 **Changed in RUN-1725.** Rejected or missing credentials, a missing base URL and a 503 used
 to always fail closed, and an unappliable mask always blocked; all followed `on_error` from
-then on, and since RUN-1813 they always fail open. A policy that stored `on_timeout:
+then on, and since RUN-1813 they are `availability` failures and fail open. A policy that stored `on_timeout:
 fail_closed` no longer keeps it. On a stream these failures used to be
 reported as `degraded_reason: guard_timeout`; they now appear as `failed_open` on the
 closing event.
