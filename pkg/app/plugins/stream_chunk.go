@@ -133,6 +133,14 @@ func streamChunkSpec(window int) textchunk.Spec {
 // onChunked is called once the block is known to be within maxStreamChunks, so
 // a block refused for its size is not counted as screened.
 //
+// The block is bounded by a deadline of one piece timeout per round of pieces, at
+// most maxBlockTimeouts of them, so a stream is held for a bounded time whatever
+// the provider does. A piece that was not started or was cut by that deadline is
+// read by the one rule of ClassifyChunks: availability only when some piece's call
+// took more than half of its timeout, otherwise chunk_budget, input. An inspector
+// that spaces its pieces (StreamPieceSpacing) has the spacing wait run before each
+// piece, outside the time the call is measured by.
+//
 // Only the chunk that reaches the end of call.Accumulated carries Final, and
 // every piece shares the block's Seq and says which it is (Part of Parts), so an
 // inspector that keys on the block position sees it once per piece and the end
@@ -204,12 +212,19 @@ func (e *executor) inspectChunked(
 //   - a block of any chunk blocks, and a block that is a finding wins over one
 //     that is a failure (the lowest chunk's, as a copy);
 //   - a failure that is the content's, or the request's own size (a chunk that
-//     never ran, a throttle on a block of several chunks), is the cut, or in a
-//     mode that does not block the typed error as it came;
+//     never ran or was cut by the block's deadline with no slow call, a throttle
+//     the block's own pieces caused), is the cut, or in a mode that does not
+//     block the typed error as it came; a throttle is the block's own doing when it
+//     is on a piece other than the first, unless the inspector says its pieces are
+//     spaced (StreamThrottleAttribution), which makes it other traffic;
 //   - the masks of every chunk are mapped back onto the block, and a mask that
 //     cannot be applied cuts, as a mask over a finding;
 //   - a failure that is availability is the entry's failed call unless a mask or
 //     a finding can still be used.
+//
+// A mode that does not block and has findings to keep reports them with the
+// failure: a typed error returned as it came would drop the fingerprints of the
+// chunks that answered.
 //
 // Whatever the outcome, the fingerprints of every chunk that answered are
 // carried, and so is the first Incomplete among them, so an observe entry keeps
@@ -272,9 +287,6 @@ func mergeChunkVerdicts(
 		if v := verdicts[d.Index]; outs[d.Index].Started && outs[d.Index].Err == nil && v != nil && v.Block {
 			return carry(*v), nil
 		}
-		// A mode that does not block and has findings to keep reports them with
-		// the failure (below); a typed error returned as it came would drop the
-		// fingerprints of the chunks that answered.
 		keepsFindings := !Blocks(entry.mode) && len(fingerprints) > 0
 		var typed *ExternalStreamFailure
 		if err := outs[d.Index].Err; !keepsFindings && err != nil && errors.As(err, &typed) && typed.Reason == d.Reason && typed.Detail == d.Detail {

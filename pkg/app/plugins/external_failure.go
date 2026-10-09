@@ -115,20 +115,22 @@ const (
 	// evaluation.
 	DetailAttachmentNotFetched = "attachment_not_fetched"
 	// DetailChunkLimit is a content that splits into more chunks than the
-	// guardrail evaluates, or a streamed block above the one call TrustGuard
-	// accepts. It is refused before any call is made.
+	// guardrail evaluates within half of its budget, or a streamed block above the
+	// one call TrustGuard accepts (reason stream_block_too_large). It is refused
+	// before any call is made.
 	DetailChunkLimit = "chunk_limit"
 	// DetailChunkBudget is the evaluation's time budget used up by the request's
-	// own size: a chunk that was never started, or was started and cut by the
-	// budget, after waiting behind the request's own earlier chunks. Bedrock
-	// reads it before any call, from an estimate: a request whose spacing and
-	// calls cannot fit the budget is refused. Once Bedrock admits a request, a
-	// later chunk that the budget cuts is availability, not this.
+	// own size: a chunk that was never started, or that waited behind the
+	// request's own chunks and was cut by the budget, while no call took longer
+	// than twice the reserve (ClassifyChunks), so the provider was not slow.
+	// Bedrock also reads it before any call, from an estimate: a request whose
+	// spacing and calls exceed half of the budget is refused.
 	DetailChunkBudget = "chunk_budget"
-	// DetailThrottledOversize is a provider rate limit answered to a chunk that
-	// was dispatched after the first round, behind the request's own earlier
-	// calls: they can have caused it. A throttle on a chunk of the first round
-	// is other traffic and stays availability.
+	// DetailThrottledOversize is a provider rate limit that the request's own
+	// calls can have caused: it answered a chunk other than the first of an
+	// evaluation of several chunks, unless the calls are spaced under the
+	// provider's quota. A throttle on the first chunk or on a single chunk stays
+	// availability.
 	DetailThrottledOversize = "throttled_oversize"
 )
 

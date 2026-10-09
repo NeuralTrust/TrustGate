@@ -47,17 +47,19 @@ const (
 // secret above that, a PEM key or a service-account JSON of about 3.5 KB, can be
 // cut in two (the other guardrails share 4,096 bytes and keep those whole), and
 // so can a context that a cut separates by more than the overlap. A conversation
-// above maxChunks is refused before any call, so a padded request costs nothing at
-// Azure. At most evalParallel calls run at once, inside one evaluationBudget
-// for the whole conversation. A chunk that would have to wait for a slot is not
-// started with less than callReserve of the budget left, about twice a call's
-// usual latency: it was queued behind the request's own chunks, so the request's
-// size used the time and the chunk is refused as chunk_budget, not sent to time
-// out as an outage. The free tier (F0) allows 5 requests a second, so a long
-// conversation throttles itself there. A throttle on a chunk of the first round
-// is other traffic and fails open; a throttle on a chunk that waited behind the
-// request's own (index evalParallel or more) is input (throttled_oversize),
-// because its own earlier calls plausibly used the quota.
+// above the ceiling is refused before any call as chunk_limit, so a padded request
+// costs nothing at Azure. The ceiling is what half of one evaluationBudget admits
+// at evalParallel calls at once and callReserve a round, at most maxChunks: 20 at
+// the 10 s budget. The headroom lets Azure answer up to twice as slowly as
+// callReserve, about twice a call's usual latency, without the budget cutting a
+// chunk. A chunk that is not started or is cut by the budget is availability only
+// when some call took longer than twice callReserve, and otherwise chunk_budget,
+// input. The free tier (F0) allows 5 requests a second, so a long conversation
+// throttles itself there. A throttle on a chunk of the first round is retried
+// once; if it persists it is other traffic on the first chunk or on a
+// single-chunk conversation and fails open, and input (throttled_oversize) on any
+// other chunk, because the request's own calls beside or before it plausibly used
+// the quota.
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/region-availability#service-limits
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#query-rates
 const (
