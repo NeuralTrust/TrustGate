@@ -35,7 +35,7 @@ func TestRunStreamSegment_ThrottledBlocksDoNotRetireTheEntry(t *testing.T) {
 	in := failureInput(pols)
 	ctx, _, publish := failureStreamCtx(t)
 	defer publish()
-	inspectors["guard"].err = WrapExternalStreamFailure("stub", FailureTransport, "throttled", errors.New("ThrottlingException"))
+	inspectors["guard"].err = WrapExternalStreamFailure("stub", FailureTransport, DetailThrottled, errors.New("ThrottlingException"))
 
 	for i := 1; i <= streamEntryRetireAfter+2; i++ {
 		_, err := runner.RunStreamSegment(ctx, in, segment(i, false))

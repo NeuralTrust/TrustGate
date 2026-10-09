@@ -100,7 +100,7 @@ func TestStreamBlockStopsRetryingAThrottle(t *testing.T) {
 	var failure *appplugins.ExternalStreamFailure
 	require.True(t, errors.As(err, &failure), "got %v", err)
 	assert.Equal(t, appplugins.FailureClassAvailability, failure.Class)
-	assert.Equal(t, "throttled", failure.Detail)
+	assert.Equal(t, appplugins.DetailThrottled, failure.Detail)
 	assert.LessOrEqual(t, client.count(), 3)
 	assert.Greater(t, client.count(), 1)
 }
@@ -130,6 +130,7 @@ func TestAStreamBlockLeavesHeadroomInTheSmallestRegionalQuota(t *testing.T) {
 		}
 		ok, opts := p.StreamSettings(streamSettings(over))
 		require.True(t, ok)
-		assert.LessOrEqual(t, opts.MaxAccumulatedBytes, 10*1000, "a block may use at most 10 of the 25 text units a second")
+		assert.LessOrEqual(t, opts.MaxAccumulatedBytes, maxStreamWindowBytes)
 	}
+	assert.LessOrEqual(t, maxStreamWindowBytes, 10*1000, "a block may use at most 10 of the 25 text units a second")
 }

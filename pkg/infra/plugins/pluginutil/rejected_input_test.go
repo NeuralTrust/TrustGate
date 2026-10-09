@@ -47,7 +47,7 @@ func TestFailureOfError(t *testing.T) {
 		{"a 400 about the configuration", &rejection{status: http.StatusBadRequest, configShaped: true}, appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected},
 		{"a 413", &rejection{status: http.StatusRequestEntityTooLarge}, appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
 		{"a 401", &rejection{status: http.StatusUnauthorized}, appplugins.FailureTransport, ""},
-		{"a 429", &rejection{status: http.StatusTooManyRequests}, appplugins.FailureTransport, ""},
+		{"a 429", &rejection{status: http.StatusTooManyRequests}, appplugins.FailureTransport, appplugins.DetailThrottled},
 		{"a 503", &rejection{status: http.StatusServiceUnavailable}, appplugins.FailureTransport, ""},
 		{"a wrapped rejection", fmt.Errorf("call: %w", &rejection{status: http.StatusBadRequest}), appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
 		{"a deadline", context.DeadlineExceeded, appplugins.FailureTransport, ""},
@@ -60,4 +60,11 @@ func TestFailureOfError(t *testing.T) {
 			assert.Equal(t, tc.detail, detail)
 		})
 	}
+}
+
+func TestFailureOfStatusNamesAThrottleForEveryProvider(t *testing.T) {
+	t.Parallel()
+	reason, detail := pluginutil.FailureOfStatus(http.StatusTooManyRequests)
+	assert.Equal(t, appplugins.FailureTransport, reason)
+	assert.Equal(t, appplugins.DetailThrottled, detail)
 }

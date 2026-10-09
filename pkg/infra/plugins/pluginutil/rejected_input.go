@@ -85,10 +85,14 @@ func FailureOfError(err error) (appplugins.FailureReason, string) {
 }
 
 // FailureOfStatus maps a non-2xx provider status to the shared failure
-// vocabulary: input when the provider refused the content, transport otherwise.
+// vocabulary: input when the provider refused the content, throttled when it
+// answered 429, transport otherwise.
 func FailureOfStatus(status int) (appplugins.FailureReason, string) {
 	if StatusRejectsInput(status) {
 		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
+	}
+	if status == http.StatusTooManyRequests {
+		return appplugins.FailureTransport, appplugins.DetailThrottled
 	}
 	return appplugins.FailureTransport, ""
 }
