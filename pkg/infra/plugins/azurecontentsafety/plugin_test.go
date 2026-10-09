@@ -161,8 +161,8 @@ func TestExecuteEnforceBlockReturns403(t *testing.T) {
 	if decoded.Error.Categories[0].Category != CategoryHate || decoded.Error.Categories[0].Severity != 4 || decoded.Error.Categories[0].Threshold != 2 {
 		t.Fatalf("breached = %+v, want Hate/4/2", decoded.Error.Categories[0])
 	}
-	if f.lastBody.Text != "hello world" {
-		t.Fatalf("text = %q, want %q", f.lastBody.Text, "hello world")
+	if f.lastBody.Text != "be safe\nhello world" {
+		t.Fatalf("text = %q, want %q", f.lastBody.Text, "be safe\nhello world")
 	}
 }
 
