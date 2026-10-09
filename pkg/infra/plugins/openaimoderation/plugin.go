@@ -59,9 +59,10 @@ const (
 // callReserve, and otherwise chunk_budget, input: the request's own size used the
 // time. OpenAI meters tokens per minute per tier, which the gateway cannot see,
 // so a rate limit on a chunk of the first round is retried once, and if it
-// persists it is other traffic on the first chunk or on a single-chunk text and
-// fails open, and input (throttled_oversize) on any other chunk, which the
-// request's own calls beside or before it may have throttled. An exhausted
+// persists on the first chunk or on a single-chunk text it is other traffic and
+// fails open, with every other throttle of the text, and otherwise it is input
+// (throttled_oversize) on a later chunk, which the request's own calls beside or
+// before it may have throttled. An exhausted
 // account (insufficient_quota, billing_hard_limit_reached) is configuration, not
 // a rate, and fails open.
 // https://developers.openai.com/api/docs/guides/moderation

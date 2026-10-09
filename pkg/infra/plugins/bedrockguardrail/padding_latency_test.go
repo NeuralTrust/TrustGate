@@ -362,7 +362,7 @@ func TestLongLegitimateMessagesInASmallQuotaRegionPassInEnforce(t *testing.T) {
 }
 
 // The ceiling is the same in every region, and the estimate never exceeds the
-// headroom up to it: a text of maxBufferedChunks chunks (203,416 bytes) is judged,
+// headroom up to it: a text of maxBufferedChunks chunks (203,136 bytes) is judged,
 // one byte more is refused as chunk_limit before any call.
 func TestTheCeilingIsTheSameInEveryRegion(t *testing.T) {
 	t.Parallel()

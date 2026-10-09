@@ -56,10 +56,11 @@ const (
 // when some call took longer than twice callReserve, and otherwise chunk_budget,
 // input. The free tier (F0) allows 5 requests a second, so a long conversation
 // throttles itself there. A throttle on a chunk of the first round is retried
-// once; if it persists it is other traffic on the first chunk or on a
-// single-chunk conversation and fails open, and input (throttled_oversize) on any
-// other chunk, because the request's own calls beside or before it plausibly used
-// the quota.
+// once; if it persists on the first chunk or on a single-chunk
+// conversation it is other traffic and fails open, with every other throttle of
+// the conversation, and otherwise it is input (throttled_oversize) on a later
+// chunk, because the request's own calls beside or before it plausibly used the
+// quota.
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/region-availability#service-limits
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#query-rates
 const (
