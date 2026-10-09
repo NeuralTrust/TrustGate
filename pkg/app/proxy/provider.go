@@ -426,6 +426,9 @@ func (p *providerInvoker) prepare(
 		crossFormat:  crossFormat,
 		capability:   capability,
 	}
+	if !crossFormat && bk.Provider() == providers.ProviderAnthropic && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
+		prep.cfg.AnthropicBeta = anthropicBetas(req)
+	}
 	p.applyOutputLimit(ctx, prep)
 	prep.cfg.Model = prep.sentModel
 	return prep, nil
