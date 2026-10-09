@@ -29,12 +29,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ENG-1735: regex_replace joins every response-target stream by default with
-// on_error fail_closed. It sorts before trustguard here, and must not decide the
-// stream's cadence. Its fail_closed holds beside the guardrail, because the
-// guard resolves on_error only for an error the executor hands back, which only
-// an entry that asked for fail_closed does: trustguard's own failures are
-// absorbed and fail open either way.
+// ENG-1735: regex_replace now joins every response-target stream by default
+// with on_error fail_closed. It sorts before trustguard here, and must not
+// decide the stream-wide failure direction or cadence: trustguard always fails
+// open.
 func TestForwarder_StreamGuardOptionsBelongToTheGuardNotTheRegexRewriter(t *testing.T) {
 	t.Parallel()
 	reg := appplugins.NewRegistry()
@@ -66,7 +64,7 @@ func TestForwarder_StreamGuardOptionsBelongToTheGuardNotTheRegexRewriter(t *test
 	guard := fwd.newStreamGuard(wiringDTO(plan), &infracontext.ResponseContext{})
 
 	require.NotNil(t, guard)
-	assert.Equal(t, streamFailClosed, guard.cfg.onError, "regex_replace's fail_closed holds beside a guardrail")
+	assert.Equal(t, streamFailOpen, guard.cfg.onError, "a regex policy must not flip trustguard's stream to fail_closed")
 	assert.Equal(t, 77, guard.cfg.headChars)
 	assert.Equal(t, 333*time.Millisecond, guard.cfg.maxHold)
 
