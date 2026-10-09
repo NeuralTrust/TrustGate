@@ -29,6 +29,88 @@ var (
 	warehouse = ids.New[ids.RegistryKind]()
 )
 
+func TestExpandLevels_PreservesOrderAndEmptyResults(t *testing.T) {
+	t.Parallel()
+	first := AllTraffic().WithRegistry(snowflake)
+	second := AllTraffic().WithRegistry(jira)
+	input := []Level{first, second}
+	cases := []struct {
+		name string
+		run  func() []Level
+		want []Level
+	}{
+		{
+			name: "consumers preserve input then target order",
+			run:  func() []Level { return expandConsumers(input, []ids.ConsumerID{consumerX, consumerY}) },
+			want: []Level{first.WithConsumer(consumerX), first.WithConsumer(consumerY), second.WithConsumer(consumerX), second.WithConsumer(consumerY)},
+		},
+		{
+			name: "groups preserve input then target order",
+			run:  func() []Level { return expandGroups(input, []string{"first", "second"}) },
+			want: []Level{first.WithGroup("first"), first.WithGroup("second"), second.WithGroup("first"), second.WithGroup("second")},
+		},
+		{
+			name: "empty consumer expansion remains nonnil",
+			run:  func() []Level { return expandConsumers(nil, []ids.ConsumerID{consumerX}) },
+			want: []Level{},
+		},
+		{
+			name: "empty group expansion remains nonnil",
+			run:  func() []Level { return expandGroups(nil, []string{"first"}) },
+			want: []Level{},
+		},
+		{
+			name: "no consumers retain input",
+			run:  func() []Level { return expandConsumers(input, nil) },
+			want: input,
+		},
+		{
+			name: "no groups retain input",
+			run:  func() []Level { return expandGroups(input, nil) },
+			want: input,
+		},
+		{
+			name: "destinations preserve input then registry and tool order",
+			run: func() []Level {
+				return expandDestinations([]Level{AllTraffic().WithGroup("first"), AllTraffic().WithGroup("second")}, &MCPScope{
+					RegistryIDs: []ids.RegistryID{warehouse},
+					Tools:       []MCPToolRef{{RegistryID: jira, Tool: "create_issue"}},
+				})
+			},
+			want: []Level{
+				AllTraffic().WithGroup("first").WithRegistry(warehouse),
+				AllTraffic().WithGroup("first").WithTool(MCPToolRef{RegistryID: jira, Tool: "create_issue"}),
+				AllTraffic().WithGroup("second").WithRegistry(warehouse),
+				AllTraffic().WithGroup("second").WithTool(MCPToolRef{RegistryID: jira, Tool: "create_issue"}),
+			},
+		},
+		{
+			name: "empty destination expansion remains nonnil",
+			run:  func() []Level { return expandDestinations(nil, &MCPScope{RegistryIDs: []ids.RegistryID{warehouse}}) },
+			want: []Level{},
+		},
+		{
+			name: "no destinations retain input",
+			run:  func() []Level { return expandDestinations(input, &MCPScope{}) },
+			want: input,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.run()
+			if (got == nil) != (tc.want == nil) || len(got) != len(tc.want) {
+				t.Fatalf("expansion shape = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("expansion[%d] = %v, want %v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestMCPScope_Occupancy_CartesianProduct(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -378,7 +378,7 @@ func OpenAIProviderOptionsForTarget(providerName string, targetFormat Format, op
 	if current, ok := options["api"].(string); ok && current == api {
 		return options
 	}
-	out := make(map[string]any, len(options)+1)
+	out := make(map[string]any)
 	for k, v := range options {
 		out[k] = v
 	}

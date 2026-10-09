@@ -164,7 +164,7 @@ func resolveVersion(nt namedTemplate, label, defaultLabel string) (*templateVers
 // gateway_wins conflict handling in inject.go's applyInjections).
 func renderTemplateContent(version *templateVersion, clientVars map[string]any, ctxVars map[string]string, escape bool, onMissing onMissingClient) (string, []string, error) {
 	jsonContext := strings.HasPrefix(strings.TrimSpace(version.Content), "[")
-	vars := make(map[string]string, len(ctxVars)+len(clientVars))
+	vars := make(map[string]string)
 	for k, v := range clientVars {
 		vars[k] = escapeValue(scalarToString(v), escape, jsonContext)
 	}

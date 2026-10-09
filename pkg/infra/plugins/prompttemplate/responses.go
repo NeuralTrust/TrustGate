@@ -111,7 +111,7 @@ func (rb *requestBody) prependResponsesItem(role, content string) (bool, string)
 	if err != nil {
 		return false, reasonEncodeFailed
 	}
-	next := make([]json.RawMessage, 0, len(items)+1)
+	next := make([]json.RawMessage, 0)
 	next = append(next, item)
 	next = append(next, items...)
 	if err := rb.setResponsesInput(next); err != nil {
