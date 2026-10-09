@@ -518,6 +518,41 @@ func TestDecodeConverseBody_Image(t *testing.T) {
 	assert.Equal(t, "what is it?", text.Value)
 }
 
+func TestDecodeConverseBody_Document(t *testing.T) {
+	t.Parallel()
+
+	body := `{"messages":[{"role":"user","content":[
+		{"document":{"format":"pdf","name":"Informe Q3","source":{"bytes":"JVBERi0xLjQK"}}},
+		{"document":{"format":"pptx","name":"deck","source":{"bytes":"UEsDBA=="}}},
+		{"document":{"format":"txt","name":"empty","source":{}}},
+		{"document":{"format":"md","name":"notes","source":{"text":"# hola"}}},
+		{"text":"summarize"}
+	]}]}`
+
+	params, err := decodeConverseBody([]byte(body))
+	require.NoError(t, err)
+
+	in := params.input("eu.anthropic.claude-sonnet-4-5-20250929-v1:0")
+	require.Len(t, in.Messages, 1)
+	content := in.Messages[0].Content
+	require.Len(t, content, 4, "a document without a source is dropped")
+	pdf, ok := content[0].(*bedrockTypes.ContentBlockMemberDocument)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.DocumentFormatPdf, pdf.Value.Format)
+	assert.Equal(t, "Informe Q3", aws.ToString(pdf.Value.Name))
+	source, ok := pdf.Value.Source.(*bedrockTypes.DocumentSourceMemberBytes)
+	require.True(t, ok)
+	assert.Equal(t, []byte("%PDF-1.4\n"), source.Value)
+	pptx, ok := content[1].(*bedrockTypes.ContentBlockMemberDocument)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.DocumentFormat("pptx"), pptx.Value.Format, "Bedrock, not the gateway, rejects formats it does not read")
+	notes, ok := content[2].(*bedrockTypes.ContentBlockMemberDocument)
+	require.True(t, ok)
+	text, ok := notes.Value.Source.(*bedrockTypes.DocumentSourceMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "# hola", text.Value)
+}
+
 func TestDecodeConverseBody_InvalidImageBytesIsARequestDecodeError(t *testing.T) {
 	t.Parallel()
 
