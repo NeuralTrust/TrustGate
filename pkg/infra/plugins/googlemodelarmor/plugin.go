@@ -16,6 +16,7 @@ package googlemodelarmor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -254,6 +255,9 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
+	if len(text) > maxSanitizeBytes {
+		return p.oversizeFailure(ctx, in, cfg)
+	}
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
@@ -304,6 +308,9 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	text := responseText(cresp)
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
+	}
+	if len(text) > maxSanitizeBytes {
+		return p.oversizeFailure(ctx, in, cfg)
 	}
 	userPrompt := correlationPrompt(p.registry, format, in.Request.Body)
 	span := rewriteSpan{
@@ -366,9 +373,11 @@ func (p *Plugin) runGuardrail(
 	result, err := sanitize(ctx)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
+		reason, detail := failureOf(err)
 		return p.externalFailure(ctx, in, cfg, latency, failureInfo{
-			reason: appplugins.FailureTransport,
-			err:    fmt.Errorf("sanitize: %w", err),
+			reason:      reason,
+			armorReason: detail,
+			err:         fmt.Errorf("sanitize: %w", err),
 		})
 	}
 	if result.InvocationResult == invocationResultFailure {
@@ -609,4 +618,27 @@ func responseText(cresp *adapter.CanonicalResponse) string {
 
 func passThrough() *appplugins.Result {
 	return &appplugins.Result{StatusCode: http.StatusOK}
+}
+
+// failureOf maps what Model Armor answered to the shared failure vocabulary:
+// a 400 about the content or a 413 is the input's, a 400 about the template
+// the policy names is configuration, and credentials, throttling, timeouts, 5xx
+// and network errors are availability.
+func failureOf(err error) (appplugins.FailureReason, string) {
+	var status *errModelArmor
+	if errors.As(err, &status) {
+		return pluginutil.FailureOfRejection(status.status, status.configShaped)
+	}
+	return appplugins.FailureTransport, ""
+}
+
+// oversizeFailure refuses, as input, a buffered text above what Model Armor
+// screens. The call is not made: every filter would skip a payload that large,
+// which this plugin already counts as content no filter judged.
+func (p *Plugin) oversizeFailure(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
+	return p.externalFailure(ctx, in, cfg, 0, failureInfo{
+		reason:      appplugins.FailureInputTooLarge,
+		armorReason: appplugins.DetailPayloadTooLarge,
+		err:         fmt.Errorf("text exceeds the %d bytes Model Armor screens", maxSanitizeBytes),
+	})
 }
