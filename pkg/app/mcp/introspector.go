@@ -38,10 +38,6 @@ func NewIntrospector(registries appregistry.Finder, dialer Dialer) Introspector 
 	return &introspector{registries: registries, dialer: dialer}
 }
 
-// ListRegistryTools deliberately returns the UNFILTERED upstream list, even for a
-// pinned registry. It is admin-only and is the source an admin reviews tools
-// from before approving them, so hiding unapproved tools here would make
-// approval impossible. Only the consumer-facing composer filters.
 func (i *introspector) ListRegistryTools(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]Tool, error) {
 	reg, err := i.registries.FindByID(ctx, gatewayID, registryID)
 	if err != nil {

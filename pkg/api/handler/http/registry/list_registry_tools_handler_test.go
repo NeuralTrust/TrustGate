@@ -27,7 +27,6 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -186,45 +185,34 @@ func TestListRegistryToolsHandler_InvalidRegistryID(t *testing.T) {
 	assert.Zero(t, sut.calls)
 }
 
-// The endpoint's fingerprint is appmcp.ToolCandidate of the very Tool the
-// upstream client returned, the same call the discovery filter makes. It must
-// therefore equal a fingerprint computed straight from the upstream bytes, even
-// with numbers a JS round trip would rewrite (1.0, 1e3, an int above 2^53), and
-// the raw payload must come back unmodified.
-func TestListRegistryToolsHandler_FingerprintMatchesTheDiscoveryFilterAndKeepsNumbers(t *testing.T) {
+// Each tool is passed through exactly as the upstream listed it: no field is
+// added or dropped, and numbers a JS round trip would rewrite (1.0, 1e3, an int
+// above 2^53) come back byte for byte.
+func TestListRegistryToolsHandler_PassesTheRawToolPayloadThrough(t *testing.T) {
 	const schema = `{"type":"object","properties":{"a":{"default":1.0},"b":{"maximum":1e3},"c":{"const":9007199254740993}}}`
 	var tool appmcp.Tool
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"calc","description":"d","inputSchema":`+schema+`}`), &tool))
-	var nul appmcp.Tool
-	require.NoError(t, json.Unmarshal([]byte(`{"name":"bad","description":"x\u0000y"}`), &nul))
 
 	gwID, regID := ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]()
-	app := newListRegistryToolsApp(registryhttp.NewListRegistryToolsHandler(&stubIntrospector{tools: []appmcp.Tool{tool, nul}}))
+	app := newListRegistryToolsApp(registryhttp.NewListRegistryToolsHandler(&stubIntrospector{tools: []appmcp.Tool{tool}}))
 	r, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gwID.String()+"/registries/"+regID.String()+"/tools", nil))
 	require.NoError(t, err)
-	defer r.Body.Close()
-	raw, _ := io.ReadAll(r.Body)
+	defer func() { _ = r.Body.Close() }()
+	raw, err := io.ReadAll(r.Body)
+	require.NoError(t, err)
 
 	var out struct {
-		Tools []struct {
-			Name        string          `json:"name"`
-			Fingerprint string          `json:"fingerprint"`
-			Pinnable    bool            `json:"pinnable"`
-			InputSchema json.RawMessage `json:"inputSchema"`
-		} `json:"tools"`
+		Tools []map[string]json.RawMessage `json:"tools"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &out), string(raw))
-	require.Len(t, out.Tools, 2)
+	require.Len(t, out.Tools, 1)
 
-	want, err := registrydomain.NewToolCandidate("calc", "d", json.RawMessage(schema))
-	require.NoError(t, err)
-	assert.Equal(t, want.Fingerprint, out.Tools[0].Fingerprint)
-	assert.True(t, out.Tools[0].Pinnable)
-	assert.JSONEq(t, schema, string(out.Tools[0].InputSchema))
-	assert.Contains(t, string(out.Tools[0].InputSchema), "1.0")
-	assert.Contains(t, string(out.Tools[0].InputSchema), "1e3")
-	assert.Contains(t, string(out.Tools[0].InputSchema), "9007199254740993")
-
-	assert.False(t, out.Tools[1].Pinnable)
-	assert.Empty(t, out.Tools[1].Fingerprint, "a tool that cannot be stored has no fingerprint")
+	got := out.Tools[0]
+	assert.Len(t, got, 3, "only the upstream's own fields: %s", raw)
+	assert.JSONEq(t, `"calc"`, string(got["name"]))
+	assert.JSONEq(t, `"d"`, string(got["description"]))
+	assert.JSONEq(t, schema, string(got["inputSchema"]))
+	assert.Contains(t, string(got["inputSchema"]), "1.0")
+	assert.Contains(t, string(got["inputSchema"]), "1e3")
+	assert.Contains(t, string(got["inputSchema"]), "9007199254740993")
 }

@@ -59,6 +59,15 @@ func storedMCPTarget(t *testing.T, conn *database.Connection, id ids.RegistryID)
 	return string(raw), target
 }
 
+func outboxCount(t *testing.T, conn *database.Connection) int {
+	t.Helper()
+	var n int
+	if err := conn.Pool.QueryRow(context.Background(), `SELECT count(*) FROM config_snapshot_outbox`).Scan(&n); err != nil {
+		t.Fatalf("count outbox: %v", err)
+	}
+	return n
+}
+
 // writeLegacyMCPTarget stores target the way rows were written before field
 // encryption existed.
 func writeLegacyMCPTarget(t *testing.T, conn *database.Connection, id ids.RegistryID, target *domain.MCPTarget) {

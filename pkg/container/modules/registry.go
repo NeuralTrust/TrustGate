@@ -19,7 +19,6 @@ import (
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
-	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -68,17 +67,6 @@ type registryRepositoryDeps struct {
 }
 
 func provideRegistryRepository(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.PinnedToolRepository {
-		return registryrepo.NewPinnedToolRepository(conn, appender)
-	}); err != nil {
-		return err
-	}
-	// The full plane records pending pinned tools straight into the database.
-	if err := c.Provide(func(repo domain.PinnedToolRepository, logger *slog.Logger) appmcp.PendingToolRecorder {
-		return appmcp.NewRepositoryPendingRecorder(repo, logger)
-	}); err != nil {
-		return err
-	}
 	if err := c.Provide(func(deps registryRepositoryDeps) *registryrepo.Repository {
 		return registryrepo.NewRepository(
 			deps.Conn,
@@ -138,20 +126,6 @@ func provideRegistryServices(c *container.Container) error {
 		}
 		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler, opts...)
 	}); err != nil {
-		return err
-	}
-	if err := c.Provide(func(repo domain.Repository, tools domain.PinnedToolRepository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.PinnedToolService {
-		return appregistry.NewPinnedToolService(repo, tools, manager, publisher, logger, sig.Signaler)
-	}); err != nil {
-		return err
-	}
-	if err := c.Provide(registryhttp.NewListPinnedToolsHandler); err != nil {
-		return err
-	}
-	if err := c.Provide(registryhttp.NewDecidePinnedToolsHandler); err != nil {
-		return err
-	}
-	if err := c.Provide(registryhttp.NewEnableToolPinningHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(appregistry.NewFinder); err != nil {
