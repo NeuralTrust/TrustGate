@@ -36,7 +36,8 @@ const (
 type errModeration struct {
 	status int
 	// configShaped is set from the error envelope when a 400 is about the
-	// policy's model or key and not about the input.
+	// policy's model or key and not about the input, or a 429 is the account's
+	// quota and not a rate.
 	configShaped bool
 }
 
@@ -105,24 +106,37 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
-// configurationCodes are the error codes of a rejection that is about the
-// policy's model or key and not about the input.
+// configurationCodes are the error codes of a 400 that is about the policy's
+// model or key and not about the input.
 var configurationCodes = map[string]struct{}{
 	"model_not_found": {}, "invalid_api_key": {}, "invalid_model": {},
 }
 
-// rejectsConfiguration reports whether a 400 in OpenAI's error envelope names
-// the model or the key: its param is the model, or its code says the model or
-// key is unusable. Anything else, an input param above all and any shape this
-// does not recognise, is read as the content's, so an unknown error cannot be
-// used to skip the guardrail.
+// quotaCodes are the error codes of a 429 that is the account's own quota, not
+// a rate: no credit left, or the billing limit reached. They are documented as
+// code values of the error object in OpenAI's error-codes guide, and waiting
+// does not clear them, unlike rate_limit_exceeded.
+var quotaCodes = map[string]struct{}{
+	"insufficient_quota": {}, "billing_hard_limit_reached": {},
+}
+
+// rejectsConfiguration reports whether an error in OpenAI's envelope is about
+// the policy and not about the input: a 400 that names the model or whose code
+// says the model or key is unusable, or a 429 whose code says the account's
+// quota is spent. Anything else, an input param above all and any shape this
+// does not recognise, is read as the content's (a 400) or a rate (a 429), so an
+// unknown error cannot be used to skip the guardrail.
 func rejectsConfiguration(status int, body []byte) bool {
-	if status != http.StatusBadRequest {
+	if status != http.StatusBadRequest && status != http.StatusTooManyRequests {
 		return false
 	}
 	var env errorEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
 		return false
+	}
+	if status == http.StatusTooManyRequests {
+		_, ok := quotaCodes[env.Error.Code]
+		return ok
 	}
 	if env.Error.Param == "model" {
 		return true

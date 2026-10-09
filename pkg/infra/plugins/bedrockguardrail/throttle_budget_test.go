@@ -89,3 +89,40 @@ func TestJitterStaysBelowItsBound(t *testing.T) {
 	}
 	assert.Greater(t, len(seen), 1, "the jitter varies")
 }
+
+// A throttle retry that the deadline does not leave time for is never sent, so
+// it must not spend a token of the credential's budget: a burst of calls near
+// their deadline would otherwise empty the budget without one retry.
+func TestARetryTheDeadlineDoesNotAllowSpendsNoToken(t *testing.T) {
+	t.Parallel()
+	client := &sequencedClient{errs: []error{throttlingError(t), throttlingError(t), throttlingError(t)}, output: allowOutput()}
+	p := pluginWith(client)
+	creds := awsCredentials{region: "us-east-1", accessKeyID: "AKIAMINE", secretAccessKey: "secret"}
+	in := buildApplyInput(testSettings, "some text", "INPUT")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := p.guardrails.ApplyWithBackoff(ctx, creds, in, callLimits{})
+
+	require.Error(t, err)
+	assert.Equal(t, "throttled", throttleDetail(err))
+	assert.Equal(t, 1, client.count(), "the wait would have run past the deadline")
+	assert.InDelta(t, float64(throttleRetryBurst), p.guardrails.throttleBudget(creds).Tokens(), 0.5, "no token was spent")
+}
+
+func TestAThrottledStreamEntryThatNeverClosedExpires(t *testing.T) {
+	t.Parallel()
+	p := pluginWith(allowing())
+	now := time.Now()
+	p.throttledStreams.Store("abandoned", now.Add(-throttledStreamTTL-time.Minute))
+	p.throttledStreams.Store("live", now.Add(-time.Minute))
+
+	p.markStreamThrottled("fresh", now)
+
+	assert.False(t, p.streamThrottled("abandoned"), "an entry whose closing segment never came is swept")
+	assert.True(t, p.streamThrottled("live"))
+	assert.True(t, p.streamThrottled("fresh"))
+	p.forgetStreamThrottle("fresh")
+	assert.False(t, p.streamThrottled("fresh"), "the closing segment removes it")
+	assert.False(t, p.streamThrottled(""), "a stream with no identity is never marked")
+}

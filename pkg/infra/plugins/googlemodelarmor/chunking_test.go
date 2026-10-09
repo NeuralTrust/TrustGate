@@ -338,3 +338,38 @@ func TestAChunkedEvaluationWithNoFindingRecordsTheFilterVersion(t *testing.T) {
 	assert.Equal(t, "allowed", data.Decision)
 	assert.Equal(t, "v3", data.FilterVersion)
 }
+
+// A throttle on a text that was split into several calls may be that text's own
+// size, so it is input; on a text of one call it stays the provider's load.
+func TestAThrottleOnALongTextIsInput(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			s := newArmorScript(t, func(call int, _ string) (int, string) {
+				if call == 3 {
+					return http.StatusTooManyRequests, rpcResourceExhausted
+				}
+				return http.StatusOK, allowResponse
+			})
+			p := pluginWithStub(s.modelArmorStub)
+			event, span := newStreamEvent()
+			in := execInput(policy.StagePreRequest, mode, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(300<<10))), nil)
+			in.Event = event
+
+			res, err := p.Execute(context.Background(), in)
+
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, appplugins.DetailThrottledOversize, data.FailureDetail)
+			assert.Equal(t, "input", data.FailureClass)
+			if mode == policy.ModeEnforce {
+				pe, isPE := appplugins.AsPluginError(err)
+				require.True(t, isPE, "got res=%v err=%v", res, err)
+				assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+				return
+			}
+			assertPassThrough(t, res, err)
+		})
+	}
+}

@@ -103,6 +103,11 @@ const (
 	DetailUnsupportedFormat       = "unsupported_format"
 	DetailProviderConfigRejected  = "provider_config_rejected"
 	DetailCoveragePartial         = "coverage_partial"
+	// DetailProviderQuotaExhausted is a provider quota that is configuration, not
+	// load: an account out of credit or at its billing limit. Nothing a request
+	// does changes it, so it is config_invalid and never the throttled detail,
+	// whatever the number of chunks.
+	DetailProviderQuotaExhausted = "provider_quota_exhausted"
 	// DetailChunkLimit is a content that splits into more chunks than the
 	// guardrail evaluates, or that the provider's quota could not serve within
 	// the call's budget. It is refused before any call is made.

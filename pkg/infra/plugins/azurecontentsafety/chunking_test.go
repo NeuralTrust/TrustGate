@@ -152,12 +152,18 @@ func TestAChunkThatCannotBeInspectedIsTheWholeConversationsFailure(t *testing.T)
 		detail string
 		class  string
 	}{
-		{"a 429 is availability", func(call int) (int, string) {
+		{"a 429 on a conversation of several chunks is input", func(call int) (int, string) {
 			if call == 2 {
 				return http.StatusTooManyRequests, `{"error":{"code":"429","message":"Rate limit is exceeded. Try again in 1 seconds."}}`
 			}
 			return http.StatusOK, categories(0)
-		}, appplugins.DetailThrottled, "availability"},
+		}, appplugins.DetailThrottledOversize, "input"},
+		{"a spent call volume quota is configuration", func(call int) (int, string) {
+			if call == 2 {
+				return http.StatusTooManyRequests, `{"error":{"code":"429","message":"Out of call volume quota for ContentSafety F0 pricing tier. Please retry after 2 days. To increase your call volume switch to a paid tier."}}`
+			}
+			return http.StatusOK, categories(0)
+		}, appplugins.DetailProviderQuotaExhausted, "availability"},
 		{"a 5xx is availability", func(call int) (int, string) {
 			if call == 2 {
 				return http.StatusServiceUnavailable, `{"error":{"code":"ServiceUnavailable"}}`

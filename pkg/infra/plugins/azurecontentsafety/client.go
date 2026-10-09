@@ -74,7 +74,7 @@ type statusError struct {
 	status int
 	// configShaped is set from the error envelope when a 400 is about the
 	// call's configuration (api-version, categories, output type) and not about
-	// the text.
+	// the text, or a 429 says the resource's call volume quota is spent.
 	configShaped bool
 }
 
@@ -136,6 +136,9 @@ var configurationTargets = map[string]struct{}{
 // code. Anything else, including a shape this does not recognise, is read as
 // the content's, so an unknown error cannot be used to skip the guardrail.
 func rejectsConfiguration(status int, body []byte) bool {
+	if status == http.StatusTooManyRequests {
+		return spentCallVolumeQuota(body)
+	}
 	if status != http.StatusBadRequest {
 		return false
 	}
@@ -148,4 +151,17 @@ func rejectsConfiguration(status int, body []byte) bool {
 	}
 	code := strings.ToLower(env.Error.Code)
 	return strings.Contains(code, "apiversion") || strings.Contains(code, "api-version")
+}
+
+// spentCallVolumeQuota reports whether a 429 says the resource ran out of its
+// call volume quota ("Out of call volume quota for ... pricing tier. Please
+// retry after N days"), which Azure answers for a free tier that is spent. It is
+// the subscription's tier, not a rate, and waiting a second does not clear it.
+// A rate limit ("exceeded call rate limit") is a throttle.
+func spentCallVolumeQuota(body []byte) bool {
+	var env errorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(env.Error.Message), "out of call volume quota")
 }

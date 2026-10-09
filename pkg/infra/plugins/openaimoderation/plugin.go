@@ -47,15 +47,21 @@ const (
 // undocumented. Bytes are never fewer than characters or tokens. A text that
 // splits into more than maxChunks requests is refused before any call, and at
 // most evalParallel run at once, inside the client's timeout for the whole
-// evaluation. OpenAI meters tokens per minute per tier, which the gateway
-// cannot see, so a rate limit on a request split into several calls may be that
-// request's own size and is input (throttled_oversize).
+// evaluation. A chunk that would have to wait for a slot is not started with
+// less than callReserve of the budget left, about twice a call's usual latency:
+// it was queued behind the request's own chunks, so the request's size used the
+// time and it is refused as chunk_budget, not sent to time out as an outage.
+// OpenAI meters tokens per minute per tier, which the gateway cannot see, so a
+// rate limit on a request split into several calls may be that request's own
+// size and is input (throttled_oversize). An exhausted account (insufficient_quota,
+// billing_hard_limit_reached) is configuration, not a rate, and fails open.
 // https://developers.openai.com/api/docs/guides/moderation
 const (
 	chunkBytes   = 32768
 	chunkOverlap = 2048
 	maxChunks    = 32
 	evalParallel = 4
+	callReserve  = 2 * time.Second
 )
 
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
@@ -334,6 +340,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	verdicts := make([]chunkVerdict, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
 		Parallel: evalParallel,
+		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(verdicts[i].violations) > 0 },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		resp, err := p.client.Moderate(ctx, p.baseURL, cfg.APIKey, moderationRequest{
@@ -347,21 +354,21 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return struct{}{}, nil
 	})
 
-	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{ThrottleIsInput: true},
-		func(i int, _ struct{}, err error) pluginutil.ChunkState {
-			if err != nil {
-				reason, detail := pluginutil.FailureOfError(err)
-				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
-			}
-			if len(verdicts[i].violations) > 0 {
-				return pluginutil.ChunkState{Blocks: true}
-			}
-			if verdicts[i].failure != nil {
-				return pluginutil.ChunkState{Failure: verdicts[i].failure}
-			}
-			return pluginutil.ChunkState{}
-		})
-	if decision.Kind == pluginutil.ChunkInputFailure || decision.Kind == pluginutil.ChunkAvailabilityFailure {
+	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
+		if err != nil {
+			reason, detail := pluginutil.FailureOfError(err)
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
+		}
+		if len(verdicts[i].violations) > 0 {
+			return appplugins.ChunkState{Blocks: true}
+		}
+		if verdicts[i].failure != nil {
+			return appplugins.ChunkState{Failure: verdicts[i].failure}
+		}
+		return appplugins.ChunkState{}
+	}
+	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
+	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
 		return p.externalFailure(ctx, in, cfg, len(chunks), decision.Reason, decision.Detail,
 			fmt.Errorf("openai_moderation: chunk %d of %d: %s", decision.Index+1, len(chunks), failureText(decision, outs)))
 	}
@@ -415,24 +422,24 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 type chunkVerdict struct {
 	results    []moderationResult
 	violations []violation
-	failure    *pluginutil.ChunkFailure
+	failure    *appplugins.ChunkFailure
 }
 
 func readChunk(cfg Settings, resp *moderationResponse) chunkVerdict {
 	if len(resp.Results) == 0 {
-		return chunkVerdict{failure: &pluginutil.ChunkFailure{Reason: appplugins.FailureVerdictIncomplete}}
+		return chunkVerdict{failure: &appplugins.ChunkFailure{Reason: appplugins.FailureVerdictIncomplete}}
 	}
 	agg := aggregate(resp.Results)
 	v := chunkVerdict{results: resp.Results, violations: evaluate(cfg, agg)}
 	if len(v.violations) == 0 {
 		if missing := missingKnownThreshold(cfg, agg); missing != "" {
-			v.failure = &pluginutil.ChunkFailure{Reason: appplugins.FailureVerdictIncomplete, Detail: missing}
+			v.failure = &appplugins.ChunkFailure{Reason: appplugins.FailureVerdictIncomplete, Detail: missing}
 		}
 	}
 	return v
 }
 
-func failureText(d pluginutil.ChunkDecision, outs []textchunk.Outcome[struct{}]) string {
+func failureText(d appplugins.ChunkDecision, outs []textchunk.Outcome[struct{}]) string {
 	if d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil {
 		return outs[d.Index].Err.Error()
 	}

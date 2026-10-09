@@ -202,8 +202,9 @@ func newRetryer() aws.Retryer {
 // ApplyWithBackoff is ApplyGuardrail that retries a throttled call with
 // exponential backoff and jitter, and only inside ctx's deadline and the
 // credential's throttle-retry budget: a wait that would run past the deadline,
-// or a retry the budget does not cover, is not taken, the throttle is returned
-// as it is, and the caller resolves it as an availability failure. A call that
+// or a retry the budget does not cover, is not taken and the throttle is
+// returned as it is. The deadline is read before the budget is charged, so a
+// retry that is never sent never spends a token. A call that
 // ends on the deadline after a throttle still reports the throttle.
 func (g *cachedGuardrailClient) ApplyWithBackoff(
 	ctx context.Context,
@@ -228,11 +229,11 @@ func (g *cachedGuardrailClient) ApplyWithBackoff(
 			return out, err
 		}
 		lastThrottle = err
-		if !g.throttleBudget(creds).Allow() {
-			return out, err
-		}
 		wait := g.backoffFor(attempt)
 		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= wait {
+			return out, err
+		}
+		if !g.throttleBudget(creds).Allow() {
 			return out, err
 		}
 		timer := time.NewTimer(wait)

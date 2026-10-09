@@ -37,13 +37,11 @@ func settingsIn(region string) map[string]any {
 	return set
 }
 
-// In a region with the smallest on-demand quota (25 text units a second) a
-// client can pad its last message until ApplyGuardrail throttles whatever it
-// sends. A throttle is availability, so without a bound the padded message goes
-// through uninspected. 300,000 characters is 300 text units, more than that
-// region serves in a call's whole budget, so it must be refused as input before
-// any call is made.
-func TestAPaddedMessageThatTheRegionQuotaCannotServeIsRefusedBeforeAnyCall(t *testing.T) {
+// A client can pad its last message until the quota throttles what it sends. A
+// throttle on a request split into several calls may be that request's own size,
+// so it is input and an enforcing policy refuses it; the same throttle on a
+// message of one call is the account's load and fails open.
+func TestAThrottleOnAPaddedMessageIsRefusedAsOversize(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -57,11 +55,10 @@ func TestAPaddedMessageThatTheRegionQuotaCannotServeIsRefusedBeforeAnyCall(t *te
 
 			res, err := p.Execute(context.Background(), in)
 
-			assert.Zero(t, client.count(), "no call is made for a request the quota cannot serve")
 			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 			require.True(t, ok)
 			assert.Equal(t, "input", extras.FailureClass)
-			assert.Equal(t, appplugins.DetailChunkLimit, extras.FailureDetail)
+			assert.Equal(t, appplugins.DetailThrottledOversize, extras.FailureDetail)
 			if mode == policy.ModeEnforce {
 				pe, isPE := appplugins.AsPluginError(err)
 				require.True(t, isPE, "want a refusal, got res=%v err=%v", res, err)
@@ -73,4 +70,22 @@ func TestAPaddedMessageThatTheRegionQuotaCannotServeIsRefusedBeforeAnyCall(t *te
 			assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
 		})
 	}
+}
+
+func TestAThrottleOnAMessageOfOneCallFailsOpen(t *testing.T) {
+	t.Parallel()
+	client := &recordingClient{err: throttlingError(t)}
+	p := pluginWith(client)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, "a short message"), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, "availability", extras.FailureClass)
+	assert.Equal(t, appplugins.DetailThrottled, extras.FailureDetail)
+	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
 }

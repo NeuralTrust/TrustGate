@@ -31,22 +31,24 @@ import (
 // {"error":{"message","type","param","code"}}. A 400 is OpenAI refusing the
 // input it was sent, which is the request's own content; credentials (a 401
 // whose type is also invalid_request_error), throttling, quota and 5xx are
-// OpenAI's availability.
+// OpenAI's availability. An exhausted quota is configuration (config_invalid)
+// and the others are transport.
 var openAIModerationErrors = []struct {
 	name    string
 	status  int
 	body    string
 	isInput bool
+	reason  string
 }{
-	{"invalid request", http.StatusBadRequest, `{"error":{"message":"Invalid input.","type":"invalid_request_error","param":"input","code":null}}`, true},
-	{"string above max length", http.StatusBadRequest, `{"error":{"message":"The input is too long.","type":"invalid_request_error","param":"input","code":"string_above_max_length"}}`, true},
-	{"payload too large", http.StatusRequestEntityTooLarge, `{"error":{"message":"Request too large.","type":"invalid_request_error","param":null,"code":null}}`, true},
-	{"bad key", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`, false},
-	{"forbidden", http.StatusForbidden, `{"error":{"message":"Country, region, or territory not supported","type":"invalid_request_error","param":null,"code":"unsupported_country_region_territory"}}`, false},
-	{"rate limit", http.StatusTooManyRequests, `{"error":{"message":"Rate limit reached.","type":"requests","param":null,"code":"rate_limit_exceeded"}}`, false},
-	{"quota", http.StatusTooManyRequests, `{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, false},
-	{"server error", http.StatusInternalServerError, `{"error":{"message":"The server had an error while processing your request.","type":"server_error","param":null,"code":null}}`, false},
-	{"overloaded", http.StatusServiceUnavailable, `{"error":{"message":"The engine is currently overloaded.","type":"server_error","param":null,"code":null}}`, false},
+	{"invalid request", http.StatusBadRequest, `{"error":{"message":"Invalid input.","type":"invalid_request_error","param":"input","code":null}}`, true, ""},
+	{"string above max length", http.StatusBadRequest, `{"error":{"message":"The input is too long.","type":"invalid_request_error","param":"input","code":"string_above_max_length"}}`, true, ""},
+	{"payload too large", http.StatusRequestEntityTooLarge, `{"error":{"message":"Request too large.","type":"invalid_request_error","param":null,"code":null}}`, true, ""},
+	{"bad key", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`, false, ""},
+	{"forbidden", http.StatusForbidden, `{"error":{"message":"Country, region, or territory not supported","type":"invalid_request_error","param":null,"code":"unsupported_country_region_territory"}}`, false, ""},
+	{"rate limit", http.StatusTooManyRequests, `{"error":{"message":"Rate limit reached.","type":"requests","param":null,"code":"rate_limit_exceeded"}}`, false, ""},
+	{"quota", http.StatusTooManyRequests, `{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, false, "config_invalid"},
+	{"server error", http.StatusInternalServerError, `{"error":{"message":"The server had an error while processing your request.","type":"server_error","param":null,"code":null}}`, false, ""},
+	{"overloaded", http.StatusServiceUnavailable, `{"error":{"message":"The engine is currently overloaded.","type":"server_error","param":null,"code":null}}`, false, ""},
 }
 
 func TestExecuteProviderErrorByClass(t *testing.T) {
@@ -64,6 +66,9 @@ func TestExecuteProviderErrorByClass(t *testing.T) {
 				res, err := p.Execute(context.Background(), in)
 
 				wantDecision, wantClass, wantReason, refused := "failed_open", "availability", "transport", false
+				if tc.reason != "" {
+					wantReason = tc.reason
+				}
 				if tc.isInput {
 					wantClass, wantReason = "input", "input_too_large"
 					if mode == policy.ModeEnforce {
