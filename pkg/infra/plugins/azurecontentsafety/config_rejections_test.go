@@ -68,6 +68,29 @@ func TestValidateSettingsWriteRequiresAnAPIVersion(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
 	cat := map[string]int{CategoryHate: 2}
-	require.Error(t, p.ValidateSettingsWrite(settings("https://acct.cognitiveservices.azure.com/contentsafety/text:analyze", cat), nil))
-	require.NoError(t, p.ValidateSettingsWrite(settings("https://acct.cognitiveservices.azure.com/contentsafety/text:analyze?api-version=2023-10-01", cat), nil))
+	const base = "https://acct.cognitiveservices.azure.com/contentsafety/text:analyze"
+	require.Error(t, p.ValidateSettingsWrite(settings(base, cat), nil))
+	require.Error(t, p.ValidateSettingsWrite(settings(base+"?api-version=", cat), nil))
+	require.NoError(t, p.ValidateSettingsWrite(settings(base+"?api-version=2023-10-01", cat), nil))
+	require.NoError(t, p.ValidateSettingsWrite(settings(base+"?API-Version=2023-10-01", cat), nil), "the parameter name is matched without regard to case")
+}
+
+// The api-version is only demanded of an endpoint that is new or changed: a
+// stored policy saved before the rule keeps accepting edits to its other
+// settings.
+func TestValidateSettingsWriteChecksTheAPIVersionOnlyWhenTheEndpointChanges(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	const legacy = "https://acct.cognitiveservices.azure.com/contentsafety/text:analyze"
+	const versioned = legacy + "?api-version=2023-10-01"
+	stored := settings(legacy, map[string]int{CategoryHate: 2})
+
+	edited := settings(legacy, map[string]int{CategoryHate: 4})
+	require.NoError(t, p.ValidateSettingsWrite(edited, stored), "an edit that leaves the endpoint alone")
+
+	moved := settings(legacy+"?foo=bar", map[string]int{CategoryHate: 2})
+	require.Error(t, p.ValidateSettingsWrite(moved, stored), "a changed endpoint without an api-version")
+
+	require.NoError(t, p.ValidateSettingsWrite(settings(versioned, map[string]int{CategoryHate: 2}), stored), "a changed endpoint with one")
+	require.Error(t, p.ValidateSettingsWrite(edited, map[string]any{"endpoint": versioned}), "an endpoint changed from a versioned one")
 }

@@ -98,23 +98,21 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
 // ValidateSettingsWrite rejects a category_severity key that names a
-// category not requested in categories. This cannot live in parseConfig (run
-// via ValidateConfig on every load): a policy saved before this rule existed
-// would turn into a run-time config_invalid failure the moment it did.
+// category not requested in categories, and an endpoint that does not carry the
+// api-version query parameter. Neither can live in parseConfig (run via
+// ValidateConfig on every load): a policy saved before the rule existed would
+// turn into a run-time config_invalid failure the moment it did.
 // Execute instead requests the union of categories and category_severity's
 // keys (Settings.requestCategories) so an already-saved mismatched policy
 // keeps working; this only stops a new one from being saved with the same
-// gap.
-//
-// previous (the settings stored before this write) is unused here: this
-// plugin's rule is a same-settings internal consistency check, not one that
-// depends on what changed.
-func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
+// gap. The api-version is checked only when the endpoint is new or changed, so
+// editing any other setting of a stored policy is never refused for it.
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return err
 	}
-	if parsed, err := url.Parse(cfg.Endpoint); err != nil || parsed.Query().Get("api-version") == "" {
+	if endpointChanged(cfg.Endpoint, previous) && !carriesAPIVersion(cfg.Endpoint) {
 		return fmt.Errorf("azure_content_safety: endpoint must carry the api-version query parameter")
 	}
 	if missing := cfg.unrequestedThresholds(); len(missing) > 0 {
@@ -123,6 +121,31 @@ func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 		)
 	}
 	return nil
+}
+
+func endpointChanged(endpoint string, previous map[string]any) bool {
+	before, ok := previous["endpoint"].(string)
+	return !ok || before != endpoint
+}
+
+// carriesAPIVersion reports whether the endpoint's query names an api-version
+// with a value; the parameter name is matched without regard to case.
+func carriesAPIVersion(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	for key, values := range parsed.Query() {
+		if !strings.EqualFold(key, "api-version") {
+			continue
+		}
+		for _, v := range values {
+			if v != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // CredentialPaths declares the settings paths that hold secrets, so the policy
