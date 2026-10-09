@@ -74,7 +74,7 @@ func TestTokenFetchSortsRejectionsFromTransientFailures(t *testing.T) {
 			require.Error(t, err)
 			var auth *authRejectedError
 			if !tt.rejected {
-				assert.False(t, errors.As(err, &auth), "a transient %d must stay on the on_error path", tt.status)
+				assert.False(t, errors.As(err, &auth), "a transient %d must stay on the transport path", tt.status)
 				return
 			}
 			require.True(t, errors.As(err, &auth), "a %d from the token endpoint is a rejection, got %v", tt.status, err)
