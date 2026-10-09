@@ -161,7 +161,7 @@ func (p *Plugin) recordStreamOutcome(
 	}
 	switch {
 	case seg.Report.CutAtEval > 0:
-		data.Decision = decisionBlocked
+		data.Decision = pluginutil.StreamCutDecision(seg.Report, decisionBlocked)
 	case seg.Report.MaskedEvals > 0:
 		// With no cut the guard applied every mask, as the buffered leg does.
 		data.Decision = decisionAnonymized
@@ -180,6 +180,7 @@ func (p *Plugin) recordStreamOutcome(
 	// block went uninspected. Extras are replaced, so this one write is the
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
+	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
 	if isAnonymizeReason(data.FailureDetail) {
 		data.Degraded = true
 		data.DegradedReason = data.FailureDetail

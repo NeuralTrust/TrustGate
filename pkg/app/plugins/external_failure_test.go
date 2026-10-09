@@ -31,58 +31,193 @@ func newTestEvent() (*metrics.EventContext, *trace.Span) {
 	return metrics.NewEventContext(span), span
 }
 
-// TestFailOpenExternalAlwaysFailsOpen pins RUN-1792: a third-party
-// guardrail failure never refuses the request, whatever the mode or reason.
-func TestFailOpenExternalAlwaysFailsOpen(t *testing.T) {
+func TestClassOf(t *testing.T) {
 	t.Parallel()
-
-	reasons := []FailureReason{
-		FailureTransport,
-		FailureVerdictIncomplete,
-		FailureConfigInvalid,
-		FailureDecodeFailed,
+	cases := []struct {
+		reason FailureReason
+		detail string
+		want   FailureClass
+	}{
+		{FailureTransport, "", FailureClassAvailability},
+		{FailureTransport, DetailFilterNotExecuted, FailureClassAvailability},
+		{FailureConfigInvalid, "", FailureClassAvailability},
+		{FailureCounterUnavailable, "", FailureClassAvailability},
+		{FailureDecodeFailed, "", FailureClassInput},
+		{FailureInputTooLarge, "", FailureClassInput},
+		{FailureInputTooLarge, DetailProviderRejectedInput, FailureClassInput},
+		{FailureInputTooLarge, DetailPayloadTooLarge, FailureClassInput},
+		{FailureVerdictIncomplete, DetailFilterNotExecuted, FailureClassInput},
+		{FailureVerdictIncomplete, DetailInvocationPartial, FailureClassInput},
+		{FailureVerdictIncomplete, DetailInterventionUnparsed, FailureClassInput},
+		{FailureVerdictIncomplete, DetailAnonymizeNoOutput, FailureClassInput},
+		{FailureVerdictIncomplete, DetailAnonymizeUnsupportedFmt, FailureClassInput},
+		{FailureVerdictIncomplete, DetailAnonymizeEncodeFailed, FailureClassInput},
+		{FailureVerdictIncomplete, DetailFilterNotInTemplate, FailureClassAvailability},
+		{FailureVerdictIncomplete, "hate", FailureClassAvailability},
+		{FailureVerdictIncomplete, "", FailureClassAvailability},
+		{FailureReason("a_reason_added_later"), "", FailureClassAvailability},
 	}
-	modes := []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}
-
-	for _, mode := range modes {
-		for _, reason := range reasons {
-			mode, reason := mode, reason
-			t.Run(string(mode)+" "+string(reason), func(t *testing.T) {
-				t.Parallel()
-				event, span := newTestEvent()
-				result := FailOpenExternal(ExternalFailure{
-					Ctx:    context.Background(),
-					Plugin: "some_guardrail",
-					Stage:  policy.StagePreRequest,
-					Mode:   mode,
-					Reason: reason,
-					Detail: "some_category",
-					Err:    errors.New("dial tcp 10.0.0.1:443: connection refused"),
-					Event:  event,
-				})
-				if result == nil || result.StatusCode != http.StatusOK {
-					t.Fatalf("expected pass-through result, got %+v", result)
-				}
-				if span.Plugin == nil || span.Plugin.Decision != "failed_open" {
-					t.Fatalf("span decision = %+v, want failed_open", span.Plugin)
-				}
-			})
+	for _, tc := range cases {
+		if got := ClassOf(tc.reason, tc.detail); got != tc.want {
+			t.Errorf("ClassOf(%q, %q) = %q, want %q", tc.reason, tc.detail, got, tc.want)
 		}
 	}
 }
 
-func TestFailOpenExternalNilEventAndLoggerAreSafe(t *testing.T) {
+func TestIsMaskOverFinding(t *testing.T) {
 	t.Parallel()
-	result := FailOpenExternal(ExternalFailure{
+	for _, detail := range []string{DetailAnonymizeNoOutput, DetailAnonymizeUnsupportedFmt, DetailAnonymizeEncodeFailed} {
+		if !IsMaskOverFinding(detail) {
+			t.Errorf("IsMaskOverFinding(%q) = false", detail)
+		}
+	}
+	for _, detail := range []string{"", DetailFilterNotExecuted, DetailInterventionUnparsed, DetailPayloadTooLarge} {
+		if IsMaskOverFinding(detail) {
+			t.Errorf("IsMaskOverFinding(%q) = true", detail)
+		}
+	}
+}
+
+// TestHandleExternalFailureModeByClass pins the outcome matrix: availability
+// fails open in every mode, input is refused in the modes that block and only
+// recorded in observe, and a mask over a finding is refused as the plugin's own
+// block.
+func TestHandleExternalFailureModeByClass(t *testing.T) {
+	t.Parallel()
+	finding := &PluginError{StatusCode: http.StatusForbidden, Type: "plugin_blocked", Message: "blocked by the plugin"}
+	cases := []struct {
+		name     string
+		reason   FailureReason
+		detail   string
+		finding  *PluginError
+		mode     policy.Mode
+		decision string
+		class    FailureClass
+		errType  string
+	}{
+		{"availability enforce", FailureTransport, "", nil, policy.ModeEnforce, DecisionFailedOpen, FailureClassAvailability, ""},
+		{"availability throttle", FailureTransport, "", nil, policy.ModeThrottle, DecisionFailedOpen, FailureClassAvailability, ""},
+		{"availability observe", FailureTransport, "", nil, policy.ModeObserve, DecisionFailedOpen, FailureClassAvailability, ""},
+		{"config enforce", FailureConfigInvalid, "", nil, policy.ModeEnforce, DecisionFailedOpen, FailureClassAvailability, ""},
+		{"template enforce", FailureVerdictIncomplete, DetailFilterNotInTemplate, nil, policy.ModeEnforce, DecisionFailedOpen, FailureClassAvailability, ""},
+		{"input enforce", FailureInputTooLarge, DetailProviderRejectedInput, nil, policy.ModeEnforce, DecisionFailedClosed, FailureClassInput, TypeGuardrailInputUninspectable},
+		{"input throttle", FailureDecodeFailed, "", nil, policy.ModeThrottle, DecisionFailedClosed, FailureClassInput, TypeGuardrailInputUninspectable},
+		{"input observe", FailureInputTooLarge, DetailProviderRejectedInput, nil, policy.ModeObserve, DecisionFailedOpen, FailureClassInput, ""},
+		{"skipped filter enforce", FailureVerdictIncomplete, DetailFilterNotExecuted, nil, policy.ModeEnforce, DecisionFailedClosed, FailureClassInput, TypeGuardrailInputUninspectable},
+		{"mask over finding enforce", FailureVerdictIncomplete, DetailAnonymizeNoOutput, finding, policy.ModeEnforce, DecisionBlocked, FailureClassInput, "plugin_blocked"},
+		{"mask over finding observe", FailureVerdictIncomplete, DetailAnonymizeNoOutput, finding, policy.ModeObserve, DecisionFailedOpen, FailureClassInput, ""},
+		{"mask without a finding enforce", FailureVerdictIncomplete, DetailAnonymizeNoOutput, nil, policy.ModeEnforce, DecisionFailedClosed, FailureClassInput, TypeGuardrailInputUninspectable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			event, span := newTestEvent()
+			out := HandleExternalFailure(ExternalFailure{
+				Ctx:     context.Background(),
+				Plugin:  "some_guardrail",
+				Stage:   policy.StagePreRequest,
+				Mode:    tc.mode,
+				Reason:  tc.reason,
+				Detail:  tc.detail,
+				Finding: tc.finding,
+				Err:     errors.New("dial tcp 10.0.0.1:443: connection refused"),
+				Event:   event,
+			})
+			if out.Decision != tc.decision || out.Class != tc.class {
+				t.Fatalf("decision/class = %q/%q, want %q/%q", out.Decision, out.Class, tc.decision, tc.class)
+			}
+			if span.Plugin == nil || span.Plugin.Decision != SpanDecisionFromOutcome(tc.decision) {
+				t.Fatalf("span decision = %+v, want %q", span.Plugin, SpanDecisionFromOutcome(tc.decision))
+			}
+			if tc.errType == "" {
+				if out.Err != nil || out.Result == nil || out.Result.StatusCode != http.StatusOK {
+					t.Fatalf("want a pass-through, got result=%+v err=%+v", out.Result, out.Err)
+				}
+				return
+			}
+			if out.Result != nil || out.Err == nil || out.Err.Type != tc.errType || out.Err.StatusCode != http.StatusForbidden {
+				t.Fatalf("want a 403 %q, got result=%+v err=%+v", tc.errType, out.Result, out.Err)
+			}
+		})
+	}
+}
+
+func TestUninspectableErrorNeverCarriesTheProviderError(t *testing.T) {
+	t.Parallel()
+	out := HandleExternalFailure(ExternalFailure{
+		Plugin:  "some_guardrail",
+		Mode:    policy.ModeEnforce,
+		Reason:  FailureInputTooLarge,
+		Message: "  custom refusal  ",
+		Err:     errors.New("POST https://secret.internal/v1: 400"),
+	})
+	if out.Err == nil || out.Err.Message != "custom refusal" {
+		t.Fatalf("err = %+v, want the configured message", out.Err)
+	}
+	if strings.Contains(string(out.Err.Body), "secret.internal") || !strings.Contains(string(out.Err.Body), TypeGuardrailInputUninspectable) {
+		t.Fatalf("body = %s", out.Err.Body)
+	}
+	if def := UninspectableError(""); def.Message != DefaultUninspectableMessage {
+		t.Fatalf("default message = %q", def.Message)
+	}
+}
+
+func TestHandleExternalFailureNilEventAndLoggerAreSafe(t *testing.T) {
+	t.Parallel()
+	out := HandleExternalFailure(ExternalFailure{
 		Plugin: "some_guardrail",
 		Stage:  policy.StagePreRequest,
 		Mode:   policy.ModeEnforce,
 		Reason: FailureTransport,
 		Err:    errors.New("boom"),
 	})
-	if result == nil || result.StatusCode != http.StatusOK {
-		t.Fatalf("result = %+v, want a pass-through", result)
+	if out.Result == nil || out.Result.StatusCode != http.StatusOK {
+		t.Fatalf("result = %+v, want a pass-through", out.Result)
 	}
+}
+
+func TestExternalStreamOutcome(t *testing.T) {
+	t.Parallel()
+	base := errors.New("boom")
+	block := &SegmentVerdict{Type: "plugin_blocked", Message: "masking could not be applied"}
+
+	t.Run("availability is the typed error in every mode", func(t *testing.T) {
+		t.Parallel()
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+			verdict, err := ExternalStreamOutcome("g", mode, FailureTransport, "", nil, base)
+			var failure *ExternalStreamFailure
+			if verdict != nil || !errors.As(err, &failure) || failure.Class != FailureClassAvailability {
+				t.Fatalf("%s: verdict=%+v err=%v", mode, verdict, err)
+			}
+		}
+	})
+	t.Run("input in observe is the typed error", func(t *testing.T) {
+		t.Parallel()
+		verdict, err := ExternalStreamOutcome("g", policy.ModeObserve, FailureInputTooLarge, DetailProviderRejectedInput, nil, base)
+		var failure *ExternalStreamFailure
+		if verdict != nil || !errors.As(err, &failure) || failure.Class != FailureClassInput {
+			t.Fatalf("verdict=%+v err=%v", verdict, err)
+		}
+	})
+	t.Run("input in enforce is a cut carrying the failure", func(t *testing.T) {
+		t.Parallel()
+		verdict, err := ExternalStreamOutcome("g", policy.ModeEnforce, FailureInputTooLarge, DetailProviderRejectedInput, nil, base)
+		if err != nil || verdict == nil || !verdict.Block || verdict.Type != TypeGuardrailInputUninspectable ||
+			verdict.Failure == nil || verdict.Failure.Reason != FailureInputTooLarge {
+			t.Fatalf("verdict=%+v err=%v", verdict, err)
+		}
+	})
+	t.Run("a mask over a finding cuts with the plugin's own verdict", func(t *testing.T) {
+		t.Parallel()
+		verdict, err := ExternalStreamOutcome("g", policy.ModeEnforce, FailureVerdictIncomplete, DetailAnonymizeNoOutput, block, base)
+		if err != nil || verdict == nil || !verdict.Block || verdict.Type != "plugin_blocked" ||
+			verdict.Message != block.Message || verdict.Failure == nil || verdict.Failure.Detail != DetailAnonymizeNoOutput {
+			t.Fatalf("verdict=%+v err=%v", verdict, err)
+		}
+		if block.Failure != nil {
+			t.Fatal("the plugin's verdict template was mutated")
+		}
+	})
 }
 
 func TestWrapExternalStreamFailure(t *testing.T) {

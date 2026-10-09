@@ -311,11 +311,11 @@ func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput,
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.FailOpenExternal: on the buffered leg it always fails
-// open (pass through, decision failed_open), in every mode and for every
-// reason (RUN-1792). It builds this plugin's own Data so
-// failure_reason/failure_detail travel in the same shape as every other
-// external guardrail.
+// shared appplugins.HandleExternalFailure, which owns the class and the mode:
+// an availability failure passes through as failed_open, and an input failure
+// is refused in a mode that blocks. It builds this plugin's own Data so
+// failure_reason/failure_detail/failure_class travel in the same shape as every
+// other external guardrail.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -325,23 +325,28 @@ func (p *Plugin) externalFailure(
 	detail string,
 	err error,
 ) (*appplugins.Result, error) {
-	result := appplugins.FailOpenExternal(appplugins.ExternalFailure{
-		Ctx:    ctx,
-		Plugin: PluginName,
-		Stage:  in.Stage,
-		Mode:   in.Mode,
-		Reason: reason,
-		Detail: detail,
-		Err:    err,
-		Logger: p.logger,
-		Event:  in.Event,
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:     ctx,
+		Plugin:  PluginName,
+		Stage:   in.Stage,
+		Mode:    in.Mode,
+		Reason:  reason,
+		Detail:  detail,
+		Message: cfg.Message,
+		Err:     err,
+		Logger:  p.logger,
+		Event:   in.Event,
 	})
 	data := newData(in, cfg, latencyMS)
-	data.Decision = appplugins.DecisionFailedOpen
+	data.Decision = outcome.Decision
 	data.FailureReason = string(reason)
 	data.FailureDetail = detail
+	data.FailureClass = string(outcome.Class)
 	setExtras(in.Event, data)
-	return result, nil
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {

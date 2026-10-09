@@ -477,12 +477,12 @@ type failureInfo struct {
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
-// shared appplugins.FailOpenExternal: on the buffered leg it always fails
-// open (pass through, decision failed_open), in every mode and for every
-// reason (RUN-1792). It builds this plugin's own Data so
-// failure_reason/failure_detail travel in the same
-// shape as every other external guardrail, while keeping filter and
-// filter_version, which are specific to this plugin.
+// shared appplugins.HandleExternalFailure, which owns the class and the mode:
+// an availability failure passes through as failed_open, and an input failure
+// is refused in a mode that blocks. It builds this plugin's own Data so
+// failure_reason/failure_detail/failure_class travel in the same shape as every
+// other external guardrail, while keeping filter and filter_version, which are
+// specific to this plugin.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -490,25 +490,30 @@ func (p *Plugin) externalFailure(
 	latencyMS int64,
 	fi failureInfo,
 ) (*appplugins.Result, error) {
-	result := appplugins.FailOpenExternal(appplugins.ExternalFailure{
-		Ctx:    ctx,
-		Plugin: PluginName,
-		Stage:  in.Stage,
-		Mode:   in.Mode,
-		Reason: fi.reason,
-		Detail: fi.filter,
-		Err:    fi.err,
-		Logger: p.logger,
-		Event:  in.Event,
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:     ctx,
+		Plugin:  PluginName,
+		Stage:   in.Stage,
+		Mode:    in.Mode,
+		Reason:  fi.reason,
+		Detail:  fi.armorReason,
+		Message: cfg.Message,
+		Err:     fi.err,
+		Logger:  p.logger,
+		Event:   in.Event,
 	})
 	data := newData(in, cfg, latencyMS)
-	data.Decision = appplugins.DecisionFailedOpen
+	data.Decision = outcome.Decision
 	data.FailureReason = string(fi.reason)
 	data.FailureDetail = fi.armorReason
+	data.FailureClass = string(outcome.Class)
 	data.Filter = fi.filter
 	data.FilterVersion = fi.filterVersion
 	setExtras(in.Event, data)
-	return result, nil
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {

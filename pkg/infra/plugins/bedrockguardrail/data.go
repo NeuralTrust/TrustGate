@@ -43,6 +43,9 @@ type Data struct {
 	// intervened with no assessment at all.
 	FailureReason string `json:"failure_reason,omitempty"`
 	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
 	// Streaming is present only on a streamed response leg, written once when
 	// the stream closes.
 	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`

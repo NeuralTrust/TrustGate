@@ -140,7 +140,7 @@ func (p *Plugin) recordStreamOutcome(
 	data := ModerationData{Model: cfg.Model, Streaming: stream}
 	switch {
 	case seg.Report.CutAtEval > 0:
-		data.Decision = decisionBlock
+		data.Decision = pluginutil.StreamCutDecision(seg.Report, decisionBlock)
 	case len(stream.Findings) > 0:
 		data.Decision = decisionReported
 	// A positive finding outranks a missing inspection, so a failure only labels
@@ -156,6 +156,7 @@ func (p *Plugin) recordStreamOutcome(
 	// block went uninspected. Extras are replaced, so this one write is the
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
+	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
 
 	// A stream span's wall clock is the whole drain, provider generation
 	// included, and the fold in pkg/app/metrics counts a pre_response span as

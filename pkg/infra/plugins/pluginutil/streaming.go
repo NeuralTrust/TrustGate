@@ -374,3 +374,23 @@ func StreamFailedOpen(r appplugins.StreamReport) bool {
 func StreamFailure(r appplugins.StreamReport) (reason, detail string) {
 	return string(r.FailureReason), r.FailureDetail
 }
+
+// StreamFailureClass is the class of the entry's first failed block, for the
+// plugin to write as failure_class in the closing write. When the entry authored
+// the cut it is the cutting failure's.
+func StreamFailureClass(r appplugins.StreamReport) string {
+	return string(r.FailureClass)
+}
+
+// StreamCutDecision is the decision an entry records for the cut it authored. A
+// cut that is a finding is the plugin's own blocked token. A cut that is an
+// input failure is failed_closed: the guardrail could not read the content, and
+// there is no finding to name. A mask over a confirmed finding that could not be
+// applied stays blocked (with the plugin marking it degraded), because a
+// finding exists and a failed_closed would hide it.
+func StreamCutDecision(r appplugins.StreamReport, blocked string) string {
+	if r.CutOnFailure && !appplugins.IsMaskOverFinding(r.FailureDetail) {
+		return appplugins.DecisionFailedClosed
+	}
+	return blocked
+}

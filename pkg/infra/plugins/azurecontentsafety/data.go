@@ -31,6 +31,9 @@ type Data struct {
 	// on a verdict_incomplete.
 	FailureReason string `json:"failure_reason,omitempty"`
 	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {
