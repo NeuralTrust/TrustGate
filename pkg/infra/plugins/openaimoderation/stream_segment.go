@@ -96,7 +96,7 @@ func (p *Plugin) InspectSegment(
 		// (headFailure/blockFailure in stream_guard.go), so this does not log a
 		// second time; it only tags the error with the same reason vocabulary the
 		// buffered leg uses.
-		reason, detail := failureOf(err)
+		reason, detail := pluginutil.FailureOfError(err)
 		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("moderating stream block %d: %w", seg.Seq, err))
 	}
