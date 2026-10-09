@@ -34,7 +34,8 @@ const (
 )
 
 type errModeration struct {
-	status int
+	status     int
+	retryAfter time.Duration
 	// configShaped is set from the error envelope when a 400 is about the
 	// policy's model or key and not about the input, or a 429 is the account's
 	// quota and not a rate.
@@ -44,6 +45,9 @@ type errModeration struct {
 var _ pluginutil.Rejection = (*errModeration)(nil)
 
 func (e *errModeration) Rejection() (int, bool) { return e.status, e.configShaped }
+
+// RetryAfter is the wait the answer asked for, zero when it asked for none.
+func (e *errModeration) RetryAfter() time.Duration { return e.retryAfter }
 
 func (e *errModeration) Error() string {
 	return fmt.Sprintf("openai_moderation: unexpected status %d", e.status)
@@ -89,7 +93,10 @@ func (c *client) Moderate(ctx context.Context, baseURL, apiKey string, body mode
 		return nil, fmt.Errorf("openai_moderation: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &errModeration{status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw)}
+		return nil, &errModeration{
+			status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw),
+			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 
 	var out moderationResponse

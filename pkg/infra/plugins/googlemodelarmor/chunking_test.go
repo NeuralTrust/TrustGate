@@ -409,19 +409,19 @@ func TestALongSecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 }
 
-// A throttle on a chunk of the first round has nothing of the request's own
-// before it: it is other traffic and fails open as the provider's load.
-func TestAThrottleOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
+// A throttle on the first chunk has nothing of the request's own before it: after
+// the one retry it is other traffic and fails open as the provider's load.
+func TestAThrottleOnTheFirstChunkOfALongTextFailsOpen(t *testing.T) {
 	t.Parallel()
-	s := newArmorScript(t, func(call int, _ string) (int, string) {
-		if call == 1 {
+	s := newArmorScript(t, func(_ int, text string) (int, string) {
+		if strings.Contains(text, "FIRST-CHUNK-ONLY") {
 			return http.StatusTooManyRequests, rpcResourceExhausted
 		}
 		return http.StatusOK, allowResponse
 	})
 	p := pluginWithStub(s.modelArmorStub)
 	event, span := newStreamEvent()
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(300<<10))), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, "FIRST-CHUNK-ONLY "+armorPlain(300<<10))), nil)
 	in.Event = event
 
 	res, err := p.Execute(context.Background(), in)
@@ -431,6 +431,71 @@ func TestAThrottleOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
 	assert.Equal(t, appplugins.DetailThrottled, data.FailureDetail)
 	assert.Equal(t, "availability", data.FailureClass)
 	assertPassThrough(t, res, err)
+}
+
+// A chunk beside the first in the first round was sent by the same request: a
+// throttle that survives the retry is input.
+func TestAThrottleOnALaterChunkOfTheFirstRoundIsInput(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(_ int, text string) (int, string) {
+		if !strings.Contains(text, "FIRST-CHUNK-ONLY") {
+			return http.StatusTooManyRequests, rpcResourceExhausted
+		}
+		return http.StatusOK, allowResponse
+	})
+	p := pluginWithStub(s.modelArmorStub)
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, "FIRST-CHUNK-ONLY "+armorPlain(150<<10))), nil)
+	in.Event = event
+
+	_, err := p.Execute(context.Background(), in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailThrottledOversize, data.FailureDetail)
+}
+
+func TestAThrottleOnASingleChunkIsRetriedOnceAndFailsOpen(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(int, string) (int, string) { return http.StatusTooManyRequests, rpcResourceExhausted })
+	p := pluginWithStub(s.modelArmorStub)
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, "hello")), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailThrottled, data.FailureDetail)
+	assert.Equal(t, "availability", data.FailureClass)
+	assert.Len(t, s.sent(), 2)
+}
+
+func TestAThrottleThatSucceedsOnRetryGivesTheNormalVerdict(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(call int, _ string) (int, string) {
+		if call == 1 {
+			return http.StatusTooManyRequests, rpcResourceExhausted
+		}
+		return http.StatusOK, allowResponse
+	})
+	p := pluginWithStub(s.modelArmorStub)
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(150<<10))), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, "allowed", data.Decision)
+	assert.Empty(t, data.FailureDetail)
 }
 
 // Every call hangs past the budget: Model Armor is slow or down, so the chunks that

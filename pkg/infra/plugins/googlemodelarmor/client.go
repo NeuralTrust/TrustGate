@@ -64,8 +64,9 @@ type tokenSource func(ctx context.Context) (string, error)
 // text, and an error string ends up in logs. Surfacing the very data this
 // guardrail exists to contain would defeat the point of running it.
 type errModelArmor struct {
-	action string
-	status int
+	action     string
+	status     int
+	retryAfter time.Duration
 	// configShaped is set from the google.rpc error body when a 400 is about the
 	// resource the policy names and not about what was sent.
 	configShaped bool
@@ -74,6 +75,9 @@ type errModelArmor struct {
 var _ pluginutil.Rejection = (*errModelArmor)(nil)
 
 func (e *errModelArmor) Rejection() (int, bool) { return e.status, e.configShaped }
+
+// RetryAfter is the wait the answer asked for, zero when it asked for none.
+func (e *errModelArmor) RetryAfter() time.Duration { return e.retryAfter }
 
 func (e *errModelArmor) Error() string {
 	return fmt.Sprintf("model_armor: %s unexpected status %d", e.action, e.status)
@@ -382,7 +386,10 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 		return nil, fmt.Errorf("model_armor: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &errModelArmor{action: action, status: res.StatusCode, configShaped: rejectsResource(res.StatusCode, raw)}
+		return nil, &errModelArmor{
+			action: action, status: res.StatusCode, configShaped: rejectsResource(res.StatusCode, raw),
+			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	// Say "too large" rather than letting a truncated payload surface as a
 	// decode failure and send whoever debugs it hunting for malformed JSON.

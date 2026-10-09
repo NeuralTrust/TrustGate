@@ -109,14 +109,80 @@ func rateLimitOnMarker(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// A throttle on a chunk of the first round has nothing of the request's own
-// before it: it is other traffic, so it fails open as the provider's load.
-func TestARateLimitOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
+// rateLimitUnless answers 429 to every request whose text does not contain
+// spare, and counts what it received.
+func rateLimitUnless(t *testing.T, spare string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	return rateLimitWhere(t, func(text string) bool { return spare == "" || !strings.Contains(text, spare) })
+}
+
+// rateLimitWhere answers 429 to every request whose text throttle accepts.
+func rateLimitWhere(t *testing.T, throttle func(text string) bool) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if throttle(string(raw)) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(rateLimited))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"modr-1","model":"omni-moderation-latest","results":[{"flagged":false,"categories":{"hate":false},"category_scores":{"hate":0.01}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// A throttle on the first chunk has nothing of the request's own before it: after
+// the one retry it is other traffic and fails open as the provider's load.
+func TestARateLimitOnTheFirstChunkOfALongTextFailsOpen(t *testing.T) {
 	t.Parallel()
-	srv, _ := rateLimitOn(t, 1)
+	srv, _ := rateLimitWhere(t, func(text string) bool { return strings.Contains(text, "FIRST-CHUNK-ONLY") })
 	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
 	event, span := newEvent()
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(300)), nil, event)
+	text := "FIRST-CHUNK-ONLY " + benignText(150)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, text), nil, event)
+
+	_, err := p.Execute(context.Background(), in)
+
+	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailThrottled, extras.FailureDetail)
+	assert.Equal(t, "availability", extras.FailureClass)
+	require.NoError(t, err)
+}
+
+// Chunks beside the first in the first round were sent by the same request, which
+// is what plausibly used the quota: a throttle on them that survives the retry is
+// input.
+func TestARateLimitOnALaterChunkOfTheFirstRoundIsInput(t *testing.T) {
+	t.Parallel()
+	srv, _ := rateLimitUnless(t, "FIRST-CHUNK-ONLY")
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+	event, span := newEvent()
+	text := "FIRST-CHUNK-ONLY " + benignText(150)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, text), nil, event)
+
+	_, err := p.Execute(context.Background(), in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, "input", extras.FailureClass)
+	assert.Equal(t, appplugins.DetailThrottledOversize, extras.FailureDetail)
+}
+
+// A throttle that the one retry gets past is no failure at all.
+func TestAThrottleThatSucceedsOnRetryGivesTheNormalVerdict(t *testing.T) {
+	t.Parallel()
+	srv, calls := rateLimitOn(t, 1)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, benignText(100)), nil, event)
 
 	res, err := p.Execute(context.Background(), in)
 
@@ -124,8 +190,9 @@ func TestARateLimitOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
 	require.NotNil(t, res)
 	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
-	assert.Equal(t, "availability", extras.FailureClass)
-	assert.Equal(t, appplugins.DetailThrottled, extras.FailureDetail)
+	assert.Equal(t, decisionAllowed, extras.Decision)
+	assert.Empty(t, extras.FailureDetail)
+	assert.Greater(t, calls.Load(), int32(1))
 }
 
 func TestARateLimitOnAChunkOfALongTextIsInput(t *testing.T) {
@@ -160,7 +227,7 @@ func TestARateLimitOnAChunkOfALongTextIsInput(t *testing.T) {
 
 func TestARateLimitOnASingleRequestFailsOpenAsThrottled(t *testing.T) {
 	t.Parallel()
-	srv, _ := rateLimitOn(t, 1)
+	srv, calls := rateLimitUnless(t, "")
 	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
 	event, span := newEvent()
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, "a short question"), nil, event)
@@ -174,6 +241,7 @@ func TestARateLimitOnASingleRequestFailsOpenAsThrottled(t *testing.T) {
 	assert.Equal(t, "availability", extras.FailureClass)
 	assert.Equal(t, appplugins.DetailThrottled, extras.FailureDetail)
 	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+	assert.EqualValues(t, 2, calls.Load(), "the throttled call is retried once")
 }
 
 func TestAFlaggedChunkBlocksEvenWhenAnotherChunkFailed(t *testing.T) {

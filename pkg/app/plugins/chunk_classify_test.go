@@ -98,9 +98,19 @@ func TestClassifyChunksFollowsTheTable(t *testing.T) {
 			o[5].Value.Failure, o[5].Waited = throttled, true
 			return o
 		}, ChunkInputFailure, 5, FailureInputTooLarge, DetailThrottledOversize, false},
-		{"a throttle on a first-round chunk of a long text is other traffic", func() []textchunk.Outcome[ChunkState] {
+		{"a throttle on the first chunk of a long text is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[0].Value.Failure = throttled
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttle on a later chunk of the first round is the request's own", func() []textchunk.Outcome[ChunkState] {
 			o := started(6)
 			o[2].Value.Failure = throttled
+			return o
+		}, ChunkInputFailure, 2, FailureInputTooLarge, DetailThrottledOversize, false},
+		{"a throttle that says it is other traffic stays availability on any chunk", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[2].Value.Failure = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}
 			return o
 		}, ChunkAvailabilityFailure, 2, FailureTransport, DetailThrottled, false},
 		{"a throttle on one chunk stays availability", func() []textchunk.Outcome[ChunkState] {
