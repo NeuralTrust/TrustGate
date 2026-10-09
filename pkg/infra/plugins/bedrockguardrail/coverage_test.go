@@ -123,11 +123,12 @@ func TestPartialCoverageCutsAStreamInEnforce(t *testing.T) {
 	assert.Equal(t, appplugins.DetailCoveragePartial, verdict.Failure.Detail)
 }
 
-// A text above what the guardrail takes is refused as input before the call, on
-// both legs, instead of being sent to be silently cut short.
-func TestATextAboveTheWindowIsRefusedBeforeTheCall(t *testing.T) {
+// A long text is sent whole on both legs: a region with a larger quota judges
+// it, and one that cannot says so (an AWS rejection or partial coverage, both
+// input), so nothing is refused locally on a guess about the quota.
+func TestALongTextIsSentWhole(t *testing.T) {
 	t.Parallel()
-	over := strings.Repeat("a", streamingDefaults.MaxAccumulatedBytes+1)
+	over := strings.Repeat("a", streamingDefaults.MaxAccumulatedBytes*3)
 	request := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + over + `"}]}`)
 	response := []byte(`{"id":"r1","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"` + over + `"},"finish_reason":"stop"}]}`)
 	for _, tc := range []struct {
@@ -141,25 +142,18 @@ func TestATextAboveTheWindowIsRefusedBeforeTheCall(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			client := &recordingClient{output: allowOutput()}
-			p := pluginWith(client)
-			event, span := eventFor(t)
+			g := allowing()
+			p := streamPlugin(t, g)
 			var resp = respCtx(tc.resp, false)
 			if tc.resp == nil {
 				resp = nil
 			}
 			in := execInput(tc.stage, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(tc.req), resp)
-			in.Event = event
 
-			_, err := p.Execute(context.Background(), in)
-			pe, ok := appplugins.AsPluginError(err)
-			require.True(t, ok, "got %v", err)
-			assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-			assert.Zero(t, client.count())
-			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-			require.True(t, ok)
-			assert.Equal(t, "input_too_large", extras.FailureReason)
-			assert.Equal(t, appplugins.DetailPayloadTooLarge, extras.FailureDetail)
+			res, err := p.Execute(context.Background(), in)
+			assertPassThrough(t, res, err)
+			require.Len(t, g.inputs, 1)
+			assert.Equal(t, over, g.inputs[0])
 		})
 	}
 }
