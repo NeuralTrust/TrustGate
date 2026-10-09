@@ -266,3 +266,31 @@ func TestStreamChunkSpecIsValidForEveryWindow(t *testing.T) {
 	assert.Equal(t, 4096, streamChunkSpec(32<<10).Overlap, "a window of 32 KiB or more holds a 3.5 KB secret whole")
 	assert.Equal(t, 4096, streamChunkSpec(56<<10).Overlap)
 }
+
+// A chunk's typed input error in a mode that does not block must not drop the
+// findings of the chunks that answered.
+func TestMergeChunkVerdicts_ATypedInputErrorInObserveKeepsTheOtherChunksFingerprints(t *testing.T) {
+	t.Parallel()
+	failure := inputFailure()
+	verdicts := []*SegmentVerdict{
+		{},
+		nil,
+		{HasTransform: true, Transformed: "012{X}56789", Fingerprints: []string{"fp-mask"}},
+	}
+	errs := []error{nil, failure, nil}
+
+	got, err := mergeOf(policy.ModeObserve, verdicts, errs)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, got.Block)
+	assert.Equal(t, []string{"fp-mask"}, got.Fingerprints)
+	var typed *ExternalStreamFailure
+	require.ErrorAs(t, got.Incomplete, &typed)
+	assert.Equal(t, DetailFilterNotExecuted, typed.Detail, "the failure is still recorded")
+
+	// without a finding to keep, the typed error comes back as it came
+	_, err = mergeOf(policy.ModeObserve, []*SegmentVerdict{{}, nil, {}}, errs)
+	require.ErrorAs(t, err, &typed)
+	assert.Same(t, failure, typed)
+}

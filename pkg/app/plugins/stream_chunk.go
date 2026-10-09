@@ -207,12 +207,16 @@ func mergeChunkVerdicts(
 		if v := verdicts[d.Index]; outs[d.Index].Started && outs[d.Index].Err == nil && v != nil && v.Block {
 			return carry(*v), nil
 		}
+		// A mode that does not block and has findings to keep reports them with
+		// the failure (below); a typed error returned as it came would drop the
+		// fingerprints of the chunks that answered.
+		keepsFindings := !Blocks(entry.mode) && len(fingerprints) > 0
 		var typed *ExternalStreamFailure
-		if err := outs[d.Index].Err; err != nil && errors.As(err, &typed) && typed.Reason == d.Reason && typed.Detail == d.Detail {
+		if err := outs[d.Index].Err; !keepsFindings && err != nil && errors.As(err, &typed) && typed.Reason == d.Reason && typed.Detail == d.Detail {
 			return nil, err
 		}
 		var block *SegmentVerdict
-		if !Blocks(entry.mode) && len(fingerprints) > 0 {
+		if keepsFindings {
 			block = &SegmentVerdict{Fingerprints: fingerprints}
 		}
 		return ExternalStreamOutcome(entry.plugin.Name(), entry.mode, d.Reason, d.Detail, block, chunkFailureError(d, outs, len(chunks)))
