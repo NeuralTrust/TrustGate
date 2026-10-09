@@ -408,9 +408,9 @@ func TestExecuteConfigInvalidObserveFailsOpen(t *testing.T) {
 	}
 }
 
-// A body the adapters cannot read is the client's: in a mode that blocks the
+// A concrete body the adapters cannot decode is the client's: in a mode that blocks the
 // call is refused as uninspectable, and in observe it is only recorded.
-func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
+func TestExecuteDecodeFailedOfAnUndecodableBodyIsAnInputFailure(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -419,6 +419,50 @@ func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 		refused  bool
 	}{
 		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeAzure{}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), nil)
+			req := requestContext(openAIRequestBody())
+			req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, settings(srv.URL, map[string]int{CategoryHate: 2}), req)
+			in.Event = event
+
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else if err != nil || res == nil || res.StatusCode != http.StatusOK {
+				t.Fatalf("observe must pass through, got res=%+v err=%v", res, err)
+			}
+			if f.count() != 0 {
+				t.Fatalf("expected azure not called on decode failure, got %d hits", f.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.FailureReason != "decode_failed" || extras.Decision != tc.decision || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
+	}
+}
+
+// A provider or format the gateway does not support is a configuration gap, not
+// the body's fault: it fails open in every mode.
+func TestExecuteDecodeFailedOfAnUnsupportedFormatFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_open", false},
 		{policy.ModeObserve, "failed_open", false},
 	} {
 		t.Run(string(tc.mode), func(t *testing.T) {
@@ -446,7 +490,7 @@ func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 				t.Fatalf("expected azure not called on decode failure, got %d hits", f.count())
 			}
 			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-			if !ok || extras.FailureReason != "decode_failed" || extras.Decision != tc.decision || extras.FailureClass != "input" {
+			if !ok || extras.FailureReason != "config_invalid" || extras.Decision != tc.decision || extras.FailureClass != "availability" {
 				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
 			}
 		})

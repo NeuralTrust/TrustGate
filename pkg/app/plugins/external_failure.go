@@ -95,6 +95,7 @@ const (
 	DetailAnonymizeEncodeFailed   = "anonymize_encode_failed"
 	DetailProviderRejectedInput   = "provider_rejected_input"
 	DetailPayloadTooLarge         = "payload_too_large"
+	DetailUnsupportedFormat       = "unsupported_format"
 )
 
 // IsMaskOverFinding reports whether a failure detail is a mask that could not
@@ -113,8 +114,10 @@ func IsMaskOverFinding(detail string) bool {
 // decide whether the traffic goes through. A pair this table does not name is
 // availability, so a new reason cannot start refusing traffic by omission.
 //
-// decode_failed is input: the body is the client's, and one our adapters cannot
-// read but the upstream accepts would otherwise skip the guardrail.
+// decode_failed is input: a concrete body the adapters cannot decode is the
+// client's, and one the upstream accepts would otherwise skip the guardrail. A
+// provider or format the gateway does not support at all is not the body's
+// fault but a configuration gap, and is config_invalid (unsupported_format).
 // filter_not_in_template stays availability: it is the customer's template, not
 // anything the request did.
 func ClassOf(reason FailureReason, detail string) FailureClass {
@@ -123,7 +126,7 @@ func ClassOf(reason FailureReason, detail string) FailureClass {
 		return FailureClassInput
 	case FailureVerdictIncomplete:
 		switch detail {
-		case DetailFilterNotExecuted, DetailInvocationPartial, DetailInterventionUnparsed:
+		case DetailFilterNotExecuted, DetailInterventionUnparsed:
 			return FailureClassInput
 		}
 		if IsMaskOverFinding(detail) {

@@ -20,9 +20,9 @@ const (
 	matchStateMatchFound    = "MATCH_FOUND"
 	invocationResultFailure = "FAILURE"
 	// invocationResultPartial is Model Armor saying it ran only some of the
-	// filters of the template. A skipped filter is the documented way a request
-	// is too large for one (token limits), so the response is not a verdict on
-	// all of the content.
+	// filters of the template. It blocks only through a skipped filter selected
+	// in block_on (unevaluatedFilter); with every block_on filter run it is
+	// recorded and fails open.
 	invocationResultPartial = "PARTIAL"
 	executionStateSuccess   = "EXECUTION_SUCCESS"
 )

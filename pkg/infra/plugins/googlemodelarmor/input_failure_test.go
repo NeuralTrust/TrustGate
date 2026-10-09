@@ -57,7 +57,7 @@ func TestExecuteSkippedFilterByClass(t *testing.T) {
 	}{
 		{"token limit skip", tokenLimitSkipResponse, "verdict_incomplete", reasonFilterNotExecuted, true},
 		{"partial with a skipped filter", partialWithSkipResponse, "verdict_incomplete", reasonFilterNotExecuted, true},
-		{"partial with every filter run", partialAllRanResponse, "verdict_incomplete", appplugins.DetailInvocationPartial, true},
+		{"partial with every block_on filter run", partialAllRanResponse, "verdict_incomplete", appplugins.DetailInvocationPartial, false},
 		{"filter absent from the template", sdpOnlyAllow, "verdict_incomplete", reasonFilterNotInTemplate, false},
 		{"invocation failure", invocationFailureResponse, "transport", "", false},
 	} {
@@ -211,7 +211,6 @@ func TestInspectSegmentSkippedFilterByClass(t *testing.T) {
 	}{
 		{"token limit skip", tokenLimitSkipResponse, streamSettings(nil), reasonFilterNotExecuted},
 		{"partial with a skipped filter", partialWithSkipResponse, streamSettings(nil), reasonFilterNotExecuted},
-		{"partial with every filter run", partialAllRanResponse, streamSettings(nil), appplugins.DetailInvocationPartial},
 		{"a usable mask beside a skipped filter", maskAndSkip, anonymizeStreamSettings(), reasonFilterNotExecuted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,4 +235,36 @@ func TestInspectSegmentSkippedFilterByClass(t *testing.T) {
 			}
 		})
 	}
+}
+
+// PARTIAL with every block_on filter run says nothing about what the policy asked:
+// it is availability on the stream too, released with the typed error in any mode.
+// PARTIAL with a block_on filter not executed is the skipped filter, which blocks.
+func TestInspectSegmentPartialWithEveryBlockOnFilterRunFailsOpen(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, partialAllRanResponse))
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		got, err := p.InspectSegment(context.Background(),
+			streamInput(mode, streamSettings(nil), nil), segment(3, "some text"))
+		if err == nil || got != nil {
+			t.Fatalf("%s: verdict = %+v err = %v, want the typed error and no cut", mode, got, err)
+		}
+	}
+	settings := streamSettings(nil)
+	settings["block_on"] = []string{filterSDP}
+	got, err := pluginWithStub(newModelArmorStub(t, http.StatusOK, partialWithSkipResponse)).InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, settings, nil), segment(3, "some text"))
+	if err == nil || got != nil {
+		t.Fatalf("PARTIAL whose skipped filters are not in block_on: verdict = %+v err = %v, want fail open", got, err)
+	}
+}
+
+func TestExecutePartialOnlyBlocksThroughASkippedBlockOnFilter(t *testing.T) {
+	t.Parallel()
+	settings := modelArmorSettings()
+	settings["block_on"] = []string{filterSDP}
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, partialWithSkipResponse))
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil)
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
 }

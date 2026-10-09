@@ -142,7 +142,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if decErr != nil {

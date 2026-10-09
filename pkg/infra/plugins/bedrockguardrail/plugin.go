@@ -150,7 +150,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil {
@@ -190,7 +190,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
 	if err != nil {

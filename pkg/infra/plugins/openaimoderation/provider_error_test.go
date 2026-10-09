@@ -123,9 +123,9 @@ func TestInspectSegmentProviderErrorByClass(t *testing.T) {
 	}
 }
 
-// A body the adapters cannot read is the client's: in a mode that blocks the call
+// A concrete body the adapters cannot decode is the client's: in a mode that blocks the call
 // is refused as uninspectable, and in observe it is only recorded.
-func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
+func TestExecuteDecodeFailedOfAnUndecodableBodyIsAnInputFailure(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		mode     policy.Mode
@@ -133,6 +133,47 @@ func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 		refused  bool
 	}{
 		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeModerator{}
+			srv := newModeratorServer(t, f)
+			p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+			req := requestContext()
+			req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+			event, span := newEvent()
+
+			res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, tc.mode, blockSettings(), req, nil, event))
+
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "want a *PluginError, got res=%+v err=%v", res, err)
+				assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+			}
+			assert.Zero(t, f.count(), "OpenAI is not called for a body that cannot be read")
+			extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+			require.True(t, ok)
+			assert.Equal(t, tc.decision, extras.Decision)
+			assert.Equal(t, "decode_failed", extras.FailureReason)
+			assert.Equal(t, "input", extras.FailureClass)
+		})
+	}
+}
+
+// A provider or format the gateway does not support is a configuration gap, not
+// the body's fault: it fails open in every mode.
+func TestExecuteDecodeFailedOfAnUnsupportedFormatFailsOpen(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_open", false},
 		{policy.ModeObserve, "failed_open", false},
 	} {
 		t.Run(string(tc.mode), func(t *testing.T) {
@@ -159,8 +200,8 @@ func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 			extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 			require.True(t, ok)
 			assert.Equal(t, tc.decision, extras.Decision)
-			assert.Equal(t, "decode_failed", extras.FailureReason)
-			assert.Equal(t, "input", extras.FailureClass)
+			assert.Equal(t, "config_invalid", extras.FailureReason)
+			assert.Equal(t, "availability", extras.FailureClass)
 		})
 	}
 }
