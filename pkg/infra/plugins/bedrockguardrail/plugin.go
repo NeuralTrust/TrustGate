@@ -40,9 +40,9 @@ const (
 )
 
 const (
-	reasonAnonymizeNoOutput          = "anonymize_no_output"
-	reasonAnonymizeUnsupportedFormat = "anonymize_unsupported_format"
-	reasonAnonymizeEncodeFailed      = "anonymize_encode_failed"
+	reasonAnonymizeNoOutput          = appplugins.DetailAnonymizeNoOutput
+	reasonAnonymizeUnsupportedFormat = appplugins.DetailAnonymizeUnsupportedFmt
+	reasonAnonymizeEncodeFailed      = appplugins.DetailAnonymizeEncodeFailed
 )
 
 const roleUser = "user"
@@ -255,7 +255,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		applyFinding(data, res.anonymize)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
-			return p.anonymizeEnforce(ctx, in, data, out, span), nil
+			return p.anonymizeEnforce(ctx, in, data, cfg.Message, out, span, res.anonymize)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -269,45 +269,53 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	return passThrough(), nil
 }
 
-func (p *Plugin) anonymizeEnforce(ctx context.Context, in appplugins.ExecInput, data *Data, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan) *appplugins.Result {
+func (p *Plugin) anonymizeEnforce(ctx context.Context, in appplugins.ExecInput, data *Data, message string, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan, f *finding) (*appplugins.Result, error) {
 	masked, ok := maskedText(out)
 	if !ok {
-		return p.anonymizeDegraded(ctx, in, data, reasonAnonymizeNoOutput)
+		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeNoOutput, f)
 	}
 	if !supportsReencode(p.registry, span.format) {
-		return p.anonymizeDegraded(ctx, in, data, reasonAnonymizeUnsupportedFormat)
+		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeUnsupportedFormat, f)
 	}
 	body, ok := span.rewrite(masked)
 	if !ok {
-		return p.anonymizeDegraded(ctx, in, data, reasonAnonymizeEncodeFailed)
+		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeEncodeFailed, f)
 	}
 	data.Decision = decisionAnonymized
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionAnonymized)
-	return span.result(body)
+	return span.result(body), nil
 }
 
-// anonymizeDegraded is the provider asking to anonymise while the masked text
-// cannot be applied. Like every other guardrail failure it fails open: the
-// original content goes on unmasked, and the span records failed_open with the
-// reason the mask could not be applied.
-func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput, data *Data, reason string) *appplugins.Result {
+// anonymizeDegraded is the provider confirming a finding and asking to
+// anonymise while the masked text cannot be applied. Forwarding the original
+// would send the very data the policy ruled out, so a mode that blocks refuses
+// the call with the finding's own block, recorded blocked and degraded.
+func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.FailureReason = string(appplugins.FailureVerdictIncomplete)
 	data.FailureDetail = reason
-	data.Decision = appplugins.DecisionFailedOpen
-	if p.logger != nil {
-		p.logger.WarnContext(ctx, "guardrail masking could not be applied, forwarding unmasked",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-			slog.String("mode", string(in.Mode)),
-			slog.String("reason", reason),
-		)
-	}
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:     ctx,
+		Plugin:  PluginName,
+		Stage:   in.Stage,
+		Mode:    in.Mode,
+		Reason:  appplugins.FailureVerdictIncomplete,
+		Detail:  reason,
+		Message: message,
+		Finding: blockError(message, *f),
+		Err:     fmt.Errorf("guardrail masking could not be applied: %s", reason),
+		Logger:  p.logger,
+		Event:   in.Event,
+	})
+	data.Decision = outcome.Decision
+	data.FailureClass = string(outcome.Class)
 	setExtras(in.Event, data)
-	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
-	return passThrough()
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the

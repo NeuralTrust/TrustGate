@@ -541,6 +541,7 @@ func TestExecuteAnonymizeObserveDoesNotMutate(t *testing.T) {
 func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	f := &finding{filter: filterSDP, infoTypes: []string{"EMAIL_ADDRESS"}}
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 
 	sdpResultWithText := func(text string) *SanitizationResult {
@@ -579,42 +580,30 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res := p.anonymizeEnforce(context.Background(), in, data, tt.result, tt.span)
-			assertPassThrough(t, res, nil)
+			res, err := p.anonymizeEnforce(context.Background(), in, data, "", tt.result, tt.span, f)
+			if res != nil {
+				t.Fatalf("expected nil result, got %+v", res)
+			}
+			if _, ok := appplugins.AsPluginError(err); !ok {
+				t.Fatalf("expected *PluginError, got %v", err)
+			}
 			if !data.Degraded || data.DegradedReason != tt.reason {
 				t.Fatalf("degraded = %t reason = %q, want true %q", data.Degraded, data.DegradedReason, tt.reason)
 			}
-			if data.Decision != appplugins.DecisionFailedOpen {
-				t.Fatalf("decision = %q, want %q", data.Decision, appplugins.DecisionFailedOpen)
+			if data.Decision != decisionBlocked {
+				t.Fatalf("decision = %q, want %q", data.Decision, decisionBlocked)
+			}
+			if data.FailureClass != "input" || data.FailureReason != "verdict_incomplete" || data.FailureDetail != tt.reason {
+				t.Fatalf("failure = %q/%q/%q, want verdict_incomplete/%s/input", data.FailureReason, data.FailureDetail, data.FailureClass, tt.reason)
 			}
 		})
-	}
-}
-
-// A filter that produced no verdict is already named in FailureDetail when the
-// mask then cannot be applied: both reasons stay on the event.
-func TestAnonymizeDegradedKeepsTheUnevaluatedFilterDetail(t *testing.T) {
-	t.Parallel()
-	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
-	data := &Data{FailureDetail: "rai: filter_not_executed"}
-
-	res := p.anonymizeEnforce(context.Background(), in, data, &SanitizationResult{},
-		rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(string) ([]byte, bool) { return []byte("x"), true }})
-
-	assertPassThrough(t, res, nil)
-	want := "rai: filter_not_executed; " + reasonAnonymizeNoOutput
-	if data.FailureDetail != want {
-		t.Fatalf("FailureDetail = %q, want %q", data.FailureDetail, want)
-	}
-	if data.DegradedReason != reasonAnonymizeNoOutput {
-		t.Fatalf("DegradedReason = %q, want %q", data.DegradedReason, reasonAnonymizeNoOutput)
 	}
 }
 
 func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	f := &finding{filter: filterSDP}
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	data := &Data{}
 	span := rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(masked string) ([]byte, bool) {
@@ -624,7 +613,10 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 		DeidentifyResult: &SDPDeidentifyResult{MatchState: matchStateMatchFound, Data: &SDPData{Text: "masked-body"}},
 	}}}}
 
-	res := p.anonymizeEnforce(context.Background(), in, data, result, span)
+	res, err := p.anonymizeEnforce(context.Background(), in, data, "", result, span, f)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
 	if res == nil || res.RequestBody == nil || string(res.RequestBody) != "masked-body" {
 		t.Fatalf("expected masked request body, got %+v", res)
 	}

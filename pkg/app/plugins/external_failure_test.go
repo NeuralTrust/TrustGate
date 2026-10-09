@@ -207,6 +207,15 @@ func TestExternalStreamOutcome(t *testing.T) {
 			t.Fatalf("verdict=%+v err=%v", verdict, err)
 		}
 	})
+	t.Run("a mask over a finding in observe still reports the finding", func(t *testing.T) {
+		t.Parallel()
+		template := &SegmentVerdict{Type: "plugin_blocked", Fingerprints: []string{"fp"}}
+		verdict, err := ExternalStreamOutcome("g", policy.ModeObserve, FailureVerdictIncomplete, DetailAnonymizeNoOutput, template, base)
+		if err != nil || verdict == nil || verdict.Block || verdict.HasTransform ||
+			len(verdict.Fingerprints) != 1 || verdict.Incomplete == nil {
+			t.Fatalf("verdict=%+v err=%v", verdict, err)
+		}
+	})
 	t.Run("a mask over a finding cuts with the plugin's own verdict", func(t *testing.T) {
 		t.Parallel()
 		verdict, err := ExternalStreamOutcome("g", policy.ModeEnforce, FailureVerdictIncomplete, DetailAnonymizeNoOutput, block, base)

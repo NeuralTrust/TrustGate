@@ -671,7 +671,8 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	}
 }
 
-func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
+// A cut that is a mask over a confirmed finding stays blocked, flagged degraded.
+func TestClosingSegmentFlagsAnUnappliedMaskCutAsBlockedAndDegraded(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
 	event, span := newStreamEvent()
@@ -679,8 +680,9 @@ func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
 	_, err := p.InspectSegment(context.Background(),
 		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), event),
 		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
-			Evals: 2, GuardCalls: 2, FailedEvals: 1,
+			Evals: 2, GuardCalls: 2, CutAtEval: 2, CutOnFailure: true,
 			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+			FailureClass: appplugins.FailureClassInput,
 		}})
 
 	if err != nil {
@@ -690,7 +692,33 @@ func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
 	if !ok {
 		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
 	}
-	if data.Decision != appplugins.DecisionFailedOpen || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput {
-		t.Fatalf("extras = %+v, want failed_open + degraded %q", data, reasonAnonymizeNoOutput)
+	if data.Decision != decisionBlocked || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput || data.FailureClass != "input" {
+		t.Fatalf("extras = %+v, want blocked + degraded %q, class input", data, reasonAnonymizeNoOutput)
+	}
+}
+
+// A cut that is an input failure with no finding behind it records failed_closed.
+func TestClosingSegmentRecordsAnInputCutAsFailedClosed(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	event, span := newStreamEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 1, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonFilterNotExecuted,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != appplugins.DecisionFailedClosed || data.Degraded || data.FailureClass != "input" {
+		t.Fatalf("extras = %+v, want failed_closed, not degraded, class input", data)
 	}
 }

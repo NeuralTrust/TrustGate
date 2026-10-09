@@ -518,47 +518,45 @@ func TestExecuteAnonymizeObserveDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestExecuteAnonymizeEnforceNoOutputFailsOpen(t *testing.T) {
+// A mask that cannot be applied over a confirmed finding refuses the call with
+// the finding's own block: forwarding the original would send the data the
+// policy ruled out. It is recorded blocked and degraded, not failed_closed,
+// because a finding exists.
+func TestExecuteAnonymizeEnforceNoOutputBlocks(t *testing.T) {
 	t.Parallel()
-	client := &recordingClient{output: piiAnonymizedOutput()}
-	p := pluginWith(client)
+	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			client := &recordingClient{output: piiAnonymizedOutput()}
+			p := pluginWith(client)
 
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok {
-		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
-	}
-	if data.Decision != appplugins.DecisionFailedOpen {
-		t.Fatalf("decision = %q, want %q", data.Decision, appplugins.DecisionFailedOpen)
-	}
-	if !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput {
-		t.Fatalf("degraded = %t reason = %q, want true %q", data.Degraded, data.DegradedReason, reasonAnonymizeNoOutput)
-	}
-}
-
-func TestExecuteAnonymizeEnforceNoOutputOnResponseFailsOpen(t *testing.T) {
-	t.Parallel()
-	client := &recordingClient{output: piiAnonymizedOutput()}
-	p := pluginWith(client)
-
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreResponse, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), respCtx(openAIResponse(), false))
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != appplugins.DecisionFailedOpen || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput {
-		t.Fatalf("extras = %+v, ok=%v, want failed_open + degraded %q", data, ok, reasonAnonymizeNoOutput)
+			event, span := eventFor(t)
+			in := execInput(stage, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), respCtx(openAIResponse(), false))
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if res != nil {
+				t.Fatalf("expected nil result on a blocked mask, got %+v", res)
+			}
+			pe, ok := appplugins.AsPluginError(err)
+			if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != typeGuardrailBlocked {
+				t.Fatalf("want a 403 %s, got %v", typeGuardrailBlocked, err)
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok {
+				t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+			}
+			if data.Decision != decisionBlocked || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput ||
+				data.FailureReason != "verdict_incomplete" || data.FailureDetail != reasonAnonymizeNoOutput || data.FailureClass != "input" {
+				t.Fatalf("extras = %+v, want blocked + degraded %q, verdict_incomplete/%s, class input", data, reasonAnonymizeNoOutput, reasonAnonymizeNoOutput)
+			}
+		})
 	}
 }
 
 func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 	t.Parallel()
 	p := pluginWith(&recordingClient{})
+	f := &finding{policy: policySensitiveInformation, name: "EMAIL"}
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
 
 	tests := []struct {
@@ -590,13 +588,18 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res := p.anonymizeEnforce(context.Background(), in, data, tt.out, tt.span)
-			assertPassThrough(t, res, nil)
+			res, err := p.anonymizeEnforce(context.Background(), in, data, "", tt.out, tt.span, f)
+			if res != nil {
+				t.Fatalf("expected nil result, got %+v", res)
+			}
+			if _, ok := appplugins.AsPluginError(err); !ok {
+				t.Fatalf("expected *PluginError, got %v", err)
+			}
 			if !data.Degraded || data.DegradedReason != tt.reason {
 				t.Fatalf("degraded = %t reason = %q, want true %q", data.Degraded, data.DegradedReason, tt.reason)
 			}
-			if data.Decision != appplugins.DecisionFailedOpen {
-				t.Fatalf("decision = %q, want %q", data.Decision, appplugins.DecisionFailedOpen)
+			if data.Decision != decisionBlocked {
+				t.Fatalf("decision = %q, want %q", data.Decision, decisionBlocked)
 			}
 		})
 	}
@@ -605,13 +608,17 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 	t.Parallel()
 	p := pluginWith(&recordingClient{})
+	f := &finding{policy: policySensitiveInformation, name: "EMAIL"}
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
 	data := &Data{}
 	span := rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(masked string) ([]byte, bool) {
 		return []byte(masked), true
 	}}
 
-	res := p.anonymizeEnforce(context.Background(), in, data, piiAnonymizedOutputWithText("masked-body"), span)
+	res, err := p.anonymizeEnforce(context.Background(), in, data, "", piiAnonymizedOutputWithText("masked-body"), span, f)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
 	if res == nil || res.RequestBody == nil || string(res.RequestBody) != "masked-body" {
 		t.Fatalf("expected masked request body, got %+v", res)
 	}
