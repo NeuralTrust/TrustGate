@@ -95,8 +95,9 @@ func (p *Plugin) inspectSegment(
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User:   principalUser(ctx),
-			Stream: segmentStream(traceID, seg, block),
+			User:     principalUser(ctx),
+			Consumer: guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			Stream:   segmentStream(traceID, seg, block),
 		},
 	}
 

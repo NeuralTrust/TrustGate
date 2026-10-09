@@ -1210,6 +1210,31 @@ func TestExecuteSendsPrincipalOnAttributesUser(t *testing.T) {
 	}
 }
 
+// TrustGuard keeps the application's name only when it is sent, and Activity
+// otherwise shows a bare id for a consumer it cannot look up: the MCP Store's.
+func TestExecuteSendsTheConsumerOnAttributes(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	req := requestContext()
+	req.ConsumerID = "570e570e-5701-4570-8500-000000000000"
+	req.ConsumerName = "MCP Store"
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := f.captured().Attributes.Consumer
+	if got == nil || got.ID != req.ConsumerID || got.Name != "MCP Store" {
+		t.Fatalf("attributes.consumer = %+v, want the Store's id and name", got)
+	}
+	if guardConsumer(" ", "") != nil {
+		t.Fatal("no consumer sends no consumer attribute")
+	}
+}
+
 func TestExecuteConsumerIDComesFromRequestNotSettings(t *testing.T) {
 	t.Parallel()
 

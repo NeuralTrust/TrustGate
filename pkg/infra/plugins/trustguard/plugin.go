@@ -298,7 +298,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User: principalUser(ctx),
+			User:     principalUser(ctx),
+			Consumer: guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
 		},
 	}
 
@@ -767,6 +768,16 @@ func gatewayTraceID(ctx context.Context) string {
 		return ""
 	}
 	return rt.TraceID()
+}
+
+// guardConsumer is the application a request came from, or nil when it is not
+// known.
+func guardConsumer(id, name string) *GuardConsumer {
+	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
+	if id == "" && name == "" {
+		return nil
+	}
+	return &GuardConsumer{ID: id, Name: name}
 }
 
 func principalUser(ctx context.Context) *GuardUser {
