@@ -413,13 +413,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, appplugins.StreamOptions{
-		HeadChars:            cfg.Streaming.HeadChars,
-		OnError:              pluginutil.StreamOnErrorFailOpen,
-		MinCharsBetweenEvals: cfg.Streaming.MinCharsBetweenEvals,
-		MaxHoldMS:            cfg.Streaming.MaxHoldMS,
-		MaxAccumulatedBytes:  cfg.Streaming.MaxAccumulatedBytes,
-	}
+	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
 }
 
 // streamGuardTimeout is how long one streamed block waits for TrustGuard. The

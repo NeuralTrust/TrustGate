@@ -357,6 +357,24 @@ func (s StreamingSettings) Options() appplugins.StreamOptions {
 	}
 }
 
+// OptionsWithin is Options with the window each evaluation may send capped at
+// ceiling bytes, whatever max_accumulated_bytes asks for.
+//
+// Every block re-sends the tail of the accumulated text under a fixed per-block
+// deadline, so a window that can grow with the stream makes the evaluation
+// slower as the response gets longer: a client that opens with a long preamble
+// would push the blocks that matter past the deadline, and an entry whose calls
+// keep timing out is retired, leaving the rest of the stream uninspected. The
+// ceiling is the size at which the provider still answers well inside the
+// deadline, and the window always keeps the block's own new text plus the
+// overlap with the previous blocks (the executor never cuts the block itself),
+// so content that spans blocks is still seen.
+func (s StreamingSettings) OptionsWithin(ceiling int) appplugins.StreamOptions {
+	opts := s.Options()
+	opts.MaxAccumulatedBytes = min(opts.MaxAccumulatedBytes, ceiling)
+	return opts
+}
+
 // StreamFailedOpen reports whether the leg released text it could not inspect
 // because this entry's own provider call failed, so the closing segment can say
 // so instead of publishing "allowed" over it.

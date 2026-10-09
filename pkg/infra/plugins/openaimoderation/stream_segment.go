@@ -45,7 +45,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, cfg.Streaming.Options()
+	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
 }
 
 // InspectSegment moderates one closed block of a streamed response.
