@@ -38,12 +38,13 @@ func (t SmartRoutingTier) RouteModel() string {
 // SmartRoutingConfig maps complexity scores in [0,1] to registries. The tier
 // with the greatest MinScore that does not exceed the score wins.
 type SmartRoutingConfig struct {
-	Tiers []SmartRoutingTier `json:"tiers"`
-	SR1   *SR1Config         `json:"sr1,omitempty"`
+	Tiers            []SmartRoutingTier `json:"tiers"`
+	SR1              *SR1Config         `json:"sr1,omitempty"`
+	LegacyThresholds bool               `json:"legacy_thresholds,omitempty"`
 }
 
 func (c *SmartRoutingConfig) Validate() error {
-	if c == nil || (len(c.Tiers) != 2 && len(c.Tiers) != 3) {
+	if c == nil || len(c.Tiers) < 2 || (!c.LegacyThresholds && len(c.Tiers) > 3) {
 		return fmt.Errorf("%w: smart routing requires two or three rungs", ErrInvalidSmartRouting)
 	}
 	if c.SR1 == nil {
@@ -57,11 +58,17 @@ func (c *SmartRoutingConfig) Validate() error {
 		cuts[.187] = false
 	}
 	routes := make(map[string]struct{}, len(c.Tiers))
+	scores := make(map[float64]struct{}, len(c.Tiers))
 	for i, tier := range c.Tiers {
 		seen, valid := cuts[tier.MinScore]
-		if math.IsNaN(tier.MinScore) || math.IsInf(tier.MinScore, 0) || !valid || seen {
+		_, duplicate := scores[tier.MinScore]
+		if math.IsNaN(tier.MinScore) || math.IsInf(tier.MinScore, 0) || tier.MinScore < 0 || tier.MinScore > 1 || duplicate {
+			return fmt.Errorf("%w: tiers[%d].min_score must be distinct and in [0,1]", ErrInvalidSmartRouting, i)
+		}
+		if !c.LegacyThresholds && (!valid || seen) {
 			return fmt.Errorf("%w: tiers[%d].min_score must be a distinct frozen cut", ErrInvalidSmartRouting, i)
 		}
+		scores[tier.MinScore] = struct{}{}
 		cuts[tier.MinScore] = true
 		if tier.RegistryID.IsNil() {
 			return fmt.Errorf("%w: tiers[%d].registry_id is required", ErrInvalidSmartRouting, i)
