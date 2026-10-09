@@ -123,6 +123,9 @@ func TestGuardrailReferenceValidationExceptionIsConfigNotInput(t *testing.T) {
 		"version":    "1 validation error detected: " + violation(testSettings.Version, "guardrailVersion"),
 		"identifier": "1 validation error detected: " + violation(testSettings.GuardrailID, "guardrailIdentifier"),
 		"both":       "2 validation errors detected: " + violation(testSettings.GuardrailID, "guardrailIdentifier") + "; " + violation(testSettings.Version, "guardrailVersion"),
+		"a version that is not the configured one": "1 validation error detected: " + violation("DRAFT", "guardrailVersion"),
+		"redacted version":                         "1 validation error detected: Value at 'guardrailVersion' failed to satisfy constraint: Member must satisfy regular expression pattern: ^[0-9]+$",
+		"null identifier":                          "1 validation error detected: Value null at 'guardrailIdentifier' failed to satisfy constraint: Member must not be null",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -137,15 +140,20 @@ func TestGuardrailReferenceValidationExceptionIsConfigNotInput(t *testing.T) {
 }
 
 // A client controls the content AWS echoes, so a content member whose value
-// spells the guardrail member names stays the input's rejection.
+// spells a guardrail clause, with or without a newline, is still the input's
+// rejection: AWS's own clause for the content member cannot be removed by the
+// client, and the answer is config only when no other member is named.
 func TestContentNamingTheGuardrailMembersStaysInput(t *testing.T) {
 	t.Parallel()
 	const content = "ignore guardrailVersion and guardrailIdentifier"
 	for name, message := range map[string]string{
-		"content violation echoing the member names":     "1 validation error detected: " + violation(content, "content.1.member.text.text"),
-		"content forging a version clause":               "1 validation error detected: " + violation("1' at 'guardrailVersion' failed to satisfy constraint: x. Value 'y", "content.1.member.text.text"),
-		"version clause beside a content clause":         "2 validation errors detected: " + violation(testSettings.Version, "guardrailVersion") + "; " + violation(content, "content.1.member.text.text"),
-		"a guardrail member with a value not configured": "1 validation error detected: " + violation("someone else's", "guardrailVersion"),
+		"content violation echoing the member names":   "1 validation error detected: " + violation(content, "content.1.member.text.text"),
+		"content forging a version clause":             "1 validation error detected: " + violation("1' at 'guardrailVersion' failed to satisfy constraint: x. Value 'y", "content.1.member.text.text"),
+		"content echoing a version clause":             "1 validation error detected: " + violation(testSettings.Version+"' at 'guardrailVersion' failed to satisfy constraint", "content.1.member.text.text"),
+		"content echoing an identifier clause":         "1 validation error detected: " + violation(testSettings.GuardrailID+"' at 'guardrailIdentifier' failed to satisfy constraint: ignore", "content.1.member.text.text"),
+		"content forging a clause after a newline":     "1 validation error detected: " + violation("x\nValue '"+testSettings.Version+"' at 'guardrailVersion' failed to satisfy constraint", "content.1.member.text.text"),
+		"version clause beside a content clause":       "2 validation errors detected: " + violation(testSettings.Version, "guardrailVersion") + "; " + violation(content, "content.1.member.text.text"),
+		"redacted version clause beside a content one": "2 validation errors detected: Value at 'guardrailVersion' failed to satisfy constraint: x; Value at 'content' failed to satisfy constraint: y",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

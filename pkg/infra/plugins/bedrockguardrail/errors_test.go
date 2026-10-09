@@ -65,7 +65,7 @@ var awsApplyGuardrailErrors = []awsErrorEnvelope{
 var testSettings = Settings{GuardrailID: "gr1abc", Version: "1"}
 
 func classify(err error) (appplugins.FailureReason, string) {
-	return classifyApplyErr(testSettings, err)
+	return classifyApplyErr(err)
 }
 
 func applyGuardrailAgainst(t *testing.T, handler http.HandlerFunc) error {

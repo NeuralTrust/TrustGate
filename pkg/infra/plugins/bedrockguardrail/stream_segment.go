@@ -102,7 +102,7 @@ func (p *Plugin) InspectSegment(
 		// The provider answering for what the block carries (a 4xx that is not
 		// credentials or throttling) is the content's, and cuts a stream in a
 		// mode that blocks; every other failure releases the held text.
-		reason, detail := classifyApplyErr(cfg, err)
+		reason, detail := classifyApplyErr(err)
 		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("applying guardrail to stream block %d: %w", seg.Seq, err))
 	}

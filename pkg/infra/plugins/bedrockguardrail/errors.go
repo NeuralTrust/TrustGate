@@ -75,13 +75,13 @@ var notAboutTheInput = map[string]struct{}{
 // cannot take, which no request can change, so it is config_invalid.
 //
 // The answer is classified on the AWS error type, the HTTP status and, for the
-// guardrail reference only, the members a ValidationException names and the
-// values it echoes for them, never on the rest of the message. The exact error
+// guardrail reference only, the members a ValidationException names, never on
+// the rest of the message. The exact error
 // AWS returns for an oversize text is not documented (the quotas page lists 25
 // text units in some regions and the API reference lists ValidationException
 // among the errors without tying it to size), so a match on message text would
 // be a guess that breaks when AWS rewords it.
-func classifyApplyErr(cfg Settings, err error) (appplugins.FailureReason, string) {
+func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	if !raisedByApplyGuardrail(err) {
 		return appplugins.FailureTransport, ""
 	}
@@ -92,7 +92,7 @@ func classifyApplyErr(cfg Settings, err error) (appplugins.FailureReason, string
 	if _, skip := notAboutTheInput[api.ErrorCode()]; skip {
 		return appplugins.FailureTransport, ""
 	}
-	if api.ErrorCode() == "ValidationException" && namesGuardrailReference(cfg, api.ErrorMessage()) {
+	if api.ErrorCode() == "ValidationException" && namesGuardrailReference(api.ErrorMessage()) {
 		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
 	}
 	status := 0
@@ -134,29 +134,27 @@ func raisedByApplyGuardrail(err error) bool {
 
 const applyGuardrailOperation = "ApplyGuardrail"
 
-// constraintViolation is one "Value '<v>' at '<member>' failed to satisfy
-// constraint" clause of an AWS validation error: the value the caller sent for
-// the member, then the member.
-var constraintViolation = regexp.MustCompile(`Value '(.*?)' at '([^']*)' failed to satisfy constraint`)
+// constraintMember captures the member of every "at '<member>' failed to satisfy
+// constraint" clause of an AWS validation error, whatever precedes it: AWS
+// writes "Value '<v>' at", "Value at" or "Value null at" depending on what the
+// caller sent, and the echoed value can hold newlines.
+var constraintMember = regexp.MustCompile(`(?s)at '([^']*)' failed to satisfy constraint`)
 
 // namesGuardrailReference reports whether a ValidationException is about the
 // guardrail identifier or version the policy configures and about nothing
-// else. AWS echoes the offending value ahead of the member, so a member name
-// inside client content can appear in the message; the clause counts only when
-// every violation names the identifier or the version and echoes the value the
-// policy configures, which a client cannot choose. A violation of any other
-// member, the content above all, makes the rejection the input's.
-func namesGuardrailReference(cfg Settings, message string) bool {
-	clauses := constraintViolation.FindAllStringSubmatch(message, -1)
-	if len(clauses) == 0 {
+// else. AWS echoes the offending value, so client content can spell a
+// guardrail clause inside the message; but AWS's own clause for a content
+// member is always present and a client cannot remove it. Every clause in the
+// message is therefore counted, and the rejection is the policy's only when
+// each one names the identifier or the version. Any other member, the content
+// above all, makes it the input's.
+func namesGuardrailReference(message string) bool {
+	members := constraintMember.FindAllStringSubmatch(message, -1)
+	if len(members) == 0 {
 		return false
 	}
-	for _, c := range clauses {
-		value, member := c[1], c[2]
-		switch {
-		case member == "guardrailIdentifier" && value == cfg.GuardrailID:
-		case member == "guardrailVersion" && value == cfg.Version:
-		default:
+	for _, m := range members {
+		if m[1] != "guardrailIdentifier" && m[1] != "guardrailVersion" {
 			return false
 		}
 	}
