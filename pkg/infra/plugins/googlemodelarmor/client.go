@@ -36,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 )
@@ -69,6 +70,10 @@ type errModelArmor struct {
 	// resource the policy names and not about what was sent.
 	configShaped bool
 }
+
+var _ pluginutil.Rejection = (*errModelArmor)(nil)
+
+func (e *errModelArmor) Rejection() (int, bool) { return e.status, e.configShaped }
 
 func (e *errModelArmor) Error() string {
 	return fmt.Sprintf("model_armor: %s unexpected status %d", e.action, e.status)

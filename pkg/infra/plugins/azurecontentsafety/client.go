@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
@@ -76,6 +77,10 @@ type statusError struct {
 	// the text.
 	configShaped bool
 }
+
+var _ pluginutil.Rejection = (*statusError)(nil)
+
+func (e *statusError) Rejection() (int, bool) { return e.status, e.configShaped }
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("azure_content_safety: unexpected status %d", e.status)
