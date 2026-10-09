@@ -210,7 +210,7 @@ func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
 func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 	t.Parallel()
 	srv := answeringServer(t, func(_ int32, w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(240 * time.Millisecond)
+		time.Sleep(480 * time.Millisecond)
 		_, _ = w.Write([]byte(moderationAllowed))
 	})
 	p := New(adapter.NewRegistry(), srv.URL, 30*time.Second, nil)
@@ -218,7 +218,7 @@ func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 	require.Equal(t, 16, textchunk.Count(text, chunkSpec))
 	event, span := newEvent()
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, text), nil, event)
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1600*time.Millisecond)
 	defer cancel()
 
 	_, err := p.Execute(ctx, in)
