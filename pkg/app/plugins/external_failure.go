@@ -96,6 +96,7 @@ const (
 	DetailProviderRejectedInput   = "provider_rejected_input"
 	DetailPayloadTooLarge         = "payload_too_large"
 	DetailUnsupportedFormat       = "unsupported_format"
+	DetailProviderConfigRejected  = "provider_config_rejected"
 )
 
 // IsMaskOverFinding reports whether a failure detail is a mask that could not

@@ -16,6 +16,7 @@ package bedrockguardrail
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -63,6 +64,17 @@ var streamingDefaults = pluginutil.StreamingDefaults{
 	MaxAccumulatedBytes:  24576,
 	GuardTimeout:         2 * time.Second,
 }
+
+// The shapes AWS accepts for the values the plugin sends on every call. A value
+// outside them is refused by the service as a ValidationException on every
+// request, which is a configuration error that must surface when the policy is
+// saved and not as a failing guardrail at run time.
+var (
+	guardrailIDPattern = regexp.MustCompile(`^([a-z0-9]+|arn:aws(-[^:]+)?:bedrock:[a-z0-9-]{1,20}:[0-9]{12}:guardrail/[a-z0-9]+)$`)
+	versionPattern     = regexp.MustCompile(`^([1-9][0-9]{0,7}|DRAFT)$`)
+	roleARNPattern     = regexp.MustCompile(`^arn:aws(-[a-z]+)*:iam::[0-9]{12}:role/[\w+=,.@/-]+$`)
+	sessionNamePattern = regexp.MustCompile(`^[\w+=,.@-]{2,64}$`)
+)
 
 type Credentials struct {
 	AWSRegion       string `mapstructure:"aws_region"`
@@ -117,6 +129,12 @@ func (s *Settings) validate() error {
 	if strings.TrimSpace(s.GuardrailID) == "" {
 		return fmt.Errorf("bedrock_guardrail: guardrail_id is required")
 	}
+	if !guardrailIDPattern.MatchString(s.GuardrailID) {
+		return fmt.Errorf("bedrock_guardrail: guardrail_id must be a guardrail id (lowercase letters and digits) or a guardrail ARN")
+	}
+	if !versionPattern.MatchString(s.Version) {
+		return fmt.Errorf("bedrock_guardrail: version must be DRAFT or a guardrail version number")
+	}
 	switch s.PIIAction {
 	case piiActionBlock, piiActionAnonymize:
 	default:
@@ -125,6 +143,12 @@ func (s *Settings) validate() error {
 	if s.Credentials.UseRole {
 		if strings.TrimSpace(s.Credentials.RoleARN) == "" {
 			return fmt.Errorf("bedrock_guardrail: role_arn is required when use_role is true")
+		}
+		if !roleARNPattern.MatchString(s.Credentials.RoleARN) {
+			return fmt.Errorf("bedrock_guardrail: role_arn must be an IAM role ARN")
+		}
+		if !sessionNamePattern.MatchString(s.Credentials.SessionName) {
+			return fmt.Errorf("bedrock_guardrail: session_name must be 2 to 64 characters from letters, digits and _+=,.@-")
 		}
 		return s.Streaming.Validate(PluginName)
 	}
