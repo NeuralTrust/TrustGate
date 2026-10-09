@@ -282,6 +282,36 @@ the model.
   its models. Unset, a new key opens the MCP Store at once and reaches its
   models on the console's next reconcile.
 
+### Requesting models from the Store
+
+`trustgate_store_request_models` asks an administrator for a provider's models,
+the way `trustgate_store_install` asks for an MCP server outside the caller's
+access. Requests live in the console and are decided in Access → Approvals,
+exactly as the Portal's; the Store files them there.
+
+- **Check.** The tool takes a `provider` in the user's words ("openai",
+  "Anthropic", a registry's name) and asks the console, which resolves it to
+  the provider's one registry the user does not reach, lists the registries to
+  choose from when there are several (the tool takes the chosen `registry_id`),
+  or takes a catalog provider the gateway has no registry of. Already reached,
+  already requested, and unknown (with the gateway's providers) are answered
+  here, before anyone writes a reason.
+- **The form.** Otherwise the answer is a link to `/store/mcp/request-models`
+  (a ticket, 15 minutes). The tool takes no reason: an agent asked for one
+  writes it from its own task. The person writes it on the page, and sending
+  it files the request; a sent or settled request spends the link. Like the MCP
+  request form, the link alone authorises the request for its owner, which an
+  administrator still decides.
+- **The console.** Both steps go to `CONSOLE_MODEL_REQUESTS_URL`
+  (`POST /api/internal/trustgate/llm-access-requests`), signed as the personal
+  key events are, with `{"action": "check" | "file", "team_id", "gateway_id",
+  "user_id", "provider" | "registry_id", "reason"}`. The console applies the
+  Portal's rules and its rate limit (10 an hour per person and gateway) and
+  answers `{"status": "ok" | "choose_registry" | "requested" | "has_access" |
+  "already_requested" | "unknown_provider" | "unavailable" | "rate_limited",
+  …}`. Unset, the Store offers no request tool and users ask from the Portal.
+  Hybrid gateways have no LLM Store, so nothing to request.
+
 ## Errors
 
 | Status | When |
@@ -421,6 +451,7 @@ the first personal consumer exists.
 | p | `DELETE …/store/principal/connections/{registry_id}` is new. A tool call refused because the caller's account is missing drops that server's cached tools, prompts and resources lists for the caller. | A revoked account's server kept being listed as ready, its tools refused, until the 5-minute discovery cache expired. |
 | q | The MCP Store offers `trustgate_store_models`. The personal key page's "Use it" is one code card (tabs, Copy, numbered and coloured lines), and its MCP config no longer escapes `<your-api-key>`. | The snippets were three `<details>` whose lines each drew their own box. |
 | r | Store session tokens carry `mcp_client` (the OAuth client they were issued to; not `client_id`, which auth bindings read), and a connect link minted from one names that app: the connected page offers "Close and go back to <app>", and says to switch back when the browser keeps the tab. TrustGuard evaluates carry `attributes.consumer {id, name}`. | The page said "go back to your assistant"; TrustGuard got the consumer id only. |
+| s | The MCP Store offers `trustgate_store_request_models` and serves `/store/mcp/request-models`, where a person files a request for a provider's models with their own reason; the console takes it at `CONSOLE_MODEL_REQUESTS_URL` (new, optional) and Access → Approvals decides it. `trustgate_store_models` points at it. Deploy the console first: the Store checks every request with it. | Models could only be requested from the Portal. |
 
 Roll back (a) by reverting it; the rest needs no action.
 

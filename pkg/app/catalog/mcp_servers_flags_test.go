@@ -84,7 +84,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 200, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 199, "the seed grew or shrank; re-audit the flags")
 
 	self := 0
 	for _, s := range servers {

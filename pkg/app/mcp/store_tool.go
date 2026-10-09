@@ -106,6 +106,10 @@ type storeTool struct {
 	ownedKeys   OwnedKeyFinder
 	modelLister StoreModelLister
 	proxyDomain string
+	// modelRequests and modelRequestLinks answer the request tool; nil keeps
+	// it dark.
+	modelRequests     appoauth.ModelAccessConsole
+	modelRequestLinks ModelRequestLinks
 }
 
 // StoreToolOption tunes NewStoreToolWithInstaller.
@@ -186,6 +190,11 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 			tools = append(tools, models)
 		}
 	}
+	if t.modelRequests != nil && t.modelRequestLinks != nil {
+		if request, err := storeRequestModelsDefinition(); err == nil {
+			tools = append(tools, request)
+		}
+	}
 	return tools
 }
 
@@ -210,6 +219,8 @@ func (t *storeTool) Call(
 		return t.personalKey(ctx, rc, baseURL)
 	case StoreModelsToolName:
 		return t.models(ctx, baseURL)
+	case StoreRequestModelsToolName:
+		return t.requestModels(ctx, baseURL, arguments)
 	default:
 		return nil, fmt.Errorf("%w: unknown tool %q", ErrStoreToolUnavailable, name)
 	}
