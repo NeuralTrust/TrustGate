@@ -224,7 +224,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	out, err := p.guardrails.ApplyGuardrail(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		reason, detail := classifyApplyErr(err)
+		reason, detail := classifyApplyErr(cfg, err)
 		return p.externalFailure(ctx, in, cfg, latency, reason, detail, fmt.Errorf("apply guardrail: %w", err))
 	}
 

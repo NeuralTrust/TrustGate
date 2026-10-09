@@ -17,7 +17,7 @@ package bedrockguardrail
 import (
 	"errors"
 	"net/http"
-	"strings"
+	"regexp"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -52,9 +52,8 @@ var notAboutTheInput = map[string]struct{}{
 	"TooManyRequestsException": {},
 	"RequestLimitExceeded":     {},
 	// ServiceQuotaExceededException is the account's quota (on-demand text units
-	// per second, per region), which no request content decides, so it fails
-	// open; classifyApplyErr reads it as input only when its message says the
-	// text's size was the quota.
+	// per second, per region), which no request content decides. An oversize
+	// text is reported by GuardrailCoverage or a ValidationException instead.
 	"ServiceQuotaExceededException": {},
 	// The guardrail the policy names is not there: configuration, not content.
 	"ResourceNotFoundException": {},
@@ -76,13 +75,13 @@ var notAboutTheInput = map[string]struct{}{
 // cannot take, which no request can change, so it is config_invalid.
 //
 // The answer is classified on the AWS error type, the HTTP status and, for the
-// guardrail reference only, the member a ValidationException names, never on
-// the rest of the message. The exact error AWS returns for an oversize text is
-// not documented (the quotas page lists 25 text units in some regions and the
-// API reference lists ValidationException among the errors without tying it to
-// size), so a match on message text would be a guess that breaks when AWS
-// rewords it, and one that fails closed on the wrong error.
-func classifyApplyErr(err error) (appplugins.FailureReason, string) {
+// guardrail reference only, the members a ValidationException names and the
+// values it echoes for them, never on the rest of the message. The exact error
+// AWS returns for an oversize text is not documented (the quotas page lists 25
+// text units in some regions and the API reference lists ValidationException
+// among the errors without tying it to size), so a match on message text would
+// be a guess that breaks when AWS rewords it.
+func classifyApplyErr(cfg Settings, err error) (appplugins.FailureReason, string) {
 	if !raisedByApplyGuardrail(err) {
 		return appplugins.FailureTransport, ""
 	}
@@ -90,13 +89,10 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	if !errors.As(err, &api) {
 		return appplugins.FailureTransport, ""
 	}
-	if api.ErrorCode() == "ServiceQuotaExceededException" && namesTextUnits(api.ErrorMessage()) {
-		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
-	}
 	if _, skip := notAboutTheInput[api.ErrorCode()]; skip {
 		return appplugins.FailureTransport, ""
 	}
-	if api.ErrorCode() == "ValidationException" && namesGuardrailReference(api.ErrorMessage()) {
+	if api.ErrorCode() == "ValidationException" && namesGuardrailReference(cfg, api.ErrorMessage()) {
 		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
 	}
 	status := 0
@@ -138,17 +134,31 @@ func raisedByApplyGuardrail(err error) bool {
 
 const applyGuardrailOperation = "ApplyGuardrail"
 
-// namesGuardrailReference reports whether a ValidationException is about the
-// guardrail identifier or version the policy configures. AWS names the member
-// in the constraint it reports ("at 'guardrailVersion'"), and the member is
-// the only part of the message read.
-func namesGuardrailReference(message string) bool {
-	m := strings.ToLower(message)
-	return strings.Contains(m, "guardrailidentifier") || strings.Contains(m, "guardrailversion")
-}
+// constraintViolation is one "Value '<v>' at '<member>' failed to satisfy
+// constraint" clause of an AWS validation error: the value the caller sent for
+// the member, then the member.
+var constraintViolation = regexp.MustCompile(`Value '(.*?)' at '([^']*)' failed to satisfy constraint`)
 
-// namesTextUnits reports whether a quota error says the text units of the
-// request were what exceeded it, which is the text's size.
-func namesTextUnits(message string) bool {
-	return strings.Contains(strings.ToLower(message), "text unit")
+// namesGuardrailReference reports whether a ValidationException is about the
+// guardrail identifier or version the policy configures and about nothing
+// else. AWS echoes the offending value ahead of the member, so a member name
+// inside client content can appear in the message; the clause counts only when
+// every violation names the identifier or the version and echoes the value the
+// policy configures, which a client cannot choose. A violation of any other
+// member, the content above all, makes the rejection the input's.
+func namesGuardrailReference(cfg Settings, message string) bool {
+	clauses := constraintViolation.FindAllStringSubmatch(message, -1)
+	if len(clauses) == 0 {
+		return false
+	}
+	for _, c := range clauses {
+		value, member := c[1], c[2]
+		switch {
+		case member == "guardrailIdentifier" && value == cfg.GuardrailID:
+		case member == "guardrailVersion" && value == cfg.Version:
+		default:
+			return false
+		}
+	}
+	return true
 }
