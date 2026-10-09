@@ -313,23 +313,22 @@ func (p *Plugin) externalFailure(
 	err error,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:        ctx,
-		Plugin:     PluginName,
-		Stage:      in.Stage,
-		Mode:       in.Mode,
-		FailClosed: cfg.OnError == pluginutil.OnErrorFailClosed,
-		Reason:     reason,
-		Detail:     detail,
-		Err:        err,
-		Logger:     p.logger,
-		Event:      in.Event,
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: reason,
+		Detail: detail,
+		Err:    err,
+		Logger: p.logger,
+		Event:  in.Event,
 	})
 	data := newData(in, cfg, latencyMS)
 	data.Decision = outcome.Decision
 	data.FailureReason = string(reason)
 	data.FailureDetail = detail
 	setExtras(in.Event, data)
-	return outcome.Result, outcome.Err
+	return outcome.Result, nil
 }
 
 func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {

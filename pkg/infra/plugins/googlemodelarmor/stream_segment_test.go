@@ -107,12 +107,12 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+func TestStreamSettingsIgnoreAStoredFailClosed(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", 0, true, nil)
-	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
-	if !on || opts.OnError != "fail_closed" {
-		t.Errorf("on=%v OnError=%q, want an explicit fail_closed to be kept", on, opts.OnError)
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}))
+	if !on || opts.OnError != "fail_open" {
+		t.Errorf("on=%v OnError=%q, want a stored fail_closed to be ignored", on, opts.OnError)
 	}
 }
 
@@ -595,8 +595,7 @@ func TestFindingFingerprintsSkipBlockingModesAndNilFindings(t *testing.T) {
 }
 
 // RUN-1710: the closing write carries the first failed block's reason whatever
-// the decision settled on, and a cut that resolved this entry's failed call as
-// fail_closed is failed_closed, not blocked.
+// the decision settled on.
 func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	t.Parallel()
 	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
@@ -613,7 +612,6 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		wantDetail   string
 	}{
 		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "verdict_incomplete", "filter_not_executed"},
-		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "verdict_incomplete", "filter_not_executed"},
 		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "verdict_incomplete", "filter_not_executed"},
 		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
 	}

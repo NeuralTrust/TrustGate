@@ -190,13 +190,13 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+func TestStreamSettingsIgnoreAStoredFailClosed(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
-	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}))
 
 	require.True(t, on)
-	assert.Equal(t, "fail_closed", opts.OnError)
+	assert.Equal(t, "fail_open", opts.OnError)
 }
 
 func TestStreamSettingsDefaultsFitTheProviderLimit(t *testing.T) {
@@ -528,8 +528,7 @@ func TestStreamSettingsAbsentKeyIsOffAndUnparsedOptInStaysOff(t *testing.T) {
 }
 
 // RUN-1710: the closing write carries the first failed block's reason whatever
-// the decision settled on, and a cut that resolved this entry's failed call as
-// fail_closed is failed_closed, not blocked.
+// the decision settled on.
 func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	t.Parallel()
 	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
@@ -546,7 +545,6 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		wantDetail   string
 	}{
 		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", "throttled"},
-		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "transport", "throttled"},
 		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", "throttled"},
 		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
 	}

@@ -119,13 +119,13 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+func TestStreamSettingsIgnoreAStoredFailClosed(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
-	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}))
 
 	require.True(t, on)
-	assert.Equal(t, "fail_closed", opts.OnError)
+	assert.Equal(t, "fail_open", opts.OnError)
 }
 
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
@@ -242,7 +242,7 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "block 4")
 }
 
-func TestInspectSegmentHonoursTheGuardTimeout(t *testing.T) {
+func TestInspectSegmentIsBoundedByTheDefaultGuardTimeout(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -256,11 +256,12 @@ func TestInspectSegmentHonoursTheGuardTimeout(t *testing.T) {
 	start := time.Now()
 	_, err := p.InspectSegment(context.Background(),
 		execInput(policy.StagePreResponse, policy.ModeEnforce,
-			streamSettings(map[string]any{"guard_timeout": "300ms"}), requestContext(), nil, nil),
+			streamSettings(map[string]any{"guard_timeout": "10ms"}), requestContext(), nil, nil),
 		block(1, "some text"))
 
 	require.Error(t, err)
-	assert.Less(t, time.Since(start), time.Second,
+	assert.Greater(t, time.Since(start), 1000*time.Millisecond, "a stored guard_timeout is ignored")
+	assert.Less(t, time.Since(start), 3*time.Second,
 		"the client is holding bytes; the block deadline must win over the plugin's own")
 }
 
@@ -391,8 +392,7 @@ func TestViolationFingerprintsDedupeAndSkipBlockingModes(t *testing.T) {
 }
 
 // RUN-1710: the closing write carries the first failed block's reason whatever
-// the decision settled on, and a cut that resolved this entry's failed call as
-// fail_closed is failed_closed, not blocked.
+// the decision settled on.
 func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	t.Parallel()
 	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
@@ -407,7 +407,6 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		wantReason   string
 	}{
 		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport"},
-		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "transport"},
 		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlock, "transport"},
 		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, ""},
 	}

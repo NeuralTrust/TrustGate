@@ -16,7 +16,6 @@ package plugins
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -69,13 +68,11 @@ const (
 // leg share it.
 const DecisionFailedOpen = "failed_open"
 
-// DecisionFailedClosed is the decision recorded when a guardrail could not give
-// a verdict and the traffic was refused. The buffered legs and the stream leg
-// share it: on the stream it labels the entry whose failed call the guard
-// resolved as fail_closed, which is a cut but not a verdict of the guardrail.
+// DecisionFailedClosed is the decision recorded when a policy could not do its
+// work and the traffic was refused. No external guardrail records it: they
+// always fail open. A stream cut that the guard resolved on a failed call of a
+// rewriter that asked for fail_closed (regex_replace) does.
 const DecisionFailedClosed = "failed_closed"
-
-const typeGuardrailUnavailable = "guardrail_unavailable"
 
 // ExternalFailure is one third-party guardrail call's failure, ready to be
 // turned into a plugin outcome by HandleExternalFailure.
@@ -93,38 +90,24 @@ type ExternalFailure struct {
 	Err    error
 	Logger *slog.Logger
 	Event  *metrics.EventContext
-	// FailClosed is the policy's on_error: fail_closed. Off, every failure
-	// lets the request through.
-	FailClosed bool
 }
 
 // ExternalFailureOutcome is HandleExternalFailure's answer. Decision is what
 // the caller's own Data.Decision (and any failure_reason/failure_detail
-// fields) should record; Result and Err are exactly what the plugin's
-// Execute should return. Err is nil unless the policy asked to fail closed.
+// fields) should record; Result is exactly what the plugin's Execute should
+// return.
 type ExternalFailureOutcome struct {
 	Decision string
 	Result   *Result
-	Err      error
 }
 
 // HandleExternalFailure applies the one rule every external guardrail
-// follows on a failure of its buffered (non-streamed) leg. By default it fails
-// OPEN, in every mode (enforce, throttle and observe) and for every
-// FailureReason (transport, which also covers timeouts and throttling,
-// verdict_incomplete, config_invalid and decode_failed): the request continues
-// and the event records decision failed_open with the failure_reason (and
-// failure_detail) the caller sets on its own Data (RUN-1792). The stream leg is
-// covered separately by RUN-1786.
-//
-// A policy that sets on_error: fail_closed opts out: in a mode that blocks, the
-// request is refused with a 502 guardrail_unavailable and the decision is
-// failed_closed, decode_failed included, since a body the guardrail could not
-// read is a body it did not inspect. config_invalid still fails open when the
-// stored settings could not be read at all, since on_error is one of them.
-//
-// TrustGuard does not go through this helper: its failures, credential errors
-// included, follow its own on_error setting inside the trustguard plugin.
+// follows on a failure of its buffered (non-streamed) leg: it fails OPEN, in
+// every mode (enforce, throttle and observe) and for every FailureReason
+// (transport, which also covers timeouts and throttling, verdict_incomplete,
+// config_invalid and decode_failed). The request continues and the event
+// records decision failed_open with the failure_reason (and failure_detail) the
+// caller sets on its own Data. There is no policy setting that changes this.
 //
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
@@ -136,9 +119,6 @@ func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
 	outcome := ExternalFailureOutcome{
 		Decision: DecisionFailedOpen,
 		Result:   &Result{StatusCode: http.StatusOK},
-	}
-	if f.FailClosed && Blocks(f.Mode) {
-		outcome = ExternalFailureOutcome{Decision: DecisionFailedClosed, Err: unavailableError()}
 	}
 	SetDecisionFromOutcome(f.Event, outcome.Decision)
 	logExternalFailure(f, outcome.Decision)
@@ -169,44 +149,14 @@ func logExternalFailure(f ExternalFailure, decision string) {
 	f.Logger.Warn("external guardrail call failed", attrs...)
 }
 
-// unavailableError is the client-facing refusal for a guardrail that failed
-// closed. Its message is generic and never carries the underlying error, which
-// can hold endpoint hostnames or vendor error text.
-func unavailableError() *PluginError {
-	return &PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeGuardrailUnavailable,
-		Message:    DefaultUnavailableMessage,
-		Headers:    map[string][]string{"Content-Type": {"application/json"}},
-		Body:       unavailableBody(),
-	}
-}
-
-func unavailableBody() []byte {
-	body := struct {
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}{}
-	body.Error.Type = typeGuardrailUnavailable
-	body.Error.Message = DefaultUnavailableMessage
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return []byte(fmt.Sprintf(`{"error":{"type":%q,"message":%q}}`, typeGuardrailUnavailable, DefaultUnavailableMessage))
-	}
-	return raw
-}
-
 // WrapExternalStreamFailure formats a stream-segment failure so its reason
 // (and, when present, detail) travel in the error text.
 //
 // Unlike HandleExternalFailure, a streamed segment's fail-open/fail-closed
-// choice is not the plugin's mode to make: the stream guard already owns
-// that decision through streaming.on_error (pkg/app/proxy/stream_guard.go),
-// because only the guard knows whether anything has been released to the
-// client yet, which is what turns fail_closed into a clean status code
-// instead of a truncated body. The guard also already logs the returned
+// choice is not the plugin's mode to make: the stream guard owns that decision
+// (pkg/app/proxy/stream_guard.go), because only the guard knows whether
+// anything has been released to the client yet. An external guardrail's failed
+// block is always absorbed per entry and released. The guard also already logs the returned
 // error itself (headFailure/blockFailure), so this does not log again: doing
 // so would print the same failure twice for one segment. It only gives that
 // one log line the same reason vocabulary HandleExternalFailure uses.

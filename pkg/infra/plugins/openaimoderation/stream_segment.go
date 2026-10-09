@@ -82,7 +82,7 @@ func (p *Plugin) InspectSegment(
 	// The deadline is the plugin's because the knob is in the plugin's schema,
 	// and it is enforced here rather than left to the caller's context because
 	// the caller is holding a client's bytes while this call runs.
-	callCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.Timeout(streamingDefaults.GuardTimeout))
+	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
 	resp, err := p.client.Moderate(callCtx, p.baseURL, cfg.APIKey, moderationRequest{
@@ -91,8 +91,8 @@ func (p *Plugin) InspectSegment(
 	})
 	if err != nil {
 		// Returned rather than resolved here: only the guard knows whether the
-		// status is still uncommitted, which is what makes streaming.on_error
-		// a clean 403 at the head and a terminator after it. The guard itself
+		// status is still uncommitted, which decides whether the held text is
+		// released; a guardrail that fails is always released. The guard itself
 		// logs this failure (headFailure/blockFailure in stream_guard.go), so
 		// this does not log a second time; it only tags the error with the
 		// same reason vocabulary the buffered leg uses.
@@ -139,10 +139,6 @@ func (p *Plugin) recordStreamOutcome(
 
 	data := ModerationData{Model: cfg.Model, Streaming: stream}
 	switch {
-	// A cut that resolved this entry's own failed call as fail_closed is a
-	// failure, not a block: the guardrail gave no verdict.
-	case pluginutil.StreamFailedClosed(seg.Report):
-		data.Decision = appplugins.DecisionFailedClosed
 	case seg.Report.CutAtEval > 0:
 		data.Decision = decisionBlock
 	case len(stream.Findings) > 0:

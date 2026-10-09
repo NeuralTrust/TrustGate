@@ -228,46 +228,30 @@ func TestStreamGuard_GuardrailProviderErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// An operator who asked for fail_closed still gets it in enforce. Observe never
-// blocks, whatever the key says.
-func TestStreamGuard_GuardrailExplicitFailClosedIsHonouredOnlyWhereItCanBlock(t *testing.T) {
+// streaming.on_error and streaming.guard_timeout were removed: a policy stored
+// with them keeps loading and fails open in every mode, at the head and after
+// it, under the default guard timeout.
+func TestStreamGuard_GuardrailStoredStreamFailureKeysAreIgnored(t *testing.T) {
 	t.Parallel()
-	closed := map[string]any{"on_error": "fail_closed"}
-
-	t.Run("enforce at the head is a clean 403", func(t *testing.T) {
-		t.Parallel()
-		srv, _ := moderationStub(t, provError)
-		g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, closed))
-		run := runModerationGuard(t, g)
-		require.NotNil(t, run.pe)
-		assert.Equal(t, http.StatusForbidden, run.pe.StatusCode)
-	})
-	t.Run("enforce after the head cuts", func(t *testing.T) {
-		t.Parallel()
-		srv, _ := moderationStub(t, provOK, provError)
-		g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, closed))
-		run := runModerationGuard(t, g)
-		assert.True(t, run.stopped)
-		assert.NotEqual(t, fullText, run.text)
-	})
-	t.Run("observe at the head never blocks", func(t *testing.T) {
-		t.Parallel()
-		srv, _ := moderationStub(t, provError)
-		g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeObserve, closed))
-		run := runModerationGuard(t, g)
-		require.Nil(t, run.pe)
-		assert.False(t, run.stopped)
-		assert.Equal(t, fullText, run.text)
-	})
-	t.Run("observe after the head never cuts", func(t *testing.T) {
-		t.Parallel()
-		srv, _ := moderationStub(t, provOK, provError)
-		g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeObserve, closed))
-		run := runModerationGuard(t, g)
-		require.Nil(t, run.pe)
-		assert.False(t, run.stopped)
-		assert.Equal(t, fullText, run.text)
-	})
+	stored := map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		for name, script := range map[string][]string{
+			"at the head":    {provError},
+			"after the head": {provOK, provError},
+		} {
+			t.Run(string(mode)+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				srv, _ := moderationStub(t, script...)
+				g, joins := moderationGuard(t, srv.URL, moderationPolicy(mode, stored))
+				require.True(t, joins)
+				require.Equal(t, streamFailOpen, g.cfg.onError)
+				run := runModerationGuard(t, g)
+				require.Nil(t, run.pe)
+				assert.False(t, run.stopped)
+				assert.Equal(t, fullText, run.text)
+			})
+		}
+	}
 }
 
 // "block" from the provider in observe is a report, never a cut or a 403.
@@ -463,48 +447,38 @@ func TestStreamGuard_GuardrailCancellationIsNotAFailure(t *testing.T) {
 	}
 }
 
-// A fail_closed cut is a cut, but the guardrail never gave a verdict: the
-// failing policy's span says failed_closed (RUN-1710), with the reason of the
-// failure, whether the client got a 403 at the head or a terminator later. It is
-// never failed_open for a request the client was refused, and never blocked.
-func TestStreamGuard_GuardrailFailClosedCutIsLabelledFailedClosed(t *testing.T) {
+// A stored streaming.on_error: fail_closed changes nothing: the failing policy's
+// span says failed_open with the reason of the failure, whether the failure came
+// at the head or later, and the client is never refused for it.
+func TestStreamGuard_GuardrailStoredFailClosedIsRecordedFailedOpen(t *testing.T) {
 	t.Parallel()
-	closed := map[string]any{"on_error": "fail_closed"}
-	for name, tc := range map[string]struct {
-		script   []string
-		wantHead bool
-	}{
-		"head 403":           {[]string{provError}, true},
-		"cut after the head": {[]string{provOK, provError}, false},
+	stored := map[string]any{"on_error": "fail_closed"}
+	for name, script := range map[string][]string{
+		"head":           {provError, provOK},
+		"after the head": {provOK, provError, provOK},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			srv, _ := moderationStub(t, tc.script...)
-			g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, closed))
+			srv, _ := moderationStub(t, script...)
+			g, _ := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, stored))
 			pe, spans := moderationSpansAnyOutcome(t, g)
-			if tc.wantHead {
-				require.NotNil(t, pe)
-				assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-			} else {
-				require.Nil(t, pe)
-			}
+			require.Nil(t, pe)
 			require.Len(t, spans, 1)
-			assert.Equal(t, "failed_closed", spans[0].Plugin.Decision)
+			assert.Equal(t, "failed_open", spans[0].Plugin.Decision)
 			data, ok := spans[0].Plugin.Extras.(openaimoderation.ModerationData)
 			require.True(t, ok)
-			assert.Equal(t, "failed_closed", data.Decision)
+			assert.Equal(t, "failed_open", data.Decision)
 			assert.Equal(t, string(appplugins.FailureTransport), data.FailureReason)
 		})
 	}
 }
 
-// One policy asked for fail_closed; another, on its default, has an outage. The
-// stream's single on_error is fail_closed because of the first, and must not
-// cut on the second's behalf: its failure is its own and fails open. The
-// chain order is irrelevant, so both are run.
-func TestStreamGuard_GuardrailOutageOfADefaultPolicyDoesNotCutOnAStrictOnesBehalf(t *testing.T) {
+// One policy stores streaming.on_error: fail_closed; another has an outage. The
+// stored key is ignored, so the stream fails open and the outage is the failing
+// policy's alone. The chain order is irrelevant, so both are run.
+func TestStreamGuard_GuardrailOutageIsFailOpenWhateverAPeerStores(t *testing.T) {
 	t.Parallel()
-	for name, prios := range map[string][2]int{"strict first": {1, 2}, "flaky first": {2, 1}} {
+	for name, prios := range map[string][2]int{"first": {1, 2}, "second": {2, 1}} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			srv, good, bad := keyedModerationStub(t)
@@ -514,15 +488,13 @@ func TestStreamGuard_GuardrailOutageOfADefaultPolicyDoesNotCutOnAStrictOnesBehal
 			strict.Priority, flaky.Priority = prios[0], prios[1]
 			g, joins := moderationGuardFor(t, srv.URL, []*policy.Policy{strict, flaky})
 			require.True(t, joins)
-			require.Equal(t, streamFailClosed, g.cfg.onError, "the merged stream option is what is under test")
+			require.Equal(t, streamFailOpen, g.cfg.onError)
 
 			pe, decisions := spanDecisionsAnyOutcome(t, g)
 
 			require.Nil(t, pe)
-			assert.False(t, g.stopped, "an outage of a fail_open policy must not cut the stream")
+			assert.False(t, g.stopped, "an outage must not cut the stream")
 			assert.ElementsMatch(t, []string{"allowed", "failed_open"}, decisions)
-			// The strict policy inspected every block, including the final one,
-			// whichever sorts first.
 			assert.Greater(t, good.Load(), bad.Load(), "the healthy policy is called on every block, past the failing one's retirement")
 			assert.LessOrEqual(t, bad.Load(), int32(3), "the failing policy is retired after three blocks in a row")
 		})

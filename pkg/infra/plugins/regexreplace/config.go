@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
@@ -70,9 +71,40 @@ type Settings struct {
 	// Streaming configures per-block rewriting of the pre_response leg. Absent,
 	// it is on; only an explicit enabled: false leaves a streamed response
 	// unrewritten.
-	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
+	Streaming streamingSettings `mapstructure:"streaming"`
 
 	compiled []compiledRule
+}
+
+// streamingSettings is the shared streaming block plus the one key regex_replace
+// keeps beside it. The rewrite is a mask, not a guardrail: when a block cannot
+// be rewritten the held text is unmasked, so the stream leg fails closed unless
+// the policy says otherwise.
+type streamingSettings struct {
+	pluginutil.StreamingSettings `mapstructure:",squash"`
+	OnError                      string `mapstructure:"on_error"`
+}
+
+func (s *streamingSettings) applyDefaults() {
+	s.ApplyDefaults(streamingDefaults)
+	if s.OnError == "" {
+		s.OnError = pluginutil.StreamOnErrorFailClosed
+	}
+}
+
+func (s streamingSettings) validate() error {
+	switch s.OnError {
+	case pluginutil.StreamOnErrorFailOpen, pluginutil.StreamOnErrorFailClosed:
+	default:
+		return fmt.Errorf("%s: streaming.on_error must be one of fail_open, fail_closed", PluginName)
+	}
+	return s.Validate(PluginName)
+}
+
+func (s streamingSettings) Options() appplugins.StreamOptions {
+	opts := s.StreamingSettings.Options()
+	opts.OnError = s.OnError
+	return opts
 }
 
 type compiledRule struct {
@@ -86,11 +118,11 @@ func parseConfig(settings map[string]any) (Settings, error) {
 		return Settings{}, err
 	}
 	// The buffered leg cannot fail: the rules are local and a rewrite that does
-	// not apply leaves the text alone. The stream leg inherits fail_closed all
+	// not apply leaves the text alone. The stream leg defaults to fail_closed all
 	// the same, because there its one failure mode is a rewrite that cannot
 	// reach text already released, and releasing unmasked text is what the
 	// rules exist to prevent.
-	cfg.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
+	cfg.Streaming.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return Settings{}, err
 	}
@@ -114,7 +146,7 @@ func (s *Settings) validate() error {
 			return fmt.Errorf("%w: rule %d", ErrEmptyPattern, i)
 		}
 	}
-	return s.Streaming.Validate(PluginName)
+	return s.Streaming.validate()
 }
 
 func (s *Settings) compile() error {
