@@ -93,12 +93,21 @@ func (p *Plugin) InspectSegment(
 	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
+	id := streamID(ctx, seg)
+	limits := callLimitsFor(len(seg.Accumulated))
+	if _, throttled := p.throttledStreams.Load(id); throttled {
+		limits.noThrottleRetry = true
+	}
 	out, err := p.guardrails.ApplyWithBackoff(
 		callCtx,
 		credentialsFromConfig(cfg.Credentials),
 		buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput),
+		limits,
 	)
 	if err != nil {
+		if isThrottled(err) && id != "" {
+			p.throttledStreams.Store(id, struct{}{})
+		}
 		// The provider answering for what the block carries (a 4xx that is not
 		// credentials or throttling) is the content's, and cuts a stream in a
 		// mode that blocks; every other failure releases the held text.
@@ -160,6 +169,7 @@ func (p *Plugin) recordStreamOutcome(
 	cfg Settings,
 	seg appplugins.StreamSegment,
 ) {
+	p.throttledStreams.Delete(streamID(ctx, seg))
 	if in.Event == nil {
 		return
 	}

@@ -16,20 +16,23 @@ package bedrockguardrail
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"golang.org/x/time/rate"
 )
 
 const credentialsExpiryWindow = 5 * time.Minute
@@ -114,6 +117,10 @@ func (c *clientCache) get(ctx context.Context, creds awsCredentials) (guardrailC
 
 type cachedGuardrailClient struct {
 	cache *clientCache
+	// budgets holds one throttle-retry limiter per credential fingerprint.
+	budgets sync.Map
+	// backoff is the first throttle wait; zero means throttleBackoff.
+	backoff time.Duration
 }
 
 func newCachedGuardrailClient() *cachedGuardrailClient {
@@ -126,42 +133,105 @@ func (g *cachedGuardrailClient) ApplyGuardrail(
 	ctx context.Context,
 	creds awsCredentials,
 	in *bedrockruntime.ApplyGuardrailInput,
+	optFns ...func(*bedrockruntime.Options),
 ) (*bedrockruntime.ApplyGuardrailOutput, error) {
 	client, err := g.cache.get(ctx, creds)
 	if err != nil {
 		return nil, err
 	}
-	return client.ApplyGuardrail(ctx, in)
+	return client.ApplyGuardrail(ctx, in, optFns...)
 }
 
 const (
 	// maxApplyAttempts bounds how often one call is tried when the quota
-	// throttles it. The SDK's own retryer is off (RetryMaxAttempts 1) so the
-	// attempts here are the only ones: a stacked retryer would multiply the
-	// load on the very quota that is throttling.
+	// throttles it. The SDK's retryer never retries a throttle (see
+	// neverRetryThrottle), so the attempts here are the only ones that answer a
+	// throttle: a stacked retryer would multiply the load on the very quota that
+	// is throttling.
 	maxApplyAttempts = 3
 	// throttleBackoff is the first wait before a retry; it doubles each attempt
 	// and carries up to as much jitter again, so concurrent blocks do not retry
 	// in step.
 	throttleBackoff = 100 * time.Millisecond
+	// throttleRetriesPerSecond and throttleRetryBurst bound the throttle
+	// retries one pod sends for one credential, whatever the number of calls
+	// being throttled: a retry is a call the quota has just refused, so a
+	// throttled account must not receive three times its load.
+	throttleRetriesPerSecond = 1
+	throttleRetryBurst       = 5
 )
 
+// callLimits narrows what ApplyWithBackoff may repeat. The zero value allows
+// every retry.
+type callLimits struct {
+	// noThrottleRetry sends a throttled call back as it is.
+	noThrottleRetry bool
+	// noTransientRetry takes the SDK's own retries of a 5xx or a connection
+	// error away from the call.
+	noTransientRetry bool
+}
+
+// callLimitsFor is the retry policy of a call that sends textBytes of text. A
+// call above one stream window is never retried: every retry resends the whole
+// text to a quota that meters text units, and a client chooses the size.
+func callLimitsFor(textBytes int) callLimits {
+	if textBytes > maxStreamWindowBytes {
+		return callLimits{noThrottleRetry: true, noTransientRetry: true}
+	}
+	return callLimits{}
+}
+
+// neverRetryThrottle takes a throttle out of the SDK retryer's hands: the
+// throttle loop of ApplyWithBackoff answers it within a budget and the call's
+// deadline. Everything else is left to the retryer's own checks.
+func neverRetryThrottle(err error) aws.Ternary {
+	if isThrottled(err) {
+		return aws.FalseTernary
+	}
+	return aws.UnknownTernary
+}
+
+// newRetryer is the SDK's standard retryer, with its retry-token bucket and its
+// three attempts for a 5xx or a connection error, minus throttles.
+func newRetryer() aws.Retryer {
+	return retry.NewStandard(func(o *retry.StandardOptions) {
+		o.Retryables = append([]retry.IsErrorRetryable{retry.IsErrorRetryableFunc(neverRetryThrottle)}, o.Retryables...)
+	})
+}
+
 // ApplyWithBackoff is ApplyGuardrail that retries a throttled call with
-// exponential backoff and jitter, and only inside ctx's deadline: a wait that
-// would run past it is not taken, the throttle is returned as it is, and the
-// caller resolves it as an availability failure.
+// exponential backoff and jitter, and only inside ctx's deadline and the
+// credential's throttle-retry budget: a wait that would run past the deadline,
+// or a retry the budget does not cover, is not taken, the throttle is returned
+// as it is, and the caller resolves it as an availability failure. A call that
+// ends on the deadline after a throttle still reports the throttle.
 func (g *cachedGuardrailClient) ApplyWithBackoff(
 	ctx context.Context,
 	creds awsCredentials,
 	in *bedrockruntime.ApplyGuardrailInput,
+	limits callLimits,
 ) (*bedrockruntime.ApplyGuardrailOutput, error) {
+	var opts []func(*bedrockruntime.Options)
+	if limits.noTransientRetry {
+		opts = append(opts, func(o *bedrockruntime.Options) { o.Retryer = retry.AddWithMaxAttempts(o.Retryer, 1) })
+	}
+	var lastThrottle error
 	for attempt := 1; ; attempt++ {
-		out, err := g.ApplyGuardrail(ctx, creds, in)
-		if err == nil || attempt >= maxApplyAttempts || !isThrottled(err) {
+		out, err := g.ApplyGuardrail(ctx, creds, in, opts...)
+		if err == nil {
+			return out, nil
+		}
+		if lastThrottle != nil && ctx.Err() != nil && !isThrottled(err) {
+			return nil, fmt.Errorf("%w (deadline after throttling)", lastThrottle)
+		}
+		if !isThrottled(err) || limits.noThrottleRetry || attempt >= maxApplyAttempts {
 			return out, err
 		}
-		wait := throttleBackoff << (attempt - 1)
-		wait += time.Duration(rand.Int63n(int64(wait))) //nolint:gosec // jitter, not a secret
+		lastThrottle = err
+		if !g.throttleBudget(creds).Allow() {
+			return out, err
+		}
+		wait := g.backoffFor(attempt)
 		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= wait {
 			return out, err
 		}
@@ -173,6 +243,43 @@ func (g *cachedGuardrailClient) ApplyWithBackoff(
 		case <-timer.C:
 		}
 	}
+}
+
+// backoffFor is the wait before the retry that follows the given attempt.
+func (g *cachedGuardrailClient) backoffFor(attempt int) time.Duration {
+	base := g.backoff
+	if base <= 0 {
+		base = throttleBackoff
+	}
+	wait := base << (attempt - 1)
+	return wait + jitter(wait)
+}
+
+// throttleBudget is the throttle-retry limiter of a credential, which is also
+// its region: the quota that throttles is the account's in that region.
+func (g *cachedGuardrailClient) throttleBudget(creds awsCredentials) *rate.Limiter {
+	key := creds.fingerprint()
+	if v, ok := g.budgets.Load(key); ok {
+		if l, isLimiter := v.(*rate.Limiter); isLimiter {
+			return l
+		}
+	}
+	v, _ := g.budgets.LoadOrStore(key, rate.NewLimiter(rate.Limit(throttleRetriesPerSecond), throttleRetryBurst))
+	l, _ := v.(*rate.Limiter)
+	return l
+}
+
+// jitter is a random duration in [0, n). A failed read of the system source of
+// randomness means no jitter, which delays a retry and never skips one.
+func jitter(n time.Duration) time.Duration {
+	if n <= 0 {
+		return 0
+	}
+	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(v.Int64())
 }
 
 func buildRuntimeClient(ctx context.Context, creds awsCredentials) (guardrailClient, error) {
@@ -214,6 +321,6 @@ func buildRuntimeClient(ctx context.Context, creds awsCredentials) (guardrailCli
 	}
 
 	return bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
-		o.RetryMaxAttempts = 1
+		o.Retryer = newRetryer()
 	}), nil
 }
