@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -840,6 +841,62 @@ func TestInspectSegmentPayloadTooLargeByMode(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, verdict)
 		assert.False(t, verdict.Block)
+	})
+}
+
+// A block above what one evaluate carries is refused before any call: a cut in a
+// mode that blocks, recorded and released in observe.
+func TestInspectSegmentABlockAboveTheWindowIsTheRequestsOwnSize(t *testing.T) {
+	t.Parallel()
+	big := strings.Repeat("a", 200<<10)
+
+	t.Run("enforce cuts", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Text: big, Accumulated: big})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, verdict.Type)
+		require.NotNil(t, verdict.Failure)
+		assert.Equal(t, appplugins.FailureInputTooLarge, verdict.Failure.Reason)
+		assert.Equal(t, appplugins.DetailChunkLimit, verdict.Failure.Detail)
+		assert.Empty(t, g.calls(), "nothing is sent")
+	})
+	t.Run("observe records it and releases the block", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		event, span := newEvent()
+		in := execInputWithEvent(policy.StagePreResponse, policy.ModeObserve, streamingSettings(nil), segmentRequest(), nil, event)
+		ctx := segmentTraceContext()
+
+		verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 1, Text: big, Accumulated: big})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+		assert.Empty(t, g.calls())
+
+		_, err = p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 2, Closing: true, Report: appplugins.StreamReport{Evals: 1}})
+		require.NoError(t, err)
+		data, ok := span.PluginAttrsCopy().Extras.(guardData)
+		require.True(t, ok)
+		assert.Equal(t, decisionFailedOpen, data.Decision)
+		assert.Equal(t, failureReasonPayloadTooLarge, data.FailureReason)
+		assert.Equal(t, "input", data.FailureClass)
+	})
+	t.Run("a block at the window is sent", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		at := strings.Repeat("a", maxStreamWindowBytes)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Text: at, Accumulated: at})
+		require.NoError(t, err)
+		assert.False(t, verdict.Block)
+		assert.Len(t, g.calls(), 1)
 	})
 }
 
