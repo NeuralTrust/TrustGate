@@ -185,6 +185,7 @@ func (p *Plugin) recordStreamOutcome(
 		data.Decision = decisionFailedOpen
 		data.FailedOpen = true
 		data.FailureReason = failure.reason
+		data.FailureClass = string(failure.class)
 		if failure.retired() && data.Streaming != nil && data.Streaming.FallbackReason == "" {
 			data.Streaming.FallbackReason = fallbackReasonSegmentationUnavail
 		}
@@ -375,7 +376,8 @@ func (p *Plugin) segmentGuardFailureOf(
 ) (*appplugins.SegmentVerdict, error) {
 	recordEvaluateFailure(ctx, reason)
 	sharedReason, detail := sharedFailure(reason, transformReason)
-	if cut, _ := appplugins.ExternalStreamOutcome(PluginName, in.Mode, sharedReason, detail, block, err); cut != nil && cut.Block {
+	verdict, _ := appplugins.ExternalStreamOutcome(PluginName, in.Mode, sharedReason, detail, block, err)
+	if verdict != nil && verdict.Block {
 		p.warn(ctx, "trustguard could not inspect stream segment, cutting the stream",
 			slog.String("plugin", PluginName),
 			slog.String("direction", directionOutput),
@@ -383,7 +385,7 @@ func (p *Plugin) segmentGuardFailureOf(
 			slog.String("reason", reason),
 			slog.Any("error", err),
 		)
-		return cut, nil
+		return verdict, nil
 	}
 	p.warn(ctx, "trustguard could not inspect stream segment, failing open",
 		slog.String("plugin", PluginName),
@@ -393,6 +395,9 @@ func (p *Plugin) segmentGuardFailureOf(
 		slog.Any("error", err),
 	)
 	p.streamFailed(ctx, in, seg, reason)
+	if verdict != nil {
+		return verdict, nil
+	}
 	return segmentAllow(), nil
 }
 
@@ -400,6 +405,7 @@ func (p *Plugin) segmentGuardFailureOf(
 // not inspect it.
 type streamFailure struct {
 	reason      string
+	class       appplugins.FailureClass
 	consecutive int
 	at          time.Time
 }
@@ -444,7 +450,7 @@ func (p *Plugin) streamRetired(ctx context.Context, in appplugins.ExecInput, seg
 	}
 	// A retired entry is never written again by streamFailed, so the sweep
 	// would otherwise take it from a stream that is still running.
-	p.streamFailures.Store(key, &streamFailure{reason: f.reason, consecutive: f.consecutive, at: time.Now()})
+	p.streamFailures.Store(key, &streamFailure{reason: f.reason, class: f.class, consecutive: f.consecutive, at: time.Now()})
 	return true
 }
 
@@ -459,8 +465,9 @@ func (p *Plugin) streamFailed(ctx context.Context, in appplugins.ExecInput, seg 
 	// extend the run: a client must not be able to retire the inspection by
 	// padding.
 	sharedReason, detail := sharedFailure(reason, "")
-	counts := appplugins.ClassOf(sharedReason, detail) != appplugins.FailureClassInput
-	f := &streamFailure{reason: reason, at: time.Now()}
+	class := appplugins.ClassOf(sharedReason, detail)
+	counts := class != appplugins.FailureClassInput
+	f := &streamFailure{reason: reason, class: class, at: time.Now()}
 	if v, ok := p.streamFailures.Load(key); ok {
 		if prev, _ := v.(*streamFailure); prev != nil {
 			f.consecutive = prev.consecutive
@@ -485,7 +492,7 @@ func (p *Plugin) streamRecovered(ctx context.Context, in appplugins.ExecInput, s
 		return
 	}
 	if prev, _ := v.(*streamFailure); prev != nil {
-		p.streamFailures.Store(key, &streamFailure{reason: prev.reason, at: time.Now()})
+		p.streamFailures.Store(key, &streamFailure{reason: prev.reason, class: prev.class, at: time.Now()})
 	}
 }
 

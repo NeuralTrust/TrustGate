@@ -713,6 +713,7 @@ func (p *Plugin) transformDegraded(
 	data.Decision = outcome.Decision
 	data.FailureClass = string(outcome.Class)
 	data.FailedOpen = outcome.Decision == decisionFailedOpen
+	data.FailedClosed = outcome.Decision == decisionFailedClosed
 	recordGuardOutcome(in.Event, data)
 	if outcome.Err != nil {
 		return nil, outcome.Err
@@ -910,6 +911,7 @@ func (p *Plugin) guardFailure(
 		Direction:     direction,
 		Decision:      outcome.Decision,
 		FailedOpen:    outcome.Decision == decisionFailedOpen,
+		FailedClosed:  outcome.Decision == decisionFailedClosed,
 		FailureReason: reason,
 		FailureClass:  string(outcome.Class),
 	})

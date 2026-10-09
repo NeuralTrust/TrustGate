@@ -20,6 +20,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 type GuardRequest struct {
@@ -147,7 +148,10 @@ type guardData struct {
 	FindingsCount int            `json:"findings_count,omitempty"`
 	Findings      []GuardFinding `json:"findings,omitempty"`
 	FailedOpen    bool           `json:"failed_open,omitempty"`
-	FailureReason string         `json:"failure_reason,omitempty"`
+	// FailedClosed is set with decision failed_closed: the guard could not
+	// inspect the request's own content and a mode that blocks refused it.
+	FailedClosed  bool   `json:"failed_closed,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
 	// FailureClass is availability or input (appplugins.ClassOf): whether the
 	// failure was TrustGuard's or the request's own content.
 	FailureClass   string `json:"failure_class,omitempty"`
@@ -246,11 +250,11 @@ func streamOutcome(streamID string, r appplugins.StreamReport) guardData {
 		data.Decision = decisionBlocked
 		if r.CutOnFailure {
 			data.FailureReason, data.FailureClass = failureOfCut(r)
+			data.Decision = pluginutil.StreamCutDecision(r, decisionBlocked)
+			data.FailedClosed = data.Decision == decisionFailedClosed
 			if appplugins.IsMaskOverFinding(r.FailureDetail) {
 				data.Degraded = true
 				data.DegradedReason = transformReasonOf(r.FailureDetail)
-			} else {
-				data.Decision = decisionFailedClosed
 			}
 		}
 	case r.Evals == 0:
