@@ -38,20 +38,6 @@ const (
 	defaultStreamingMaxHoldMS            = 800
 	defaultStreamingMaxAccumulatedBytes  = 262144
 	defaultStreamingGuardTimeout         = 2 * time.Second
-
-	minStreamingHeadChars = 1
-	maxStreamingHeadChars = 4096
-
-	minStreamingMinCharsBetweenEvals = 256
-	maxStreamingMinCharsBetweenEvals = 65536
-
-	minStreamingMaxHoldMS = 50
-	maxStreamingMaxHoldMS = 5000
-
-	minStreamingMaxAccumulatedBytes = 4096
-	// The engine's detectAll returns nil above 1 MiB, so a payload larger than
-	// this is not inspected at all and nothing says so.
-	maxStreamingMaxAccumulatedBytes = 1048576
 )
 
 type Settings struct {
@@ -65,23 +51,21 @@ type Settings struct {
 	// input/output direction reported to TrustGuard per evaluate call.
 	Direction   string            `mapstructure:"direction"`
 	CollectorID string            `mapstructure:"collector_id"`
-	Streaming   StreamingSettings `mapstructure:"streaming"`
+	Streaming   pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
-// StreamingSettings configures per-block inspection of a streaming response
-// leg. There is no max_inflight key: exactly one guard call is in flight by
-// construction, which is what makes the contiguous-prefix invariant hold.
-type StreamingSettings struct {
-	// Enabled defaults to true: a policy whose direction includes the
-	// response has to inspect a streamed response too, or "Request &
-	// Response" silently means "request only" on the traffic that streams,
-	// which for chat is most of it. It is a pointer so an explicit false,
-	// the opt-out, is distinguishable from an absent key.
-	Enabled              *bool `mapstructure:"enabled"`
-	HeadChars            int   `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
+// streamingDefaults enables per-block inspection when the policy does not say
+// otherwise: a policy whose direction includes the response has to inspect a
+// streamed response too, or "Request & Response" silently means "request only"
+// on the traffic that streams, which for chat is most of it. An explicit
+// streaming.enabled: false is the opt-out.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	EnabledByDefault:     true,
+	HeadChars:            defaultStreamingHeadChars,
+	MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
+	MaxHoldMS:            defaultStreamingMaxHoldMS,
+	MaxAccumulatedBytes:  defaultStreamingMaxAccumulatedBytes,
+	GuardTimeout:         defaultStreamingGuardTimeout,
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -100,22 +84,7 @@ func (s *Settings) applyDefaults() {
 	if s.Direction == "" {
 		s.Direction = defaultLegs
 	}
-	s.Streaming.applyDefaults()
-}
-
-func (s *StreamingSettings) applyDefaults() {
-	if s.HeadChars == 0 {
-		s.HeadChars = defaultStreamingHeadChars
-	}
-	if s.MinCharsBetweenEvals == 0 {
-		s.MinCharsBetweenEvals = defaultStreamingMinCharsBetweenEvals
-	}
-	if s.MaxHoldMS == 0 {
-		s.MaxHoldMS = defaultStreamingMaxHoldMS
-	}
-	if s.MaxAccumulatedBytes == 0 {
-		s.MaxAccumulatedBytes = defaultStreamingMaxAccumulatedBytes
-	}
+	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
 func (s *Settings) validate() error {
@@ -130,45 +99,7 @@ func (s *Settings) validate() error {
 	if _, err := uuid.Parse(strings.TrimSpace(s.CollectorID)); err != nil {
 		return fmt.Errorf("trustguard: collector_id must be a valid UUID")
 	}
-	return s.Streaming.validate()
-}
-
-func (s StreamingSettings) validate() error {
-	if s.HeadChars < minStreamingHeadChars || s.HeadChars > maxStreamingHeadChars {
-		return fmt.Errorf(
-			"trustguard: streaming.head_chars must be between %d and %d, got %d",
-			minStreamingHeadChars, maxStreamingHeadChars, s.HeadChars,
-		)
-	}
-	if s.MinCharsBetweenEvals < minStreamingMinCharsBetweenEvals ||
-		s.MinCharsBetweenEvals > maxStreamingMinCharsBetweenEvals {
-		return fmt.Errorf(
-			"trustguard: streaming.min_chars_between_evals must be between %d and %d, got %d",
-			minStreamingMinCharsBetweenEvals, maxStreamingMinCharsBetweenEvals, s.MinCharsBetweenEvals,
-		)
-	}
-	if s.MaxHoldMS < minStreamingMaxHoldMS || s.MaxHoldMS > maxStreamingMaxHoldMS {
-		return fmt.Errorf(
-			"trustguard: streaming.max_hold_ms must be between %d and %d, got %d",
-			minStreamingMaxHoldMS, maxStreamingMaxHoldMS, s.MaxHoldMS,
-		)
-	}
-	if s.MaxAccumulatedBytes < minStreamingMaxAccumulatedBytes ||
-		s.MaxAccumulatedBytes > maxStreamingMaxAccumulatedBytes {
-		return fmt.Errorf(
-			"trustguard: streaming.max_accumulated_bytes must be between %d and %d, got %d",
-			minStreamingMaxAccumulatedBytes, maxStreamingMaxAccumulatedBytes, s.MaxAccumulatedBytes,
-		)
-	}
-	return nil
-}
-
-func (s StreamingSettings) enabled() bool {
-	return s.Enabled == nil || *s.Enabled
-}
-
-func (s StreamingSettings) guardTimeout() time.Duration {
-	return defaultStreamingGuardTimeout
+	return s.Streaming.Validate(PluginName)
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {

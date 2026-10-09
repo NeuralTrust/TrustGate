@@ -181,13 +181,12 @@ func TestStreamingDefaults(t *testing.T) {
 	cfg, err := parseConfig(map[string]any{"collector_id": testCollectorID})
 	require.NoError(t, err)
 
-	assert.True(t, cfg.Streaming.enabled(),
+	assert.True(t, cfg.Streaming.IsEnabled(),
 		"a policy that says nothing about streaming inspects streamed responses: RUN-1712")
 	assert.Equal(t, defaultStreamingHeadChars, cfg.Streaming.HeadChars)
 	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, defaultStreamingMaxHoldMS, cfg.Streaming.MaxHoldMS)
 	assert.Equal(t, defaultStreamingMaxAccumulatedBytes, cfg.Streaming.MaxAccumulatedBytes)
-	assert.Equal(t, defaultStreamingGuardTimeout, cfg.Streaming.guardTimeout())
 }
 
 func TestStreamingExplicitValues(t *testing.T) {
@@ -206,13 +205,11 @@ func TestStreamingExplicitValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.True(t, cfg.Streaming.enabled())
+	assert.True(t, cfg.Streaming.IsEnabled())
 	assert.Equal(t, 1024, cfg.Streaming.HeadChars)
 	assert.Equal(t, 4096, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, 1500, cfg.Streaming.MaxHoldMS)
 	assert.Equal(t, 524288, cfg.Streaming.MaxAccumulatedBytes)
-	assert.Equal(t, defaultStreamingGuardTimeout, cfg.Streaming.guardTimeout(),
-		"a stored streaming.guard_timeout is ignored")
 }
 
 func TestStreamingRanges(t *testing.T) {
@@ -221,25 +218,25 @@ func TestStreamingRanges(t *testing.T) {
 		streaming map[string]any
 		wantErr   bool
 	}{
-		{name: "head_chars at the floor", streaming: map[string]any{"head_chars": minStreamingHeadChars}},
-		{name: "head_chars at the ceiling", streaming: map[string]any{"head_chars": maxStreamingHeadChars}},
-		{name: "head_chars above the ceiling", streaming: map[string]any{"head_chars": maxStreamingHeadChars + 1}, wantErr: true},
+		{name: "head_chars at the floor", streaming: map[string]any{"head_chars": 1}},
+		{name: "head_chars at the ceiling", streaming: map[string]any{"head_chars": 4096}},
+		{name: "head_chars above the ceiling", streaming: map[string]any{"head_chars": 4096 + 1}, wantErr: true},
 		{name: "head_chars negative", streaming: map[string]any{"head_chars": -1}, wantErr: true},
 
-		{name: "min_chars_between_evals at the floor", streaming: map[string]any{"min_chars_between_evals": minStreamingMinCharsBetweenEvals}},
-		{name: "min_chars_between_evals at the ceiling", streaming: map[string]any{"min_chars_between_evals": maxStreamingMinCharsBetweenEvals}},
-		{name: "min_chars_between_evals below the floor", streaming: map[string]any{"min_chars_between_evals": minStreamingMinCharsBetweenEvals - 1}, wantErr: true},
-		{name: "min_chars_between_evals above the ceiling", streaming: map[string]any{"min_chars_between_evals": maxStreamingMinCharsBetweenEvals + 1}, wantErr: true},
+		{name: "min_chars_between_evals at the floor", streaming: map[string]any{"min_chars_between_evals": 256}},
+		{name: "min_chars_between_evals at the ceiling", streaming: map[string]any{"min_chars_between_evals": 65536}},
+		{name: "min_chars_between_evals below the floor", streaming: map[string]any{"min_chars_between_evals": 256 - 1}, wantErr: true},
+		{name: "min_chars_between_evals above the ceiling", streaming: map[string]any{"min_chars_between_evals": 65536 + 1}, wantErr: true},
 
-		{name: "max_hold_ms at the floor", streaming: map[string]any{"max_hold_ms": minStreamingMaxHoldMS}},
-		{name: "max_hold_ms at the ceiling", streaming: map[string]any{"max_hold_ms": maxStreamingMaxHoldMS}},
-		{name: "max_hold_ms below the floor", streaming: map[string]any{"max_hold_ms": minStreamingMaxHoldMS - 1}, wantErr: true},
-		{name: "max_hold_ms above the ceiling", streaming: map[string]any{"max_hold_ms": maxStreamingMaxHoldMS + 1}, wantErr: true},
+		{name: "max_hold_ms at the floor", streaming: map[string]any{"max_hold_ms": 50}},
+		{name: "max_hold_ms at the ceiling", streaming: map[string]any{"max_hold_ms": 5000}},
+		{name: "max_hold_ms below the floor", streaming: map[string]any{"max_hold_ms": 50 - 1}, wantErr: true},
+		{name: "max_hold_ms above the ceiling", streaming: map[string]any{"max_hold_ms": 5000 + 1}, wantErr: true},
 
-		{name: "max_accumulated_bytes at the floor", streaming: map[string]any{"max_accumulated_bytes": minStreamingMaxAccumulatedBytes}},
-		{name: "max_accumulated_bytes at the 1 MiB ceiling", streaming: map[string]any{"max_accumulated_bytes": maxStreamingMaxAccumulatedBytes}},
-		{name: "max_accumulated_bytes below the floor", streaming: map[string]any{"max_accumulated_bytes": minStreamingMaxAccumulatedBytes - 1}, wantErr: true},
-		{name: "max_accumulated_bytes above 1 MiB", streaming: map[string]any{"max_accumulated_bytes": maxStreamingMaxAccumulatedBytes + 1}, wantErr: true},
+		{name: "max_accumulated_bytes at the floor", streaming: map[string]any{"max_accumulated_bytes": 4096}},
+		{name: "max_accumulated_bytes at the 1 MiB ceiling", streaming: map[string]any{"max_accumulated_bytes": 1048576}},
+		{name: "max_accumulated_bytes below the floor", streaming: map[string]any{"max_accumulated_bytes": 4096 - 1}, wantErr: true},
+		{name: "max_accumulated_bytes above 1 MiB", streaming: map[string]any{"max_accumulated_bytes": 1048576 + 1}, wantErr: true},
 
 		{name: "stored guard_timeout is ignored whatever its value", streaming: map[string]any{"guard_timeout": "soon"}},
 		{name: "stored streaming on_error is ignored whatever its value", streaming: map[string]any{"on_error": "panic"}},
@@ -308,4 +305,25 @@ func TestValidateSettingsWriteRejectsFinalPassOptOut(t *testing.T) {
 	require.Contains(t, err.Error(), "streaming.final_pass")
 	require.NoError(t, p.ValidateSettingsWrite(settings, settings),
 		"a policy already stored with final_pass: false must stay editable")
+}
+
+// The per-block deadline is the short stream default, bounded above by the
+// deployment-wide timeout. Neither a stored streaming.guard_timeout nor a looser
+// deployment timeout moves it.
+func TestStreamGuardTimeoutIsTheStreamDefaultCappedByTheDeploymentTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deployment time.Duration
+		want       time.Duration
+	}{
+		{"default deployment timeout", 30 * time.Second, defaultStreamingGuardTimeout},
+		{"deployment timeout tighter than the stream default", time.Second, time.Second},
+		{"deployment timeout equal", defaultStreamingGuardTimeout, defaultStreamingGuardTimeout},
+		{"unset deployment timeout", 0, defaultStreamingGuardTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Plugin{timeout: tc.deployment}
+			assert.Equal(t, tc.want, p.streamGuardTimeout())
+		})
+	}
 }
