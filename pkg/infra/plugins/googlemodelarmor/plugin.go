@@ -537,9 +537,7 @@ func (p *Plugin) runGuardrail(
 			}
 		}
 	}
-	if finding != nil {
-		data.FilterVersion = evals[from].result.filterVersion()
-	}
+	data.FilterVersion = filterVersionOf(evals, outs, from, finding != nil)
 	for i, ev := range evals {
 		if outs[i].Started && outs[i].Err == nil && ev.keptGap != "" {
 			data.FailureReason = string(appplugins.FailureVerdictIncomplete)
@@ -586,6 +584,22 @@ func (p *Plugin) runGuardrail(
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionAllowed)
 	return passThrough(), nil
+}
+
+// filterVersionOf is the filter version behind a chunked evaluation's verdict:
+// the chunk that produced the finding when there is one, else the first chunk
+// that was sent and answered, so an evaluation that found nothing still says
+// which filter version judged it.
+func filterVersionOf(evals []chunkEval, outs []textchunk.Outcome[struct{}], from int, hasFinding bool) string {
+	if hasFinding {
+		return evals[from].result.filterVersion()
+	}
+	for i, ev := range evals {
+		if outs[i].Started && outs[i].Err == nil && ev.result != nil {
+			return ev.result.filterVersion()
+		}
+	}
+	return ""
 }
 
 // failureOfChunk is the failure that decided a chunked evaluation: the filter

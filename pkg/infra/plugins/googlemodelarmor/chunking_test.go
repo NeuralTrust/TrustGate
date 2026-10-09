@@ -236,17 +236,22 @@ func TestAMaskInTwoChunksAcrossTheOverlapIsAppliedOnce(t *testing.T) {
 // would send what that chunk masked.
 func TestAMaskSurvivesAnAvailabilityFailureOnAnotherChunk(t *testing.T) {
 	t.Parallel()
-	s := newArmorScript(t, func(call int, text string) (int, string) {
+	// The failing chunk is named by what it carries, never by arrival order: the
+	// chunks run concurrently, so the nth request is a different chunk from run
+	// to run, and it can be the one that holds the email.
+	const failing = "FAILS-WITH-503"
+	s := newArmorScript(t, func(_ int, text string) (int, string) {
 		if strings.Contains(text, "victim@example.com") {
 			return http.StatusOK, deidentifyAnswer(text)
 		}
-		if call == 3 {
+		if strings.Contains(text, failing) {
 			return http.StatusServiceUnavailable, rpcUnavailable
 		}
 		return http.StatusOK, allowResponse
 	})
 	p := pluginWithStub(s.modelArmorStub)
-	text := "write to victim@example.com " + armorPlain(200<<10)
+	plain := armorPlain(200 << 10)
+	text := "write to victim@example.com " + plain[:120<<10] + " " + failing + " " + plain[120<<10:]
 	settings := modelArmorSettings()
 	settings["sdp_action"] = sdpActionAnonymize
 	event, span := newStreamEvent()
@@ -312,4 +317,24 @@ func TestSixteenChunksAreEvaluatedAndSeventeenAreRefused(t *testing.T) {
 			assertPassThrough(t, res, err)
 		})
 	}
+}
+
+func TestAChunkedEvaluationWithNoFindingRecordsTheFilterVersion(t *testing.T) {
+	t.Parallel()
+	versioned := strings.TrimSuffix(allowResponse, sanitizeClose) +
+		`},"sanitizationMetadata":{"filterVersionConfig":{"filterVersion":"v3","filterVersionAlias":"FILTER_VERSION_ALIAS_STABLE"}}}}`
+	s := newArmorScript(t, func(int, string) (int, string) { return http.StatusOK, versioned })
+	p := pluginWithStub(s.modelArmorStub)
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(200<<10))), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	assertPassThrough(t, res, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Greater(t, data.ChunkCount, 1)
+	assert.Equal(t, "allowed", data.Decision)
+	assert.Equal(t, "v3", data.FilterVersion)
 }
