@@ -23,7 +23,9 @@ import (
 	"time"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 // countingDialer records every dial so a test can say how often an upstream was
@@ -256,5 +258,207 @@ func TestDiscovery_PendingConsentIsNotRemembered(t *testing.T) {
 
 	if got := dialer.count("https://a.example.com/mcp"); got != 2 {
 		t.Fatalf("dialled %d times, want 2: a consent requirement must not be cached", got)
+	}
+}
+
+func seedSnapshot(t *testing.T, cache *mapCache, reg *registrydomain.Registry, items []Tool, age, freshFor time.Duration) string {
+	t.Helper()
+	key, ok := discoveryKey(context.Background(), reg, "tools")
+	if !ok {
+		t.Fatal("this registry should have a cacheable discovery key")
+	}
+	fetchedAt := time.Now().Add(-age)
+	cache.Set(key, discoverySnapshot[Tool]{items: items, fetchedAt: fetchedAt, staleAfter: fetchedAt.Add(freshFor)})
+	return key
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func cachedToolNames(cache *mapCache, key string) []string {
+	v, ok := cache.Get(key)
+	if !ok {
+		return nil
+	}
+	snap, ok := v.(discoverySnapshot[Tool])
+	if !ok || time.Now().After(snap.staleAfter) {
+		return nil
+	}
+	return toolNames(snap.items)
+}
+
+func TestDiscovery_AToolCallIsNotHeldByAStaleDiscovery(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	up := &gatedUpstream{
+		fakeUpstream: &fakeUpstream{tools: tools("weather", "forecast"), result: []byte(`{"ok":true}`)},
+		before:       func() { <-release },
+	}
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	cache := newMapCache()
+	key := seedSnapshot(t, cache, reg, tools("weather"), 10*time.Minute, discoveryFreshFor)
+	c := NewComposer(newCountingDialer(func(string) (Upstream, error) { return up, nil }), nil, cache, slog.New(slog.DiscardHandler))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.CallTool(context.Background(), routable(mcpClient(), reg), "weather", nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the call waited for the upstream's tools/list instead of using the snapshot it had")
+	}
+
+	close(release)
+	waitFor(t, "the background refresh", func() bool { return len(cachedToolNames(cache, key)) == 2 })
+}
+
+func TestDiscovery_ASnapshotPastItsMaxAgeIsNotServed(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	cache := newMapCache()
+	seedSnapshot(t, cache, reg, tools("old"), discoveryMaxAge+time.Minute, discoveryFreshFor)
+	up := &fakeUpstream{tools: tools("new")}
+	c := NewComposer(newCountingDialer(func(string) (Upstream, error) { return up, nil }), nil, cache, slog.New(slog.DiscardHandler))
+
+	got, err := c.ListTools(context.Background(), routable(mcpClient(), reg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if names := toolNames(got); len(names) != 1 || names[0] != "new" {
+		t.Fatalf("tools = %v, want a fresh discovery once the snapshot is too old", names)
+	}
+}
+
+func TestDiscovery_AFailedRefreshKeepsTheSnapshotAndBacksOff(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	cache := newMapCache()
+	key := seedSnapshot(t, cache, reg, tools("weather"), 10*time.Minute, discoveryFreshFor)
+	dialer := newCountingDialer(func(string) (Upstream, error) { return nil, errors.New("connection refused") })
+	c := NewComposer(dialer, nil, cache, slog.New(slog.DiscardHandler))
+	rc := routable(mcpClient(), reg)
+
+	got, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("a stale snapshot should be served while the upstream is down: %v", err)
+	}
+	if names := toolNames(got); len(names) != 1 || names[0] != "weather" {
+		t.Fatalf("tools = %v, want the snapshot's", names)
+	}
+	waitFor(t, "the failed refresh", func() bool { return len(cachedToolNames(cache, key)) == 1 })
+
+	for range 3 {
+		if _, err := c.ListTools(context.Background(), rc); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if got := dialer.count("https://a.example.com/mcp"); got != 1 {
+		t.Fatalf("dialled %d times, want 1: a failed refresh should back off like a failed discovery", got)
+	}
+}
+
+func TestDiscovery_ConsentOnRefreshDropsTheSnapshot(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	cache := newMapCache()
+	key := seedSnapshot(t, cache, reg, tools("weather"), 10*time.Minute, discoveryFreshFor)
+	c := NewComposer(newCountingDialer(func(string) (Upstream, error) {
+		return nil, &ConsentRequiredError{Provider: "github"}
+	}), nil, cache, slog.New(slog.DiscardHandler))
+	rc := routable(mcpClient(), reg)
+
+	if _, err := c.ListTools(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	waitFor(t, "the snapshot to be dropped", func() bool {
+		_, ok := cache.Get(key)
+		return !ok
+	})
+
+	var consentErr *ConsentRequiredError
+	if _, err := c.ListTools(context.Background(), rc); !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want the consent requirement once the grant is gone", err)
+	}
+}
+
+func TestDiscovery_ACallerThatGivesUpDoesNotFailTheOthers(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	up := &gatedUpstream{
+		fakeUpstream: &fakeUpstream{tools: tools("weather")},
+		before:       func() { <-release },
+	}
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	dialer := newCountingDialer(func(string) (Upstream, error) { return up, nil })
+	c := NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(mcpClient(), reg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.ListTools(ctx, rc)
+		first <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	second := make(chan error, 1)
+	go func() {
+		_, err := c.ListTools(context.Background(), rc)
+		second <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-first:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want the caller's cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a cancelled caller kept waiting on the shared discovery")
+	}
+
+	close(release)
+	if err := <-second; err != nil {
+		t.Fatalf("the other caller failed with the first one's cancellation: %v", err)
+	}
+	if _, err := c.ListTools(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := dialer.count("https://a.example.com/mcp"); got != 1 {
+		t.Fatalf("dialled %d times, want 1: the cancellation must not be remembered as a failure", got)
+	}
+}
+
+func TestDetachedFromRequest_KeepsIdentityButNotTheTrace(t *testing.T) {
+	t.Parallel()
+	principal := &identity.Principal{Issuer: "https://idp.example.com", Subject: "user-1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = identity.WithPrincipal(ctx, principal)
+	ctx = trace.NewContext(ctx, &trace.RequestTrace{})
+	ctx = trace.NewSpanContext(ctx, &trace.Span{})
+	cancel()
+
+	detached := detachedFromRequest(ctx)
+	if detached.Err() != nil {
+		t.Fatal("the refresh inherited the request's cancellation")
+	}
+	if identity.PrincipalFromContext(detached) != principal {
+		t.Fatal("the refresh lost the principal its per-user credentials depend on")
+	}
+	if trace.SpanFromContext(detached) != nil || trace.FromContext(detached) != nil {
+		t.Fatal("the refresh can still write to the request's trace")
 	}
 }
