@@ -87,6 +87,14 @@ const (
 	// says "blocked". Inspecting the truncated body again would only record
 	// "allowed" right after it, so the leg is skipped. Not a coverage gap.
 	skipReasonStreamCut = "stream_cut"
+	// skipReasonStreamFinalInspected marks the post_response leg of a stream
+	// whose final block the stream guard already evaluated in full under this
+	// same policy entry. The drained body is the text that block carried, so a
+	// second evaluation only adds a duplicate output row to Activity. A stream
+	// whose final block was not evaluated in full (degraded, failed call,
+	// accumulation cap, fail-open) keeps this audit: it is then the only
+	// full-text pass. Not a coverage gap.
+	skipReasonStreamFinalInspected = "stream_final_inspected"
 )
 
 // Why a streamed leg stopped being inspected the way the policy asked. The
@@ -969,6 +977,9 @@ func outputInspectSkipReason(stage policy.Stage, resp *infracontext.ResponseCont
 		// never reads as "no body".
 		if resp.StreamCut {
 			return skipReasonStreamCut
+		}
+		if streamGuard && resp.StreamFinalInspected {
+			return skipReasonStreamFinalInspected
 		}
 	default:
 		return skipReasonStreamingMismatch

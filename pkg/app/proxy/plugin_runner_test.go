@@ -896,6 +896,13 @@ func TestForward_PostResponseWaitsForTheCutDrain(t *testing.T) {
 // the plugin skips a cut stream only because the proxy says the stream was cut.
 func postResponseStreamCut(t *testing.T, p *streamInspectorPlugin, lines [][]byte, drained <-chan appplugins.ExecInput) bool {
 	t.Helper()
+	return postResponseContext(t, p, lines, drained).StreamCut
+}
+
+// postResponseContext is the same drive, returning the whole response context
+// post_response saw so a test can read any flag the proxy stamps on it.
+func postResponseContext(t *testing.T, p *streamInspectorPlugin, lines [][]byte, drained <-chan appplugins.ExecInput) *infracontext.ResponseContext {
+	t.Helper()
 	gatewayID := ids.New[ids.GatewayKind]()
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
@@ -919,11 +926,11 @@ func postResponseStreamCut(t *testing.T, p *streamInspectorPlugin, lines [][]byt
 	case in := <-drained:
 		require.Equal(t, policy.StagePostResponse, in.Stage)
 		require.NotNil(t, in.Response)
-		return in.Response.StreamCut
+		return in.Response
 	case <-time.After(2 * time.Second):
 		t.Fatal("post_response never ran")
 	}
-	return false
+	return nil
 }
 
 func streamCutTestLines() [][]byte {
@@ -966,5 +973,29 @@ func TestForward_PostResponseSeesWhetherTheStreamWasCut(t *testing.T) {
 		p := newStreamCutPlugin(seen)
 		p.segErr = errors.New("guard unavailable")
 		assert.False(t, postResponseStreamCut(t, p, streamCutTestLines(), seen))
+	})
+}
+
+// ENG-1738: post_response skips its own full-text pass only because the proxy
+// says the stream guard already evaluated the final block in full. Anything
+// less than that must leave the flag false so the audit stays the only pass.
+func TestForward_PostResponseSeesWhetherTheFinalBlockWasInspected(t *testing.T) {
+	t.Run("a completed stream whose final block was evaluated", func(t *testing.T) {
+		seen := make(chan appplugins.ExecInput, 1)
+		p := newStreamCutPlugin(seen)
+		assert.True(t, postResponseContext(t, p, streamCutTestLines(), seen).StreamFinalInspected)
+	})
+	t.Run("a degraded fail_open stream never had a final block evaluated", func(t *testing.T) {
+		seen := make(chan appplugins.ExecInput, 1)
+		p := newStreamCutPlugin(seen)
+		p.segErr = errors.New("guard unavailable")
+		assert.False(t, postResponseContext(t, p, streamCutTestLines(), seen).StreamFinalInspected)
+	})
+	t.Run("a cut stream is not final inspected", func(t *testing.T) {
+		seen := make(chan appplugins.ExecInput, 1)
+		p := newStreamCutPlugin(seen)
+		p.verdict = &appplugins.SegmentVerdict{Block: true, Type: "guardrail_violation", Message: "blocked mid-stream"}
+		p.blockSeq = 2
+		assert.False(t, postResponseContext(t, p, streamCutTestLines(), seen).StreamFinalInspected)
 	})
 }

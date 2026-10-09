@@ -1005,3 +1005,27 @@ func TestExecutor_RunStreamSegment_HandedBackFailuresAreNeverRetiredByTheExecuto
 	assert.Equal(t, 5, report.FailedEvals, "still counted as failed evals")
 	assert.NotEqual(t, StreamFallbackEntryRetired, report.FallbackReason)
 }
+
+// ENG-1738: the guard's Truncated flag cannot see an entry's own window, which
+// narrows a copy of the segment. The outcome must say so, or post_response
+// skips an audit for an entry that never read the whole response.
+func TestExecutor_RunStreamSegment_CountsEntriesHandedOnlyATail(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_full", mode: policy.ModeEnforce},
+		entrySpec{slug: "b_small_window", mode: policy.ModeEnforce},
+	)
+	for _, pol := range pols {
+		if pol.Slug == "b_small_window" {
+			pol.Settings["max_accumulated_bytes"] = 5
+		}
+	}
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	out, err := runSegment(t, exec, in, segment(1, true))
+
+	require.NoError(t, err)
+	assert.Equal(t, "head tail", inspectors["a_full"].seen[0].Accumulated)
+	assert.Equal(t, " tail", inspectors["b_small_window"].seen[0].Accumulated)
+	assert.Equal(t, 1, out.WindowedEntries)
+	assert.Zero(t, out.FailedEntries)
+}

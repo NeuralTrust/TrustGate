@@ -244,14 +244,21 @@ type streamGuard struct {
 	// not always the whole of it: past the accumulation cap a call carries a
 	// tail window, and the bytes in front of that window are text no verdict of
 	// that block speaks for.
-	inspected  string
-	sentChars  int
-	finalSent  bool
-	failures   int
-	silenced   bool
-	stopped    bool
-	handedOff  bool
-	cutMessage string
+	inspected string
+	sentChars int
+	finalSent bool
+	// finalInspected is set only once the final block's call came back with a
+	// verdict from every entry and every entry was handed the whole accumulated text
+	// (neither the guard's cap nor an entry's own window cut it). finalSent
+	// is latched before the call is made, so it also covers a final block whose
+	// call failed or whose text was a tail window; this is the stricter fact
+	// post_response needs to know its own full-text pass would add nothing.
+	finalInspected bool
+	failures       int
+	silenced       bool
+	stopped        bool
+	handedOff      bool
+	cutMessage     string
 	// native marks a Bedrock eventstream: the items are whole frames, and a mask
 	// is patched into them in place.
 	native bool
@@ -923,6 +930,9 @@ func (g *streamGuard) call(
 		g.callFailures++
 	}
 	g.remember(outcome)
+	if seg.Final && !seg.Truncated && outcome != nil && outcome.FailedEntries == 0 && outcome.WindowedEntries == 0 {
+		g.finalInspected = true
+	}
 	return outcome, nil
 }
 
@@ -1424,6 +1434,13 @@ func (g *streamGuard) drainForUsage() {
 // own never set it. It must be read after the returned sequence is exhausted,
 // like cutBarrier.
 func (g *streamGuard) wasCut() bool { return g.stopped }
+
+// wasFinalInspected reports whether the stream's final block was evaluated in
+// full by every entry: the call came back, no entry failed, and the text it
+// carried was not a tail window. A cut, a degrade, a failed or skipped final
+// call and a capped accumulation all leave it false. It must be read after the
+// returned sequence is exhausted, like wasCut.
+func (g *streamGuard) wasFinalInspected() bool { return g.finalInspected }
 
 // cutBarrier is closed once the drain a cut handed the upstream to has finished
 // reading it. It is nil when no cut handed anything off, which is every stream
