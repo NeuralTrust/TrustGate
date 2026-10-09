@@ -281,8 +281,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return p.externalFailure(ctx, in, cfg, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 
-	if in.Stage == policy.StagePreResponse && !pluginutil.ResponseCarriesCompletion(in.Response) {
-		pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUpstreamStatus)
+	if in.Stage == policy.StagePreResponse && pluginutil.SkipWithoutCompletion(in.Event, string(in.Stage), in.Response) {
 		return passThrough(), nil
 	}
 
@@ -292,8 +291,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUndecodableResponse)
 			return passThrough(), nil
 		}
-		reason, detail := pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format)
-		return p.externalFailure(ctx, in, cfg, reason, detail, decErr)
+		if !pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format) {
+			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonNonChatRoute)
+			return passThrough(), nil
+		}
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", decErr)
 	}
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil

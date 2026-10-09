@@ -15,9 +15,7 @@
 package openaimoderation
 
 import (
-	"bytes"
 	"context"
-	"mime/multipart"
 	"net/http"
 	"testing"
 
@@ -27,55 +25,28 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/pluginutiltest"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-func multipartBody(t *testing.T, fields map[string]string, fileField, fileName string, file []byte) ([]byte, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	for k, v := range fields {
-		require.NoError(t, w.WriteField(k, v))
-	}
-	part, err := w.CreateFormFile(fileField, fileName)
-	require.NoError(t, err)
-	_, err = part.Write(file)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-	return buf.Bytes(), w.FormDataContentType()
-}
-
 // The routes a policy covers include the ones that carry no chat messages:
-// image generation, audio and files. Their bodies are not chat JSON, so the
-// adapters either have no decoder for them or cannot parse them as one; that is
-// the route's shape, not anything the client got wrong, so it must not refuse
-// the call.
-func TestNonChatRoutesAreNotRefusedInEnforce(t *testing.T) {
+// image generation, audio and files. Their bodies are not chat JSON, so there is
+// no text for the guardrail to judge: that is the route's shape, not anything
+// the client got wrong, so the leg is a recorded skip and never a refusal.
+func TestNonChatRoutesAreSkippedNotRefused(t *testing.T) {
 	t.Parallel()
-	transcription, _ := multipartBody(t, map[string]string{"model": "whisper-1"}, "file", "speech.mp3", []byte("ID3\x03\x00\x00\x00\x00\x00\x21"))
-	upload, _ := multipartBody(t, map[string]string{"purpose": "fine-tune"}, "file", "train.jsonl", []byte(`{"prompt":"a","completion":"b"}`))
-	cases := []struct {
-		name       string
-		capability string
-		format     string
-		body       []byte
-	}{
-		{"image generation", "images", "openai_images", []byte(`{"model":"dall-e-3","prompt":"a white siamese cat","n":1,"size":"1024x1024"}`)},
-		{"speech", "audio_speech", "openai_audio", []byte(`{"model":"tts-1","input":"The quick brown fox jumped over the lazy dog.","voice":"alloy"}`)},
-		{"transcription upload", "audio_transcription", "openai_audio", transcription},
-		{"file upload", "files", "openai_files", upload},
-	}
-	for _, tc := range cases {
+	for _, tc := range pluginutiltest.NonChatRoutes(t) {
 		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
-			t.Run(tc.name+" "+string(mode), func(t *testing.T) {
+			t.Run(tc.Name+" "+string(mode), func(t *testing.T) {
 				t.Parallel()
 				f := &fakeModerator{response: flaggedHateResponse()}
 				srv := newModeratorServer(t, f)
 				p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
 				req := requestContext()
-				req.Body = tc.body
-				req.SourceFormat = tc.format
-				req.ProxyCapability = tc.capability
+				req.Body = tc.Body
+				req.SourceFormat = tc.Format
+				req.ProxyCapability = tc.Capability
 				event, span := newEvent()
 				in := execInput(policy.StagePreRequest, mode, blockSettings(), req, nil, event)
 
@@ -84,10 +55,9 @@ func TestNonChatRoutesAreNotRefusedInEnforce(t *testing.T) {
 				require.NotNil(t, res)
 				assert.Equal(t, http.StatusOK, res.StatusCode)
 				assert.Zero(t, f.count())
-				data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
-				require.True(t, ok)
-				assert.Equal(t, "failed_open", data.Decision)
-				assert.Equal(t, "availability", data.FailureClass)
+				skipped, reason := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
+				assert.True(t, skipped)
+				assert.Equal(t, pluginutil.SkipReasonNonChatRoute, reason)
 			})
 		}
 	}
@@ -99,7 +69,7 @@ func TestMalformedChatBodyStillBlocksOnAChatRoute(t *testing.T) {
 	srv := newModeratorServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
 	req := requestContext()
-	req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+	req.Body = pluginutiltest.MalformedChatBody
 	req.ProxyCapability = "chat"
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), req, nil, nil)
 
@@ -113,36 +83,29 @@ func TestMalformedChatBodyStillBlocksOnAChatRoute(t *testing.T) {
 // pre_response also runs on what the upstream answered when it did not produce
 // a completion: an error page from a proxy in front of it, a provider error
 // envelope, or audio bytes. None of those is content the client steered into
-// the guardrail, so none refuses the call.
-func TestUninspectableResponsesAreNotRefusedInEnforce(t *testing.T) {
+// the guardrail, so each is a recorded skip and never a refusal.
+func TestUninspectableResponsesAreSkippedNotRefused(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		status int
-		format string
-		body   []byte
-	}{
-		{"html 503", http.StatusServiceUnavailable, "openai", []byte("<html><body><h1>503 Service Unavailable</h1></body></html>")},
-		{"plain text envoy error", http.StatusServiceUnavailable, "openai", []byte("upstream connect error or disconnect/reset before headers. reset reason: connection failure")},
-		{"cohere 429", http.StatusTooManyRequests, "cohere", []byte(`{"message":"You are using a Trial key, which is limited to 40 API calls / minute."}`)},
-		{"speech mp3 on the audio format", http.StatusOK, "openai_audio", []byte("ID3\x03\x00\x00\x00\x00\x00\x21\xff\xfb\x90\x64")},
-		{"speech mp3 on a chat format", http.StatusOK, "openai", []byte("ID3\x03\x00\x00\x00\x00\x00\x21\xff\xfb\x90\x64")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range pluginutiltest.UninspectableResponses() {
+		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 			f := &fakeModerator{response: flaggedHateResponse()}
 			srv := newModeratorServer(t, f)
 			p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
 			req := requestContext()
-			req.SourceFormat = tc.format
+			req.SourceFormat = tc.Format
+			event, span := newEvent()
 			in := execInput(policy.StagePreResponse, policy.ModeEnforce, blockSettings(), req,
-				&infracontext.ResponseContext{StatusCode: tc.status, Body: tc.body}, nil)
+				&infracontext.ResponseContext{StatusCode: tc.Status, Body: tc.Body}, event)
 
 			res, err := p.Execute(context.Background(), in)
 			require.NoError(t, err)
 			require.NotNil(t, res)
 			assert.Equal(t, http.StatusOK, res.StatusCode)
 			assert.Zero(t, f.count())
+			skipped, reason := pluginutiltest.SkipOf(t, span.PluginAttrsCopy().Extras)
+			assert.True(t, skipped)
+			assert.Equal(t, tc.SkipReason, reason)
 		})
 	}
 }

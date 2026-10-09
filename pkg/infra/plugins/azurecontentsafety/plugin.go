@@ -157,8 +157,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if decErr != nil {
-		reason, detail := pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format)
-		return p.externalFailure(ctx, in, cfg, 0, reason, detail, decErr)
+		if !pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format) {
+			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonNonChatRoute)
+			return passThrough(), nil
+		}
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", decErr)
 	}
 	if creq == nil {
 		return passThrough(), nil
