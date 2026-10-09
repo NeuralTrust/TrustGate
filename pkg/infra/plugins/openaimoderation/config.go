@@ -43,16 +43,22 @@ const (
 // client sets stream: true is not a guardrail. A policy opts out with
 // streaming.enabled: false.
 //
-// MaxAccumulatedBytes stays at 256 KiB: OpenAI documents no input size limit
-// for the moderations endpoint, so there is nothing authoritative to fit to.
+// Each block sends at most maxStreamWindowBytes of the accumulated text. OpenAI
+// documents no input size limit for the moderations endpoint, so the window is
+// fitted to the deadline instead: the classifier's latency grows with the text,
+// and the 1.5 s a block waits is spent long before a quarter of a megabyte. It
+// stays above 30 blocks of the default cadence, so the text that straddles two
+// blocks is always inside the window.
 var streamingDefaults = pluginutil.StreamingDefaults{
 	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 1024,
 	MaxHoldMS:            500,
-	MaxAccumulatedBytes:  262144,
+	MaxAccumulatedBytes:  maxStreamWindowBytes,
 	GuardTimeout:         1500 * time.Millisecond,
 }
+
+const maxStreamWindowBytes = 32768
 
 type Settings struct {
 	APIKey         string             `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential

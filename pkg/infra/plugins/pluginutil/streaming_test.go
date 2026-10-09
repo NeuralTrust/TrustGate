@@ -514,3 +514,13 @@ func TestStreamFailedOpen(t *testing.T) {
 		})
 	}
 }
+
+func TestOptionsWithinCapsTheWindowWhateverTheSettingAsks(t *testing.T) {
+	t.Parallel()
+	if got := (StreamingSettings{MaxAccumulatedBytes: 1 << 20}).OptionsWithin(32768).MaxAccumulatedBytes; got != 32768 {
+		t.Fatalf("window = %d, want the 32768 ceiling", got)
+	}
+	if got := (StreamingSettings{MaxAccumulatedBytes: 4096}).OptionsWithin(32768).MaxAccumulatedBytes; got != 4096 {
+		t.Fatalf("window = %d, want the smaller window the policy asked for", got)
+	}
+}

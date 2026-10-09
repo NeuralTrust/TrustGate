@@ -36,8 +36,13 @@ const (
 	defaultStreamingHeadChars            = 400
 	defaultStreamingMinCharsBetweenEvals = 2048
 	defaultStreamingMaxHoldMS            = 800
-	defaultStreamingMaxAccumulatedBytes  = 262144
-	defaultStreamingGuardTimeout         = 2 * time.Second
+	// maxStreamWindowBytes is the most of the accumulated text one evaluate call
+	// carries. The block waits at most defaultStreamingGuardTimeout for the token
+	// and the call together, so the window is fitted to that deadline and not to
+	// what the detectors accept.
+	maxStreamWindowBytes                = 65536
+	defaultStreamingMaxAccumulatedBytes = maxStreamWindowBytes
+	defaultStreamingGuardTimeout        = 2 * time.Second
 )
 
 type Settings struct {
