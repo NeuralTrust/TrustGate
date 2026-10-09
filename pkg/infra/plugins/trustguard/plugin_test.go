@@ -563,6 +563,75 @@ func assertFailedOpen(t *testing.T, res *appplugins.Result, span *trace.Span, re
 	assert.Equal(t, decisionFailedOpen, attrs.Decision, "the span decision is what the policy chain shows")
 }
 
+// assertTransformBlocked pins a mask TrustGuard asked for that the plugin cannot
+// write back: the finding is refused with the plugin's own block, recorded
+// blocked and degraded, never failed_open.
+func assertTransformBlocked(t *testing.T, res *appplugins.Result, err error, span *trace.Span, degradedReason string) {
+	t.Helper()
+	require.Nil(t, res, "a mask that cannot be applied must not forward the original")
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "want a *PluginError, got %v", err)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.Equal(t, typeBlocked, pe.Type)
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	require.True(t, ok, "a refusal must leave extras, got %T", attrs.Extras)
+	assert.Equal(t, decisionBlocked, extras.Decision)
+	assert.False(t, extras.FailedOpen)
+	assert.Equal(t, failureReasonTransformFailed, extras.FailureReason)
+	assert.Equal(t, "input", extras.FailureClass)
+	assert.True(t, extras.Degraded)
+	assert.Equal(t, degradedReason, extras.DegradedReason)
+	assert.Equal(t, "block", attrs.Decision, "the span decision is what the policy chain shows")
+}
+
+// A 413 is TrustGuard refusing the body for its size: the request's own content.
+// A mode that blocks refuses the call as uninspectable (failed_closed), observe
+// only records it, and a 5xx from the same engine stays an availability failure.
+func TestExecutePayloadTooLargeByMode(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		status   int
+		mode     policy.Mode
+		decision string
+		reason   string
+		class    string
+		refused  bool
+	}{
+		{"413 enforce", http.StatusRequestEntityTooLarge, policy.ModeEnforce, decisionFailedClosed, failureReasonPayloadTooLarge, "input", true},
+		{"413 observe", http.StatusRequestEntityTooLarge, policy.ModeObserve, decisionFailedOpen, failureReasonPayloadTooLarge, "input", false},
+		{"500 enforce", http.StatusInternalServerError, policy.ModeEnforce, decisionFailedOpen, failureReasonTransport, "availability", false},
+		{"502 enforce", http.StatusBadGateway, policy.ModeEnforce, decisionFailedOpen, failureReasonTransport, "availability", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{status: tc.status}
+			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+			event, span := newEvent()
+			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, tc.mode, settings(""), requestContext(), nil, event))
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "want a *PluginError, got %v", err)
+				assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+				assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+				assert.Nil(t, res)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				assert.Equal(t, http.StatusOK, res.StatusCode)
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.Equal(t, tc.decision, extras.Decision)
+			assert.Equal(t, tc.reason, extras.FailureReason)
+			assert.Equal(t, tc.class, extras.FailureClass)
+			assert.Equal(t, !tc.refused, extras.FailedOpen)
+		})
+	}
+}
+
 func TestExecuteTransportErrorIgnoresAStoredFailClosed(t *testing.T) {
 	t.Parallel()
 
@@ -613,8 +682,8 @@ func TestExecutePersistent401FailsOpenWhateverIsStored(t *testing.T) {
 }
 
 // A mask TrustGuard asks for on the response that the plugin cannot write back
-// leaves the upstream response exactly as it came: no half-rewritten body.
-func TestExecuteResponseTransformFailureForwardsTheResponse(t *testing.T) {
+// refuses the response: the upstream body is not released.
+func TestExecuteResponseTransformFailureBlocks(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusTransform}}
@@ -623,10 +692,27 @@ func TestExecuteResponseTransformFailureForwardsTheResponse(t *testing.T) {
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
 	event, span := newEvent()
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp, event))
-	require.NoError(t, err)
-	assertFailedOpen(t, res, span, failureReasonTransformFailed)
-	assert.Nil(t, res.Body, "the plugin writes no body of its own")
+	assertTransformBlocked(t, res, err, span, reasonTransformNoPayload)
 	assert.Equal(t, openAIResponseBody(), resp.Body)
+}
+
+// Observe never applies a transform, so a mask it could not write back cannot
+// arise: the finding is reported and the request goes on.
+func TestExecuteTransformInObserveNeverReachesTheUnappliableMask(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusTransform}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+
+	event, span := newEvent()
+	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil, event))
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	assert.Equal(t, decisionReported, extras.Decision)
+	assert.False(t, extras.Degraded)
+	assert.Empty(t, extras.FailureReason)
 }
 
 func TestExecutePreResponseBlockReturns403(t *testing.T) {
@@ -1436,9 +1522,10 @@ func TestExecuteTransformObserveDoesNotRewrite(t *testing.T) {
 	}
 }
 
-// A mask the plugin cannot apply is a failure on our side: the original content
-// goes on, unmasked, and the span says so and why, whatever on_error is stored.
-func TestExecuteTransformMissingPayloadFailsOpen(t *testing.T) {
+// A mask the plugin cannot apply over a finding TrustGuard confirmed is refused:
+// forwarding the original would send the data the detector flagged. Whatever
+// on_error is stored changes nothing.
+func TestExecuteTransformMissingPayloadBlocks(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusTransform, TraceID: "trace-empty"}}
@@ -1447,25 +1534,17 @@ func TestExecuteTransformMissingPayloadFailsOpen(t *testing.T) {
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
-	require.NoError(t, err)
-	assertFailedOpen(t, res, span, failureReasonTransformFailed)
-	extras := span.PluginAttrsCopy().Extras.(guardData)
-	assert.True(t, extras.Degraded)
-	assert.Equal(t, reasonTransformNoPayload, extras.DegradedReason)
+	assertTransformBlocked(t, res, err, span, reasonTransformNoPayload)
 
 	set := settings("")
-	set["on_error"] = "fail_closed"
-	set["on_mask_failure"] = "block"
+	set["on_error"] = "fail_open"
+	set["on_mask_failure"] = "pass"
 	event, span = newEvent()
 	res, err = p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
-	require.NoError(t, err)
-	assertFailedOpen(t, res, span, failureReasonTransformFailed)
-	extras = span.PluginAttrsCopy().Extras.(guardData)
-	assert.True(t, extras.Degraded)
-	assert.Equal(t, reasonTransformNoPayload, extras.DegradedReason)
+	assertTransformBlocked(t, res, err, span, reasonTransformNoPayload)
 }
 
-func TestExecuteTransformLineCountMismatchFailsOpen(t *testing.T) {
+func TestExecuteTransformLineCountMismatchBlocks(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: transformResponse("be safe\nhello\n[MASKED_PII]")}
@@ -1473,15 +1552,7 @@ func TestExecuteTransformLineCountMismatchFailsOpen(t *testing.T) {
 
 	event, span := newEvent()
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event))
-	require.NoError(t, err)
-	assertFailedOpen(t, res, span, failureReasonTransformFailed)
-
-	set := settings("")
-	set["on_error"] = "fail_closed"
-	event, span = newEvent()
-	res, err = p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
-	require.NoError(t, err)
-	assertFailedOpen(t, res, span, failureReasonTransformFailed)
+	assertTransformBlocked(t, res, err, span, reasonTransformEncodeFailed)
 }
 
 // Enforce + transform on MCP masks the tool arguments, the same way the LLM path
@@ -2006,29 +2077,46 @@ func TestExecuteMCPTransformUsesEnvelopePayload(t *testing.T) {
 	}
 }
 
-func TestExecuteUndecodableRequestFailsOpen(t *testing.T) {
+// A body the plugin cannot read is the client's: in a mode that blocks the call
+// is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteUndecodableRequestIsAnInputFailure(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
-	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, decisionFailedClosed, true},
+		{policy.ModeObserve, decisionFailedOpen, false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
-	req := requestContext()
-	req.Body = []byte(`{"model":"gpt-4o-mini","messages":123}`)
-	event, span := newEvent()
-	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event))
-	if err != nil {
-		t.Fatalf("expected fail-open pass, got error %v", err)
-	}
-	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
-		t.Fatalf("expected pass-through on an undecodable body, got %+v", res)
-	}
-	if f.count() != 0 {
-		t.Fatalf("expected no guard call for an undecodable body, got %d hits", f.count())
-	}
-	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-	if !ok || !extras.FailedOpen || extras.Decision != decisionFailedOpen {
-		t.Fatalf("extras = %+v, want failed_open decision", span.PluginAttrsCopy().Extras)
+			req := requestContext()
+			req.Body = []byte(`{"model":"gpt-4o-mini","messages":123}`)
+			event, span := newEvent()
+			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, tc.mode, settings(""), req, nil, event))
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else if err != nil || res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+				t.Fatalf("observe must pass through, got res=%+v err=%v", res, err)
+			}
+			if f.count() != 0 {
+				t.Fatalf("expected no guard call for an undecodable body, got %d hits", f.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			if !ok || extras.Decision != tc.decision || extras.FailureReason != failureReasonPayloadUnreadable ||
+				extras.FailureClass != "input" || extras.FailedOpen != !tc.refused {
+				t.Fatalf("extras = %+v, want %s/payload_unreadable/input", span.PluginAttrsCopy().Extras, tc.decision)
+			}
+		})
 	}
 }
 
@@ -2172,7 +2260,7 @@ func TestStreamedPreResponseLegReasonFollowsStreamingSetting(t *testing.T) {
 			}
 			event, span := newEvent()
 			in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, set, requestContext(), &infracontext.ResponseContext{Streaming: true}, event)
-			if _, _, skipped := p.llmInspectionPayload(context.Background(), in, directionOutput); !skipped {
+			if _, _, halt := p.llmInspectionPayload(context.Background(), in, directionOutput); halt == nil {
 				t.Fatal("expected the leg to be skipped")
 			}
 			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
@@ -2280,13 +2368,13 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 			event, span := newEvent()
 			in := execInputWithEvent(tc.stage, policy.ModeEnforce, settings(""), requestContext(), tc.resp, event)
 
-			var skipped bool
+			var halt *inspectionHalt
 			if tc.mcp {
-				_, _, skipped = p.mcpInspectionPayload(context.Background(), in, tc.direction)
+				_, _, halt = p.mcpInspectionPayload(context.Background(), in, tc.direction)
 			} else {
-				_, _, skipped = p.llmInspectionPayload(context.Background(), in, tc.direction)
+				_, _, halt = p.llmInspectionPayload(context.Background(), in, tc.direction)
 			}
-			if !skipped {
+			if halt == nil {
 				t.Fatal("expected the leg to be skipped")
 			}
 

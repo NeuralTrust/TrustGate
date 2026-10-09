@@ -57,6 +57,15 @@ var rateLimitHeaderNames = []string{
 	"X-RateLimit-Reason",
 }
 
+// payloadTooLargeError is TrustGuard refusing the body for its size (HTTP 413).
+// It is a verdict on the request's own content, so unlike a transport failure
+// it is classified as input.
+type payloadTooLargeError struct{}
+
+func (e *payloadTooLargeError) Error() string {
+	return "trustguard: payload too large"
+}
+
 type rateLimitedError struct {
 	headers map[string][]string
 	body    []byte
@@ -171,6 +180,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 			headers: copyRateLimitHeaders(res.Header),
 			body:    append([]byte(nil), raw...),
 		}
+	}
+	if res.StatusCode == http.StatusRequestEntityTooLarge {
+		return nil, &payloadTooLargeError{}
 	}
 	if res.StatusCode == http.StatusServiceUnavailable {
 		return nil, &entitlementsUnavailableError{body: append([]byte(nil), raw...)}

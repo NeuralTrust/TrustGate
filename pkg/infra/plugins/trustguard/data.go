@@ -139,17 +139,20 @@ type GuardFinding struct {
 }
 
 type guardData struct {
-	Direction      string         `json:"direction,omitempty"`
-	Status         string         `json:"status,omitempty"`
-	Decision       string         `json:"decision,omitempty"`
-	TraceID        string         `json:"trace_id,omitempty"`
-	RequestID      string         `json:"request_id,omitempty"`
-	FindingsCount  int            `json:"findings_count,omitempty"`
-	Findings       []GuardFinding `json:"findings,omitempty"`
-	FailedOpen     bool           `json:"failed_open,omitempty"`
-	FailureReason  string         `json:"failure_reason,omitempty"`
-	Degraded       bool           `json:"degraded,omitempty"`
-	DegradedReason string         `json:"degraded_reason,omitempty"`
+	Direction     string         `json:"direction,omitempty"`
+	Status        string         `json:"status,omitempty"`
+	Decision      string         `json:"decision,omitempty"`
+	TraceID       string         `json:"trace_id,omitempty"`
+	RequestID     string         `json:"request_id,omitempty"`
+	FindingsCount int            `json:"findings_count,omitempty"`
+	Findings      []GuardFinding `json:"findings,omitempty"`
+	FailedOpen    bool           `json:"failed_open,omitempty"`
+	FailureReason string         `json:"failure_reason,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was TrustGuard's or the request's own content.
+	FailureClass   string `json:"failure_class,omitempty"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	DegradedReason string `json:"degraded_reason,omitempty"`
 	// Skipped marks a leg the plugin decided not to inspect at all. Without
 	// it, "inspected and clean" and "never looked" produce an identical
 	// event, which is what let response coverage lapse unnoticed. Both fields
@@ -241,6 +244,15 @@ func streamOutcome(streamID string, r appplugins.StreamReport) guardData {
 	switch {
 	case r.CutAtEval > 0:
 		data.Decision = decisionBlocked
+		if r.CutOnFailure {
+			data.FailureReason, data.FailureClass = failureOfCut(r)
+			if appplugins.IsMaskOverFinding(r.FailureDetail) {
+				data.Degraded = true
+				data.DegradedReason = transformReasonOf(r.FailureDetail)
+			} else {
+				data.Decision = decisionFailedClosed
+			}
+		}
 	case r.Evals == 0:
 		data.Skipped = true
 		data.SkipReason = skipReasonProviderNotStreaming

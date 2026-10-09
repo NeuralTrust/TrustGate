@@ -265,9 +265,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return p.guardFailure(ctx, in, direction, failureReasonGatewayIDMissing, nil)
 	}
 
-	payload, tgt, skip := p.inspectionPayload(ctx, in, direction, mcpMode)
-	if skip {
-		return passThrough(), nil
+	payload, tgt, halt := p.inspectionPayload(ctx, in, direction, mcpMode)
+	if halt != nil {
+		return halt.result, halt.err
 	}
 
 	// A pod that cannot reach TrustGuard at all — no URL, no credentials: a
@@ -321,6 +321,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		if errors.As(err, &limited) {
 			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
 			return nil, rateLimitError(limited)
+		}
+		var tooLarge *payloadTooLargeError
+		if errors.As(err, &tooLarge) {
+			return p.guardFailure(ctx, in, direction, failureReasonPayloadTooLarge, err)
 		}
 		var unavailable *entitlementsUnavailableError
 		if errors.As(err, &unavailable) {
@@ -442,7 +446,7 @@ func (p *Plugin) inspectionPayload(
 	in appplugins.ExecInput,
 	direction string,
 	mcpMode bool,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	if mcpMode {
 		return p.mcpInspectionPayload(ctx, in, direction)
 	}
@@ -453,7 +457,7 @@ func (p *Plugin) mcpInspectionPayload(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	direction string,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	if direction == directionInput {
 		if len(in.Request.Body) == 0 || strings.TrimSpace(mcpInputText(in.Request.Body)) == "" {
@@ -467,10 +471,9 @@ func (p *Plugin) mcpInspectionPayload(
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPRequest(reqBody, masked) }
 		payload, err := mcpToolsCallPayload(reqBody)
 		if err != nil {
-			p.payloadFailure(ctx, in, direction, "trustguard mcp tools/call payload build failed, failing open", err)
-			return nil, tgt, true
+			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard mcp tools/call payload build failed", err)
 		}
-		return payload, tgt, false
+		return payload, tgt, nil
 	}
 	// An MCP response never reaches the stream guard (the MCP runner buffers
 	// the result), so it is never labelled as one.
@@ -487,17 +490,16 @@ func (p *Plugin) mcpInspectionPayload(
 	tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPResponse(respBody, masked) }
 	payload, err := mcpToolsResultPayload(respBody)
 	if err != nil {
-		p.payloadFailure(ctx, in, direction, "trustguard mcp tools/result payload build failed, failing open", err)
-		return nil, tgt, true
+		return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard mcp tools/result payload build failed", err)
 	}
-	return payload, tgt, false
+	return payload, tgt, nil
 }
 
 func (p *Plugin) llmInspectionPayload(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	direction string,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
@@ -509,8 +511,7 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		request, decodeErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 		if adapter.IsRequestDecodeError(decodeErr) && adapter.IsChatRequest(in.Request.ProxyCapability, format) {
-			p.payloadFailure(ctx, in, direction, "trustguard request body decode failed, failing open", decodeErr)
-			return nil, tgt, true
+			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard request body decode failed", decodeErr)
 		}
 		if request != nil && request.DroppedInputItems > 0 {
 			p.debug(ctx, "trustguard request input items left out of inspection",
@@ -535,10 +536,9 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		payload, payloadErr := llmRequestPayloadWithAttachments(request, attachments)
 		if payloadErr != nil {
-			p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed, failing open", payloadErr)
-			return nil, tgt, true
+			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed", payloadErr)
 		}
-		return payload, tgt, false
+		return payload, tgt, nil
 	}
 	if reason := outputInspectSkipReason(in.Stage, in.Response, p.streamGuardOwns(in)); reason != "" {
 		return p.skipInspection(ctx, in, tgt, direction, reason)
@@ -562,10 +562,9 @@ func (p *Plugin) llmInspectionPayload(
 	}
 	payload, payloadErr := llmResponsePayload(response, tools)
 	if payloadErr != nil {
-		p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed, failing open", payloadErr)
-		return nil, tgt, true
+		return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed", payloadErr)
 	}
-	return payload, tgt, false
+	return payload, tgt, nil
 }
 
 func (p *Plugin) canonicalResponse(in appplugins.ExecInput, format adapter.Format) (*adapter.CanonicalResponse, []adapter.CanonicalTool) {
@@ -596,7 +595,7 @@ func (p *Plugin) skipInspection(
 	in appplugins.ExecInput,
 	tgt transformTarget,
 	direction, reason string,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	p.debug(ctx, "trustguard leg not inspected, skipping",
 		slog.String("plugin", PluginName),
 		slog.String("stage", string(in.Stage)),
@@ -604,18 +603,20 @@ func (p *Plugin) skipInspection(
 		slog.String("reason", reason),
 	)
 	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason})
-	return nil, tgt, true
+	return nil, tgt, &inspectionHalt{result: passThrough()}
 }
 
-func (p *Plugin) payloadFailure(ctx context.Context, in appplugins.ExecInput, direction, message string, err error) {
-	recordEvaluateFailure(ctx, failureReasonPayloadUnreadable)
-	p.warn(ctx, message, slog.String("plugin", PluginName), slog.Any("error", err))
-	recordGuardOutcome(in.Event, guardData{
-		Direction:     direction,
-		Decision:      decisionFailedOpen,
-		FailedOpen:    true,
-		FailureReason: failureReasonPayloadUnreadable,
-	})
+// inspectionHalt is what the payload builders return when there is nothing to
+// send: the leg was skipped (a pass-through) or its payload could not be built
+// and the failure was resolved, which a mode that blocks answers with a refusal.
+type inspectionHalt struct {
+	result *appplugins.Result
+	err    error
+}
+
+func (p *Plugin) payloadFailure(ctx context.Context, in appplugins.ExecInput, direction, message string, err error) *inspectionHalt {
+	result, refusal := p.guardFailure(ctx, in, direction, failureReasonPayloadUnreadable, fmt.Errorf("%s: %w", message, err))
+	return &inspectionHalt{result: result, err: refusal}
 }
 
 func (p *Plugin) applyTransform(
@@ -651,22 +652,22 @@ func (p *Plugin) applyTransform(
 		}
 		if tgt.apply == nil {
 			if _, ok := transformedInput(resp.TransformedPayload); !ok {
-				return p.transformDegraded(ctx, in, data, reasonTransformNoPayload), nil
+				return p.transformDegraded(ctx, in, data, resp, reasonTransformNoPayload)
 			}
-			return p.transformDegraded(ctx, in, data, reasonTransformEncodeFailed), nil
+			return p.transformDegraded(ctx, in, data, resp, reasonTransformEncodeFailed)
 		}
 	}
 
 	masked, ok := transformedInput(resp.TransformedPayload)
 	if !ok {
-		return p.transformDegraded(ctx, in, data, reasonTransformNoPayload), nil
+		return p.transformDegraded(ctx, in, data, resp, reasonTransformNoPayload)
 	}
 	if tgt.apply == nil {
-		return p.transformDegraded(ctx, in, data, reasonTransformUnsupported), nil
+		return p.transformDegraded(ctx, in, data, resp, reasonTransformUnsupported)
 	}
 	body, ok := tgt.apply(masked)
 	if !ok {
-		return p.transformDegraded(ctx, in, data, reasonTransformEncodeFailed), nil
+		return p.transformDegraded(ctx, in, data, resp, reasonTransformEncodeFailed)
 	}
 	return p.transformApplied(in, data, tgt, body)
 }
@@ -680,31 +681,43 @@ func (p *Plugin) transformApplied(in appplugins.ExecInput, data guardData, tgt t
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 }
 
-// transformDegraded is TrustGuard asking for content to be masked and this
-// plugin being unable to write the mask back. That is a failure on our side,
-// not a finding the guard missed, so it fails open like any other failure: the
-// original content goes on, unmasked, and the span says so and why.
+// transformDegraded is TrustGuard confirming a finding and asking for it to be
+// masked while this plugin cannot write the mask back. Forwarding the original
+// would send the data the detector flagged, so a mode that blocks refuses the
+// call with the finding's own block, recorded blocked and degraded with the step
+// that failed.
 func (p *Plugin) transformDegraded(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	data guardData,
+	resp *GuardResponse,
 	reason string,
-) *appplugins.Result {
+) (*appplugins.Result, error) {
 	recordEvaluateFailure(ctx, failureReasonTransformFailed)
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.FailureReason = failureReasonTransformFailed
-	attrs := []any{
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.String("direction", data.Direction),
-		slog.String("reason", reason),
-	}
-	p.warn(ctx, "trustguard transform could not be applied, forwarding unmasked", attrs...)
-	data.Decision = decisionFailedOpen
-	data.FailedOpen = true
+	sharedReason, detail := sharedFailure(failureReasonTransformFailed, reason)
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:     ctx,
+		Plugin:  PluginName,
+		Stage:   in.Stage,
+		Mode:    in.Mode,
+		Reason:  sharedReason,
+		Detail:  detail,
+		Finding: blockError(resp, data.Direction),
+		Err:     fmt.Errorf("trustguard transform could not be applied: %s", reason),
+		Logger:  p.logger,
+		Event:   in.Event,
+	})
+	data.Decision = outcome.Decision
+	data.FailureClass = string(outcome.Class)
+	data.FailedOpen = outcome.Decision == decisionFailedOpen
 	recordGuardOutcome(in.Event, data)
-	return passThrough()
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 func guardOutcomeDecision(status string, mode policy.Mode) string {
@@ -863,11 +876,16 @@ func stageDirection(stage policy.Stage) string {
 }
 
 // guardFailure resolves every failure of the guard itself, as opposed to a
-// finding, the same way: the request carries on, and never silently. The metric
-// counts it and the span carries failed_open with the reason, which is what the
-// console reads. A deadline is a failure like any other, so a caller who pushes
-// the detector past it gets a payload through uninspected, on the record. A
-// deliberate answer (a block, a 429) is not a failure and never comes here.
+// finding, by the class of its reason (appplugins.ClassOf). One that does not
+// depend on the request, which is nearly all of them, lets the request carry on,
+// and never silently: the metric counts it and the span carries failed_open with
+// the reason, which is what the console reads. One that depends on the request
+// itself (a payload this plugin could not read, a body TrustGuard refused for
+// its size) is refused in a mode that blocks, as failed_closed, and only
+// recorded in observe. A deadline is a failure like any other, so a caller who
+// pushes the detector past it gets a payload through uninspected, on the
+// record. A deliberate answer (a block, a 429) is not a failure and never comes
+// here.
 func (p *Plugin) guardFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -876,23 +894,29 @@ func (p *Plugin) guardFailure(
 	err error,
 ) (*appplugins.Result, error) {
 	recordEvaluateFailure(ctx, reason)
-	attrs := []any{
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.String("direction", direction),
-		slog.String("reason", reason),
-	}
-	if err != nil {
-		attrs = append(attrs, slog.Any("error", err))
-	}
-	p.warn(ctx, "trustguard could not inspect, failing open", attrs...)
+	sharedReason, detail := sharedFailure(reason, "")
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: sharedReason,
+		Detail: detail,
+		Err:    err,
+		Logger: p.logger,
+		Event:  in.Event,
+	})
 	recordGuardOutcome(in.Event, guardData{
 		Direction:     direction,
-		Decision:      decisionFailedOpen,
-		FailedOpen:    true,
+		Decision:      outcome.Decision,
+		FailedOpen:    outcome.Decision == decisionFailedOpen,
 		FailureReason: reason,
+		FailureClass:  string(outcome.Class),
 	})
-	return passThrough(), nil
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
