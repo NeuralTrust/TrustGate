@@ -59,7 +59,6 @@ const (
 	skipReasonEmptyResponseBody   = "empty_response_body"
 	skipReasonStreamingMismatch   = "streaming_stage_mismatch"
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
-	skipReasonUndecodableResponse = "undecodable_response"
 	skipReasonObserveMode         = "observe_mode"
 	// skipReasonProviderNotStreaming marks a response leg that opted into
 	// per-block inspection and never got a block to inspect: the provider
@@ -504,8 +503,11 @@ func (p *Plugin) llmInspectionPayload(
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		request, decodeErr := p.registry.DecodeRequestFor(in.Request.Body, format)
-		if adapter.IsRequestDecodeError(decodeErr) && adapter.IsChatRequest(in.Request.ProxyCapability, format) {
-			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard request body decode failed", decodeErr)
+		if decodeErr != nil {
+			if pluginutil.RequestDecodeFailure(decodeErr, in.Request.ProxyCapability, format) {
+				return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard request body decode failed", decodeErr)
+			}
+			return p.skipInspection(ctx, in, tgt, direction, pluginutil.SkipReasonNonChatRoute)
 		}
 		if request != nil && request.DroppedInputItems > 0 {
 			p.debug(ctx, "trustguard request input items left out of inspection",
@@ -514,7 +516,7 @@ func (p *Plugin) llmInspectionPayload(
 			)
 		}
 		attachments := extractPayloadAttachments(in.Request.Body)
-		if decodeErr != nil || request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
+		if request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		original := in.Request.Body
@@ -541,7 +543,7 @@ func (p *Plugin) llmInspectionPayload(
 	if response == nil {
 		// canonicalResponse swallows the decode error; without this the gateway
 		// cannot tell an undecodable response from an empty one.
-		return p.skipInspection(ctx, in, tgt, direction, skipReasonUndecodableResponse)
+		return p.skipInspection(ctx, in, tgt, direction, pluginutil.SkipReasonUndecodableResponse)
 	}
 	if !responseHasInspectableContent(response) && len(tools) == 0 {
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
