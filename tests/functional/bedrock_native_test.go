@@ -580,37 +580,34 @@ func TestBedrockNative_StorePathIsNotANativeRoute(t *testing.T) {
 }
 
 // A client can make a mask impossible to apply by putting the value where no mask may
-// rewrite it. The call goes through, as sent, whatever on_mask_failure a stored
-// policy still carries: the setting is ignored.
+// rewrite it. The call is refused, since the original would carry what the policy
+// asked to mask, whatever on_mask_failure a stored policy still carries: the setting
+// was removed and is ignored.
 func TestBedrockNative_OnMaskFailure(t *testing.T) {
 	defer Track(t, "BedrockNativeOnMaskFailure")()
 	stub := newBedrockRuntimeStub(t)
 	body := `{"messages":[{"role":"user","content":[{"text":"my secret code"}]}],"requestMetadata":{"secret":"x"}}`
 	rules := []map[string]any{{"pattern": "secret", "replacement": "[REDACTED]"}}
 
-	t.Run("by default the call goes through unmasked", func(t *testing.T) {
-		apiKey, slug := setupBedrockNativeRoute(t, withStages(policyPlugin("regex_replace", map[string]any{
-			"target": "request", "rules": rules,
-		}), "pre_request"))
-		before := stub.callCount()
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey,
-			"/"+slug+"/model/amazon.nova-lite-v1:0/converse", nativeHeaders(), []byte(body))
-		require.Equal(t, http.StatusOK, status, "body: %s", raw)
-		assert.Equal(t, before+1, stub.callCount())
-		assert.Equal(t, body, string(stub.last(t).Body), "the original, as sent")
-	})
-
-	t.Run("a stored on_mask_failure block is ignored and the call goes through unmasked", func(t *testing.T) {
-		apiKey, slug := setupBedrockNativeRoute(t, withStages(policyPlugin("regex_replace", map[string]any{
-			"target": "request", "rules": rules, "on_mask_failure": "block",
-		}), "pre_request"))
-		before := stub.callCount()
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey,
-			"/"+slug+"/model/amazon.nova-lite-v1:0/converse", nativeHeaders(), []byte(body))
-		require.Equal(t, http.StatusOK, status, "body: %s", raw)
-		assert.Equal(t, before+1, stub.callCount())
-		assert.Equal(t, body, string(stub.last(t).Body), "the original, as sent")
-	})
+	for name, extra := range map[string]map[string]any{
+		"a mask that cannot be applied refuses the call":                   nil,
+		"a stored on_mask_failure pass does not let the call through":      {"on_mask_failure": "pass"},
+		"a stored on_mask_failure block changes nothing about the refusal": {"on_mask_failure": "block"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			set := map[string]any{"target": "request", "rules": rules}
+			for k, v := range extra {
+				set[k] = v
+			}
+			apiKey, slug := setupBedrockNativeRoute(t, withStages(policyPlugin("regex_replace", set), "pre_request"))
+			before := stub.callCount()
+			status, header, raw := proxyRequest(t, http.MethodPost, apiKey,
+				"/"+slug+"/model/amazon.nova-lite-v1:0/converse", nativeHeaders(), []byte(body))
+			require.Equal(t, http.StatusForbidden, status, "body: %s", raw)
+			assert.Equal(t, "AccessDeniedException", header.Get("X-Amzn-Errortype"))
+			assert.Equal(t, before, stub.callCount(), "nothing reached Bedrock")
+		})
+	}
 
 	t.Run("a mask that can be applied is applied whatever the setting", func(t *testing.T) {
 		apiKey, slug := setupBedrockNativeRoute(t, withStages(policyPlugin("regex_replace", map[string]any{

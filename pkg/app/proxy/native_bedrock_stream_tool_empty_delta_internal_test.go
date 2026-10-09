@@ -51,7 +51,7 @@ func TestNativeToolMask_EmptyInputDeltasAreLeftAsTheyAre(t *testing.T) {
 			got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(runner, toolBlocks), frames)
 			require.Nil(t, pe)
 			require.Len(t, got, len(frames), "no frame is dropped")
-			assert.Empty(t, streamFailedOpenEntries(rt), "the mask applied, nothing failed open")
+			assert.Empty(t, streamMaskBlockedEntries(rt), "the mask applied, nothing was refused")
 
 			released := fragmentsOf(got)
 			require.Len(t, released, len(fragments))

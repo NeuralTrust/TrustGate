@@ -41,7 +41,7 @@ const BedrockNativePassthrough = "native_bedrock_passthrough"
 //     is a rewrite for enforcement (a tool filter, a model downgrade, a limit that
 //     strips a tool): it cannot be carried out, and the call is refused;
 //   - masks: a plugin that masks text runs, and its change is carried onto the bytes
-//     the client sent; if that cannot be done safely the mask fails open, recorded with its cause;
+//     the client sent; if that cannot be done safely the call is refused, recorded with its cause;
 //   - skips: a plugin that transforms the request (a template, an injected tool, a
 //     compressed prompt, a cache) has nowhere to write and is not run.
 type BedrockNativeBehavior string
@@ -125,27 +125,31 @@ func rewriteSubject(stage policy.Stage) string {
 const FailureMaskNotApplicable = "mask_not_applicable"
 
 // NativeMaskData is the extras of the policy-chain entry a mask that could not be
-// applied gets. It is the shape every fail-open outcome of this codebase records:
-// decision failed_open and a failure_reason.
+// applied gets. A mask only exists over a finding an enforcing policy confirmed, so
+// forwarding the original would send what the policy ruled out: the call is refused
+// and the entry records blocked, degraded, with the cause as failure_reason.
 type NativeMaskData struct {
-	Decision      string `json:"decision"`
-	Stage         string `json:"stage"`
-	Mode          string `json:"mode"`
-	FailureReason string `json:"failure_reason"`
-	Streamed      bool   `json:"streamed,omitempty"`
+	Decision       string `json:"decision"`
+	Stage          string `json:"stage"`
+	Mode           string `json:"mode"`
+	FailureReason  string `json:"failure_reason"`
+	FailureClass   string `json:"failure_class"`
+	Degraded       bool   `json:"degraded"`
+	DegradedReason string `json:"degraded_reason"`
+	Streamed       bool   `json:"streamed,omitempty"`
 }
 
 func NativeMaskFailureReason(cause adapter.MaskCause) string {
 	return FailureMaskNotApplicable + ":" + string(cause)
 }
 
-// RecordNativeMaskNotApplied records, as a failed-open policy outcome, that a
-// native Bedrock call went through unmasked because the mask a policy asked for
-// could not be applied safely. It writes one entry onto the request trace, the
-// same way a failing external guardrail does, so the console shows it in the
-// policy chain, and emits one Warn log. The caller decides how often it is
-// called: once per kind of cause per request or stream.
-func RecordNativeMaskNotApplied(
+// RecordNativeMaskBlocked records, as a blocked policy outcome, that a native
+// Bedrock call was refused because the mask a policy asked for could not be applied
+// safely. It writes one entry onto the request trace, the same way a failing
+// external guardrail does, so the console shows it in the policy chain, and emits
+// one Warn log. The caller decides how often it is called: once per kind of cause
+// per request or stream.
+func RecordNativeMaskBlocked(
 	ctx context.Context,
 	logger *slog.Logger,
 	stage policy.Stage,
@@ -158,23 +162,26 @@ func RecordNativeMaskNotApplied(
 		span.SetStage(string(stage))
 		event := metrics.NewEventContext(span)
 		event.SetMode(string(policy.ModeEnforce))
-		SetDecisionFromOutcome(event, DecisionFailedOpen)
-		event.SetStatusCode(http.StatusOK)
+		SetDecisionFromOutcome(event, DecisionBlocked)
+		event.SetStatusCode(http.StatusForbidden)
 		event.SetExtras(&NativeMaskData{
-			Decision:      DecisionFailedOpen,
-			Stage:         string(stage),
-			Mode:          string(policy.ModeEnforce),
-			FailureReason: reason,
-			Streamed:      streamed,
+			Decision:       DecisionBlocked,
+			Stage:          string(stage),
+			Mode:           string(policy.ModeEnforce),
+			FailureReason:  reason,
+			FailureClass:   string(FailureClassInput),
+			Degraded:       true,
+			DegradedReason: string(cause),
+			Streamed:       streamed,
 		})
 		event.Publish()
 	}
 	if logger == nil {
 		return
 	}
-	logger.WarnContext(ctx, "native bedrock mask could not be applied; the call goes through unmasked",
+	logger.WarnContext(ctx, "native bedrock mask could not be applied; the call is refused",
 		slog.String("stage", string(stage)),
-		slog.String("decision", DecisionFailedOpen),
+		slog.String("decision", DecisionBlocked),
 		slog.String("failure_reason", reason),
 		slog.Bool("streamed", streamed))
 }

@@ -364,7 +364,7 @@ func TestNativeStreamGuard_MaskInAnInvokeChunk(t *testing.T) {
 
 // If the rebuilt window still holds the removed text anywhere, the mask is
 // refused and the stream is cut: the leak check is what stands behind the mask.
-func TestNativeStreamGuard_LeakInTheWindowFailsOpenAndReleasesTheOriginal(t *testing.T) {
+func TestNativeStreamGuard_LeakInTheWindowEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		deltaFrame(t, "Hello there"),
@@ -374,11 +374,10 @@ func TestNativeStreamGuard_LeakInTheWindowFailsOpenAndReleasesTheOriginal(t *tes
 	}
 	runner := &maskRunner{from: streamEmail, to: "<EMAIL>"}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(runner, streamGuardConfig{headChars: 5, minChars: 1000, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "leak_remaining")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "leak_remaining")
 }
 
-func TestNativeStreamGuard_MaskOfTextAlreadyReleasedFailsOpenAndReleasesTheOriginal(t *testing.T) {
+func TestNativeStreamGuard_MaskOfTextAlreadyReleasedEndsTheStream(t *testing.T) {
 	t.Parallel()
 	// The first block is clean and released. The mask then names text inside it.
 	frames := [][]byte{
@@ -388,8 +387,7 @@ func TestNativeStreamGuard_MaskOfTextAlreadyReleasedFailsOpenAndReleasesTheOrigi
 	}
 	released := &lateMaskRunner{from: streamEmail, to: "<EMAIL>"}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(released, streamGuardConfig{headChars: 5, minChars: 1, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "already_released_text")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "already_released_text")
 }
 
 // lateMaskRunner answers the first block clean and masks from the second on.
@@ -578,12 +576,11 @@ func (addRunner) RunStreamSegment(_ context.Context, _ appplugins.StageInput, se
 	return &appplugins.SegmentOutcome{HasTransform: true, Transformed: "ADDED " + seg.Accumulated}, nil
 }
 
-func TestNativeStreamGuard_AnAdditionIsNotAMaskAndFailsOpen(t *testing.T) {
+func TestNativeStreamGuard_AnAdditionIsNotAMaskAndEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{deltaFrame(t, "Hello there friend"), deltaFrame(t, " and more")}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(addRunner{}, streamGuardConfig{headChars: 1000, minChars: 1000, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "not_a_text_replacement")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "not_a_text_replacement")
 }
 
 // A native stream outlives the lookup the call started, so the model is read again

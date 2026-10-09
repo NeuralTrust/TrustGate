@@ -27,13 +27,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRecordNativeMaskNotApplied_IsAFailedOpenPolicyEntryWithTheCause(t *testing.T) {
+func TestRecordNativeMaskBlocked_IsABlockedPolicyEntryWithTheCause(t *testing.T) {
 	t.Parallel()
 	rt := trace.New("t", trace.Metadata{})
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 
-	appplugins.RecordNativeMaskNotApplied(trace.NewContext(context.Background(), rt), logger, policy.StagePreRequest, "leak_remaining", false)
+	appplugins.RecordNativeMaskBlocked(trace.NewContext(context.Background(), rt), logger, policy.StagePreRequest, "leak_remaining", false)
 
 	var plugins []*trace.Span
 	for _, s := range rt.Spans() {
@@ -44,19 +44,22 @@ func TestRecordNativeMaskNotApplied_IsAFailedOpenPolicyEntryWithTheCause(t *test
 	require.Len(t, plugins, 1)
 	attrs := plugins[0].PluginAttrsCopy()
 	assert.Equal(t, "native_bedrock_passthrough", plugins[0].Name)
-	assert.Equal(t, "failed_open", attrs.Decision, "the decision every fail-open outcome records")
+	assert.Equal(t, "block", attrs.Decision, "the span decision of a refused call")
 	assert.Equal(t, "pre_request", attrs.Stage)
 	data, ok := attrs.Extras.(*appplugins.NativeMaskData)
 	require.True(t, ok)
-	assert.Equal(t, "failed_open", data.Decision)
+	assert.Equal(t, "blocked", data.Decision)
 	assert.Equal(t, "mask_not_applicable:leak_remaining", data.FailureReason)
+	assert.Equal(t, "input", data.FailureClass)
+	assert.True(t, data.Degraded)
+	assert.Equal(t, "leak_remaining", data.DegradedReason)
 	assert.Contains(t, logs.String(), "mask_not_applicable:leak_remaining")
-	assert.Equal(t, 200, plugins[0].StatusCode(), "the request goes through")
+	assert.Equal(t, 403, plugins[0].StatusCode(), "the call is refused")
 }
 
-func TestRecordNativeMaskNotApplied_WithoutATraceOnlyLogs(t *testing.T) {
+func TestRecordNativeMaskBlocked_WithoutATraceOnlyLogs(t *testing.T) {
 	t.Parallel()
 	var logs bytes.Buffer
-	appplugins.RecordNativeMaskNotApplied(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)), policy.StagePreResponse, "reasoning_not_maskable", true)
+	appplugins.RecordNativeMaskBlocked(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)), policy.StagePreResponse, "reasoning_not_maskable", true)
 	assert.Contains(t, logs.String(), "reasoning_not_maskable")
 }
