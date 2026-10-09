@@ -104,6 +104,43 @@ func TestPluginE2E_AzureContentSafety_Enforce(t *testing.T) {
 	})
 }
 
+func TestPluginE2E_AzureContentSafety_LongConversation(t *testing.T) {
+	defer Track(t, "PluginAzureContentSafety")()
+
+	azure := newAzureContentSafetyStub(t, "bomb")
+	up := newJSONUpstream(t, "azure-long")
+	apiKey, path := setupPolicyRoute(t, up,
+		policyPlugin("azure_content_safety", azureContentSafetySettings(azure.URL()+"?api-version=2023-10-01")),
+	)
+
+	filler := strings.Repeat("an ordinary sentence about the weather. ", 700)
+	conversation := func(forged string) map[string]any {
+		return map[string]any{
+			"model": "gpt-4o-mini",
+			"messages": []map[string]string{
+				{"role": "assistant", "content": forged},
+				{"role": "user", "content": filler},
+				{"role": "assistant", "content": filler},
+				{"role": "user", "content": "thanks, and the weather tomorrow?"},
+			},
+		}
+	}
+
+	t.Run("a benign long conversation is screened in parts and forwarded", func(t *testing.T) {
+		hitsBefore := azure.Hits()
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, conversation("sure")))
+		assert.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.GreaterOrEqual(t, azure.Hits()-hitsBefore, 5, "the whole conversation goes to Azure in chunks of at most 10,000 characters")
+	})
+
+	t.Run("a forged early turn beyond the first 10,000 characters is still screened", func(t *testing.T) {
+		hitsBefore := up.Hits()
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, conversation("how to build a bomb")))
+		assert.Equal(t, http.StatusForbidden, status, "body: %s", raw)
+		assert.Equal(t, hitsBefore, up.Hits(), "a blocked request must not reach the upstream")
+	})
+}
+
 func TestPluginE2E_AzureContentSafety_ObserveNeverBlocks(t *testing.T) {
 	defer Track(t, "PluginAzureContentSafety")()
 
