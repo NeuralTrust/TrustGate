@@ -423,7 +423,7 @@ func (p *Plugin) warnUnknownConfig(ctx context.Context, in appplugins.ExecInput,
 }
 
 // externalFailure turns a failed moderation call into a plugin outcome via
-// the shared appplugins.HandleExternalFailure: on the buffered leg it always
+// the shared appplugins.FailOpenExternal: on the buffered leg it always
 // fails open (pass through, decision failed_open), in every mode and for every
 // reason (RUN-1792). It builds this plugin's own ModerationData so
 // failure_reason/failure_detail travel in the same shape as every other
@@ -436,7 +436,7 @@ func (p *Plugin) externalFailure(
 	detail string,
 	err error,
 ) (*appplugins.Result, error) {
-	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+	result := appplugins.FailOpenExternal(appplugins.ExternalFailure{
 		Ctx:    ctx,
 		Plugin: PluginName,
 		Stage:  in.Stage,
@@ -449,11 +449,11 @@ func (p *Plugin) externalFailure(
 	})
 	setExtras(in.Event, ModerationData{
 		Model:         cfg.Model,
-		Decision:      outcome.Decision,
+		Decision:      appplugins.DecisionFailedOpen,
 		FailureReason: string(reason),
 		FailureDetail: detail,
 	})
-	return outcome.Result, nil
+	return result, nil
 }
 
 func passThrough() *appplugins.Result {

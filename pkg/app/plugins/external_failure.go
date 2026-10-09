@@ -57,7 +57,7 @@ const (
 	// FailureCounterUnavailable is TrustGate's own counter store (Redis)
 	// failing a read or a write: rate_limiter, per_tool_rate_limiter and
 	// token_rate_limiter all share this one reason. It is handled by
-	// HandleCounterFailure in counter_failure.go, not by HandleExternalFailure;
+	// HandleCounterFailure in counter_failure.go, not by FailOpenExternal;
 	// token_rate_limiter with partition key fails closed there on a read in a
 	// blocking mode.
 	FailureCounterUnavailable FailureReason = "counter_unavailable"
@@ -75,7 +75,7 @@ const DecisionFailedOpen = "failed_open"
 const DecisionFailedClosed = "failed_closed"
 
 // ExternalFailure is one third-party guardrail call's failure, ready to be
-// turned into a plugin outcome by HandleExternalFailure.
+// handed to FailOpenExternal.
 type ExternalFailure struct {
 	Ctx    context.Context
 	Plugin string
@@ -92,16 +92,7 @@ type ExternalFailure struct {
 	Event  *metrics.EventContext
 }
 
-// ExternalFailureOutcome is HandleExternalFailure's answer. Decision is what
-// the caller's own Data.Decision (and any failure_reason/failure_detail
-// fields) should record; Result is exactly what the plugin's Execute should
-// return.
-type ExternalFailureOutcome struct {
-	Decision string
-	Result   *Result
-}
-
-// HandleExternalFailure applies the one rule every external guardrail
+// FailOpenExternal applies the one rule every external guardrail
 // follows on a failure of its buffered (non-streamed) leg: it fails OPEN, in
 // every mode (enforce, throttle and observe) and for every FailureReason
 // (transport, which also covers timeouts and throttling, verdict_incomplete,
@@ -112,17 +103,13 @@ type ExternalFailureOutcome struct {
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
 // caller still owns its own Data: it is responsible for setting
-// Data.Decision (from ExternalFailureOutcome.Decision) and any
-// failure_reason/failure_detail fields, and calling setExtras, before or
-// after invoking this.
-func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
-	outcome := ExternalFailureOutcome{
-		Decision: DecisionFailedOpen,
-		Result:   &Result{StatusCode: http.StatusOK},
-	}
-	SetDecisionFromOutcome(f.Event, outcome.Decision)
-	logExternalFailure(f, outcome.Decision)
-	return outcome
+// Data.Decision (DecisionFailedOpen) and any failure_reason/failure_detail
+// fields, and calling setExtras, before or after invoking this. The returned
+// Result is what the plugin's Execute returns.
+func FailOpenExternal(f ExternalFailure) *Result {
+	SetDecisionFromOutcome(f.Event, DecisionFailedOpen)
+	logExternalFailure(f, DecisionFailedOpen)
+	return &Result{StatusCode: http.StatusOK}
 }
 
 func logExternalFailure(f ExternalFailure, decision string) {
@@ -152,14 +139,14 @@ func logExternalFailure(f ExternalFailure, decision string) {
 // WrapExternalStreamFailure formats a stream-segment failure so its reason
 // (and, when present, detail) travel in the error text.
 //
-// Unlike HandleExternalFailure, a streamed segment's fail-open/fail-closed
+// Unlike FailOpenExternal, a streamed segment's fail-open/fail-closed
 // choice is not the plugin's mode to make: the stream guard owns that decision
 // (pkg/app/proxy/stream_guard.go), because only the guard knows whether
 // anything has been released to the client yet. An external guardrail's failed
 // block is always absorbed per entry and released. The guard also already logs the returned
 // error itself (headFailure/blockFailure), so this does not log again: doing
 // so would print the same failure twice for one segment. It only gives that
-// one log line the same reason vocabulary HandleExternalFailure uses.
+// one log line the same reason vocabulary FailOpenExternal uses.
 //
 // The error is typed (*ExternalStreamFailure) so the executor can read the
 // reason and detail off it with errors.As and carry them to the closing
@@ -170,7 +157,7 @@ func WrapExternalStreamFailure(pluginName string, reason FailureReason, detail s
 
 // ExternalStreamFailure is one external guardrail's failure on a streamed
 // block, as WrapExternalStreamFailure builds it. Reason and Detail are the
-// same vocabulary HandleExternalFailure records on the buffered leg.
+// same vocabulary FailOpenExternal records on the buffered leg.
 type ExternalStreamFailure struct {
 	Plugin string
 	Reason FailureReason

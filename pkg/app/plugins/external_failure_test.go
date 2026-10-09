@@ -31,9 +31,9 @@ func newTestEvent() (*metrics.EventContext, *trace.Span) {
 	return metrics.NewEventContext(span), span
 }
 
-// TestHandleExternalFailureAlwaysFailsOpen pins RUN-1792: a third-party
+// TestFailOpenExternalAlwaysFailsOpen pins RUN-1792: a third-party
 // guardrail failure never refuses the request, whatever the mode or reason.
-func TestHandleExternalFailureAlwaysFailsOpen(t *testing.T) {
+func TestFailOpenExternalAlwaysFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	reasons := []FailureReason{
@@ -50,7 +50,7 @@ func TestHandleExternalFailureAlwaysFailsOpen(t *testing.T) {
 			t.Run(string(mode)+" "+string(reason), func(t *testing.T) {
 				t.Parallel()
 				event, span := newTestEvent()
-				outcome := HandleExternalFailure(ExternalFailure{
+				result := FailOpenExternal(ExternalFailure{
 					Ctx:    context.Background(),
 					Plugin: "some_guardrail",
 					Stage:  policy.StagePreRequest,
@@ -60,11 +60,8 @@ func TestHandleExternalFailureAlwaysFailsOpen(t *testing.T) {
 					Err:    errors.New("dial tcp 10.0.0.1:443: connection refused"),
 					Event:  event,
 				})
-				if outcome.Result == nil || outcome.Result.StatusCode != http.StatusOK {
-					t.Fatalf("expected pass-through result, got %+v", outcome.Result)
-				}
-				if outcome.Decision != "failed_open" {
-					t.Fatalf("decision = %q, want failed_open", outcome.Decision)
+				if result == nil || result.StatusCode != http.StatusOK {
+					t.Fatalf("expected pass-through result, got %+v", result)
 				}
 				if span.Plugin == nil || span.Plugin.Decision != "failed_open" {
 					t.Fatalf("span decision = %+v, want failed_open", span.Plugin)
@@ -74,17 +71,17 @@ func TestHandleExternalFailureAlwaysFailsOpen(t *testing.T) {
 	}
 }
 
-func TestHandleExternalFailureNilEventAndLoggerAreSafe(t *testing.T) {
+func TestFailOpenExternalNilEventAndLoggerAreSafe(t *testing.T) {
 	t.Parallel()
-	outcome := HandleExternalFailure(ExternalFailure{
+	result := FailOpenExternal(ExternalFailure{
 		Plugin: "some_guardrail",
 		Stage:  policy.StagePreRequest,
 		Mode:   policy.ModeEnforce,
 		Reason: FailureTransport,
 		Err:    errors.New("boom"),
 	})
-	if outcome.Decision != "failed_open" {
-		t.Fatalf("outcome = %+v, want failed_open", outcome)
+	if result == nil || result.StatusCode != http.StatusOK {
+		t.Fatalf("result = %+v, want a pass-through", result)
 	}
 }
 

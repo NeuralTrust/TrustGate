@@ -45,10 +45,8 @@ const CodePolicyBlocked int64 = -32001
 const CodeRateLimited int64 = -32004
 
 // CodeUnavailable is returned when gateway plan entitlements cannot be resolved
-// (unknown tier) or TrustGuard evaluate returns 503. Aligns with HTTP 503 on the proxy path.
+// (unknown tier). Aligns with HTTP 503 on the proxy path.
 const CodeUnavailable int64 = -32005
-
-const trustGuardUnavailableType = "trustguard_unavailable"
 
 const (
 	directionInput  = "input"
@@ -444,9 +442,6 @@ func blockToRPCError(pe *appplugins.PluginError) *RPCError {
 	code := CodePolicyBlocked
 	if pe != nil && pe.StatusCode == http.StatusTooManyRequests {
 		code = CodeRateLimited
-	}
-	if pe != nil && pe.StatusCode == http.StatusServiceUnavailable && pe.Type == trustGuardUnavailableType {
-		code = CodeUnavailable
 	}
 	var headers map[string][]string
 	if pe != nil && len(pe.Headers) > 0 {
