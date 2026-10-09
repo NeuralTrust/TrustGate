@@ -410,8 +410,7 @@ func (p *Plugin) runGuardrail(
 	// same Data instead.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			if res.anonymize != nil && appplugins.Blocks(in.Mode) &&
-				appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability {
+			if keepsMaskDespiteGap(res, in.Mode, reason) {
 				data.FailureReason = string(appplugins.FailureVerdictIncomplete)
 				data.FailureDetail = reason
 				data.FailureClass = string(appplugins.FailureClassAvailability)
@@ -641,4 +640,15 @@ func (p *Plugin) oversizeFailure(ctx context.Context, in appplugins.ExecInput, c
 		armorReason: appplugins.DetailPayloadTooLarge,
 		err:         fmt.Errorf("text exceeds the %d bytes Model Armor screens", maxSanitizeBytes),
 	})
+}
+
+// keepsMaskDespiteGap reports whether a block_on filter that produced no
+// verdict leaves a mask to apply in a mode that blocks. It does when the gap is
+// availability (the template never enabled the filter, or its state is
+// unspecified): the de-identified text is already in hand and releasing the
+// original would send the raw data. A gap that is the content's (a skipped
+// filter) refuses instead, since the other filters did not judge this content.
+func keepsMaskDespiteGap(res assessmentResult, mode policy.Mode, reason string) bool {
+	return res.anonymize != nil && appplugins.Blocks(mode) &&
+		appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability
 }

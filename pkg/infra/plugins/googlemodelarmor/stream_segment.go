@@ -136,8 +136,7 @@ func (p *Plugin) InspectSegment(
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
 			cause := fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason)
 			_, usable := maskedText(result)
-			if res.anonymize != nil && usable && appplugins.Blocks(in.Mode) &&
-				appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability {
+			if usable && keepsMaskDespiteGap(res, in.Mode, reason) {
 				incomplete = appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, reason, cause)
 			} else {
 				return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reason, nil, cause)
