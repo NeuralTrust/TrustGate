@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,41 +144,42 @@ func TestToolCallArgumentsAndToolResultsAreScreened(t *testing.T) {
 
 func TestAChunkThatCannotBeInspectedIsTheWholeConversationsFailure(t *testing.T) {
 	t.Parallel()
-	long := chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("word ", 5000)})
+	const lateMarker = " ZZLATEZZ"
+	long := chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("word ", 12000) + lateMarker})
 	categories := func(n int) string {
 		return fmt.Sprintf(`{"categoriesAnalysis":[{"category":"Hate","severity":%d}]}`, n)
 	}
 	cases := []struct {
 		name   string
-		reply  func(call int) (int, string)
+		reply  func(call int, text string) (int, string)
 		detail string
 		class  string
 	}{
-		{"a 429 on a conversation of several chunks is input", func(call int) (int, string) {
-			if call == 2 {
+		{"a 429 on a chunk dispatched after the first round is input", func(_ int, text string) (int, string) {
+			if strings.Contains(text, lateMarker) {
 				return http.StatusTooManyRequests, `{"error":{"code":"429","message":"Rate limit is exceeded. Try again in 1 seconds."}}`
 			}
 			return http.StatusOK, categories(0)
 		}, appplugins.DetailThrottledOversize, "input"},
-		{"a spent call volume quota is configuration", func(call int) (int, string) {
+		{"a spent call volume quota is configuration", func(call int, _ string) (int, string) {
 			if call == 2 {
 				return http.StatusTooManyRequests, `{"error":{"code":"429","message":"Out of call volume quota for ContentSafety F0 pricing tier. Please retry after 2 days. To increase your call volume switch to a paid tier."}}`
 			}
 			return http.StatusOK, categories(0)
 		}, appplugins.DetailProviderQuotaExhausted, "availability"},
-		{"a 5xx is availability", func(call int) (int, string) {
+		{"a 5xx is availability", func(call int, _ string) (int, string) {
 			if call == 2 {
 				return http.StatusServiceUnavailable, `{"error":{"code":"ServiceUnavailable"}}`
 			}
 			return http.StatusOK, categories(0)
 		}, "", "availability"},
-		{"a category missing from one chunk is availability", func(call int) (int, string) {
+		{"a category missing from one chunk is availability", func(call int, _ string) (int, string) {
 			if call == 2 {
 				return http.StatusOK, `{"categoriesAnalysis":[]}`
 			}
 			return http.StatusOK, categories(0)
 		}, CategoryHate, "availability"},
-		{"azure refusing the content is input", func(call int) (int, string) {
+		{"azure refusing the content is input", func(call int, _ string) (int, string) {
 			if call == 2 {
 				return http.StatusBadRequest, `{"error":{"code":"InvalidRequestBody","message":"The text is not acceptable.","target":"text"}}`
 			}
@@ -187,8 +190,9 @@ func TestAChunkThatCannotBeInspectedIsTheWholeConversationsFailure(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				status, body := tc.reply(int(calls.Add(1)))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				status, body := tc.reply(int(calls.Add(1)), string(raw))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(status)
 				_, _ = w.Write([]byte(body))
@@ -345,4 +349,69 @@ func TestASecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok, "got %v", err)
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+}
+
+// Two conversations of two chunks each are in flight together and the provider
+// throttles every call. Each chunk is in the first round, so what throttled it
+// was other traffic, not the conversation's own size: both fail open.
+func TestConcurrentConversationsThrottledInTheFirstRoundFailOpen(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":"429","message":"Rate limit is exceeded. Try again in 1 seconds."}}`))
+	}))
+	t.Cleanup(srv.Close)
+	p := New(adapter.NewRegistry(), nil)
+	twoChunks := chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 15000)})
+	require.Equal(t, 2, textchunk.Count(strings.Repeat("a", 15000), chunkSpec))
+
+	var wg sync.WaitGroup
+	results := make([]*Data, 2)
+	errs := make([]error, 2)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, results[i], errs[i] = run(t, p, policy.ModeEnforce, srv.URL, twoChunks)
+		}()
+	}
+	wg.Wait()
+	for i := range results {
+		require.NoError(t, errs[i])
+		assert.Equal(t, appplugins.DetailThrottled, results[i].FailureDetail)
+		assert.Equal(t, "availability", results[i].FailureClass)
+		assert.Equal(t, appplugins.DecisionFailedOpen, results[i].Decision)
+	}
+}
+
+// A parent whose deadline passes is not a client that left: the time ran out, so
+// the budget rule reads it, and the chunks that never started are the request's
+// own size.
+func TestAParentDeadlineFollowsTheBudgetRule(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Hate","severity":0}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	p := New(adapter.NewRegistry(), nil)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(srv.URL, map[string]int{CategoryHate: 2}),
+		requestContext(chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 300000)})))
+	in.Event = event
+	parent, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	t.Cleanup(cancel)
+
+	_, err := p.Execute(parent, in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	extras, _ := span.PluginAttrsCopy().Extras.(*Data)
+	require.NotNil(t, extras)
+	assert.Equal(t, appplugins.DetailChunkBudget, extras.FailureDetail)
 }

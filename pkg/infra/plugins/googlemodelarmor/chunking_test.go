@@ -343,18 +343,19 @@ func TestAChunkedEvaluationWithNoFindingRecordsTheFilterVersion(t *testing.T) {
 // size, so it is input; on a text of one call it stays the provider's load.
 func TestAThrottleOnALongTextIsInput(t *testing.T) {
 	t.Parallel()
+	const lateMarker = " ZZLATEZZ"
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			s := newArmorScript(t, func(call int, _ string) (int, string) {
-				if call == 3 {
+			s := newArmorScript(t, func(_ int, text string) (int, string) {
+				if strings.Contains(text, lateMarker) {
 					return http.StatusTooManyRequests, rpcResourceExhausted
 				}
 				return http.StatusOK, allowResponse
 			})
 			p := pluginWithStub(s.modelArmorStub)
 			event, span := newStreamEvent()
-			in := execInput(policy.StagePreRequest, mode, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(300<<10))), nil)
+			in := execInput(policy.StagePreRequest, mode, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(300<<10)+lateMarker)), nil)
 			in.Event = event
 
 			res, err := p.Execute(context.Background(), in)
@@ -405,4 +406,28 @@ func TestALongSecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok, "got %v", err)
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+}
+
+// A throttle on a chunk of the first round has nothing of the request's own
+// before it: it is other traffic and fails open as the provider's load.
+func TestAThrottleOnAFirstRoundChunkOfALongTextFailsOpen(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(call int, _ string) (int, string) {
+		if call == 1 {
+			return http.StatusTooManyRequests, rpcResourceExhausted
+		}
+		return http.StatusOK, allowResponse
+	})
+	p := pluginWithStub(s.modelArmorStub)
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, armorPlain(300<<10))), nil)
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailThrottled, data.FailureDetail)
+	assert.Equal(t, "availability", data.FailureClass)
+	assertPassThrough(t, res, err)
 }
