@@ -129,5 +129,5 @@ func TestALongStreamIsEvaluatedThroughABoundedWindow(t *testing.T) {
 			assert.True(t, out.Block, "the violation at the end of a long stream must still cut it")
 		}
 	}
-	assert.LessOrEqual(t, mod.largest(), 64<<10, "no call may carry more than its window")
+	assert.LessOrEqual(t, mod.largest(), maxStreamWindowBytes, "no call may carry more than its window")
 }
