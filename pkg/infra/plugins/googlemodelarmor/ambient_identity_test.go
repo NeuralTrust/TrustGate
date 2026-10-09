@@ -220,8 +220,8 @@ func TestExecuteAmbientIdentityUnchangedWhenEnabled(t *testing.T) {
 }
 
 // on_mask_failure is not a setting: a mask that cannot be applied to a native Bedrock
-// call always fails open. A policy stored with the key keeps loading, whatever
-// its value, and the key changes nothing.
+// call always blocks, in a mode that blocks. A policy stored with the key keeps
+// loading, whatever its value, and the key changes nothing.
 func TestOnMaskFailureIsIgnored(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", time.Second, false, nil)

@@ -203,8 +203,9 @@ const streamOnErrorFailOpen = "fail_open"
 // take:
 //
 //   - on_error is fail_open whenever an owner takes part. Owners are the
-//     guardrails, which always fail open, and a passive rewriter never fails a
-//     call. The guard applies this one value only to an error the executor hands
+//     guardrails, whose availability failures fail open and whose content-
+//     dependent failures arrive as a cut verdict rather than an error, and a
+//     passive rewriter never fails a call. The guard applies this one value only to an error the executor hands
 //     it, and RunStreamSegment hands back only the error of an entry whose own
 //     options say fail_closed (a rewriter such as regex_replace): everything
 //     else is absorbed per entry. So the guard cannot cut on behalf of a

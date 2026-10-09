@@ -183,7 +183,7 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 	for _, group := range catalog.Groups {
 		for _, item := range group.Items {
 			for _, f := range item.SettingsSchema.Fields {
-				assert.NotEqual(t, "on_mask_failure", f.Key, "%s: a mask that cannot be applied always fails open", item.Slug)
+				assert.NotEqual(t, "on_mask_failure", f.Key, "%s: a mask that cannot be applied always blocks in a mode that blocks", item.Slug)
 			}
 		}
 	}

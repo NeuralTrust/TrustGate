@@ -3640,8 +3640,8 @@ paths:
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
         mask the call but never rewrite it: a mask that cannot be carried onto the
-        original body fails open: the call goes through as the client sent it and
-        the policy chain records failed_open with the cause. Every error the gateway
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
         makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
         x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
@@ -3721,8 +3721,8 @@ paths:
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
         mask the call but never rewrite it: a mask that cannot be carried onto the
-        original body fails open: the call goes through as the client sent it and
-        the policy chain records failed_open with the cause. Every error the gateway
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
         makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
         x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
@@ -3802,8 +3802,8 @@ paths:
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
         mask the call but never rewrite it: a mask that cannot be carried onto the
-        original body fails open: the call goes through as the client sent it and
-        the policy chain records failed_open with the cause. Every error the gateway
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
         makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
         x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
@@ -3883,8 +3883,8 @@ paths:
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
         mask the call but never rewrite it: a mask that cannot be carried onto the
-        original body fails open: the call goes through as the client sent it and
-        the policy chain records failed_open with the cause. Every error the gateway
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
         makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
         x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:

@@ -230,7 +230,7 @@ func TestOptionsCarriesEveryKnob(t *testing.T) {
 		t.Errorf("MaxAccumulatedBytes = %d, want 44", got.MaxAccumulatedBytes)
 	}
 	if got.OnError != StreamOnErrorFailOpen {
-		t.Errorf("OnError = %q, want %q: a failed inspection call always fails open", got.OnError, StreamOnErrorFailOpen)
+		t.Errorf("OnError = %q, want %q: a failed inspection call is released", got.OnError, StreamOnErrorFailOpen)
 	}
 }
 
