@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
@@ -38,6 +39,12 @@ const (
 	streamChunkParallel    = 4
 	streamChunkOverlap     = 4096
 	streamChunkOverlapFrom = 32 << 10
+
+	defaultStreamPieceTimeout = 2 * time.Second
+	// maxBlockTimeouts caps a block's deadline at this many piece timeouts, so
+	// a stream is held for a bounded time however many pieces a block has and
+	// however slow they are.
+	maxBlockTimeouts = 4
 )
 
 // StreamPayloadBound is the optional declaration of a StreamInspector that
@@ -63,6 +70,43 @@ func chunkParallelOf(inspector StreamInspector) int {
 		return p.StreamChunkParallel()
 	}
 	return streamChunkParallel
+}
+
+// StreamPieceSpacing is the optional declaration of a StreamInspector whose
+// provider meters text by a quota a second: SpaceStreamPieces returns the wait
+// that runs before each piece of one block, given the piece's size in bytes,
+// which spaces the pieces under that quota. It is called once per block, so the
+// spacing is local to the block and shares no state between blocks. It may
+// return nil for no spacing.
+type StreamPieceSpacing interface {
+	SpaceStreamPieces(in ExecInput) func(ctx context.Context, bytes int) error
+}
+
+// StreamThrottleAttribution is the optional declaration of a StreamInspector
+// whose pieces are spaced under its provider's quota (StreamPieceSpacing), so a
+// throttle on a piece cannot be the block's own doing: it is other traffic, and
+// availability whichever piece it is on.
+type StreamThrottleAttribution interface {
+	StreamThrottleIsOtherTraffic() bool
+}
+
+// StreamPieceTimeout is the optional declaration of the time one piece's call
+// may take, which the block's deadline is made of. An inspector that does not
+// declare it is given defaultStreamPieceTimeout.
+type StreamPieceTimeout interface {
+	StreamGuardTimeout() time.Duration
+}
+
+func pieceTimeoutOf(inspector StreamInspector) time.Duration {
+	if t, ok := inspector.(StreamPieceTimeout); ok && t.StreamGuardTimeout() > 0 {
+		return t.StreamGuardTimeout()
+	}
+	return defaultStreamPieceTimeout
+}
+
+func throttleIsOtherTraffic(plugin Plugin) bool {
+	a, ok := plugin.(StreamThrottleAttribution)
+	return ok && a.StreamThrottleIsOtherTraffic()
 }
 
 func boundsOwnPayload(inspector StreamInspector) bool {
@@ -111,10 +155,28 @@ func (e *executor) inspectChunked(
 	chunks := textchunk.Split(call.Accumulated, spec)
 	blockStart := max(len(call.Accumulated)-len(call.Text), 0)
 
+	parallel := chunkParallelOf(inspector)
+	timeout := pieceTimeoutOf(inspector)
+	blockCtx, cancel := context.WithTimeout(ctx, min(timeout*time.Duration(textchunk.Rounds(len(chunks), parallel)), maxBlockTimeouts*timeout))
+	defer cancel()
+	reserve := timeout / 4
+	slow := textchunk.SlowCallOf(blockCtx, reserve)
+	var space func(ctx context.Context, bytes int) error
+	if s, ok := inspector.(StreamPieceSpacing); ok {
+		space = s.SpaceStreamPieces(in)
+	}
+
 	verdicts := make([]*SegmentVerdict, len(chunks))
-	outs := textchunk.Run(ctx, chunks, textchunk.RunOptions{
-		Parallel: chunkParallelOf(inspector),
+	outs := textchunk.Run(blockCtx, chunks, textchunk.RunOptions{
+		Parallel: parallel,
+		Reserve:  reserve,
 		StopOn:   func(i int) bool { return Blocks(entry.mode) && verdicts[i] != nil && verdicts[i].Block },
+		Before: func(ctx context.Context, _ int, c textchunk.Chunk) error {
+			if space == nil {
+				return nil
+			}
+			return space(ctx, len(c.Text))
+		},
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		piece := call
 		piece.Accumulated = c.Text
@@ -132,7 +194,7 @@ func (e *executor) inspectChunked(
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	return mergeChunkVerdicts(entry, call.Accumulated, chunks, verdicts, outs)
+	return mergeChunkVerdicts(entry, call.Accumulated, chunks, verdicts, outs, SlowCall(slow))
 }
 
 // mergeChunkVerdicts reads the chunks through the same precedence table the
@@ -158,23 +220,25 @@ func mergeChunkVerdicts(
 	chunks []textchunk.Chunk,
 	verdicts []*SegmentVerdict,
 	outs []textchunk.Outcome[struct{}],
+	opts ...ClassifyOption,
 ) (*SegmentVerdict, error) {
+	otherTraffic := throttleIsOtherTraffic(entry.plugin)
 	d := ClassifyChunks(outs, false, func(i int, _ struct{}, err error) ChunkState {
 		if err != nil {
 			reason, detail := streamFailureOf(err)
-			return ChunkState{Failure: &ChunkFailure{Reason: reason, Detail: detail}}
+			return ChunkState{Failure: &ChunkFailure{Reason: reason, Detail: detail, OtherTraffic: otherTraffic && detail == DetailThrottled}}
 		}
 		switch v := verdicts[i]; {
 		case v == nil:
 		case v.Block && v.Failure == nil:
 			return ChunkState{Blocks: true}
 		case v.Block:
-			return ChunkState{Failure: &ChunkFailure{Reason: v.Failure.Reason, Detail: v.Failure.Detail}}
+			return ChunkState{Failure: &ChunkFailure{Reason: v.Failure.Reason, Detail: v.Failure.Detail, OtherTraffic: otherTraffic && v.Failure.Detail == DetailThrottled}}
 		case v.HasTransform:
 			return ChunkState{Mask: true}
 		}
 		return ChunkState{}
-	})
+	}, opts...)
 
 	var fingerprints []string
 	seen := map[string]struct{}{}
