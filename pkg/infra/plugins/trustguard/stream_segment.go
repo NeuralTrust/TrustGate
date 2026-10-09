@@ -26,7 +26,6 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -40,16 +39,13 @@ func (p *Plugin) inspectSegment(
 ) (*appplugins.SegmentVerdict, error) {
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
-		// Another policy on the route can have streaming on, and then this
-		// entry is asked about every block. An error would stop the executor
-		// from running the rest of the chain, so settings that do not parse
-		// fail open here as they do in Execute.
+		// Settings that do not parse keep this entry off the stream chain
+		// (StreamSettings), so this covers only a caller that skipped that
+		// check. An error would stop the executor from running the rest of the
+		// chain, so it fails open here as it does in Execute.
 		if !seg.Closing {
 			recordEvaluateFailure(ctx, failureReasonConfigInvalid)
 		}
-		return segmentAllow(), nil
-	}
-	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
 	if seg.Closing {

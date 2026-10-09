@@ -2189,10 +2189,11 @@ func TestOutputInspectSkipReason(t *testing.T) {
 	}
 }
 
-// RUN-1759: with the stream guard off, a streamed pre_response leg is a plain
-// stage mismatch (post_response inspects the drained body); with it on, the
-// leg is reported as handed to the stream guard.
-func TestStreamedPreResponseLegReasonFollowsStreamingSetting(t *testing.T) {
+// RUN-1759: a streamed pre_response leg of a policy that inspects the response
+// is reported as handed to the stream guard, whatever its streaming block says
+// (RUN-1661). Only a policy that does not select pre_response is a plain stage
+// mismatch.
+func TestStreamedPreResponseLegReason(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -2201,8 +2202,8 @@ func TestStreamedPreResponseLegReasonFollowsStreamingSetting(t *testing.T) {
 		streaming map[string]any
 		want      string
 	}{
-		{"default settings opt into the stream guard", "", nil, skipReasonInspectedAsStream},
-		{"streaming disabled", "", map[string]any{"enabled": false}, skipReasonStreamingMismatch},
+		{"default settings", "", nil, skipReasonInspectedAsStream},
+		{"stored enabled: false is ignored", "", map[string]any{"enabled": false}, skipReasonInspectedAsStream},
 		{"policy does not select pre_response", "request", nil, skipReasonStreamingMismatch},
 	} {
 		tc := tc
@@ -2488,9 +2489,9 @@ func TestExecuteTransportErrorStillFailsOpenUnderTimeoutDefault(t *testing.T) {
 }
 
 // ENG-1738: the skip is decided per policy entry, from that entry's own
-// settings. Two trustguard entries on one route share the response context, so
-// the stream-guarded one skips while the one that opted out of per-block
-// inspection still audits the drained body: nothing else evaluated it.
+// settings. Every entry on the response leg is stream-guarded, so a stored
+// streaming.enabled: false does not keep a second audit of a drained body the
+// stream guard already inspected (RUN-1661).
 func TestExecutePostResponseFinalInspectedSkipIsPerPolicyEntry(t *testing.T) {
 	t.Parallel()
 
@@ -2500,8 +2501,9 @@ func TestExecutePostResponseFinalInspectedSkipIsPerPolicyEntry(t *testing.T) {
 		streaming map[string]any
 		wantCalls int
 	}{
-		{"stream-guarded entry skips", map[string]any{"enabled": true}, 0},
-		{"entry with streaming disabled keeps its audit", map[string]any{"enabled": false}, 1},
+		{"stored enabled: true skips", map[string]any{"enabled": true}, 0},
+		{"stored enabled: false skips too", map[string]any{"enabled": false}, 0},
+		{"no streaming block skips", map[string]any{}, 0},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -2523,4 +2525,53 @@ func TestExecutePostResponseFinalInspectedSkipIsPerPolicyEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A stream whose final block was not evaluated in full (degraded, retired,
+// capped or windowed) leaves StreamFinalInspected unset, and then the
+// post_response pass is the only full audit of the drained body. It has to carry
+// the assistant text, the reasoning and the tool calls, as the final block would
+// have.
+func TestExecutePostResponseAuditsTheDrainWhenTheFinalBlockWasNotInspected(t *testing.T) {
+	t.Parallel()
+
+	sse := `data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"plan "}}]}` + "\n\n" +
+		`data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":"first"}}]}` + "\n\n" +
+		`data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello "}}]}` + "\n\n" +
+		`data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"world"}}]}` + "\n\n" +
+		`data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"q\":"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"x\"}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		"data: [DONE]\n\n"
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-drain"}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: []byte(sse)}
+	event, _ := newEvent()
+	in := execInputWithEvent(policy.StagePostResponse, policy.ModeEnforce, settings("response"), requestContext(), resp, event)
+
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.Equal(t, 1, f.count(), "the drained body must be audited once")
+
+	got := f.captured()
+	assert.Equal(t, directionOutput, got.Direction)
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(got.Payload, &payload))
+	require.Len(t, payload.Messages, 1)
+	msg := payload.Messages[0]
+	assert.Equal(t, "hello world", msg["content"])
+	assert.Equal(t, "plan first", msg["reasoning_content"])
+	calls, ok := msg["tool_calls"].([]any)
+	require.True(t, ok, "tool_calls = %#v", msg["tool_calls"])
+	require.Len(t, calls, 1)
+	call, ok := calls[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "call_1", call["id"])
+	fn, ok := call["function"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "lookup", fn["name"])
+	assert.Equal(t, `{"q":"x"}`, fn["arguments"])
 }

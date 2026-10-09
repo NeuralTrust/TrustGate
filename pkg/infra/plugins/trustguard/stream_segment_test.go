@@ -338,7 +338,7 @@ func newSegmentServer(t *testing.T, g *segmentGuard) *httptest.Server {
 }
 
 func streamingSettings(streaming map[string]any) map[string]any {
-	s := map[string]any{"enabled": true}
+	s := map[string]any{}
 	for k, v := range streaming {
 		s[k] = v
 	}
@@ -586,18 +586,11 @@ func TestInspectSegmentDeadlineCoversTheTokenFetch(t *testing.T) {
 func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {
 	t.Parallel()
 
-	requestLeg := streamingSettings(nil)
-	requestLeg["direction"] = legRequest
-
 	tests := []struct {
 		name     string
 		settings map[string]any
 		seg      appplugins.StreamSegment
 	}{
-		{"streaming disabled", streamingSettings(map[string]any{"enabled": false}),
-			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"}},
-		{"policy excludes the response leg", requestLeg,
-			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"}},
 		{"nothing produced yet", streamingSettings(nil), appplugins.StreamSegment{Seq: 1}},
 	}
 	for _, tt := range tests {
@@ -614,11 +607,28 @@ func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {
 	}
 }
 
-// TestStreamSettingsIsTheOptIn pins the half of the contract the caller cannot
-// do for itself: the plugin is on every pre_response chain that names it, so
-// the settings — not the type — decide whether a head gate exists, and the
-// options come back with the answer so the caller never re-reads them.
-func TestStreamSettingsIsTheOptIn(t *testing.T) {
+// A stored streaming.enabled: false has no effect (RUN-1661).
+func TestInspectSegmentInspectsWhenStoredStreamingSaysOff(t *testing.T) {
+	t.Parallel()
+
+	g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	verdict, err := p.InspectSegment(segmentTraceContext(),
+		segmentInput(t, streamingSettings(map[string]any{"enabled": false})),
+		appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+
+	require.NoError(t, err)
+	require.NotNil(t, verdict)
+	assert.True(t, verdict.Block)
+	assert.Len(t, g.calls(), 1)
+}
+
+// TestStreamSettingsAnswersParticipation pins the half of the contract the
+// caller cannot do for itself: the plugin is on every pre_response chain that
+// names it, so the settings — not the type — decide whether a head gate
+// exists, and the options come back with the answer so the caller never
+// re-reads them.
+func TestStreamSettingsAnswersParticipation(t *testing.T) {
 	t.Parallel()
 	p := newTestPlugin(t, adapter.NewRegistry(), "http://guard.local")
 
@@ -636,7 +646,7 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 		MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
 		MaxHoldMS:            defaultStreamingMaxHoldMS,
 		MaxAccumulatedBytes:  defaultStreamingMaxAccumulatedBytes,
-	}, opts, "the block-loop knobs travel with the opt-in, so the caller never runs on defaults it was not given")
+	}, opts, "the block-loop knobs travel with the answer, so the caller never runs on defaults it was not given")
 
 	inherited := streamingSettings(nil)
 	inherited["on_error"] = onErrorFailClosed
@@ -646,22 +656,23 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 	assert.Equal(t, onErrorFailClosed, opts.OnError,
 		"streaming.on_error inherits the policy on_error, and the caller must be given what it inherited")
 
-	// RUN-1712: a policy that says nothing about streaming is on, with the
-	// defaults, because its direction already says it inspects the response.
-	// Before this, the same policy streamed its responses uninspected while the
-	// console told the operator both legs were covered.
-	enabled, opts = p.StreamSettings(map[string]any{"collector_id": testCollectorID})
-	assert.True(t, enabled, "an absent streaming block must mean on, not off")
-	assert.Equal(t, defaultStreamingHeadChars, opts.HeadChars)
-	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, opts.MinCharsBetweenEvals)
-
-	optedOut := streamingSettings(map[string]any{"enabled": false})
+	// A policy whose direction includes the response inspects a streamed
+	// response with the defaults, whatever its streaming block says (RUN-1712,
+	// RUN-1661).
+	for name, set := range map[string]map[string]any{
+		"absent streaming block":           {"collector_id": testCollectorID},
+		"stored enabled: false is ignored": {"collector_id": testCollectorID, "streaming": map[string]any{"enabled": false}},
+	} {
+		enabled, opts = p.StreamSettings(set)
+		assert.True(t, enabled, name)
+		assert.Equal(t, defaultStreamingHeadChars, opts.HeadChars, name)
+		assert.Equal(t, defaultStreamingMinCharsBetweenEvals, opts.MinCharsBetweenEvals, name)
+	}
 
 	for _, tt := range []struct {
 		name     string
 		settings map[string]any
 	}{
-		{"streaming explicitly disabled", optedOut},
 		{"policy excludes the response leg", requestLeg},
 		{"settings that do not parse", map[string]any{"collector_id": "not-a-uuid"}},
 	} {
@@ -750,21 +761,56 @@ func TestInspectSegmentAggregateOnACut(t *testing.T) {
 	assert.False(t, data.Streaming.FinalPass)
 }
 
-// A policy that never enabled streaming writes nothing: it is on the chain, so
-// it is asked, but it has nothing to say about a stream it did not inspect.
-func TestInspectSegmentClosingWritesNothingWhenStreamingIsOff(t *testing.T) {
+// A request-only policy is not a stream participant: the executor never asks it
+// about a block, so it makes no guard call and writes no streamed entry.
+func TestRequestOnlyPolicyIsNotAskedAboutTheStream(t *testing.T) {
 	t.Parallel()
 
-	p := newTestPlugin(t, adapter.NewRegistry(), "")
-	event, span := newEvent()
-	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce,
-		streamingSettings(map[string]any{"enabled": false}), segmentRequest(), nil, event)
+	g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(p))
+	requestLeg := streamingSettings(nil)
+	requestLeg["direction"] = legRequest
+	pol := &policy.Policy{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     PluginName,
+		Slug:     PluginName,
+		Enabled:  true,
+		Parallel: true,
+		Stages:   []policy.Stage{policy.StagePreRequest, policy.StagePreResponse},
+		Mode:     policy.ModeEnforce,
+		Settings: requestLeg,
+	}
+	rt := trace.New(testStreamTraceID, trace.Metadata{})
+	ctx, publish := appplugins.NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	in := appplugins.StageInput{
+		Stage:    policy.StagePreResponse,
+		Policies: []*policy.Policy{pol},
+		Request:  segmentRequest(),
+		Response: &infracontext.ResponseContext{},
+	}
+	runner, ok := appplugins.NewExecutor(reg, nil).(interface {
+		RunStreamSegment(context.Context, appplugins.StageInput, appplugins.StreamSegment) (*appplugins.SegmentOutcome, error)
+	})
+	require.True(t, ok)
 
-	_, err := p.InspectSegment(segmentTraceContext(), in,
-		appplugins.StreamSegment{Closing: true, Report: appplugins.StreamReport{Evals: 2}})
+	outcome, err := runner.RunStreamSegment(ctx, in, appplugins.StreamSegment{StreamID: "s-1", Seq: 1, Accumulated: "Hello world"})
 	require.NoError(t, err)
+	require.NotNil(t, outcome)
+	assert.False(t, outcome.Block)
+	_, err = runner.RunStreamSegment(ctx, in, appplugins.StreamSegment{
+		StreamID: "s-1", Seq: 1, Closing: true, Report: appplugins.StreamReport{Evals: 1},
+	})
+	require.NoError(t, err)
+	publish()
 
-	assert.Nil(t, span.PluginAttrsCopy().Extras)
+	assert.Empty(t, g.calls(), "a request-only policy must not be asked about a block")
+	for _, span := range rt.Spans() {
+		if span.Name == PluginName {
+			assert.Nil(t, span.PluginAttrsCopy().Extras, "a request-only policy writes no streamed entry")
+		}
+	}
 }
 
 // An observe-mode policy is what an operator runs to see what a policy would do
@@ -859,4 +905,20 @@ func TestHeadFailureUnderFailClosedIsReportedAsABlockByTheFailingEntry(t *testin
 	}
 	require.True(t, found)
 	assert.Equal(t, streamOutcomeBlocked, streamOutcomeLabel(report))
+}
+
+func TestSettingsWriteRefusesANewStreamingOptOut(t *testing.T) {
+	t.Parallel()
+	p := newTestPlugin(t, adapter.NewRegistry(), "")
+	off := streamingSettings(map[string]any{"enabled": false})
+	on := streamingSettings(map[string]any{"enabled": true})
+
+	err := p.ValidateSettingsWrite(off, nil)
+	require.Error(t, err, "a new streaming.enabled: false must be refused")
+	assert.Contains(t, err.Error(), "streaming.enabled cannot turn it off")
+
+	require.Error(t, p.ValidateSettingsWrite(off, on), "turning an enabled policy off is a new opt-out")
+	require.NoError(t, p.ValidateSettingsWrite(off, off), "a policy stored with the value stays editable")
+	require.NoError(t, p.ValidateSettingsWrite(on, nil))
+	require.NoError(t, p.ValidateSettingsWrite(streamingSettings(nil), nil))
 }

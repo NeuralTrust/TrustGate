@@ -178,9 +178,9 @@ type SegmentVerdict struct {
 	Fingerprints []string
 }
 
-// StreamOptions is the streaming configuration of the entry that opted in.
+// StreamOptions is the streaming configuration of a participating entry.
 // HeadChars and OnError live in the plugin's own settings schema, so they
-// travel with the opt-in rather than being re-read by a caller that cannot
+// travel with the answer rather than being re-read by a caller that cannot
 // parse them: an operator who sets streaming.on_error to fail_closed must not
 // silently get fail_open. The block-loop knobs travel the same way and for the
 // same reason: MinCharsBetweenEvals floors how often a block closes,
@@ -194,14 +194,18 @@ type StreamOptions struct {
 	MaxAccumulatedBytes  int
 }
 
-// StreamInspector is the opt-in a plugin declares to be consulted per block of
-// a streaming response. A plugin that does not implement it is absent from the
-// stream chain and still runs at the fixed stages, so the capability extends
-// one plugin at a time, the way ScopeInertSafe does.
+// StreamInspector is the capability a plugin declares to be consulted per
+// block of a streaming response. A plugin that does not implement it is absent
+// from the stream chain and still runs at the fixed stages, so the capability
+// extends one plugin at a time, the way ScopeInertSafe does.
 //
-// Implementing the interface is not by itself the opt-in: StreamSettings reads
-// the policy's settings and decides. A plugin whose streaming block is
-// disabled yields no stream chain at all, so an existing policy costs nothing.
+// Implementing the interface does not by itself put a policy on the stream
+// chain: StreamSettings reads the policy's settings and reports actsOnResponse.
+// Whether a response streams is the client's call, so actsOnResponse must
+// depend only on whether the policy acts on the response leg (its direction,
+// stages or target) and on its settings parsing, never on a setting that turns
+// inspection off (RUN-1661). A policy that does not act on the response, such
+// as a request-only one, yields no stream chain.
 //
 // InspectSegment must return promptly and without error on a segment whose
 // Closing flag is set, whatever it makes of the report it carries. That call is
@@ -210,7 +214,7 @@ type StreamOptions struct {
 // verdict is read from it.
 type StreamInspector interface {
 	InspectSegment(ctx context.Context, in ExecInput, seg StreamSegment) (*SegmentVerdict, error)
-	StreamSettings(settings map[string]any) (bool, StreamOptions)
+	StreamSettings(settings map[string]any) (actsOnResponse bool, opts StreamOptions)
 }
 
 // StreamOptionsOwner is the optional declaration of a StreamInspector that is a

@@ -29,6 +29,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bedrockguardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -189,13 +190,48 @@ func TestStreamGuard_GuardrailsInspectAStreamWithNoStreamingKey(t *testing.T) {
 	assert.Positive(t, calls.Load())
 }
 
-func TestStreamGuard_GuardrailExplicitlyDisabledIsNotAParticipant(t *testing.T) {
+// A stored streaming.enabled: false has no effect (RUN-1661).
+func TestStreamGuard_GuardrailStoredEnabledFalseStillInspects(t *testing.T) {
 	t.Parallel()
 	srv, calls := moderationStub(t, provFlagged)
-	_, joins := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, map[string]any{"enabled": false}))
+	g, joins := moderationGuard(t, srv.URL, moderationPolicy(policy.ModeEnforce, map[string]any{"enabled": false}))
+	require.True(t, joins, "streaming.enabled: false is not an opt-out")
 
-	assert.False(t, joins, "streaming.enabled: false is the opt-out")
-	assert.Zero(t, calls.Load())
+	run := runModerationGuard(t, g)
+
+	require.NotNil(t, run.pe, "a flagged head is a clean 403 in enforce")
+	assert.Equal(t, http.StatusForbidden, run.pe.StatusCode)
+	assert.Positive(t, calls.Load())
+}
+
+// A bedrock_guardrail policy with no streaming block makes the forwarder build
+// the stream guard, with the plugin's own defaults.
+func TestStreamGuard_BedrockWithNoStreamingBlockJoinsTheStream(t *testing.T) {
+	t.Parallel()
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(bedrockguardrail.New(adapter.NewRegistry(), nil)))
+	pol := &policy.Policy{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     bedrockguardrail.PluginName,
+		Slug:     bedrockguardrail.PluginName,
+		Enabled:  true,
+		Parallel: true,
+		Stages:   []policy.Stage{policy.StagePreResponse},
+		Mode:     policy.ModeEnforce,
+		Settings: map[string]any{
+			"guardrail_id": "gr-1",
+			"credentials": map[string]any{
+				"access_key_id":     "AKIAEXAMPLE",
+				"secret_access_key": "secret",
+			},
+		},
+	}
+
+	joins, opts := appplugins.NewStagePlan(reg, []*policy.Policy{pol}, nil).StreamPlan(policy.StagePreResponse)
+
+	require.True(t, joins)
+	assert.Equal(t, "fail_open", opts.OnError, "a guardrail outage must not cut a stream the client is already reading")
+	assert.Positive(t, opts.MaxAccumulatedBytes)
 }
 
 // Provider failures. The head and a later block take different paths in the

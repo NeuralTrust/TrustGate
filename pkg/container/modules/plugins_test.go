@@ -203,3 +203,65 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 		}
 	}
 }
+
+// TestNewPluginRegistry_StreamInspectorsRefuseANewStreamingOptOut pins that
+// every plugin inspecting streamed responses block by block refuses a new
+// streaming.enabled: false and keeps a policy stored with it editable
+// (RUN-1661). A new StreamInspector must be added to the fixtures here, which is
+// what makes the rule a conscious edit for it.
+func TestNewPluginRegistry_StreamInspectorsRefuseANewStreamingOptOut(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	fixtures := map[string]func() map[string]any{
+		"trustguard": func() map[string]any {
+			return map[string]any{"collector_id": "11111111-1111-4111-8111-111111111111"}
+		},
+		"openai_moderation": func() map[string]any {
+			return map[string]any{"api_key": "k", "thresholds": map[string]any{"hate": 0.7}}
+		},
+		"bedrock_guardrail": func() map[string]any {
+			return map[string]any{
+				"guardrail_id": "gr-1",
+				"credentials":  map[string]any{"access_key_id": "AKIAEXAMPLE", "secret_access_key": "secret"},
+			}
+		},
+		"google_model_armor": func() map[string]any {
+			return map[string]any{"project": "proj", "location": "us-central1", "template": "tmpl-1"}
+		},
+		"regex_replace": func() map[string]any {
+			return map[string]any{
+				"target": "response",
+				"rules":  []map[string]any{{"pattern": "a", "replacement": "b"}},
+			}
+		},
+	}
+
+	var inspectors []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if _, ok := p.(appplugins.StreamInspector); ok {
+			inspectors = append(inspectors, name)
+		}
+	}
+	keys := make([]string, 0, len(fixtures))
+	for slug := range fixtures {
+		keys = append(keys, slug)
+	}
+	require.ElementsMatch(t, keys, inspectors, "every StreamInspector needs a fixture here")
+
+	withEnabled := func(set map[string]any, v any) map[string]any {
+		set["streaming"] = map[string]any{"enabled": v}
+		return set
+	}
+	for slug, base := range fixtures {
+		require.NoError(t, reg.ValidateSettingsWrite(slug, base(), nil), "%s: the fixture must be a valid write", slug)
+
+		err := reg.ValidateSettingsWrite(slug, withEnabled(base(), false), nil)
+		require.Error(t, err, "%s: a new streaming.enabled: false must be refused", slug)
+		assert.Contains(t, err.Error(), "streaming.enabled cannot turn it off", slug)
+
+		assert.NoError(t, reg.ValidateSettingsWrite(slug, withEnabled(base(), false), withEnabled(base(), false)),
+			"%s: a policy stored with streaming.enabled: false stays editable", slug)
+		assert.NoError(t, reg.ValidateSettingsWrite(slug, withEnabled(base(), true), nil), slug)
+	}
+}

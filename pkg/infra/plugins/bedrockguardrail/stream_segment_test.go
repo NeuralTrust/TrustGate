@@ -109,7 +109,7 @@ func anonymisingOutput(masked string) *bedrockruntime.ApplyGuardrailOutput {
 }
 
 func streamSettings(over map[string]any) map[string]any {
-	stream := map[string]any{"enabled": true}
+	stream := map[string]any{}
 	for k, v := range over {
 		stream[k] = v
 	}
@@ -146,7 +146,7 @@ func newEvent() (*metrics.EventContext, *trace.Span) {
 	return metrics.NewEventContext(span), span
 }
 
-func TestStreamSettingsOptIn(t *testing.T) {
+func TestStreamSettingsParticipation(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
 	cases := []struct {
@@ -154,15 +154,12 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block: opt-in, so off", bufferedSettings(), false},
-		{"enabled", streamSettings(nil), true},
+		{"absent block", bufferedSettings(), true},
+		{"empty block", streamSettings(nil), true},
+		{"stored enabled: true", streamSettings(map[string]any{"enabled": true}), true},
+		{"stored enabled: false is ignored", streamSettings(map[string]any{"enabled": false}), true},
 		{
-			"explicitly disabled",
-			streamSettings(map[string]any{"enabled": false}),
-			false,
-		},
-		{
-			"enabled but the settings do not parse",
+			"settings that do not parse",
 			map[string]any{"streaming": map[string]any{"enabled": true}},
 			false,
 		},
@@ -181,7 +178,8 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	p := New(adapter.NewRegistry(), nil)
 
 	for name, set := range map[string]map[string]any{
-		"enabled, nothing else": streamSettings(nil),
+		"no streaming block":    bufferedSettings(),
+		"empty streaming block": streamSettings(nil),
 	} {
 		on, opts := p.StreamSettings(set)
 		require.True(t, on, name)
@@ -370,17 +368,22 @@ func TestInspectSegmentVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
 	assert.Contains(t, err.Error(), "verdict_incomplete (automated_reasoning_policy)")
 }
 
-func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
+func TestInspectSegmentInspectsWhateverStreamingSays(t *testing.T) {
 	t.Parallel()
-	g := intervening(blockingOutput())
-	p := streamPlugin(t, g)
+	for name, set := range map[string]map[string]any{
+		"no streaming block":               bufferedSettings(),
+		"stored enabled: false is ignored": streamSettings(map[string]any{"enabled": false}),
+	} {
+		g := intervening(blockingOutput())
+		p := streamPlugin(t, g)
 
-	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, streamSettings(map[string]any{"enabled": false}), nil), segment(1, "hateful output"))
+		got, err := p.InspectSegment(context.Background(),
+			streamInput(policy.ModeEnforce, set, nil), segment(1, "hateful output"))
 
-	require.NoError(t, err)
-	assert.False(t, got.Block)
-	assert.Zero(t, g.calls, "a policy that opted out must cost no call")
+		require.NoError(t, err, name)
+		assert.True(t, got.Block, name)
+		assert.Equal(t, 1, g.calls, name)
+	}
 }
 
 func TestInspectSegmentSkipsEmptyText(t *testing.T) {
@@ -502,29 +505,6 @@ func TestFindingFingerprintsSkipBlockingModesAndNilFindings(t *testing.T) {
 	assert.Nil(t, findingFingerprints(policy.ModeEnforce, f),
 		"a blocking mode stops the stream, so nothing comes back to deduplicate")
 	assert.Nil(t, findingFingerprints(policy.ModeObserve, nil))
-}
-
-// bedrock_guardrail is opt-in because of ApplyGuardrail's per-second quota. With
-// no streaming block the plugin must not join the stream chain, and parseConfig
-// must resolve the absent key to off rather than to anything the other two
-// guardrails default to. The skip marker for a streamed response is asserted in
-// TestStreamedResponseRecordsSkipWhenStreamingIsNotEnabled.
-func TestStreamSettingsAbsentKeyIsOffAndUnparsedOptInStaysOff(t *testing.T) {
-	t.Parallel()
-	p := New(adapter.NewRegistry(), nil)
-
-	on, opts := p.StreamSettings(bufferedSettings())
-	assert.False(t, on)
-	assert.Equal(t, appplugins.StreamOptions{}, opts)
-
-	cfg, err := parseConfig(bufferedSettings())
-	require.NoError(t, err)
-	assert.False(t, cfg.Streaming.IsEnabled())
-	assert.Nil(t, cfg.Streaming.Enabled, "an absent key is not an explicit false")
-
-	// Tuning keys alone are not an opt-in.
-	on, _ = p.StreamSettings(streamSettings(map[string]any{"enabled": nil, "head_chars": 100}))
-	assert.False(t, on)
 }
 
 // RUN-1710: the closing write carries the first failed block's reason whatever

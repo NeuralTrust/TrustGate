@@ -857,7 +857,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors and timeouts unless on_error / on_timeout say fail_closed. Streamed responses are inspected block by block as they are produced, whenever the direction includes the response; set streaming.enabled to false to inspect them only after the stream completes.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors and timeouts unless on_error / on_timeout say fail_closed. Whether a response streams is decided by the client request; a streamed response is always inspected block by block as it is produced whenever the direction includes the response, and this cannot be turned off.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -915,7 +915,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"openai_moderation": {
 		name:        "OpenAI Moderation",
 		group:       groupGuardrails,
-		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. If OpenAI cannot be reached or returns an unusable verdict, the request is allowed through and the event records decision failed_open with the failure reason, in every mode, unless settings.on_error is fail_closed. Text-only. Streamed responses are moderated block by block by default, and a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed; set settings.streaming.enabled to false to leave them unmoderated, in which case the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. If OpenAI cannot be reached or returns an unusable verdict, the request is allowed through and the event records decision failed_open with the failure reason, in every mode, unless settings.on_error is fail_closed. Text-only. Whether a response streams is decided by the client request; a streamed response is always moderated block by block when the policy covers the response, and this cannot be turned off. A provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1085,7 +1085,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"bedrock_guardrail": {
 		name:        "AWS Bedrock Guardrail",
 		group:       groupGuardrails,
-		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. Streamed responses are inspected block by block only when streaming is enabled for the policy (settings.streaming.enabled: true, set through the API; it is off by default because every block calls ApplyGuardrail again and AWS rate-limits it per account and region). Once enabled, a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed. Otherwise streamed responses pass through uninspected, and the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. Whether a response streams is decided by the client request; a streamed response is always inspected block by block, and this cannot be turned off. Each block calls ApplyGuardrail again, and AWS rate-limits ApplyGuardrail per account and region. A provider error, throttle or timeout on a block fails open unless settings.streaming.on_error is fail_closed.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1188,7 +1188,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"google_model_armor": {
 		name:        "Google Model Armor",
 		group:       groupGuardrails,
-		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streamed responses are inspected block by block by default, and a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed; set settings.streaming.enabled to false to leave them uninspected, in which case the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Whether a response streams is decided by the client request; a streamed response is always inspected block by block, and this cannot be turned off. A provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1257,7 +1257,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"regex_replace": {
 		name:        "Regex Replace",
 		group:       groupGuardrails,
-		description: "Rewrite the request prompt or LLM response with ordered RE2 regex rules that chain, each seeing the previous output. Streamed responses are rewritten block by block when the rule targets the response; set streaming.enabled to false to leave them unrewritten, in which case the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Rewrite the request prompt or LLM response with ordered RE2 regex rules that chain, each seeing the previous output. Whether a response streams is decided by the client request; a streamed response is always rewritten block by block when the rule targets the response, and this cannot be turned off.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{

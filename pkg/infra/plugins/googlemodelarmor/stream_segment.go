@@ -38,20 +38,16 @@ const anonymizeDegradedMessage = "response blocked: guardrail masking could not 
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 
-// StreamSettings reports whether these policy settings ask for per-block
-// sanitization of the response leg, and the options the block loop must run
-// under. Implementing InspectSegment is not the opt-in on its own: this plugin
-// is on every pre_response chain that names it, so this is what keeps the head
-// gate off for a policy that opted out with streaming.enabled: false.
-func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+// StreamSettings reports whether a policy with these settings sanitizes a
+// streamed response block by block, and the options the block loop must run
+// under. Every policy that parses does: the template applies to the response
+// leg whatever the policy says about streaming (RUN-1661).
+func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.IsEnabled() {
-		return false, appplugins.StreamOptions{}
-	}
-	opts := cfg.Streaming.Options()
+	opts = cfg.Streaming.Options()
 	opts.MaxAccumulatedBytes = min(opts.MaxAccumulatedBytes, maxSanitizeBytes)
 	return true, opts
 }
@@ -76,9 +72,6 @@ func (p *Plugin) InspectSegment(
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
-	}
-	if !cfg.Streaming.IsEnabled() {
-		return segmentAllow(), nil
 	}
 	if err := p.checkIdentity(cfg); err != nil {
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)

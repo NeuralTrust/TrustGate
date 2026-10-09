@@ -35,21 +35,23 @@ const (
 // openai_moderation and the block loop calls it less often to keep the hold on
 // a client's bytes bounded.
 //
-// Unlike google_model_armor and openai_moderation it is OPT-IN
-// (streaming.enabled: true). Every block resends the whole accumulated prefix to
-// ApplyGuardrail, and the on-demand quota is per account and region: 25 text
-// units per second per policy type in most regions (only the largest US and
-// EU regions get more), and a text unit is up to 1000 characters. A few streams
-// inspected per block would throttle the customer's account, and their buffered
-// requests would then go through uninspected (failed_open). Until the console
-// exposes the control (RUN-1661) a policy without the key is not inspected per
-// block, and the trace marks it skipped with reason streaming_disabled.
+// Every block resends the whole accumulated prefix to ApplyGuardrail, and the
+// on-demand quota is per account and region: 25 text units per second per
+// policy type in most regions (only the largest US and EU regions get more),
+// and a text unit is up to 1000 characters. A streamed response is inspected
+// per block all the same (RUN-1661), so the cadence is what keeps the number of
+// calls per stream down. The quota is shared with the buffered legs: a few
+// streams inspected per block can throttle the account, and then the
+// non-streamed pre_request and pre_response calls are throttled too. Those
+// follow on_error: fail_open lets the request through uninspected
+// (failed_open), fail_closed refuses it with a 502 guardrail_unavailable. A
+// throttled block of the stream itself follows streaming.on_error.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
 //
-// Once a policy opts in, the stream leg fails open by default and
-// MaxAccumulatedBytes is 24 KiB because ApplyGuardrail caps the input per
-// policy at a number of text units (1 unit = up to 1000 characters) that
-// depends on region and tier, and the smallest default is 25 units
+// The stream leg fails open by default and MaxAccumulatedBytes is 24 KiB
+// because ApplyGuardrail caps the input per policy at a number of text units
+// (1 unit = up to 1000 characters) that depends on region and tier, and the
+// smallest default is 25 units
 // (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
 // tier). Bytes are never fewer than characters, so 24576 bytes fits in 25
 // units. Past it this policy is sent only the tail window, whatever window the
@@ -84,8 +86,7 @@ type Settings struct {
 	// verdict on its buffered leg: fail_open (the default) lets it through and
 	// records failed_open, fail_closed refuses it in a mode that blocks.
 	OnError string `mapstructure:"on_error"`
-	// Streaming tunes the per-block inspection of the pre_response leg. It is off
-	// when the block is absent; streaming.enabled: true turns it on.
+	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 

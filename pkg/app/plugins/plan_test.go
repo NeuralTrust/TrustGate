@@ -421,7 +421,7 @@ func TestStagePlan_StreamPlan(t *testing.T) {
 
 	ok, opts = disabled.StreamPlan(policy.StagePreResponse)
 	assert.False(t, ok,
-		"a policy whose streaming block is disabled must not yield a guard, however the plugin is typed")
+		"a policy its plugin keeps off the response leg must not yield a guard, however the plugin is typed")
 	assert.Zero(t, opts)
 
 	ok, _ = withoutInspector.StreamPlan(policy.StagePreResponse)
@@ -507,7 +507,7 @@ func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing
 		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
 	})
 
-	t.Run("a disabled owner does not count", func(t *testing.T) {
+	t.Run("a non-participating owner does not count", func(t *testing.T) {
 		pols := policies(t,
 			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
 			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},

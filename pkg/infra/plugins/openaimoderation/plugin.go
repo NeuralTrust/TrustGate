@@ -103,8 +103,8 @@ var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 // no path to a violation: the policy would call OpenAI and never act), plus
 // an unknown model or an unknown thresholds/categories key for the
 // configured model - option "b": only a NEWLY introduced unknown key is
-// refused. The same rule applies to streaming.final_pass: false
-// (pluginutil.ValidateFinalPassWrite). previous is the settings as they were
+// refused. The same rule applies to streaming.final_pass: false and
+// streaming.enabled: false (pluginutil.ValidateStreamingWrite). previous is the settings as they were
 // stored before this write (nil on create, or when the write also changes the
 // slug: settings that belonged to a different plugin are not "previous" for
 // this one). A key
@@ -123,7 +123,7 @@ func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error 
 				"this policy could never block or report a violation - set thresholds or block_on_flagged: true",
 		)
 	}
-	if err := pluginutil.ValidateFinalPassWrite(PluginName, settings, previous); err != nil {
+	if err := pluginutil.ValidateStreamingWrite(PluginName, settings, previous); err != nil {
 		return err
 	}
 
@@ -249,13 +249,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	// A streamed response is moderated block by block by the stream guard when
-	// streaming is enabled for this policy. When it is not, the response goes
-	// out unmoderated and the trace says so, rather than omitting the policy.
+	// A streamed response is moderated block by block by the stream guard.
 	if in.Stage == policy.StagePreResponse && in.Response != nil && in.Response.Streaming {
-		if !cfg.Streaming.IsEnabled() {
-			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
-		}
 		return passThrough(), nil
 	}
 

@@ -31,7 +31,7 @@ import (
 )
 
 func streamSettings(over map[string]any) map[string]any {
-	stream := map[string]any{"enabled": true}
+	stream := map[string]any{}
 	for k, v := range over {
 		stream[k] = v
 	}
@@ -62,7 +62,7 @@ func newStreamEvent() (*metrics.EventContext, *trace.Span) {
 	return metrics.NewEventContext(span), span
 }
 
-func TestStreamSettingsOptIn(t *testing.T) {
+func TestStreamSettingsParticipation(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", 0, true, nil)
 	cases := []struct {
@@ -70,11 +70,12 @@ func TestStreamSettingsOptIn(t *testing.T) {
 		settings map[string]any
 		want     bool
 	}{
-		{"absent block: on by default", modelArmorSettings(), true},
-		{"enabled", streamSettings(nil), true},
-		{"explicitly disabled", streamSettings(map[string]any{"enabled": false}), false},
+		{"absent block", modelArmorSettings(), true},
+		{"empty block", streamSettings(nil), true},
+		{"stored enabled: true", streamSettings(map[string]any{"enabled": true}), true},
+		{"stored enabled: false is ignored", streamSettings(map[string]any{"enabled": false}), true},
 		{
-			"enabled but the settings do not parse",
+			"settings that do not parse",
 			map[string]any{"streaming": map[string]any{"enabled": true}},
 			false,
 		},
@@ -94,12 +95,12 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", 0, true, nil)
 	for name, set := range map[string]map[string]any{
-		"enabled, nothing else": streamSettings(nil),
+		"empty streaming block": streamSettings(nil),
 		"no streaming block":    modelArmorSettings(),
 	} {
 		on, opts := p.StreamSettings(set)
 		if !on {
-			t.Fatalf("%s: expected the opt-in", name)
+			t.Fatalf("%s: expected the policy to inspect the stream", name)
 		}
 		if opts.OnError != "fail_open" {
 			t.Errorf("%s: OnError = %q, want fail_open: a Model Armor outage must not cut a stream", name, opts.OnError)
@@ -143,7 +144,7 @@ func TestStreamSettingsStaysWithinTheSanitizeLimit(t *testing.T) {
 			t.Parallel()
 			on, opts := p.StreamSettings(tc.settings)
 			if !on {
-				t.Fatal("expected the opt-in")
+				t.Fatal("expected the policy to inspect the stream")
 			}
 			if opts.MaxAccumulatedBytes != tc.want {
 				t.Errorf("MaxAccumulatedBytes = %d, want %d: Model Armor skips its filters above 65,536 tokens",
@@ -384,22 +385,27 @@ func TestInspectSegmentIgnoresAbsentFilterNotInBlockOn(t *testing.T) {
 	}
 }
 
-func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
+func TestInspectSegmentSanitizesWhateverStreamingSays(t *testing.T) {
 	t.Parallel()
-	stub := newModelArmorStub(t, http.StatusOK, raiBlockResponse)
-	p := pluginWithStub(stub)
+	for name, set := range map[string]map[string]any{
+		"no streaming block":               modelArmorSettings(),
+		"stored enabled: false is ignored": streamSettings(map[string]any{"enabled": false}),
+	} {
+		stub := newModelArmorStub(t, http.StatusOK, raiBlockResponse)
+		p := pluginWithStub(stub)
 
-	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, streamSettings(map[string]any{"enabled": false}), nil), segment(1, "unsafe output"))
+		got, err := p.InspectSegment(context.Background(),
+			streamInput(policy.ModeEnforce, set, nil), segment(1, "unsafe output"))
 
-	if err != nil {
-		t.Fatalf("InspectSegment: %v", err)
-	}
-	if got.Block {
-		t.Error("a policy that opted out must not cut")
-	}
-	if stub.count() != 0 {
-		t.Errorf("sanitize calls = %d, want none", stub.count())
+		if err != nil {
+			t.Fatalf("%s: InspectSegment: %v", name, err)
+		}
+		if !got.Block {
+			t.Errorf("%s: a flagged block must be cut", name)
+		}
+		if stub.count() != 1 {
+			t.Errorf("%s: sanitize calls = %d, want 1", name, stub.count())
+		}
 	}
 }
 

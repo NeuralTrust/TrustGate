@@ -39,14 +39,9 @@ const (
 // trustguard's, which buys a smaller window between the text being produced and
 // being cleared.
 //
-// It is on by default: a guardrail that silently stops guarding the moment a
-// client sets stream: true is not a guardrail. A policy opts out with
-// streaming.enabled: false.
-//
 // MaxAccumulatedBytes stays at 256 KiB: OpenAI documents no input size limit
 // for the moderations endpoint, so there is nothing authoritative to fit to.
 var streamingDefaults = pluginutil.StreamingDefaults{
-	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 1024,
 	MaxHoldMS:            500,
@@ -66,8 +61,7 @@ type Settings struct {
 	// verdict on its buffered leg: fail_open (the default) lets it through and
 	// records failed_open, fail_closed refuses it in a mode that blocks.
 	OnError string `mapstructure:"on_error"`
-	// Streaming tunes the per-block inspection of the pre_response leg. It is on
-	// when the block is absent; streaming.enabled: false opts out.
+	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 

@@ -763,11 +763,11 @@ func (f *forwarder) shortCircuitStream(
 	}
 }
 
-// newStreamGuard builds the head gate, and returns nil when no policy enabled
-// per-segment inspection. A gateway whose policies do not participate keeps the
-// streaming path it has today: not a wrapper that passes through, no wrapper at
-// all, so not one extra allocation or indirection sits between the provider and
-// the client.
+// newStreamGuard builds the head gate, and returns nil when no policy takes
+// part in per-segment inspection. A gateway whose policies do not participate
+// keeps the streaming path it has today: not a wrapper that passes through, no
+// wrapper at all, so not one extra allocation or indirection sits between the
+// provider and the client.
 //
 // head_chars, on_error and the block-loop knobs come from StreamPlan rather
 // than from a literal, so a policy that sets on_error to fail_closed is not
@@ -779,8 +779,8 @@ func (f *forwarder) newStreamGuard(
 	if f.executor == nil || f.codec == nil {
 		return nil
 	}
-	enabled, opts := dto.plan.StreamPlan(policydomain.StagePreResponse)
-	if !enabled {
+	participates, opts := dto.plan.StreamPlan(policydomain.StagePreResponse)
+	if !participates {
 		return nil
 	}
 	runner, ok := f.executor.(segmentRunner)
