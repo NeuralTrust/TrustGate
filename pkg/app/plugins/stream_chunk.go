@@ -29,28 +29,49 @@ import (
 // that splits into more than maxStreamChunks is cut in a mode that blocks: the
 // stream is held for the length of the call, and a client chooses the block's
 // size.
+//
+// An inspector that bounds its own payload (StreamPayloadBound) is not split:
+// it is sent the block whole, as one call, because it is one evaluation of the
+// whole block that it answers for.
 const (
 	maxStreamChunks       = 8
 	streamChunkParallel   = 4
 	maxStreamChunkOverlap = 2048
 )
 
+// StreamPayloadBound is the optional declaration of a StreamInspector that
+// bounds the payload it sends itself, and must therefore be handed a block
+// whole: the executor never splits a block for it. Splitting would repeat its
+// per-call state (the position of a block in the stream, the block that ends
+// the response) once per piece.
+type StreamPayloadBound interface {
+	BoundsStreamPayload() bool
+}
+
+func boundsOwnPayload(inspector StreamInspector) bool {
+	b, ok := inspector.(StreamPayloadBound)
+	return ok && b.BoundsStreamPayload()
+}
+
 func streamChunkSpec(window int) textchunk.Spec {
 	return textchunk.Spec{Max: window, Overlap: min(window/8, maxStreamChunkOverlap), Unit: textchunk.Bytes}
 }
 
 // inspectChunked calls inspector once per chunk of call.Accumulated and merges
-// the answers into the one a single call would have given: a block of any chunk
-// blocks (the lowest chunk's), a failure that is the content's is the cut, the
-// masks of every chunk are mapped back onto the block (a mask that cannot be
-// applied cuts, as a mask over a finding), and a failure that is availability is
-// the entry's failed call unless a mask or a finding can still be used.
+// the answers into the one a single call would have given (mergeChunkVerdicts).
+// onChunked is called once the block is known to be within maxStreamChunks, so
+// a block refused for its size is not counted as screened.
+//
+// Only the chunk that reaches the end of call.Accumulated carries Final, and
+// every piece says which it is (Part of Parts), so an inspector that keys on the
+// block never sees the same block position or the same end of response twice.
 func (e *executor) inspectChunked(
 	ctx context.Context,
 	inspector StreamInspector,
 	in ExecInput,
 	call StreamSegment,
 	entry chainEntry,
+	onChunked func(),
 ) (*SegmentVerdict, error) {
 	spec := streamChunkSpec(entry.streamWindow)
 	if n := textchunk.Count(call.Accumulated, spec); n > maxStreamChunks {
@@ -58,6 +79,7 @@ func (e *executor) inspectChunked(
 			fmt.Errorf("plugins: a stream block of %d bytes splits into %d chunks, above the %d screened",
 				len(call.Accumulated), n, maxStreamChunks))
 	}
+	onChunked()
 	chunks := textchunk.Split(call.Accumulated, spec)
 	blockStart := max(len(call.Accumulated)-len(call.Text), 0)
 
@@ -73,6 +95,8 @@ func (e *executor) inspectChunked(
 			piece.Text = c.Text[min(blockStart-c.Start, len(c.Text)):]
 		}
 		piece.Truncated = true
+		piece.Final = call.Final && c.End == len(call.Accumulated)
+		piece.Part, piece.Parts = i+1, len(chunks)
 		verdict, err := inspector.InspectSegment(ctx, in, piece)
 		verdicts[i] = verdict
 		return struct{}{}, err
@@ -83,6 +107,23 @@ func (e *executor) inspectChunked(
 	return mergeChunkVerdicts(entry, call.Accumulated, chunks, verdicts, outs)
 }
 
+// mergeChunkVerdicts reads the chunks through the same precedence table the
+// buffered legs use (ClassifyChunks), so one provider answer means the same
+// thing on either leg:
+//
+//   - a block of any chunk blocks, and a block that is a finding wins over one
+//     that is a failure (the lowest chunk's, as a copy);
+//   - a failure that is the content's, or the request's own size (a chunk that
+//     never ran, a throttle on a block of several chunks), is the cut, or in a
+//     mode that does not block the typed error as it came;
+//   - the masks of every chunk are mapped back onto the block, and a mask that
+//     cannot be applied cuts, as a mask over a finding;
+//   - a failure that is availability is the entry's failed call unless a mask or
+//     a finding can still be used.
+//
+// Whatever the outcome, the fingerprints of every chunk that answered are
+// carried, and so is the first Incomplete among them, so an observe entry keeps
+// every chunk's findings.
 func mergeChunkVerdicts(
 	entry chainEntry,
 	accumulated string,
@@ -90,35 +131,27 @@ func mergeChunkVerdicts(
 	verdicts []*SegmentVerdict,
 	outs []textchunk.Outcome[struct{}],
 ) (*SegmentVerdict, error) {
-	for _, wantFinding := range []bool{true, false} {
-		for i, v := range verdicts {
-			if outs[i].Started && outs[i].Err == nil && v != nil && v.Block && (v.Failure == nil) == wantFinding {
-				return v, nil
-			}
+	d := ClassifyChunks(outs, false, func(i int, _ struct{}, err error) ChunkState {
+		if err != nil {
+			reason, detail := streamFailureOf(err)
+			return ChunkState{Failure: &ChunkFailure{Reason: reason, Detail: detail}}
 		}
-	}
+		switch v := verdicts[i]; {
+		case v == nil:
+		case v.Block && v.Failure == nil:
+			return ChunkState{Blocks: true}
+		case v.Block:
+			return ChunkState{Failure: &ChunkFailure{Reason: v.Failure.Reason, Detail: v.Failure.Detail}}
+		case v.HasTransform:
+			return ChunkState{Mask: true}
+		}
+		return ChunkState{}
+	})
 
-	var availability error
-	for _, out := range outs {
-		if !out.Started || out.Err == nil {
-			continue
-		}
-		var failure *ExternalStreamFailure
-		if errors.As(out.Err, &failure) && failure.Class == FailureClassInput {
-			return nil, out.Err
-		}
-		if availability == nil {
-			availability = out.Err
-		}
-	}
-
-	merged := &SegmentVerdict{}
 	var fingerprints []string
 	seen := map[string]struct{}{}
-	masked := make([]string, len(chunks))
-	anyMask := false
+	var incomplete error
 	for i, v := range verdicts {
-		masked[i] = chunks[i].Text
 		if !outs[i].Started || outs[i].Err != nil || v == nil {
 			continue
 		}
@@ -128,17 +161,52 @@ func mergeChunkVerdicts(
 				fingerprints = append(fingerprints, fp)
 			}
 		}
-		if v.Incomplete != nil && merged.Incomplete == nil {
-			merged.Incomplete = v.Incomplete
-		}
-		if v.HasTransform {
-			anyMask = true
-			masked[i] = v.Transformed
+		if v.Incomplete != nil && incomplete == nil {
+			incomplete = v.Incomplete
 		}
 	}
-	merged.Fingerprints = fingerprints
+	carry := func(v SegmentVerdict) *SegmentVerdict {
+		v.Fingerprints = fingerprints
+		if v.Incomplete == nil {
+			v.Incomplete = incomplete
+		}
+		return &v
+	}
 
-	if anyMask {
+	switch d.Kind {
+	case ChunkBlocked:
+		return carry(*verdicts[d.Index]), nil
+	case ChunkInputFailure:
+		if v := verdicts[d.Index]; outs[d.Index].Started && outs[d.Index].Err == nil && v != nil && v.Block {
+			return carry(*v), nil
+		}
+		var typed *ExternalStreamFailure
+		if err := outs[d.Index].Err; err != nil && errors.As(err, &typed) && typed.Reason == d.Reason && typed.Detail == d.Detail {
+			return nil, err
+		}
+		var block *SegmentVerdict
+		if !Blocks(entry.mode) && len(fingerprints) > 0 {
+			block = &SegmentVerdict{Fingerprints: fingerprints}
+		}
+		return ExternalStreamOutcome(entry.plugin.Name(), entry.mode, d.Reason, d.Detail, block, chunkFailureError(d, outs, len(chunks)))
+	}
+
+	var availability error
+	if d.Kind == ChunkAvailabilityFailure {
+		availability = outs[d.Index].Err
+		if availability == nil {
+			availability = chunkFailureError(d, outs, len(chunks))
+		}
+	}
+	merged := carry(SegmentVerdict{})
+	if d.Masked {
+		masked := make([]string, len(chunks))
+		for i, c := range chunks {
+			masked[i] = c.Text
+			if outs[i].Started && outs[i].Err == nil && verdicts[i] != nil && verdicts[i].HasTransform {
+				masked[i] = verdicts[i].Transformed
+			}
+		}
 		text, ok := textchunk.MergeMasks(accumulated, chunks, masked)
 		if !ok {
 			return ExternalStreamOutcome(entry.plugin.Name(), entry.mode, FailureVerdictIncomplete, DetailAnonymizeEncodeFailed, nil,
@@ -158,4 +226,21 @@ func mergeChunkVerdicts(
 		return nil, availability
 	}
 	return merged, nil
+}
+
+// streamFailureOf is the reason and detail a chunk's error carries: the typed
+// failure a plugin returned, else a bare transport failure.
+func streamFailureOf(err error) (FailureReason, string) {
+	var typed *ExternalStreamFailure
+	if errors.As(err, &typed) {
+		return typed.Reason, typed.Detail
+	}
+	return FailureTransport, ""
+}
+
+func chunkFailureError(d ChunkDecision, outs []textchunk.Outcome[struct{}], count int) error {
+	if d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil {
+		return fmt.Errorf("plugins: chunk %d of %d of a stream block: %w", d.Index+1, count, outs[d.Index].Err)
+	}
+	return fmt.Errorf("plugins: chunk %d of %d of a stream block was not screened (%s)", d.Index+1, count, d.Detail)
 }

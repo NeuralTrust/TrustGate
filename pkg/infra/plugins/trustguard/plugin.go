@@ -395,6 +395,16 @@ func (p *Plugin) InspectSegment(
 	return p.inspectSegment(ctx, in, seg)
 }
 
+// BoundsStreamPayload declares that the stream executor must hand this plugin a
+// block whole (appplugins.StreamPayloadBound). The plugin is one evaluation of
+// the whole block, with the position of the block in the stream and the block
+// that ends the response as per-call state, and it bounds its own payload, so
+// splitting a block that is larger than its window would count the block once
+// per piece and send the end of the response several times.
+func (p *Plugin) BoundsStreamPayload() bool { return true }
+
+var _ appplugins.StreamPayloadBound = (*Plugin)(nil)
+
 // StreamSettings reports whether these policy settings enable per-block
 // inspection of the response leg, and the options the caller must run the
 // stream under. Implementing InspectSegment is not the opt-in on its own: this

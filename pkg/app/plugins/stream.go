@@ -79,6 +79,13 @@ type StreamSegment struct {
 	// — how many calls it cost, how long it was held, how it ended — would
 	// count one response once per policy if every entry recorded it.
 	ReportsStream bool
+	// Part and Parts say which piece of a block this is when the executor
+	// screened one block in several calls: Part counts from 1 and Parts is how
+	// many the block was cut into. Both are zero for a block sent whole. A
+	// piece carries Final only when it reaches the end of the block, so an
+	// inspector never sees the end of the response twice, and Seq is the
+	// block's own position in the stream on every piece.
+	Part, Parts int
 }
 
 // StreamReport is what one streamed response cost, as the component that held
