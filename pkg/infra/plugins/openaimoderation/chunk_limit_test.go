@@ -49,10 +49,10 @@ func chatResponseOf(t *testing.T, text string) *infracontext.ResponseContext {
 	return &infracontext.ResponseContext{StatusCode: http.StatusOK, Body: raw}
 }
 
-// A text far above what the moderation model reads is the client's doing and
-// would only run the call into its timeout, which fails open. It is refused
-// locally as input before a call; one under the bound is sent whole.
-func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
+// A text that splits into more requests than the plugin evaluates is the
+// client's doing and cannot be screened whole. It is refused locally as input
+// before a call; one that fits a single request is sent whole.
+func TestBufferedLegsRefuseATextAboveTheChunkLimitLocally(t *testing.T) {
 	t.Parallel()
 
 	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
@@ -81,6 +81,7 @@ func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
 				extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 				require.True(t, ok)
 				assert.Equal(t, "input", extras.FailureClass)
+				assert.Equal(t, appplugins.DetailChunkLimit, extras.FailureDetail)
 				if mode == policy.ModeEnforce {
 					pe, isPE := appplugins.AsPluginError(err)
 					require.True(t, isPE, "want a refusal, got res=%v err=%v", res, err)
@@ -97,7 +98,7 @@ func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
 				}}}}
 				srv := newModeratorServer(t, f)
 				p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
-				text := strings.Repeat("a", 50<<10)
+				text := strings.Repeat("a", chunkBytes)
 				in := execInput(stage, mode, blockSettings(), requestContext(), nil, nil)
 				if stage == policy.StagePreRequest {
 					in.Request = chatRequestOf(t, text)

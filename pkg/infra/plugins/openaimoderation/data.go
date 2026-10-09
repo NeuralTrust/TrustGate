@@ -49,6 +49,9 @@ type ModerationData struct {
 	FlaggedByOpenAI   bool               `json:"flagged_by_openai"`
 	FlaggedCategories []violation        `json:"flagged_categories,omitempty"`
 	Decision          string             `json:"decision,omitempty"`
+	// ChunkCount is how many moderation requests the text was split into; it
+	// is set only when that is more than one.
+	ChunkCount int `json:"chunk_count,omitempty"`
 	// FailureReason and FailureDetail are set on a failed_open (or
 	// failed_closed) decision, and on a streamed leg also whenever a block
 	// failed, whatever the final decision: FailureReason is one of
