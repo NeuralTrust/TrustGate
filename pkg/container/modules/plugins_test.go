@@ -188,3 +188,48 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 		}
 	}
 }
+
+// TestNewPluginRegistry_RetiredSettingsSet pins which plugins refuse to store
+// which keys, by running the registry's own strip over a settings object that
+// carries every key a guardrail used to take. A plugin missing from the table
+// stores them all.
+func TestNewPluginRegistry_RetiredSettingsSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	stale := func() map[string]any {
+		return map[string]any{
+			"on_error": "fail_closed", "on_timeout": "fail_closed", "timeout": "1ms",
+			"on_mask_failure": "block",
+			"streaming":       map[string]any{"enabled": true, "on_error": "fail_closed", "guard_timeout": "1s"},
+		}
+	}
+	kept := map[string][]string{
+		"trustguard":           {"streaming"},
+		"bedrock_guardrail":    {"timeout", "on_timeout", "streaming"},
+		"google_model_armor":   {"timeout", "on_timeout", "streaming"},
+		"openai_moderation":    {"timeout", "on_timeout", "on_mask_failure", "streaming"},
+		"azure_content_safety": {"timeout", "on_timeout", "on_mask_failure", "streaming"},
+		"regex_replace":        {"on_error", "on_timeout", "timeout", "streaming"},
+	}
+	for slug, want := range kept {
+		t.Run(slug, func(t *testing.T) {
+			got := appplugins.StripRetiredSettings(reg, slug, stale())
+			keys := make([]string, 0, len(got))
+			for k := range got {
+				keys = append(keys, k)
+			}
+			assert.ElementsMatch(t, want, keys)
+			streaming, _ := got["streaming"].(map[string]any)
+			switch slug {
+			case "regex_replace":
+				assert.Contains(t, streaming, "on_error", "a rewriter keeps its stream failure policy")
+				assert.Contains(t, streaming, "guard_timeout")
+			case "azure_content_safety":
+				assert.Contains(t, streaming, "on_error", "azure has no stream leg and retires only its own keys")
+			default:
+				assert.NotContains(t, streaming, "on_error")
+				assert.NotContains(t, streaming, "guard_timeout")
+				assert.Contains(t, streaming, "enabled")
+			}
+		})
+	}
+}

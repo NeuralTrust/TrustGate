@@ -181,3 +181,14 @@ func (s Settings) isRequestLeg() bool {
 func (s Settings) isResponseLeg() bool {
 	return s.Target == targetResponse
 }
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+// streaming.on_error is not among them: regex_replace is a rewriter and its
+// stream leg fails closed on it.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnMaskFailure,
+	}
+}
