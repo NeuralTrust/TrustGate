@@ -195,7 +195,10 @@ jobs:
       # gosec <= 2.22.x ships a golang.org/x/tools that cannot type-check
       # go1.27 packages and aborts with "package ... without types was
       # imported from command-line-arguments" before reporting anything.
-      gosec_version: "2.29.0"
+      # 2.29.0 (x/tools v0.49.0) cannot read go1.27.2 export data ("export
+      # data version 5 is greater than maximum supported"); gosec master at
+      # d2b649ec (x/tools v0.51.0) can. Move to the next tagged release.
+      gosec_version: "2.29.1-0.20261005092323-d2b649ec0182"
       govulncheck_enabled: true
 
   image-scan:
