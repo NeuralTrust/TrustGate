@@ -164,9 +164,6 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	if len(text) > cfg.Streaming.MaxAccumulatedBytes {
-		return p.oversizeFailure(ctx, in, cfg)
-	}
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
@@ -211,9 +208,6 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	text := responseText(cresp)
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
-	}
-	if len(text) > cfg.Streaming.MaxAccumulatedBytes {
-		return p.oversizeFailure(ctx, in, cfg)
 	}
 	span := rewriteSpan{
 		format:     format,
@@ -433,15 +427,4 @@ func responseText(cresp *adapter.CanonicalResponse) string {
 
 func passThrough() *appplugins.Result {
 	return &appplugins.Result{StatusCode: http.StatusOK}
-}
-
-// oversizeFailure refuses, as input, a buffered text above the window the
-// stream leg also sends at most. ApplyGuardrail caps the text per policy at a
-// number of text units that depends on region and tier, so a longer text is
-// either refused by the service or judged in part; the window is the size every
-// region takes, and a region with a larger quota raises
-// streaming.max_accumulated_bytes.
-func (p *Plugin) oversizeFailure(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
-	return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
-		fmt.Errorf("text exceeds the %d bytes the guardrail takes", cfg.Streaming.MaxAccumulatedBytes))
 }
