@@ -61,7 +61,7 @@ const (
 	// FailureCounterUnavailable is TrustGate's own counter store (Redis)
 	// failing a read or a write: rate_limiter, per_tool_rate_limiter and
 	// token_rate_limiter all share this one reason. It is handled by
-	// HandleCounterFailure in counter_failure.go, not by FailOpenExternal;
+	// HandleCounterFailure in counter_failure.go, not by HandleExternalFailure;
 	// token_rate_limiter with partition key fails closed there on a read in a
 	// blocking mode.
 	FailureCounterUnavailable FailureReason = "counter_unavailable"

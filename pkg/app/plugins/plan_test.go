@@ -477,7 +477,8 @@ func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing
 			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
 		).StreamPlan(policy.StagePreResponse)
 		assert.True(t, ok)
-		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_closed"}, opts,
+			"the head gate is the owner's, and the rewriter's fail_closed holds beside it")
 	})
 
 	t.Run("passive alone: its own options", func(t *testing.T) {
@@ -495,15 +496,36 @@ func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing
 			polSpec{slug: "guard", enabled: true, priority: 3, stages: pre},
 		).StreamPlan(policy.StagePreResponse)
 		assert.True(t, ok)
-		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_open"}, opts,
-			"an owner's own on_error is not read: owners are guardrails and always fail open")
+		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_closed"}, opts,
+			"an owner's own on_error is not read, the enforcing rewriter's is")
 	})
 
-	t.Run("owner first, passive second: unchanged", func(t *testing.T) {
+	t.Run("owner first, passive second: the same answer as the other order", func(t *testing.T) {
 		ok, opts := plan(t,
 			polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
 			polSpec{slug: "rewriter", enabled: true, priority: 2, stages: pre},
 		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_closed"}, opts)
+	})
+
+	t.Run("an observing rewriter never turns the stream fail_closed", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre, mode: policy.ModeObserve},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("a rewriter that asked for fail_open stays fail_open", func(t *testing.T) {
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		)
+		pols[0].Settings = map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open"}
+		pols[1].Settings = ownerSet
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
 		assert.True(t, ok)
 		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
 	})
@@ -562,7 +584,7 @@ func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) 
 		unset := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open"}
 		assert.Equal(t, 24576, plan(t, unset, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
 	})
-	t.Run("a passive rewriter's fail_closed does not flip an owner", func(t *testing.T) {
+	t.Run("an enforcing passive rewriter's fail_closed holds beside an owner", func(t *testing.T) {
 		passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
 		regP := newRegistry(t, passive, a)
 		pols := policies(t,
@@ -573,6 +595,6 @@ func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) 
 		pols[1].Settings = defaults
 		ok, opts := NewStagePlan(regP, pols, nil).StreamPlan(policy.StagePreResponse)
 		require.True(t, ok)
-		assert.Equal(t, "fail_open", opts.OnError)
+		assert.Equal(t, "fail_closed", opts.OnError)
 	})
 }
