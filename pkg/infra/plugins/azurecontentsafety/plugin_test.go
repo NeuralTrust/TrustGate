@@ -403,32 +403,48 @@ func TestExecuteConfigInvalidObserveFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteDecodeFailedAlwaysPassesThroughEnforce(t *testing.T) {
+// A body the adapters cannot read is the client's: in a mode that blocks the
+// call is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeAzure{}
-	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), nil)
-	req := requestContext(openAIRequestBody())
-	req.Provider = "not-a-real-provider"
-	req.SourceFormat = ""
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(srv.URL, map[string]int{CategoryHate: 2}), req)
-	in.Event = event
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeAzure{}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), nil)
+			req := requestContext(openAIRequestBody())
+			req.Provider = "not-a-real-provider"
+			req.SourceFormat = ""
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, settings(srv.URL, map[string]int{CategoryHate: 2}), req)
+			in.Event = event
 
-	res, err := p.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("decode_failed must fail open even in enforce mode, got error %v", err)
-	}
-	if res == nil || res.StatusCode != http.StatusOK {
-		t.Fatalf("expected pass-through, got %+v", res)
-	}
-	if f.count() != 0 {
-		t.Fatalf("expected azure not called on decode failure, got %d hits", f.count())
-	}
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.FailureReason != "decode_failed" || extras.Decision != "failed_open" {
-		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", extras, ok)
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else if err != nil || res == nil || res.StatusCode != http.StatusOK {
+				t.Fatalf("observe must pass through, got res=%+v err=%v", res, err)
+			}
+			if f.count() != 0 {
+				t.Fatalf("expected azure not called on decode failure, got %d hits", f.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.FailureReason != "decode_failed" || extras.Decision != tc.decision || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
 	}
 }
 

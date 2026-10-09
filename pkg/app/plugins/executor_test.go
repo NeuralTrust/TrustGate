@@ -714,7 +714,7 @@ func TestExecutor_RunStage_ParallelMetadataWriterReadersRaceSafe(t *testing.T) {
 // newGuardrailStylePlugin builds a fake plugin whose Execute mirrors exactly
 // what an external guardrail (azure_content_safety, bedrock_guardrail,
 // google_model_armor, openai_moderation) does on a transport failure: it
-// hands the failure to FailOpenExternal and returns whatever that
+// hands the failure to HandleExternalFailure and returns whatever that
 // decides, mode by mode. It exists so this test exercises the real
 // executor/mode contract rather than a stand-in for it.
 func newGuardrailStylePlugin(name string) *fakePlugin {
@@ -722,13 +722,13 @@ func newGuardrailStylePlugin(name string) *fakePlugin {
 		name:   name,
 		stages: []policy.Stage{policy.StagePreRequest},
 		execFn: func(in ExecInput) (*Result, error) {
-			return FailOpenExternal(ExternalFailure{
+			return HandleExternalFailure(ExternalFailure{
 				Plugin: name,
 				Stage:  in.Stage,
 				Mode:   in.Mode,
 				Reason: FailureTransport,
 				Err:    context.DeadlineExceeded,
-			}), nil
+			}).Result, nil
 		},
 	}
 }
@@ -756,7 +756,7 @@ func TestExecutor_RunStage_EnforceGuardrailFailureLetsLaterPluginRun(t *testing.
 	})
 	require.NoError(t, err)
 	require.False(t, out.ShortCircuit)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "RUN-1792: enforce fails open too, so the later plugin still runs")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "an availability failure fails open in enforce too, so the later plugin still runs")
 }
 
 func TestExecutor_RunStage_ObserveGuardrailFailureLetsLaterPluginRun(t *testing.T) {
@@ -787,7 +787,7 @@ func TestExecutor_RunStage_ObserveGuardrailFailureLetsLaterPluginRun(t *testing.
 
 // TestExecutor_RunStage_ObserveNonPluginErrorFailsOpen is the executor's own
 // safety net (RUN-1675), for a plugin that returns a plain, non-*PluginError
-// error without going through FailOpenExternal/HandleCounterFailure
+// error without going through HandleExternalFailure/HandleCounterFailure
 // itself — a counter-store outage that slipped past its own fail-open
 // handling, or any other plugin that never learned the mode-aware pattern.
 // Observe never blocks, so runOne must swallow the error, record failed_open

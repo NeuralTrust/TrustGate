@@ -167,8 +167,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	// to be blamed for a later block's failure.
 	var cutKeys []string
 	var failedKey string
+	var inputCut bool
 	if !seg.Closing {
-		defer func() { spans.setCut(seg, cutKeys, failedKey, !outcome.Block) }()
+		defer func() { spans.setCut(seg, cutKeys, failedKey, !outcome.Block, inputCut) }()
 	}
 	for _, entry := range entries {
 		inspector, ok := streamInspector(entry.plugin)
@@ -237,7 +238,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			// asked for fail_closed (or states nothing) hands its error back.
 			if !Blocks(entry.mode) || entryFailsOpen(inspector, entry) {
 				if !cancelled {
-					first, retiredNow := spans.fail(spanKey(seg, entry))
+					first, retiredNow := spans.fail(spanKey(seg, entry), err)
 					SetDecisionFromOutcome(event, DecisionFailedOpen)
 					outcome.FailedEntries++
 					e.warnAbsorbedStreamFailure(entry, seg, err, first, retiredNow)
@@ -267,6 +268,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		if verdict.Incomplete != nil && ctx.Err() == nil {
 			spans.noteFailure(spanKey(seg, entry), verdict.Incomplete)
 		}
+		if verdict.Failure != nil && ctx.Err() == nil {
+			spans.noteCutFailure(spanKey(seg, entry), verdict.Failure)
+		}
 		if verdict.HasTransform && head != "" {
 			whole := *verdict
 			whole.Transformed = head + verdict.Transformed
@@ -290,6 +294,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			// A block is the cut's one author: the transforms of the same
 			// segment are discarded with it, so their entries do not share it.
 			cutKeys = []string{spanKey(seg, entry)}
+			inputCut = verdict.Failure != nil
 		case verdict.HasTransform && Blocks(entry.mode):
 			// Every entry whose transform ends up in the final mask is a
 			// candidate for the rewrite that could not be applied.
@@ -330,7 +335,9 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 //
 // The block's own text is never cut: it is about to be released, and text this
 // entry never saw would reach the client uninspected. A block larger than the
-// window is sent whole, so the provider refuses it and the call fails open.
+// window is sent whole, and a provider that refuses it for its size answers
+// with an input-class failure, which cuts the stream in a mode that blocks
+// instead of releasing text no one read.
 func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
 	if window <= 0 {
 		return seg, ""

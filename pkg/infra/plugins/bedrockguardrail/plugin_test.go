@@ -400,25 +400,45 @@ func TestExecuteConfigInvalidObserveFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
+// A body the adapters cannot read is the client's: in a mode that blocks the
+// call is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 	t.Parallel()
-	client := &recordingClient{output: allowOutput()}
-	p := pluginWith(client)
-
-	req := reqCtx(openAIRequest())
-	req.Provider = "not-a-real-provider"
-	req.SourceFormat = ""
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), req, nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	if client.count() != 0 {
-		t.Fatalf("expected guardrail not called on decode failure, got %d calls", client.count())
-	}
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "decode_failed" {
-		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", extras, ok)
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			client := &recordingClient{output: allowOutput()}
+			p := pluginWith(client)
+			req := reqCtx(openAIRequest())
+			req.Provider = "not-a-real-provider"
+			req.SourceFormat = ""
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, bedrockSettings(piiActionBlock), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if client.count() != 0 {
+				t.Fatalf("expected guardrail not called on decode failure, got %d calls", client.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.Decision != tc.decision || extras.FailureReason != "decode_failed" || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
 	}
 }
 

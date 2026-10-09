@@ -49,6 +49,9 @@ type Data struct {
 	// verdict — the template never enabled it (filter_not_in_template) or it
 	// did not run on this call (filter_not_executed). Filter names which one.
 	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
 	// FilterVersion is the Model Armor filter version that produced the
 	// verdict. A template pointed at an alias rather than a pinned version
 	// changes behaviour when Google promotes a new one, with no deploy on our

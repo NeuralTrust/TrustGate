@@ -747,25 +747,46 @@ func TestExecuteParseConfigErrorEnforceFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
+// A body the adapters cannot read is the client's: in a mode that blocks the
+// call is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 	t.Parallel()
-	stub := newModelArmorStub(t, http.StatusOK, allowResponse)
-	p := pluginWithStub(stub)
-	req := reqCtx(openAIRequest())
-	req.Provider = "not-a-real-provider"
-	req.SourceFormat = ""
-	event, span := newStreamEvent()
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+			p := pluginWithStub(stub)
+			req := reqCtx(openAIRequest())
+			req.Provider = "not-a-real-provider"
+			req.SourceFormat = ""
+			event, span := newStreamEvent()
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), req, nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	if stub.count() != 0 {
-		t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
-	}
-	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != "failed_open" || data.FailureReason != "decode_failed" {
-		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", data, ok)
+			in := execInput(policy.StagePreRequest, tc.mode, modelArmorSettings(), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if stub.count() != 0 {
+				t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || data.Decision != tc.decision || data.FailureReason != "decode_failed" || data.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", data, ok, tc.decision)
+			}
+		})
 	}
 }
 
