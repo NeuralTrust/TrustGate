@@ -111,7 +111,8 @@ func MaxChunks(limit, parallel int, reserve, budget time.Duration) int {
 // BudgetCut false because ctx's deadline had not passed.
 //
 // Took is how long the call itself ran, without what RunOptions.Before held it
-// back for: the provider's time, which says whether it was slow.
+// back for and without what the call spent in Pause: the provider's time, which
+// says whether it was slow.
 type Outcome[T any] struct {
 	Value     T
 	Err       error
@@ -162,9 +163,10 @@ dispatch:
 				err = o.Before(runCtx, i, chunks[i])
 			}
 			if err == nil {
+				pauses := &pauseClock{reserve: reserve}
 				began := time.Now()
-				v, err = call(runCtx, i, chunks[i], fn)
-				out[i].Took = time.Since(began)
+				v, err = call(context.WithValue(runCtx, pauseKey{}, pauses), i, chunks[i], fn)
+				out[i].Took = max(0, time.Since(began)-pauses.total())
 			}
 			out[i].Value, out[i].Err = v, err
 			out[i].BudgetCut = err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded)
@@ -180,6 +182,54 @@ dispatch:
 	}
 	wg.Wait()
 	return out
+}
+
+type pauseKey struct{}
+
+// pauseClock is what a call spent waiting in Pause, and the effective reserve
+// its waits are capped at.
+type pauseClock struct {
+	reserve time.Duration
+	mu      sync.Mutex
+	waited  time.Duration
+}
+
+func (c *pauseClock) total() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waited
+}
+
+// PauseCap is the longest a call of a Run over ctx may wait in Pause: the
+// effective reserve of that Run. It is zero, no cap, outside a Run or when the
+// Run has no reserve.
+func PauseCap(ctx context.Context) time.Duration {
+	if c, ok := ctx.Value(pauseKey{}).(*pauseClock); ok {
+		return c.reserve
+	}
+	return 0
+}
+
+// Pause waits d, or until ctx ends, and reports whether the whole wait was
+// taken. Inside a Run the wait is not part of the call's Outcome.Took: a call
+// that backs off before a retry waits for its own reasons, and Took is only the
+// provider's time.
+func Pause(ctx context.Context, d time.Duration) bool {
+	began := time.Now()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	var done bool
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+		done = true
+	}
+	if c, ok := ctx.Value(pauseKey{}).(*pauseClock); ok {
+		c.mu.Lock()
+		c.waited += time.Since(began)
+		c.mu.Unlock()
+	}
+	return done
 }
 
 func lacksReserve(ctx context.Context, reserve time.Duration) bool {
