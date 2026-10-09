@@ -720,3 +720,13 @@ func TestClosingSegmentRecordsAnInputCutAsFailedClosed(t *testing.T) {
 		t.Fatalf("extras = %+v, want failed_closed, not degraded, class input", data)
 	}
 }
+
+// The block's deadline and the slow-call threshold are made of the time a piece's
+// call really has.
+func TestTheStreamPieceTimeoutIsTheGuardTimeoutOfTheCall(t *testing.T) {
+	t.Parallel()
+	var declared appplugins.StreamPieceTimeout = &Plugin{}
+	if declared.StreamGuardTimeout() != streamingDefaults.GuardTimeout || declared.StreamGuardTimeout() <= 0 {
+		t.Fatalf("StreamGuardTimeout = %v, want %v", declared.StreamGuardTimeout(), streamingDefaults.GuardTimeout)
+	}
+}

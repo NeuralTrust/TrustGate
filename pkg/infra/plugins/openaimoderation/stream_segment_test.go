@@ -429,3 +429,12 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		})
 	}
 }
+
+// The block's deadline and the slow-call threshold are made of the time a piece's
+// call really has.
+func TestTheStreamPieceTimeoutIsTheGuardTimeoutOfTheCall(t *testing.T) {
+	t.Parallel()
+	var declared appplugins.StreamPieceTimeout = &Plugin{}
+	assert.Equal(t, streamingDefaults.GuardTimeout, declared.StreamGuardTimeout())
+	assert.Positive(t, declared.StreamGuardTimeout())
+}

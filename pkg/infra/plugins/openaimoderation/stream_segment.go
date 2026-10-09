@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -31,6 +32,12 @@ const streamIDSeparator = ":"
 const streamLegResponse = "response"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+
+// StreamGuardTimeout is the time one piece's call may take: the guard timeout the
+// call itself runs under, so the block's deadline and the slow-call threshold are
+// made of the same time.
+func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
 
 // StreamSettings reports whether these policy settings ask for per-block
 // moderation of the response leg, and the options the block loop must run
