@@ -16,7 +16,6 @@ package azurecontentsafety
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -207,7 +206,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		reason, detail := failureOf(err)
+		reason, detail := pluginutil.FailureOfError(err)
 		return p.externalFailure(ctx, in, cfg, latency, reason, detail, err)
 	}
 
@@ -246,18 +245,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	return passThrough(), nil
-}
-
-// failureOf maps what Azure answered to the shared failure vocabulary. A 400 is
-// Azure refusing the text it was sent, which is the request's own content,
-// unless its envelope names the call's configuration; every other status, a
-// timeout and a network error are Azure's availability.
-func failureOf(err error) (appplugins.FailureReason, string) {
-	var status *statusError
-	if errors.As(err, &status) {
-		return pluginutil.FailureOfRejection(status.status, status.configShaped)
-	}
-	return appplugins.FailureTransport, ""
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via

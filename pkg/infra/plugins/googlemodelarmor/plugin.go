@@ -16,7 +16,6 @@ package googlemodelarmor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -369,7 +368,7 @@ func (p *Plugin) runGuardrail(
 	result, err := sanitize(ctx)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		reason, detail := failureOf(err)
+		reason, detail := pluginutil.FailureOfError(err)
 		return p.externalFailure(ctx, in, cfg, latency, failureInfo{
 			reason:      reason,
 			armorReason: detail,
@@ -613,18 +612,6 @@ func responseText(cresp *adapter.CanonicalResponse) string {
 
 func passThrough() *appplugins.Result {
 	return &appplugins.Result{StatusCode: http.StatusOK}
-}
-
-// failureOf maps what Model Armor answered to the shared failure vocabulary:
-// a 400 about the content or a 413 is the input's, a 400 about the template
-// the policy names is configuration, and credentials, throttling, timeouts, 5xx
-// and network errors are availability.
-func failureOf(err error) (appplugins.FailureReason, string) {
-	var status *errModelArmor
-	if errors.As(err, &status) {
-		return pluginutil.FailureOfRejection(status.status, status.configShaped)
-	}
-	return appplugins.FailureTransport, ""
 }
 
 // keepsMaskDespiteGap reports whether a block_on filter that produced no

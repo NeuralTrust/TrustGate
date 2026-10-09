@@ -15,6 +15,7 @@
 package pluginutil
 
 import (
+	"errors"
 	"net/http"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -41,6 +42,25 @@ func FailureOfRejection(status int, configShaped bool) (appplugins.FailureReason
 		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
 	}
 	return FailureOfStatus(status)
+}
+
+// Rejection is implemented by the error a provider client returns for a non-2xx
+// answer: the status, and whether a 400's envelope says it is about the call's
+// own configuration.
+type Rejection interface {
+	error
+	Rejection() (status int, configShaped bool)
+}
+
+// FailureOfError maps what a provider answered to the shared failure
+// vocabulary: a Rejection is read through FailureOfRejection, and every other
+// error (a timeout, a network error, an undecodable answer) is availability.
+func FailureOfError(err error) (appplugins.FailureReason, string) {
+	var rejection Rejection
+	if errors.As(err, &rejection) {
+		return FailureOfRejection(rejection.Rejection())
+	}
+	return appplugins.FailureTransport, ""
 }
 
 // FailureOfStatus maps a non-2xx provider status to the shared failure

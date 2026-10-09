@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
@@ -38,6 +39,10 @@ type errModeration struct {
 	// policy's model or key and not about the input.
 	configShaped bool
 }
+
+var _ pluginutil.Rejection = (*errModeration)(nil)
+
+func (e *errModeration) Rejection() (int, bool) { return e.status, e.configShaped }
 
 func (e *errModeration) Error() string {
 	return fmt.Sprintf("openai_moderation: unexpected status %d", e.status)
