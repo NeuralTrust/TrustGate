@@ -30,4 +30,7 @@ var (
 	// theirs to ask for. It is not ErrNotFound: the resource exists and the
 	// caller is known, they are simply not the one allowed to act on it.
 	ErrForbidden = errors.New("forbidden")
+	// ErrUpstreamUnavailable reports that a provider the answer depends on did
+	// not give a usable one, so the gateway has nothing truthful to return.
+	ErrUpstreamUnavailable = errors.New("upstream unavailable")
 )

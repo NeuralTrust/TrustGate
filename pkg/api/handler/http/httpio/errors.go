@@ -67,17 +67,18 @@ func NotFoundBody() ErrorBody {
 }
 
 const (
-	msgNotFound           = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
-	msgInternal           = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
-	msgValidationHint     = "Check the request body fields against the Admin API schema and retry."
-	msgConflictHint       = "Fetch the current resource, resolve the conflict, and retry."
-	msgAlreadyExistsHint  = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
-	msgHasDependentsHint  = "Remove or reassign dependent resources first, then retry the delete."
-	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
-	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
-	msgOwnedKeyHint       = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
-	msgApplicationKeyHint = "Budgets and owner groups apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
-	msgPersonalKeyHint    = "You already hold a key on this gateway. Rotate or revoke it instead."
+	msgNotFound                = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
+	msgInternal                = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
+	msgValidationHint          = "Check the request body fields against the Admin API schema and retry."
+	msgConflictHint            = "Fetch the current resource, resolve the conflict, and retry."
+	msgAlreadyExistsHint       = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
+	msgHasDependentsHint       = "Remove or reassign dependent resources first, then retry the delete."
+	msgInvalidConfigHint       = "Check the configuration fields and types against the Admin API docs and retry."
+	msgResultTooLargeHint      = "Narrow the query with filters or pagination (smaller page size) and retry."
+	msgOwnedKeyHint            = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
+	msgApplicationKeyHint      = "Budgets and owner groups apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
+	msgPersonalKeyHint         = "You already hold a key on this gateway. Rotate or revoke it instead."
+	msgUpstreamUnavailableHint = "Check the registry's endpoint and credentials, then retry."
 )
 
 // MapDomainError translates an application/domain error into the matching
@@ -124,6 +125,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_config", Message: publicMessage(err, msgInvalidConfigHint)}
 	case errors.Is(err, commonerrors.ErrResultTooLarge):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: publicMessage(err, msgResultTooLargeHint)}
+	case errors.Is(err, commonerrors.ErrUpstreamUnavailable):
+		return fiber.StatusBadGateway, ErrorBody{Error: "upstream_unavailable", Message: publicMessage(err, msgUpstreamUnavailableHint)}
 	default:
 		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error", Message: msgInternal}
 	}
@@ -155,7 +158,8 @@ func isBareSentinel(msg string) bool {
 		commonerrors.ErrHasDependents.Error(),
 		commonerrors.ErrValidation.Error(),
 		commonerrors.ErrInvalidConfig.Error(),
-		commonerrors.ErrResultTooLarge.Error():
+		commonerrors.ErrResultTooLarge.Error(),
+		commonerrors.ErrUpstreamUnavailable.Error():
 		return true
 	default:
 		return false

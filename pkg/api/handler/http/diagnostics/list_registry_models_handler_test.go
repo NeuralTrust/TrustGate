@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"testing"
@@ -83,15 +84,16 @@ func (f *fakeCatalogService) ListModels(_ context.Context, providerCode string) 
 // answer, so the handler's own wiring is what the test observes.
 type fakeAvailability struct {
 	kept []catalogdomain.Model
+	err  error
 	got  appcatalog.ServerlessFilterInput
 }
 
 func (f *fakeAvailability) Narrow(
 	_ context.Context,
 	in appcatalog.ServerlessFilterInput,
-) []catalogdomain.Model {
+) ([]catalogdomain.Model, error) {
 	f.got = in
-	return f.kept
+	return f.kept, f.err
 }
 
 func llmRegistry(gatewayID ids.GatewayID, id ids.RegistryID, provider string) *registrydomain.Registry {
@@ -187,6 +189,23 @@ func TestDiagnosticsRegistryModels_EmptyNarrowingIsReportedAsEmpty(t *testing.T)
 	require.Equal(t, fiber.StatusOK, status, "body: %s", raw)
 	assert.Empty(t, modelSlugs(t, raw))
 	assert.Contains(t, string(raw), `"items":[]`, "items must serialize as an array, never null")
+}
+
+func TestDiagnosticsRegistryModels_UnlistableAzureDeploymentsAreBadGateway(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	app := newModelsApp(
+		fakeVerifier{claims: diagClaims(gatewayID.String())},
+		&fakeRegistryFinder{registry: llmRegistry(gatewayID, registryID, "azure")},
+		&fakeCatalogService{models: []catalogdomain.Model{{Slug: "gpt-5.6-terra", Enabled: true}}},
+		&fakeAvailability{err: fmt.Errorf("%w: the azure provider did not list this registry's models", commonerrors.ErrUpstreamUnavailable)},
+	)
+
+	status, raw := getModels(t, app, gatewayID.String(), registryID.String(), "a.diag.token")
+
+	require.Equal(t, fiber.StatusBadGateway, status, "body: %s", raw)
+	assert.Contains(t, string(raw), "upstream_unavailable")
+	assert.NotContains(t, string(raw), "gpt-5.6-terra", "a catalog name must not be offered as a deployment")
 }
 
 func TestDiagnosticsRegistryModels_MissingTokenRejected(t *testing.T) {

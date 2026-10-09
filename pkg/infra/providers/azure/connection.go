@@ -16,12 +16,14 @@ package azure
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
+// TestConnection probes the resource's deployments listing, the same request
+// the model picker depends on. It does not exercise the registry's api_version:
+// inference is the only route that reads it.
 func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {
 	if config.Credentials.Azure == nil || config.Credentials.Azure.Endpoint == "" {
 		return providers.ProbeResult{
@@ -31,10 +33,22 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 		}
 	}
 
-	modelsURL, api, err := c.buildModelsURL(config)
+	deploymentsURL, _, err := deploymentsListURL(config)
 	if err != nil {
 		return providers.ProbeResult{OK: false, Stage: providers.StageConnectivity, Message: err.Error()}
 	}
+	result := c.probe(ctx, config, providers.AzureAPIDeployments, deploymentsURL)
+	if result.StatusCode != http.StatusNotFound {
+		return result
+	}
+	// A gateway in front of the resource (API Management, a private proxy) may
+	// expose only the v1 surface. The listing still needs the deployments
+	// route, but reachability and credentials can be proven without it.
+	modelsURL := azureConfiguredEndpoint(config.Credentials.Azure.Endpoint) + "/openai/v1/models"
+	return c.probe(ctx, config, providers.AzureAPIOpenAIV1, modelsURL)
+}
+
+func (c *client) probe(ctx context.Context, config *providers.Config, api, target string) providers.ProbeResult {
 	auth, err := c.resolveAuthForAPI(ctx, config, api)
 	if err != nil {
 		return providers.ProbeResult{
@@ -43,8 +57,7 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 			Message: err.Error(),
 		}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return providers.ProbeResult{OK: false, Stage: providers.StageConnectivity, Message: err.Error()}
 	}
@@ -52,25 +65,18 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 	return providers.RunHTTPProbe(providers.ProviderAzure, req)
 }
 
-func (c *client) buildModelsURL(config *providers.Config) (string, string, error) {
+// deploymentsListURL is where a resource lists its own deployments, whichever
+// API surface the registry routes inference through: the deployment name is
+// the model every surface sends. Azure serves this route only on
+// deploymentsListAPIVersion and older, so the registry's api_version cannot be
+// used here, and /openai/v1/models is no substitute because it lists every
+// model the region offers rather than what this resource deployed. It also
+// returns the registry's API surface.
+func deploymentsListURL(config *providers.Config) (string, string, error) {
 	opts, err := providers.DecodeAzureOptions(config.Options)
 	if err != nil {
 		return "", "", err
 	}
-	configuredEndpoint := azureConfiguredEndpoint(config.Credentials.Azure.Endpoint)
-	// Foundry documents model discovery through the shared OpenAI v1 surface,
-	// including on services.ai.azure.com endpoints. The native Anthropic
-	// surface only documents inference endpoints such as /messages.
-	switch opts.API {
-	case providers.AzureAPIOpenAIV1, providers.AzureAPIResponses:
-		return configuredEndpoint + "/openai/v1/models", opts.API, nil
-	case providers.AzureAPIAnthropic:
-		return configuredEndpoint + "/openai/v1/models", providers.AzureAPIOpenAIV1, nil
-	}
 	endpoint := azureRESTEndpoint(config.Credentials.Azure.Endpoint)
-	apiVersion := defaultAPIVersion
-	if config.Credentials.Azure.ApiVersion != "" {
-		apiVersion = config.Credentials.Azure.ApiVersion
-	}
-	return fmt.Sprintf("%s/openai/deployments?api-version=%s", endpoint, apiVersion), opts.API, nil
+	return endpoint + "/openai/deployments?api-version=" + deploymentsListAPIVersion, opts.API, nil
 }
