@@ -134,9 +134,9 @@ func TestStreamSettingsStaysWithinTheSanitizeLimit(t *testing.T) {
 		settings map[string]any
 		want     int
 	}{
-		{"default", streamSettings(nil), 65536},
+		{"default", streamSettings(nil), 57344},
 		{"configured below the limit", streamSettings(map[string]any{"max_accumulated_bytes": 8192}), 8192},
-		{"configured above the limit", streamSettings(map[string]any{"max_accumulated_bytes": 1048576}), 65536},
+		{"configured above the limit", streamSettings(map[string]any{"max_accumulated_bytes": 1048576}), 57344},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestStreamSettingsStaysWithinTheSanitizeLimit(t *testing.T) {
 				t.Fatal("expected the opt-in")
 			}
 			if opts.MaxAccumulatedBytes != tc.want {
-				t.Errorf("MaxAccumulatedBytes = %d, want %d: Model Armor skips its filters above 65,536 tokens",
+				t.Errorf("MaxAccumulatedBytes = %d, want %d: the block and the correlation prompt must fit 65,536 tokens",
 					opts.MaxAccumulatedBytes, tc.want)
 			}
 		})

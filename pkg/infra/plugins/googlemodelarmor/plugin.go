@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -259,19 +260,16 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	if res, err, refused := p.refuseOversize(ctx, in, cfg, text); refused {
-		return res, err
-	}
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
 			return rewriteRequest(p.registry, format, in.Request.Body, creq, idx, masked)
 		},
 	}
-	sanitize := func(ctx context.Context) (*SanitizationResult, error) {
-		return cl.SanitizeUserPrompt(ctx, cfg.Project, cfg.Location, cfg.Template, text)
+	sanitize := func(ctx context.Context, chunk string) (*SanitizationResult, error) {
+		return cl.SanitizeUserPrompt(ctx, cfg.Project, cfg.Location, cfg.Template, chunk)
 	}
-	return p.runGuardrail(ctx, in, cfg, sanitize, span)
+	return p.runGuardrail(ctx, in, cfg, text, cl.timeout, sanitize, span)
 }
 
 // executePreResponse sanitizes the completion in its own call, separate from
@@ -312,9 +310,6 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	if res, err, refused := p.refuseOversize(ctx, in, cfg, text); refused {
-		return res, err
-	}
 	userPrompt := correlationPrompt(p.registry, format, in.Request.Body)
 	span := rewriteSpan{
 		format:     format,
@@ -323,39 +318,32 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 			return rewriteResponse(p.registry, format, cresp, masked)
 		},
 	}
-	sanitize := func(ctx context.Context) (*SanitizationResult, error) {
-		return cl.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, text, userPrompt)
+	sanitize := func(ctx context.Context, chunk string) (*SanitizationResult, error) {
+		return cl.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, chunk, userPrompt)
 	}
-	return p.runGuardrail(ctx, in, cfg, sanitize, span)
+	return p.runGuardrail(ctx, in, cfg, text, cl.timeout, sanitize, span)
 }
 
-// maxBufferedTextBytes is the longest text a buffered leg sends to Model Armor.
-// Google screens at most 65,536 tokens with the prompt injection, Responsible AI
-// and CSAM filters and 130,000 with Sensitive Data Protection
-// (https://docs.cloud.google.com/model-armor/quotas), which is about 256 KiB and
-// 512 KiB of English at the most generous four characters per token, so no text
-// under this bound is one a filter would have read whole anyway. It also keeps a
-// de-identify answer, which carries the text once more, well under
-// maxResponseBytes (1 MiB) and the call inside its timeout. A longer text is the
-// input's doing and is refused locally as input_too_large, instead of ending as
-// a transport failure after a slow call.
-const maxBufferedTextBytes = 512 << 10
+// A buffered text is split into chunks of chunkBytes. Model Armor screens at
+// most 65,536 tokens with the prompt injection, Responsible AI and CSAM filters
+// and 130,000 with Sensitive Data Protection, and skips a filter above its
+// limit (https://docs.cloud.google.com/model-armor/quotas). A token covers at
+// least one byte, which Google does not document and is an assumption of this
+// plugin, so a call of at most 65,536 bytes is within every limit: the chunk
+// plus the correlation prompt a response carries (maxCorrelationPromptBytes)
+// fills exactly that. The overlap keeps a pattern that straddles a cut whole in
+// one chunk. A text that splits into more than maxBufferedChunks is refused
+// before any call, and at most chunkParallel run at once inside the client's
+// timeout for the whole evaluation. The project's quota is 1,200 requests a
+// minute, which maxBufferedChunks calls cannot exhaust alone.
+const (
+	chunkBytes        = maxSanitizeBytes
+	chunkOverlap      = 2048
+	maxBufferedChunks = 16
+	chunkParallel     = 4
+)
 
-// refuseOversize reports, with the outcome to return, that text is above
-// maxBufferedTextBytes. A de-identify answer that still exceeds maxResponseBytes
-// on a text under the bound is input too (pluginutil.AnswerTooLargeError): the
-// client chose a text that grows past it when escaped.
-func (p *Plugin) refuseOversize(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string) (*appplugins.Result, error, bool) {
-	if len(text) <= maxBufferedTextBytes {
-		return nil, nil, false
-	}
-	res, err := p.externalFailure(ctx, in, cfg, 0, failureInfo{
-		reason:      appplugins.FailureInputTooLarge,
-		armorReason: appplugins.DetailPayloadTooLarge,
-		err:         fmt.Errorf("model_armor: text exceeds the %d bytes a buffered leg sends", maxBufferedTextBytes),
-	})
-	return res, err, true
-}
+var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
 
 // maxCorrelationPromptBytes bounds the user prompt sent along with a response.
 // It is context for the filters, not content to inspect (the prompt was
@@ -393,85 +381,187 @@ func tailOnRuneBoundary(s string, limit int) string {
 	return tail
 }
 
-func (p *Plugin) runGuardrail(
-	ctx context.Context,
-	in appplugins.ExecInput,
-	cfg Settings,
-	sanitize func(context.Context) (*SanitizationResult, error),
-	span rewriteSpan,
-) (*appplugins.Result, error) {
-	start := time.Now()
-	result, err := sanitize(ctx)
-	latency := time.Since(start).Milliseconds()
-	if err != nil {
-		reason, detail := pluginutil.FailureOfError(err)
-		return p.externalFailure(ctx, in, cfg, latency, failureInfo{
-			reason:      reason,
-			armorReason: detail,
-			err:         fmt.Errorf("sanitize: %w", err),
-		})
-	}
+// chunkEval is what Model Armor said about one chunk, read the way a single
+// call is read: a failure that is the call's (failure), a verdict (res), and
+// the gap a mask was kept despite (keptGap).
+type chunkEval struct {
+	result  *SanitizationResult
+	res     assessmentResult
+	failure *failureInfo
+	keptGap string
+}
+
+func (p *Plugin) evaluateChunk(in appplugins.ExecInput, cfg Settings, result *SanitizationResult) chunkEval {
+	ev := chunkEval{result: result}
 	if result.InvocationResult == invocationResultFailure {
-		return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+		ev.failure = &failureInfo{
 			reason:        appplugins.FailureTransport,
 			filterVersion: result.filterVersion(),
 			err:           fmt.Errorf("invocationResult FAILURE"),
-		})
+		}
+		return ev
 	}
-	res := inspect(result, cfg)
-	data := newData(in, cfg, latency)
-	data.FilterVersion = result.filterVersion()
-
+	ev.res = inspect(result, cfg)
 	// A filter we were told to block on that did not actually run reports no
-	// match, exactly like a filter that ran and found nothing — and the
-	// envelope can still say SUCCESS overall. Take the same path as an
+	// match, exactly like a filter that ran and found nothing, and the
+	// envelope can still say SUCCESS overall. It takes the same path as an
 	// outright failure rather than mistake silence for safety. A filter that
 	// did run and matched still wins: it is a real verdict, and naming it is
 	// more useful than naming the one that was missing.
 	//
-	// A filter that was skipped (EXECUTION_SKIPPED) is the content's doing, since padding a request is what
-	// skips one, so a mode that blocks refuses it, usable mask or not: the
-	// other filters did not judge this content. An invocation that came back
-	// PARTIAL while every block_on filter ran says nothing about what was asked,
-	// so it is recorded and fails open. A filter the template never
-	// enabled is the customer's configuration, not anything the request did,
-	// and keeps its usable mask: Model Armor already handed us the
-	// de-identified text, and failing open would forward the ORIGINAL prompt
-	// with the raw PII. Apply the mask and record the incomplete verdict on the
-	// same Data instead.
-	if res.block == nil {
-		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			if keepsMaskDespiteGap(res, in.Mode, reason) {
-				data.FailureReason = string(appplugins.FailureVerdictIncomplete)
-				data.FailureDetail = reason
-				data.FailureClass = string(appplugins.FailureClassAvailability)
-			} else {
-				return p.externalFailure(ctx, in, cfg, latency, failureInfo{
-					reason:        appplugins.FailureVerdictIncomplete,
-					filter:        f,
-					armorReason:   reason,
-					filterVersion: result.filterVersion(),
-					err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
-				})
-			}
-		} else if result.InvocationResult == invocationResultPartial {
-			return p.externalFailure(ctx, in, cfg, latency, failureInfo{
-				reason:        appplugins.FailureVerdictIncomplete,
-				armorReason:   appplugins.DetailInvocationPartial,
-				filterVersion: result.filterVersion(),
-				err:           fmt.Errorf("invocationResult PARTIAL"),
-			})
+	// A filter that was skipped (EXECUTION_SKIPPED) is the content's doing, since
+	// padding a request is what skips one, so a mode that blocks refuses it,
+	// usable mask or not: the other filters did not judge this content. An
+	// invocation that came back PARTIAL while every block_on filter ran says
+	// nothing about what was asked, so it is recorded and fails open. A filter
+	// the template never enabled is the customer's configuration, not anything
+	// the request did, and keeps its usable mask: Model Armor already handed us
+	// the de-identified text, and failing open would forward the ORIGINAL prompt
+	// with the raw PII. The mask is applied and the incomplete verdict recorded
+	// on the same Data instead.
+	if ev.res.block != nil {
+		return ev
+	}
+	if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
+		if keepsMaskDespiteGap(ev.res, in.Mode, reason) {
+			ev.keptGap = reason
+			return ev
+		}
+		ev.failure = &failureInfo{
+			reason:        appplugins.FailureVerdictIncomplete,
+			filter:        f,
+			armorReason:   reason,
+			filterVersion: result.filterVersion(),
+			err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
+		}
+		return ev
+	}
+	if result.InvocationResult == invocationResultPartial {
+		ev.failure = &failureInfo{
+			reason:        appplugins.FailureVerdictIncomplete,
+			armorReason:   appplugins.DetailInvocationPartial,
+			filterVersion: result.filterVersion(),
+			err:           fmt.Errorf("invocationResult PARTIAL"),
 		}
 	}
+	return ev
+}
 
-	if res.block != nil {
-		applyFinding(data, res.block)
+func (e chunkEval) state() pluginutil.ChunkState {
+	switch {
+	case e.failure != nil:
+		return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: e.failure.reason, Detail: e.failure.armorReason}}
+	case e.res.block != nil:
+		return pluginutil.ChunkState{Blocks: true}
+	case e.res.anonymize != nil:
+		return pluginutil.ChunkState{Mask: true}
+	}
+	return pluginutil.ChunkState{}
+}
+
+func (p *Plugin) runGuardrail(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	text string,
+	budget time.Duration,
+	sanitize func(ctx context.Context, chunk string) (*SanitizationResult, error),
+	span rewriteSpan,
+) (*appplugins.Result, error) {
+	if n := textchunk.Count(text, chunkSpec); n > maxBufferedChunks {
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{
+			reason:      appplugins.FailureInputTooLarge,
+			armorReason: appplugins.DetailChunkLimit,
+			chunks:      n,
+			err:         fmt.Errorf("model_armor: the text splits into %d chunks, above the %d evaluated", n, maxBufferedChunks),
+		})
+	}
+	chunks := textchunk.Split(text, chunkSpec)
+	count := len(chunks)
+
+	start := time.Now()
+	runCtx := ctx
+	if budget > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
+	evals := make([]chunkEval, count)
+	outs := textchunk.Run(runCtx, chunks, textchunk.RunOptions{
+		Parallel: chunkParallel,
+		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
+	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
+		result, err := sanitize(ctx, c.Text)
+		if err != nil {
+			return struct{}{}, err
+		}
+		evals[i] = p.evaluateChunk(in, cfg, result)
+		return struct{}{}, nil
+	})
+	latency := time.Since(start).Milliseconds()
+
+	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{},
+		func(i int, _ struct{}, err error) pluginutil.ChunkState {
+			if err != nil {
+				reason, detail := pluginutil.FailureOfError(err)
+				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
+			}
+			return evals[i].state()
+		})
+
+	var gap *pluginutil.ChunkDecision
+	switch decision.Kind {
+	case pluginutil.ChunkInputFailure, pluginutil.ChunkAvailabilityFailure:
+		if decision.Kind == pluginutil.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
+			gap = &decision
+			break
+		}
+		return p.externalFailure(ctx, in, cfg, latency, failureOfChunk(decision, evals, outs, count))
+	}
+
+	data := newData(in, cfg, latency)
+	if count > 1 {
+		data.ChunkCount = count
+	}
+
+	var finding *finding
+	var from int
+	switch {
+	case decision.Kind == pluginutil.ChunkBlocked:
+		from, finding = decision.Index, evals[decision.Index].res.block
+	case decision.Masked:
+		for i, ev := range evals {
+			if outs[i].Started && outs[i].Err == nil && ev.res.anonymize != nil {
+				from, finding = i, ev.res.anonymize
+				break
+			}
+		}
+	}
+	if finding != nil {
+		data.FilterVersion = evals[from].result.filterVersion()
+	}
+	for i, ev := range evals {
+		if outs[i].Started && outs[i].Err == nil && ev.keptGap != "" {
+			data.FailureReason = string(appplugins.FailureVerdictIncomplete)
+			data.FailureDetail = ev.keptGap
+			data.FailureClass = string(appplugins.FailureClassAvailability)
+			break
+		}
+	}
+	if gap != nil {
+		data.FailureReason = string(gap.Reason)
+		data.FailureDetail = gap.Detail
+		data.FailureClass = string(appplugins.FailureClassAvailability)
+	}
+
+	if decision.Kind == pluginutil.ChunkBlocked {
+		applyFinding(data, finding)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
 			data.Decision = decisionBlocked
 			setExtras(in.Event, data)
 			appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-			return nil, blockError(cfg.Message, *res.block)
+			return nil, blockError(cfg.Message, *finding)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -479,11 +569,12 @@ func (p *Plugin) runGuardrail(
 		return passThrough(), nil
 	}
 
-	if res.anonymize != nil {
-		applyFinding(data, res.anonymize)
+	if finding != nil {
+		applyFinding(data, finding)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
-			return p.anonymizeEnforce(ctx, in, data, cfg.Message, result, span, res.anonymize)
+			masked, failed := mergedMask(text, chunks, evals, outs)
+			return p.anonymizeEnforceMasked(ctx, in, data, cfg.Message, masked, failed, span, finding)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -497,6 +588,55 @@ func (p *Plugin) runGuardrail(
 	return passThrough(), nil
 }
 
+// failureOfChunk is the failure that decided a chunked evaluation: the filter
+// and version Model Armor named for the chunk, or, when its call failed, the
+// error of that call.
+func failureOfChunk(d pluginutil.ChunkDecision, evals []chunkEval, outs []textchunk.Outcome[struct{}], count int) failureInfo {
+	fi := failureInfo{reason: d.Reason, armorReason: d.Detail, chunks: count}
+	switch {
+	case d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil:
+		fi.err = fmt.Errorf("sanitize: %w", outs[d.Index].Err)
+	case d.Index >= 0 && d.Index < len(evals) && evals[d.Index].failure != nil:
+		orig := evals[d.Index].failure
+		fi.filter, fi.filterVersion, fi.err = orig.filter, orig.filterVersion, orig.err
+	default:
+		fi.err = fmt.Errorf("chunk %d of %d was not evaluated: %s", d.Index+1, count, d.Detail)
+	}
+	return fi
+}
+
+// mergedMask is the masked text the chunks that asked for a mask add up to. A
+// single chunk's text is Model Armor's own de-identified output. With several,
+// each chunk's output is mapped back onto the original, so the overlap does not
+// apply a mask twice and no byte a chunk masked is left in the clear. failed is
+// the reason there is no masked text.
+func mergedMask(text string, chunks []textchunk.Chunk, evals []chunkEval, outs []textchunk.Outcome[struct{}]) (masked string, failed string) {
+	if len(chunks) == 1 {
+		m, ok := maskedText(evals[0].result)
+		if !ok {
+			return "", reasonAnonymizeNoOutput
+		}
+		return m, ""
+	}
+	perChunk := make([]string, len(chunks))
+	for i, c := range chunks {
+		perChunk[i] = c.Text
+		if !outs[i].Started || outs[i].Err != nil || evals[i].res.anonymize == nil {
+			continue
+		}
+		m, ok := maskedText(evals[i].result)
+		if !ok {
+			return "", reasonAnonymizeNoOutput
+		}
+		perChunk[i] = m
+	}
+	merged, ok := textchunk.MergeMasks(text, chunks, perChunk)
+	if !ok {
+		return "", reasonAnonymizeEncodeFailed
+	}
+	return merged, ""
+}
+
 func (p *Plugin) anonymizeEnforce(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -507,8 +647,28 @@ func (p *Plugin) anonymizeEnforce(
 	f *finding,
 ) (*appplugins.Result, error) {
 	masked, ok := maskedText(result)
+	reason := ""
 	if !ok {
-		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeNoOutput, f)
+		reason = reasonAnonymizeNoOutput
+	}
+	return p.anonymizeEnforceMasked(ctx, in, data, message, masked, reason, span, f)
+}
+
+// anonymizeEnforceMasked applies a mask Model Armor produced, or refuses in a
+// mode that blocks when it cannot be applied: failedReason is why there is no
+// masked text, and empty when there is.
+func (p *Plugin) anonymizeEnforceMasked(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	data *Data,
+	message string,
+	masked string,
+	failedReason string,
+	span rewriteSpan,
+	f *finding,
+) (*appplugins.Result, error) {
+	if failedReason != "" {
+		return p.anonymizeDegraded(ctx, in, data, message, failedReason, f)
 	}
 	if !supportsReencode(p.registry, span.format) {
 		return p.anonymizeDegraded(ctx, in, data, message, reasonAnonymizeUnsupportedFormat, f)
@@ -568,7 +728,9 @@ type failureInfo struct {
 	filter        string
 	armorReason   string
 	filterVersion string
-	err           error
+	// chunks is how many calls the evaluation was split into, when it was.
+	chunks int
+	err    error
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the
@@ -604,6 +766,9 @@ func (p *Plugin) externalFailure(
 	data.FailureClass = string(outcome.Class)
 	data.Filter = fi.filter
 	data.FilterVersion = fi.filterVersion
+	if fi.chunks > 1 {
+		data.ChunkCount = fi.chunks
+	}
 	setExtras(in.Event, data)
 	if outcome.Err != nil {
 		return nil, outcome.Err

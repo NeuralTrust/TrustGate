@@ -125,12 +125,12 @@ func TestStreamHTTPErrorsAreClassifiedByTheirGoogleRPCBody(t *testing.T) {
 	}
 }
 
-// A buffered text is sent whole whatever its size: Model Armor answers
+// A buffered text of one chunk is sent whole: Model Armor answers
 // EXECUTION_SKIPPED for a filter it could not run, which is the content's and
-// decides, and nothing is refused locally on a guess about its token limit.
-func TestBufferedTextAboveTheStreamWindowIsSentWhole(t *testing.T) {
+// decides.
+func TestBufferedTextOfOneChunkIsSentWhole(t *testing.T) {
 	t.Parallel()
-	over := strings.Repeat("a", maxSanitizeBytes+1)
+	over := strings.Repeat("a", chunkBytes)
 	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + over + `"}]}`)
 	for _, tc := range []struct {
 		name     string
