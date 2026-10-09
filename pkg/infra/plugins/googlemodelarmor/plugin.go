@@ -240,7 +240,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, armorReason: appplugins.DetailUnsupportedFormat, err: err})
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil {
@@ -286,7 +286,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, armorReason: appplugins.DetailUnsupportedFormat, err: err})
 	}
 	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
 	if err != nil {
@@ -383,10 +383,11 @@ func (p *Plugin) runGuardrail(
 	// did run and matched still wins: it is a real verdict, and naming it is
 	// more useful than naming the one that was missing.
 	//
-	// A filter that was skipped (EXECUTION_SKIPPED, or an invocation that came
-	// back PARTIAL) is the content's doing, since padding a request is what
+	// A filter that was skipped (EXECUTION_SKIPPED) is the content's doing, since padding a request is what
 	// skips one, so a mode that blocks refuses it, usable mask or not: the
-	// other filters did not judge this content. A filter the template never
+	// other filters did not judge this content. An invocation that came back
+	// PARTIAL while every block_on filter ran says nothing about what was asked,
+	// so it is recorded and fails open. A filter the template never
 	// enabled is the customer's configuration, not anything the request did,
 	// and keeps its usable mask: Model Armor already handed us the
 	// de-identified text, and failing open would forward the ORIGINAL prompt

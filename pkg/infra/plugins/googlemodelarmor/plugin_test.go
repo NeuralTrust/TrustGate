@@ -742,9 +742,9 @@ func TestExecuteParseConfigErrorEnforceFailsOpen(t *testing.T) {
 	}
 }
 
-// A body the adapters cannot read is the client's: in a mode that blocks the
+// A concrete body the adapters cannot decode is the client's: in a mode that blocks the
 // call is refused as uninspectable, and in observe it is only recorded.
-func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
+func TestExecuteDecodeFailedOfAnUndecodableBodyIsAnInputFailure(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		mode     policy.Mode
@@ -752,6 +752,48 @@ func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 		refused  bool
 	}{
 		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+			p := pluginWithStub(stub)
+			req := reqCtx(openAIRequest())
+			req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+			event, span := newStreamEvent()
+
+			in := execInput(policy.StagePreRequest, tc.mode, modelArmorSettings(), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if stub.count() != 0 {
+				t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || data.Decision != tc.decision || data.FailureReason != "decode_failed" || data.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", data, ok, tc.decision)
+			}
+		})
+	}
+}
+
+// A provider or format the gateway does not support is a configuration gap, not
+// the body's fault: it fails open in every mode.
+func TestExecuteDecodeFailedOfAnUnsupportedFormatFailsOpen(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_open", false},
 		{policy.ModeObserve, "failed_open", false},
 	} {
 		t.Run(string(tc.mode), func(t *testing.T) {
@@ -778,7 +820,7 @@ func TestExecuteDecodeFailedIsAnInputFailure(t *testing.T) {
 				t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
 			}
 			data, ok := span.PluginAttrsCopy().Extras.(*Data)
-			if !ok || data.Decision != tc.decision || data.FailureReason != "decode_failed" || data.FailureClass != "input" {
+			if !ok || data.Decision != tc.decision || data.FailureReason != "config_invalid" || data.FailureClass != "availability" {
 				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", data, ok, tc.decision)
 			}
 		})

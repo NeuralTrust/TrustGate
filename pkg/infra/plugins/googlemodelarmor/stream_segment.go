@@ -122,8 +122,9 @@ func (p *Plugin) InspectSegment(
 	res := inspect(result, cfg)
 	// Same rule as the buffered leg: a block_on filter that produced no
 	// verdict is not a clean one, and a real match on another filter still
-	// wins because it is a verdict. A filter that was skipped (or an invocation
-	// that came back PARTIAL) is the content's, so a mode that blocks cuts. A
+	// wins because it is a verdict. A filter that was skipped is the content's, so
+	// a mode that blocks cuts; an invocation that came back PARTIAL with every
+	// block_on filter run is recorded and released. A
 	// filter the template never enabled is the customer's configuration: it is
 	// released as a failed inspection, except for a usable mask in a blocking
 	// mode, where the de-identified text is already in hand and releasing the

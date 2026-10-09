@@ -278,7 +278,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", err)
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 
 	text, decErr := p.extractText(in, format)
