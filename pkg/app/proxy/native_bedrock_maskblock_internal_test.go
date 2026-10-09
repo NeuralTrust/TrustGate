@@ -38,31 +38,43 @@ func runNativeGuardTraced(t *testing.T, g *streamGuard, frames [][]byte) ([][]by
 	return collectFrames(t, out), nil, rt
 }
 
-func streamFailedOpenEntries(rt *trace.RequestTrace) []*appplugins.NativeMaskData {
+func streamMaskBlockedEntries(rt *trace.RequestTrace) []*appplugins.NativeMaskData {
 	var out []*appplugins.NativeMaskData
 	for _, span := range rt.Spans() {
 		if span.Type != trace.SpanPlugin || span.Name != appplugins.BedrockNativePassthrough {
 			continue
 		}
 		attrs := span.PluginAttrsCopy()
-		if data, ok := attrs.Extras.(*appplugins.NativeMaskData); ok && attrs.Decision == appplugins.DecisionFailedOpen {
+		if data, ok := attrs.Extras.(*appplugins.NativeMaskData); ok && attrs.Decision == "block" {
 			out = append(out, data)
 		}
 	}
 	return out
 }
 
-// requireStreamFailedOpen is what a mask a stream cannot apply now looks like:
-// no cut, every frame released as it came, and one failed-open entry for the
-// cause with the streamed marker.
-func requireStreamFailedOpen(t *testing.T, got, frames [][]byte, rt *trace.RequestTrace, cause string) {
+// requireStreamMaskBlocked is what a mask a stream cannot apply looks like: the
+// stream ends where the held text began, with the exception the dialect has for a
+// refused call (or a 403 before the first byte), the frames that were already
+// released untouched, and one blocked entry for the cause with the streamed marker.
+func requireStreamMaskBlocked(t *testing.T, got [][]byte, pe *appplugins.PluginError, frames [][]byte, rt *trace.RequestTrace, cause string) {
 	t.Helper()
-	assert.Equal(t, frames, got, "the frames go through as they came and the stream is not cut")
+	if pe != nil {
+		assert.Equal(t, 403, pe.StatusCode)
+		assert.Equal(t, appplugins.BedrockNativePassthrough, pe.Type)
+	} else {
+		require.NotEmpty(t, got)
+		excType, _ := decodeException(t, got[len(got)-1])
+		assert.Equal(t, "validationException", excType)
+		released := got[:len(got)-1]
+		require.Less(t, len(released), len(frames), "the held frames were dropped, not released")
+		assert.Equal(t, frames[:len(released)], released, "what was already released is untouched")
+	}
 	var causes []string
-	for _, e := range streamFailedOpenEntries(rt) {
-		assert.Equal(t, appplugins.DecisionFailedOpen, e.Decision)
+	for _, e := range streamMaskBlockedEntries(rt) {
+		assert.Equal(t, appplugins.DecisionBlocked, e.Decision)
 		assert.Equal(t, "pre_response", e.Stage)
 		assert.True(t, e.Streamed)
+		assert.True(t, e.Degraded)
 		causes = append(causes, e.FailureReason)
 	}
 	assert.Contains(t, causes, "mask_not_applicable:"+cause)
@@ -85,9 +97,10 @@ func (r *newTextMaskRunner) RunStreamSegment(_ context.Context, _ appplugins.Sta
 	return &appplugins.SegmentOutcome{HasTransform: true, Transformed: head + strings.ReplaceAll(seg.Text, r.from, r.to)}, nil
 }
 
-// A mask a stream cannot apply does not end the inspection: the next block is
-// inspected as usual, and a mask it can apply is applied.
-func TestNativeStreamGuard_FailOpenKeepsInspectingLaterBlocks(t *testing.T) {
+// A mask a stream cannot apply ends it: the held frames are dropped, never
+// released with the text the policy asked to mask, and the stream closes with the
+// exception the dialect has for a refused call. The cause is recorded once.
+func TestNativeStreamGuard_AMaskThatCannotBeAppliedEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		deltaFrame(t, "Hello there friend"),
@@ -98,41 +111,8 @@ func TestNativeStreamGuard_FailOpenKeepsInspectingLaterBlocks(t *testing.T) {
 	}
 	g := nativeGuardFor(&newTextMaskRunner{from: streamEmail, to: "<EMAIL>"}, streamGuardConfig{headChars: 5, minChars: 30, maxHold: time.Hour})
 	got, pe, rt := runNativeGuardTraced(t, g, frames)
-	require.Nil(t, pe)
-	require.Len(t, got, len(frames))
-	assert.Equal(t, frames[:3], got[:3], "the block the mask could not be applied to is released as it came")
-	assert.Contains(t, decodeFrameText(t, got[3]), "<EMAIL>", "the next block is inspected and masked")
-	assert.NotContains(t, decodeFrameText(t, got[3]), streamEmail)
-	entries := streamFailedOpenEntries(rt)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "mask_not_applicable:reasoning_not_maskable", entries[0].FailureReason)
-}
-
-// An explicit block verdict still ends the stream.
-func TestNativeStreamGuard_ABlockVerdictStillBlocksAfterAFailOpen(t *testing.T) {
-	t.Parallel()
-	frames := [][]byte{
-		deltaFrame(t, "Hello there friend"),
-		testEventFrame(t, "contentBlockDelta", `{"contentBlockIndex":0,"delta":{"reasoningContent":{"text":"thinking"}}}`),
-		deltaFrame(t, " write to "+streamEmail+" now"),
-		deltaFrame(t, " forbidden words here"),
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "reasoning_not_maskable")
+	if pe == nil {
+		assert.NotContains(t, releasedText(t, got[:len(got)-1]), streamEmail)
 	}
-	g := nativeGuardFor(&blockAfterMaskRunner{mask: &newTextMaskRunner{from: streamEmail, to: "<EMAIL>"}, needle: "forbidden"}, streamGuardConfig{headChars: 5, minChars: 30, maxHold: time.Hour})
-	got, pe, rt := runNativeGuardTraced(t, g, frames)
-	require.Nil(t, pe)
-	excType, _ := decodeException(t, got[len(got)-1])
-	assert.Equal(t, "validationException", excType)
-	assert.Len(t, streamFailedOpenEntries(rt), 1, "the earlier fail-open is still recorded")
-}
-
-type blockAfterMaskRunner struct {
-	mask   *newTextMaskRunner
-	needle string
-}
-
-func (r *blockAfterMaskRunner) RunStreamSegment(ctx context.Context, in appplugins.StageInput, seg appplugins.StreamSegment) (*appplugins.SegmentOutcome, error) {
-	if !seg.Closing && strings.Contains(seg.Text, r.needle) {
-		return &appplugins.SegmentOutcome{Block: true, Type: "blocked", Message: "no"}, nil
-	}
-	return r.mask.RunStreamSegment(ctx, in, seg)
 }

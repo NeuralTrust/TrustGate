@@ -273,15 +273,14 @@ func TestNativeToolDegrade_FailuresAreCountedAndRetire(t *testing.T) {
 // P6: a string that does not survive being read and written back is not
 // rewritten: a mask on such an input ends the stream, and an input nothing masks
 // is released as it came.
-func TestNativeToolMask_LoneSurrogateIsNeverAlteredAndFailsOpenOnAMask(t *testing.T) {
+func TestNativeToolMask_LoneSurrogateIsNeverAlteredAndEndsTheStreamOnAMask(t *testing.T) {
 	t.Parallel()
-	t.Run("a mask fails open", func(t *testing.T) {
+	t.Run("a mask ends the stream", func(t *testing.T) {
 		t.Parallel()
 		frames := append([][]byte{deltaFrame(t, "Sending it")}, converseToolFrames(t, 1, `{"x":"\ud83d","to":"bob@x.io"}`)...)
 		frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 		got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(&maskRunner{from: streamEmail, to: "<EMAIL>"}, toolBlocks), frames)
-		require.Nil(t, pe)
-		requireStreamFailedOpen(t, got, frames, rt, "tool_input_not_maskable")
+		requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_input_not_maskable")
 	})
 	t.Run("nothing to mask is released as it came", func(t *testing.T) {
 		t.Parallel()
