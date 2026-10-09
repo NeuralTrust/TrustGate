@@ -154,6 +154,12 @@ func (c *mapCache) Set(key string, value any) {
 	c.m[key] = value
 }
 
+func (c *mapCache) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, key)
+}
+
 func newTestComposer(dialer Dialer) Composer {
 	return NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
 }
