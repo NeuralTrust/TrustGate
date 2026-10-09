@@ -21,13 +21,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Guardrail policies always fail open: the plugins ignore on_error, on_timeout,
-// the per-policy timeout, on_mask_failure and streaming.on_error /
+// What a guardrail does when it fails is decided by the failure's class and the
+// policy's mode, not by a stored setting: the plugins ignore on_error,
+// on_timeout, the per-policy timeout, on_mask_failure and streaming.on_error /
 // streaming.guard_timeout. A row that still stores one reads back through
 // GET /policies and the Terraform provider as a behaviour the gateway does not
-// have (a policy showing "fail closed" that fails open), and a binary of another
-// release that still decodes the key would act on it. Drop them from the rows
-// that carry them.
+// have (a policy showing "fail closed" that fails open on an availability
+// failure), and a binary of another release that still decodes the key would act
+// on it. Drop them from the rows that carry them.
 //
 // Per slug, the keys dropped are the ones that plugin's RetiredSettings declares:
 //
@@ -130,11 +131,12 @@ func upStripRetiredGuardrailSettings(ctx context.Context, tx pgx.Tx) error {
 	return err
 }
 
-// downStripRetiredGuardrailSettings is a deliberate no-op. What Up dropped is
-// the stored value of a setting no plugin reads, so there is nothing a rolled
-// back binary could be given that it would not already default to, and
-// reinstating a fail_closed or a 1ms timeout would only recreate the mismatch
-// between what a policy shows and what the gateway does.
+// downStripRetiredGuardrailSettings is a deliberate no-op. Up drops values the
+// new release never honours, so a rollback cannot give them back: a policy that
+// stored fail_closed loses it and runs with the old release's defaults, which is
+// the intended product behaviour. Reinstating a fail_closed or a 1ms timeout
+// would only recreate the mismatch between what a policy shows and what the
+// gateway does.
 func downStripRetiredGuardrailSettings(_ context.Context, _ pgx.Tx) error {
 	return nil
 }
