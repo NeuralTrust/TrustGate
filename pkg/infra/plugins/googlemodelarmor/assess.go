@@ -37,7 +37,7 @@ const (
 	// reasonFilterStateUnspecified is a filter whose executionState is neither
 	// success nor a skip (EXECUTION_STATE_UNSPECIFIED, or a state Google adds):
 	// nothing says the content caused it, so it is availability.
-	reasonFilterStateUnspecified = "filter_state_unspecified"
+	reasonFilterStateUnspecified = appplugins.DetailFilterStateUnspecified
 )
 
 // unevaluatedFilter names the first filter selected in block_on that produced

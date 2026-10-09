@@ -90,6 +90,7 @@ const (
 const (
 	DetailFilterNotExecuted       = "filter_not_executed"
 	DetailFilterNotInTemplate     = "filter_not_in_template"
+	DetailFilterStateUnspecified  = "filter_state_unspecified"
 	DetailInvocationPartial       = "invocation_partial"
 	DetailInterventionUnparsed    = "intervention_unparsed"
 	DetailAnonymizeNoOutput       = "anonymize_no_output"
