@@ -49,7 +49,7 @@ func TestStripRetiredGuardrailSettingsMigration(t *testing.T) {
 			('armor', 'google_model_armor', '`+staleGuardrailSettings+`'),
 			('openai', 'openai_moderation', '`+staleGuardrailSettings+`'),
 			('azure', 'azure_content_safety', '`+staleGuardrailSettings+`'),
-			('regex', 'regex_replace', '{"on_mask_failure": "block", "streaming": {"on_error": "fail_closed", "enabled": true}}'),
+			('regex', 'regex_replace', '{"on_mask_failure": "block", "streaming": {"on_error": "fail_closed", "enabled": true, "GUARD_TIMEOUT": "1ms"}}'),
 			('other', 'rate_limiter', '`+staleGuardrailSettings+`'),
 			('clean', 'trustguard', '{"collector_id": "c", "streaming": {"enabled": false}}'),
 			('only-stale', 'bedrock_guardrail', '{"on_error": "fail_closed"}'),
@@ -68,7 +68,7 @@ func TestStripRetiredGuardrailSettingsMigration(t *testing.T) {
 		"Streaming": map[string]any{"enabled": true, "On_Error": "fail_closed", "GUARD_TIMEOUT": "1ms"},
 	}, settingsOf(t, ctx, tx, "azure"), "azure_content_safety retires on_error only")
 	require.Equal(t, map[string]any{"streaming": map[string]any{"on_error": "fail_closed", "enabled": true}}, settingsOf(t, ctx, tx, "regex"),
-		"regex_replace keeps its fail-closed stream policy")
+		"regex_replace keeps its fail-closed stream policy and loses its guard timeout")
 	var other map[string]any
 	require.NoError(t, json.Unmarshal([]byte(staleGuardrailSettings), &other))
 	require.Equal(t, other, settingsOf(t, ctx, tx, "other"), "a plugin outside the list is untouched")
