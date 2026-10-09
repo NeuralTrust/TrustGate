@@ -335,19 +335,23 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // fills exactly that. The overlap is 4,096 bytes, enough for a long secret (a PEM
 // key, a service-account JSON of about 3.5 KB) to lie whole in one chunk; a
 // pattern longer than it, or a context that a cut separates by more than it,
-// can still be cut in two. A text that splits into more than maxBufferedChunks is refused
-// before any call, and at most chunkParallel run at once inside the client's
-// timeout for the whole evaluation. The project's quota is 1,200 requests a
-// minute, which maxBufferedChunks calls cannot exhaust alone.
+// can still be cut in two. The ceiling is what half of the client's timeout for the
+// whole evaluation admits at chunkParallel calls at once and callReserve a round,
+// at most maxBufferedChunks (16 at the default 15 s): a text above it is refused
+// before any call as chunk_limit. The project's quota is 1,200 requests a minute,
+// which maxBufferedChunks calls cannot exhaust alone. A chunk that is not started
+// or is cut by the budget is availability only when some call took longer than
+// twice callReserve, and otherwise chunk_budget, input. A throttle on a chunk of
+// the first round is retried once; if it persists it is availability on the first
+// chunk or on a single-chunk text, and input (throttled_oversize) on any other.
 const (
 	chunkBytes        = maxSanitizeBytes
 	chunkOverlap      = 4096
 	maxBufferedChunks = 16
 	chunkParallel     = 4
-	// callReserve is the budget a chunk that has to wait for a slot needs left
-	// to be started, about twice a call's usual latency. A chunk queued behind
-	// the request's own chunks that finds less is refused as chunk_budget: the
-	// request's size used the time, the provider was not slow.
+	// callReserve is the time one round of calls is reserved, about twice a
+	// call's usual latency: the ceiling, the least budget a waiting chunk may
+	// start with and the slow-call threshold (twice it) are all made of it.
 	callReserve = 1500 * time.Millisecond
 )
 

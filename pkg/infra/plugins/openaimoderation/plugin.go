@@ -49,17 +49,21 @@ const (
 // overlap is 4,096 bytes, enough for a long secret (a PEM key, a service-account
 // JSON of about 3.5 KB) to lie whole in one chunk; a pattern longer than it, or
 // a context that a cut separates by more than it, can still be cut in two. A
-// text that splits into more than maxChunks requests is refused before any call, and at
-// most evalParallel run at once, inside the client's timeout for the whole
-// evaluation. A chunk that would have to wait for a slot is not started with
-// less than callReserve of the budget left, about twice a call's usual latency:
-// it was queued behind the request's own chunks, so the request's size used the
-// time and it is refused as chunk_budget, not sent to time out as an outage.
-// OpenAI meters tokens per minute per tier, which the gateway cannot see, so a
-// rate limit on a chunk of the first round is other traffic and fails open, and
-// one on a chunk that waited behind the request's own (index evalParallel or
-// more) may be that request's own size and is input (throttled_oversize). An exhausted account (insufficient_quota,
-// billing_hard_limit_reached) is configuration, not a rate, and fails open.
+// text is evaluated when its estimate, one callReserve per round of evalParallel
+// requests, is at most half of the client's timeout for the whole evaluation:
+// that is the ceiling, at most maxChunks, 12 at the default 15 s, and a text above
+// it is refused before any call as chunk_limit. The headroom lets OpenAI answer
+// up to twice as slowly as callReserve, about twice a call's usual latency, on
+// every round without the budget cutting a chunk. A chunk that is not started or
+// is cut by the budget is availability only when some call took longer than twice
+// callReserve, and otherwise chunk_budget, input: the request's own size used the
+// time. OpenAI meters tokens per minute per tier, which the gateway cannot see,
+// so a rate limit on a chunk of the first round is retried once, and if it
+// persists it is other traffic on the first chunk or on a single-chunk text and
+// fails open, and input (throttled_oversize) on any other chunk, which the
+// request's own calls beside or before it may have throttled. An exhausted
+// account (insufficient_quota, billing_hard_limit_reached) is configuration, not
+// a rate, and fails open.
 // https://developers.openai.com/api/docs/guides/moderation
 const (
 	chunkBytes   = 32768

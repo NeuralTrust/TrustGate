@@ -482,14 +482,23 @@ window below that, so a long secret lies whole in one chunk. A block that would
 need more than 8 chunks is a failure of the content: a mode that blocks cuts the
 stream (`input_too_large` / `chunk_limit`) and observe releases the block. The
 chunks are read through the same rules as a buffered evaluation: a chunk that
-blocks wins, a failure that is the content's cuts, a throttle on a piece that
-waited behind the block's own earlier pieces is the content's too (one on a
-first-round piece is the provider's load and fails open), a mask from any chunk is applied, and an
+blocks wins, a failure that is the content's cuts, a throttle on any piece but the
+first is the content's too (the block's own pieces beside or before it may have
+caused it; one on the first piece is the provider's load and fails open, and so
+is every throttle on `bedrock_guardrail`, whose pieces are spaced), a mask from any chunk is applied, and an
 availability failure releases the block unless a mask or a finding can still be
-used. `trustguard` is not split: it bounds its own payload and is sent the block
-whole, and a block of more than 65,536 bytes is refused before any call as
-`input_too_large` / `chunk_limit` (a cut in a mode that blocks, recorded in
-observe). Every other evaluation sends at most the entry's window, which a provider
+used. A block is held for at most one piece timeout per round of pieces and never
+more than four, whatever the provider does. A piece that was not started or was
+cut by that deadline is availability only when some piece's call took more than
+half of its timeout (the provider was slow), and otherwise the block's own size
+used the time: it is cut in a mode that blocks as `input_too_large` /
+`chunk_budget`. `trustguard` is not split: it bounds its own payload and is sent the block
+whole, and a block of more than 65,536 bytes is refused before any call with the
+failure reason `stream_block_too_large` (`input_too_large` / `chunk_limit`; a cut
+in a mode that blocks, recorded in observe). The gateway does not split what the
+upstream sends in one server-sent event, so a single upstream event of more than
+64 KiB (the provider's own framing) is such a block and cuts a TrustGuard stream
+in Enforce. Every other evaluation sends at most the entry's window, which a provider
 ceiling caps whatever the setting asks for, so the time of a block does not grow
 with the response and a long preamble cannot push the blocks that follow past
 the per-block deadline. The
@@ -513,8 +522,9 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   guardrail for the rest of the stream. A buffered Bedrock request is different:
   its chunks are sent one at a time and spaced under the region's quota, so a
   throttle there is always availability. The pieces of one streamed block larger
-  than the window are sent one at a time, and a throttle on a piece after the
-  first is the content's, as for the other guardrails.
+  than the window are sent one at a time and spaced by the same per-block spacer,
+  so a throttle on a piece is other traffic and availability too; the block is
+  held for at most four times the 2 s guard timeout.
 - `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
   input limit for moderations, so the window is fitted to the 1.5 second block
   deadline.
