@@ -333,11 +333,8 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	case decision.Kind == appplugins.ChunkBlocked:
 		finding = evals[decision.Index].res.block
 	case decision.Masked:
-		for i, ev := range evals {
-			if outs[i].Started && outs[i].Err == nil && ev.res.anonymize != nil {
-				finding = ev.res.anonymize
-				break
-			}
+		if i := pluginutil.FirstMaskedChunk(outs, func(i int) bool { return evals[i].res.anonymize != nil }); i >= 0 {
+			finding = evals[i].res.anonymize
 		}
 	}
 
@@ -428,37 +425,12 @@ func (p *Plugin) failedChunk(
 	return p.externalFailureWithPolicies(ctx, in, cfg, latency, count, d.Reason, d.Detail, policies, cause)
 }
 
-// mergedMask is the masked text the chunks that asked for a mask add up to. A
-// single chunk's text is the guardrail's own output. With several, each chunk's
-// output is mapped back onto the original, so the overlap does not apply a mask
-// twice and no byte a chunk masked is left in the clear. failed is the reason
-// there is no masked text: a chunk asked for a mask and gave none, or the masks
-// cannot be mapped back onto the original.
+// mergedMask is the masked text the chunks that asked for a mask add up to (see
+// pluginutil.MergeChunkMasks).
 func mergedMask(text string, chunks []textchunk.Chunk, evals []chunkEval, outs []textchunk.Outcome[struct{}]) (masked string, failed string) {
-	if len(chunks) == 1 {
-		m, ok := maskedText(evals[0].out)
-		if !ok {
-			return "", reasonAnonymizeNoOutput
-		}
-		return m, ""
-	}
-	perChunk := make([]string, len(chunks))
-	for i, c := range chunks {
-		perChunk[i] = c.Text
-		if !outs[i].Started || outs[i].Err != nil || evals[i].res.anonymize == nil {
-			continue
-		}
-		m, ok := maskedText(evals[i].out)
-		if !ok {
-			return "", reasonAnonymizeNoOutput
-		}
-		perChunk[i] = m
-	}
-	merged, ok := textchunk.MergeMasks(text, chunks, perChunk)
-	if !ok {
-		return "", reasonAnonymizeEncodeFailed
-	}
-	return merged, ""
+	return pluginutil.MergeChunkMasks(text, chunks, outs,
+		func(i int) bool { return evals[i].res.anonymize != nil },
+		func(i int) (string, bool) { return maskedText(evals[i].out) })
 }
 
 func (p *Plugin) anonymizeEnforce(ctx context.Context, in appplugins.ExecInput, data *Data, message string, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan, f *finding) (*appplugins.Result, error) {
