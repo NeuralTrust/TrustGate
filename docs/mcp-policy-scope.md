@@ -441,9 +441,11 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 - An `observe` entry's transform is never applied to the client, so it is not
   handed on: the entries behind it judge the text the client will actually get.
 - A block still ends the chain and discards any transform of the same segment.
-- If an enforcing entry fails after an earlier one masked the segment, the mask
-  travels with the error: `on_error: fail_open` releases the masked text, never
-  the raw text, and cuts the stream if the mask cannot be applied.
+- If a guardrail fails on an availability failure after an earlier entry masked
+  the segment, the failure fails open and the chain goes on with the masked
+  text: what is released is the masked text, never the raw text. A failure that
+  depends on the content of the block cuts the stream in a mode that blocks, and
+  so does a mask that cannot be applied.
 - Masks can stack within a block: a wide pattern in a later rewriter may match
   inside the placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders
   change, never raw data. Across blocks they do not: `regex_replace` replaces
@@ -461,32 +463,88 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 
 **Each streaming entry is sent its own window.** One stream has one head gate
 and one cadence, taken from the first entry that owns them, usually
-`trustguard`; `on_error` is merged across policies. The stream keeps the largest
+`trustguard`. The stream's own `on_error` is `fail_open` when a guardrail takes
+part, because no guardrail has a setting for it, and a passive rewriter
+(`regex_replace`) does not change that: a guardrail's availability failure is
+absorbed per entry and fails open, and one that depends on the content of the
+block arrives as a cut verdict. The stream keeps the largest
 `max_accumulated_bytes` of its participants, and each entry is handed only the
 tail of the text that its own `streaming.max_accumulated_bytes` allows. So a
 policy's setting bounds what its provider receives whatever policy owns the
 stream, and a provider with a small limit never shrinks what another policy
 inspects. A rewrite over that tail is put back behind the text the entry did
 not see. The one exception is a block whose new text alone is larger than the
-window: it is sent whole, because that text is about to reach the client, and
-if the provider refuses or skips it, `on_error` decides. The defaults follow the
-providers' per-request limits:
+window: that text is about to reach the client, so it is screened in full, in
+chunks of the window (at most 8 per block, four in flight, one for
+`bedrock_guardrail`) that share an
+overlap of 4,096 bytes where the window is 32 KiB or more, and an eighth of the
+window below that, so a long secret lies whole in one chunk. A block that would
+need more than 8 chunks is a failure of the content: a mode that blocks cuts the
+stream (`input_too_large` / `chunk_limit`) and observe releases the block. The
+chunks are read through the same rules as a buffered evaluation: a chunk that
+blocks wins, a failure that is the content's cuts, a throttle on any piece but the
+first is the content's too when the first piece answered without a throttle (the block's own pieces beside or before it may have
+caused it; one on the first piece is the provider's load, which makes every throttle of the block fail open, and so
+is every throttle on `bedrock_guardrail`, whose pieces are spaced so a throttle is attributed to traffic outside the block). A throttled piece of the first round is sent once more after a short backoff. A mask from any chunk is applied, and an
+availability failure releases the block unless a mask or a finding can still be
+used. A block is held for at most one piece timeout per round of pieces and never
+more than four, whatever the provider does. A piece that was not started or was
+cut by that deadline is availability only when some piece's call took more than
+half of its timeout (the provider was slow), and otherwise the block's own size
+used the time: it is cut in a mode that blocks as `input_too_large` /
+`chunk_budget`. `trustguard` is not split: it bounds its own payload and is sent the block
+whole, and a block of more than 65,536 bytes is refused before any call with the
+failure reason `stream_block_too_large` (`input_too_large` / `chunk_limit`; a cut
+in a mode that blocks, recorded in observe). The gateway does not split what the
+upstream sends in one server-sent event, so a single upstream event of more than
+64 KiB (the provider's own framing) is such a block and cuts a TrustGuard stream
+in Enforce. Every other evaluation sends at most the entry's window, which a provider
+ceiling caps whatever the setting asks for, so the time of a block does not grow
+with the response and a long preamble cannot push the blocks that follow past
+the per-block deadline. The
+ceilings follow the providers' per-request limits and deadlines, and a larger
+`streaming.max_accumulated_bytes` is capped to them:
 
-- `google_model_armor`: 64 KiB, and never more. Model Armor skips its filters
-  above 65,536 tokens, which the plugin counts as a filter that did not run, so
-  a larger payload would cut a `fail_closed` stream or release the block
-  uninspected on `fail_open`. Google does not raise this limit, so a higher
-  setting is treated as 64 KiB.
-- `bedrock_guardrail` (streaming is opt-in): 24 KiB. AWS bounds each
-  `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
-  characters. The defaults go as low as 25 units (for example in eu-west-3,
-  eu-south-1 and sa-east-1) and AWS does not document what a larger input gets. The quotas are adjustable, so a
-  larger setting is honoured; raise it only after raising the quota. The window
-  bounds the size of each call, not their rate: in regions where the
-  content-filter quota is 25 text units per second, a long stream also needs
-  that quota raised, or throttled calls fail as `on_error` says.
-- `openai_moderation` and `trustguard`: 256 KiB, unchanged. OpenAI documents no
-  per-request input limit for moderations.
+- `google_model_armor`: 56 KiB (57,344 bytes), and never more. Model Armor
+  skips its filters above 65,536 tokens, which the plugin counts as a filter
+  that did not run, so a larger payload would release the block uninspected. The
+  stream sends an 8 KiB correlation prompt with each block, and 57,344 bytes
+  plus that prompt is 65,536. Google does not raise this limit, so a higher
+  setting is treated as 56 KiB.
+- `bedrock_guardrail` (streaming is opt-in): 8 KiB, and never more. AWS bounds
+  each `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
+  characters, at a number of units per second that goes as low as 25 (for
+  example in eu-west-3, eu-south-1 and sa-east-1). A block of 8 KiB is at most
+  9 units, so it leaves room for concurrent blocks and for the retry a
+  throttled call gets within the block's deadline; a larger setting is treated
+  as 8 KiB. A throttled block that is still throttled after its retries is
+  released as an availability failure and does not count toward retiring the
+  guardrail for the rest of the stream. A buffered Bedrock request is different:
+  its chunks are sent one at a time and spaced under the region's quota, so a
+  throttle there is always availability. The pieces of one streamed block larger
+  than the window are sent one at a time and spaced by the same per-block spacer,
+  so a throttle on a piece is other traffic and availability too; the block is
+  held for at most four times the 2 s guard timeout.
+- `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
+  input limit for moderations, so the window is fitted to the 1.5 second block
+  deadline.
+- `trustguard`: 64 KiB, and never more, fitted to the 2 second deadline that
+  covers the token and the evaluate call.
+
+A buffered request (the whole prompt or response, not a stream block) is split
+too, and the text a guardrail screens is bounded by what half of its 30 second
+evaluation budget admits, which is separate from the timeout of each call (a
+provider that hangs fails open after about one call, not after the budget). A
+text above the ceiling is refused before any call as `input_too_large` /
+`chunk_limit` in a mode that blocks. The ceilings, in characters or bytes and
+in tokens at about four characters a token:
+
+| Guardrail | Chunks | Text | Tokens |
+|---|---|---|---|
+| `azure_content_safety` | 60 | about 482,000 UTF-16 units | about 120,000 |
+| `openai_moderation` | 28 | about 807,000 bytes | about 200,000 |
+| `bedrock_guardrail` | 10 | about 203,000 bytes | about 50,000 |
+| `google_model_armor` | 16 | about 856,000 bytes | about 210,000 |
 
 ## Deny pattern: "only group X may call this tool"
 

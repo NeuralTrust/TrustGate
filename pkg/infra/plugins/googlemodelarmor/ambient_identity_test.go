@@ -219,23 +219,19 @@ func TestExecuteAmbientIdentityUnchangedWhenEnabled(t *testing.T) {
 	}
 }
 
-// on_mask_failure is the setting every plugin that masks carries: its values are
-// validated, the plugin accepts it among its settings, and it declares that it
-// masks on a native Bedrock call.
-func TestOnMaskFailureSetting(t *testing.T) {
+// on_mask_failure is not a setting: a mask that cannot be applied to a native Bedrock
+// call always blocks, in a mode that blocks. A policy stored with the key keeps
+// loading, whatever its value, and the key changes nothing.
+func TestOnMaskFailureIsIgnored(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", time.Second, false, nil)
 	assert.Equal(t, appplugins.BedrockNativeMasks, appplugins.BedrockNativeOf(p))
-	for _, value := range []string{"pass", "block"} {
-		set := withCredentials(modelArmorSettings(), map[string]any{"service_account_json": "{}"})
-		set[appplugins.SettingOnMaskFailure] = value
-		assert.NoError(t, p.ValidateConfig(set), value)
-	}
-	set := withCredentials(modelArmorSettings(), map[string]any{"service_account_json": "{}"})
-	set[appplugins.SettingOnMaskFailure] = "explode"
 	reg := appplugins.NewRegistry()
 	require.NoError(t, reg.Register(p))
-	err := reg.Validate(p.Name(), set)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), appplugins.SettingOnMaskFailure)
+	for _, value := range []string{"pass", "block", "explode"} {
+		set := withCredentials(modelArmorSettings(), map[string]any{"service_account_json": "{}"})
+		set["on_mask_failure"] = value
+		assert.NoError(t, p.ValidateConfig(set), value)
+		assert.NoError(t, reg.Validate(p.Name(), set), value)
+	}
 }

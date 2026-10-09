@@ -92,10 +92,27 @@ func (*segmentExecutor) RunStreamSegment(
 	return nil, nil
 }
 
+// rewriterPlugin is an inspector that is a passive participant, as regex_replace
+// is: it is the one kind of plugin whose own stream failure direction reaches the
+// guard.
+type rewriterPlugin struct{ inspectorPlugin }
+
+func (rewriterPlugin) OwnsStreamOptions() bool { return false }
+
 func inspectorPlan(t *testing.T, settings map[string]any) *appplugins.StagePlan {
 	t.Helper()
+	return planOf(t, inspectorPlugin{}, settings)
+}
+
+func rewriterPlan(t *testing.T, settings map[string]any) *appplugins.StagePlan {
+	t.Helper()
+	return planOf(t, rewriterPlugin{}, settings)
+}
+
+func planOf(t *testing.T, plugin appplugins.Plugin, settings map[string]any) *appplugins.StagePlan {
+	t.Helper()
 	reg := appplugins.NewRegistry()
-	require.NoError(t, reg.Register(inspectorPlugin{}))
+	require.NoError(t, reg.Register(plugin))
 	return appplugins.NewStagePlan(reg, []*policy.Policy{{
 		ID:       ids.New[ids.PolicyKind](),
 		Name:     "guard",
@@ -164,21 +181,27 @@ func TestForwarder_StreamGuardIsNotBuiltWithoutAnEnabledInspector(t *testing.T) 
 	}
 }
 
-// TestForwarder_StreamGuardCarriesThePolicyConfig proves head_chars and
-// on_error reach the guard. They are validated at policy load, so an operator
-// who asks for fail_closed and is given fail_open gets a guard that releases
-// text it could not verify.
+// TestForwarder_StreamGuardCarriesThePolicyConfig proves head_chars reaches the
+// guard, and that the failure direction is the one the plan resolved: a guardrail
+// always fails open whatever on_error it still stores, and a passive rewriter that
+// asks for fail_closed gets it, since releasing text it could not mask is the one
+// outcome its rules exist to prevent.
 func TestForwarder_StreamGuardCarriesThePolicyConfig(t *testing.T) {
 	t.Parallel()
 	fwd := &forwarder{executor: &segmentExecutor{}, codec: adapter.NewRegistry(), logger: newGuardLogger()}
-	dto := wiringDTO(inspectorPlan(t, map[string]any{
+	settings := map[string]any{
 		"enabled":    true,
 		"head_chars": 37,
 		"on_error":   "fail_closed",
-	}))
+	}
 
-	guard := fwd.newStreamGuard(dto, &infracontext.ResponseContext{})
-	require.NotNil(t, guard)
-	require.Equal(t, 37, guard.cfg.headChars, "the policy's head_chars is used, not defaultHeadChars")
-	require.Equal(t, streamFailClosed, guard.cfg.onError, "the policy's on_error is used, not the fail_open default")
+	guardrail := fwd.newStreamGuard(wiringDTO(inspectorPlan(t, settings)), &infracontext.ResponseContext{})
+	require.NotNil(t, guardrail)
+	require.Equal(t, 37, guardrail.cfg.headChars, "the policy's head_chars is used, not defaultHeadChars")
+	require.Equal(t, streamFailOpen, guardrail.cfg.onError, "a guardrail's stored on_error is ignored")
+
+	rewriter := fwd.newStreamGuard(wiringDTO(rewriterPlan(t, settings)), &infracontext.ResponseContext{})
+	require.NotNil(t, rewriter)
+	require.Equal(t, 37, rewriter.cfg.headChars)
+	require.Equal(t, streamFailClosed, rewriter.cfg.onError, "a rewriter's own on_error is used, not the fail_open default")
 }

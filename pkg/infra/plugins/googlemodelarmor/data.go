@@ -33,9 +33,12 @@ type Data struct {
 	// deliberately — it is a public contract — so without these two the
 	// difference between a borderline block and an unambiguous one is
 	// invisible to anyone tuning thresholds after the fact.
-	Confidence     string `json:"confidence,omitempty"`
-	Category       string `json:"category,omitempty"`
-	LatencyMS      int64  `json:"latency_ms,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
+	Category   string `json:"category,omitempty"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	// ChunkCount is how many sanitize calls the text was split into; it is set
+	// only when that is more than one.
+	ChunkCount     int    `json:"chunk_count,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
 	// FailureReason is one of appplugins.FailureReason (transport,
@@ -49,6 +52,14 @@ type Data struct {
 	// verdict — the template never enabled it (filter_not_in_template) or it
 	// did not run on this call (filter_not_executed). Filter names which one.
 	FailureDetail string `json:"failure_detail,omitempty"`
+	// EarlierFailureDetail is the failure_detail a call had already recorded
+	// when a later failure took FailureDetail: ClassOf classifies the exact
+	// (reason, detail) pair, so the detail that decides the class stays in
+	// FailureDetail and the one it replaced is kept here.
+	EarlierFailureDetail string `json:"earlier_failure_detail,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
 	// FilterVersion is the Model Armor filter version that produced the
 	// verdict. A template pointed at an alias rather than a pinned version
 	// changes behaviour when Google promotes a new one, with no deploy on our

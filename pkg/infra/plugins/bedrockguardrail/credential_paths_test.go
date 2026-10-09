@@ -32,7 +32,7 @@ func TestCredentialPaths(t *testing.T) {
 	}, (&Plugin{}).CredentialPaths())
 
 	cfg, err := parseConfig(map[string]any{
-		"guardrail_id": "gr-1",
+		"guardrail_id": "gr1abc",
 		"credentials": map[string]any{
 			"access_key_id":     "c1",
 			"secret_access_key": "c2",

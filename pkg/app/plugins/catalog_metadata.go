@@ -857,7 +857,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors and timeouts unless on_error / on_timeout say fail_closed. Streamed responses are inspected block by block as they are produced, whenever the direction includes the response; set streaming.enabled to false to inspect them only after the stream completes.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. It fails open when TrustGuard is unavailable: if it cannot be reached, rejects the credentials, or does not answer within the deployment timeout, the request goes through uninspected and the event records failed_open with the reason. Content it cannot inspect is blocked in enforce and only recorded in observe: text too large to evaluate (images and other attachments do not count toward the limit), a payload TrustGuard refuses for its size, an attachment TrustGuard rejects as sent inline, a body the gateway cannot read, and a mask that cannot be applied to a finding. An image given by a URL TrustGuard cannot fetch does not block the request: the text is inspected without it, and the event records how many attachments were not fetched and a failure (verdict_incomplete) so it can alert. A block or a rate limit from TrustGuard is its answer and still applies. Streamed responses are inspected block by block as they are produced, whenever the direction includes the response; set streaming.enabled to false to inspect them only after the stream completes.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -880,42 +880,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
 				},
-				{
-					Key:   "on_error",
-					Label: "On Error",
-					Type:  FieldTypeEnum,
-					Description: "What to do when the guard cannot inspect the request: a transport failure, a server error, " +
-						"rejected or missing credentials, a missing base URL, unavailable entitlements, or a mask that " +
-						"could not be applied. fail_open lets the request through uninspected and marks it failed_open " +
-						"with the reason. A block or a rate limit is the guard's answer and is never affected.",
-					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_open",
-				},
-				{
-					Key:   "on_timeout",
-					Label: "On Timeout",
-					Type:  FieldTypeEnum,
-					Description: "What to do when the guard does not answer in time. Defaults to fail_open, like on_error. " +
-						"A large enough payload can push the detector past the deadline, so fail_closed is the " +
-						"stricter choice for a policy that must never let text through uninspected.",
-					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_open",
-				},
-				{
-					Key:   "timeout",
-					Label: "Timeout",
-					Type:  FieldTypeDuration,
-					Description: "How long one evaluate call may take for this policy (e.g. 30s). " +
-						"Leave empty to use the deployment-wide TRUSTGUARD_TIMEOUT.",
-				},
-				MaskFailureField(),
 			},
 		},
 	},
 	"openai_moderation": {
 		name:        "OpenAI Moderation",
 		group:       groupGuardrails,
-		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. If OpenAI cannot be reached or returns an unusable verdict, the request is allowed through and the event records decision failed_open with the failure reason, in every mode, unless settings.on_error is fail_closed. Text-only. Streamed responses are moderated block by block by default, and a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed; set settings.streaming.enabled to false to leave them unmoderated, in which case the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. If OpenAI cannot be reached or does not answer, the request is allowed through and the event records decision failed_open with the failure reason. Long content is split and every part is screened, up to about 800 KB (about 200,000 tokens); content too large to screen is blocked in enforce and only recorded in observe, and so is content OpenAI refuses (a 400) or the gateway cannot read. A rate limit on a later part of long content, after the first part was answered, is treated as content that cannot be screened, while a rate limit on the first part fails open, while an account out of credit or at its billing limit is a configuration problem and fails open. A pattern longer than the overlap between the parts can be cut in two. Text-only. Streamed responses are moderated block by block by default, and a provider error or timeout on a block fails open, while a block OpenAI refuses for what it carries ends the stream in enforce; set settings.streaming.enabled to false to leave them unmoderated, in which case the trace marks the policy as skipped with reason streaming_disabled.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -924,18 +895,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeString,
 					Description: "OpenAI credential sent as a Bearer token to the Moderations API.",
 					Required:    true,
-				},
-				{
-					Key:   "on_error",
-					Label: "On Error",
-					Type:  FieldTypeEnum,
-					Description: "What to do when the guardrail cannot give a verdict on the request or a buffered response: " +
-						"it cannot be reached, it times out or is throttled, or its answer does not cover what the policy " +
-						"asked. fail_open lets the traffic through and records failed_open with the reason; fail_closed " +
-						"refuses it with a 502 guardrail_unavailable in a mode that blocks. Streamed blocks follow " +
-						"streaming.on_error instead.",
-					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_open",
 				},
 				{
 					Key:   "model",
@@ -1015,7 +974,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"azure_content_safety": {
 		name:        "Azure Content Safety",
 		group:       groupGuardrails,
-		description: "Screen request text with Azure AI Content Safety and block categories whose severity meets the configured threshold. If Azure cannot be reached or returns an unusable verdict, the request is allowed through and the event records decision failed_open with the failure reason, in every mode.",
+		description: "Screen request text with Azure AI Content Safety and block categories whose severity meets the configured threshold. If Azure cannot be reached or does not answer, the request is allowed through and the event records decision failed_open with the failure reason. The whole conversation is screened, in parts when it is long, up to about 480,000 characters (about 120,000 tokens); content too large to screen is blocked in enforce and only recorded in observe, and so is text Azure refuses (a 400) or the gateway cannot read. A rate limit on a later part of a conversation screened in parts, after the first part was answered, is treated as content that cannot be screened, so the free tier, which rate-limits long conversations, does not support them; a spent call volume quota is a configuration problem and fails open. A pattern longer than the overlap between the parts can be cut in two.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1026,22 +985,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:   "on_error",
-					Label: "On Error",
-					Type:  FieldTypeEnum,
-					Description: "What to do when the guardrail cannot give a verdict on the request or a buffered response: " +
-						"it cannot be reached, it times out or is throttled, or its answer does not cover what the policy " +
-						"asked. fail_open lets the traffic through and records failed_open with the reason; fail_closed " +
-						"refuses it with a 502 guardrail_unavailable in a mode that blocks. Streamed blocks follow " +
-						"streaming.on_error instead.",
-					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_open",
-				},
-				{
 					Key:         "endpoint",
 					Label:       "Endpoint",
 					Type:        FieldTypeString,
-					Description: "Absolute Analyze Text endpoint URL for the Azure Content Safety resource.",
+					Description: "Absolute Analyze Text endpoint URL for the Azure Content Safety resource, including its api-version query parameter.",
 					Required:    true,
 				},
 				{
@@ -1085,33 +1032,21 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"bedrock_guardrail": {
 		name:        "AWS Bedrock Guardrail",
 		group:       groupGuardrails,
-		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. Streamed responses are inspected block by block only when streaming is enabled for the policy (settings.streaming.enabled: true, set through the API; it is off by default because every block calls ApplyGuardrail again and AWS rate-limits it per account and region). Once enabled, a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed. Otherwise streamed responses pass through uninspected, and the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. The policy fails open when AWS is unavailable: if the guardrail cannot be reached or rejects the credentials, the request goes through and the event records decision failed_open with the failure reason. Long content is split and every part is screened. The parts are sent one at a time, spaced under the region's quota, so throttling by AWS fails open; content of more than 10 parts (about 200 KB, or about 50,000 tokens, the same in every region, which is what half of the 30 s budget admits) is treated as content that cannot be screened, and a part that AWS answers too slowly after the request was accepted fails open only when AWS was slow; parts that cut the budget while AWS answered at its usual pace are treated as content too large to screen. A pattern longer than the overlap between the parts can be cut in two. Content it cannot inspect is blocked in enforce and only recorded in observe: content too large to screen, a call AWS rejects as a client error, an intervention the policy cannot explain, and anonymised text that cannot be written back. Streamed responses are inspected block by block only when streaming is enabled for the policy (settings.streaming.enabled: true, set through the API; it is off by default because every block calls ApplyGuardrail again and AWS rate-limits it per account and region). Once enabled, a provider error or timeout on a block fails open, while a block AWS rejects for what it carries ends the stream in enforce. Otherwise streamed responses pass through uninspected, and the trace marks the policy as skipped with reason streaming_disabled.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
 					Key:         "guardrail_id",
 					Label:       "Guardrail ID",
 					Type:        FieldTypeString,
-					Description: "AWS Bedrock guardrail identifier.",
+					Description: "AWS Bedrock guardrail identifier: the lowercase alphanumeric ID, or the full guardrail ARN (arn:aws:bedrock:<region>:<account>:guardrail/<id>).",
 					Required:    true,
-				},
-				{
-					Key:   "on_error",
-					Label: "On Error",
-					Type:  FieldTypeEnum,
-					Description: "What to do when the guardrail cannot give a verdict on the request or a buffered response: " +
-						"it cannot be reached, it times out or is throttled, or its answer does not cover what the policy " +
-						"asked. fail_open lets the traffic through and records failed_open with the reason; fail_closed " +
-						"refuses it with a 502 guardrail_unavailable in a mode that blocks. Streamed blocks follow " +
-						"streaming.on_error instead.",
-					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_open",
 				},
 				{
 					Key:         "version",
 					Label:       "Version",
 					Type:        FieldTypeString,
-					Description: "Guardrail version. Defaults to DRAFT.",
+					Description: "Guardrail version: DRAFT, or a version number from 1 to 99999999. Defaults to DRAFT.",
 					Default:     "DRAFT",
 				},
 				{
@@ -1158,7 +1093,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "session_name",
 							Label:       "Session Name",
 							Type:        FieldTypeString,
-							Description: "STS assume-role session name.",
+							Description: "STS assume-role session name: 2 to 64 characters from letters, digits and + = , . @ _ -.",
 							Default:     "BedrockClientSession",
 						},
 						{
@@ -1181,14 +1116,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 						},
 					},
 				},
-				MaskFailureField(),
 			},
 		},
 	},
 	"google_model_armor": {
 		name:        "Google Model Armor",
 		group:       groupGuardrails,
-		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streamed responses are inspected block by block by default, and a provider error or timeout on a block fails open unless settings.streaming.on_error is fail_closed; set settings.streaming.enabled to false to leave them uninspected, in which case the trace marks the policy as skipped with reason streaming_disabled.",
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. The policy fails open when Model Armor is unavailable: if it cannot be reached or returns a failed invocation, the request goes through and the event records decision failed_open with the failure reason. Content it could not inspect is blocked in enforce and only recorded in observe: content too large to screen, a filter selected in block_on that was skipped because the content is too large, and anonymised text that cannot be written back. Long content is split and every part is screened, up to about 850 KB (about 210,000 tokens), and a rate limit on a later part of long content, after the first part was answered, is treated as content that cannot be screened. A pattern longer than the overlap between the parts can be cut in two. A filter the template does not enable is a configuration gap and fails open. Streamed responses are inspected block by block by default, and a provider error or timeout on a block fails open; set settings.streaming.enabled to false to leave them uninspected, in which case the trace marks the policy as skipped with reason streaming_disabled.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1197,18 +1131,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeString,
 					Description: "GCP project ID that owns the Model Armor template.",
 					Required:    true,
-				},
-				{
-					Key:   "on_error",
-					Label: "On Error",
-					Type:  FieldTypeEnum,
-					Description: "What to do when the guardrail cannot give a verdict on the request or a buffered response: " +
-						"it cannot be reached, it times out or is throttled, or its answer does not cover what the policy " +
-						"asked. fail_open lets the traffic through and records failed_open with the reason; fail_closed " +
-						"refuses it with a 502 guardrail_unavailable in a mode that blocks. Streamed blocks follow " +
-						"streaming.on_error instead.",
-					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_open",
 				},
 				{
 					Key:         "location",
@@ -1250,7 +1172,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeString,
 					Description: `Optional; returned to the caller when the guardrail blocks, alongside the filter that fired. Defaults to "This content violates our usage policy." when empty.`,
 				},
-				MaskFailureField(),
 			},
 		},
 	},
@@ -1309,7 +1230,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 						},
 					},
 				},
-				MaskFailureField(),
 			},
 		},
 	},

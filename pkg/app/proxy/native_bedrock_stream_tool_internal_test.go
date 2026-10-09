@@ -184,24 +184,22 @@ func TestNativeToolMask_EscapedAtSignIsMasked(t *testing.T) {
 	}
 }
 
-func TestNativeToolMask_MaskTouchingANumberFailsOpen(t *testing.T) {
+func TestNativeToolMask_MaskTouchingANumberEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := append([][]byte{deltaFrame(t, "Calling now")}, converseToolFrames(t, 1, `{"phone":415`, `5550123,"ok":true}`)...)
 	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 	runner := &maskRunner{from: "4155550123", to: "<PHONE>"}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(runner, toolBlocks), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "tool_input_not_maskable")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_input_not_maskable")
 }
 
-func TestNativeToolMask_InvalidToolInputFailsOpen(t *testing.T) {
+func TestNativeToolMask_InvalidToolInputEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := append([][]byte{deltaFrame(t, "Calling now")}, converseToolFrames(t, 1, `{"to":"bob@x`, `.io"`)...) // never closed
 	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 	runner := &maskRunner{from: "bob@x", to: "<M>"}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(runner, toolBlocks), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "tool_input_not_maskable")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_input_not_maskable")
 }
 
 func TestNativeToolMask_TextAndToolInTheSameWindow(t *testing.T) {
@@ -299,7 +297,7 @@ func TestNativeToolMask_HoldsTheCallUntilItsStopAndNotTheTextAroundIt(t *testing
 
 // A call that outgrows the hold before its stop frame is not edited: a mask on
 // the same window cuts, as it did before calls were held.
-func TestNativeToolMask_CallThatOutgrowsTheHoldFailsOpenOnAMask(t *testing.T) {
+func TestNativeToolMask_CallThatOutgrowsTheHoldEndsTheStreamOnAMask(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		deltaFrame(t, "Hello there"),
@@ -329,13 +327,15 @@ func TestNativeToolMask_CallThatOutgrowsTheHoldFailsOpenOnAMask(t *testing.T) {
 	}
 	rt := trace.New("t", trace.Metadata{})
 	out, pe := g.Run(trace.NewContext(context.Background(), rt), iter.Seq2[[]byte, error](src))
-	require.Nil(t, pe)
-	got := collectFrames(t, out)
-	requireStreamFailedOpen(t, got, frames, rt, "tool_call_not_held")
+	var got [][]byte
+	if pe == nil {
+		got = collectFrames(t, out)
+	}
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_call_not_held")
 }
 
 // Another family's tool call is not understood, so a mask next to one cuts.
-func TestNativeToolMask_UnhandledFamilyFailsOpen(t *testing.T) {
+func TestNativeToolMask_UnhandledFamilyEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		chunkFrame(t, `{"choices":[{"index":0,"delta":{"content":"write to `+streamEmail+` now"}}]}`),
@@ -344,8 +344,7 @@ func TestNativeToolMask_UnhandledFamilyFailsOpen(t *testing.T) {
 	}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(&maskRunner{from: streamEmail, to: "<EMAIL>"},
 		streamGuardConfig{headChars: 1000, minChars: 1000, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "tool_call_not_held")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_call_not_held")
 }
 
 // A short value is masked where the policy found it in a stream, and a tool
@@ -411,7 +410,7 @@ func TestNativeToolMask_CallInTheHeadIsHeldAndMasked(t *testing.T) {
 // A rebuilt frame that does not read as the text the policy returned is not
 // released, even when the removed text is too short to be looked for elsewhere:
 // here the first string of the frame that equals it is not the one the view reads.
-func TestNativeStreamGuard_ShortValueFrameThatDoesNotReadBackFailsOpen(t *testing.T) {
+func TestNativeStreamGuard_ShortValueFrameThatDoesNotReadBackEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		testEventFrame(t, "messageStart", `{"role":"assistant"}`),
@@ -420,8 +419,7 @@ func TestNativeStreamGuard_ShortValueFrameThatDoesNotReadBackFailsOpen(t *testin
 	}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(&firstMaskRunner{from: "42", to: "##"},
 		streamGuardConfig{headChars: 1000, minChars: 1000, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "shape_mismatch")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "shape_mismatch")
 }
 
 // firstToolMaskRunner masks the first occurrence of from in a tool input only: a
@@ -436,11 +434,10 @@ func (r *firstToolMaskRunner) RunStreamSegment(_ context.Context, _ appplugins.S
 }
 
 // A mask that leaves a copy of the removed text in the input is not released.
-func TestNativeToolMask_AMaskThatLeavesACopyBehindFailsOpen(t *testing.T) {
+func TestNativeToolMask_AMaskThatLeavesACopyBehindEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := append([][]byte{deltaFrame(t, "Sending it now")}, converseToolFrames(t, 1, `{"a":"bob@x.io",`, `"b":"bob@x.io"}`)...)
 	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(&firstToolMaskRunner{from: streamEmail, to: "<EMAIL>"}, toolBlocks), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "tool_input_not_maskable")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_input_not_maskable")
 }

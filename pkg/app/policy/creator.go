@@ -81,6 +81,9 @@ func NewCreator(
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, error) {
+	// A key the plugin ignores is never stored, so the policy reads back as what
+	// the gateway does.
+	in.Settings = appplugins.StripRetiredSettings(c.registry, in.Slug, in.Settings)
 	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode, in.MCPScope)
 	if err != nil {
 		return nil, err

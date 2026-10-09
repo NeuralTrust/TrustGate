@@ -722,14 +722,13 @@ func newGuardrailStylePlugin(name string) *fakePlugin {
 		name:   name,
 		stages: []policy.Stage{policy.StagePreRequest},
 		execFn: func(in ExecInput) (*Result, error) {
-			outcome := HandleExternalFailure(ExternalFailure{
+			return HandleExternalFailure(ExternalFailure{
 				Plugin: name,
 				Stage:  in.Stage,
 				Mode:   in.Mode,
 				Reason: FailureTransport,
 				Err:    context.DeadlineExceeded,
-			})
-			return outcome.Result, outcome.Err
+			}).Result, nil
 		},
 	}
 }
@@ -757,7 +756,7 @@ func TestExecutor_RunStage_EnforceGuardrailFailureLetsLaterPluginRun(t *testing.
 	})
 	require.NoError(t, err)
 	require.False(t, out.ShortCircuit)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "RUN-1792: enforce fails open too, so the later plugin still runs")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "an availability failure fails open in enforce too, so the later plugin still runs")
 }
 
 func TestExecutor_RunStage_ObserveGuardrailFailureLetsLaterPluginRun(t *testing.T) {

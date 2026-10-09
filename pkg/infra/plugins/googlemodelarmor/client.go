@@ -31,10 +31,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 )
@@ -62,9 +64,20 @@ type tokenSource func(ctx context.Context) (string, error)
 // text, and an error string ends up in logs. Surfacing the very data this
 // guardrail exists to contain would defeat the point of running it.
 type errModelArmor struct {
-	action string
-	status int
+	action     string
+	status     int
+	retryAfter time.Duration
+	// configShaped is set from the google.rpc error body when a 400 is about the
+	// resource the policy names and not about what was sent.
+	configShaped bool
 }
+
+var _ pluginutil.Rejection = (*errModelArmor)(nil)
+
+func (e *errModelArmor) Rejection() (int, bool) { return e.status, e.configShaped }
+
+// RetryAfter is the wait the answer asked for, zero when it asked for none.
+func (e *errModelArmor) RetryAfter() time.Duration { return e.retryAfter }
 
 func (e *errModelArmor) Error() string {
 	return fmt.Sprintf("model_armor: %s unexpected status %d", e.action, e.status)
@@ -373,12 +386,15 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 		return nil, fmt.Errorf("model_armor: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &errModelArmor{action: action, status: res.StatusCode}
+		return nil, &errModelArmor{
+			action: action, status: res.StatusCode, configShaped: rejectsResource(res.StatusCode, raw),
+			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	// Say "too large" rather than letting a truncated payload surface as a
 	// decode failure and send whoever debugs it hunting for malformed JSON.
 	if len(raw) >= maxResponseBytes {
-		return nil, fmt.Errorf("model_armor: %s response exceeds %d bytes", action, maxResponseBytes)
+		return nil, &pluginutil.AnswerTooLargeError{Provider: "model_armor " + action, Limit: maxResponseBytes}
 	}
 	var out sanitizeResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -521,4 +537,45 @@ func newModelArmorClientCache(baseURL string, timeout time.Duration, sources *cr
 			return newClientWithTokenSource(baseURL, timeout, sources.tokenSourceFor(creds)), nil
 		},
 	}
+}
+
+// rpcStatus is the google.rpc.Status body Google APIs answer an error with, of
+// which only the structured parts are read.
+type rpcStatus struct {
+	Error struct {
+		Message string `json:"message"`
+		Details []struct {
+			FieldViolations []struct {
+				Field string `json:"field"`
+			} `json:"fieldViolations"`
+		} `json:"details"`
+	} `json:"error"`
+}
+
+// resourceRejectionMessage matches the start of the messages Google gives a
+// request whose location or template is not usable. It is anchored at the start
+// because the rest of a message can quote what the request carried.
+var resourceRejectionMessage = regexp.MustCompile(`(?i)^(invalid|unsupported|unknown)\s+(resource name|location|template)\b`)
+
+// rejectsResource reports whether a 400 says the resource named by the policy
+// (the template path made of project, location and template) is the problem: a
+// BadRequest field violation on the resource name, or a message that opens by
+// calling the resource name, location or template invalid. Anything else is
+// read as the content's.
+func rejectsResource(status int, body []byte) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	var parsed rpcStatus
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false
+	}
+	for _, detail := range parsed.Error.Details {
+		for _, violation := range detail.FieldViolations {
+			if violation.Field == "name" || violation.Field == "parent" {
+				return true
+			}
+		}
+	}
+	return resourceRejectionMessage.MatchString(strings.TrimSpace(parsed.Error.Message))
 }

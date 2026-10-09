@@ -770,8 +770,8 @@ func (f *forwarder) shortCircuitStream(
 // the client.
 //
 // head_chars, on_error and the block-loop knobs come from StreamPlan rather
-// than from a literal, so a policy that sets on_error to fail_closed is not
-// silently run as fail_open.
+// than from a literal, so a rewriter that asks for fail_closed is not silently
+// run as fail_open.
 func (f *forwarder) newStreamGuard(
 	dto *forwardRequestDTO,
 	resp *infracontext.ResponseContext,
@@ -819,8 +819,8 @@ func (f *forwarder) newStreamGuard(
 	if dto.request.IsBedrockNative() {
 		// The same segmentation and plugin calls as an SSE stream, over frames:
 		// each frame is an event, its decoded text is what is inspected, and the
-		// original frame is what is released. Each policy's streaming.on_error is
-		// honoured, as on every other stream.
+		// original frame is what is released. Each entry's own stream
+		// failure direction is honoured, as on every other stream.
 		guard.native = true
 		guard.seg.frames = true
 	}

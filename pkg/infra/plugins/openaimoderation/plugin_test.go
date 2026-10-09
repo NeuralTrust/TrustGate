@@ -38,7 +38,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-const pluginTestTimeout = 2 * time.Second
+const pluginTestTimeout = 15 * time.Second
 
 type fakeModerator struct {
 	mu       sync.Mutex
@@ -873,26 +873,38 @@ func TestValidateSettingsWriteRejectsFinalPassOptOut(t *testing.T) {
 	require.NoError(t, p.ValidateConfig(settings), "the rule applies on write only, never when a policy loads")
 }
 
-func TestExecuteFailureFailsClosedWhenThePolicyAsks(t *testing.T) {
+func withRemovedKeys(set map[string]any) map[string]any {
+	set["on_error"] = "fail_closed"
+	set["on_timeout"] = "fail_closed"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+	set["streaming"] = map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}
+	return set
+}
+
+// on_error, streaming.on_error and streaming.guard_timeout are not guardrail settings: a
+// policy stored with them keeps loading, fails open on a provider error, and runs its
+// stream leg fail open under the default guard timeout.
+func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
 	srv := newModeratorServer(t, &fakeModerator{status: http.StatusInternalServerError, rawBody: `{"error":"boom"}`})
 	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
-	settings := blockSettings()
-	settings["on_error"] = "fail_closed"
 
-	event, _ := newEvent()
-	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, requestContext(), nil, event))
+	require.NoError(t, p.ValidateConfig(withRemovedKeys(blockSettings())))
+	invalid := blockSettings()
+	invalid["on_error"] = "retry"
+	require.NoError(t, p.ValidateConfig(invalid), "a stored invalid on_error must not reject a write")
 
-	var pluginErr *appplugins.PluginError
-	require.ErrorAs(t, err, &pluginErr)
-	assert.Equal(t, http.StatusBadGateway, pluginErr.StatusCode)
-}
+	event, span := newEvent()
+	res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, withRemovedKeys(blockSettings()), requestContext(), nil, event))
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, "failed_open", data.Decision)
 
-func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
-	t.Parallel()
-	settings := blockSettings()
-	settings["on_error"] = "retry"
-
-	_, err := parseConfig(settings)
-	require.Error(t, err)
+	on, opts := p.StreamSettings(withRemovedKeys(blockSettings()))
+	require.True(t, on)
+	assert.Equal(t, "fail_open", opts.OnError)
 }

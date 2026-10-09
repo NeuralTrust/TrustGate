@@ -32,6 +32,11 @@ func joinRequestText(creq *adapter.CanonicalRequest) string {
 		if strings.TrimSpace(msg.Content) != "" {
 			parts = append(parts, msg.Content)
 		}
+		for _, call := range msg.ToolCalls {
+			if strings.TrimSpace(call.Arguments) != "" {
+				parts = append(parts, call.Arguments)
+			}
+		}
 	}
 	return strings.Join(parts, "\n")
 }

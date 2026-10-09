@@ -92,7 +92,7 @@ func pluginWith(client guardrailClient) *Plugin {
 
 func bedrockSettings(piiAction string) map[string]any {
 	return map[string]any{
-		"guardrail_id": "gr-123",
+		"guardrail_id": "gr123abc",
 		"version":      "DRAFT",
 		"pii_action":   piiAction,
 		"credentials": map[string]any{
@@ -317,56 +317,97 @@ func TestExecuteClientErrorEnforceFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteVerdictIncompleteEnforceFailsOpen(t *testing.T) {
+// An intervention none of the read policy families can explain is not a clean
+// pass: AWS intervened on this content, so a mode that blocks refuses it
+// (failed_closed) and observe only records it.
+func TestExecuteUnparsedInterventionByMode(t *testing.T) {
 	t.Parallel()
-	// An intervention none of the read policy families (topic, content, word,
-	// sensitive-information, contextual-grounding) can explain: AWS added a
-	// policy type this plugin does not yet parse.
-	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}
-	p := pluginWith(client)
-
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "verdict_incomplete" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_open", extras, ok)
-	}
-}
-
-func TestExecuteVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
-	t.Parallel()
-	client := &recordingClient{output: intervened(types.GuardrailAssessment{
+	// A policy type AWS added that this plugin does not yet parse.
+	unparsed := intervened(types.GuardrailAssessment{})
+	named := intervened(types.GuardrailAssessment{
 		AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
-	})}
-	p := pluginWith(client)
-
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.FailureReason != "verdict_incomplete" || extras.FailureDetail != "automated_reasoning_policy" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/automated_reasoning_policy", extras, ok)
+	})
+	for _, tc := range []struct {
+		name     string
+		output   *bedrockruntime.ApplyGuardrailOutput
+		mode     policy.Mode
+		decision string
+		refused  bool
+		policies string
+	}{
+		{"enforce", unparsed, policy.ModeEnforce, "failed_closed", true, ""},
+		{"enforce names the policy", named, policy.ModeEnforce, "failed_closed", true, "automated_reasoning_policy"},
+		{"throttle", unparsed, policy.ModeThrottle, "failed_closed", true, ""},
+		{"observe", unparsed, policy.ModeObserve, "failed_open", false, ""},
+		{"observe names the policy", named, policy.ModeObserve, "failed_open", false, "automated_reasoning_policy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := pluginWith(&recordingClient{output: tc.output})
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.Decision != tc.decision || extras.FailureReason != "verdict_incomplete" ||
+				extras.FailureDetail != "intervention_unparsed" || extras.FailurePolicies != tc.policies || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want %s verdict_incomplete/intervention_unparsed policies=%q class input", extras, ok, tc.decision, tc.policies)
+			}
+		})
 	}
 }
 
-func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
+// What ApplyGuardrail answers is classified by the AWS error type and status, in
+// the shapes the SDK parses off the wire: a client error about the call is the
+// content's and is refused in a mode that blocks; credentials, throttling,
+// timeouts and 5xx stay availability and fail open.
+func TestExecuteProviderErrorByClass(t *testing.T) {
 	t.Parallel()
-	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}
-	p := pluginWith(client)
+	for _, tc := range awsApplyGuardrailErrors {
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+			t.Run(tc.name+" "+string(mode), func(t *testing.T) {
+				t.Parallel()
+				awsErr := applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("X-Amzn-Errortype", tc.errType+":http://internal.amazon.com/coral/com.amazon.bedrock/")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+				})
+				p := pluginWith(&recordingClient{err: awsErr})
+				event, span := eventFor(t)
+				in := execInput(policy.StagePreRequest, mode, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+				in.Event = event
+				res, err := p.Execute(context.Background(), in)
 
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeObserve, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "verdict_incomplete" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_open", extras, ok)
+				input := tc.reason == appplugins.FailureInputTooLarge
+				wantDecision, wantClass, refused := "failed_open", "availability", false
+				if input {
+					wantClass = "input"
+					if mode == policy.ModeEnforce {
+						wantDecision, refused = "failed_closed", true
+					}
+				}
+				if refused {
+					pe, ok := appplugins.AsPluginError(err)
+					if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+						t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+					}
+				} else {
+					assertPassThrough(t, res, err)
+				}
+				extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+				if !ok || extras.Decision != wantDecision || extras.FailureClass != wantClass || extras.FailureReason != string(tc.reason) {
+					t.Fatalf("extras = %+v, ok=%v, want %s/%s/%s", extras, ok, wantDecision, wantClass, tc.reason)
+				}
+			})
+		}
 	}
 }
 
@@ -400,25 +441,86 @@ func TestExecuteConfigInvalidObserveFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
+// A concrete body the adapters cannot decode is the client's: in a mode that blocks the
+// call is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteDecodeFailedOfAnUndecodableBodyIsAnInputFailure(t *testing.T) {
 	t.Parallel()
-	client := &recordingClient{output: allowOutput()}
-	p := pluginWith(client)
-
-	req := reqCtx(openAIRequest())
-	req.Provider = "not-a-real-provider"
-	req.SourceFormat = ""
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), req, nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	if client.count() != 0 {
-		t.Fatalf("expected guardrail not called on decode failure, got %d calls", client.count())
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			client := &recordingClient{output: allowOutput()}
+			p := pluginWith(client)
+			req := reqCtx(openAIRequest())
+			req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, bedrockSettings(piiActionBlock), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if client.count() != 0 {
+				t.Fatalf("expected guardrail not called on decode failure, got %d calls", client.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.Decision != tc.decision || extras.FailureReason != "decode_failed" || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
 	}
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "decode_failed" {
-		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", extras, ok)
+}
+
+// A provider or format the gateway does not support is a configuration gap, not
+// the body's fault: it fails open in every mode.
+func TestExecuteDecodeFailedOfAnUnsupportedFormatFailsOpen(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_open", false},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			client := &recordingClient{output: allowOutput()}
+			p := pluginWith(client)
+			req := reqCtx(openAIRequest())
+			req.Provider = "not-a-real-provider"
+			req.SourceFormat = ""
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, bedrockSettings(piiActionBlock), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if client.count() != 0 {
+				t.Fatalf("expected guardrail not called on decode failure, got %d calls", client.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.Decision != tc.decision || extras.FailureReason != "config_invalid" || extras.FailureClass != "availability" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
 	}
 }
 
@@ -498,25 +600,38 @@ func TestExecuteAnonymizeObserveDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestExecuteAnonymizeEnforceNoOutputFailsClosed(t *testing.T) {
+// A mask that cannot be applied over a confirmed finding refuses the call with
+// the finding's own block: forwarding the original would send the data the
+// policy ruled out. It is recorded blocked and degraded, not failed_closed,
+// because a finding exists.
+func TestExecuteAnonymizeEnforceNoOutputBlocks(t *testing.T) {
 	t.Parallel()
-	client := &recordingClient{output: piiAnonymizedOutput()}
-	p := pluginWith(client)
+	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			client := &recordingClient{output: piiAnonymizedOutput()}
+			p := pluginWith(client)
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
-	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on degraded fail-closed, got %+v", res)
-	}
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("expected *PluginError, got %v", err)
-	}
-	if pe.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusForbidden)
-	}
-	if pe.Type != typeGuardrailBlocked {
-		t.Fatalf("type = %q, want %q", pe.Type, typeGuardrailBlocked)
+			event, span := eventFor(t)
+			in := execInput(stage, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), respCtx(openAIResponse(), false))
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if res != nil {
+				t.Fatalf("expected nil result on a blocked mask, got %+v", res)
+			}
+			pe, ok := appplugins.AsPluginError(err)
+			if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != typeGuardrailBlocked {
+				t.Fatalf("want a 403 %s, got %v", typeGuardrailBlocked, err)
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok {
+				t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+			}
+			if data.Decision != decisionBlocked || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput ||
+				data.FailureReason != "verdict_incomplete" || data.FailureDetail != reasonAnonymizeNoOutput || data.FailureClass != "input" {
+				t.Fatalf("extras = %+v, want blocked + degraded %q, verdict_incomplete/%s, class input", data, reasonAnonymizeNoOutput, reasonAnonymizeNoOutput)
+			}
+		})
 	}
 }
 
@@ -555,7 +670,7 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res, err := p.anonymizeEnforce(in, data, "", tt.out, tt.span, f)
+			res, err := p.anonymizeEnforce(context.Background(), in, data, "", tt.out, tt.span, f)
 			if res != nil {
 				t.Fatalf("expected nil result, got %+v", res)
 			}
@@ -582,7 +697,7 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 		return []byte(masked), true
 	}}
 
-	res, err := p.anonymizeEnforce(in, data, "", piiAnonymizedOutputWithText("masked-body"), span, f)
+	res, err := p.anonymizeEnforce(context.Background(), in, data, "", piiAnonymizedOutputWithText("masked-body"), span, f)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -649,47 +764,60 @@ func TestValidateConfigRejectsMissingGuardrailID(t *testing.T) {
 	}
 }
 
-func TestExecuteClientErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
+func withRemovedKeys(set map[string]any) map[string]any {
+	set["on_error"] = "fail_closed"
+	set["on_timeout"] = "fail_closed"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+	set["streaming"] = map[string]any{"enabled": true, "on_error": "fail_closed", "guard_timeout": "1ms"}
+	return set
+}
+
+// on_error, streaming.on_error and streaming.guard_timeout are not guardrail settings: a
+// policy stored with them keeps loading, fails open on a client error, and runs its
+// stream leg fail open under the default guard timeout.
+func TestStoredRemovedKeysAreIgnored(t *testing.T) {
 	t.Parallel()
 	p := pluginWith(&recordingClient{err: errors.New("boom")})
-	settings := bedrockSettings(piiActionBlock)
-	settings["on_error"] = "fail_closed"
 
-	res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil))
+	if err := p.ValidateConfig(withRemovedKeys(bedrockSettings(piiActionBlock))); err != nil {
+		t.Fatalf("a stored policy with removed keys must keep loading, got %v", err)
+	}
+	invalid := bedrockSettings(piiActionBlock)
+	invalid["on_error"] = "retry"
+	if err := p.ValidateConfig(invalid); err != nil {
+		t.Fatalf("a stored invalid on_error must not reject a write, got %v", err)
+	}
 
-	var pluginErr *appplugins.PluginError
-	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
-		t.Fatalf("res = %+v, err = %v, want a 502 refusal", res, err)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, withRemovedKeys(bedrockSettings(piiActionBlock)), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_open", extras, ok)
+	}
+
+	on, opts := p.StreamSettings(withRemovedKeys(bedrockSettings(piiActionBlock)))
+	if !on || opts.OnError != "fail_open" {
+		t.Fatalf("stream opt-in = %v, on_error = %q, want fail_open", on, opts.OnError)
 	}
 }
 
-func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
-	t.Parallel()
-	settings := bedrockSettings(piiActionBlock)
-	settings["on_error"] = "retry"
-
-	if _, err := parseConfig(settings); err == nil {
-		t.Fatal("expected an error for on_error: retry")
-	}
-}
-
-// on_mask_failure is the setting every plugin that masks carries: its values are
-// validated, the plugin accepts it among its settings, and it declares that it
-// masks on a native Bedrock call.
-func TestOnMaskFailureSetting(t *testing.T) {
+// on_mask_failure is not a setting: a mask that cannot be applied to a native Bedrock
+// call always blocks, in a mode that blocks. A policy stored with the key keeps
+// loading, whatever its value, and the key changes nothing.
+func TestOnMaskFailureIsIgnored(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
 	assert.Equal(t, appplugins.BedrockNativeMasks, appplugins.BedrockNativeOf(p))
-	for _, value := range []string{"pass", "block"} {
-		set := bedrockSettings(piiActionBlock)
-		set[appplugins.SettingOnMaskFailure] = value
-		assert.NoError(t, p.ValidateConfig(set), value)
-	}
-	set := bedrockSettings(piiActionBlock)
-	set[appplugins.SettingOnMaskFailure] = "explode"
 	reg := appplugins.NewRegistry()
 	require.NoError(t, reg.Register(p))
-	err := reg.Validate(p.Name(), set)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), appplugins.SettingOnMaskFailure)
+	for _, value := range []string{"pass", "block", "explode"} {
+		set := bedrockSettings(piiActionBlock)
+		set["on_mask_failure"] = value
+		assert.NoError(t, p.ValidateConfig(set), value)
+		assert.NoError(t, reg.Validate(p.Name(), set), value)
+	}
 }

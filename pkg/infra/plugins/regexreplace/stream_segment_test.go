@@ -22,6 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 func cardRule() map[string]any {
@@ -436,5 +437,43 @@ func TestInspectSegmentIgnoresAnAnchorAtTheWindowStart(t *testing.T) {
 	}
 	if got.HasTransform {
 		t.Errorf("verdict = %+v, want no transform at the window start", got)
+	}
+}
+
+// regex_replace is a rewriter, not a guardrail: when a block cannot be rewritten
+// the held text is unmasked, so its stream leg keeps failing closed by default.
+func TestStreamSettingsFailClosedByDefault(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+
+	on, opts := p.StreamSettings(streamSettings(targetResponse, cardRule()))
+	if !on || opts.OnError != "fail_closed" {
+		t.Fatalf("on=%v on_error=%q, want fail_closed by default", on, opts.OnError)
+	}
+
+	set := withStreaming(settings(targetResponse, cardRule()), map[string]any{"enabled": true, "on_error": "fail_open"})
+	on, opts = p.StreamSettings(set)
+	if !on || opts.OnError != "fail_open" {
+		t.Fatalf("on=%v on_error=%q, want an explicit streaming.on_error to be honoured", on, opts.OnError)
+	}
+}
+
+// The settings the guardrails lost do not exist here either: they are ignored
+// whatever their value, and they leave the fail-closed stream path untouched.
+func TestStoredGuardrailFailureKeysAreIgnored(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	set := withStreaming(settings(targetResponse, cardRule()), map[string]any{"enabled": true, "guard_timeout": "1ms"})
+	set["on_error"] = "retry"
+	set["on_timeout"] = "retry"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+
+	if err := p.ValidateConfig(set); err != nil {
+		t.Fatalf("a stored policy with removed keys must keep loading, got %v", err)
+	}
+	on, opts := p.StreamSettings(set)
+	if !on || opts.OnError != "fail_closed" {
+		t.Fatalf("on=%v on_error=%q, want the fail_closed default", on, opts.OnError)
 	}
 }

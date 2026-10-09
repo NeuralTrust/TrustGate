@@ -30,29 +30,32 @@ func tracedContext() (context.Context, *trace.RequestTrace) {
 	return trace.NewContext(context.Background(), rt), rt
 }
 
-// failedOpenEntries are the policy-chain entries recorded as failed open for a
-// mask that could not be applied: what the console shows in Activity.
-func failedOpenEntries(rt *trace.RequestTrace) []*appplugins.NativeMaskData {
+// maskBlockedEntries are the policy-chain entries recorded as blocked for a mask
+// that could not be applied: what the console shows in Activity.
+func maskBlockedEntries(rt *trace.RequestTrace) []*appplugins.NativeMaskData {
 	var out []*appplugins.NativeMaskData
 	for _, span := range rt.Spans() {
 		if span.Type != trace.SpanPlugin || span.Name != appplugins.BedrockNativePassthrough {
 			continue
 		}
 		attrs := span.PluginAttrsCopy()
-		if data, ok := attrs.Extras.(*appplugins.NativeMaskData); ok && attrs.Decision == appplugins.DecisionFailedOpen {
+		if data, ok := attrs.Extras.(*appplugins.NativeMaskData); ok && attrs.Decision == "block" {
 			out = append(out, data)
 		}
 	}
 	return out
 }
 
-// requireFailedOpen asserts one failed-open entry, with this stage and a failure
-// reason that starts with mask_not_applicable: and ends with cause.
-func requireFailedOpen(t *testing.T, rt *trace.RequestTrace, stage, cause string) {
+// requireMaskBlocked asserts one blocked entry, degraded, with this stage and a
+// failure reason that starts with mask_not_applicable: and ends with cause.
+func requireMaskBlocked(t *testing.T, rt *trace.RequestTrace, stage, cause string) {
 	t.Helper()
-	entries := failedOpenEntries(rt)
-	require.Len(t, entries, 1, "one failed-open entry per kind of cause")
-	assert.Equal(t, appplugins.DecisionFailedOpen, entries[0].Decision)
+	entries := maskBlockedEntries(rt)
+	require.Len(t, entries, 1, "one blocked entry per kind of cause")
+	assert.Equal(t, appplugins.DecisionBlocked, entries[0].Decision)
 	assert.Equal(t, stage, entries[0].Stage)
 	assert.Equal(t, "mask_not_applicable:"+cause, entries[0].FailureReason)
+	assert.Equal(t, "input", entries[0].FailureClass)
+	assert.True(t, entries[0].Degraded)
+	assert.Equal(t, cause, entries[0].DegradedReason)
 }

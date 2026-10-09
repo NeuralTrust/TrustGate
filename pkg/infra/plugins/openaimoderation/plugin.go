@@ -16,6 +16,7 @@ package openaimoderation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -38,6 +40,49 @@ const (
 	decisionReported = "reported"
 	decisionAllowed  = "allowed"
 )
+
+// The moderation endpoint documents no input size or token limit and no
+// maximum array length, so a text is split into requests of chunkBytes, the
+// size the stream leg sends, one text per request: what
+// an array of texts yields (one combined result or one per item) is
+// undocumented. Bytes are never fewer than characters or tokens. The
+// overlap is 4,096 bytes, enough for a long secret (a PEM key, a service-account
+// JSON of about 3.5 KB) to lie whole in one chunk; a pattern longer than it, or
+// a context that a cut separates by more than it, can still be cut in two. A
+// text is evaluated when its estimate, one callReserve per round of evalParallel
+// requests, is at most half of evaluationBudget:
+// that is the ceiling, at most maxChunks, 28 at the default 30 s, and a text above
+// it is refused before any call as chunk_limit. The headroom lets OpenAI answer
+// up to twice as slowly as callReserve, about twice a call's usual latency, on
+// every round without the budget cutting a chunk. A chunk that is not started or
+// is cut by the budget is availability only when some call took longer than twice
+// callReserve, and otherwise chunk_budget, input: the request's own size used the
+// time. OpenAI meters tokens per minute per tier, which the gateway cannot see,
+// so a rate limit on a chunk of the first round is retried once, and if it
+// persists on the first chunk or on a single-chunk text it is other traffic and
+// fails open, with every other throttle of the text, and otherwise it is input
+// (throttled_oversize) on a later chunk, which the request's own calls beside or
+// before it may have throttled. An exhausted
+// account (insufficient_quota, billing_hard_limit_reached) is configuration, not
+// a rate, and fails open.
+// https://developers.openai.com/api/docs/guides/moderation
+const (
+	chunkBytes   = 32768
+	chunkOverlap = 4096
+	maxChunks    = 32
+	evalParallel = 4
+	callReserve  = 2 * time.Second
+)
+
+// evaluationBudget is the time one evaluation has for all of its chunks. It is
+// not a call's timeout: every call keeps the client's own, so a provider that
+// hangs fails the evaluation open after about one call and not after the whole
+// budget. It sets the ceiling (see above): 15 s of admitted estimate at two
+// seconds a round of four calls is 28 chunks, about 807,000 bytes, or about
+// 200,000 tokens.
+const evaluationBudget = 30 * time.Second
+
+var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -52,6 +97,16 @@ type Plugin struct {
 	// warning on every request. A different gap on the same config id (the
 	// operator edited it) is a new key, so it still warns.
 	warnedConfigs sync.Map
+	// budget is the time one evaluation has for all of its chunks; zero means
+	// evaluationBudget.
+	budget time.Duration
+}
+
+func (p *Plugin) evaluationBudget() time.Duration {
+	if p.budget > 0 {
+		return p.budget
+	}
+	return evaluationBudget
 }
 
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logger *slog.Logger) *Plugin {
@@ -241,7 +296,7 @@ func (p *Plugin) CredentialPaths() []string {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureConfigInvalid, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, "", err)
 	}
 	p.warnUnknownConfig(ctx, in, cfg)
 
@@ -277,39 +332,88 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
+	}
+
+	if in.Stage == policy.StagePreResponse && pluginutil.SkipWithoutCompletion(in.Event, string(in.Stage), in.Response) {
+		return passThrough(), nil
 	}
 
 	text, decErr := p.extractText(in, format)
 	if decErr != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", decErr)
+		if in.Stage == policy.StagePreResponse {
+			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUndecodableResponse)
+			return passThrough(), nil
+		}
+		if pluginutil.SkipNonChatRoute(in.Event, string(in.Stage), in.Request.ProxyCapability, format) {
+			return passThrough(), nil
+		}
+		if !adapter.IsRequestDecodeError(decErr) {
+			return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, decErr)
+		}
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", decErr)
 	}
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
 
-	req := moderationRequest{
-		Model: cfg.Model,
-		Input: []moderationInput{{Type: inputTypeText, Text: text}},
+	limit := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.evaluationBudget())
+	if n := textchunk.Count(text, chunkSpec); n > limit {
+		return p.externalFailure(ctx, in, cfg, n, appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
+			fmt.Errorf("openai_moderation: the text splits into %d chunks, above the %d evaluated", n, limit))
+	}
+	chunks := textchunk.Split(text, chunkSpec)
+
+	budget, cancel := context.WithTimeout(ctx, p.evaluationBudget())
+	defer cancel()
+	slow := textchunk.SlowCallOf(budget, callReserve)
+	verdicts := make([]chunkVerdict, len(chunks))
+	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
+		Parallel: evalParallel,
+		Reserve:  callReserve,
+		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(verdicts[i].violations) > 0 },
+	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
+		resp, err := pluginutil.RetryFirstRoundThrottle(ctx, i, evalParallel, func(ctx context.Context) (*moderationResponse, error) {
+			return p.client.Moderate(ctx, p.baseURL, cfg.APIKey, moderationRequest{
+				Model: cfg.Model,
+				Input: []moderationInput{{Type: inputTypeText, Text: c.Text}},
+			})
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		verdicts[i] = readChunk(cfg, resp)
+		return struct{}{}, nil
+	})
+
+	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
+		if err != nil {
+			reason, detail := pluginutil.FailureOfError(err)
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
+		}
+		if len(verdicts[i].violations) > 0 {
+			return appplugins.ChunkState{Blocks: true}
+		}
+		if verdicts[i].failure != nil {
+			return appplugins.ChunkState{Failure: verdicts[i].failure}
+		}
+		return appplugins.ChunkState{}
+	}
+	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState,
+		appplugins.SlowCall(slow))
+	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
+		return p.externalFailure(ctx, in, cfg, len(chunks), decision.Reason, decision.Detail,
+			fmt.Errorf("openai_moderation: chunk %d of %d: %s", decision.Index+1, len(chunks), failureText(decision, outs)))
 	}
 
-	resp, err := p.client.Moderate(ctx, p.baseURL, cfg.APIKey, req)
-	if err != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureTransport, "", err)
-	}
-	if len(resp.Results) == 0 {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureVerdictIncomplete, "",
-			fmt.Errorf("moderations response carried no results"))
-	}
-
-	agg := aggregate(resp.Results)
-	violations := evaluate(cfg, agg)
-	if len(violations) == 0 {
-		if missing := missingKnownThreshold(cfg, agg); missing != "" {
-			return p.externalFailure(ctx, in, cfg, appplugins.FailureVerdictIncomplete, missing,
-				fmt.Errorf("openai_moderation: thresholded category %q missing from response", missing))
+	var results []moderationResult
+	for i, out := range outs {
+		if out.Started && out.Err == nil {
+			results = append(results, verdicts[i].results...)
 		}
 	}
+	agg := aggregate(results)
+	violations := evaluate(cfg, agg)
 	topCategory, topScore := maxScore(agg)
 
 	data := ModerationData{
@@ -319,6 +423,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		MaxScoreCategory:  topCategory,
 		FlaggedByOpenAI:   agg.anyFlagged,
 		FlaggedCategories: violations,
+	}
+	if len(chunks) > 1 {
+		data.ChunkCount = len(chunks)
 	}
 
 	if len(violations) > 0 && appplugins.Blocks(in.Mode) {
@@ -340,6 +447,36 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	return passThrough(), nil
+}
+
+// chunkVerdict is what OpenAI said about one chunk: its results, the violations
+// they make on their own, and the failure of an answer that cannot be read as a
+// verdict.
+type chunkVerdict struct {
+	results    []moderationResult
+	violations []violation
+	failure    *appplugins.ChunkFailure
+}
+
+func readChunk(cfg Settings, resp *moderationResponse) chunkVerdict {
+	if len(resp.Results) == 0 {
+		return chunkVerdict{failure: &appplugins.ChunkFailure{Reason: appplugins.FailureVerdictIncomplete}}
+	}
+	agg := aggregate(resp.Results)
+	v := chunkVerdict{results: resp.Results, violations: evaluate(cfg, agg)}
+	if len(v.violations) == 0 {
+		if missing := missingKnownThreshold(cfg, agg); missing != "" {
+			v.failure = &appplugins.ChunkFailure{Reason: appplugins.FailureVerdictIncomplete, Detail: missing}
+		}
+	}
+	return v
+}
+
+func failureText(d appplugins.ChunkDecision, outs []textchunk.Outcome[struct{}]) string {
+	if d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil {
+		return outs[d.Index].Err.Error()
+	}
+	return d.Detail
 }
 
 // extractText returns the text to moderate, or a non-nil error when decoding
@@ -423,38 +560,47 @@ func (p *Plugin) warnUnknownConfig(ctx context.Context, in appplugins.ExecInput,
 }
 
 // externalFailure turns a failed moderation call into a plugin outcome via
-// the shared appplugins.HandleExternalFailure: on the buffered leg it always
-// fails open (pass through, decision failed_open), in every mode and for every
-// reason (RUN-1792). It builds this plugin's own ModerationData so
-// failure_reason/failure_detail travel in the same shape as every other
-// external guardrail.
+// the shared appplugins.HandleExternalFailure, which owns the class and the
+// mode: an availability failure passes through as failed_open, and an input
+// failure is refused in a mode that blocks. It builds this plugin's own
+// ModerationData so failure_reason/failure_detail/failure_class travel in the
+// same shape as every other external guardrail.
 func (p *Plugin) externalFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	cfg Settings,
+	chunks int,
 	reason appplugins.FailureReason,
 	detail string,
 	err error,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:        ctx,
-		Plugin:     PluginName,
-		Stage:      in.Stage,
-		Mode:       in.Mode,
-		FailClosed: cfg.OnError == pluginutil.OnErrorFailClosed,
-		Reason:     reason,
-		Detail:     detail,
-		Err:        err,
-		Logger:     p.logger,
-		Event:      in.Event,
+		Ctx:     ctx,
+		Plugin:  PluginName,
+		Stage:   in.Stage,
+		Mode:    in.Mode,
+		Reason:  reason,
+		Detail:  detail,
+		Message: cfg.Action.Message,
+		Err:     err,
+		Logger:  p.logger,
+		Event:   in.Event,
 	})
-	setExtras(in.Event, ModerationData{
+	data := ModerationData{
 		Model:         cfg.Model,
 		Decision:      outcome.Decision,
 		FailureReason: string(reason),
 		FailureDetail: detail,
-	})
-	return outcome.Result, outcome.Err
+		FailureClass:  string(outcome.Class),
+	}
+	if chunks > 1 {
+		data.ChunkCount = chunks
+	}
+	setExtras(in.Event, data)
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 func passThrough() *appplugins.Result {

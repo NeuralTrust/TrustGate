@@ -3639,11 +3639,11 @@ paths:
         credential such as a client certificate); an AWS SigV4 Authorization header
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
-        mask the call but never rewrite it: a change that cannot be carried onto the
-        original body fails open, or blocks when the policy''s on_mask_failure is
-        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
-        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
-        are relayed unchanged.'
+        mask the call but never rewrite it: a mask that cannot be carried onto the
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
+        makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
+        x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
       - description: Consumer slug
         in: path
@@ -3720,11 +3720,11 @@ paths:
         credential such as a client certificate); an AWS SigV4 Authorization header
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
-        mask the call but never rewrite it: a change that cannot be carried onto the
-        original body fails open, or blocks when the policy''s on_mask_failure is
-        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
-        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
-        are relayed unchanged.'
+        mask the call but never rewrite it: a mask that cannot be carried onto the
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
+        makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
+        x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
       - description: Consumer slug
         in: path
@@ -3801,11 +3801,11 @@ paths:
         credential such as a client certificate); an AWS SigV4 Authorization header
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
-        mask the call but never rewrite it: a change that cannot be carried onto the
-        original body fails open, or blocks when the policy''s on_mask_failure is
-        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
-        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
-        are relayed unchanged.'
+        mask the call but never rewrite it: a mask that cannot be carried onto the
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
+        makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
+        x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
       - description: Consumer slug
         in: path
@@ -3882,11 +3882,11 @@ paths:
         credential such as a client certificate); an AWS SigV4 Authorization header
         is accepted and ignored, it does not authenticate the call. model_id is a
         model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and
-        mask the call but never rewrite it: a change that cannot be carried onto the
-        original body fails open, or blocks when the policy''s on_mask_failure is
-        block. Every error the gateway makes uses the AWS envelope ({"__type": "...",
-        "message": "..."}) with the x-amzn-ErrorType header, and Bedrock''s own errors
-        are relayed unchanged.'
+        mask the call but never rewrite it: a mask that cannot be carried onto the
+        original body refuses the call with a 403 AccessDeniedException, and the
+        policy chain records blocked with the cause. Every error the gateway
+        makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the
+        x-amzn-ErrorType header, and Bedrock''s own errors are relayed unchanged.'
       parameters:
       - description: Consumer slug
         in: path

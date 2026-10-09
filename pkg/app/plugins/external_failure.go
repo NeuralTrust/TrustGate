@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -51,9 +52,11 @@ const (
 	// a running policy that validated at save time under older rules, so it
 	// is handled at run time rather than surfaced only at write time.
 	FailureConfigInvalid FailureReason = "config_invalid"
-	// FailureDecodeFailed is our own side failing to decode the request or
-	// response body before the guardrail ever saw it. The guardrail was
-	// never consulted, so there was nothing for it to say.
+	// FailureDecodeFailed is a request body that a chat route promised and the
+	// adapters cannot decode, before the guardrail ever saw it. The guardrail
+	// was never consulted, so there was nothing for it to say. A response body
+	// that cannot be decoded is the upstream's and is skipped, not failed, and a
+	// route with no chat decoder is config_invalid (unsupported_format).
 	FailureDecodeFailed FailureReason = "decode_failed"
 	// FailureCounterUnavailable is TrustGate's own counter store (Redis)
 	// failing a read or a write: rate_limiter, per_tool_rate_limiter and
@@ -62,87 +65,245 @@ const (
 	// token_rate_limiter with partition key fails closed there on a read in a
 	// blocking mode.
 	FailureCounterUnavailable FailureReason = "counter_unavailable"
+	// FailureInputTooLarge is a guardrail that could not inspect this request's
+	// own content: the provider refused it for what it carries (a 4xx client
+	// error, a 413). The class is the input's, not the provider's.
+	FailureInputTooLarge FailureReason = "input_too_large"
 )
+
+// FailureClass says what a failure depends on, which is what decides whether
+// traffic may go through uninspected. An availability failure is the
+// provider, the network or the deployment: nothing about the request caused
+// it, so the request continues. An input failure is the request's own content:
+// a client can steer it, so letting it through would hand any caller a way
+// round the guardrail, and Enforce refuses it.
+type FailureClass string
+
+const (
+	FailureClassAvailability FailureClass = "availability"
+	FailureClassInput        FailureClass = "input"
+)
+
+// The details a (reason, detail) pair is classified on. They are the values
+// plugins already record as failure_detail, so naming them here does not change
+// the wire.
+const (
+	DetailFilterNotExecuted       = "filter_not_executed"
+	DetailFilterNotInTemplate     = "filter_not_in_template"
+	DetailFilterStateUnspecified  = "filter_state_unspecified"
+	DetailInvocationPartial       = "invocation_partial"
+	DetailInterventionUnparsed    = "intervention_unparsed"
+	DetailAnonymizeNoOutput       = "anonymize_no_output"
+	DetailAnonymizeUnsupportedFmt = "anonymize_unsupported_format"
+	DetailAnonymizeEncodeFailed   = "anonymize_encode_failed"
+	DetailProviderRejectedInput   = "provider_rejected_input"
+	DetailPayloadTooLarge         = "payload_too_large"
+	DetailAnswerTooLarge          = "answer_too_large"
+	DetailThrottled               = "throttled"
+	DetailUnsupportedFormat       = "unsupported_format"
+	DetailProviderConfigRejected  = "provider_config_rejected"
+	DetailCoveragePartial         = "coverage_partial"
+	// DetailProviderQuotaExhausted is a provider quota that is configuration, not
+	// load: an account out of credit or at its billing limit. Nothing a request
+	// does changes it, so it is config_invalid and never the throttled detail,
+	// whatever the number of chunks.
+	DetailProviderQuotaExhausted = "provider_quota_exhausted"
+	// DetailAttachmentNotFetched is an attachment sent as a URL that the guard
+	// could not fetch, so the rest of the request was evaluated without it. It
+	// is availability (a CDN that is down must not block legitimate traffic) and
+	// is recorded as a failure so it alerts instead of passing as a clean
+	// evaluation.
+	DetailAttachmentNotFetched = "attachment_not_fetched"
+	// DetailChunkLimit is a content that splits into more chunks than the
+	// guardrail evaluates within half of its budget, or a streamed block above the
+	// one call TrustGuard accepts (reason stream_block_too_large). It is refused
+	// before any call is made.
+	DetailChunkLimit = "chunk_limit"
+	// DetailChunkBudget is the evaluation's time budget used up by the request's
+	// own size: a chunk that was never started, or that waited behind the
+	// request's own chunks and was cut by the budget, while no call took longer
+	// than twice the reserve (ClassifyChunks), so the provider was not slow.
+	// Bedrock also reads it before any call, from an estimate: a request whose
+	// spacing and calls exceed half of the budget is refused.
+	DetailChunkBudget = "chunk_budget"
+	// DetailThrottledOversize is a provider rate limit that the request's own
+	// calls can have caused: it answered a chunk other than the first of an
+	// evaluation of several chunks, unless the calls are spaced under the
+	// provider's quota. A throttle on the first chunk or on a single chunk stays
+	// availability.
+	DetailThrottledOversize = "throttled_oversize"
+)
+
+// IsMaskOverFinding reports whether a failure detail is a mask that could not
+// be applied. The provider confirmed a finding and the plugin cannot write the
+// masked text back, so what is refused is a finding, not a missing inspection.
+func IsMaskOverFinding(detail string) bool {
+	switch detail {
+	case DetailAnonymizeNoOutput, DetailAnonymizeUnsupportedFmt, DetailAnonymizeEncodeFailed:
+		return true
+	}
+	return false
+}
+
+// ClassOf is the one classification of an external guardrail failure. Plugins
+// only map what a provider answered to a (reason, detail) pair; they never
+// decide whether the traffic goes through. A pair this table does not name is
+// availability, so a new reason cannot start refusing traffic by omission.
+//
+// decode_failed is input: a chat body the adapters cannot decode is the
+// client's, and one the upstream accepts would otherwise skip the guardrail. A
+// provider or format the gateway does not support at all, and a route that has
+// no chat decoder (images, audio, files), is not the body's fault but a
+// configuration gap, and is config_invalid (unsupported_format).
+// filter_not_in_template stays availability: it is the customer's template, not
+// anything the request did.
+func ClassOf(reason FailureReason, detail string) FailureClass {
+	switch reason {
+	case FailureDecodeFailed, FailureInputTooLarge:
+		return FailureClassInput
+	case FailureVerdictIncomplete:
+		switch detail {
+		case DetailFilterNotExecuted, DetailInterventionUnparsed, DetailCoveragePartial:
+			return FailureClassInput
+		}
+		if IsMaskOverFinding(detail) {
+			return FailureClassInput
+		}
+	}
+	return FailureClassAvailability
+}
 
 // DecisionFailedOpen is the decision recorded when a guardrail could not give
 // a verdict and the traffic was let through. The buffered legs and the stream
 // leg share it.
 const DecisionFailedOpen = "failed_open"
 
-// DecisionFailedClosed is the decision recorded when a guardrail could not give
-// a verdict and the traffic was refused. The buffered legs and the stream leg
-// share it: on the stream it labels the entry whose failed call the guard
-// resolved as fail_closed, which is a cut but not a verdict of the guardrail.
+// DecisionFailedClosed is the decision recorded when a policy could not do its
+// work and the traffic was refused: a guardrail that could not inspect the
+// request's own content in a mode that blocks, or a stream cut that the guard
+// resolved on a failed call of a rewriter that asked for fail_closed
+// (regex_replace).
 const DecisionFailedClosed = "failed_closed"
 
-const typeGuardrailUnavailable = "guardrail_unavailable"
+// DecisionBlocked is the decision recorded when a finding is refused, which
+// includes a mask over a confirmed finding that cannot be applied.
+const DecisionBlocked = "blocked"
+
+// TypeGuardrailInputUninspectable is the error type of the 403 a guardrail
+// answers when it could not inspect the content of the request itself.
+const TypeGuardrailInputUninspectable = "guardrail_input_uninspectable"
+
+// DefaultUninspectableMessage is the refusal text when the policy configures no
+// message of its own. It never carries the provider's error, which can hold
+// endpoint hostnames or vendor text.
+const DefaultUninspectableMessage = "request blocked: the policy could not inspect this content"
 
 // ExternalFailure is one third-party guardrail call's failure, ready to be
-// turned into a plugin outcome by HandleExternalFailure.
+// handed to HandleExternalFailure.
 type ExternalFailure struct {
 	Ctx    context.Context
 	Plugin string
 	Stage  policy.Stage
 	Mode   policy.Mode
 	Reason FailureReason
-	// Detail is optional context named in the Warn log — typically the
-	// filter or category the guardrail left unanswered. It is not written
-	// onto any Data struct by this helper: the caller decides where (if
-	// anywhere) its own Data carries it.
+	// Detail names the reason within Reason (a skipped filter, an anonymize
+	// that could not be applied). The class is read from it, and it is named in
+	// the Warn log. This helper does not write it onto any Data struct: the
+	// caller decides where its own Data carries it.
 	Detail string
-	Err    error
-	Logger *slog.Logger
-	Event  *metrics.EventContext
-	// FailClosed is the policy's on_error: fail_closed. Off, every failure
-	// lets the request through.
-	FailClosed bool
+	// Message is the policy's configured block message, used for the refusal of
+	// an input failure. Empty means DefaultUninspectableMessage.
+	Message string
+	// Finding is the plugin's normal block error, set only for a mask over a
+	// confirmed finding: refusing it is a block of that finding, so it is
+	// answered as the plugin answers a block.
+	Finding *PluginError
+	Err     error
+	Logger  *slog.Logger
+	Event   *metrics.EventContext
 }
 
-// ExternalFailureOutcome is HandleExternalFailure's answer. Decision is what
-// the caller's own Data.Decision (and any failure_reason/failure_detail
-// fields) should record; Result and Err are exactly what the plugin's
-// Execute should return. Err is nil unless the policy asked to fail closed.
+// ExternalFailureOutcome is HandleExternalFailure's answer. Decision and Class
+// are what the caller's own Data records (decision, failure_class); Result and
+// Err are exactly what the plugin's Execute returns, and exactly one is set.
 type ExternalFailureOutcome struct {
 	Decision string
+	Class    FailureClass
 	Result   *Result
-	Err      error
+	Err      *PluginError
 }
 
-// HandleExternalFailure applies the one rule every external guardrail
-// follows on a failure of its buffered (non-streamed) leg. By default it fails
-// OPEN, in every mode (enforce, throttle and observe) and for every
-// FailureReason (transport, which also covers timeouts and throttling,
-// verdict_incomplete, config_invalid and decode_failed): the request continues
-// and the event records decision failed_open with the failure_reason (and
-// failure_detail) the caller sets on its own Data (RUN-1792). The stream leg is
-// covered separately by RUN-1786.
+// HandleExternalFailure applies the one rule every external guardrail follows
+// on a failure of its buffered (non-streamed) leg. The class is ClassOf's, and
+// the mode decides what it costs:
 //
-// A policy that sets on_error: fail_closed opts out: in a mode that blocks, the
-// request is refused with a 502 guardrail_unavailable and the decision is
-// failed_closed, decode_failed included, since a body the guardrail could not
-// read is a body it did not inspect. config_invalid still fails open when the
-// stored settings could not be read at all, since on_error is one of them.
+//   - availability, in any mode: the request continues, failed_open;
+//   - input in observe: the request continues, failed_open, since observe never
+//     blocks;
+//   - input in a blocking mode: the request is refused with a 403
+//     guardrail_input_uninspectable, failed_closed;
+//   - a mask over a finding in a blocking mode: the finding is refused with the
+//     plugin's own block error, blocked.
 //
-// TrustGuard does not go through this helper: its failures, credential errors
-// included, follow its own on_error setting inside the trustguard plugin.
+// There is no policy setting that changes this.
 //
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
-// caller still owns its own Data: it is responsible for setting
-// Data.Decision (from ExternalFailureOutcome.Decision) and any
-// failure_reason/failure_detail fields, and calling setExtras, before or
-// after invoking this.
+// caller still owns its own Data: it records Decision, the failure_reason and
+// failure_detail it names, and Class as failure_class.
 func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
+	class := ClassOf(f.Reason, f.Detail)
 	outcome := ExternalFailureOutcome{
 		Decision: DecisionFailedOpen,
+		Class:    class,
 		Result:   &Result{StatusCode: http.StatusOK},
 	}
-	if f.FailClosed && Blocks(f.Mode) {
-		outcome = ExternalFailureOutcome{Decision: DecisionFailedClosed, Err: unavailableError()}
+	if class == FailureClassInput && Blocks(f.Mode) {
+		outcome.Result = nil
+		if f.Finding != nil && IsMaskOverFinding(f.Detail) {
+			outcome.Decision = DecisionBlocked
+			outcome.Err = f.Finding
+		} else {
+			outcome.Decision = DecisionFailedClosed
+			outcome.Err = UninspectableError(f.Message)
+		}
 	}
 	SetDecisionFromOutcome(f.Event, outcome.Decision)
 	logExternalFailure(f, outcome.Decision)
 	return outcome
+}
+
+// UninspectableError is the 403 a guardrail answers when it could not inspect
+// the content of the request. It is a refusal of the content, not a gateway
+// fault, so it is not a 502 that invites a retry.
+func UninspectableError(message string) *PluginError {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = DefaultUninspectableMessage
+	}
+	return &PluginError{
+		StatusCode: http.StatusForbidden,
+		Type:       TypeGuardrailInputUninspectable,
+		Message:    msg,
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
+		Body:       uninspectableBody(msg),
+	}
+}
+
+func uninspectableBody(message string) []byte {
+	body := struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{}
+	body.Error.Type = TypeGuardrailInputUninspectable
+	body.Error.Message = message
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"error":{"type":%q}}`, TypeGuardrailInputUninspectable))
+	}
+	return raw
 }
 
 func logExternalFailure(f ExternalFailure, decision string) {
@@ -169,62 +330,79 @@ func logExternalFailure(f ExternalFailure, decision string) {
 	f.Logger.Warn("external guardrail call failed", attrs...)
 }
 
-// unavailableError is the client-facing refusal for a guardrail that failed
-// closed. Its message is generic and never carries the underlying error, which
-// can hold endpoint hostnames or vendor error text.
-func unavailableError() *PluginError {
-	return &PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeGuardrailUnavailable,
-		Message:    DefaultUnavailableMessage,
-		Headers:    map[string][]string{"Content-Type": {"application/json"}},
-		Body:       unavailableBody(),
-	}
-}
-
-func unavailableBody() []byte {
-	body := struct {
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}{}
-	body.Error.Type = typeGuardrailUnavailable
-	body.Error.Message = DefaultUnavailableMessage
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return []byte(fmt.Sprintf(`{"error":{"type":%q,"message":%q}}`, typeGuardrailUnavailable, DefaultUnavailableMessage))
-	}
-	return raw
-}
-
 // WrapExternalStreamFailure formats a stream-segment failure so its reason
 // (and, when present, detail) travel in the error text.
 //
-// Unlike HandleExternalFailure, a streamed segment's fail-open/fail-closed
-// choice is not the plugin's mode to make: the stream guard already owns
-// that decision through streaming.on_error (pkg/app/proxy/stream_guard.go),
-// because only the guard knows whether anything has been released to the
-// client yet, which is what turns fail_closed into a clean status code
-// instead of a truncated body. The guard also already logs the returned
-// error itself (headFailure/blockFailure), so this does not log again: doing
-// so would print the same failure twice for one segment. It only gives that
-// one log line the same reason vocabulary HandleExternalFailure uses.
+// It is the availability path of the stream: the error is absorbed per entry by
+// the executor and the held text is released, as a failed call that says
+// nothing about the content. A failure that depends on the content goes through
+// ExternalStreamOutcome, which decides between this and a cut. The guard also
+// already logs the returned error itself (headFailure/blockFailure), so this
+// does not log again.
 //
 // The error is typed (*ExternalStreamFailure) so the executor can read the
-// reason and detail off it with errors.As and carry them to the closing
+// reason, detail and class off it with errors.As and carry them to the closing
 // segment, where the entry's span is written once. Its text is unchanged.
 func WrapExternalStreamFailure(pluginName string, reason FailureReason, detail string, err error) error {
-	return &ExternalStreamFailure{Plugin: pluginName, Reason: reason, Detail: detail, Err: err}
+	return newExternalStreamFailure(pluginName, reason, detail, err)
+}
+
+func newExternalStreamFailure(pluginName string, reason FailureReason, detail string, err error) *ExternalStreamFailure {
+	return &ExternalStreamFailure{Plugin: pluginName, Reason: reason, Detail: detail, Class: ClassOf(reason, detail), Err: err}
+}
+
+// ExternalStreamOutcome is the stream twin of HandleExternalFailure: the only
+// place a streamed block's failure becomes an outcome. It returns either a
+// verdict (the stream is cut) or the typed error (the block is released).
+//
+//   - availability, any mode: the typed error, absorbed as failed_open;
+//   - input in observe: the typed error, absorbed as failed_open, and not
+//     counted toward retiring the entry, so a padded stream cannot switch off
+//     its own inspection. When block carries the fingerprints of a confirmed
+//     finding (a mask over it), the finding is still reported: the verdict is a
+//     non-blocking one that keeps the failure as Incomplete;
+//   - input in a blocking mode: a Block verdict carrying the failure, which the
+//     executor records as failed_closed on the entry that authored the cut;
+//   - a mask over a finding in a blocking mode: the same cut, recorded as
+//     blocked and degraded.
+//
+// block is the verdict the plugin answers a block with (its Type and Message);
+// nil gives the uninspectable refusal.
+func ExternalStreamOutcome(
+	plugin string,
+	mode policy.Mode,
+	reason FailureReason,
+	detail string,
+	block *SegmentVerdict,
+	err error,
+) (*SegmentVerdict, error) {
+	failure := newExternalStreamFailure(plugin, reason, detail, err)
+	if failure.Class != FailureClassInput {
+		return nil, failure
+	}
+	if !Blocks(mode) {
+		if block != nil {
+			return &SegmentVerdict{Fingerprints: block.Fingerprints, Incomplete: failure}, nil
+		}
+		return nil, failure
+	}
+	verdict := SegmentVerdict{Block: true, Type: TypeGuardrailInputUninspectable, Message: DefaultUninspectableMessage}
+	if block != nil {
+		verdict = *block
+		verdict.Block = true
+	}
+	verdict.Failure = failure
+	return &verdict, nil
 }
 
 // ExternalStreamFailure is one external guardrail's failure on a streamed
-// block, as WrapExternalStreamFailure builds it. Reason and Detail are the
-// same vocabulary HandleExternalFailure records on the buffered leg.
+// block, as WrapExternalStreamFailure builds it. Reason, Detail and Class are
+// the same vocabulary HandleExternalFailure records on the buffered leg.
 type ExternalStreamFailure struct {
 	Plugin string
 	Reason FailureReason
 	Detail string
+	Class  FailureClass
 	Err    error
 }
 

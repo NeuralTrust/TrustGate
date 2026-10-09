@@ -74,13 +74,17 @@ func (s *modelArmorStub) path() string {
 	return s.lastPath
 }
 
+// defaultTestTimeout is the timeout of the production default (15 s), which
+// sets the chunk ceiling a long text meets.
+const defaultTestTimeout = 15 * time.Second
+
 func pluginWithStub(s *modelArmorStub) *Plugin {
 	return &Plugin{
 		registry:             adapter.NewRegistry(),
 		allowAmbientIdentity: true,
 		clients: &clientCache{
 			build: func(modelArmorCredentials) (*client, error) {
-				return newClientWithTokenSource(s.server.URL, time.Second, staticTokenSource("test-token", nil)), nil
+				return newClientWithTokenSource(s.server.URL, defaultTestTimeout, staticTokenSource("test-token", nil)), nil
 			},
 		},
 	}
@@ -429,9 +433,11 @@ func TestExecuteMatchWinsOverAbsentFilter(t *testing.T) {
 	}
 }
 
-// An SDP anonymize with a selected filter that never ran must still apply the
-// mask the provider returned: failing open would forward the original prompt
-// with the raw PII. The incomplete verdict rides on the same event.
+// An SDP anonymize with a selected filter the template never enabled must still
+// apply the mask the provider returned: failing open would forward the original
+// prompt with the raw PII, and the missing filter is the customer's
+// configuration, not the content's. The incomplete verdict rides on the same
+// event.
 func TestExecuteAnonymizeMasksEvenWhenAFilterIsAbsent(t *testing.T) {
 	t.Parallel()
 	const masked = "hello {EMAIL}"
@@ -461,8 +467,9 @@ func TestExecuteAnonymizeMasksEvenWhenAFilterIsAbsent(t *testing.T) {
 		t.Fatalf("last user content = %q, want %q", last, masked)
 	}
 	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != decisionAnonymized || data.FailureReason != "verdict_incomplete" || data.FailureDetail == "" {
-		t.Fatalf("extras = %+v, ok=%v, want anonymized + verdict_incomplete with a detail", data, ok)
+	if !ok || data.Decision != decisionAnonymized || data.FailureReason != "verdict_incomplete" ||
+		data.FailureDetail != reasonFilterNotInTemplate || data.FailureClass != "availability" {
+		t.Fatalf("extras = %+v, ok=%v, want anonymized + verdict_incomplete/%s/availability", data, ok, reasonFilterNotInTemplate)
 	}
 }
 
@@ -580,7 +587,7 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res, err := p.anonymizeEnforce(in, data, "", tt.result, tt.span, f)
+			res, err := p.anonymizeEnforce(context.Background(), in, data, "", tt.result, tt.span, f)
 			if res != nil {
 				t.Fatalf("expected nil result, got %+v", res)
 			}
@@ -592,6 +599,9 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 			}
 			if data.Decision != decisionBlocked {
 				t.Fatalf("decision = %q, want %q", data.Decision, decisionBlocked)
+			}
+			if data.FailureClass != "input" || data.FailureReason != "verdict_incomplete" || data.FailureDetail != tt.reason {
+				t.Fatalf("failure = %q/%q/%q, want verdict_incomplete/%s/input", data.FailureReason, data.FailureDetail, data.FailureClass, tt.reason)
 			}
 		})
 	}
@@ -610,7 +620,7 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 		DeidentifyResult: &SDPDeidentifyResult{MatchState: matchStateMatchFound, Data: &SDPData{Text: "masked-body"}},
 	}}}}
 
-	res, err := p.anonymizeEnforce(in, data, "", result, span, f)
+	res, err := p.anonymizeEnforce(context.Background(), in, data, "", result, span, f)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -736,48 +746,128 @@ func TestExecuteParseConfigErrorEnforceFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
+// A concrete body the adapters cannot decode is the client's: in a mode that blocks the
+// call is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteDecodeFailedOfAnUndecodableBodyIsAnInputFailure(t *testing.T) {
 	t.Parallel()
-	stub := newModelArmorStub(t, http.StatusOK, allowResponse)
-	p := pluginWithStub(stub)
-	req := reqCtx(openAIRequest())
-	req.Provider = "not-a-real-provider"
-	req.SourceFormat = ""
-	event, span := newStreamEvent()
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+			p := pluginWithStub(stub)
+			req := reqCtx(openAIRequest())
+			req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+			event, span := newStreamEvent()
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), req, nil)
+			in := execInput(policy.StagePreRequest, tc.mode, modelArmorSettings(), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if stub.count() != 0 {
+				t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || data.Decision != tc.decision || data.FailureReason != "decode_failed" || data.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", data, ok, tc.decision)
+			}
+		})
+	}
+}
+
+// A provider or format the gateway does not support is a configuration gap, not
+// the body's fault: it fails open in every mode.
+func TestExecuteDecodeFailedOfAnUnsupportedFormatFailsOpen(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_open", false},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+			p := pluginWithStub(stub)
+			req := reqCtx(openAIRequest())
+			req.Provider = "not-a-real-provider"
+			req.SourceFormat = ""
+			event, span := newStreamEvent()
+
+			in := execInput(policy.StagePreRequest, tc.mode, modelArmorSettings(), req, nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			if stub.count() != 0 {
+				t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || data.Decision != tc.decision || data.FailureReason != "config_invalid" || data.FailureClass != "availability" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", data, ok, tc.decision)
+			}
+		})
+	}
+}
+
+func withRemovedKeys(set map[string]any) map[string]any {
+	set["on_error"] = "fail_closed"
+	set["on_timeout"] = "fail_closed"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+	set["streaming"] = map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}
+	return set
+}
+
+// on_error, streaming.on_error and streaming.guard_timeout are not guardrail settings: a
+// policy stored with them keeps loading, fails open on a client error, and runs its
+// stream leg fail open under the default guard timeout.
+func TestStoredRemovedKeysAreIgnored(t *testing.T) {
+	t.Parallel()
+	p := pluginWithClientError(errors.New("boom"))
+
+	if err := p.ValidateConfig(withRemovedKeys(modelArmorSettings())); err != nil {
+		t.Fatalf("a stored policy with removed keys must keep loading, got %v", err)
+	}
+	invalid := modelArmorSettings()
+	invalid["on_error"] = "retry"
+	if err := p.ValidateConfig(invalid); err != nil {
+		t.Fatalf("a stored invalid on_error must not reject a write, got %v", err)
+	}
+
+	event, span := newStreamEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, withRemovedKeys(modelArmorSettings()), reqCtx(openAIRequest()), nil)
 	in.Event = event
 	res, err := p.Execute(context.Background(), in)
 	assertPassThrough(t, res, err)
-	if stub.count() != 0 {
-		t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" {
+		t.Fatalf("extras = %+v, ok=%v, want failed_open", extras, ok)
 	}
-	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != "failed_open" || data.FailureReason != "decode_failed" {
-		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", data, ok)
-	}
-}
 
-func TestExecuteClientErrorFailsClosedWhenThePolicyAsks(t *testing.T) {
-	t.Parallel()
-	p := pluginWithClientError(errors.New("boom"))
-	settings := modelArmorSettings()
-	settings["on_error"] = "fail_closed"
-
-	res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil))
-
-	var pluginErr *appplugins.PluginError
-	if !errors.As(err, &pluginErr) || pluginErr.StatusCode != http.StatusBadGateway {
-		t.Fatalf("res = %+v, err = %v, want a 502 refusal", res, err)
-	}
-}
-
-func TestParseConfigRejectsAnUnknownOnError(t *testing.T) {
-	t.Parallel()
-	settings := modelArmorSettings()
-	settings["on_error"] = "retry"
-
-	if _, err := parseConfig(settings); err == nil {
-		t.Fatal("expected an error for on_error: retry")
+	on, opts := p.StreamSettings(withRemovedKeys(modelArmorSettings()))
+	if !on || opts.OnError != "fail_open" {
+		t.Fatalf("stream opt-in = %v, on_error = %q, want fail_open", on, opts.OnError)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -31,6 +32,12 @@ const streamIDSeparator = ":"
 const streamLegResponse = "response"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+
+// StreamGuardTimeout is the time one piece's call may take: the guard timeout the
+// call itself runs under, so the block's deadline and the slow-call threshold are
+// made of the same time.
+func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
 
 // StreamSettings reports whether these policy settings ask for per-block
 // moderation of the response leg, and the options the block loop must run
@@ -45,7 +52,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, cfg.Streaming.Options()
+	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
 }
 
 // InspectSegment moderates one closed block of a streamed response.
@@ -82,7 +89,7 @@ func (p *Plugin) InspectSegment(
 	// The deadline is the plugin's because the knob is in the plugin's schema,
 	// and it is enforced here rather than left to the caller's context because
 	// the caller is holding a client's bytes while this call runs.
-	callCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.Timeout(streamingDefaults.GuardTimeout))
+	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
 	resp, err := p.client.Moderate(callCtx, p.baseURL, cfg.APIKey, moderationRequest{
@@ -90,13 +97,14 @@ func (p *Plugin) InspectSegment(
 		Input: []moderationInput{{Type: inputTypeText, Text: seg.Accumulated}},
 	})
 	if err != nil {
-		// Returned rather than resolved here: only the guard knows whether the
-		// status is still uncommitted, which is what makes streaming.on_error
-		// a clean 403 at the head and a terminator after it. The guard itself
-		// logs this failure (headFailure/blockFailure in stream_guard.go), so
-		// this does not log a second time; it only tags the error with the
-		// same reason vocabulary the buffered leg uses.
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+		// OpenAI refusing the content of the block is the content's, and cuts a
+		// stream in a mode that blocks; every other failure is returned for the
+		// held text to be released. The guard itself logs a returned failure
+		// (headFailure/blockFailure in stream_guard.go), so this does not log a
+		// second time; it only tags the error with the same reason vocabulary the
+		// buffered leg uses.
+		reason, detail := pluginutil.FailureOfError(err)
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("moderating stream block %d: %w", seg.Seq, err))
 	}
 	if len(resp.Results) == 0 {
@@ -139,12 +147,8 @@ func (p *Plugin) recordStreamOutcome(
 
 	data := ModerationData{Model: cfg.Model, Streaming: stream}
 	switch {
-	// A cut that resolved this entry's own failed call as fail_closed is a
-	// failure, not a block: the guardrail gave no verdict.
-	case pluginutil.StreamFailedClosed(seg.Report):
-		data.Decision = appplugins.DecisionFailedClosed
 	case seg.Report.CutAtEval > 0:
-		data.Decision = decisionBlock
+		data.Decision = pluginutil.StreamCutDecision(seg.Report, decisionBlock)
 	case len(stream.Findings) > 0:
 		data.Decision = decisionReported
 	// A positive finding outranks a missing inspection, so a failure only labels
@@ -160,6 +164,7 @@ func (p *Plugin) recordStreamOutcome(
 	// block went uninspected. Extras are replaced, so this one write is the
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
+	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
 
 	// A stream span's wall clock is the whole drain, provider generation
 	// included, and the fold in pkg/app/metrics counts a pre_response span as

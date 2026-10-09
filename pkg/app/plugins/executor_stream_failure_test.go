@@ -294,3 +294,143 @@ func TestRunStreamSegment_UnclaimedFailureCutIsNotAnEntrysFailure(t *testing.T) 
 	assert.Equal(t, DecisionFailedOpen, spanFor(t, rt, "b_reader").Plugin.Decision,
 		"a closing failure on an entry that never failed is not failed_closed")
 }
+
+// A verdict that is usable but incomplete is applied, and its failure becomes
+// the entry's first on the stream without counting as a failed call: the entry
+// is not retired for it and the mask still reaches the client.
+func TestRunStreamSegment_IncompleteVerdictIsKeptWithoutCountingAsAFailedCall(t *testing.T) {
+	t.Parallel()
+	incomplete := WrapExternalStreamFailure("stub", FailureVerdictIncomplete, "rai", errors.New("filter skipped"))
+	exec, pols, inspectors := streamChain(t, entrySpec{
+		slug: "guard", mode: policy.ModeEnforce,
+		verdict: &SegmentVerdict{HasTransform: true, Transformed: "masked", Incomplete: incomplete},
+	})
+	withOnError(pols, "guard", "fail_open")
+	in := failureInput(pols)
+	ctx, _, publish := failureStreamCtx(t)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+
+	var outcome *SegmentOutcome
+	for i := 1; i <= 4; i++ {
+		got, err := runner.RunStreamSegment(ctx, in, segment(i, false))
+		require.NoError(t, err)
+		outcome = got
+	}
+	_, err := runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 4, Closing: true})
+	require.NoError(t, err)
+	publish()
+
+	require.NotNil(t, outcome)
+	assert.True(t, outcome.HasTransform, "the mask is applied on every block, the entry is never retired")
+	report := lastSeen(t, inspectors["guard"]).Report
+	assert.Equal(t, FailureVerdictIncomplete, report.FailureReason)
+	assert.Equal(t, "rai", report.FailureDetail)
+	assert.Zero(t, report.FailedEvals)
+}
+
+// A Block verdict that carries an input-class failure is the cut's author's
+// own: its closing report says the cut is a failure (CutOnFailure) with that
+// failure's reason, detail and class, and an entry that did not author the cut
+// reads none of it.
+func TestRunStreamSegment_InputCutCarriesItsFailureToTheAuthorOnly(t *testing.T) {
+	t.Parallel()
+	cut, err := ExternalStreamOutcome("stub", policy.ModeEnforce, FailureInputTooLarge, DetailProviderRejectedInput, nil, errors.New("400"))
+	require.NoError(t, err)
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_other", mode: policy.ModeEnforce},
+		entrySpec{slug: "b_author", mode: policy.ModeEnforce, verdict: cut},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	in := failureInput(pols)
+	ctx, _, publish := failureStreamCtx(t)
+	defer publish()
+
+	outcome, err := runner.RunStreamSegment(ctx, in, segment(1, false))
+	require.NoError(t, err)
+	require.True(t, outcome.Block)
+	assert.Equal(t, TypeGuardrailInputUninspectable, outcome.Type)
+	_, err = runner.RunStreamSegment(ctx, in, StreamSegment{
+		StreamID: "stream-1", Seq: 1, Closing: true,
+		Report: StreamReport{Evals: 1, CutAtEval: 1},
+	})
+	require.NoError(t, err)
+
+	author := lastSeen(t, inspectors["b_author"]).Report
+	assert.True(t, author.CutOnFailure)
+	assert.Equal(t, FailureInputTooLarge, author.FailureReason)
+	assert.Equal(t, DetailProviderRejectedInput, author.FailureDetail)
+	assert.Equal(t, FailureClassInput, author.FailureClass)
+	other := lastSeen(t, inspectors["a_other"]).Report
+	assert.False(t, other.CutOnFailure)
+	assert.Empty(t, other.FailureClass)
+}
+
+// The cut's failure replaces an earlier absorbed one: the span is about the cut.
+func TestRunStreamSegment_InputCutFailureReplacesAnEarlierAbsorbedOne(t *testing.T) {
+	t.Parallel()
+	exec, pols, inspectors := streamChain(t, entrySpec{slug: "guard", mode: policy.ModeEnforce})
+	withOnError(pols, "guard", "fail_open")
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	in := failureInput(pols)
+	ctx, _, publish := failureStreamCtx(t)
+	defer publish()
+
+	inspectors["guard"].err = WrapExternalStreamFailure("stub", FailureTransport, "", errors.New("down"))
+	_, err := runner.RunStreamSegment(ctx, in, segment(1, false))
+	require.NoError(t, err)
+	inspectors["guard"].err = nil
+	cut, err := ExternalStreamOutcome("stub", policy.ModeEnforce, FailureVerdictIncomplete, DetailFilterNotExecuted, nil, errors.New("skipped"))
+	require.NoError(t, err)
+	inspectors["guard"].verdict = cut
+	_, err = runner.RunStreamSegment(ctx, in, segment(2, false))
+	require.NoError(t, err)
+	_, err = runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 2, Closing: true, Report: StreamReport{Evals: 2, CutAtEval: 2}})
+	require.NoError(t, err)
+
+	report := lastSeen(t, inspectors["guard"]).Report
+	assert.Equal(t, FailureVerdictIncomplete, report.FailureReason)
+	assert.Equal(t, DetailFilterNotExecuted, report.FailureDetail)
+	assert.Equal(t, FailureClassInput, report.FailureClass)
+	assert.True(t, report.CutOnFailure)
+	assert.Equal(t, 1, report.FailedEvals, "only the absorbed failure counts as a failed call")
+}
+
+// Input failures are not the provider failing: they never extend the retirement
+// streak, so a client padding a stream cannot switch an entry off, while the
+// same number of availability failures does.
+func TestRunStreamSegment_InputFailuresDoNotRetireTheEntry(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		err         error
+		wantRetired bool
+	}{
+		{"input", WrapExternalStreamFailure("stub", FailureInputTooLarge, DetailProviderRejectedInput, errors.New("400")), false},
+		{"availability", WrapExternalStreamFailure("stub", FailureTransport, "", errors.New("503")), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			exec, pols, inspectors := streamChain(t, entrySpec{slug: "guard", mode: policy.ModeObserve})
+			runner, ok := exec.(*executor)
+			require.True(t, ok)
+			in := failureInput(pols)
+			ctx, _, publish := failureStreamCtx(t)
+			defer publish()
+			inspectors["guard"].err = tt.err
+
+			for i := 1; i <= streamEntryRetireAfter+2; i++ {
+				_, err := runner.RunStreamSegment(ctx, in, segment(i, false))
+				require.NoError(t, err)
+			}
+			if tt.wantRetired {
+				assert.Len(t, inspectors["guard"].seen, streamEntryRetireAfter)
+			} else {
+				assert.Len(t, inspectors["guard"].seen, streamEntryRetireAfter+2, "an input failure is called again on every block")
+			}
+		})
+	}
+}
