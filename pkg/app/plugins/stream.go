@@ -400,7 +400,9 @@ func (s *streamSpans) handedBack(key string) {
 // now reached the retirement streak. A failure that depends on the content
 // (FailureClassInput) is counted as failed but never extends the streak: the
 // provider is healthy, and retiring the entry on content a client chose would
-// let it switch the inspection off by padding the stream.
+// let it switch the inspection off by padding the stream. A throttle
+// (DetailThrottled) is the provider's quota, which concurrent traffic can
+// exhaust, so it never extends the streak either.
 func (s *streamSpans) fail(key string, err error) (first, retiredNow bool) {
 	if s == nil {
 		return false, false
@@ -410,6 +412,9 @@ func (s *streamSpans) fail(key string, err error) (first, retiredNow bool) {
 	s.failed[key]++
 	var failure *ExternalStreamFailure
 	if errors.As(err, &failure) && failure.Class == FailureClassInput {
+		return s.failed[key] == 1, false
+	}
+	if failure != nil && failure.Detail == DetailThrottled {
 		return s.failed[key] == 1, false
 	}
 	s.streak[key]++

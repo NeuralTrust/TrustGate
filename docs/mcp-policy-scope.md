@@ -488,14 +488,15 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   a larger payload would release the block
   uninspected. Google does not raise this limit, so a higher
   setting is treated as 64 KiB.
-- `bedrock_guardrail` (streaming is opt-in): 24 KiB, and never more. AWS bounds
+- `bedrock_guardrail` (streaming is opt-in): 8 KiB, and never more. AWS bounds
   each `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
-  characters. The defaults go as low as 25 units (for example in eu-west-3,
-  eu-south-1 and sa-east-1), and 24 KiB fits the smallest of them whatever the
-  region's quota, so a larger setting is treated as 24 KiB. The window bounds the
-  size of each call, not their rate: in regions where the content-filter quota is
-  25 text units per second, a long stream also needs that quota raised, or
-  throttled calls fail open.
+  characters, at a number of units per second that goes as low as 25 (for
+  example in eu-west-3, eu-south-1 and sa-east-1). A block of 8 KiB is at most
+  9 units, so it leaves room for concurrent blocks and for the retry a
+  throttled call gets within the block's deadline; a larger setting is treated
+  as 8 KiB. A throttled block that is still throttled after its retries is
+  released as an availability failure and does not count toward retiring the
+  guardrail for the rest of the stream.
 - `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
   input limit for moderations, so the window is fitted to the 1.5 second block
   deadline.

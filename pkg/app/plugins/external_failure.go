@@ -99,6 +99,7 @@ const (
 	DetailProviderRejectedInput   = "provider_rejected_input"
 	DetailPayloadTooLarge         = "payload_too_large"
 	DetailAnswerTooLarge          = "answer_too_large"
+	DetailThrottled               = "throttled"
 	DetailUnsupportedFormat       = "unsupported_format"
 	DetailProviderConfigRejected  = "provider_config_rejected"
 	DetailCoveragePartial         = "coverage_partial"

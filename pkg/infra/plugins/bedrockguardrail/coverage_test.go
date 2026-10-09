@@ -177,7 +177,7 @@ func TestServiceQuotaIsAlwaysAvailability(t *testing.T) {
 			err := applyGuardrailAgainst(t, validationLikeException(t, "ServiceQuotaExceededException", tc.message))
 			reason, detail := classify(err)
 			assert.Equal(t, appplugins.FailureTransport, reason)
-			assert.Empty(t, detail)
+			assert.Equal(t, appplugins.DetailThrottled, detail)
 			assert.Equal(t, appplugins.FailureClassAvailability, appplugins.ClassOf(reason, detail))
 		})
 	}

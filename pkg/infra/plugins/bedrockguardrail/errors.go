@@ -59,6 +59,24 @@ var notAboutTheInput = map[string]struct{}{
 	"ResourceNotFoundException": {},
 }
 
+// throttlingErrors are the AWS error types of the account's per-second quota
+// answering, which are availability and never evidence about the content.
+// ServiceQuotaExceededException is an HTTP 400 that is the same quota.
+var throttlingErrors = map[string]struct{}{
+	"ThrottlingException":           {},
+	"Throttling":                    {},
+	"ThrottledException":            {},
+	"TooManyRequestsException":      {},
+	"RequestLimitExceeded":          {},
+	"ServiceQuotaExceededException": {},
+}
+
+// isThrottled reports whether err is the quota answering.
+func isThrottled(err error) bool {
+	_, detail := classifyApplyErr(err)
+	return detail == appplugins.DetailThrottled
+}
+
 // classifyApplyErr maps what ApplyGuardrail answered to the shared failure
 // vocabulary. A client error (4xx) that ApplyGuardrail itself returns for what
 // the call carries, a ValidationException above all, is the request's own
@@ -89,6 +107,9 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	if !errors.As(err, &api) {
 		return appplugins.FailureTransport, ""
 	}
+	if _, throttled := throttlingErrors[api.ErrorCode()]; throttled {
+		return appplugins.FailureTransport, appplugins.DetailThrottled
+	}
 	if _, skip := notAboutTheInput[api.ErrorCode()]; skip {
 		return appplugins.FailureTransport, ""
 	}
@@ -105,8 +126,10 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 		if api.ErrorFault() == smithy.FaultClient {
 			return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 		}
+	case status == http.StatusTooManyRequests:
+		return appplugins.FailureTransport, appplugins.DetailThrottled
 	case status == http.StatusUnauthorized, status == http.StatusForbidden,
-		status == http.StatusRequestTimeout, status == http.StatusTooManyRequests:
+		status == http.StatusRequestTimeout:
 	case status >= http.StatusBadRequest && status < http.StatusInternalServerError:
 		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 	}
