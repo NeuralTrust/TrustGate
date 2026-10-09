@@ -57,6 +57,7 @@ func TestClassOf(t *testing.T) {
 		{FailureVerdictIncomplete, DetailAnonymizeUnsupportedFmt, FailureClassInput},
 		{FailureVerdictIncomplete, DetailAnonymizeEncodeFailed, FailureClassInput},
 		{FailureVerdictIncomplete, DetailFilterNotInTemplate, FailureClassAvailability},
+		{FailureVerdictIncomplete, DetailFilterStateUnspecified, FailureClassAvailability},
 		{FailureVerdictIncomplete, "hate", FailureClassAvailability},
 		{FailureVerdictIncomplete, "", FailureClassAvailability},
 		{FailureReason("a_reason_added_later"), "", FailureClassAvailability},
