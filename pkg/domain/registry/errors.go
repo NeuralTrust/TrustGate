@@ -32,12 +32,4 @@ var (
 	ErrInvalidHealthChecks    = fmt.Errorf("registry: invalid health checks: %w", commonerrors.ErrValidation)
 	ErrInvalidMCPTarget       = fmt.Errorf("registry: invalid mcp target: %w", commonerrors.ErrValidation)
 	ErrInvalidPricing         = fmt.Errorf("registry: invalid pricing: %w", commonerrors.ErrValidation)
-	ErrInvalidToolDefinition  = fmt.Errorf("registry: invalid tool definition: %w", commonerrors.ErrValidation)
-	ErrInvalidToolPolicy      = fmt.Errorf("registry: invalid tool policy: %w", commonerrors.ErrValidation)
-	// ErrUnknownToolRefs reports decisions that name a (tool, fingerprint) the
-	// registry has no row for. The decision is refused as a whole.
-	ErrUnknownToolRefs = fmt.Errorf("registry: unknown tool definitions: %w", commonerrors.ErrValidation)
-	// ErrInvalidToolDecision reports a decision that contradicts itself, such as
-	// one tool definition in both the approve and the reject list.
-	ErrInvalidToolDecision = fmt.Errorf("registry: invalid tool decision: %w", commonerrors.ErrValidation)
 )

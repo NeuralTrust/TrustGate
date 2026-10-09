@@ -214,7 +214,7 @@ func consumerBindings(rc *appconsumer.RoutableConsumer) []string {
 	parts := make([]string, 0, len(rc.Registries))
 	for _, registry := range rc.Registries {
 		if registry != nil && registry.IsMCP() {
-			parts = append(parts, "rg:"+registry.ID.String()+"@"+registry.UpdatedAt.UTC().Format(time.RFC3339Nano)+pinSuffix(registry))
+			parts = append(parts, "rg:"+registry.ID.String()+"@"+registry.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		}
 	}
 	for _, entry := range rc.Consumer.Toolkit() {
@@ -250,7 +250,7 @@ func SurfaceFingerprint(rc *appconsumer.RoutableConsumer, dynamic []string) stri
 	parts := make([]string, 0, len(rc.Registries))
 	for _, registry := range rc.Registries {
 		if registry != nil && registry.IsMCP() {
-			parts = append(parts, registry.ID.String()+"@"+registry.UpdatedAt.UTC().Format(time.RFC3339Nano)+pinSuffix(registry))
+			parts = append(parts, registry.ID.String()+"@"+registry.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		}
 	}
 	for _, entry := range rc.Consumer.Toolkit() {
@@ -370,7 +370,7 @@ func (w *surfaceWatcher) loadSurface(
 		if registry == nil {
 			continue
 		}
-		parts = append(parts, "sf:"+registry.ID.String()+"/"+registry.Name+pinSuffix(registry))
+		parts = append(parts, "sf:"+registry.ID.String()+"/"+registry.Name)
 	}
 	sort.Strings(parts)
 	return parts, nil

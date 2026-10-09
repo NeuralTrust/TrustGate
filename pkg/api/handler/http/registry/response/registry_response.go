@@ -104,7 +104,6 @@ type RegistryResponse struct {
 	Provider        string                `json:"provider,omitempty"`
 	ProviderOptions map[string]any        `json:"provider_options,omitempty"`
 	Description     string                `json:"description,omitempty"`
-	ToolPolicy      string                `json:"tool_policy,omitempty"`
 	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
 	Pricing         *PricingResponse      `json:"pricing,omitempty"`
@@ -253,7 +252,6 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		Provider:        b.Provider(),
 		ProviderOptions: b.ProviderOptions(),
 		Description:     b.Description,
-		ToolPolicy:      string(b.ToolPolicy.Normalize()),
 		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,
 		Pricing:         fromPricing(b.Pricing()),

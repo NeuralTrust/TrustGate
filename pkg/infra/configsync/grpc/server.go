@@ -43,11 +43,6 @@ type Server struct {
 // auth interceptors as the rest.
 type ServiceRegistration func(grpc.ServiceRegistrar)
 
-// RegisterPinnedTools returns the registration of the PinnedTools channel.
-func RegisterPinnedTools(srv snapshotpb.PinnedToolsServer) ServiceRegistration {
-	return func(r grpc.ServiceRegistrar) { snapshotpb.RegisterPinnedToolsServer(r, srv) }
-}
-
 // NewServer builds the control-plane ConfigSync gRPC listener with TLS (when
 // configured), the auth interceptors, and keepalive enforcement. The optional
 // installations service, when non-nil, is registered on the same listener so the

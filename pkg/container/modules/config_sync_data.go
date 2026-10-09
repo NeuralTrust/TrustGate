@@ -21,7 +21,6 @@ import (
 	"log/slog"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
-	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -100,13 +99,6 @@ func ConfigSyncData(c *container.Container) error {
 	// plane too: this plane cannot write auths.
 	if err := c.Provide(func(client *configsyncgrpc.Client) appauth.PersonalKeyIssuer {
 		return configsyncgrpc.NewPersonalKeysClient(client.ClientConn())
-	}); err != nil {
-		return err
-	}
-	// Pending pinned tools reach the control plane over the same connection; the
-	// recorder in MCP wraps this port with the queue, dedupe and retries.
-	if err := c.Provide(func(client *configsyncgrpc.Client, logger *slog.Logger) appmcp.PendingToolRecorder {
-		return configsyncgrpc.NewPinnedToolsClient(client.ClientConn(), logger)
 	}); err != nil {
 		return err
 	}

@@ -35,10 +35,6 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/noop"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -67,17 +63,10 @@ type Compiler struct {
 	// grants, which fails closed (nobody is granted under Selected access).
 	grants        StoreGrantReader
 	storePolicies StorePolicyReader
-	// pinnedTools is optional: the decided tool set of pinned MCP registries
-	// rides the snapshot when a reader is wired (WithPinnedTools). Without one a
-	// pinned registry carries no set, which fails closed (nothing is approved).
-	pinnedTools PinnedToolReader
 	// sharedOAuth is optional: it fills the platform's shared OAuth client
 	// secret into the registries that use that client (WithSharedOAuth).
 	sharedOAuth mcpoauth.Provider
-	// pinnedErrors counts failed reads of a pinned registry's decisions, by kind
-	// (corrupt or transient). It is created once with the reader.
-	pinnedErrors metric.Int64Counter
-	logger       *slog.Logger
+	logger      *slog.Logger
 	// playgroundTokenKeys are stamped into every compiled snapshot so data
 	// planes can verify RS256 playground tokens without any local key config.
 	playgroundTokenKeys []readmodel.VerificationKey
@@ -103,37 +92,12 @@ type StorePolicyReader interface {
 	ListPolicies(ctx context.Context, page, size int) ([]*storeaccessdomain.Policy, int, error)
 }
 
-// PinnedToolReader is the read side the compiler needs for the tool decisions
-// of pinned registries.
-type PinnedToolReader interface {
-	ListByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]registrydomain.PinnedTool, error)
-}
-
 // CompilerOption tunes NewCompiler.
 type CompilerOption func(*Compiler)
 
 // WithStoreGrants includes the MCP Store access grants in every snapshot.
 func WithStoreGrants(r StoreGrantReader) CompilerOption {
 	return func(c *Compiler) { c.grants = r }
-}
-
-// WithPinnedTools stamps every pinned registry with its approved and rejected
-// tools. The registry_tools table changes on its own, so whoever writes a
-// decision must also bump the registry (its updated_at and a change marker) for
-// a new snapshot to be compiled and for the data planes' discovery cache keys
-// to change.
-func WithPinnedTools(r PinnedToolReader) CompilerOption {
-	return func(c *Compiler) {
-		c.pinnedTools = r
-		counter, err := otel.Meter("trustgate/configsnapshot").Int64Counter(
-			"trustgate.configsnapshot.pinned_tools.errors",
-			metric.WithDescription("failed reads of a pinned registry's tool decisions while compiling a snapshot"),
-		)
-		if err != nil {
-			counter = noop.Int64Counter{}
-		}
-		c.pinnedErrors = counter
-	}
 }
 
 // WithSharedOAuth fills the platform's shared OAuth client secret into every
@@ -531,9 +495,6 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	if err := c.attachPinnedTools(ctx, registries); err != nil {
-		return nil, err
-	}
 
 	byGateway := make(map[ids.GatewayID]*readmodel.Data)
 	groupByGateway(byGateway, consumers, func(x *consumerdomain.Consumer) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x consumerdomain.Consumer) { data.Consumers = append(data.Consumers, x) })
@@ -712,9 +673,6 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 	}
 	data.Registries = append(data.Registries, registries...)
 	for i := range data.Registries {
-		if err := c.attachPinnedTools(ctx, []*registrydomain.Registry{&data.Registries[i]}); err != nil {
-			return err
-		}
 		c.attachSharedOAuth(&data.Registries[i])
 	}
 
@@ -758,31 +716,6 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 			}
 			data.StorePolicies = append(data.StorePolicies, *p)
 		}
-	}
-	return nil
-}
-
-// attachPinnedTools fills the decided set of every pinned registry. Auto
-// registries are never read and keep their bytes.
-//
-// A transient read error fails the compile: publishing a pinned registry without
-// its set would hide tools that were approved, so the data planes keep their
-// last good snapshot instead. Corrupt persisted rows (ErrCorruptData) keep their
-// own gateway out of the snapshot like every other corrupt entity: the bulk
-// collect falls back to per-gateway collection, which skips that gateway with a
-// WARN, so one tenant's bad row cannot freeze config for all the others. Both
-// are counted.
-func (c *Compiler) attachPinnedTools(ctx context.Context, registries []*registrydomain.Registry) error {
-	if c.pinnedTools == nil {
-		return nil
-	}
-	if err := registrydomain.StampPinnedTools(ctx, c.pinnedTools, registries); err != nil {
-		kind := "transient"
-		if errors.Is(err, commonerrors.ErrCorruptData) {
-			kind = "corrupt"
-		}
-		c.pinnedErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", kind)))
-		return fmt.Errorf("configsnapshot: %w", err)
 	}
 	return nil
 }
