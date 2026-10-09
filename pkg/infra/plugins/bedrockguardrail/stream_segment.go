@@ -39,6 +39,27 @@ const anonymizeDegradedMessage = "response blocked: guardrail masking could not 
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 var _ appplugins.StreamChunkParallelism = (*Plugin)(nil)
+var _ appplugins.StreamPieceSpacing = (*Plugin)(nil)
+var _ appplugins.StreamThrottleAttribution = (*Plugin)(nil)
+var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+
+// SpaceStreamPieces spaces the pieces of one block with the buffered leg's
+// spacer, at the policy's region floor, so a block's own calls stay under the
+// quota. The spacer belongs to the block: it starts full and is dropped with it.
+func (p *Plugin) SpaceStreamPieces(in appplugins.ExecInput) func(ctx context.Context, bytes int) error {
+	cfg, err := parseConfig(in.Config.Settings)
+	if err != nil {
+		return nil
+	}
+	return newSpacer(floorFor(credentialsFromConfig(cfg.Credentials).region)).wait
+}
+
+// StreamThrottleIsOtherTraffic is true: the pieces of a block are spaced under
+// the region's floor, so a throttle on one is other traffic and availability.
+func (p *Plugin) StreamThrottleIsOtherTraffic() bool { return true }
+
+// StreamGuardTimeout is the time one piece's call may take.
+func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
 
 // StreamChunkParallel is 1: the pieces of a block are sent one at a time, as the
 // buffered leg sends its chunks, because the region's quota is on text units a
