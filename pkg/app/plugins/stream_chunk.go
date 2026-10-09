@@ -49,6 +49,22 @@ type StreamPayloadBound interface {
 	BoundsStreamPayload() bool
 }
 
+// StreamChunkParallelism is the optional declaration of a StreamInspector that
+// cannot take the executor's default number of calls at once, because its
+// provider meters calls it cannot tell apart (a quota on units a second): the
+// pieces of a block are sent that many at a time. An inspector that does not
+// declare it is sent streamChunkParallel pieces at once.
+type StreamChunkParallelism interface {
+	StreamChunkParallel() int
+}
+
+func chunkParallelOf(inspector StreamInspector) int {
+	if p, ok := inspector.(StreamChunkParallelism); ok && p.StreamChunkParallel() >= 1 {
+		return p.StreamChunkParallel()
+	}
+	return streamChunkParallel
+}
+
 func boundsOwnPayload(inspector StreamInspector) bool {
 	b, ok := inspector.(StreamPayloadBound)
 	return ok && b.BoundsStreamPayload()
@@ -96,7 +112,7 @@ func (e *executor) inspectChunked(
 
 	verdicts := make([]*SegmentVerdict, len(chunks))
 	outs := textchunk.Run(ctx, chunks, textchunk.RunOptions{
-		Parallel: streamChunkParallel,
+		Parallel: chunkParallelOf(inspector),
 		StopOn:   func(i int) bool { return Blocks(entry.mode) && verdicts[i] != nil && verdicts[i].Block },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		piece := call
