@@ -60,7 +60,7 @@ func (f *limitedAzure) server(t *testing.T) *httptest.Server {
 		if strings.Contains(body.Text, "FLAGGED") {
 			severity = 4
 		}
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"categoriesAnalysis":[{"category":"Hate","severity":%d}]}`, severity)))
+		_, _ = fmt.Fprintf(w, `{"categoriesAnalysis":[{"category":"Hate","severity":%d}]}`, severity)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
