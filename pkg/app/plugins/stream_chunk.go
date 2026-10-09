@@ -34,9 +34,10 @@ import (
 // it is sent the block whole, as one call, because it is one evaluation of the
 // whole block that it answers for.
 const (
-	maxStreamChunks       = 8
-	streamChunkParallel   = 4
-	maxStreamChunkOverlap = 2048
+	maxStreamChunks        = 8
+	streamChunkParallel    = 4
+	streamChunkOverlap     = 4096
+	streamChunkOverlapFrom = 32 << 10
 )
 
 // StreamPayloadBound is the optional declaration of a StreamInspector that
@@ -53,8 +54,18 @@ func boundsOwnPayload(inspector StreamInspector) bool {
 	return ok && b.BoundsStreamPayload()
 }
 
+// streamChunkSpec is how a block is cut for a window. A window of 32 KiB or more
+// shares 4,096 bytes between neighbours, so a long secret (a PEM key, a
+// service-account JSON of about 3.5 KB) lies whole in one chunk; a smaller
+// window cannot spare that much and shares an eighth of itself. The residual is
+// a pattern longer than the overlap, or a context that a cut separates by more
+// than it.
 func streamChunkSpec(window int) textchunk.Spec {
-	return textchunk.Spec{Max: window, Overlap: min(window/8, maxStreamChunkOverlap), Unit: textchunk.Bytes}
+	overlap := window / 8
+	if window >= streamChunkOverlapFrom {
+		overlap = streamChunkOverlap
+	}
+	return textchunk.Spec{Max: window, Overlap: min(overlap, textchunk.MaxOverlap(window)), Unit: textchunk.Bytes}
 }
 
 // inspectChunked calls inspector once per chunk of call.Accumulated and merges

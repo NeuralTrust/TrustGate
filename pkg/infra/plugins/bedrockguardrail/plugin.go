@@ -247,8 +247,10 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // text unit is up to 1,000 characters (a partial unit is billed whole), so 24
 // units per chunk fits it whatever the region. Bytes are never fewer than
 // characters, and AWS does not say whether its characters are code points or
-// UTF-16 units, which bytes bound both. The overlap keeps a secret or a pattern
-// that straddles a cut whole in one chunk; it re-bills about 4%.
+// UTF-16 units, which bytes bound both. The overlap is 4,096 bytes, enough that
+// a long secret (a PEM key, a service-account JSON of about 3.5 KB) lies whole
+// in one chunk; it re-bills about 17%. A pattern longer than the overlap, or a
+// context that a cut separates by more than it, can still be cut in two.
 //
 // Only the last user message of a request (or the whole response) is sent.
 //
@@ -265,7 +267,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // https://aws.amazon.com/blogs/machine-learning/use-the-applyguardrail-api-with-long-context-inputs-and-streaming-outputs-in-amazon-bedrock/
 const (
 	chunkBytes        = 24000
-	chunkOverlap      = 1000
+	chunkOverlap      = 4096
 	maxBufferedChunks = 32
 	chunkParallel     = 4
 	bufferedBudget    = 10 * time.Second

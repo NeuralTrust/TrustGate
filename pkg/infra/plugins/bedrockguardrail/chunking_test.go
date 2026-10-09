@@ -17,6 +17,7 @@ package bedrockguardrail
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -213,4 +214,37 @@ func TestPartialCoverageOnOneChunkRefusesTheRequest(t *testing.T) {
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 	require.True(t, ok)
 	assert.Equal(t, appplugins.DetailCoveragePartial, extras.FailureDetail)
+}
+
+// pemLike is a secret as long as a PEM key or a service-account JSON, with the
+// line breaks such text has: a chunk may end at one of them, inside the secret.
+func pemLike(bytes int) string {
+	var b strings.Builder
+	b.WriteString("SECRET-BEGIN\n")
+	for b.Len() < bytes-len("SECRET-END") {
+		b.WriteString(strings.Repeat("k", 63) + "\n")
+	}
+	b.WriteString("SECRET-END")
+	return b.String()
+}
+
+// The overlap is what lets a secret that a cut falls inside be seen whole in the
+// next chunk: here 3,000 of its 3,500 bytes are in the first chunk.
+func TestALongSecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
+	t.Parallel()
+	g := scripted(func(in *bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+		if text := textOf(in); strings.Contains(text, "SECRET-BEGIN") && strings.Contains(text, "SECRET-END") {
+			return topicBlockedOutput(), nil
+		}
+		return allowOutput(), nil
+	})
+	p := streamPlugin(t, g)
+	text := benignWords(chunkBytes-3000) + " " + pemLike(3500) + " " + benignWords(5000)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("us-east-1"), chatRequestOf(t, text), nil)
+
+	_, err := p.Execute(context.Background(), in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 }

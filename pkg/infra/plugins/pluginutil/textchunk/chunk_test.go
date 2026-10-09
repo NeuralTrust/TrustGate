@@ -15,6 +15,7 @@
 package textchunk
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -133,15 +134,17 @@ func TestSplitBreaksOnANewlineThenAnySpaceInTheLastEighth(t *testing.T) {
 
 func TestSplitTextWithinMaxIsOneChunk(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []Chunk{{Start: 0, End: 5, Text: "hello"}}, Split("hello", Spec{Max: 5, Overlap: 1, Unit: Bytes}))
-	assert.Equal(t, []Chunk{{}}, Split("", Spec{Max: 5, Overlap: 1, Unit: Bytes}))
-	assert.Equal(t, 1, Count("", Spec{Max: 5, Overlap: 1, Unit: Bytes}))
+	assert.Equal(t, []Chunk{{Start: 0, End: 5, Text: "hello"}}, Split("hello", Spec{Max: 16, Overlap: 1, Unit: Bytes}))
+	assert.Equal(t, []Chunk{{}}, Split("", Spec{Max: 16, Overlap: 1, Unit: Bytes}))
+	assert.Equal(t, 1, Count("", Spec{Max: 16, Overlap: 1, Unit: Bytes}))
 }
 
 func TestSplitPanicsOnASpecThatCannotAdvance(t *testing.T) {
 	t.Parallel()
 	assert.Panics(t, func() { Split("x", Spec{Max: 4, Overlap: 4}) })
 	assert.Panics(t, func() { Count("x", Spec{Max: 0}) })
+	assert.Panics(t, func() { Split("x", Spec{Max: 100, Overlap: MaxOverlap(100) + 1}) })
+	assert.NotPanics(t, func() { Split("x", Spec{Max: 100, Overlap: MaxOverlap(100)}) })
 }
 
 func TestSplitSurvivesInvalidUTF8(t *testing.T) {
@@ -165,10 +168,31 @@ func FuzzSplitOverlapGuarantee(f *testing.F) {
 		if utf16 {
 			s.Unit = UTF16
 		}
-		if s.Max < 12 || s.Overlap >= s.Max-8 {
+		if s.Max < 1 || s.Overlap > MaxOverlap(s.Max) {
 			t.Skip()
 		}
 		chunks := assertInvariants(t, text, s)
 		assertOverlapGuarantee(t, text, s, chunks)
 	})
+}
+
+// A window shared with its neighbour by more than the shortest chunk cannot
+// promise the overlap, so the bound is what the guarantee needs and not just a
+// margin of one rune: a spec just inside it holds on text whose spaces fall
+// where they cut chunks shortest.
+func TestTheLargestOverlapAWindowAllowsKeepsTheGuarantee(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewSource(7))
+	for iter := 0; iter < 300; iter++ {
+		var b strings.Builder
+		for b.Len() < 1500 {
+			b.WriteString(strings.Repeat("a", rng.Intn(60)))
+			b.WriteString(" ")
+		}
+		max := 24 + rng.Intn(200)
+		for _, u := range []Unit{Bytes, UTF16} {
+			s := Spec{Max: max, Overlap: MaxOverlap(max), Unit: u}
+			assertOverlapGuarantee(t, b.String(), s, Split(b.String(), s))
+		}
+	}
 }

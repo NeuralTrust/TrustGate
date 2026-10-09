@@ -232,3 +232,20 @@ func TestRunStreamSegment_ABlockRefusedForItsSizeIsNotCountedAsChunked(t *testin
 	assert.Empty(t, guard.seen())
 	assert.Zero(t, guard.last.ChunkedEvals, "a block that was refused was never screened in chunks")
 }
+
+// A window is an operator's setting, so any size must make a spec Split accepts,
+// and a window that holds a long secret shares enough to keep it whole.
+func TestStreamChunkSpecIsValidForEveryWindow(t *testing.T) {
+	t.Parallel()
+	for window := 1; window <= 300; window++ {
+		spec := streamChunkSpec(window)
+		assert.NotPanics(t, func() { textchunk.Split(words(1000), spec) }, "window %d", window)
+	}
+	for _, window := range []int{8 << 10, 32<<10 - 1, 32 << 10, 56 << 10, 64 << 10, 256 << 10} {
+		spec := streamChunkSpec(window)
+		assert.NotPanics(t, func() { textchunk.Count(words(window*2), spec) }, "window %d", window)
+	}
+	assert.Equal(t, 1024, streamChunkSpec(8<<10).Overlap, "a small window shares an eighth of itself")
+	assert.Equal(t, 4096, streamChunkSpec(32<<10).Overlap, "a window of 32 KiB or more holds a 3.5 KB secret whole")
+	assert.Equal(t, 4096, streamChunkSpec(56<<10).Overlap)
+}

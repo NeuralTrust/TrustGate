@@ -226,3 +226,34 @@ func TestAThresholdedCategoryMissingFromOneChunkFailsOpen(t *testing.T) {
 	assert.Equal(t, string(appplugins.FailureVerdictIncomplete), extras.FailureReason)
 	assert.Equal(t, "hate", extras.FailureDetail)
 }
+
+// pemLike is a secret as long as a PEM key or a service-account JSON, with the
+// line breaks such text has: a chunk may end at one of them, inside the secret.
+func pemLike(bytes int) string {
+	var b strings.Builder
+	b.WriteString("SECRET-BEGIN\n")
+	for b.Len() < bytes-len("SECRET-END") {
+		b.WriteString(strings.Repeat("k", 63) + "\n")
+	}
+	b.WriteString("SECRET-END")
+	return b.String()
+}
+
+// The overlap is what lets a secret that a cut falls inside be seen whole in the
+// next chunk: here 3,000 of its 3,500 bytes are in the first chunk.
+func TestALongSecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
+	t.Parallel()
+	stub := &moderationStub{flag: func(s string) bool {
+		return strings.Contains(s, "SECRET-BEGIN") && strings.Contains(s, "SECRET-END")
+	}}
+	srv := stub.server(t)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+	text := benignText(32)[:chunkBytes-3000] + " " + pemLike(3500) + " " + benignText(5)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, text), nil, nil)
+
+	_, err := p.Execute(context.Background(), in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+}
