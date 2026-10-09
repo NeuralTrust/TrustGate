@@ -38,6 +38,8 @@ const (
 	decisionAllowed  = "allowed"
 )
 
+const roleUser = "user"
+
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
@@ -152,7 +154,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if creq == nil {
 		return passThrough(), nil
 	}
-	text := joinRequestText(creq)
+	text := lastUserText(creq)
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
@@ -260,17 +262,18 @@ func (p *Plugin) externalFailure(
 	return outcome.Result, nil
 }
 
-func joinRequestText(creq *adapter.CanonicalRequest) string {
-	parts := make([]string, 0, len(creq.Messages)+1)
-	if strings.TrimSpace(creq.System) != "" {
-		parts = append(parts, creq.System)
-	}
-	for _, msg := range creq.Messages {
-		if strings.TrimSpace(msg.Content) != "" {
-			parts = append(parts, msg.Content)
+// lastUserText is the text of the last user turn, the same span
+// bedrock_guardrail and google_model_armor read on pre_request. Azure caps the
+// text it analyses at 10K characters, and a system prompt plus the history of a
+// long conversation would cross it on a request whose own content is short.
+func lastUserText(creq *adapter.CanonicalRequest) string {
+	for i := len(creq.Messages) - 1; i >= 0; i-- {
+		msg := creq.Messages[i]
+		if msg.Role == roleUser && strings.TrimSpace(msg.Content) != "" {
+			return msg.Content
 		}
 	}
-	return strings.Join(parts, "\n")
+	return ""
 }
 
 // evaluate reports every breached category plus, when none breached, the
