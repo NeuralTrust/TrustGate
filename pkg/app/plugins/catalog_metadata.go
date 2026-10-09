@@ -1039,14 +1039,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "guardrail_id",
 					Label:       "Guardrail ID",
 					Type:        FieldTypeString,
-					Description: "AWS Bedrock guardrail identifier.",
+					Description: "AWS Bedrock guardrail identifier: the lowercase alphanumeric ID, or the full guardrail ARN (arn:aws:bedrock:<region>:<account>:guardrail/<id>).",
 					Required:    true,
 				},
 				{
 					Key:         "version",
 					Label:       "Version",
 					Type:        FieldTypeString,
-					Description: "Guardrail version. Defaults to DRAFT.",
+					Description: "Guardrail version: DRAFT, or a version number from 1 to 99999999. Defaults to DRAFT.",
 					Default:     "DRAFT",
 				},
 				{
@@ -1093,7 +1093,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "session_name",
 							Label:       "Session Name",
 							Type:        FieldTypeString,
-							Description: "STS assume-role session name.",
+							Description: "STS assume-role session name: 2 to 64 characters from letters, digits and + = , . @ _ -.",
 							Default:     "BedrockClientSession",
 						},
 						{
