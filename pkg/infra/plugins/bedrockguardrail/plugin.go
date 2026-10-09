@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -67,6 +68,10 @@ type Plugin struct {
 	registry   *adapter.Registry
 	guardrails *cachedGuardrailClient
 	logger     *slog.Logger
+	// throttledStreams holds the streams whose first throttled block has been
+	// seen, so a sustained throttle does not add a backoff to every later
+	// block. A stream's closing segment removes its entry.
+	throttledStreams sync.Map
 }
 
 func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
@@ -244,7 +249,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 			fmt.Errorf("bedrock_guardrail: text exceeds the %d characters a buffered leg sends", maxBufferedTextChars))
 	}
 	start := time.Now()
-	out, err := p.guardrails.ApplyWithBackoff(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
+	out, err := p.guardrails.ApplyWithBackoff(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source), callLimitsFor(len(text)))
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		reason, detail := classifyApplyErr(err)

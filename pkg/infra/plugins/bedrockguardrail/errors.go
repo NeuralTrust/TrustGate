@@ -27,7 +27,8 @@ import (
 )
 
 // notAboutTheInput are the AWS error types of a 4xx that say nothing about the
-// content of the call: who is asking, how fast, and what the policy points at.
+// content of the call: who is asking and what the policy points at. The
+// account's quota answering is throttlingErrors, read before this table.
 // The type is read rather than only the status because AWS answers some of them
 // with a status that looks like a malformed request (ExpiredTokenException and
 // ServiceQuotaExceededException are HTTP 400).
@@ -45,23 +46,16 @@ var notAboutTheInput = map[string]struct{}{
 	"SignatureDoesNotMatch":       {},
 	"RequestExpired":              {},
 	"NotAuthorized":               {},
-	// Throttling and quotas.
-	"ThrottlingException":      {},
-	"Throttling":               {},
-	"ThrottledException":       {},
-	"TooManyRequestsException": {},
-	"RequestLimitExceeded":     {},
-	// ServiceQuotaExceededException is the account's quota (on-demand text units
-	// per second, per region), which no request content decides. An oversize
-	// text is reported by GuardrailCoverage or a ValidationException instead.
-	"ServiceQuotaExceededException": {},
 	// The guardrail the policy names is not there: configuration, not content.
 	"ResourceNotFoundException": {},
 }
 
 // throttlingErrors are the AWS error types of the account's per-second quota
 // answering, which are availability and never evidence about the content.
-// ServiceQuotaExceededException is an HTTP 400 that is the same quota.
+// ServiceQuotaExceededException is an HTTP 400 that is the same quota (on-demand
+// text units per second, per region), which no request content decides; an
+// oversize text is reported by GuardrailCoverage or a ValidationException
+// instead.
 var throttlingErrors = map[string]struct{}{
 	"ThrottlingException":           {},
 	"Throttling":                    {},
