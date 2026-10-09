@@ -180,7 +180,10 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
-const streamOnErrorFailOpen = "fail_open"
+const (
+	streamOnErrorFailOpen   = "fail_open"
+	streamOnErrorFailClosed = "fail_closed"
+)
 
 // StreamPlan reports whether any entry of the stage opted into per-segment
 // inspection *and* has it enabled, and yields the options that entry runs
@@ -202,15 +205,16 @@ const streamOnErrorFailOpen = "fail_open"
 // participant's explicit choice or run its provider over a payload it cannot
 // take:
 //
-//   - on_error is fail_open whenever an owner takes part. Owners are the
-//     guardrails, whose availability failures fail open and whose content-
-//     dependent failures arrive as a cut verdict rather than an error, and a
-//     passive rewriter never fails a call. The guard applies this one value only to an error the executor hands
-//     it, and RunStreamSegment hands back only the error of an entry whose own
-//     options say fail_closed (a rewriter such as regex_replace): everything
-//     else is absorbed per entry. So the guard cannot cut on behalf of a
-//     guardrail that failed, and a rewriter that rides alongside one inherits
-//     the owner's fail_open.
+//   - on_error is fail_open whenever an owner takes part, unless an enforcing
+//     passive participant resolves fail_closed. Owners are the guardrails,
+//     whose availability failures fail open and whose content-dependent
+//     failures arrive as a cut verdict rather than an error, so their own
+//     on_error is never read. The guard applies this one value only to an error
+//     the executor hands it, and RunStreamSegment hands back only the error of
+//     an entry whose own options say fail_closed (a rewriter such as
+//     regex_replace): everything else is absorbed per entry. So the guard cannot
+//     cut on behalf of a guardrail that failed, and a rewriter that asked for
+//     fail_closed keeps it beside one, whatever the order of the two.
 //   - max_accumulated_bytes is the largest any participant asks for, passive
 //     ones included, and the executor narrows each entry to its own
 //     (segmentWithin). No provider receives a larger prefix than its policy
@@ -230,6 +234,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		owner      StreamOptions
 		hasOwner   bool
 		maxBytes   int
+		failClosed bool
 	)
 	for _, entry := range p.byStage[stage] {
 		inspector, ok := streamInspector(entry.plugin)
@@ -242,6 +247,9 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		}
 		maxBytes = max(maxBytes, opts.MaxAccumulatedBytes)
 		if !ownsStreamOptions(entry.plugin) {
+			if Blocks(entry.mode) && opts.OnError == streamOnErrorFailClosed {
+				failClosed = true
+			}
 			if !hasPassive {
 				passive, hasPassive = opts, true
 			}
@@ -253,6 +261,9 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 	}
 	if hasOwner {
 		owner.OnError = streamOnErrorFailOpen
+		if failClosed {
+			owner.OnError = streamOnErrorFailClosed
+		}
 		if maxBytes > 0 {
 			owner.MaxAccumulatedBytes = maxBytes
 		}
