@@ -268,3 +268,74 @@ func TestExecutePartialOnlyBlocksThroughASkippedBlockOnFilter(t *testing.T) {
 	res, err := p.Execute(context.Background(), in)
 	assertPassThrough(t, res, err)
 }
+
+// A text above the local ceiling is refused as the input's before any call: a
+// blocking mode refuses it and observe records it. A text under it reaches
+// Model Armor whole.
+func TestBufferedLegsRefuseTextAboveTheCeilingLocally(t *testing.T) {
+	t.Parallel()
+	body := func(text string) []byte {
+		return []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + text + `"}]}`)
+	}
+	response := func(text string) []byte {
+		return []byte(`{"id":"r1","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"` + text + `"},"finish_reason":"stop"}]}`)
+	}
+	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+			t.Run(string(stage)+" "+string(mode)+" 600 KiB", func(t *testing.T) {
+				t.Parallel()
+				stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+				p := pluginWithStub(stub)
+				event, span := newStreamEvent()
+				big := strings.Repeat("a", 600<<10)
+				var in appplugins.ExecInput
+				if stage == policy.StagePreRequest {
+					in = execInput(stage, mode, modelArmorSettings(), reqCtx(body(big)), nil)
+				} else {
+					in = execInput(stage, mode, modelArmorSettings(), reqCtx(body("hi")), respCtx(response(big), false))
+				}
+				in.Event = event
+
+				res, err := p.Execute(context.Background(), in)
+
+				wantDecision := "failed_open"
+				if mode == policy.ModeEnforce {
+					wantDecision = "failed_closed"
+					pe, ok := appplugins.AsPluginError(err)
+					if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+						t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+					}
+				} else {
+					assertPassThrough(t, res, err)
+				}
+				if stub.count() != 0 {
+					t.Fatalf("an oversize text reached Model Armor %d times", stub.count())
+				}
+				data, ok := span.PluginAttrsCopy().Extras.(*Data)
+				if !ok || data.Decision != wantDecision || data.FailureClass != "input" ||
+					data.FailureReason != string(appplugins.FailureInputTooLarge) || data.FailureDetail != appplugins.DetailPayloadTooLarge {
+					t.Fatalf("extras = %+v, ok=%v", data, ok)
+				}
+			})
+			t.Run(string(stage)+" "+string(mode)+" 100 KiB", func(t *testing.T) {
+				t.Parallel()
+				stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+				p := pluginWithStub(stub)
+				text := strings.Repeat("a", 100<<10)
+				var in appplugins.ExecInput
+				if stage == policy.StagePreRequest {
+					in = execInput(stage, mode, modelArmorSettings(), reqCtx(body(text)), nil)
+				} else {
+					in = execInput(stage, mode, modelArmorSettings(), reqCtx(body("hi")), respCtx(response(text), false))
+				}
+
+				res, err := p.Execute(context.Background(), in)
+
+				assertPassThrough(t, res, err)
+				if stub.count() != 1 || !strings.Contains(string(stub.lastBody), text) {
+					t.Fatalf("want the whole text in one call, got %d calls", stub.count())
+				}
+			})
+		}
+	}
+}

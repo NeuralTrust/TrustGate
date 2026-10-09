@@ -259,6 +259,9 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
+	if res, err, refused := p.refuseOversize(ctx, in, cfg, text); refused {
+		return res, err
+	}
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
@@ -309,6 +312,9 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
+	if res, err, refused := p.refuseOversize(ctx, in, cfg, text); refused {
+		return res, err
+	}
 	userPrompt := correlationPrompt(p.registry, format, in.Request.Body)
 	span := rewriteSpan{
 		format:     format,
@@ -321,6 +327,33 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 		return cl.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, text, userPrompt)
 	}
 	return p.runGuardrail(ctx, in, cfg, sanitize, span)
+}
+
+// maxBufferedTextBytes is the longest text a buffered leg sends to Model Armor.
+// Google screens at most 65,536 tokens with the prompt injection, Responsible AI
+// and CSAM filters and 130,000 with Sensitive Data Protection
+// (https://docs.cloud.google.com/model-armor/quotas), which is about 256 KiB and
+// 512 KiB of English at the most generous four characters per token, so no text
+// under this bound is one a filter would have read whole anyway. It also keeps a
+// de-identify answer, which carries the text once more, well under
+// maxResponseBytes (1 MiB) and the call inside its timeout. A longer text is the
+// input's doing and is refused locally as input_too_large, instead of ending as
+// a transport failure after a slow call.
+const maxBufferedTextBytes = 512 << 10
+
+// refuseOversize reports, with the outcome to return, that text is above
+// maxBufferedTextBytes. A response that exceeds maxResponseBytes on a text under
+// the bound is the provider's and stays a transport failure.
+func (p *Plugin) refuseOversize(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string) (*appplugins.Result, error, bool) {
+	if len(text) <= maxBufferedTextBytes {
+		return nil, nil, false
+	}
+	res, err := p.externalFailure(ctx, in, cfg, 0, failureInfo{
+		reason:      appplugins.FailureInputTooLarge,
+		armorReason: appplugins.DetailPayloadTooLarge,
+		err:         fmt.Errorf("model_armor: text exceeds the %d bytes a buffered leg sends", maxBufferedTextBytes),
+	})
+	return res, err, true
 }
 
 // maxCorrelationPromptBytes bounds the user prompt sent along with a response.
