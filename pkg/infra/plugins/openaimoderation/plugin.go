@@ -39,6 +39,15 @@ const (
 	decisionAllowed  = "allowed"
 )
 
+// maxBufferedTextBytes is the longest text a buffered leg sends to the
+// moderation endpoint. omni-moderation reads up to 32,768 tokens
+// (https://platform.openai.com/docs/guides/moderation), which is about 128 KiB
+// of English at four characters per token, so 256 KiB is twice what the model
+// can read and far above any prompt. Above it the text is the input's doing and
+// is refused locally as payload_too_large instead of ending in a timeout, which
+// fails open.
+const maxBufferedTextBytes = 256 << 10
+
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
@@ -300,6 +309,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
+	}
+
+	if len(text) > maxBufferedTextBytes {
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
+			fmt.Errorf("openai_moderation: text exceeds the %d bytes a buffered leg sends", maxBufferedTextBytes))
 	}
 
 	req := moderationRequest{

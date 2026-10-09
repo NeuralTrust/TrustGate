@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -223,7 +224,25 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceOutput, span)
 }
 
+// maxBufferedTextChars is the longest text a buffered leg sends to
+// ApplyGuardrail, counted in characters as AWS bills them (a text unit is up to
+// 1,000 characters). The per-policy burst quota of the largest-quota regions is
+// 1,000 text units, so no region can serve a longer text in one call whatever
+// its quota: above it the text is the input's doing and is refused locally as
+// payload_too_large instead of ending in a timeout, which fails open.
+//
+// The bound is deliberately the ceiling of the most generous region rather than
+// of the smallest. Regions with 25 text units per second throttle a long text
+// well below it, but that is availability (the quota, not the content), so
+// refusing there would turn a quota into a 403 and would also refuse texts the
+// large-quota regions accept.
+const maxBufferedTextChars = 1_000_000
+
 func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string, source types.GuardrailContentSource, span rewriteSpan) (*appplugins.Result, error) {
+	if utf8.RuneCountInString(text) > maxBufferedTextChars {
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge,
+			fmt.Errorf("bedrock_guardrail: text exceeds the %d characters a buffered leg sends", maxBufferedTextChars))
+	}
 	start := time.Now()
 	out, err := p.guardrails.ApplyGuardrail(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
 	latency := time.Since(start).Milliseconds()

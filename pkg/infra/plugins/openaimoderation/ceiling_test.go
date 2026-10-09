@@ -1,0 +1,115 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package openaimoderation
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+)
+
+func chatRequestOf(t *testing.T, text string) *infracontext.RequestContext {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": text}}})
+	require.NoError(t, err)
+	req := requestContext()
+	req.Body = raw
+	return req
+}
+
+func chatResponseOf(t *testing.T, text string) *infracontext.ResponseContext {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"id": "c", "object": "chat.completion", "model": "gpt-4o",
+		"choices": []map[string]any{{"index": 0, "message": map[string]string{"role": "assistant", "content": text}, "finish_reason": "stop"}},
+	})
+	require.NoError(t, err)
+	return &infracontext.ResponseContext{StatusCode: http.StatusOK, Body: raw}
+}
+
+// A text far above what the moderation model reads is the client's doing and
+// would only run the call into its timeout, which fails open. It is refused
+// locally as input before a call; one under the bound is sent whole.
+func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
+	t.Parallel()
+
+	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+			t.Run(string(stage)+" "+string(mode)+" over", func(t *testing.T) {
+				t.Parallel()
+				f := &fakeModerator{response: moderationResponse{ID: "m", Results: []moderationResult{{}}}}
+				srv := newModeratorServer(t, f)
+				p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+				event, span := newEvent()
+				big := strings.Repeat("a", 2<<20)
+				in := execInput(stage, mode, blockSettings(), requestContext(), nil, event)
+				if stage == policy.StagePreRequest {
+					in.Request = chatRequestOf(t, big)
+				} else {
+					in.Request = requestContext()
+					in.Response = chatResponseOf(t, big)
+				}
+
+				res, err := p.Execute(context.Background(), in)
+
+				f.mu.Lock()
+				hits := f.hits
+				f.mu.Unlock()
+				assert.Zero(t, hits, "an oversize text must not reach OpenAI")
+				extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+				require.True(t, ok)
+				assert.Equal(t, "input", extras.FailureClass)
+				if mode == policy.ModeEnforce {
+					pe, isPE := appplugins.AsPluginError(err)
+					require.True(t, isPE, "want a refusal, got res=%v err=%v", res, err)
+					assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, "failed_open", extras.Decision)
+			})
+			t.Run(string(stage)+" "+string(mode)+" under", func(t *testing.T) {
+				t.Parallel()
+				f := &fakeModerator{response: moderationResponse{ID: "m", Results: []moderationResult{{
+					Categories: map[string]bool{"hate": false}, CategoryScores: map[string]float64{"hate": 0.01},
+				}}}}
+				srv := newModeratorServer(t, f)
+				p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+				text := strings.Repeat("a", 50<<10)
+				in := execInput(stage, mode, blockSettings(), requestContext(), nil, nil)
+				if stage == policy.StagePreRequest {
+					in.Request = chatRequestOf(t, text)
+				} else {
+					in.Response = chatResponseOf(t, text)
+				}
+				_, err := p.Execute(context.Background(), in)
+				require.NoError(t, err)
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				assert.Equal(t, 1, f.hits)
+			})
+		}
+	}
+}
