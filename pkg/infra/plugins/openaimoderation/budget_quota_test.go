@@ -29,6 +29,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -201,4 +202,32 @@ func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "availability", extras.FailureClass)
 	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+}
+
+// Fast calls and a forced cut: the request's own chunks used a deadline shorter
+// than the budget while every call answered at its usual pace, so the chunks that
+// were not started are the request's size, chunk_budget, input.
+func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
+	t.Parallel()
+	srv := answeringServer(t, func(_ int32, w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(240 * time.Millisecond)
+		_, _ = w.Write([]byte(moderationAllowed))
+	})
+	p := New(adapter.NewRegistry(), srv.URL, 30*time.Second, nil)
+	text := strings.Repeat("a", chunkBytes+15*(chunkBytes-chunkOverlap))
+	require.Equal(t, 16, textchunk.Count(text, chunkSpec))
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, text), nil, event)
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+
+	_, err := p.Execute(ctx, in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailChunkBudget, extras.FailureDetail)
+	assert.Equal(t, "input", extras.FailureClass)
 }

@@ -511,3 +511,36 @@ func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
 	assert.Equal(t, "availability", data.FailureClass)
 	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
 }
+
+// Fast calls and a forced cut: the request's own chunks used a deadline shorter
+// than the budget while every call answered at its usual pace, so the chunks that
+// were not started are the request's size, chunk_budget, input.
+func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		time.Sleep(240 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Hate","severity":0}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	p := New(adapter.NewRegistry(), nil)
+	text := strings.Repeat("a", chunkUnits+15*(chunkUnits-chunkOverlap))
+	require.Equal(t, 16, textchunk.Count(text, chunkSpec))
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(srv.URL, map[string]int{CategoryHate: 2}),
+		requestContext(chatBody(t, map[string]string{"role": "user", "content": text})))
+	in.Event = event
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+
+	_, err := p.Execute(ctx, in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailChunkBudget, data.FailureDetail)
+	assert.Equal(t, "input", data.FailureClass)
+}
