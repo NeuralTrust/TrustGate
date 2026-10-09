@@ -154,7 +154,8 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+		reason, detail := pluginutil.RequestDecodeFailure(err, in.Request.ProxyCapability, format)
+		return p.externalFailure(ctx, in, cfg, 0, reason, detail, err)
 	}
 	if creq == nil {
 		return passThrough(), nil
@@ -188,13 +189,18 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
 		return passThrough(), nil
 	}
+	if !pluginutil.ResponseCarriesCompletion(in.Response) {
+		pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUpstreamStatus)
+		return passThrough(), nil
+	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
 		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, err)
 	}
 	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+		pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUndecodableResponse)
+		return passThrough(), nil
 	}
 	if cresp == nil {
 		return passThrough(), nil
