@@ -59,6 +59,8 @@ func applyGuardrailAnswering(t *testing.T, body string) *bedrockruntime.ApplyGua
 const (
 	fullCoverage    = `{"action":"NONE","actionReason":"No action.","assessments":[{}],"outputs":[],"guardrailCoverage":{"textCharacters":{"guarded":29,"total":29}}}`
 	partialCoverage = `{"action":"NONE","actionReason":"No action.","assessments":[{}],"outputs":[],"guardrailCoverage":{"textCharacters":{"guarded":25000,"total":30000}}}`
+	noGuardedCount  = `{"action":"NONE","actionReason":"No action.","assessments":[{}],"outputs":[],"guardrailCoverage":{"textCharacters":{"total":30000}}}`
+	emptyText       = `{"action":"NONE","actionReason":"No action.","assessments":[{}],"outputs":[],"guardrailCoverage":{"textCharacters":{"guarded":0,"total":0}}}`
 	noCoverageField = `{"action":"NONE","actionReason":"No action.","assessments":[{}],"outputs":[]}`
 )
 
@@ -70,6 +72,8 @@ func TestPartialCoverageIsAnInputFailureOnTheBufferedLeg(t *testing.T) {
 		partial bool
 	}{
 		{"partial", partialCoverage, true},
+		{"total without a guarded count", noGuardedCount, true},
+		{"nothing to guard", emptyText, false},
 		{"full", fullCoverage, false},
 		{"not reported", noCoverageField, false},
 	} {

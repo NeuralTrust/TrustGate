@@ -230,10 +230,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 
 	res := inspect(out, cfg.PIIAction)
 
-	// A finding on the part that was guarded is a verdict and wins. With none,
-	// a guardrail that judged only part of the text says nothing about the rest,
-	// which a client can steer by padding, so a mode that blocks refuses it.
-	if res.block == nil && res.partialCoverage {
+	if res.judgedOnlyInPart() {
 		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial,
 			fmt.Errorf("guardrail covered only part of the text"))
 	}

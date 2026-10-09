@@ -271,11 +271,20 @@ func inspectContextualGrounding(p *types.GuardrailContextualGroundingPolicyAsses
 
 // partiallyCovered reports whether ApplyGuardrail guarded fewer text characters
 // than it was sent. An answer that reports no coverage is not partial: the
-// field is absent on answers that predate it.
+// field is absent on answers that predate it. A total with no guarded count
+// means none of the text was guarded.
 func partiallyCovered(coverage *types.GuardrailCoverage) bool {
-	if coverage == nil || coverage.TextCharacters == nil {
+	if coverage == nil || coverage.TextCharacters == nil || coverage.TextCharacters.Total == nil {
 		return false
 	}
 	text := coverage.TextCharacters
-	return text.Guarded != nil && text.Total != nil && *text.Guarded < *text.Total
+	return *text.Total > 0 && aws.ToInt32(text.Guarded) < *text.Total
+}
+
+// judgedOnlyInPart reports whether the guardrail judged part of the text and
+// found nothing in that part. A finding is a verdict on the part that was
+// guarded and wins over the coverage gap; without one, what was not judged is
+// something a client can steer by padding.
+func (r assessmentResult) judgedOnlyInPart() bool {
+	return r.partialCoverage && r.block == nil
 }

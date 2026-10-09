@@ -47,21 +47,24 @@ const (
 // block, and the trace marks it skipped with reason streaming_disabled.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
 //
-// Once a policy opts in, the stream leg fails open by default and
-// MaxAccumulatedBytes is 24 KiB because ApplyGuardrail caps the input per
+// Once a policy opts in, the stream leg fails open by default and the window
+// each evaluation sends is capped at maxStreamWindowBytes whatever
+// streaming.max_accumulated_bytes asks for: ApplyGuardrail caps the input per
 // policy at a number of text units (1 unit = up to 1000 characters) that
 // depends on region and tier, and the smallest default is 25 units
 // (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
 // tier). Bytes are never fewer than characters, so 24576 bytes fits in 25
-// units. Past it this policy is sent only the tail window, whatever window the
-// rest of the stream keeps. Regions with a larger quota can raise
-// streaming.max_accumulated_bytes.
+// units, and it keeps the call inside the per-block deadline. Past it this
+// policy is sent only the tail window, whatever window the rest of the stream
+// keeps.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
+const maxStreamWindowBytes = 24576
+
 var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
-	MaxAccumulatedBytes:  24576,
+	MaxAccumulatedBytes:  maxStreamWindowBytes,
 	GuardTimeout:         2 * time.Second,
 }
 

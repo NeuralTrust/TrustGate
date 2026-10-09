@@ -51,7 +51,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, cfg.Streaming.Options()
+	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
 }
 
 // InspectSegment applies the guardrail to one closed block of a streamed
@@ -108,7 +108,7 @@ func (p *Plugin) InspectSegment(
 	}
 
 	res := inspect(out, cfg.PIIAction)
-	if res.block == nil && res.partialCoverage {
+	if res.judgedOnlyInPart() {
 		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial, nil,
 			fmt.Errorf("stream block %d: guardrail covered only part of the text", seg.Seq))
 	}
