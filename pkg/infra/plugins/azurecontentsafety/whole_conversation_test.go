@@ -119,16 +119,16 @@ func TestAPayloadInAnEarlierTurnIsScreened(t *testing.T) {
 	assert.Contains(t, f.sent()[0], "FLAGGED payload")
 }
 
-// The limit is counted in code points, so the boundary text passes and one more
-// character does not.
+// The limit is counted in code points, so the boundary text goes in one call
+// and one more character is split instead of refused.
 func TestTheLimitIsCountedInCodePoints(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
 		content string
-		sent    bool
+		calls   int
 	}{
-		"at the limit": {strings.Repeat("é", azureTextLimit), true},
-		"over by one":  {strings.Repeat("é", azureTextLimit+1), false},
+		"at the limit": {strings.Repeat("é", azureTextLimit), 1},
+		"over by one":  {strings.Repeat("é", azureTextLimit+1), 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -139,13 +139,8 @@ func TestTheLimitIsCountedInCodePoints(t *testing.T) {
 				requestContext(chatBody(t, map[string]string{"role": "user", "content": tc.content})))
 
 			_, err := p.Execute(context.Background(), in)
-			if tc.sent {
-				require.NoError(t, err)
-				assert.Len(t, f.sent(), 1)
-				return
-			}
-			require.Error(t, err)
-			assert.Empty(t, f.sent())
+			require.NoError(t, err)
+			assert.Len(t, f.sent(), tc.calls)
 		})
 	}
 }
