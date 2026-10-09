@@ -475,17 +475,21 @@ stream, and a provider with a small limit never shrinks what another policy
 inspects. A rewrite over that tail is put back behind the text the entry did
 not see. The one exception is a block whose new text alone is larger than the
 window: that text is about to reach the client, so it is screened in full, in
-chunks of the window (at most 8 per block, four in flight) that share an
+chunks of the window (at most 8 per block, four in flight, one for
+`bedrock_guardrail`) that share an
 overlap of 4,096 bytes where the window is 32 KiB or more, and an eighth of the
 window below that, so a long secret lies whole in one chunk. A block that would
 need more than 8 chunks is a failure of the content: a mode that blocks cuts the
 stream (`input_too_large` / `chunk_limit`) and observe releases the block. The
 chunks are read through the same rules as a buffered evaluation: a chunk that
-blocks wins, a failure that is the content's cuts, a throttle on a block of
-several chunks is the content's too, a mask from any chunk is applied, and an
+blocks wins, a failure that is the content's cuts, a throttle on a piece that
+waited behind the block's own earlier pieces is the content's too (one on a
+first-round piece is the provider's load and fails open), a mask from any chunk is applied, and an
 availability failure releases the block unless a mask or a finding can still be
 used. `trustguard` is not split: it bounds its own payload and is sent the block
-whole. Every other evaluation sends at most the entry's window, which a provider
+whole, and a block of more than 65,536 bytes is refused before any call as
+`input_too_large` / `chunk_limit` (a cut in a mode that blocks, recorded in
+observe). Every other evaluation sends at most the entry's window, which a provider
 ceiling caps whatever the setting asks for, so the time of a block does not grow
 with the response and a long preamble cannot push the blocks that follow past
 the per-block deadline. The
@@ -508,9 +512,9 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   released as an availability failure and does not count toward retiring the
   guardrail for the rest of the stream. A buffered Bedrock request is different:
   its chunks are sent one at a time and spaced under the region's quota, so a
-  throttle there is always availability. The chunks of one streamed block larger
-  than the window are not spaced, so a throttle on them is the content's, as for
-  the other guardrails.
+  throttle there is always availability. The pieces of one streamed block larger
+  than the window are sent one at a time, and a throttle on a piece after the
+  first is the content's, as for the other guardrails.
 - `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
   input limit for moderations, so the window is fitted to the 1.5 second block
   deadline.

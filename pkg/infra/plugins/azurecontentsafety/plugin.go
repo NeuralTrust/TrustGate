@@ -43,12 +43,11 @@ const (
 // The text:analyze limit is "10K characters (split longer texts as needed)".
 // What a character is stays undocumented, so a chunk is capped in UTF-16 code
 // units, which are never fewer than code points or characters. The overlap is
-// 2,000 units, enough for a long secret (a PEM key, a service-account JSON of
-// about 3.5 KB in ASCII is above it, so it can be cut in two there) or any
-// other pattern up to that length to lie whole in one chunk; a pattern longer
-// than the overlap, or a context that a cut separates by more than it, can
-// still be cut in two. A conversation above
-// maxChunks is refused before any call, so a padded request costs nothing at
+// 2,000 units, so a pattern of up to 2,000 units lies whole in one chunk. A
+// secret above that, a PEM key or a service-account JSON of about 3.5 KB, can be
+// cut in two (the other guardrails share 4,096 bytes and keep those whole), and
+// so can a context that a cut separates by more than the overlap. A conversation
+// above maxChunks is refused before any call, so a padded request costs nothing at
 // Azure. At most evalParallel calls run at once, inside one evaluationBudget
 // for the whole conversation. A chunk that would have to wait for a slot is not
 // started with less than callReserve of the budget left, about twice a call's

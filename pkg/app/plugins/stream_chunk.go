@@ -90,8 +90,9 @@ func streamChunkSpec(window int) textchunk.Spec {
 // a block refused for its size is not counted as screened.
 //
 // Only the chunk that reaches the end of call.Accumulated carries Final, and
-// every piece says which it is (Part of Parts), so an inspector that keys on the
-// block never sees the same block position or the same end of response twice.
+// every piece shares the block's Seq and says which it is (Part of Parts), so an
+// inspector that keys on the block position sees it once per piece and the end
+// of the response once.
 func (e *executor) inspectChunked(
 	ctx context.Context,
 	inspector StreamInspector,
