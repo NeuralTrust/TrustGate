@@ -218,20 +218,22 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	out, err := p.guardrails.ApplyGuardrail(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureTransport, "",
-			fmt.Errorf("apply guardrail: %w", err))
+		reason, detail := classifyApplyErr(err)
+		return p.externalFailure(ctx, in, cfg, latency, reason, detail, fmt.Errorf("apply guardrail: %w", err))
 	}
 
 	res := inspect(out, cfg.PIIAction)
 
-	// The guardrail intervened, but none of the policy types this plugin reads
-	// (topic, content, word, sensitive-information, contextual-grounding)
-	// produced a finding to explain it — an intervention type AWS added that
-	// this plugin does not yet parse. Reading that as a clean pass would be a
-	// guardrail that quietly stopped guarding.
+	// The guardrail intervened on this content, but none of the policy types
+	// this plugin reads (topic, content, word, sensitive-information,
+	// contextual-grounding) produced a finding to explain it — an intervention
+	// type AWS added that this plugin does not yet parse. Reading that as a
+	// clean pass would let any input steer into the gap, so a mode that blocks
+	// refuses it. The policy types are named in failure_policies; the detail is
+	// the stable token the class is read from.
 	if res.intervened && res.block == nil && res.anonymize == nil {
-		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, unparsedPolicies(out.Assessments),
-			fmt.Errorf("guardrail intervened with no block or anonymize finding"))
+		return p.externalFailureWithPolicies(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, appplugins.DetailInterventionUnparsed,
+			unparsedPolicies(out.Assessments), fmt.Errorf("guardrail intervened with no block or anonymize finding"))
 	}
 
 	data := newData(in, cfg, latency)
@@ -333,6 +335,19 @@ func (p *Plugin) externalFailure(
 	detail string,
 	err error,
 ) (*appplugins.Result, error) {
+	return p.externalFailureWithPolicies(ctx, in, cfg, latencyMS, reason, detail, "", err)
+}
+
+func (p *Plugin) externalFailureWithPolicies(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	latencyMS int64,
+	reason appplugins.FailureReason,
+	detail string,
+	policies string,
+	err error,
+) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,
 		Plugin:  PluginName,
@@ -349,6 +364,7 @@ func (p *Plugin) externalFailure(
 	data.Decision = outcome.Decision
 	data.FailureReason = string(reason)
 	data.FailureDetail = detail
+	data.FailurePolicies = policies
 	data.FailureClass = string(outcome.Class)
 	setExtras(in.Event, data)
 	if outcome.Err != nil {

@@ -17,6 +17,7 @@ package bedrockguardrail
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -406,38 +407,77 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "block 5")
 }
 
-func TestInspectSegmentReturnsTheVerdictIncompleteFailure(t *testing.T) {
+// An intervention none of the read policy families can explain is not a clean
+// pass on the stream either: a mode that blocks cuts, carrying the failure, and
+// observe releases the block with the typed error.
+func TestInspectSegmentUnparsedInterventionByMode(t *testing.T) {
 	t.Parallel()
-	// Same shape as TestExecuteVerdictIncompleteEnforceFailsClosed: an
-	// intervention none of the read policy families can explain.
-	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
-		Action:      types.GuardrailActionGuardrailIntervened,
-		Assessments: []types.GuardrailAssessment{{}},
-	}))
+	unparsed := func() *scriptedGuardrail {
+		return intervening(&bedrockruntime.ApplyGuardrailOutput{
+			Action:      types.GuardrailActionGuardrailIntervened,
+			Assessments: []types.GuardrailAssessment{{AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{}}},
+		})
+	}
 
-	got, err := p.InspectSegment(context.Background(),
+	got, err := streamPlugin(t, unparsed()).InspectSegment(context.Background(),
 		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, got.Type)
+	require.NotNil(t, got.Failure)
+	assert.Equal(t, appplugins.FailureVerdictIncomplete, got.Failure.Reason)
+	assert.Equal(t, appplugins.DetailInterventionUnparsed, got.Failure.Detail)
+	assert.Contains(t, got.Failure.Error(), "automated_reasoning_policy")
 
+	got, err = streamPlugin(t, unparsed()).InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(nil), nil), segment(5, "some text"))
 	require.Error(t, err)
-	assert.Nil(t, got, "an incomplete verdict must not be reported as a clean allow")
-	assert.Contains(t, err.Error(), "verdict_incomplete")
+	assert.Nil(t, got, "observe never cuts")
+	var failure *appplugins.ExternalStreamFailure
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, appplugins.DetailInterventionUnparsed, failure.Detail)
 }
 
-func TestInspectSegmentVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
+// A block larger than the window that AWS rejects as a client error is the
+// content's: it cuts in a mode that blocks instead of releasing text no one
+// read. Credentials, throttling and 5xx stay availability and release the block.
+func TestInspectSegmentProviderErrorByClass(t *testing.T) {
 	t.Parallel()
-	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
-		Action: types.GuardrailActionGuardrailIntervened,
-		Assessments: []types.GuardrailAssessment{{
-			AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
-		}},
-	}))
+	for _, tc := range awsApplyGuardrailErrors {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			awsErr := applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Amzn-Errortype", tc.errType+":http://internal.amazon.com/coral/com.amazon.bedrock/")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+			})
+			newPlugin := func() *Plugin {
+				return streamPlugin(t, &scriptedGuardrail{apply: func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+					return nil, awsErr
+				}})
+			}
+			input := tc.reason == appplugins.FailureInputTooLarge
 
-	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+			got, err := newPlugin().InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+			if input {
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.True(t, got.Block)
+				require.NotNil(t, got.Failure)
+				assert.Equal(t, appplugins.FailureInputTooLarge, got.Failure.Reason)
+			} else {
+				require.Error(t, err, "an availability failure releases the block")
+				assert.Nil(t, got)
+			}
 
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.Contains(t, err.Error(), "verdict_incomplete (automated_reasoning_policy)")
+			got, err = newPlugin().InspectSegment(context.Background(),
+				streamInput(policy.ModeObserve, streamSettings(nil), nil), segment(5, "some text"))
+			require.Error(t, err, "observe never cuts")
+			assert.Nil(t, got)
+		})
+	}
 }
 
 func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
