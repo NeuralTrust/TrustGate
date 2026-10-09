@@ -49,6 +49,11 @@ type Data struct {
 	// verdict — the template never enabled it (filter_not_in_template) or it
 	// did not run on this call (filter_not_executed). Filter names which one.
 	FailureDetail string `json:"failure_detail,omitempty"`
+	// EarlierFailureDetail is the failure_detail a call had already recorded
+	// when a later failure took FailureDetail: ClassOf classifies the exact
+	// (reason, detail) pair, so the detail that decides the class stays in
+	// FailureDetail and the one it replaced is kept here.
+	EarlierFailureDetail string `json:"earlier_failure_detail,omitempty"`
 	// FailureClass is availability or input (appplugins.ClassOf): whether the
 	// failure was the provider's or the request's own content.
 	FailureClass string `json:"failure_class,omitempty"`

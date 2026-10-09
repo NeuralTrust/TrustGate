@@ -531,6 +531,9 @@ func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput,
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.FailureReason = string(appplugins.FailureVerdictIncomplete)
+	if data.FailureDetail != "" && data.FailureDetail != reason {
+		data.EarlierFailureDetail = data.FailureDetail
+	}
 	data.FailureDetail = reason
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,

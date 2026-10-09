@@ -364,6 +364,7 @@ Their `extras` carry these keys:
 | `partial_window` | `azure_content_safety` only, additive. `true` when the conversation was above the 10,000 characters `text:analyze` accepts and only a window of it was analysed. The window is the conversation's most recent 10,000 code points and always holds the whole last user message; when the tail does not reach back to that message, it is the message followed by the most recent of what came after it. The system prompt, earlier turns or the middle of the conversation can fall outside it. Absent when the whole conversation was analysed |
 | `chars_not_inspected` | `azure_content_safety` only, additive, with `partial_window`. How many code points of the conversation were not analysed |
 | `failure_class` | `availability` or `input` (above). Present on every failure, so one query separates "the provider is down" from "the client padded the input" across all four plugins without knowing their reasons |
+| `earlier_failure_detail` | `google_model_armor` only, additive. The `failure_detail` the call had already recorded (a filter gap such as `filter_not_in_template`) when a mask that could not be applied took `failure_detail`, which stays the detail the class is read from |
 | `failure_policies` | `bedrock_guardrail` only. With `failure_detail: intervention_unparsed`, the policy assessments AWS returned that the plugin does not read (for example `automated_reasoning_policy`) |
 
 How each provider's answer is classified. A provider error is read from its status and error
