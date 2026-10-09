@@ -244,9 +244,11 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil {
-		if !pluginutil.RequestDecodeFailure(err, in.Request.ProxyCapability, format) {
-			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonNonChatRoute)
+		if pluginutil.SkipNonChatRoute(in.Event, string(in.Stage), in.Request.ProxyCapability, format) {
 			return passThrough(), nil
+		}
+		if !adapter.IsRequestDecodeError(err) {
+			return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, armorReason: appplugins.DetailUnsupportedFormat, err: err})
 		}
 		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
 	}

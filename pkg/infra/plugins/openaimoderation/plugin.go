@@ -290,9 +290,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonUndecodableResponse)
 			return passThrough(), nil
 		}
-		if !pluginutil.RequestDecodeFailure(decErr, in.Request.ProxyCapability, format) {
-			pluginutil.RecordSkipped(in.Event, string(in.Stage), pluginutil.SkipReasonNonChatRoute)
+		if pluginutil.SkipNonChatRoute(in.Event, string(in.Stage), in.Request.ProxyCapability, format) {
 			return passThrough(), nil
+		}
+		if !adapter.IsRequestDecodeError(decErr) {
+			return p.externalFailure(ctx, in, cfg, appplugins.FailureConfigInvalid, appplugins.DetailUnsupportedFormat, decErr)
 		}
 		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", decErr)
 	}
