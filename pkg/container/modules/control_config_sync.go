@@ -67,10 +67,6 @@ type compilerReaders struct {
 	// TenantCaps puts each tenant's plan caps into the snapshots that carry its
 	// gateways.
 	TenantCaps ratelimitdomain.TenantCapsRepository
-	// PinnedTools puts the decided tool set of pinned MCP registries into the
-	// snapshots. Deliberately not optional: without it a pinned registry would
-	// publish with nothing approved and silently hide every tool.
-	PinnedTools registrydomain.PinnedToolRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -93,7 +89,6 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
-			appsnapshot.WithPinnedTools(r.PinnedTools),
 			appsnapshot.WithSharedOAuth(shared),
 		), nil
 	}); err != nil {
@@ -145,13 +140,6 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	// The DB-less data plane reports pending pinned tools over the same channel.
-	// The service treats the caller as untrusted; see PinnedToolsService.
-	if err := c.Provide(func(registries registrydomain.Repository, tools registrydomain.PinnedToolRepository, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.PinnedToolsServer {
-		return configsyncgrpc.NewPinnedToolsService(registries, tools, gateways, logger)
-	}); err != nil {
-		return err
-	}
 	// The MCP Store's personal key page runs on the data plane and writes the
 	// key here. The service checks the gateway against the caller's scope.
 	if err := c.Provide(func(issuer appauth.PersonalKeyIssuer, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.PersonalKeysServer {
@@ -162,12 +150,12 @@ func ControlConfigSync(c *container.Container) error {
 	if err := c.Provide(configsyncgrpc.NewAuthInterceptor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, pinned snapshotpb.PinnedToolsServer, personalKeys snapshotpb.PersonalKeysServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
+	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, personalKeys snapshotpb.PersonalKeysServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
 		if cfg.IsDeployed() && (cfg.ConfigSync.GRPCTLSCertPath == "" || cfg.ConfigSync.GRPCTLSKeyPath == "") {
 			return nil, fmt.Errorf("%w: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY are required on the control plane in deployed environments", commonerrors.ErrInvalidConfig)
 		}
 		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger,
-			configsyncgrpc.RegisterPinnedTools(pinned), configsyncgrpc.RegisterPersonalKeys(personalKeys))
+			configsyncgrpc.RegisterPersonalKeys(personalKeys))
 	}); err != nil {
 		return err
 	}

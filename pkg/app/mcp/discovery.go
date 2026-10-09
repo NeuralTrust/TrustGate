@@ -178,8 +178,6 @@ func discoverCached[T any](
 		}
 	}
 
-	ask = screenAsk(c, reg, kind, ask)
-
 	if !cacheable {
 		return ask(ctx)
 	}
@@ -317,11 +315,6 @@ func isContextError(err error) bool {
 
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	if kind == "tools" {
-		// The cached list is already filtered by the decided set, so the set is
-		// part of the key.
-		key += pinSuffix(reg)
-	}
 	perPrincipal := perPrincipalAuth(reg) ||
 		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())
 	if !perPrincipal {
@@ -333,12 +326,4 @@ func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string
 	}
 	sum := sha256.Sum256([]byte(p.Issuer + "|" + p.Subject))
 	return key + ":" + hex.EncodeToString(sum[:8]), true
-}
-
-func pinnedSetHash(set []registrydomain.ToolDecision) string {
-	h := sha256.New()
-	for _, d := range set {
-		_, _ = fmt.Fprintf(h, "%d:%s|%d:%s|%s\n", len(d.Name), d.Name, len(d.Fingerprint), d.Fingerprint, d.Status)
-	}
-	return hex.EncodeToString(h.Sum(nil)[:8])
 }
