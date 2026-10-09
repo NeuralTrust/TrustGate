@@ -126,3 +126,29 @@ func TestAThrottledStreamEntryThatNeverClosedExpires(t *testing.T) {
 	assert.False(t, p.streamThrottled("fresh"), "the closing segment removes it")
 	assert.False(t, p.streamThrottled(""), "a stream with no identity is never marked")
 }
+
+// Any of the three operations on the throttled streams sweeps the entries whose
+// closing never came, so a pod that only reads or only closes streams cannot grow
+// the map.
+func TestAnyOperationOnTheThrottledStreamsSweepsTheExpiredOnes(t *testing.T) {
+	t.Parallel()
+	expired := func() *Plugin {
+		p := pluginWith(allowing())
+		p.throttledStreams.Store("abandoned", time.Now().Add(-throttledStreamTTL-time.Minute))
+		return p
+	}
+	cases := map[string]func(p *Plugin){
+		"a read":  func(p *Plugin) { p.streamThrottled("someone") },
+		"a close": func(p *Plugin) { p.forgetStreamThrottle("someone") },
+		"a mark":  func(p *Plugin) { p.markStreamThrottled("someone", time.Now()) },
+	}
+	for name, op := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p := expired()
+			op(p)
+			_, still := p.throttledStreams.Load("abandoned")
+			assert.False(t, still)
+		})
+	}
+}
