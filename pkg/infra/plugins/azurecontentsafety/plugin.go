@@ -239,10 +239,12 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(evals[i].breaches) > 0 },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
-		resp, err := p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
-			Text:       c.Text,
-			Categories: cfg.requestCategories(),
-			OutputType: cfg.OutputType,
+		resp, err := pluginutil.RetryFirstRoundThrottle(ctx, i, evalParallel, func(ctx context.Context) (*analyzeResponse, error) {
+			return p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
+				Text:       c.Text,
+				Categories: cfg.requestCategories(),
+				OutputType: cfg.OutputType,
+			})
 		})
 		if err != nil {
 			return struct{}{}, err

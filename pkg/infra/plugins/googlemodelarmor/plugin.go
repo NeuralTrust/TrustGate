@@ -505,7 +505,9 @@ func (p *Plugin) runGuardrail(
 		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
-		result, err := sanitize(ctx, c.Text)
+		result, err := pluginutil.RetryFirstRoundThrottle(ctx, i, chunkParallel, func(ctx context.Context) (*SanitizationResult, error) {
+			return sanitize(ctx, c.Text)
+		})
 		if err != nil {
 			return struct{}{}, err
 		}

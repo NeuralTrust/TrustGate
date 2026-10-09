@@ -38,8 +38,8 @@ type ChunkFailure struct {
 	Reason FailureReason
 	Detail string
 	// OtherTraffic says the request's own calls cannot have caused a throttle
-	// (they are spaced under the provider's documented quota), so it stays
-	// availability on an evaluation of several chunks.
+	// (they are spaced under the provider's documented quota), so it is
+	// availability whichever chunk it is on.
 	OtherTraffic bool
 }
 
@@ -133,19 +133,22 @@ func ClassifyChunks[T any](
 }
 
 // DecideChunks is the precedence of a chunked evaluation (see ClassifyChunks for
-// cancelled), shared by the buffered legs and the stream leg. A chunk that blocks wins over every
-// failure. Then, by lowest index: a failure that is the content's (input);
-// a chunk that never started because the budget ran out (chunk_budget); a
-// throttle on an evaluation of more than one chunk (throttled_oversize), since
-// a request split into several calls is large next to the provider's per-call
-// limit and plausibly part of the quota that throttled it; and last a failure
-// that is availability. An evaluation with no verdict and no failure is
-// allowed.
+// cancelled), shared by the buffered legs and the stream leg. A chunk that
+// blocks wins over every failure. Then, by lowest index: a failure that is the
+// content's (input); a chunk that never started because the budget ran out
+// (chunk_budget); a throttle that the request's own calls caused
+// (throttled_oversize); and last a failure that is availability. An evaluation
+// with no verdict and no failure is allowed.
 //
-// A throttle on a chunk of the first round stays availability: nothing of the
-// request's own was in flight before it, so other traffic caused it. So does a
-// provider quota that is configuration (an exhausted or unbilled account): those are
-// recorded as config_invalid and never carry the throttled detail.
+// One invariant decides a throttle: it is the request's own doing when the
+// request had calls in flight or behind it, that is a chunk other than the first
+// of an evaluation of several chunks, whether it waited for a slot or was sent in
+// the first round beside its siblings, unless the failure says OtherTraffic (the
+// calls were spaced under the provider's quota, so only other traffic can have
+// caused it). A throttle on the first chunk or on an evaluation of one chunk is
+// availability, and so is a provider quota that is configuration (an exhausted or
+// unbilled account): those are recorded as config_invalid and never carry the
+// throttled detail.
 func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 	d := ChunkDecision{Index: -1}
 	for _, st := range states {
@@ -173,7 +176,8 @@ func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 		}
 	}
 	for i, st := range states {
-		if st.Started && st.Waited && st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic {
+		if st.Started && st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic &&
+			(st.Waited || (len(states) > 1 && i > 0)) {
 			return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailThrottledOversize)
 		}
 	}

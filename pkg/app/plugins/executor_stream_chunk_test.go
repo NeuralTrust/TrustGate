@@ -305,7 +305,7 @@ func TestRunStreamSegment_AnInspectorThatDeclaresOneAtATimeIsSentPiecesSequentia
 // A throttle on the second piece of a sequential inspector waited behind the
 // first, so the block's own size plausibly spent the quota: input. The same
 // throttle on an inspector that sends four at once is in the first round.
-func TestRunStreamSegment_AThrottleOnASequentialPieceIsInputAndOnAFirstRoundPieceIsNot(t *testing.T) {
+func TestRunStreamSegment_AThrottleOnAPieceBehindTheFirstIsInputAndOnTheFirstIsNot(t *testing.T) {
 	t.Parallel()
 	const window = 8192
 	var b strings.Builder
@@ -327,9 +327,16 @@ func TestRunStreamSegment_AThrottleOnASequentialPieceIsInputAndOnAFirstRoundPiec
 	require.True(t, out.Block, "the piece that waited behind the first was throttled by the block's own size")
 	assert.Equal(t, TypeGuardrailInputUninspectable, out.Type)
 
-	exec, in, _ = sequentialChain(t, window, 4, pick)
+	first := textchunk.Split(text, streamChunkSpec(window))[0].Text
+	pickFirst := func(seg StreamSegment) (*SegmentVerdict, error) {
+		if seg.Accumulated == first {
+			return nil, newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
+		}
+		return &SegmentVerdict{}, nil
+	}
+	exec, in, _ = sequentialChain(t, window, 4, pickFirst)
 	out, err = exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
 	require.NoError(t, err)
-	assert.False(t, out.Block, "a first-round throttle is the provider's load and fails open")
+	assert.False(t, out.Block, "a throttle on the first piece is the provider's load and fails open")
 	assert.Equal(t, 1, out.FailedEntries)
 }

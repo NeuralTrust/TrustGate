@@ -71,7 +71,8 @@ type analyzeResponse struct {
 // statusError is a non-2xx answer from Azure. It carries only the status: the
 // body can echo the text that was analysed, and an error string ends up in logs.
 type statusError struct {
-	status int
+	status     int
+	retryAfter time.Duration
 	// configShaped is set from the error envelope when a 400 is about the
 	// call's configuration (api-version, categories, output type) and not about
 	// the text, or a 429 says the resource's call volume quota is spent.
@@ -81,6 +82,9 @@ type statusError struct {
 var _ pluginutil.Rejection = (*statusError)(nil)
 
 func (e *statusError) Rejection() (int, bool) { return e.status, e.configShaped }
+
+// RetryAfter is the wait the answer asked for, zero when it asked for none.
+func (e *statusError) RetryAfter() time.Duration { return e.retryAfter }
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("azure_content_safety: unexpected status %d", e.status)
@@ -107,7 +111,10 @@ func (c *client) Analyze(ctx context.Context, endpoint, apiKey string, body anal
 		return nil, fmt.Errorf("azure_content_safety: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &statusError{status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw)}
+		return nil, &statusError{
+			status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw),
+			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	var out analyzeResponse
 	if err := json.Unmarshal(raw, &out); err != nil {

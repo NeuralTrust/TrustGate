@@ -358,19 +358,42 @@ func TestASecretThatACutFallsInsideIsSeenWholeInOneChunk(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 }
 
-// Two conversations of two chunks each are in flight together and the provider
-// throttles every call. Each chunk is in the first round, so what throttled it
-// was other traffic, not the conversation's own size: both fail open.
-func TestConcurrentConversationsThrottledInTheFirstRoundFailOpen(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"code":"429","message":"Rate limit is exceeded. Try again in 1 seconds."}}`))
+// throttlingAzure answers 429 to the requests whose text throttle accepts, with a
+// severity-0 verdict to the rest, and counts every request.
+func throttlingAzure(t *testing.T, throttle func(text string) bool) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if throttle(string(raw)) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"code":"429","message":"Rate limit is exceeded. Try again in 1 seconds."}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Hate","severity":0}]}`))
 	}))
 	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+const firstChunkMarker = "FIRST-CHUNK-ONLY"
+
+func twoChunkConversation(t *testing.T) []byte {
+	t.Helper()
+	text := firstChunkMarker + strings.Repeat("a", 15000)
+	require.Equal(t, 2, textchunk.Count(text, chunkSpec))
+	return chatBody(t, map[string]string{"role": "user", "content": text})
+}
+
+// A throttle on the first chunk of a conversation that survives the one retry is
+// other traffic: it fails open, however many conversations are in flight.
+func TestAThrottleOnTheFirstChunkFailsOpen(t *testing.T) {
+	t.Parallel()
+	srv, _ := throttlingAzure(t, func(text string) bool { return strings.Contains(text, firstChunkMarker) })
 	p := New(adapter.NewRegistry(), nil)
-	twoChunks := chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 15000)})
-	require.Equal(t, 2, textchunk.Count(strings.Repeat("a", 15000), chunkSpec))
+	body := twoChunkConversation(t)
 
 	var wg sync.WaitGroup
 	results := make([]*Data, 2)
@@ -379,7 +402,7 @@ func TestConcurrentConversationsThrottledInTheFirstRoundFailOpen(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, results[i], errs[i] = run(t, p, policy.ModeEnforce, srv.URL, twoChunks)
+			_, results[i], errs[i] = run(t, p, policy.ModeEnforce, srv.URL, body)
 		}()
 	}
 	wg.Wait()
@@ -389,6 +412,49 @@ func TestConcurrentConversationsThrottledInTheFirstRoundFailOpen(t *testing.T) {
 		assert.Equal(t, "availability", results[i].FailureClass)
 		assert.Equal(t, appplugins.DecisionFailedOpen, results[i].Decision)
 	}
+}
+
+// A throttle on a later chunk of the first round, which the request sent beside
+// its first, is input once the retry has failed too.
+func TestAThrottleOnALaterChunkOfTheFirstRoundIsInput(t *testing.T) {
+	t.Parallel()
+	srv, _ := throttlingAzure(t, func(text string) bool { return !strings.Contains(text, firstChunkMarker) })
+	p := New(adapter.NewRegistry(), nil)
+
+	_, data, err := run(t, p, policy.ModeEnforce, srv.URL, twoChunkConversation(t))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	assert.Equal(t, appplugins.DetailThrottledOversize, data.FailureDetail)
+	assert.Equal(t, "input", data.FailureClass)
+}
+
+func TestAThrottleOnASingleChunkFailsOpenAfterOneRetry(t *testing.T) {
+	t.Parallel()
+	srv, calls := throttlingAzure(t, func(string) bool { return true })
+	p := New(adapter.NewRegistry(), nil)
+
+	_, data, err := run(t, p, policy.ModeEnforce, srv.URL, chatBody(t, map[string]string{"role": "user", "content": "hello"}))
+
+	require.NoError(t, err)
+	assert.Equal(t, appplugins.DetailThrottled, data.FailureDetail)
+	assert.Equal(t, "availability", data.FailureClass)
+	assert.EqualValues(t, 2, calls.Load())
+}
+
+func TestAThrottleThatSucceedsOnRetryGivesTheNormalVerdict(t *testing.T) {
+	t.Parallel()
+	var first atomic.Bool
+	srv, _ := throttlingAzure(t, func(string) bool { return first.CompareAndSwap(false, true) })
+	p := New(adapter.NewRegistry(), nil)
+
+	res, data, err := run(t, p, policy.ModeEnforce, srv.URL, twoChunkConversation(t))
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "allowed", data.Decision)
+	assert.Empty(t, data.FailureDetail)
 }
 
 // A parent whose deadline passes is not a client that left: the time ran out, so

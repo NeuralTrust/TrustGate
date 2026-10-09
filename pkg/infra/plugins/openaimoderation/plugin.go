@@ -350,9 +350,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(verdicts[i].violations) > 0 },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
-		resp, err := p.client.Moderate(ctx, p.baseURL, cfg.APIKey, moderationRequest{
-			Model: cfg.Model,
-			Input: []moderationInput{{Type: inputTypeText, Text: c.Text}},
+		resp, err := pluginutil.RetryFirstRoundThrottle(ctx, i, evalParallel, func(ctx context.Context) (*moderationResponse, error) {
+			return p.client.Moderate(ctx, p.baseURL, cfg.APIKey, moderationRequest{
+				Model: cfg.Model,
+				Input: []moderationInput{{Type: inputTypeText, Text: c.Text}},
+			})
 		})
 		if err != nil {
 			return struct{}{}, err

@@ -122,11 +122,11 @@ func TestMergeChunkVerdicts_TheFingerprintsOfEveryChunkSurviveABlock(t *testing.
 	assert.Same(t, incomplete, got.Incomplete, "the first incomplete over every chunk that answered")
 }
 
-func TestMergeChunkVerdicts_AThrottleOnAFirstRoundChunkIsAvailability(t *testing.T) {
+func TestMergeChunkVerdicts_AThrottleOnTheFirstChunkIsAvailability(t *testing.T) {
 	t.Parallel()
 	throttled := newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
-	verdicts := []*SegmentVerdict{{}, nil, {}, {}, {}, {}}
-	errs := []error{nil, throttled, nil, nil, nil, nil}
+	verdicts := []*SegmentVerdict{nil, {}, {}, {}, {}, {}}
+	errs := []error{throttled, nil, nil, nil, nil, nil}
 
 	got, err := mergeOf(policy.ModeEnforce, verdicts, errs)
 
