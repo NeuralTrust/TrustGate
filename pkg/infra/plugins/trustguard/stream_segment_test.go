@@ -884,7 +884,7 @@ func TestInspectSegmentABlockAboveTheWindowIsTheRequestsOwnSize(t *testing.T) {
 		data, ok := span.PluginAttrsCopy().Extras.(guardData)
 		require.True(t, ok)
 		assert.Equal(t, decisionFailedOpen, data.Decision)
-		assert.Equal(t, failureReasonPayloadTooLarge, data.FailureReason)
+		assert.Equal(t, failureReasonStreamBlockTooLarge, data.FailureReason)
 		assert.Equal(t, "input", data.FailureClass)
 	})
 	t.Run("a block at the window is sent", func(t *testing.T) {
@@ -981,6 +981,12 @@ func TestInspectSegmentClosingRecordsACutThatIsAFailure(t *testing.T) {
 				FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailPayloadTooLarge,
 				FailureClass: appplugins.FailureClassInput},
 			wantDecision: decisionFailedClosed, wantReason: failureReasonPayloadTooLarge,
+		},
+		"stream block too large": {
+			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,
+				FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailChunkLimit,
+				FailureClass: appplugins.FailureClassInput},
+			wantDecision: decisionFailedClosed, wantReason: failureReasonStreamBlockTooLarge,
 		},
 		"mask over a finding": {
 			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,

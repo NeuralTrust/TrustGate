@@ -30,9 +30,10 @@ const decisionFailedClosed = appplugins.DecisionFailedClosed
 // this plugin adds later and does not map is availability, so it cannot start
 // refusing traffic by omission.
 //
-// Only five of its reasons say something about the request itself. A payload
+// Only six of its reasons say something about the request itself. A payload
 // this plugin could not build is a body it could not read (decode_failed). A 413
-// is the body TrustGuard refused for its size, and a 400 "invalid attachment" is
+// is the body TrustGuard refused for its size, a stream block above the one evaluate it
+// sends is its own size (stream_block_too_large), and a 400 "invalid attachment" is
 // an attachment it could not fetch or decode. An answer above the size the
 // client reads is the request's too: the mask echoes its text back. A transform it cannot write back
 // is a mask over a finding TrustGuard confirmed, which the detail says. An
@@ -44,6 +45,8 @@ func sharedFailure(reason, transformReason string) (appplugins.FailureReason, st
 		return appplugins.FailureDecodeFailed, ""
 	case failureReasonPayloadTooLarge:
 		return appplugins.FailureInputTooLarge, appplugins.DetailPayloadTooLarge
+	case failureReasonStreamBlockTooLarge:
+		return appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit
 	case failureReasonResponseTooLarge:
 		return appplugins.FailureInputTooLarge, appplugins.DetailAnswerTooLarge
 	case failureReasonAttachmentRejected:
@@ -90,7 +93,7 @@ func failureOfCut(r appplugins.StreamReport) (reason, class string) {
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailPayloadTooLarge:
 		reason = failureReasonPayloadTooLarge
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailChunkLimit:
-		reason = failureReasonPayloadTooLarge
+		reason = failureReasonStreamBlockTooLarge
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailAnswerTooLarge:
 		reason = failureReasonResponseTooLarge
 	case r.FailureReason == appplugins.FailureInputTooLarge && r.FailureDetail == appplugins.DetailProviderRejectedInput:

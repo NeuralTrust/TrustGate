@@ -71,7 +71,7 @@ func (p *Plugin) inspectSegment(
 	// carries: a block above the window that evaluate accepts is refused here,
 	// before any call, as the request's own size.
 	if len(seg.Accumulated) > maxStreamWindowBytes {
-		return p.segmentFailureOf(ctx, in, seg, failureReasonPayloadTooLarge,
+		return p.segmentFailureOf(ctx, in, seg, failureReasonStreamBlockTooLarge,
 			appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit, nil,
 			fmt.Errorf("trustguard: a stream block of %d bytes is above the %d one evaluate carries",
 				len(seg.Accumulated), maxStreamWindowBytes))
