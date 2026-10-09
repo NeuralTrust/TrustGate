@@ -108,6 +108,29 @@ func TestClassifyChunksFollowsTheTable(t *testing.T) {
 			o[2].Value.Failure = throttled
 			return o
 		}, ChunkInputFailure, 2, FailureInputTooLarge, DetailThrottledOversize, false},
+		{"every call of a two-chunk evaluation throttled is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(2)
+			o[0].Value.Failure, o[1].Value.Failure = throttled, throttled
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"every call of a four-chunk evaluation throttled is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(4)
+			for i := range o {
+				o[i].Value.Failure, o[i].Waited = throttled, i >= 2
+			}
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttled first chunk makes a later waited throttle other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[0].Value.Failure = throttled
+			o[2].Value.Failure, o[2].Waited = throttled, true
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttle on a later chunk after the first answered is the request's own", func() []textchunk.Outcome[ChunkState] {
+			o := started(4)
+			o[2].Value.Failure, o[3].Value.Failure = throttled, throttled
+			return o
+		}, ChunkInputFailure, 2, FailureInputTooLarge, DetailThrottledOversize, false},
 		{"a throttle that says it is other traffic stays availability on any chunk", func() []textchunk.Outcome[ChunkState] {
 			o := started(6)
 			o[2].Value.Failure = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}
