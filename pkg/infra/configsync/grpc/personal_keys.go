@@ -73,7 +73,7 @@ func (s *PersonalKeysService) Create(ctx context.Context, req *snapshotpb.Create
 	if err != nil {
 		return nil, err
 	}
-	key, err := s.issuer.Create(ctx, gatewayID, req.GetOwnerId(), req.GetGroups())
+	key, err := s.issuer.Create(ctx, gatewayID, appauth.PersonalKeyOwner{ID: req.GetOwnerId(), Email: req.GetEmail()}, req.GetGroups())
 	if err != nil {
 		return nil, personalKeyStatus("create", err)
 	}
@@ -143,6 +143,7 @@ func personalKeyToProto(key *appauth.PersonalKey, withSecret bool) *snapshotpb.P
 		Enabled:       a.Enabled,
 		CreatedAtUnix: a.CreatedAt.Unix(),
 		OwnerGroups:   append([]string(nil), a.OwnerGroups...),
+		OwnerEmail:    a.OwnerEmail,
 	}
 	if a.ExpiresAt != nil {
 		out.ExpiresAtUnix = a.ExpiresAt.Unix()
@@ -177,12 +178,12 @@ func (c *PersonalKeysClient) Get(ctx context.Context, gatewayID ids.GatewayID, o
 	return personalKeyFromProto(gatewayID, ownerID, res.GetKey())
 }
 
-func (c *PersonalKeysClient) Create(ctx context.Context, gatewayID ids.GatewayID, ownerID string, groups []string) (*appauth.PersonalKey, error) {
-	res, err := c.cli.Create(ctx, &snapshotpb.CreatePersonalKeyRequest{GatewayId: gatewayID.String(), OwnerId: ownerID, Groups: groups})
+func (c *PersonalKeysClient) Create(ctx context.Context, gatewayID ids.GatewayID, owner appauth.PersonalKeyOwner, groups []string) (*appauth.PersonalKey, error) {
+	res, err := c.cli.Create(ctx, &snapshotpb.CreatePersonalKeyRequest{GatewayId: gatewayID.String(), OwnerId: owner.ID, Groups: groups, Email: owner.Email})
 	if err != nil {
 		return nil, personalKeyError("create", err)
 	}
-	return personalKeyFromProto(gatewayID, ownerID, res.GetKey())
+	return personalKeyFromProto(gatewayID, owner.ID, res.GetKey())
 }
 
 func (c *PersonalKeysClient) Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*appauth.PersonalKey, error) {
@@ -233,6 +234,7 @@ func personalKeyFromProto(gatewayID ids.GatewayID, ownerID string, wire *snapsho
 		Enabled:     wire.GetEnabled(),
 		CreatedAt:   time.Unix(wire.GetCreatedAtUnix(), 0).UTC(),
 		OwnerGroups: wire.GetOwnerGroups(),
+		OwnerEmail:  wire.GetOwnerEmail(),
 		RawKey:      wire.GetSecret(),
 	}
 	if at := wire.GetExpiresAtUnix(); at != 0 {

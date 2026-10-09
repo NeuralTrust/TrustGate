@@ -27,6 +27,8 @@ import (
 const (
 	MaxOwnerGroups      = 512
 	MaxOwnerGroupLength = 256
+	// MaxOwnerEmailLength is the longest address RFC 5321 allows.
+	MaxOwnerEmailLength = 320
 )
 
 // SetOwnerGroups replaces the groups of an owned key's owner. They are
@@ -69,4 +71,32 @@ func NormalizeOwnerGroups(groups []string) ([]string, error) {
 		return nil, nil
 	}
 	return out, nil
+}
+
+// SetOwnerEmail records a personal key's owner's email; empty clears it.
+func (a *Auth) SetOwnerEmail(email string, now time.Time) error {
+	if !a.IsOwned() {
+		return ErrApplicationKey
+	}
+	normalized, err := NormalizeOwnerEmail(email)
+	if err != nil {
+		return err
+	}
+	a.OwnerEmail = normalized
+	a.UpdatedAt = now.UTC()
+	return nil
+}
+
+// NormalizeOwnerEmail trims an owner's email and refuses what is not one: it
+// is shown as the person behind every call the key makes.
+func NormalizeOwnerEmail(email string) (string, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return "", nil
+	}
+	at := strings.LastIndex(email, "@")
+	if len(email) > MaxOwnerEmailLength || at < 1 || at == len(email)-1 || strings.ContainsAny(email, " \t\r\n<>\"") {
+		return "", fmt.Errorf("%w: %q is not an email address", ErrInvalidOwnerEmail, email)
+	}
+	return email, nil
 }

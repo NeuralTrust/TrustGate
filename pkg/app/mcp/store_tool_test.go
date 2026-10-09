@@ -932,3 +932,24 @@ func TestStoreOfferIsEmptyWhenTheStoreIsClosed(t *testing.T) {
 		t.Fatalf("a closed Store offers nothing, got %+v", offer)
 	}
 }
+
+// Some clients do not act on tools/list_changed, and only the user can make
+// them re-read the list: every install that brings tools says how.
+func TestInstallMessage_TellsHowToGetTheNewTools(t *testing.T) {
+	for name, tc := range map[string]struct {
+		res     appstore.InstallResult
+		connect string
+	}{
+		"installed":                  {res: appstore.InstallResult{Name: "Linear"}},
+		"installed, to connect":      {res: appstore.InstallResult{Name: "Linear", RequiresAuth: true}, connect: "https://gw.example/store/mcp/connect?ticket=t"},
+		"already installed, connect": {res: appstore.InstallResult{Name: "Linear", RequiresAuth: true, AlreadyInstalled: true}, connect: "https://gw.example/store/mcp/connect?ticket=t"},
+	} {
+		text := installMessage(&tc.res, "", tc.connect)
+		if !strings.Contains(text, "refresh this connector's tools") || !strings.Contains(text, "start a new conversation") {
+			t.Fatalf("%s: %q does not say how to get the new tools", name, text)
+		}
+	}
+	if text := installMessage(&appstore.InstallResult{Name: "Linear", Pending: true}, "", ""); strings.Contains(text, "refresh") {
+		t.Fatalf("a pending request has no tools to refresh: %q", text)
+	}
+}

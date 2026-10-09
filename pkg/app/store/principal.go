@@ -70,10 +70,13 @@ type PrincipalInstall struct {
 // PrincipalConnection is the state of one company source that needs the
 // principal's own account (forwarded-auth registry), linked or not.
 type PrincipalConnection struct {
-	Provider       string
-	Code           string
-	RegistryID     ids.RegistryID
-	Registry       string
+	Provider   string
+	Code       string
+	RegistryID ids.RegistryID
+	Registry   string
+	// Shared is an instance that reads one account for everyone: Linked then
+	// says whether an administrator connected it, and only they disconnect it.
+	Shared         bool
 	Linked         bool
 	AccountRef     string
 	ExpiresAt      time.Time
@@ -198,6 +201,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 			Code:       registrydomain.StoreCode(reg),
 			RegistryID: reg.ID,
 			Registry:   reg.Name,
+			Shared:     auth.Shared(),
 		}
 		if err := p.fillConnection(ctx, gatewayID, principalSub, reg, &conn); err != nil {
 			return nil, err

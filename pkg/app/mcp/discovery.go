@@ -262,6 +262,33 @@ func (c *composer) rememberFailure(key string, err error) {
 	c.discovery.Set(key, discoveryFailure{err: err, until: time.Now().Add(negativeTTL)})
 }
 
+// discoveryEvictor is the part of a DiscoveryCache that can drop entries; the
+// TTL map the gateway wires has it.
+type discoveryEvictor interface {
+	DeleteByPrefix(prefix string)
+}
+
+// discoveryKinds are the lists discovery caches per server.
+var discoveryKinds = []string{"tools", "prompts", "resources"}
+
+// forgetDiscovery drops what discovery cached about reg for this caller. A
+// call that finds the caller's account gone — revoked from the Portal or the
+// connect page, or no longer usable — would otherwise leave their tool list
+// showing the server as ready, every tool in it refused, until the entry
+// expired minutes later.
+func (c *composer) forgetDiscovery(ctx context.Context, reg *registrydomain.Registry) {
+	evictor, ok := c.discovery.(discoveryEvictor)
+	if !ok || reg == nil {
+		return
+	}
+	for _, kind := range discoveryKinds {
+		// The prefix covers the per-URL keys a server with URL variables adds.
+		if key, cacheable := discoveryKey(ctx, reg, kind); cacheable {
+			evictor.DeleteByPrefix(key)
+		}
+	}
+}
+
 // fixableByConnecting reports a refusal somebody can clear from outside, by
 // connecting an account.
 //

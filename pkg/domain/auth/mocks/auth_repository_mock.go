@@ -745,12 +745,12 @@ func (_c *Repository_UpdateBudget_Call) RunAndReturn(run func(context.Context, *
 	return _c
 }
 
-// UpdateOwnerGroups provides a mock function with given fields: ctx, a
-func (_m *Repository) UpdateOwnerGroups(ctx context.Context, a *auth.Auth) (*auth.Auth, error) {
+// UpdateOwner provides a mock function with given fields: ctx, a
+func (_m *Repository) UpdateOwner(ctx context.Context, a *auth.Auth) (*auth.Auth, error) {
 	ret := _m.Called(ctx, a)
 
 	if len(ret) == 0 {
-		panic("no return value specified for UpdateOwnerGroups")
+		panic("no return value specified for UpdateOwner")
 	}
 
 	var r0 *auth.Auth
@@ -775,31 +775,31 @@ func (_m *Repository) UpdateOwnerGroups(ctx context.Context, a *auth.Auth) (*aut
 	return r0, r1
 }
 
-// Repository_UpdateOwnerGroups_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateOwnerGroups'
-type Repository_UpdateOwnerGroups_Call struct {
+// Repository_UpdateOwner_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateOwner'
+type Repository_UpdateOwner_Call struct {
 	*mock.Call
 }
 
-// UpdateOwnerGroups is a helper method to define mock.On call
+// UpdateOwner is a helper method to define mock.On call
 //   - ctx context.Context
 //   - a *auth.Auth
-func (_e *Repository_Expecter) UpdateOwnerGroups(ctx interface{}, a interface{}) *Repository_UpdateOwnerGroups_Call {
-	return &Repository_UpdateOwnerGroups_Call{Call: _e.mock.On("UpdateOwnerGroups", ctx, a)}
+func (_e *Repository_Expecter) UpdateOwner(ctx interface{}, a interface{}) *Repository_UpdateOwner_Call {
+	return &Repository_UpdateOwner_Call{Call: _e.mock.On("UpdateOwner", ctx, a)}
 }
 
-func (_c *Repository_UpdateOwnerGroups_Call) Run(run func(ctx context.Context, a *auth.Auth)) *Repository_UpdateOwnerGroups_Call {
+func (_c *Repository_UpdateOwner_Call) Run(run func(ctx context.Context, a *auth.Auth)) *Repository_UpdateOwner_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context), args[1].(*auth.Auth))
 	})
 	return _c
 }
 
-func (_c *Repository_UpdateOwnerGroups_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_UpdateOwnerGroups_Call {
+func (_c *Repository_UpdateOwner_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_UpdateOwner_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *Repository_UpdateOwnerGroups_Call) RunAndReturn(run func(context.Context, *auth.Auth) (*auth.Auth, error)) *Repository_UpdateOwnerGroups_Call {
+func (_c *Repository_UpdateOwner_Call) RunAndReturn(run func(context.Context, *auth.Auth) (*auth.Auth, error)) *Repository_UpdateOwner_Call {
 	_c.Call.Return(run)
 	return _c
 }

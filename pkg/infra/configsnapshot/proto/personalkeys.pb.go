@@ -92,7 +92,10 @@ type CreatePersonalKeyRequest struct {
 	GatewayId string                 `protobuf:"bytes,1,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
 	OwnerId   string                 `protobuf:"bytes,2,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`
 	// groups are the owner's groups as their sign-in carried them.
-	Groups        []string `protobuf:"bytes,3,rep,name=groups,proto3" json:"groups,omitempty"`
+	Groups []string `protobuf:"bytes,3,rep,name=groups,proto3" json:"groups,omitempty"`
+	// email is the owner's email as their sign-in carried it, which the key's
+	// calls are shown under. Empty when the sign-in carried none.
+	Email         string `protobuf:"bytes,4,opt,name=email,proto3" json:"email,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -148,6 +151,13 @@ func (x *CreatePersonalKeyRequest) GetGroups() []string {
 	return nil
 }
 
+func (x *CreatePersonalKeyRequest) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
 // PersonalKey mirrors the console's view of a personal key. Timestamps are Unix
 // seconds; expires_at_unix is 0 when the key never expires.
 type PersonalKey struct {
@@ -162,6 +172,7 @@ type PersonalKey struct {
 	ConsumerIds   []string               `protobuf:"bytes,8,rep,name=consumer_ids,json=consumerIds,proto3" json:"consumer_ids,omitempty"`
 	// secret is the key itself, set only by Create and Rotate.
 	Secret        string `protobuf:"bytes,9,opt,name=secret,proto3" json:"secret,omitempty"`
+	OwnerEmail    string `protobuf:"bytes,10,opt,name=owner_email,json=ownerEmail,proto3" json:"owner_email,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -259,6 +270,13 @@ func (x *PersonalKey) GetSecret() string {
 	return ""
 }
 
+func (x *PersonalKey) GetOwnerEmail() string {
+	if x != nil {
+		return x.OwnerEmail
+	}
+	return ""
+}
+
 type PersonalKeyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           *PersonalKey           `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
@@ -348,12 +366,13 @@ const file_personalkeys_proto_rawDesc = "" +
 	"\x12PersonalKeyRequest\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x19\n" +
-	"\bowner_id\x18\x02 \x01(\tR\aownerId\"l\n" +
+	"\bowner_id\x18\x02 \x01(\tR\aownerId\"\x82\x01\n" +
 	"\x18CreatePersonalKeyRequest\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x19\n" +
 	"\bowner_id\x18\x02 \x01(\tR\aownerId\x12\x16\n" +
-	"\x06groups\x18\x03 \x03(\tR\x06groups\"\xa3\x02\n" +
+	"\x06groups\x18\x03 \x03(\tR\x06groups\x12\x14\n" +
+	"\x05email\x18\x04 \x01(\tR\x05email\"\xc4\x02\n" +
 	"\vPersonalKey\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -365,7 +384,10 @@ const file_personalkeys_proto_rawDesc = "" +
 	"\x0fcreated_at_unix\x18\x06 \x01(\x03R\rcreatedAtUnix\x12!\n" +
 	"\fowner_groups\x18\a \x03(\tR\vownerGroups\x12!\n" +
 	"\fconsumer_ids\x18\b \x03(\tR\vconsumerIds\x12\x16\n" +
-	"\x06secret\x18\t \x01(\tR\x06secret\"@\n" +
+	"\x06secret\x18\t \x01(\tR\x06secret\x12\x1f\n" +
+	"\vowner_email\x18\n" +
+	" \x01(\tR\n" +
+	"ownerEmail\"@\n" +
 	"\x13PersonalKeyResponse\x12)\n" +
 	"\x03key\x18\x01 \x01(\v2\x17.snapshotpb.PersonalKeyR\x03key\"\x1b\n" +
 	"\x19RevokePersonalKeyResponse2\xc3\x02\n" +
