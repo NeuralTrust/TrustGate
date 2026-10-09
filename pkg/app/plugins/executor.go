@@ -208,9 +208,8 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		}
 		var verdict *SegmentVerdict
 		var err error
-		if !seg.Closing && entry.streamWindow > 0 && len(call.Accumulated) > entry.streamWindow {
-			spans.chunked(spanKey(seg, entry))
-			verdict, err = e.inspectChunked(ctx, inspector, execIn, call, entry)
+		if !seg.Closing && entry.streamWindow > 0 && len(call.Accumulated) > entry.streamWindow && !boundsOwnPayload(inspector) {
+			verdict, err = e.inspectChunked(ctx, inspector, execIn, call, entry, func() { spans.chunked(spanKey(seg, entry)) })
 		} else {
 			verdict, err = inspector.InspectSegment(ctx, execIn, call)
 		}
