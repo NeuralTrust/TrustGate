@@ -19,7 +19,7 @@ DOCKER_TAG    ?= $(VERSION)
 # Must be a release whose bundled staticcheck understands this module's go
 # directive, and it must be `go install`ed (not a release binary) so it is
 # compiled with the same Go toolchain the module targets.
-GOLANGCI_LINT_VERSION ?= v2.13.2
+GOLANGCI_LINT_VERSION ?= v2.14.0
 
 M := $(shell printf "\033[34;1m▶\033[0m")
 
