@@ -318,7 +318,9 @@ func newExternalStreamFailure(pluginName string, reason FailureReason, detail st
 //   - availability, any mode: the typed error, absorbed as failed_open;
 //   - input in observe: the typed error, absorbed as failed_open, and not
 //     counted toward retiring the entry, so a padded stream cannot switch off
-//     its own inspection;
+//     its own inspection. When block carries the fingerprints of a confirmed
+//     finding (a mask over it), the finding is still reported: the verdict is a
+//     non-blocking one that keeps the failure as Incomplete;
 //   - input in a blocking mode: a Block verdict carrying the failure, which the
 //     executor records as failed_closed on the entry that authored the cut;
 //   - a mask over a finding in a blocking mode: the same cut, recorded as
@@ -335,7 +337,13 @@ func ExternalStreamOutcome(
 	err error,
 ) (*SegmentVerdict, error) {
 	failure := newExternalStreamFailure(plugin, reason, detail, err)
-	if failure.Class != FailureClassInput || !Blocks(mode) {
+	if failure.Class != FailureClassInput {
+		return nil, failure
+	}
+	if !Blocks(mode) {
+		if block != nil {
+			return &SegmentVerdict{Fingerprints: block.Fingerprints, Incomplete: failure}, nil
+		}
 		return nil, failure
 	}
 	verdict := SegmentVerdict{Block: true, Type: TypeGuardrailInputUninspectable, Message: DefaultUninspectableMessage}

@@ -302,9 +302,10 @@ func TestInspectSegmentAnonymisesAsATransform(t *testing.T) {
 	assert.Equal(t, "write to {EMAIL} for details", got.Transformed)
 }
 
-// A mask that cannot be applied is a failed inspection like any other: the
-// block is released unmasked, never cut, and the guard records it failed open.
-func TestInspectSegmentReleasesWhenAnonymisationProducedNothing(t *testing.T) {
+// Releasing the unmasked text is the one outcome the policy ruled out, and the
+// buffered leg blocks for the same reason: a mode that blocks cuts the stream,
+// carrying the failure so the span records blocked and degraded.
+func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
 	t.Parallel()
 	p := streamPlugin(t, intervening(anonymisingOutput("")))
 
@@ -312,14 +313,37 @@ func TestInspectSegmentReleasesWhenAnonymisationProducedNothing(t *testing.T) {
 		streamInput(policy.ModeEnforce, streamSettings(nil), nil),
 		segment(2, "write to a@b.com for details"))
 
-	require.Error(t, err)
-	assert.Nil(t, got, "a failed mask must not be reported as a block or a clean allow")
-	var failure *appplugins.ExternalStreamFailure
-	require.ErrorAs(t, err, &failure)
-	assert.Equal(t, reasonAnonymizeNoOutput, failure.Detail)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.False(t, got.HasTransform, "there is nothing to transform with")
+	assert.Equal(t, anonymizeDegradedMessage, got.Message)
+	assert.Equal(t, typeGuardrailBlocked, got.Type)
+	require.NotNil(t, got.Failure)
+	assert.Equal(t, reasonAnonymizeNoOutput, got.Failure.Detail)
+	assert.Equal(t, appplugins.FailureClassInput, got.Failure.Class)
 }
 
-func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
+// Observe never blocks: the finding is still reported and the failure is kept
+// without counting as a failed call.
+func TestInspectSegmentObserveReportsTheFindingWhenAnonymisationProducedNothing(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(anonymisingOutput("")))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(nil), nil),
+		segment(2, "write to a@b.com for details"))
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, got.Block)
+	assert.False(t, got.HasTransform)
+	assert.NotEmpty(t, got.Fingerprints)
+	require.NotNil(t, got.Incomplete)
+}
+
+// A cut that is a mask over a confirmed finding stays blocked, flagged degraded.
+func TestClosingSegmentFlagsAnUnappliedMaskCutAsBlockedAndDegraded(t *testing.T) {
 	t.Parallel()
 	p := streamPlugin(t, allowing())
 	event, span := newEvent()
@@ -327,16 +351,41 @@ func TestClosingSegmentFlagsAnUnappliedMaskAsDegraded(t *testing.T) {
 	_, err := p.InspectSegment(context.Background(),
 		streamInput(policy.ModeEnforce, streamSettings(nil), event),
 		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
-			Evals: 2, GuardCalls: 2, FailedEvals: 1,
+			Evals: 2, GuardCalls: 2, CutAtEval: 2, CutOnFailure: true,
 			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+			FailureClass: appplugins.FailureClassInput,
 		}})
 
 	require.NoError(t, err)
 	data, ok := span.PluginAttrsCopy().Extras.(*Data)
 	require.True(t, ok)
-	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
+	assert.Equal(t, decisionBlocked, data.Decision)
 	assert.True(t, data.Degraded)
 	assert.Equal(t, reasonAnonymizeNoOutput, data.DegradedReason)
+	assert.Equal(t, "input", data.FailureClass)
+}
+
+// A cut that is an input failure with no finding behind it records failed_closed.
+func TestClosingSegmentRecordsAnInputCutAsFailedClosed(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, allowing())
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 1, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailProviderRejectedInput,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	require.NoError(t, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DecisionFailedClosed, data.Decision)
+	assert.False(t, data.Degraded)
+	assert.Equal(t, "input_too_large", data.FailureReason)
+	assert.Equal(t, "input", data.FailureClass)
 }
 
 func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {

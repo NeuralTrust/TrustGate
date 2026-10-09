@@ -31,6 +31,11 @@ const streamIDSeparator = ":"
 
 const streamLegResponse = "response"
 
+// The buffered leg refuses the call when SDP asks to anonymise and returns
+// nothing to anonymise with, so the stream leg cuts for the same reason rather
+// than releasing text the policy ruled out.
+const anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
+
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 
 // StreamSettings reports whether these policy settings ask for per-block
@@ -144,9 +149,16 @@ func (p *Plugin) InspectSegment(
 	case res.anonymize != nil:
 		masked, ok := maskedText(result)
 		if !ok {
-			// The mask cannot be applied, so the block is released unmasked as a
-			// failed inspection: the guard records it failed open with this reason.
-			return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
+			// A backstop rather than a live path: inspectSDP only reports an
+			// anonymise once de-identified text came back. If that
+			// classification ever loosens, releasing the unmasked prefix is the
+			// one outcome the policy ruled out, so a mode that blocks cuts.
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
+				&appplugins.SegmentVerdict{
+					Type:         typeModelArmorBlocked,
+					Message:      anonymizeDegradedMessage,
+					Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+				},
 				fmt.Errorf("stream block %d: guardrail asked to anonymise and returned no masked text", seg.Seq))
 		}
 		return &appplugins.SegmentVerdict{
@@ -219,7 +231,7 @@ func (p *Plugin) recordStreamOutcome(
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
 	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
-	if isAnonymizeReason(data.FailureDetail) {
+	if appplugins.IsMaskOverFinding(data.FailureDetail) {
 		data.Degraded = true
 		data.DegradedReason = data.FailureDetail
 	}
@@ -282,14 +294,4 @@ func streamID(ctx context.Context, seg appplugins.StreamSegment) string {
 
 func segmentAllow() *appplugins.SegmentVerdict {
 	return &appplugins.SegmentVerdict{}
-}
-
-// isAnonymizeReason reports whether a failure detail is one of the reasons a
-// provider's mask could not be applied, which the span also flags as degraded.
-func isAnonymizeReason(detail string) bool {
-	switch detail {
-	case reasonAnonymizeNoOutput, reasonAnonymizeUnsupportedFormat, reasonAnonymizeEncodeFailed:
-		return true
-	}
-	return false
 }
