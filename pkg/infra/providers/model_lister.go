@@ -31,6 +31,9 @@ type LiveModel struct {
 	ID            string
 	DisplayName   string
 	ProviderModel string
+	// Pending marks a model the provider lists but does not serve yet, such as
+	// an Azure deployment that is still being created.
+	Pending bool
 }
 
 // ModelLister lists the models a provider's API reports as available to the
@@ -44,6 +47,21 @@ type ModelLister interface {
 // ErrModelListingFailed wraps any transport or provider failure during a live
 // model listing so callers can degrade to the static catalog.
 var ErrModelListingFailed = errors.New("live model listing failed")
+
+// ErrModelListingMisconfigured marks a listing that failed because of the
+// registry's own configuration (a missing endpoint, unusable credentials)
+// rather than the provider being unreachable. It always wraps
+// ErrModelListingFailed.
+var ErrModelListingMisconfigured = errors.New("live model listing misconfigured")
+
+// ModelListingStatusError is the provider's non-2xx answer to a listing.
+type ModelListingStatusError struct {
+	StatusCode int
+}
+
+func (e *ModelListingStatusError) Error() string {
+	return fmt.Sprintf("provider returned status %d", e.StatusCode)
+}
 
 // maxModelListBody bounds how much of a models response is read; the largest
 // real listing (OpenRouter) is well under this.
@@ -60,7 +78,7 @@ func FetchModelListBody(providerKey string, req *http.Request) ([]byte, error) {
 	}
 	defer DrainBody(resp.Body)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("%w: provider returned status %d", ErrModelListingFailed, resp.StatusCode)
+		return nil, fmt.Errorf("%w: %w", ErrModelListingFailed, &ModelListingStatusError{StatusCode: resp.StatusCode})
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxModelListBody))
 	if err != nil {

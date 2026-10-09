@@ -30,9 +30,9 @@ type RegistryAvailability interface {
 	// Narrow drops the models these credentials cannot use. Any doubt yields
 	// the input unchanged, since a too-long list still fails at request time
 	// with the provider's own message, while a spuriously empty picker is a
-	// dead end. The one exception is a provider whose catalog ids are never
-	// valid request models (Azure deployments): there the listing is the only
-	// answer, and failing to get it is an error rather than the catalog.
+	// dead end. The one exception is a provider whose listing is
+	// authoritative: its catalog ids are never valid request models, so
+	// failing to get the listing is an error rather than the catalog.
 	Narrow(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error)
 }
 

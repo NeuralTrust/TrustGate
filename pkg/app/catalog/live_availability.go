@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -36,6 +37,11 @@ import (
 
 const (
 	liveModelsCacheTTL = 10 * time.Minute
+	// liveModelsTransientTTL caches a listing that is likely to change soon:
+	// one that is empty or still has a model being created. Where the listing
+	// is the only answer, ten minutes of it would hide a deployment the user
+	// has just made.
+	liveModelsTransientTTL = 30 * time.Second
 	// liveModelsTimeout bounds the provider GET so a slow provider cannot hold
 	// the admin API request open.
 	liveModelsTimeout = 8 * time.Second
@@ -47,9 +53,9 @@ const (
 //go:generate mockery --name=LiveAvailabilityFilter --dir=. --output=./mocks --filename=catalog_live_availability_filter_mock.go --case=underscore --with-expecter
 type LiveAvailabilityFilter interface {
 	// Filter narrows in.Models to what the registry serves. It fails only for
-	// a provider whose listing is the sole truthful answer (Azure: the catalog
-	// names model families, while a request must name a deployment); every
-	// other provider falls back to the unnarrowed catalog.
+	// a provider whose listing is authoritative (see LiveModelSource), where
+	// catalog ids are never valid request models; every other provider falls
+	// back to the unnarrowed catalog.
 	Filter(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error)
 }
 
@@ -75,10 +81,20 @@ type LiveModel struct {
 	// ProviderModel is the model a deployment serves, when the provider names
 	// one (Azure: a deployment called "prod-chat" serving gpt-4o).
 	ProviderModel string
+	// Pending marks a model the provider lists but does not serve yet.
+	Pending bool
 }
+
+// ErrLiveListingMisconfigured marks a listing that failed because of the
+// registry's own endpoint or credentials, not because the provider was down.
+var ErrLiveListingMisconfigured = errors.New("live model listing misconfigured")
 
 type LiveModelSource interface {
 	Supports(providerCode string) bool
+	// Authoritative reports whether the provider's listing replaces the
+	// catalog instead of narrowing it: its ids are what a request must name,
+	// and a catalog id is never one of them.
+	Authoritative(providerCode string) bool
 	List(ctx context.Context, providerCode string, auth *registrydomain.TargetAuth, options map[string]any) ([]LiveModel, error)
 }
 
@@ -140,8 +156,8 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 	if in.GatewayID.IsNil() || in.RegistryID.IsNil() {
 		return in.Models, nil
 	}
-	if in.ProviderCode == providerdomain.Azure {
-		return f.azureDeployments(ctx, in)
+	if f.source != nil && f.source.Authoritative(in.ProviderCode) {
+		return f.authoritativeModels(ctx, in)
 	}
 	if len(in.Models) == 0 {
 		return in.Models, nil
@@ -187,16 +203,15 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 	return kept, nil
 }
 
-// azureDeployments answers with the resource's own deployments. Falling back
-// to the catalog here is what RUN-1144 was: catalog ids such as gpt-5.6-terra
-// are model families, a deployment name cannot even contain a dot, and every
-// pick ended in DeploymentNotFound.
-func (f *liveAvailabilityFilter) azureDeployments(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error) {
+// authoritativeModels never falls back to the catalog: a catalog id such as
+// gpt-5.6-terra names a model family, the request must name a deployment, and
+// offering one answers DeploymentNotFound (RUN-1144).
+func (f *liveAvailabilityFilter) authoritativeModels(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error) {
 	live, err := f.registryModels(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	return azureDeploymentModels(in.Models, live), nil
+	return deploymentModels(in.Models, live), nil
 }
 
 // List returns the registry's live models as catalog entries. It answers only
@@ -218,7 +233,7 @@ func (f *liveAvailabilityFilter) List(ctx context.Context, in ServerlessFilterIn
 
 	out := make([]domain.Model, 0, len(live))
 	for _, model := range live {
-		if model.ID == "" {
+		if model.ID == "" || model.Pending {
 			continue
 		}
 		displayName := model.DisplayName
@@ -251,10 +266,24 @@ func (f *liveAvailabilityFilter) listRegistryModels(
 	in ServerlessFilterInput,
 ) ([]LiveModel, bool) {
 	live, err := f.registryModels(ctx, in)
-	if err != nil || len(live) == 0 {
+	if err != nil {
+		return nil, false
+	}
+	live = servingModels(live)
+	if len(live) == 0 {
 		return nil, false
 	}
 	return live, true
+}
+
+func servingModels(live []LiveModel) []LiveModel {
+	serving := make([]LiveModel, 0, len(live))
+	for _, model := range live {
+		if !model.Pending {
+			serving = append(serving, model)
+		}
+	}
+	return serving
 }
 
 func (f *liveAvailabilityFilter) registryModels(
@@ -263,7 +292,7 @@ func (f *liveAvailabilityFilter) registryModels(
 ) ([]LiveModel, error) {
 	if f.source == nil || !f.source.Supports(in.ProviderCode) {
 		f.debugSkip(in, "provider has no live listing", nil)
-		return nil, fmt.Errorf("%w: %s registries cannot list their models", commonerrors.ErrUpstreamUnavailable, in.ProviderCode)
+		return nil, fmt.Errorf("no live model listing is wired for provider %s", in.ProviderCode)
 	}
 
 	reg, err := f.finder.FindByID(ctx, in.GatewayID, in.RegistryID)
@@ -289,6 +318,9 @@ func (f *liveAvailabilityFilter) registryModels(
 			slog.String("error", err.Error()))
 		// The provider's own error stays in the log: it can carry the upstream
 		// body, which must not reach an API response.
+		if errors.Is(err, ErrLiveListingMisconfigured) {
+			return nil, fmt.Errorf("%w: the %s provider rejected this registry's endpoint or credentials", commonerrors.ErrInvalidConfig, in.ProviderCode)
+		}
 		return nil, fmt.Errorf("%w: the %s provider did not list this registry's models", commonerrors.ErrUpstreamUnavailable, in.ProviderCode)
 	}
 	if len(live) == 0 {
@@ -297,7 +329,10 @@ func (f *liveAvailabilityFilter) registryModels(
 	return live, nil
 }
 
-func azureDeploymentModels(catalogModels []domain.Model, live []LiveModel) []domain.Model {
+// deploymentModels turns an authoritative listing into catalog entries keyed
+// by the deployment name, borrowing pricing and capabilities from the catalog
+// row of the model each deployment serves.
+func deploymentModels(catalogModels []domain.Model, live []LiveModel) []domain.Model {
 	capHint := len(catalogModels)
 	if capHint <= math.MaxInt/2 {
 		capHint *= 2
@@ -313,7 +348,7 @@ func azureDeploymentModels(catalogModels []domain.Model, live []LiveModel) []dom
 	out := make([]domain.Model, 0, len(live))
 	for _, model := range live {
 		deployment := strings.TrimSpace(model.ID)
-		if deployment == "" {
+		if deployment == "" || model.Pending {
 			continue
 		}
 		key := strings.ToLower(deployment)
@@ -364,7 +399,7 @@ func (f *liveAvailabilityFilter) liveModels(
 			return nil, err
 		}
 		f.mu.Lock()
-		f.cache[key] = cachedLiveModels{models: models, expires: time.Now().Add(liveModelsCacheTTL)}
+		f.cache[key] = cachedLiveModels{models: models, expires: time.Now().Add(liveModelsTTL(models))}
 		f.mu.Unlock()
 		return models, nil
 	})
@@ -377,6 +412,18 @@ func (f *liveAvailabilityFilter) liveModels(
 		}
 		return completed.Val.([]LiveModel), nil
 	}
+}
+
+func liveModelsTTL(models []LiveModel) time.Duration {
+	if len(models) == 0 {
+		return liveModelsTransientTTL
+	}
+	for _, model := range models {
+		if model.Pending {
+			return liveModelsTransientTTL
+		}
+	}
+	return liveModelsCacheTTL
 }
 
 func (f *liveAvailabilityFilter) debugSkip(in ServerlessFilterInput, reason string, err error) {

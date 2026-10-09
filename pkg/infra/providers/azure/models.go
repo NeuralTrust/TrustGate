@@ -17,28 +17,64 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
+const anthropicModelPrefix = "claude"
+
 func (c *client) ListLiveModels(ctx context.Context, config *providers.Config) ([]providers.LiveModel, error) {
 	if config.Credentials.Azure == nil || config.Credentials.Azure.Endpoint == "" {
-		return nil, fmt.Errorf("%w: azure endpoint is required", providers.ErrModelListingFailed)
+		return nil, misconfigured("azure endpoint is required")
 	}
-	targetURL, err := deploymentsListURL(config)
+	targetURL, api, err := deploymentsListURL(config)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", providers.ErrModelListingFailed, err.Error())
+		return nil, misconfigured(err.Error())
 	}
 	auth, err := c.resolveAuth(ctx, config)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", providers.ErrModelListingFailed, err.Error())
+		return nil, misconfigured(err.Error())
 	}
-	return providers.ListModelsGET(ctx, providers.ProviderAzure, targetURL, func(req *http.Request) {
+	models, err := providers.ListModelsGET(ctx, providers.ProviderAzure, targetURL, func(req *http.Request) {
 		auth.apply(req)
 	}, parseAzureDeploymentList)
+	if err != nil {
+		var status *providers.ModelListingStatusError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			// A 404 here is either a wrong endpoint or Azure retiring the
+			// pinned version; only the second one breaks every registry.
+			slog.WarnContext(ctx, "azure deployments listing route not found",
+				slog.String("api_version", deploymentsListAPIVersion))
+		}
+		return nil, err
+	}
+	return deploymentsForSurface(models, api), nil
+}
+
+func misconfigured(detail string) error {
+	return fmt.Errorf("%w: %w: %s", providers.ErrModelListingFailed, providers.ErrModelListingMisconfigured, detail)
+}
+
+// deploymentsForSurface keeps the deployments the registry's API surface can
+// call: Claude deployments answer only on the Anthropic surface, and every
+// other model only on the OpenAI ones. A deployment that does not name its
+// model is kept.
+func deploymentsForSurface(models []providers.LiveModel, api string) []providers.LiveModel {
+	wantAnthropic := api == providers.AzureAPIAnthropic
+	kept := make([]providers.LiveModel, 0, len(models))
+	for _, model := range models {
+		if model.ProviderModel != "" &&
+			strings.HasPrefix(strings.ToLower(model.ProviderModel), anthropicModelPrefix) != wantAnthropic {
+			continue
+		}
+		kept = append(kept, model)
+	}
+	return kept
 }
 
 func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
@@ -56,7 +92,7 @@ func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
 	models := make([]providers.LiveModel, 0, len(payload.Data))
 	for _, item := range payload.Data {
 		deployment := strings.TrimSpace(item.ID)
-		if deployment == "" || !deploymentServes(item.Status) {
+		if deployment == "" {
 			continue
 		}
 		if _, dup := seen[deployment]; dup {
@@ -67,6 +103,7 @@ func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
 			ID:            deployment,
 			DisplayName:   deployment,
 			ProviderModel: strings.TrimSpace(item.Model),
+			Pending:       !deploymentServes(item.Status),
 		})
 	}
 	return models, nil
