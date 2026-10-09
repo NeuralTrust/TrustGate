@@ -133,6 +133,7 @@ type NativeMaskData struct {
 	Stage          string `json:"stage"`
 	Mode           string `json:"mode"`
 	FailureReason  string `json:"failure_reason"`
+	FailureDetail  string `json:"failure_detail"`
 	FailureClass   string `json:"failure_class"`
 	Degraded       bool   `json:"degraded"`
 	DegradedReason string `json:"degraded_reason"`
@@ -164,13 +165,12 @@ func RecordNativeMaskBlocked(
 		event.SetMode(string(policy.ModeEnforce))
 		SetDecisionFromOutcome(event, DecisionBlocked)
 		event.SetStatusCode(http.StatusForbidden)
-		// The class is what ClassOf says of the same failure on a guardrail's own
-		// leg: a mask over a finding that cannot be applied.
 		event.SetExtras(&NativeMaskData{
 			Decision:       DecisionBlocked,
 			Stage:          string(stage),
 			Mode:           string(policy.ModeEnforce),
 			FailureReason:  reason,
+			FailureDetail:  DetailAnonymizeNoOutput,
 			FailureClass:   string(ClassOf(FailureVerdictIncomplete, DetailAnonymizeNoOutput)),
 			Degraded:       true,
 			DegradedReason: string(cause),
