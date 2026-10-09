@@ -102,6 +102,11 @@ func TestClassifyChunksFollowsTheTable(t *testing.T) {
 			o[0].Value.Failure = throttled
 			return o
 		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttle on spaced calls is other traffic even on several chunks", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Value.Failure = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}
+			return o
+		}, ChunkAvailabilityFailure, 1, FailureTransport, DetailThrottled, false},
 		{"an exhausted provider quota is configuration even on several chunks", func() []textchunk.Outcome[ChunkState] {
 			o := started(3)
 			o[1].Value.Failure = quota

@@ -91,7 +91,7 @@ func TestBufferedLegsRefuseATextAboveTheChunkLimitLocally(t *testing.T) {
 				t.Parallel()
 				client := &recordingClient{output: allowOutput()}
 				p := pluginWith(client)
-				text := strings.Repeat("é", 100000)
+				text := strings.Repeat("é", 50000)
 				in := execInput(stage, mode, bedrockSettings("block"), reqCtx(openAIRequest()), nil)
 				if stage == policy.StagePreRequest {
 					in.Request = chatRequestOf(t, text)

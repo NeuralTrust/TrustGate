@@ -37,11 +37,10 @@ func settingsIn(region string) map[string]any {
 	return set
 }
 
-// A client can pad its last message until the quota throttles what it sends. A
-// throttle on a request split into several calls may be that request's own size,
-// so it is input and an enforcing policy refuses it; the same throttle on a
-// message of one call is the account's load and fails open.
-func TestAThrottleOnAPaddedMessageIsRefusedAsOversize(t *testing.T) {
+// A client can pad its last message until its chunks cannot be spaced inside the
+// budget. Such a message is refused as input before any call, never sent to be
+// throttled or timed out into a fail-open.
+func TestAPaddedMessageThatCannotBeSpacedInTheBudgetIsRefusedBeforeAnyCall(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -55,10 +54,11 @@ func TestAThrottleOnAPaddedMessageIsRefusedAsOversize(t *testing.T) {
 
 			res, err := p.Execute(context.Background(), in)
 
+			assert.Zero(t, client.count())
 			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 			require.True(t, ok)
 			assert.Equal(t, "input", extras.FailureClass)
-			assert.Equal(t, appplugins.DetailThrottledOversize, extras.FailureDetail)
+			assert.Equal(t, appplugins.DetailChunkBudget, extras.FailureDetail)
 			if mode == policy.ModeEnforce {
 				pe, isPE := appplugins.AsPluginError(err)
 				require.True(t, isPE, "want a refusal, got res=%v err=%v", res, err)
