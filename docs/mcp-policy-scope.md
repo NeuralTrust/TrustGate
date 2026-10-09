@@ -476,25 +476,26 @@ inspects. A rewrite over that tail is put back behind the text the entry did
 not see. The one exception is a block whose new text alone is larger than the
 window: it is sent whole, because that text is about to reach the client, and
 if the provider refuses or skips it, that is a failure of the content, so a mode
-that blocks cuts the stream and observe releases the block. Every evaluation
-sends at most the entry's window, which a provider ceiling caps whatever the
+that blocks cuts the stream and observe releases the block. Every other
+evaluation sends at most the entry's window, which a provider ceiling caps whatever the
 setting asks for, so the time of a block does not grow with the response and a
 long preamble cannot push the blocks that follow past the per-block deadline. The
-defaults follow the providers' per-request limits and deadlines:
+ceilings follow the providers' per-request limits and deadlines, and a larger
+`streaming.max_accumulated_bytes` is capped to them:
 
 - `google_model_armor`: 64 KiB, and never more. Model Armor skips its filters
   above 65,536 tokens, which the plugin counts as a filter that did not run, so
   a larger payload would release the block
   uninspected. Google does not raise this limit, so a higher
   setting is treated as 64 KiB.
-- `bedrock_guardrail` (streaming is opt-in): 24 KiB. AWS bounds each
-  `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
+- `bedrock_guardrail` (streaming is opt-in): 24 KiB, and never more. AWS bounds
+  each `ApplyGuardrail` input per guardrail policy in text units of up to 1,000
   characters. The defaults go as low as 25 units (for example in eu-west-3,
-  eu-south-1 and sa-east-1) and AWS does not document what a larger input gets. The quotas are adjustable, so a
-  larger setting is honoured; raise it only after raising the quota. The window
-  bounds the size of each call, not their rate: in regions where the
-  content-filter quota is 25 text units per second, a long stream also needs
-  that quota raised, or throttled calls fail open.
+  eu-south-1 and sa-east-1), and 24 KiB fits the smallest of them whatever the
+  region's quota, so a larger setting is treated as 24 KiB. The window bounds the
+  size of each call, not their rate: in regions where the content-filter quota is
+  25 text units per second, a long stream also needs that quota raised, or
+  throttled calls fail open.
 - `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
   input limit for moderations, so the window is fitted to the 1.5 second block
   deadline.
