@@ -464,11 +464,10 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 **Each streaming entry is sent its own window.** One stream has one head gate
 and one cadence, taken from the first entry that owns them, usually
 `trustguard`. The stream's own `on_error` is `fail_open` when a guardrail takes
-part, because no guardrail has a setting for it: a guardrail's availability
-failure is absorbed per entry and fails open, and one that depends on the content
-of the block arrives as a cut verdict. The one exception is an enforcing rewriter
-that asks for `fail_closed` (`regex_replace`, by default), which keeps it beside
-a guardrail whatever the order of the two. The stream keeps the largest
+part, because no guardrail has a setting for it, and a passive rewriter
+(`regex_replace`) does not change that: a guardrail's availability failure is
+absorbed per entry and fails open, and one that depends on the content of the
+block arrives as a cut verdict. The stream keeps the largest
 `max_accumulated_bytes` of its participants, and each entry is handed only the
 tail of the text that its own `streaming.max_accumulated_bytes` allows. So a
 policy's setting bounds what its provider receives whatever policy owns the
