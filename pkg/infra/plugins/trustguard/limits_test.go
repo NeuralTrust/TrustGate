@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,12 +178,60 @@ func TestAnInvalidAttachmentOnAURLRetriesWithoutIt(t *testing.T) {
 	assert.NotEmpty(t, seen[1][0].Data)
 	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
 	require.True(t, ok)
-	assert.Equal(t, decisionAllowed, extras.Decision)
+	assert.Equal(t, decisionAllowed, extras.Decision, "the text was evaluated and its verdict is applied")
 	assert.Equal(t, 1, extras.AttachmentsNotFetched)
 	assert.Equal(t, 1, extras.AttachmentsNotInspected)
+	assert.Equal(t, failureReasonVerdictIncomplete, extras.FailureReason, "part of the request was never inspected, which alerts")
+	assert.Equal(t, appplugins.DetailAttachmentNotFetched, extras.FailureDetail)
+	assert.Equal(t, "availability", extras.FailureClass)
 	raw, err := json.Marshal(extras)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"attachments_not_fetched":1`)
+	assert.Contains(t, string(raw), `"failure_reason":"verdict_incomplete"`)
+	assert.Contains(t, string(raw), `"failure_detail":"attachment_not_fetched"`)
+}
+
+// A verdict on the text that comes back from the second call is applied: a block
+// still blocks, and the not-fetched attachment is recorded beside it.
+func TestAVerdictFromTheRetryWithoutTheURLIsStillApplied(t *testing.T) {
+	t.Parallel()
+	f := blockingGuard()
+	f.preflight = func(body GuardRequest) (int, string) {
+		for _, a := range attachmentsOf(t, body.Payload) {
+			if a.URL != "" {
+				return http.StatusBadRequest, invalidAttachmentBody
+			}
+		}
+		return 0, ""
+	}
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+	req := requestWith(t, jailbreakText, "https://cdn.example.com/down.png")
+	event, span := newEvent()
+
+	_, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, typeBlocked, pe.Type)
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	assert.Equal(t, decisionBlocked, extras.Decision)
+	assert.Equal(t, appplugins.DetailAttachmentNotFetched, extras.FailureDetail)
+	assert.Equal(t, 1, extras.AttachmentsNotFetched)
+}
+
+func TestTheRetryKeepsItsShareOfTheBudget(t *testing.T) {
+	t.Parallel()
+	start := time.Unix(1_700_000_000, 0)
+	budget := 4 * time.Second
+
+	assert.Equal(t, start.Add(budget), firstCallDeadline(start, budget, false), "no URL attachment, the whole budget")
+	assert.Equal(t, start.Add(3*time.Second), firstCallDeadline(start, budget, true), "a quarter is held back for the retry")
+
+	deadline := start.Add(budget)
+	assert.True(t, retryHasBudget(start.Add(3*time.Second), deadline, budget))
+	assert.False(t, retryHasBudget(start.Add(3*time.Second+time.Millisecond), deadline, budget), "less than the minimum share is left")
+	assert.False(t, retryHasBudget(deadline.Add(time.Second), deadline, budget))
 }
 
 func TestASecondInvalidAttachmentIsInput(t *testing.T) {
@@ -239,6 +288,8 @@ func TestAGeminiFilesURIIsNeverSent(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 1, extras.AttachmentsNotFetched)
 	assert.Equal(t, 1, extras.AttachmentsNotInspected)
+	assert.Equal(t, appplugins.DetailAttachmentNotFetched, extras.FailureDetail)
+	assert.Equal(t, "availability", extras.FailureClass)
 }
 
 // The gateway and TrustGuard's resolver agree byte for byte: a part carrying

@@ -154,7 +154,11 @@ type guardData struct {
 	FailureReason string `json:"failure_reason,omitempty"`
 	// FailureClass is availability or input (appplugins.ClassOf): whether the
 	// failure was TrustGuard's or the request's own content.
-	FailureClass   string `json:"failure_class,omitempty"`
+	FailureClass string `json:"failure_class,omitempty"`
+	// FailureDetail refines FailureReason when it is the shared verdict_incomplete
+	// (attachment_not_fetched). It is absent for every other reason, which this
+	// plugin names in its own vocabulary.
+	FailureDetail  string `json:"failure_detail,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
 	// Skipped marks a leg the plugin decided not to inspect at all. Without

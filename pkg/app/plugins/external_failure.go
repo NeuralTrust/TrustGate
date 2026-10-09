@@ -108,6 +108,12 @@ const (
 	// does changes it, so it is config_invalid and never the throttled detail,
 	// whatever the number of chunks.
 	DetailProviderQuotaExhausted = "provider_quota_exhausted"
+	// DetailAttachmentNotFetched is an attachment sent as a URL that the guard
+	// could not fetch, so the rest of the request was evaluated without it. It
+	// is availability (a CDN that is down must not block legitimate traffic) and
+	// is recorded as a failure so it alerts instead of passing as a clean
+	// evaluation.
+	DetailAttachmentNotFetched = "attachment_not_fetched"
 	// DetailChunkLimit is a content that splits into more chunks than the
 	// guardrail evaluates, or that the provider's quota could not serve within
 	// the call's budget. It is refused before any call is made.
