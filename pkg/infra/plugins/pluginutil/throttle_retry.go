@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
 
 // throttleBackoff is the wait before a throttled call is retried when the
@@ -63,8 +65,9 @@ func IsThrottle(err error) bool {
 // RetryThrottledOnce calls fn and, when it fails with a throttle, calls it once
 // more. The wait is the provider's Retry-After when it is at most half of the
 // time ctx has left, and otherwise a short backoff that never takes more than a
-// quarter of it; a wait that ctx cannot afford is not taken and the throttle is
-// returned as it is. Only a throttle is retried: any other failure, and a
+// quarter of it; inside a textchunk.Run it never exceeds the Run's effective
+// reserve, and it is not counted in the call's Outcome.Took. A wait that ctx
+// cannot afford is not taken and the throttle is returned as it is. Only a throttle is retried: any other failure, and a
 // second throttle, is returned unchanged.
 func RetryThrottledOnce[T any](ctx context.Context, fn func(ctx context.Context) (T, error)) (T, error) {
 	v, err := fn(ctx)
@@ -82,12 +85,11 @@ func RetryThrottledOnce[T any](ctx context.Context, fn func(ctx context.Context)
 			}
 		}
 	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
+	if limit := textchunk.PauseCap(ctx); limit > 0 {
+		wait = min(wait, limit)
+	}
+	if !textchunk.Pause(ctx, wait) {
 		return v, err
-	case <-timer.C:
 	}
 	return fn(ctx)
 }
