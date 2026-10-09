@@ -149,7 +149,6 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 		[]byte(nil),
 		[]byte(nil),
 		[]byte(nil),
-		"auto",
 		time.Now().UTC(),
 		time.Now().UTC(),
 	}})
@@ -188,15 +187,11 @@ func TestRepository_ScanPricing(t *testing.T) {
 		[]byte(nil),
 		[]byte(nil),
 		pricingJSON,
-		"pinned",
 		time.Now().UTC(),
 		time.Now().UTC(),
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)
-	}
-	if reg.ToolPolicy != domain.ToolPolicyPinned {
-		t.Fatalf("ToolPolicy = %q, want pinned", reg.ToolPolicy)
 	}
 	if reg.Pricing() == nil || reg.Pricing().Discount != 0.2 {
 		t.Fatalf("pricing = %+v, want discount 0.2", reg.Pricing())

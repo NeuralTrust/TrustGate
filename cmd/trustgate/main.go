@@ -41,7 +41,6 @@ import (
 	_ "github.com/NeuralTrust/TrustGate/docs"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
-	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -217,9 +216,7 @@ type proxyParam struct {
 
 type mcpParam struct {
 	dig.In
-	// PendingTools is nil until a pending-tool recorder is wired.
-	PendingTools *appmcp.AsyncPendingRecorder `optional:"true"`
-	Srv          server.Server                `name:"mcp"`
+	Srv          server.Server `name:"mcp"`
 	Worker       appmetrics.Worker
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
@@ -269,7 +266,6 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
-	defer p.PendingTools.Close()
 	defer startRateLimit(p.RateLimit, logger)()
 	runServer(p.Srv, serverMCP, logger)
 }
