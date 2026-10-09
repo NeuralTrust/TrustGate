@@ -14,7 +14,13 @@
 
 package trustguard
 
-import appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+import (
+	"context"
+	"errors"
+
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 const decisionFailedClosed = appplugins.DecisionFailedClosed
 
@@ -87,4 +93,32 @@ func failureOfCut(r appplugins.StreamReport) (reason, class string) {
 		reason = string(r.FailureReason)
 	}
 	return reason, string(r.FailureClass)
+}
+
+// reasonOfError is the failure reason, in this plugin's vocabulary, of an error
+// the evaluate call returned. The 429 is not here: it is the engine answering,
+// and each leg turns it into its own refusal before asking for a reason. A
+// deadline counts as the guard running out of time only when this call imposed
+// it, and not when the caller's own context ended.
+func reasonOfError(ctx context.Context, err error) string {
+	var unavailable *entitlementsUnavailableError
+	var auth *authRejectedError
+	var tooLarge *payloadTooLargeError
+	var rejected *attachmentRejectedError
+	var tooBig *pluginutil.AnswerTooLargeError
+	switch {
+	case errors.As(err, &tooBig):
+		return failureReasonResponseTooLarge
+	case errors.As(err, &tooLarge):
+		return failureReasonPayloadTooLarge
+	case errors.As(err, &rejected):
+		return failureReasonAttachmentRejected
+	case errors.As(err, &unavailable):
+		return failureReasonEntitlementsUnavailable
+	case errors.As(err, &auth), errors.Is(err, errUnauthorized):
+		return failureReasonUnauthorized
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		return failureReasonTimeout
+	}
+	return failureReasonTransport
 }

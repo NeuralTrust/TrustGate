@@ -39,6 +39,17 @@ type transformTarget struct {
 	// attachmentsOmitted counts the attachments of the request that were left
 	// out of the evaluate because TrustGuard cannot resolve them.
 	attachmentsOmitted int
+	// attachmentsNotFetched is the part of attachmentsOmitted that TrustGuard
+	// could not have fetched even though they are valid URLs: a URL it has no
+	// credentials for, or one it could not reach.
+	attachmentsNotFetched int
+	// textBytes is the unescaped text the evaluate carries (maxBufferedTextBytes).
+	textBytes int
+	// urlAttachments counts the attachments sent as a URL for TrustGuard to
+	// fetch, and withoutURLAttachments builds the payload again with only the
+	// ones sent as data.
+	urlAttachments        int
+	withoutURLAttachments func() (json.RawMessage, error)
 }
 
 // transformedInput extracts the masked string TrustGuard returns for rewrite.

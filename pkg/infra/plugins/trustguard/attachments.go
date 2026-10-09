@@ -68,18 +68,68 @@ func partitionAttachments(all []GuardAttachment) (resolvable []GuardAttachment, 
 	return resolvable, omitted
 }
 
+// resolvableAttachment mirrors TrustGuard's resolver: exactly one of data and
+// url, compared as sent and not trimmed, so the two sides agree byte for byte.
+// A Gemini Files URI is not resolvable: it needs the caller's API key, which
+// TrustGuard does not have.
 func resolvableAttachment(a GuardAttachment) bool {
-	hasData, hasURL := strings.TrimSpace(a.Data) != "", strings.TrimSpace(a.URL) != ""
+	hasData, hasURL := a.Data != "", a.URL != ""
 	switch {
 	case hasData == hasURL:
 		return false
 	case hasURL:
 		u, err := url.Parse(a.URL)
-		return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+		return err == nil && (u.Scheme == "http" || u.Scheme == "https") && !needsCallerKey(u)
 	default:
 		_, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding, strings.NewReader(a.Data)))
 		return err == nil
 	}
+}
+
+// needsCallerKey reports whether u is a file in the Gemini Files API, which
+// answers only to the API key of the caller that uploaded it.
+func needsCallerKey(u *url.URL) bool {
+	return strings.EqualFold(u.Hostname(), geminiFilesHost) && strings.Contains(u.Path, "/files/")
+}
+
+const geminiFilesHost = "generativelanguage.googleapis.com"
+
+// countCallerAuthURLs is how many of the attachments are valid URLs that
+// partitionAttachments leaves out only because TrustGuard has no credentials for
+// them.
+func countCallerAuthURLs(all []GuardAttachment) int {
+	n := 0
+	for _, a := range all {
+		if a.Data != "" || a.URL == "" {
+			continue
+		}
+		if u, err := url.Parse(a.URL); err == nil && (u.Scheme == "http" || u.Scheme == "https") && needsCallerKey(u) {
+			n++
+		}
+	}
+	return n
+}
+
+func countURLAttachments(attachments []GuardAttachment) int {
+	n := 0
+	for _, a := range attachments {
+		if a.URL != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// dataAttachments keeps the attachments sent as data, which TrustGuard decodes
+// without a fetch.
+func dataAttachments(attachments []GuardAttachment) []GuardAttachment {
+	var out []GuardAttachment
+	for _, a := range attachments {
+		if a.URL == "" {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func walkAttachmentValue(v any, add func(GuardAttachment)) {

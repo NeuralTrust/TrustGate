@@ -27,7 +27,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -329,26 +328,7 @@ func (p *Plugin) segmentFailure(
 	if errors.As(err, &limited) {
 		return segmentBlock(typeRateLimited, rateLimitMessage), nil
 	}
-	reason := failureReasonTransport
-	var unavailable *entitlementsUnavailableError
-	var auth *authRejectedError
-	var tooLarge *payloadTooLargeError
-	var rejected *attachmentRejectedError
-	var tooBig *pluginutil.AnswerTooLargeError
-	switch {
-	case errors.As(err, &tooBig):
-		reason = failureReasonResponseTooLarge
-	case errors.As(err, &tooLarge):
-		reason = failureReasonPayloadTooLarge
-	case errors.As(err, &rejected):
-		reason = failureReasonAttachmentRejected
-	case errors.As(err, &unavailable):
-		reason = failureReasonEntitlementsUnavailable
-	case errors.As(err, &auth), errors.Is(err, errUnauthorized):
-		reason = failureReasonUnauthorized
-	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
-		reason = failureReasonTimeout
-	}
+	reason := reasonOfError(ctx, err)
 	return p.segmentGuardFailure(ctx, in, seg, reason, err)
 }
 

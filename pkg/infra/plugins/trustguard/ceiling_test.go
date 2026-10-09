@@ -49,10 +49,10 @@ func chatResponseOf(t *testing.T, text string) *infracontext.ResponseContext {
 	return &infracontext.ResponseContext{StatusCode: http.StatusOK, Body: raw}
 }
 
-// A request or response far above any prompt is the client's doing and would
-// only be inspected until the call times out, which fails open. It is refused
-// locally as input before a call is made; one under the bound is sent whole.
-func TestBufferedLegsRefuseAPayloadAboveTheCeilingLocally(t *testing.T) {
+// A request or response whose text is above the ceiling is the client's doing
+// and would only be inspected until the call times out, which fails open. It is
+// refused locally as input before a call is made; one under it is sent whole.
+func TestBufferedLegsRefuseATextAboveTheCeilingLocally(t *testing.T) {
 	t.Parallel()
 
 	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
@@ -62,7 +62,7 @@ func TestBufferedLegsRefuseAPayloadAboveTheCeilingLocally(t *testing.T) {
 				f := &fakeGuard{}
 				p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 				event, span := newEvent()
-				big := strings.Repeat("a", 2<<20)
+				big := strings.Repeat("a", maxBufferedTextBytes+1)
 				in := execInputWithEvent(stage, mode, settings(""), requestContext(), nil, event)
 				if stage == policy.StagePreRequest {
 					in.Request = chatRequestOf(t, big)
@@ -72,7 +72,7 @@ func TestBufferedLegsRefuseAPayloadAboveTheCeilingLocally(t *testing.T) {
 
 				res, err := p.Execute(context.Background(), in)
 
-				assert.Zero(t, f.count(), "an oversize payload must not reach TrustGuard")
+				assert.Zero(t, f.count(), "an oversize text must not reach TrustGuard")
 				extras, ok := span.PluginAttrsCopy().Extras.(guardData)
 				require.True(t, ok)
 				assert.Equal(t, "input", extras.FailureClass)
@@ -90,7 +90,7 @@ func TestBufferedLegsRefuseAPayloadAboveTheCeilingLocally(t *testing.T) {
 				t.Parallel()
 				f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 				p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
-				text := strings.Repeat("a", 50<<10)
+				text := strings.Repeat("a", 2<<20)
 				in := execInput(stage, mode, settings(""), requestContext(), nil)
 				if stage == policy.StagePreRequest {
 					in.Request = chatRequestOf(t, text)

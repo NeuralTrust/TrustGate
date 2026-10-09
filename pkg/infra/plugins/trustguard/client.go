@@ -34,18 +34,14 @@ const (
 	evaluatePath           = "/v1/evaluate"
 	traceIDHeader          = "X-Trace-ID"
 	playgroundOriginHeader = "X-AG-Playground"
-	maxResponseBytes       = 1 << 20
+	// maxResponseBytes is the floor of the answer a call reads, and the most the
+	// token endpoint's answer may be. An evaluate answer is sized by what the
+	// call sent (answerLimit).
+	maxResponseBytes = 1 << 20
 
-	// maxBufferedPayloadBytes is the largest evaluate payload a buffered leg
-	// sends. A normal prompt or completion is a few tens of KiB and an agent
-	// conversation with its tool results a few hundred; TrustGuard itself only
-	// refuses a body above 10 MiB, long after a padded one has run the call into
-	// its timeout, which fails open. The bound is half of maxResponseBytes on
-	// purpose: the mask answers with the payload echoed back, so a payload at
-	// the bound still fits an answer that has to carry it once more. Above it
-	// the request is the input's doing and is refused locally as
-	// payload_too_large; a streamed leg sends a 64 KiB window and never gets here.
-	maxBufferedPayloadBytes = 512 << 10
+	// answerSlackBytes is what an answer may carry beyond the payload echoed
+	// back: findings, ids and the rest of the envelope.
+	answerSlackBytes = 64 << 10
 
 	// evaluateTimeoutHeader tells TrustGuard how long, in milliseconds, this
 	// call will wait. TrustGuard holds its detectors to a little less, so one
@@ -157,11 +153,22 @@ func newClient(timeout time.Duration, opts ...clientOption) *client {
 	}}
 }
 
+// answerLimit is the most an evaluate answer is read up to for a call that sent
+// payloadBytes. A transform answers with the payload echoed back, attachments
+// included, so a fixed limit would turn any masked payload above half of it into
+// an answer that is too large; twice the payload plus a slack is what a faithful
+// echo and its envelope can come to, and still bounds what a client can make the
+// gateway read.
+func answerLimit(payloadBytes int) int {
+	return max(maxResponseBytes, 2*payloadBytes+answerSlackBytes)
+}
+
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
 	}
+	limit := answerLimit(len(payload))
 	endpoint := strings.TrimRight(baseURL, "/") + evaluatePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
@@ -185,10 +192,10 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 		return nil, fmt.Errorf("trustguard: guard call: %w", err)
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxResponseBytes))
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, int64(limit)))
 		_ = res.Body.Close()
 	}()
-	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
+	raw, err := io.ReadAll(io.LimitReader(res.Body, int64(limit)))
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: read response: %w", err)
 	}
@@ -216,8 +223,8 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("trustguard: unexpected status %d", res.StatusCode)
 	}
-	if len(raw) >= maxResponseBytes {
-		return nil, &pluginutil.AnswerTooLargeError{Provider: "trustguard", Limit: maxResponseBytes}
+	if len(raw) >= limit {
+		return nil, &pluginutil.AnswerTooLargeError{Provider: "trustguard", Limit: limit}
 	}
 	var out GuardResponse
 	if err := json.Unmarshal(raw, &out); err != nil {

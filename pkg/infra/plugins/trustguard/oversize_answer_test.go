@@ -28,15 +28,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-// The mask echoes the text back in the answer's JSON, where '<' is written as
-// <: a text of angle brackets comes back six times its size, and the
-// client chose that. The answer outgrowing the limit is therefore the request's
-// doing, and a blocking mode refuses it instead of forwarding the unmasked
-// original as if TrustGuard were down.
-func TestAnAnswerAboveTheLimitOnAPaddedTextIsInput(t *testing.T) {
+// An answer above what the call could faithfully echo is the request's: the
+// gateway reads at most twice the payload it sent plus a slack, and an answer
+// beyond that is not the payload coming back. Letting it through as an outage
+// would hand the client a way to have its email forwarded unmasked, so a
+// blocking mode refuses it.
+func TestAnAnswerAboveTheLimitIsInput(t *testing.T) {
 	t.Parallel()
 
-	text := strings.Repeat("<", 180<<10) + " victim@example.com"
+	text := "reach me at victim@example.com"
 	raw, err := json.Marshal(map[string]any{"model": "gpt-4o", "messages": []map[string]string{{"role": "user", "content": text}}})
 	require.NoError(t, err)
 	req := requestContext()
@@ -45,7 +45,7 @@ func TestAnAnswerAboveTheLimitOnAPaddedTextIsInput(t *testing.T) {
 	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			f := &fakeGuard{echoMask: func(s string) string { return strings.ReplaceAll(s, "victim@example.com", "[EMAIL]") }}
+			f := &fakeGuard{echoMask: func(string) string { return strings.Repeat("x", 2*maxResponseBytes) }}
 			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 			event, span := newEvent()
 			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, mode, settings(""), req, nil, event))
