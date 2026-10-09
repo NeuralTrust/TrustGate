@@ -16,6 +16,7 @@ package azurecontentsafety
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -162,7 +164,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureTransport, "", err)
+		reason, detail := failureOf(err)
+		return p.externalFailure(ctx, in, cfg, latency, reason, detail, err)
 	}
 
 	severities, breaches, missing := evaluate(resp, cfg)
@@ -200,6 +203,17 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	return passThrough(), nil
+}
+
+// failureOf maps what Azure answered to the shared failure vocabulary. A 400 is
+// Azure refusing the text it was sent, which is the request's own content; every
+// other status, a timeout and a network error are Azure's availability.
+func failureOf(err error) (appplugins.FailureReason, string) {
+	var status *statusError
+	if errors.As(err, &status) {
+		return pluginutil.FailureOfStatus(status.status)
+	}
+	return appplugins.FailureTransport, ""
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via

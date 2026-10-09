@@ -99,21 +99,20 @@ func (p *Plugin) InspectSegment(
 		buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput),
 	)
 	if err != nil {
-		// Resolved by the guard, not here: only it knows whether the status is
-		// still uncommitted, which decides whether the held text is
-		// released; a guardrail that fails is always released.
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+		// The provider answering for what the block carries (a 4xx that is not
+		// credentials or throttling) is the content's, and cuts a stream in a
+		// mode that blocks; every other failure releases the held text.
+		reason, detail := classifyApplyErr(err)
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("applying guardrail to stream block %d: %w", seg.Seq, err))
 	}
 
 	res := inspect(out, cfg.PIIAction)
 	// Same rule as the buffered leg: an intervention neither block nor
-	// anonymize can explain is not a clean pass. Left to the guard the same
-	// way a transport failure is, since only it knows whether the block is
-	// still uncommitted.
+	// anonymize can explain is not a clean pass, and a mode that blocks cuts.
 	if res.intervened && res.block == nil && res.anonymize == nil {
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, unparsedPolicies(out.Assessments),
-			fmt.Errorf("stream block %d: guardrail intervened with no block or anonymize finding", seg.Seq))
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailInterventionUnparsed, nil,
+			fmt.Errorf("stream block %d: guardrail intervened with no block or anonymize finding (policies: %q)", seg.Seq, unparsedPolicies(out.Assessments)))
 	}
 	switch {
 	case res.block != nil:

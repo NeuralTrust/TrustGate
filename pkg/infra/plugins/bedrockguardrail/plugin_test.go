@@ -317,56 +317,97 @@ func TestExecuteClientErrorEnforceFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteVerdictIncompleteEnforceFailsOpen(t *testing.T) {
+// An intervention none of the read policy families can explain is not a clean
+// pass: AWS intervened on this content, so a mode that blocks refuses it
+// (failed_closed) and observe only records it.
+func TestExecuteUnparsedInterventionByMode(t *testing.T) {
 	t.Parallel()
-	// An intervention none of the read policy families (topic, content, word,
-	// sensitive-information, contextual-grounding) can explain: AWS added a
-	// policy type this plugin does not yet parse.
-	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}
-	p := pluginWith(client)
-
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "verdict_incomplete" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_open", extras, ok)
-	}
-}
-
-func TestExecuteVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
-	t.Parallel()
-	client := &recordingClient{output: intervened(types.GuardrailAssessment{
+	// A policy type AWS added that this plugin does not yet parse.
+	unparsed := intervened(types.GuardrailAssessment{})
+	named := intervened(types.GuardrailAssessment{
 		AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
-	})}
-	p := pluginWith(client)
-
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.FailureReason != "verdict_incomplete" || extras.FailureDetail != "automated_reasoning_policy" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/automated_reasoning_policy", extras, ok)
+	})
+	for _, tc := range []struct {
+		name     string
+		output   *bedrockruntime.ApplyGuardrailOutput
+		mode     policy.Mode
+		decision string
+		refused  bool
+		policies string
+	}{
+		{"enforce", unparsed, policy.ModeEnforce, "failed_closed", true, ""},
+		{"enforce names the policy", named, policy.ModeEnforce, "failed_closed", true, "automated_reasoning_policy"},
+		{"throttle", unparsed, policy.ModeThrottle, "failed_closed", true, ""},
+		{"observe", unparsed, policy.ModeObserve, "failed_open", false, ""},
+		{"observe names the policy", named, policy.ModeObserve, "failed_open", false, "automated_reasoning_policy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := pluginWith(&recordingClient{output: tc.output})
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.Decision != tc.decision || extras.FailureReason != "verdict_incomplete" ||
+				extras.FailureDetail != "intervention_unparsed" || extras.FailurePolicies != tc.policies || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want %s verdict_incomplete/intervention_unparsed policies=%q class input", extras, ok, tc.decision, tc.policies)
+			}
+		})
 	}
 }
 
-func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
+// What ApplyGuardrail answers is classified by the AWS error type and status, in
+// the shapes the SDK parses off the wire: a client error about the call is the
+// content's and is refused in a mode that blocks; credentials, throttling,
+// timeouts and 5xx stay availability and fail open.
+func TestExecuteProviderErrorByClass(t *testing.T) {
 	t.Parallel()
-	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}
-	p := pluginWith(client)
+	for _, tc := range awsApplyGuardrailErrors {
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+			t.Run(tc.name+" "+string(mode), func(t *testing.T) {
+				t.Parallel()
+				awsErr := applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("X-Amzn-Errortype", tc.errType+":http://internal.amazon.com/coral/com.amazon.bedrock/")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+				})
+				p := pluginWith(&recordingClient{err: awsErr})
+				event, span := eventFor(t)
+				in := execInput(policy.StagePreRequest, mode, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+				in.Event = event
+				res, err := p.Execute(context.Background(), in)
 
-	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeObserve, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
-	in.Event = event
-	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "verdict_incomplete" {
-		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_open", extras, ok)
+				input := tc.reason == appplugins.FailureInputTooLarge
+				wantDecision, wantClass, refused := "failed_open", "availability", false
+				if input {
+					wantClass = "input"
+					if mode == policy.ModeEnforce {
+						wantDecision, refused = "failed_closed", true
+					}
+				}
+				if refused {
+					pe, ok := appplugins.AsPluginError(err)
+					if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+						t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+					}
+				} else {
+					assertPassThrough(t, res, err)
+				}
+				extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+				if !ok || extras.Decision != wantDecision || extras.FailureClass != wantClass || extras.FailureReason != string(tc.reason) {
+					t.Fatalf("extras = %+v, ok=%v, want %s/%s/%s", extras, ok, wantDecision, wantClass, tc.reason)
+				}
+			})
+		}
 	}
 }
 

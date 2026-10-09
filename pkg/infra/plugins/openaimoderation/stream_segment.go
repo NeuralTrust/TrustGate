@@ -90,13 +90,14 @@ func (p *Plugin) InspectSegment(
 		Input: []moderationInput{{Type: inputTypeText, Text: seg.Accumulated}},
 	})
 	if err != nil {
-		// Returned rather than resolved here: only the guard knows whether the
-		// status is still uncommitted, which decides whether the held text is
-		// released; a guardrail that fails is always released. The guard itself
-		// logs this failure (headFailure/blockFailure in stream_guard.go), so
-		// this does not log a second time; it only tags the error with the
-		// same reason vocabulary the buffered leg uses.
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+		// OpenAI refusing the content of the block is the content's, and cuts a
+		// stream in a mode that blocks; every other failure is returned for the
+		// held text to be released. The guard itself logs a returned failure
+		// (headFailure/blockFailure in stream_guard.go), so this does not log a
+		// second time; it only tags the error with the same reason vocabulary the
+		// buffered leg uses.
+		reason, detail := failureOf(err)
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("moderating stream block %d: %w", seg.Seq, err))
 	}
 	if len(resp.Results) == 0 {

@@ -16,6 +16,7 @@ package openaimoderation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -295,7 +296,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	resp, err := p.client.Moderate(ctx, p.baseURL, cfg.APIKey, req)
 	if err != nil {
-		return p.externalFailure(ctx, in, cfg, appplugins.FailureTransport, "", err)
+		reason, detail := failureOf(err)
+		return p.externalFailure(ctx, in, cfg, reason, detail, err)
 	}
 	if len(resp.Results) == 0 {
 		return p.externalFailure(ctx, in, cfg, appplugins.FailureVerdictIncomplete, "",
@@ -420,6 +422,17 @@ func (p *Plugin) warnUnknownConfig(ctx context.Context, in appplugins.ExecInput,
 		attrs = append(attrs, slog.Any("unknown_category_keys", badCategories))
 	}
 	p.logger.WarnContext(ctx, "openai moderation config names an unrecognised model or category", attrs...)
+}
+
+// failureOf maps what OpenAI answered to the shared failure vocabulary. A 400 is
+// OpenAI refusing the input it was sent, which is the request's own content;
+// every other status, a timeout and a network error are OpenAI's availability.
+func failureOf(err error) (appplugins.FailureReason, string) {
+	var status *errModeration
+	if errors.As(err, &status) {
+		return pluginutil.FailureOfStatus(status.status)
+	}
+	return appplugins.FailureTransport, ""
 }
 
 // externalFailure turns a failed moderation call into a plugin outcome via

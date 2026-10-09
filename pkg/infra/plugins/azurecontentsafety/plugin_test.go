@@ -76,6 +76,7 @@ type fakeAzure struct {
 	lastBody analyzeRequest
 	status   int
 	response analyzeResponse
+	rawBody  string
 }
 
 func (f *fakeAzure) handler() http.HandlerFunc {
@@ -92,6 +93,10 @@ func (f *fakeAzure) handler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
+		if f.rawBody != "" {
+			_, _ = w.Write([]byte(f.rawBody))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(f.response)
 	}
 }

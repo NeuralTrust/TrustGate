@@ -66,6 +66,16 @@ type analyzeResponse struct {
 	CategoriesAnalysis []categoryAnalysis `json:"categoriesAnalysis"`
 }
 
+// statusError is a non-2xx answer from Azure. It carries only the status: the
+// body can echo the text that was analysed, and an error string ends up in logs.
+type statusError struct {
+	status int
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("azure_content_safety: unexpected status %d", e.status)
+}
+
 func (c *client) Analyze(ctx context.Context, endpoint, apiKey string, body analyzeRequest) (*analyzeResponse, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -87,7 +97,7 @@ func (c *client) Analyze(ctx context.Context, endpoint, apiKey string, body anal
 		return nil, fmt.Errorf("azure_content_safety: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("azure_content_safety: unexpected status %d", res.StatusCode)
+		return nil, &statusError{status: res.StatusCode}
 	}
 	var out analyzeResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
