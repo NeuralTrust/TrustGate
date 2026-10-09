@@ -255,7 +255,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		applyFinding(data, res.anonymize)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
-			return p.anonymizeEnforce(in, data, cfg.Message, out, span, res.anonymize)
+			return p.anonymizeEnforce(ctx, in, data, out, span), nil
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -269,32 +269,45 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	return passThrough(), nil
 }
 
-func (p *Plugin) anonymizeEnforce(in appplugins.ExecInput, data *Data, message string, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan, f *finding) (*appplugins.Result, error) {
+func (p *Plugin) anonymizeEnforce(ctx context.Context, in appplugins.ExecInput, data *Data, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan) *appplugins.Result {
 	masked, ok := maskedText(out)
 	if !ok {
-		return p.anonymizeDegraded(in, data, message, reasonAnonymizeNoOutput, f)
+		return p.anonymizeDegraded(ctx, in, data, reasonAnonymizeNoOutput)
 	}
 	if !supportsReencode(p.registry, span.format) {
-		return p.anonymizeDegraded(in, data, message, reasonAnonymizeUnsupportedFormat, f)
+		return p.anonymizeDegraded(ctx, in, data, reasonAnonymizeUnsupportedFormat)
 	}
 	body, ok := span.rewrite(masked)
 	if !ok {
-		return p.anonymizeDegraded(in, data, message, reasonAnonymizeEncodeFailed, f)
+		return p.anonymizeDegraded(ctx, in, data, reasonAnonymizeEncodeFailed)
 	}
 	data.Decision = decisionAnonymized
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionAnonymized)
-	return span.result(body), nil
+	return span.result(body)
 }
 
-// anonymizeDegraded blocks by design (RUN-1792): the provider confirmed sensitive data and gave no way to mask it, so this is the one deliberate exception to fail-open.
-func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
+// anonymizeDegraded is the provider asking to anonymise while the masked text
+// cannot be applied. Like every other guardrail failure it fails open: the
+// original content goes on unmasked, and the span records failed_open with the
+// reason the mask could not be applied.
+func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput, data *Data, reason string) *appplugins.Result {
 	data.Degraded = true
 	data.DegradedReason = reason
-	data.Decision = decisionBlocked
+	data.FailureReason = string(appplugins.FailureVerdictIncomplete)
+	data.FailureDetail = reason
+	data.Decision = appplugins.DecisionFailedOpen
+	if p.logger != nil {
+		p.logger.WarnContext(ctx, "guardrail masking could not be applied, forwarding unmasked",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("mode", string(in.Mode)),
+			slog.String("reason", reason),
+		)
+	}
 	setExtras(in.Event, data)
-	appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-	return nil, blockError(message, *f)
+	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
+	return passThrough()
 }
 
 // externalFailure turns a failed guardrail call into a plugin outcome via the

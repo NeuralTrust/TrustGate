@@ -541,7 +541,6 @@ func TestExecuteAnonymizeObserveDoesNotMutate(t *testing.T) {
 func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
-	f := &finding{filter: filterSDP, infoTypes: []string{"EMAIL_ADDRESS"}}
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 
 	sdpResultWithText := func(text string) *SanitizationResult {
@@ -580,18 +579,13 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res, err := p.anonymizeEnforce(in, data, "", tt.result, tt.span, f)
-			if res != nil {
-				t.Fatalf("expected nil result, got %+v", res)
-			}
-			if _, ok := appplugins.AsPluginError(err); !ok {
-				t.Fatalf("expected *PluginError, got %v", err)
-			}
+			res := p.anonymizeEnforce(context.Background(), in, data, tt.result, tt.span)
+			assertPassThrough(t, res, nil)
 			if !data.Degraded || data.DegradedReason != tt.reason {
 				t.Fatalf("degraded = %t reason = %q, want true %q", data.Degraded, data.DegradedReason, tt.reason)
 			}
-			if data.Decision != decisionBlocked {
-				t.Fatalf("decision = %q, want %q", data.Decision, decisionBlocked)
+			if data.Decision != appplugins.DecisionFailedOpen {
+				t.Fatalf("decision = %q, want %q", data.Decision, appplugins.DecisionFailedOpen)
 			}
 		})
 	}
@@ -600,7 +594,6 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
-	f := &finding{filter: filterSDP}
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	data := &Data{}
 	span := rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(masked string) ([]byte, bool) {
@@ -610,10 +603,7 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 		DeidentifyResult: &SDPDeidentifyResult{MatchState: matchStateMatchFound, Data: &SDPData{Text: "masked-body"}},
 	}}}}
 
-	res, err := p.anonymizeEnforce(in, data, "", result, span, f)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	res := p.anonymizeEnforce(context.Background(), in, data, result, span)
 	if res == nil || res.RequestBody == nil || string(res.RequestBody) != "masked-body" {
 		t.Fatalf("expected masked request body, got %+v", res)
 	}

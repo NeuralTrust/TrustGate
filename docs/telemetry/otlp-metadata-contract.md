@@ -406,11 +406,13 @@ mask is available (Model Armor `sdp_action: anonymize` with a missing `block_on`
 it is still applied: the decision is `anonymized` and the event also carries
 `failure_reason: verdict_incomplete`.
 
-One deliberate exception stays fail-closed: in enforce, when Model Armor or Bedrock flags
-sensitive data in an anonymize configuration but returns no masked output
-(`degraded_reason: anonymize_no_output`, `reasonAnonymizeNoOutput`), the request is blocked,
-because the provider confirmed the data and gave the gateway no way to mask it. The same
-applies to the other degraded reasons (unsupported format, encode failure).
+A mask the gateway cannot apply fails open too. In enforce, when Model Armor or Bedrock flags
+sensitive data in an anonymize configuration but the masked text cannot be written back
+(no masked output, a format that cannot be re-encoded, or an encode failure), the request or
+stream goes on unmasked. The entry records `decision: failed_open`, `degraded: true` and
+`degraded_reason` set to `anonymize_no_output`, `anonymize_unsupported_format` or
+`anonymize_encode_failed`, with `failure_reason: verdict_incomplete` and the same value in
+`failure_detail`. A provider block verdict still blocks.
 
 **Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
 and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
