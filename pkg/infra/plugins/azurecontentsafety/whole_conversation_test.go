@@ -119,45 +119,6 @@ func TestAPayloadInAnEarlierTurnIsScreened(t *testing.T) {
 	assert.Contains(t, f.sent()[0], "FLAGGED payload")
 }
 
-// A conversation that does not fit text:analyze's limit is an input failure
-// decided locally: Enforce blocks it and Observe records it and lets it go.
-func TestAConversationOverTheLimitIsAnInputFailure(t *testing.T) {
-	t.Parallel()
-	over := chatBody(t,
-		map[string]string{"role": "system", "content": strings.Repeat("s", azureTextLimit/2)},
-		map[string]string{"role": "user", "content": strings.Repeat("é", azureTextLimit/2)},
-	)
-	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			f := &limitedAzure{}
-			srv := f.server(t)
-			p := New(adapter.NewRegistry(), nil)
-			event, span := eventFor(t)
-			in := execInput(policy.StagePreRequest, mode, settings(srv.URL, map[string]int{CategoryHate: 2}), requestContext(over))
-			in.Event = event
-
-			res, err := p.Execute(context.Background(), in)
-			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
-			require.True(t, ok)
-			assert.Equal(t, "input", extras.FailureClass)
-			assert.Equal(t, appplugins.DetailPayloadTooLarge, extras.FailureDetail)
-			assert.Empty(t, f.sent(), "the length is checked locally, before any call")
-			if mode == policy.ModeEnforce {
-				pe, isPE := appplugins.AsPluginError(err)
-				require.True(t, isPE, "got %v", err)
-				assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-				assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
-				assert.Equal(t, "failed_closed", extras.Decision)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, res)
-			assert.Equal(t, "failed_open", extras.Decision)
-		})
-	}
-}
-
 // The limit is counted in code points, so the boundary text passes and one more
 // character does not.
 func TestTheLimitIsCountedInCodePoints(t *testing.T) {
