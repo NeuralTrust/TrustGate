@@ -180,10 +180,7 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
-const (
-	streamOnErrorFailOpen   = "fail_open"
-	streamOnErrorFailClosed = "fail_closed"
-)
+const streamOnErrorFailOpen = "fail_open"
 
 // StreamPlan reports whether any entry of the stage opted into per-segment
 // inspection *and* has it enabled, and yields the options that entry runs
@@ -200,8 +197,8 @@ const (
 // stream carries one of each, and the entries are already ordered by priority.
 // Merging those would invent a cadence no operator asked for.
 //
-// Two options are not taken from the first owner, because "first wins" let a
-// policy with no streaming block, which is now a participant, override another
+// Two options are not taken from the first owner, because "first wins" would let a
+// policy with no streaming block, which is a participant, override another
 // participant's explicit choice or run its provider over a payload it cannot
 // take:
 //

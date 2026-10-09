@@ -50,7 +50,7 @@ type CounterFailure struct {
 // HandleCounterFailure applies the rule the product owner set for our own
 // infrastructure: a counter-store outage always fails OPEN, in every mode,
 // enforce included. The request is never refused for trouble on our side.
-// Third-party guardrails follow the same rule (HandleExternalFailure).
+// Third-party guardrails follow the same rule (FailOpenExternal).
 //
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
