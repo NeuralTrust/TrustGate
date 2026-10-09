@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
@@ -312,8 +313,16 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	return p.runGuardrail(ctx, in, cfg, sanitize, span)
 }
 
+// maxCorrelationPromptBytes bounds the user prompt sent along with a response.
+// It is context for the filters, not content to inspect (the prompt was
+// inspected on pre_request), and it counts against the same token limit as the
+// response: unbounded, a padded prompt would push the response call past it and
+// make Model Armor skip its filters on the response.
+const maxCorrelationPromptBytes = 8 << 10
+
 // correlationPrompt best-effort decodes the original request's last user
-// message to pass as SanitizeModelResponse's optional userPrompt context.
+// message to pass as SanitizeModelResponse's optional userPrompt context,
+// keeping its last maxCorrelationPromptBytes.
 // Any failure here just omits the correlation; it never blocks the response.
 func correlationPrompt(reg *adapter.Registry, format adapter.Format, requestBody []byte) string {
 	if reg == nil || len(requestBody) == 0 {
@@ -324,7 +333,20 @@ func correlationPrompt(reg *adapter.Registry, format adapter.Format, requestBody
 		return ""
 	}
 	text, _ := lastUserText(creq)
-	return text
+	return tailOnRuneBoundary(text, maxCorrelationPromptBytes)
+}
+
+// tailOnRuneBoundary keeps the last limit bytes of s, advanced to the next rune
+// start so it never begins inside a character.
+func tailOnRuneBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	tail := s[len(s)-limit:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return tail
 }
 
 func (p *Plugin) runGuardrail(
@@ -361,15 +383,22 @@ func (p *Plugin) runGuardrail(
 	// did run and matched still wins: it is a real verdict, and naming it is
 	// more useful than naming the one that was missing.
 	//
-	// The exception is a usable mask in a blocking mode: Model Armor already
-	// handed us the de-identified text, and failing open would forward the
-	// ORIGINAL prompt with the raw PII. Apply the mask and record the
-	// incomplete verdict on the same Data instead.
+	// A filter that was skipped (EXECUTION_SKIPPED, or an invocation that came
+	// back PARTIAL) is the content's doing, since padding a request is what
+	// skips one, so a mode that blocks refuses it, usable mask or not: the
+	// other filters did not judge this content. A filter the template never
+	// enabled is the customer's configuration, not anything the request did,
+	// and keeps its usable mask: Model Armor already handed us the
+	// de-identified text, and failing open would forward the ORIGINAL prompt
+	// with the raw PII. Apply the mask and record the incomplete verdict on the
+	// same Data instead.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			if res.anonymize != nil && appplugins.Blocks(in.Mode) {
+			if res.anonymize != nil && appplugins.Blocks(in.Mode) &&
+				appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability {
 				data.FailureReason = string(appplugins.FailureVerdictIncomplete)
-				data.FailureDetail = f + ": " + reason
+				data.FailureDetail = reason
+				data.FailureClass = string(appplugins.FailureClassAvailability)
 			} else {
 				return p.externalFailure(ctx, in, cfg, latency, failureInfo{
 					reason:        appplugins.FailureVerdictIncomplete,
@@ -379,6 +408,13 @@ func (p *Plugin) runGuardrail(
 					err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
 				})
 			}
+		} else if result.InvocationResult == invocationResultPartial {
+			return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+				reason:        appplugins.FailureVerdictIncomplete,
+				armorReason:   appplugins.DetailInvocationPartial,
+				filterVersion: result.filterVersion(),
+				err:           fmt.Errorf("invocationResult PARTIAL"),
+			})
 		}
 	}
 

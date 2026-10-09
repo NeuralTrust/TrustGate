@@ -14,9 +14,16 @@
 
 package googlemodelarmor
 
+import appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+
 const (
 	matchStateMatchFound    = "MATCH_FOUND"
 	invocationResultFailure = "FAILURE"
+	// invocationResultPartial is Model Armor saying it ran only some of the
+	// filters of the template. A skipped filter is the documented way a request
+	// is too large for one (token limits), so the response is not a verdict on
+	// all of the content.
+	invocationResultPartial = "PARTIAL"
 	executionStateSuccess   = "EXECUTION_SUCCESS"
 )
 
@@ -24,8 +31,8 @@ const (
 // on the event so an operator can tell a template that never enabled a filter
 // (fix it in Google Cloud) from one whose filter failed on this call.
 const (
-	reasonFilterNotInTemplate = "filter_not_in_template"
-	reasonFilterNotExecuted   = "filter_not_executed"
+	reasonFilterNotInTemplate = appplugins.DetailFilterNotInTemplate
+	reasonFilterNotExecuted   = appplugins.DetailFilterNotExecuted
 )
 
 // unevaluatedFilter names the first filter selected in block_on that produced
@@ -41,7 +48,16 @@ const (
 //   - it is absent from filterResults, which is what a template that never
 //     enabled it returns. block_on defaults to every filter, so without this a
 //     template enabling one filter would silently pass the other four.
-//   - it is present with an executionState other than EXECUTION_SUCCESS.
+//   - it is present with an executionState other than EXECUTION_SUCCESS, which
+//     is how Model Armor reports a filter it skipped (EXECUTION_SKIPPED, with
+//     "Detection skipped as token limit exceeded." above the filter's token
+//     limit): the content, not the template, kept it from running.
+//
+// The two are told apart because they are not the same kind of failure: a
+// skipped filter is the content's and is refused in a mode that blocks, while a
+// filter the template never enabled is the customer's configuration and fails
+// open. When both occur the skipped one is named, since it is the one a request
+// can cause.
 //
 // An empty executionState on a present filter is treated as success: the
 // field is absent on older filter versions, and inventing a failure from
@@ -70,16 +86,23 @@ func unevaluatedFilter(result *SanitizationResult, on map[string]bool) (filter, 
 		{filterCSAM, fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil,
 			fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil && failed(fr.CSAM.CSAMFilterFilterResult.ExecutionState)},
 	}
+	missing := ""
 	for _, c := range checks {
 		if !on[c.name] {
 			continue
 		}
 		if !c.present {
-			return c.name, reasonFilterNotInTemplate
+			if missing == "" {
+				missing = c.name
+			}
+			continue
 		}
 		if c.failed {
 			return c.name, reasonFilterNotExecuted
 		}
+	}
+	if missing != "" {
+		return missing, reasonFilterNotInTemplate
 	}
 	return "", ""
 }

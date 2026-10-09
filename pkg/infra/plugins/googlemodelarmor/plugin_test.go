@@ -429,9 +429,11 @@ func TestExecuteMatchWinsOverAbsentFilter(t *testing.T) {
 	}
 }
 
-// An SDP anonymize with a selected filter that never ran must still apply the
-// mask the provider returned: failing open would forward the original prompt
-// with the raw PII. The incomplete verdict rides on the same event.
+// An SDP anonymize with a selected filter the template never enabled must still
+// apply the mask the provider returned: failing open would forward the original
+// prompt with the raw PII, and the missing filter is the customer's
+// configuration, not the content's. The incomplete verdict rides on the same
+// event.
 func TestExecuteAnonymizeMasksEvenWhenAFilterIsAbsent(t *testing.T) {
 	t.Parallel()
 	const masked = "hello {EMAIL}"
@@ -461,8 +463,9 @@ func TestExecuteAnonymizeMasksEvenWhenAFilterIsAbsent(t *testing.T) {
 		t.Fatalf("last user content = %q, want %q", last, masked)
 	}
 	data, ok := span.PluginAttrsCopy().Extras.(*Data)
-	if !ok || data.Decision != decisionAnonymized || data.FailureReason != "verdict_incomplete" || data.FailureDetail == "" {
-		t.Fatalf("extras = %+v, ok=%v, want anonymized + verdict_incomplete with a detail", data, ok)
+	if !ok || data.Decision != decisionAnonymized || data.FailureReason != "verdict_incomplete" ||
+		data.FailureDetail != reasonFilterNotInTemplate || data.FailureClass != "availability" {
+		t.Fatalf("extras = %+v, ok=%v, want anonymized + verdict_incomplete/%s/availability", data, ok, reasonFilterNotInTemplate)
 	}
 }
 
