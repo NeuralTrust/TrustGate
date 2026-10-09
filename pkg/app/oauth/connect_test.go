@@ -1798,3 +1798,51 @@ func TestConnectService_TicketNamesItsOwnerByTheirOwnEmail(t *testing.T) {
 		}
 	}
 }
+
+type gatewayClientsByID map[string]*oauth.RegisteredGatewayClient
+
+func (g gatewayClientsByID) GetGatewayClient(_ context.Context, id string) (*oauth.RegisteredGatewayClient, error) {
+	if c, ok := g[id]; ok {
+		return c, nil
+	}
+	return nil, errors.New("not found")
+}
+
+// A link names the app its owner minted it from — the OAuth client their Store
+// session was issued to — so the page can say where to go back.
+func TestConnectService_TicketNamesTheAppItCameFrom(t *testing.T) {
+	t.Parallel()
+	store := newMemConnectStore()
+	clients := gatewayClientsByID{"claude-client": {ClientID: "claude-client", ClientName: " Claude "}}
+	svc := oauth.NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: appconsumer.NewData(ids.New[ids.GatewayKind](), nil)},
+		infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil), discardConnectAuditor(), nil, nil, nil, nil,
+		oauth.WithConnectClients(clients))
+	gw := ids.New[ids.GatewayKind]()
+	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
+	session := func(client string) context.Context {
+		return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice", Claims: map[string]any{identity.ClaimMCPClient: client}})
+	}
+
+	for name, tc := range map[string]struct {
+		ctx     context.Context
+		subject string
+		want    string
+	}{
+		"her session from Claude": {ctx: session("claude-client"), subject: "alice", want: "Claude"},
+		"an unknown client":       {ctx: session("gone"), subject: "alice"},
+		"someone else's link":     {ctx: session("claude-client"), subject: "bob"},
+		"a key, issued to no app": {ctx: identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"}), subject: "alice"},
+	} {
+		id, err := svc.CreateServerTicket(tc.ctx, gw, tc.subject, storePath, "com.notion/mcp", "")
+		if err != nil {
+			t.Fatalf("%s: CreateServerTicket: %v", name, err)
+		}
+		ticket, err := store.GetTicket(context.Background(), id)
+		if err != nil || ticket == nil {
+			t.Fatalf("%s: GetTicket: %v", name, err)
+		}
+		if ticket.ClientName != tc.want {
+			t.Fatalf("%s: client name = %q, want %q", name, ticket.ClientName, tc.want)
+		}
+	}
+}

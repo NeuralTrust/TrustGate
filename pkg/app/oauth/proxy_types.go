@@ -104,6 +104,9 @@ type CodeGrant struct {
 }
 
 type SessionRecord struct {
+	// ClientID is the OAuth client the session was issued to, carried into
+	// every refreshed token so the app it names survives a refresh.
+	ClientID    string   `json:"client_id,omitempty"`
 	Subject     string   `json:"subject"`
 	Email       string   `json:"email,omitempty"`
 	Scopes      []string `json:"scopes,omitempty"`

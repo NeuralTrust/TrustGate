@@ -498,11 +498,12 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
   {{else if .Linked}}{{if .AccountRef}}<div class="account">` + badgeCheck + `{{.AccountRef}}</div>{{end}}
   <div class="done">` + doneGlyph + `<div>
-    <span class="done-title">{{if .AutoReturn}}All set — taking you back{{else if .ResumeURL}}All set — head back to your app{{else}}All set — go back to your assistant{{end}}</span>
-    <span class="done-body">{{.ServerName}} is ready to use there. If its tools do not show up, refresh the connector's tools in your assistant or start a new conversation — some clients read the tool list only when asked to or when a conversation opens.</span>
+    <span class="done-title">{{if .AutoReturn}}All set — taking you back{{else if .ResumeURL}}All set — head back to your app{{else}}All set — go back to {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}}{{end}}</span>
+    <span class="done-body">{{.ServerName}} is ready to use there. If its tools do not show up, refresh the connector's tools in {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}} or start a new conversation — some clients read the tool list only when asked to or when a conversation opens.</span>
+    {{if not .ResumeURL}}<span class="done-body" id="close-hint" hidden>This browser keeps open the tabs it did not open itself: switch back to {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}}, and close this tab whenever you like.</span>{{end}}
   </div></div>
   {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}
-  {{if .AutoClose}}<script>setTimeout(function () { window.close(); }, 1500);</script>{{end}}{{end}}
+  {{if .AutoClose}}<script>setTimeout(function () { window.close(); setTimeout(function () { var h = document.getElementById('close-hint'); if (!window.closed && h) { h.hidden = false; } }, 300); }, 1500);</script>{{end}}{{end}}
   {{if .Owner.Name}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
@@ -513,7 +514,10 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn primary block" type="submit">Reconnect {{.ServerName}}</button></form>
     {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
   {{else if .Linked}}
-    {{if .ResumeURL}}<a class="btn primary block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
+    {{if .ResumeURL}}<a class="btn primary block" href="{{.ResumeURL}}">Return to your app</a>
+    {{else}}<button class="btn primary block" type="button" id="close-tab">Close and go back to {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}}</button>
+    <script>(function(){var b=document.getElementById('close-tab'),h=document.getElementById('close-hint');if(!b)return;
+    b.addEventListener('click',function(){window.close();setTimeout(function(){if(!window.closed&&h){h.hidden=false;}},300);});})();</script>{{end}}
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn ghost-danger block" type="submit">Disconnect {{.ServerName}}</button></form>
   {{else}}
     <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn primary block" type="submit">Connect account</button></form>

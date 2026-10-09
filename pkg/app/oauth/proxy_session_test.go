@@ -33,6 +33,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -259,6 +260,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.SaveCode(ctx, "gw-code", CodeGrant{
+		ClientID:      "cursor-client",
 		RedirectURI:   "cursor://anysphere.cursor-mcp/oauth/callback",
 		CodeChallenge: s256("client-verifier"),
 		Subject:       "user-42",
@@ -312,6 +314,12 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	}
 	if claims["email"] != "ada@example.com" {
 		t.Fatalf("session token must carry the IdP email, got %v", claims["email"])
+	}
+	if claims[identity.ClaimMCPClient] != "cursor-client" {
+		t.Fatalf("session token must name the client it was issued to, got %v", claims[identity.ClaimMCPClient])
+	}
+	if _, has := claims["client_id"]; has {
+		t.Fatal("the client is not client_id: auth bindings match that against a consumer's allowed clients")
 	}
 	if claims["iss"] != signer.Issuer() {
 		t.Fatalf("expected issuer %q, got %v", signer.Issuer(), claims["iss"])

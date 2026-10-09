@@ -770,6 +770,7 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		refresh := gatewayRefreshPrefix + token
 		loginAt := p.now()
 		rec := SessionRecord{
+			ClientID:    grant.ClientID,
 			Subject:     grant.Subject,
 			Email:       grant.Email,
 			Scopes:      grant.Scopes,
@@ -818,6 +819,11 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 	}
 	if identity.LooksLikeEmail(grant.Email) {
 		claims["email"] = grant.Email
+	}
+	// The app the session was issued to, so a page the person is sent to from
+	// it can name where to go back.
+	if grant.ClientID != "" {
+		claims[identity.ClaimMCPClient] = grant.ClientID
 	}
 	// org binds the session to the user's platform tenant; the MCP plane rejects
 	// a default-IdP session whose org does not match the addressed gateway's
@@ -933,6 +939,7 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 		return nil, oauthErr("invalid_grant", "session predates gateway binding; sign in again")
 	}
 	resp, err := p.mintSession(CodeGrant{
+		ClientID:    rec.ClientID,
 		Subject:     rec.Subject,
 		Email:       rec.Email,
 		Scopes:      rec.Scopes,

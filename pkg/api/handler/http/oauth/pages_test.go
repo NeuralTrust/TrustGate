@@ -749,7 +749,9 @@ func TestSingleConnectPage_ClosesItselfOnlyRightAfterConnecting(t *testing.T) {
 			return renderConnectPageAfter(c, p, "tk", flash, justConnected, mustMCPCatalog(t))
 		})
 	}
-	if body := render(page(""), true, ""); !strings.Contains(body, "window.close()") {
+	// The landing page's own attempt, as opposed to the button's.
+	const autoClose = "setTimeout(function () { window.close();"
+	if body := render(page(""), true, ""); !strings.Contains(body, autoClose) {
 		t.Fatalf("the page the callback lands on must close itself, body:\n%s", body)
 	}
 	for name, body := range map[string]string{
@@ -757,8 +759,40 @@ func TestSingleConnectPage_ClosesItselfOnlyRightAfterConnecting(t *testing.T) {
 		"with a resume link": render(page("https://app.example.com/back"), true, ""),
 		"after an error":     render(page(""), true, "Linear refused the connection."),
 	} {
-		if strings.Contains(body, "window.close()") {
+		if strings.Contains(body, autoClose) {
 			t.Fatalf("%s: the page must not close itself, body:\n%s", name, body)
 		}
+	}
+}
+
+// Once connected, the page offers the way back by name: the app the link came
+// from, from the OAuth client its Store session was issued to. A browser that
+// will not close the tab gets told to switch back instead.
+func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
+	t.Parallel()
+	render := func(app, resume string) string {
+		return renderToString(t, func(c *fiber.Ctx) error {
+			return renderConnectPage(c, &appoauth.ConnectPage{
+				ConsumerPath: "/store/mcp",
+				Code:         "app.linear/mcp",
+				ResumeURL:    resume,
+				ClientName:   app,
+				Providers: []appoauth.ProviderStatus{{
+					Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
+				}},
+			}, "tk", "", mustMCPCatalog(t))
+		})
+	}
+	body := render("Claude", "")
+	for _, want := range []string{`id="close-tab"`, "Close and go back to Claude", "All set — go back to Claude", `id="close-hint"`, "switch back to Claude"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the connected page must say %q, body:\n%s", want, body)
+		}
+	}
+	if body := render("", ""); !strings.Contains(body, "Close and go back to your assistant") {
+		t.Fatalf("an unknown app is named as the assistant, body:\n%s", body)
+	}
+	if body := render("Claude", "https://app.example.com/back"); strings.Contains(body, `id="close-tab"`) {
+		t.Fatalf("a page with a resume link sends the user there instead, body:\n%s", body)
 	}
 }
