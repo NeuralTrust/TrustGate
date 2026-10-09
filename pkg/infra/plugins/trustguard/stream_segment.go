@@ -48,7 +48,7 @@ func (p *Plugin) inspectSegment(
 		}
 		return segmentAllow(), nil
 	}
-	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
 	if seg.Closing {
@@ -104,7 +104,7 @@ func (p *Plugin) inspectSegment(
 	// why the call goes through guardWith and tokenWithin rather than guard: a
 	// block that has to wait for a cold token still has to answer inside
 	// the stream guard timeout, because the caller is holding bytes for it.
-	blockCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.guardTimeout())
+	blockCtx, cancel := context.WithTimeout(ctx, p.streamGuardTimeout())
 	defer cancel()
 	resp, err := p.guardWith(
 		blockCtx,

@@ -141,9 +141,8 @@ type Plugin struct {
 	tokens   *tokenManager
 	baseURL  string
 	logger   *slog.Logger
-	// timeout is the deployment-wide deadline of an evaluate call whose
-	// policy sets none. A policy can shorten or lengthen its own calls
-	// without every gateway sharing the change.
+	// timeout is the deployment-wide deadline (TRUSTGUARD_TIMEOUT) of every
+	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
 	cfgCache sync.Map
@@ -407,7 +406,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
 	return true, appplugins.StreamOptions{
@@ -417,6 +416,18 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 		MaxHoldMS:            cfg.Streaming.MaxHoldMS,
 		MaxAccumulatedBytes:  cfg.Streaming.MaxAccumulatedBytes,
 	}
+}
+
+// streamGuardTimeout is how long one streamed block waits for TrustGuard. The
+// caller holds the client's bytes for that long, so it is the short stream
+// deadline, and the deployment-wide timeout bounds it from above: a deployment
+// that tightens TRUSTGUARD_TIMEOUT tightens its streams with it, and a looser
+// one never stretches the hold on a client.
+func (p *Plugin) streamGuardTimeout() time.Duration {
+	if p.timeout > 0 {
+		return min(streamingDefaults.GuardTimeout, p.timeout)
+	}
+	return streamingDefaults.GuardTimeout
 }
 
 // streamGuardOwns reports whether this policy's streamed response is inspected
