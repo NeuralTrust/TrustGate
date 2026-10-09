@@ -118,6 +118,9 @@ type StreamReport struct {
 	// zero on the guard's chain-wide report and set per entry. With no cut,
 	// the guard applied every one of them: it applies a mask or cuts.
 	MaskedEvals int
+	// ChunkedEvals counts the blocks that were larger than this entry's window
+	// and were screened in chunks of it. Only the executor knows it, per entry.
+	ChunkedEvals int
 	// FailedEvals counts the blocks on which this entry's own call failed and
 	// the held text was released (or the stream was cut) without its verdict.
 	// Like MaskedEvals only the executor knows it, so it is zero on the guard's
@@ -302,6 +305,9 @@ type streamSpans struct {
 	cutBy    map[string][]string
 	failedBy map[string]string
 	masked   map[string]int
+	// chunkedEvals counts, per entry, the blocks that were larger than its window
+	// and were screened in chunks.
+	chunkedEvals map[string]int
 	// failed counts, per entry, the blocks on which its own call failed and
 	// the failure was not the caller's cancellation. It is per entry because
 	// the guard's DegradedReason is one value for the whole chain: it is copied
@@ -342,6 +348,8 @@ func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 		failedBy: make(map[string]string),
 		masked:   make(map[string]int),
 		failed:   make(map[string]int),
+
+		chunkedEvals: make(map[string]int),
 
 		failureReason: make(map[string]FailureReason),
 		failureDetail: make(map[string]string),
@@ -570,6 +578,16 @@ func (s *streamSpans) charge(seg StreamSegment, entry chainEntry, d time.Duratio
 	s.spent[spanKey(seg, entry)] += d
 }
 
+// chunked counts one block that an entry screened in chunks.
+func (s *streamSpans) chunked(key string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chunkedEvals[key]++
+}
+
 // setCut records which entries author the cut on the segment just evaluated,
 // replacing whatever an earlier segment stored. The guard knows a stream was
 // cut but not by whom, and only the chain can tell: without this an
@@ -675,6 +693,7 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	key := spanKey(seg, entry)
 	report.GuardLatency = s.spent[key]
 	report.MaskedEvals = s.masked[key]
+	report.ChunkedEvals = s.chunkedEvals[key]
 	report.FailedEvals = s.failed[key]
 	report.FailureReason = s.failureReason[key]
 	report.FailureDetail = s.failureDetail[key]

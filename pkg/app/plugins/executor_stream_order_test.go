@@ -17,6 +17,7 @@ package plugins
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -30,6 +31,7 @@ import (
 // is handed, so a test can assert what each entry saw and not only what it
 // answered. calls is a shared log: the order entries were consulted in.
 type orderStub struct {
+	mu sync.Mutex
 	*streamPlugin
 	fn    func(StreamSegment) *SegmentVerdict
 	err   error
@@ -39,11 +41,15 @@ type orderStub struct {
 }
 
 func (o *orderStub) InspectSegment(_ context.Context, _ ExecInput, seg StreamSegment) (*SegmentVerdict, error) {
+	o.mu.Lock()
 	o.seen = append(o.seen, seg)
+	if !seg.Closing {
+		*o.log = append(*o.log, o.name)
+	}
+	o.mu.Unlock()
 	if seg.Closing {
 		return nil, nil
 	}
-	*o.log = append(*o.log, o.name)
 	if o.err != nil {
 		return nil, o.err
 	}

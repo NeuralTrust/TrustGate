@@ -524,3 +524,21 @@ func TestOptionsWithinCapsTheWindowWhateverTheSettingAsks(t *testing.T) {
 		t.Fatalf("window = %d, want the smaller window the policy asked for", got)
 	}
 }
+
+func TestNewStreamDataCountsChunkedBlocksOnlyWhenThereWereAny(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(NewStreamData("id", appplugins.StreamReport{ChunkedEvals: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"chunked_blocks":2`) {
+		t.Fatalf("chunked_blocks missing from %s", raw)
+	}
+	raw, err = json.Marshal(NewStreamData("id", appplugins.StreamReport{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "chunked_blocks") {
+		t.Fatalf("chunked_blocks must be omitted when no block was chunked: %s", raw)
+	}
+}

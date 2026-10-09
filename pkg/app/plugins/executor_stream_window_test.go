@@ -128,7 +128,9 @@ func TestStagePlan_StreamPlan_KeepsTheLargestWindow(t *testing.T) {
 		"a small provider window ahead of the guard must not shrink what the guard inspects")
 }
 
-func TestRunStreamSegment_BlockLargerThanTheWindowIsSentWhole(t *testing.T) {
+// The block's own text is never cut from an entry: one larger than the entry's
+// window is screened in chunks of the window that together cover all of it.
+func TestRunStreamSegment_BlockLargerThanTheWindowIsScreenedInChunks(t *testing.T) {
 	t.Parallel()
 	exec, pols, stubs, _ := orderChain(t,
 		orderSpec{slug: "a_remote", priority: 10, mode: policy.ModeEnforce, reads: true},
@@ -138,10 +140,15 @@ func TestRunStreamSegment_BlockLargerThanTheWindowIsSentWhole(t *testing.T) {
 
 	runOrder(t, exec, pols, seg)
 
-	require.Len(t, stubs["a_remote"].seen, 1)
-	got := stubs["a_remote"].seen[0]
-	assert.Equal(t, " a burst", got.Accumulated, "text about to be released is never kept from the entry")
-	assert.True(t, got.Truncated)
+	seen := stubs["a_remote"].seen
+	require.Len(t, seen, 2)
+	var pieces []string
+	for _, got := range seen {
+		assert.LessOrEqual(t, len(got.Accumulated), 4, "no call is larger than the entry's window")
+		assert.True(t, got.Truncated)
+		pieces = append(pieces, got.Accumulated)
+	}
+	assert.ElementsMatch(t, []string{" a b", "urst"}, pieces, "text about to be released is never kept from the entry")
 }
 
 func TestRunStreamSegment_FailureAfterAWindowedMaskCarriesTheWholeMask(t *testing.T) {
