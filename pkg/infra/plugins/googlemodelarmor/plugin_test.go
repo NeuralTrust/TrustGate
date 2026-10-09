@@ -591,6 +591,27 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 	}
 }
 
+// A filter that produced no verdict is already named in FailureDetail when the
+// mask then cannot be applied: both reasons stay on the event.
+func TestAnonymizeDegradedKeepsTheUnevaluatedFilterDetail(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
+	data := &Data{FailureDetail: "rai: filter_not_executed"}
+
+	res := p.anonymizeEnforce(context.Background(), in, data, &SanitizationResult{},
+		rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(string) ([]byte, bool) { return []byte("x"), true }})
+
+	assertPassThrough(t, res, nil)
+	want := "rai: filter_not_executed; " + reasonAnonymizeNoOutput
+	if data.FailureDetail != want {
+		t.Fatalf("FailureDetail = %q, want %q", data.FailureDetail, want)
+	}
+	if data.DegradedReason != reasonAnonymizeNoOutput {
+		t.Fatalf("DegradedReason = %q, want %q", data.DegradedReason, reasonAnonymizeNoOutput)
+	}
+}
+
 func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))

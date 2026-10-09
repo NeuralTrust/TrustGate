@@ -441,7 +441,13 @@ func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput,
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.FailureReason = string(appplugins.FailureVerdictIncomplete)
-	data.FailureDetail = reason
+	// A filter that produced no verdict already named itself in the detail; the
+	// mask reason is added to it rather than replacing it.
+	if data.FailureDetail != "" {
+		data.FailureDetail += "; " + reason
+	} else {
+		data.FailureDetail = reason
+	}
 	data.Decision = appplugins.DecisionFailedOpen
 	if p.logger != nil {
 		p.logger.WarnContext(ctx, "guardrail masking could not be applied, forwarding unmasked",
