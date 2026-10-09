@@ -350,6 +350,38 @@ func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
 	}
 }
 
+// A mask in hand outranks an unevaluated block_on filter in a blocking mode, as
+// on the buffered leg: releasing the original text would send the raw PII the
+// mask exists to hide. The incomplete verdict travels on the transform.
+func TestInspectSegmentMasksWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
+	t.Parallel()
+	skippedRAI := `"rai":{"raiFilterResult":{"executionState":"EXECUTION_SKIPPED","matchState":"NO_MATCH_FOUND"}}`
+	body := sanitizeOpen +
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"write to [EMAIL] soon"}}}},` +
+		skippedRAI + sanitizeClose
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, body))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), nil), segment(2, "write to a@b.com soon"))
+
+	if err != nil {
+		t.Fatalf("a usable mask must not become an error: %v", err)
+	}
+	if !got.HasTransform || got.Transformed != "write to [EMAIL] soon" {
+		t.Fatalf("verdict = %+v, want the masked prefix as a transform", got)
+	}
+	var failure *appplugins.ExternalStreamFailure
+	if !errors.As(got.Incomplete, &failure) || failure.Reason != appplugins.FailureVerdictIncomplete || failure.Detail == "" {
+		t.Fatalf("Incomplete = %v, want a typed verdict_incomplete naming the filter", got.Incomplete)
+	}
+
+	observed, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, anonymizeStreamSettings(), nil), segment(2, "write to a@b.com soon"))
+	if err == nil {
+		t.Fatalf("observe applies no mask, so the incomplete verdict stays an error, got %+v", observed)
+	}
+}
+
 func TestInspectSegmentMatchWinsOverAbsentFilter(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, sdpOnlyRAIHits))
