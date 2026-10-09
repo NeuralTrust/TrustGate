@@ -1046,5 +1046,5 @@ func TestBuilder_NativeBedrockMaskNotApplicableIsAPolicyChainEntry(t *testing.T)
 	assert.Equal(t, "block", entry.Decision)
 	raw, err := json.Marshal(entry.Extras)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"decision":"blocked","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining","failure_class":"input","degraded":true,"degraded_reason":"leak_remaining"}`, string(raw))
+	assert.JSONEq(t, `{"decision":"blocked","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining","failure_detail":"anonymize_no_output","failure_class":"input","degraded":true,"degraded_reason":"leak_remaining"}`, string(raw))
 }
