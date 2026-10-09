@@ -103,6 +103,17 @@ const (
 	DetailUnsupportedFormat       = "unsupported_format"
 	DetailProviderConfigRejected  = "provider_config_rejected"
 	DetailCoveragePartial         = "coverage_partial"
+	// DetailChunkLimit is a content that splits into more chunks than the
+	// guardrail evaluates, or that the provider's quota could not serve within
+	// the call's budget. It is refused before any call is made.
+	DetailChunkLimit = "chunk_limit"
+	// DetailChunkBudget is a chunk that was never sent because the chunks
+	// ahead of it used the evaluation's whole time budget.
+	DetailChunkBudget = "chunk_budget"
+	// DetailThrottledOversize is a provider rate limit answered to a request
+	// that was split into several calls: the request's own size can have
+	// caused it.
+	DetailThrottledOversize = "throttled_oversize"
 )
 
 // IsMaskOverFinding reports whether a failure detail is a mask that could not
