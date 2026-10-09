@@ -219,8 +219,8 @@ func TestSegmentVerdicts(t *testing.T) {
 		})
 	}
 
-	// A mask this plugin cannot apply is a failure on our side, not a finding:
-	// it fails open instead of cutting.
+	// A mask this plugin cannot apply is reported as an error here; the caller
+	// resolves it by mode, cutting in a mode that blocks.
 	for name, tc := range map[string]struct {
 		seg  appplugins.StreamSegment
 		resp GuardResponse
@@ -792,4 +792,163 @@ func TestInspectSegmentObserveModeReportsNoCutItDidNotMake(t *testing.T) {
 	assert.Equal(t, int64(240), data.Streaming.AddedLatencyMs)
 	assert.Equal(t, 70*time.Millisecond, span.Latency(),
 		"the observing entry is charged its own share of the hold")
+}
+
+func segmentInputIn(t *testing.T, mode policy.Mode) appplugins.ExecInput {
+	t.Helper()
+	return execInput(policy.StagePreResponse, mode, streamingSettings(nil), segmentRequest(), nil)
+}
+
+// A 413 is TrustGuard refusing the body for its size: the request's own content,
+// so a mode that blocks cuts the stream, carrying the failure the executor
+// records, while observe and every availability failure release the block.
+func TestInspectSegmentPayloadTooLargeByMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enforce cuts", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusRequestEntityTooLarge}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, verdict.Type)
+		require.NotNil(t, verdict.Failure)
+		assert.Equal(t, appplugins.FailureInputTooLarge, verdict.Failure.Reason)
+		assert.Equal(t, appplugins.DetailPayloadTooLarge, verdict.Failure.Detail)
+		assert.Equal(t, appplugins.FailureClassInput, verdict.Failure.Class)
+	})
+	t.Run("observe releases the block", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusRequestEntityTooLarge}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeObserve),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+		assert.Nil(t, verdict.Failure)
+	})
+	t.Run("an availability failure releases the block in enforce", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusInternalServerError}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+	})
+}
+
+// A client padding a stream must not retire the inspection: an input failure
+// never extends the run that stops this policy calling TrustGuard, where the
+// same number of availability failures does.
+func TestInspectSegmentInputFailuresDoNotRetireTheStream(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		status      int
+		wantRetired bool
+	}{
+		"payload too large": {http.StatusRequestEntityTooLarge, false},
+		"server error":      {http.StatusInternalServerError, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			g := &segmentGuard{status: tc.status}
+			p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+			in := segmentInputIn(t, policy.ModeObserve)
+			ctx := segmentTraceContext()
+			for seq := 1; seq <= streamRetireAfter+2; seq++ {
+				_, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: seq, Accumulated: "Hello world"})
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.wantRetired, p.streamRetired(ctx, in, appplugins.StreamSegment{Seq: 1, Accumulated: "x"}))
+			if tc.wantRetired {
+				assert.Len(t, g.calls(), streamRetireAfter)
+			} else {
+				assert.Len(t, g.calls(), streamRetireAfter+2)
+			}
+		})
+	}
+}
+
+// A mask TrustGuard asked for that cannot be written into the stream is a mask
+// over a confirmed finding: a mode that blocks cuts with the finding's own block
+// and the failure that records it blocked and degraded; observe releases.
+func TestInspectSegmentUnappliableTransformCutsInEnforce(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enforce", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusTransform}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, typeBlocked, verdict.Type)
+		assert.False(t, verdict.HasTransform)
+		require.NotNil(t, verdict.Failure)
+		assert.Equal(t, appplugins.DetailAnonymizeNoOutput, verdict.Failure.Detail)
+	})
+	t.Run("observe", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusTransform}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeObserve),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+	})
+}
+
+// The closing write of a cut that is a failure: an input failure is failed_closed,
+// a mask over a finding stays blocked and degraded in the plugin's own words.
+func TestInspectSegmentClosingRecordsACutThatIsAFailure(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		report       appplugins.StreamReport
+		wantDecision string
+		wantReason   string
+		wantDegraded string
+	}{
+		"payload too large": {
+			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,
+				FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailPayloadTooLarge,
+				FailureClass: appplugins.FailureClassInput},
+			wantDecision: decisionFailedClosed, wantReason: failureReasonPayloadTooLarge,
+		},
+		"mask over a finding": {
+			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,
+				FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: appplugins.DetailAnonymizeNoOutput,
+				FailureClass: appplugins.FailureClassInput},
+			wantDecision: decisionBlocked, wantReason: failureReasonTransformFailed, wantDegraded: reasonTransformNoPayload,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p := newTestPlugin(t, adapter.NewRegistry(), "")
+			event, span := newEvent()
+			in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, streamingSettings(nil), segmentRequest(), nil, event)
+
+			_, err := p.InspectSegment(segmentTraceContext(), in, appplugins.StreamSegment{Seq: 2, Closing: true, Report: tc.report})
+			require.NoError(t, err)
+
+			data, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantDecision, data.Decision)
+			assert.Equal(t, tc.wantReason, data.FailureReason)
+			assert.Equal(t, "input", data.FailureClass)
+			assert.Equal(t, tc.wantDegraded != "", data.Degraded)
+			assert.Equal(t, tc.wantDegraded, data.DegradedReason)
+			assert.False(t, data.FailedOpen)
+		})
+	}
 }
