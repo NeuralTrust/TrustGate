@@ -17,8 +17,10 @@ package plugins
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,4 +242,94 @@ func TestRunStreamSegment_ABlockWithinTheWindowIsNotChunked(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, guard.seen(), 1)
 	assert.False(t, guard.seen()[0].Truncated)
+}
+
+// sequentialGuard is a chunkGuard that declares one piece at a time and records
+// the most calls it saw in flight.
+type sequentialGuard struct {
+	*chunkGuard
+	parallel int
+	inflight atomic.Int32
+	peak     atomic.Int32
+}
+
+func (g *sequentialGuard) StreamChunkParallel() int { return g.parallel }
+
+func (g *sequentialGuard) InspectSegment(ctx context.Context, in ExecInput, seg StreamSegment) (*SegmentVerdict, error) {
+	if !seg.Closing {
+		n := g.inflight.Add(1)
+		defer g.inflight.Add(-1)
+		for {
+			p := g.peak.Load()
+			if n <= p || g.peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return g.chunkGuard.InspectSegment(ctx, in, seg)
+}
+
+func sequentialChain(t *testing.T, window, parallel int, fn func(StreamSegment) (*SegmentVerdict, error)) (*executor, StageInput, *sequentialGuard) {
+	t.Helper()
+	base := &chunkGuard{
+		fakePlugin: fakePlugin{name: "guard", stages: []policy.Stage{policy.StagePreResponse}, result: &Result{StatusCode: 200}},
+		fn:         fn,
+	}
+	g := &sequentialGuard{chunkGuard: base, parallel: parallel}
+	pol := policies(t, polSpec{slug: "guard", enabled: true, priority: 10, stages: []policy.Stage{policy.StagePreResponse}})[0]
+	pol.Mode = policy.ModeEnforce
+	pol.Settings = map[string]any{"enabled": true, "max_accumulated_bytes": window}
+	exec, ok := NewExecutor(newRegistry(t, g), nil).(*executor)
+	require.True(t, ok)
+	return exec, failureInput([]*policy.Policy{pol}), g
+}
+
+func TestRunStreamSegment_AnInspectorThatDeclaresOneAtATimeIsSentPiecesSequentially(t *testing.T) {
+	t.Parallel()
+	const window = 8192
+	text := words(40000)
+	for parallel, wantPeak := range map[int]int32{1: 1, 4: 4} {
+		exec, in, g := sequentialChain(t, window, parallel, allow)
+		_, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+		require.NoError(t, err)
+		assert.Len(t, g.seen(), 6)
+		if wantPeak == 1 {
+			assert.EqualValues(t, 1, g.peak.Load(), "the pieces were sent one at a time")
+		} else {
+			assert.Greater(t, g.peak.Load(), int32(1), "the default sends several at once")
+		}
+	}
+}
+
+// A throttle on the second piece of a sequential inspector waited behind the
+// first, so the block's own size plausibly spent the quota: input. The same
+// throttle on an inspector that sends four at once is in the first round.
+func TestRunStreamSegment_AThrottleOnASequentialPieceIsInputAndOnAFirstRoundPieceIsNot(t *testing.T) {
+	t.Parallel()
+	const window = 8192
+	var b strings.Builder
+	for i := 0; b.Len() < 40000; i++ {
+		fmt.Fprintf(&b, "w%06d ", i)
+	}
+	text := b.String()
+	second := textchunk.Split(text, streamChunkSpec(window))[1].Text
+	pick := func(seg StreamSegment) (*SegmentVerdict, error) {
+		if seg.Accumulated == second {
+			return nil, newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
+		}
+		return &SegmentVerdict{}, nil
+	}
+
+	exec, in, _ := sequentialChain(t, window, 1, pick)
+	out, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+	require.NoError(t, err)
+	require.True(t, out.Block, "the piece that waited behind the first was throttled by the block's own size")
+	assert.Equal(t, TypeGuardrailInputUninspectable, out.Type)
+
+	exec, in, _ = sequentialChain(t, window, 4, pick)
+	out, err = exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+	require.NoError(t, err)
+	assert.False(t, out.Block, "a first-round throttle is the provider's load and fails open")
+	assert.Equal(t, 1, out.FailedEntries)
 }

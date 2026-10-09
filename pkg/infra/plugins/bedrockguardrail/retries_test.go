@@ -31,6 +31,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 // ApplyGuardrail's documented answer for content nothing intervened on.
@@ -190,6 +191,27 @@ func TestTheSecondBlockOfAThrottledStreamMakesOneAttempt(t *testing.T) {
 	_, err = p.InspectSegment(context.Background(), in, segment(4, "a block of the next response"))
 	require.Error(t, err)
 	assert.Greater(t, client.count(), before+1, "the closing segment releases the stream, so its id retries again")
+}
+
+// The pieces of one block are sent one at a time, and a piece is retried like
+// any call: the one-attempt shortcut is for the blocks of a throttled stream.
+func TestThePiecesOfAChunkedBlockAreRetriedInAThrottledStream(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 1, New(adapter.NewRegistry(), nil).StreamChunkParallel())
+	throttled := throttlingError(t)
+	client := &sequencedClient{errs: []error{throttled, throttled, throttled, throttled, throttled, throttled, throttled, throttled}, output: allowOutput()}
+	p := pluginWith(client)
+	in := streamInput(policy.ModeEnforce, streamSettings(nil), nil)
+	_, err := p.InspectSegment(context.Background(), in, segment(1, "first block"))
+	require.Error(t, err)
+	before := client.count()
+
+	piece := segment(2, "a piece of a long block")
+	piece.Part, piece.Parts = 1, 3
+	_, err = p.InspectSegment(context.Background(), in, piece)
+
+	require.Error(t, err)
+	assert.Greater(t, client.count(), before+1, "a piece of a chunked block is retried")
 }
 
 func metricsEvent(t *testing.T) *metrics.EventContext {

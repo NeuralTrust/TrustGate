@@ -38,6 +38,12 @@ const streamLegResponse = "response"
 const anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamChunkParallelism = (*Plugin)(nil)
+
+// StreamChunkParallel is 1: the pieces of a block are sent one at a time, as the
+// buffered leg sends its chunks, because the region's quota is on text units a
+// second and parallel pieces would spend it together.
+func (p *Plugin) StreamChunkParallel() int { return chunkParallel }
 
 // StreamSettings reports whether these policy settings ask for per-block
 // inspection of the response leg, and the options the block loop must run
@@ -96,7 +102,9 @@ func (p *Plugin) InspectSegment(
 
 	id := streamID(ctx, seg)
 	limits := callLimitsFor(len(seg.Accumulated))
-	if p.streamThrottled(id) {
+	// A piece of a block that was cut into several is retried like any other
+	// call: the shortcut is for the blocks of a stream, not for the pieces of one.
+	if seg.Parts <= 1 && p.streamThrottled(id) {
 		limits.noThrottleRetry = true
 	}
 	creds := credentialsFromConfig(cfg.Credentials)
