@@ -279,6 +279,8 @@ type connectServiceParams struct {
 	// discovered at the URL the principal dials, filled in from their install.
 	Installs installationdomain.Repository `optional:"true"`
 	Handoff  appoauth.ConnectHandoff
+	// Clients names the app a connect link was minted from.
+	Clients appoauth.FlowStore `optional:"true"`
 }
 
 type connectHandoffParams struct {
@@ -531,6 +533,9 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 		opts = append(opts, appoauth.WithConnectURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
 	}
 	opts = append(opts, appoauth.WithConnectHandoff(p.Handoff))
+	if p.Clients != nil {
+		opts = append(opts, appoauth.WithConnectClients(p.Clients))
+	}
 	return appoauth.NewConnectService(
 		p.Store,
 		p.Vault,

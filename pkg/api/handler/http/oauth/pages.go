@@ -161,6 +161,9 @@ type singleConnectView struct {
 	// AutoReturn sends the user back to ResumeURL on its own: set on the page
 	// the OAuth callback lands on, once the account is connected.
 	AutoReturn bool
+	// AppName is the app the link came from ("Claude"), named where the page
+	// says to go back; empty says "your assistant".
+	AppName string
 	// AutoClose closes the tab on its own when there is nowhere to send the
 	// user: a link handed out in a tool result, where the assistant they came
 	// from is the tab or app underneath. A browser that refuses (a tab it did
@@ -210,6 +213,7 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		Flash:     flash,
 		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
 		Owner:     ownerOf(page.Principal),
+		AppName:   page.ClientName,
 	}
 	var granted []string
 	for _, p := range providerRowsForPage(page) {
