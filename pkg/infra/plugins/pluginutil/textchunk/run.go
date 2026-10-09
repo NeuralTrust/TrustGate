@@ -16,8 +16,10 @@ package textchunk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // RunOptions bounds a Run.
@@ -28,15 +30,32 @@ type RunOptions struct {
 	// returns true the chunks that have not started are skipped and the calls
 	// in flight are cancelled through their context.
 	StopOn func(i int) bool
+	// Reserve is the least time a chunk that has to wait for a slot may start
+	// with: when ctx's deadline is closer than that the chunk, and every one
+	// behind it, is not started. A chunk of the first round (index below
+	// Parallel) never waits and is not held back, and the reserve is capped at a
+	// quarter of the time ctx had when the run began, so a short budget that an
+	// operator configured shrinks the reserve instead of refusing every request
+	// of more than one round. Zero means no reserve.
+	Reserve time.Duration
 }
 
 // Outcome is what evaluating one chunk produced. Started is false when the
-// chunk was never sent because the context ended or StopOn fired first: the
-// caller decides what that means, this package does not.
+// chunk was never sent because the context ended, the reserve was not there or
+// StopOn fired first: the caller decides what that means, this package does not.
+//
+// Waited says the chunk was queued behind chunks of the same run (its index is
+// at least Parallel), and BudgetCut says its call returned an error while
+// ctx's deadline had passed. Both together are a chunk whose time the request's
+// own earlier chunks used up. A chunk of the first round that is cut was the
+// provider being slow, and a call that ended on its own timeout leaves
+// BudgetCut false because ctx's deadline had not passed.
 type Outcome[T any] struct {
-	Value   T
-	Err     error
-	Started bool
+	Value     T
+	Err       error
+	Started   bool
+	Waited    bool
+	BudgetCut bool
 }
 
 // Run evaluates fn over chunks in index order with at most o.Parallel calls in
@@ -50,7 +69,12 @@ func Run[T any](ctx context.Context, chunks []Chunk, o RunOptions,
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	sem := make(chan struct{}, max(1, o.Parallel))
+	parallel := max(1, o.Parallel)
+	reserve := o.Reserve
+	if deadline, ok := ctx.Deadline(); ok {
+		reserve = min(reserve, time.Until(deadline)/4)
+	}
+	sem := make(chan struct{}, parallel)
 	var wg, stopMu = sync.WaitGroup{}, sync.Mutex{}
 dispatch:
 	for i := range chunks {
@@ -59,17 +83,19 @@ dispatch:
 		case <-runCtx.Done():
 			break dispatch
 		}
-		if runCtx.Err() != nil {
+		if runCtx.Err() != nil || (i >= parallel && lacksReserve(runCtx, reserve)) {
 			<-sem
 			break
 		}
 		out[i].Started = true
+		out[i].Waited = i >= parallel
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			v, err := call(runCtx, i, chunks[i], fn)
 			out[i].Value, out[i].Err = v, err
+			out[i].BudgetCut = err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 			if o.StopOn != nil {
 				stopMu.Lock()
 				stop := o.StopOn(i)
@@ -82,6 +108,14 @@ dispatch:
 	}
 	wg.Wait()
 	return out
+}
+
+func lacksReserve(ctx context.Context, reserve time.Duration) bool {
+	if reserve <= 0 {
+		return false
+	}
+	deadline, ok := ctx.Deadline()
+	return ok && time.Until(deadline) < reserve
 }
 
 func call[T any](ctx context.Context, i int, c Chunk,

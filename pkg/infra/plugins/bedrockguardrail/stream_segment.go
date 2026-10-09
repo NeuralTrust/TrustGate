@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -96,18 +96,18 @@ func (p *Plugin) InspectSegment(
 
 	id := streamID(ctx, seg)
 	limits := callLimitsFor(len(seg.Accumulated))
-	if _, throttled := p.throttledStreams.Load(id); throttled {
+	if p.streamThrottled(id) {
 		limits.noThrottleRetry = true
 	}
 	creds := credentialsFromConfig(cfg.Credentials)
-	out, err := p.applyBlock(callCtx, creds, buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput), limits)
+	out, err := p.guardrails.ApplyWithBackoff(callCtx, creds, buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput), limits)
 	if err != nil {
 		// The provider answering for what the block carries (a 4xx that is not
 		// credentials or throttling) is the content's, and cuts a stream in a
 		// mode that blocks; every other failure releases the held text.
-		reason, detail := failureOfCall(err)
-		if detail == appplugins.DetailThrottled && id != "" {
-			p.throttledStreams.Store(id, struct{}{})
+		reason, detail := classifyApplyErr(err)
+		if detail == appplugins.DetailThrottled {
+			p.markStreamThrottled(id, time.Now())
 		}
 		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("applying guardrail to stream block %d: %w", seg.Seq, err))
@@ -166,7 +166,7 @@ func (p *Plugin) recordStreamOutcome(
 	cfg Settings,
 	seg appplugins.StreamSegment,
 ) {
-	p.throttledStreams.Delete(streamID(ctx, seg))
+	p.forgetStreamThrottle(streamID(ctx, seg))
 	if in.Event == nil {
 		return
 	}
@@ -252,15 +252,41 @@ func segmentAllow() *appplugins.SegmentVerdict {
 	return &appplugins.SegmentVerdict{}
 }
 
-// applyBlock sends one block, after the pacer has reserved its text units.
-func (p *Plugin) applyBlock(
-	ctx context.Context,
-	creds awsCredentials,
-	in *bedrockruntime.ApplyGuardrailInput,
-	limits callLimits,
-) (*bedrockruntime.ApplyGuardrailOutput, error) {
-	if err := p.pacer.Wait(ctx, creds, textUnits(inputBytes(in))); err != nil {
-		return nil, err
+// throttledStreamTTL bounds a stream's entry whose closing segment never came.
+const throttledStreamTTL = 10 * time.Minute
+
+// streamThrottled reports whether an earlier block of this stream was throttled,
+// so a sustained throttle does not add a backoff to every later block.
+func (p *Plugin) streamThrottled(id string) bool {
+	if id == "" {
+		return false
 	}
-	return p.guardrails.ApplyWithBackoff(ctx, creds, in, limits)
+	_, ok := p.throttledStreams.Load(id)
+	return ok
+}
+
+// markStreamThrottled records the stream's first throttled block, and sweeps the
+// entries older than throttledStreamTTL at most once a minute, so a stream whose
+// closing segment never arrived cannot grow the map.
+func (p *Plugin) markStreamThrottled(id string, now time.Time) {
+	if id == "" {
+		return
+	}
+	p.throttledStreams.Store(id, now)
+	last := p.throttledSweptAt.Load()
+	if now.UnixNano()-last < int64(time.Minute) || !p.throttledSweptAt.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	p.throttledStreams.Range(func(k, v any) bool {
+		if at, ok := v.(time.Time); !ok || now.Sub(at) > throttledStreamTTL {
+			p.throttledStreams.Delete(k)
+		}
+		return true
+	})
+}
+
+func (p *Plugin) forgetStreamThrottle(id string) {
+	if id != "" {
+		p.throttledStreams.Delete(id)
+	}
 }

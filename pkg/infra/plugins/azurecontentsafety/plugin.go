@@ -45,9 +45,14 @@ const (
 // keeps a pattern that straddles a cut whole in one chunk. A conversation above
 // maxChunks is refused before any call, so a padded request costs nothing at
 // Azure. At most evalParallel calls run at once, inside one evaluationBudget
-// for the whole conversation. The free tier (F0) allows 5 requests a second,
-// so a long conversation can throttle itself there, and a throttle is
-// availability: F0 gives incomplete coverage of long conversations.
+// for the whole conversation. A chunk that would have to wait for a slot is not
+// started with less than callReserve of the budget left, about twice a call's
+// usual latency: it was queued behind the request's own chunks, so the request's
+// size used the time and the chunk is refused as chunk_budget, not sent to time
+// out as an outage. The free tier (F0) allows 5 requests a second, so a long
+// conversation throttles itself there, and a throttle on a conversation of
+// several chunks is input (throttled_oversize): F0 does not support complete
+// coverage of long conversations.
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/region-availability#service-limits
 // https://learn.microsoft.com/en-us/azure/ai-services/content-safety/overview#query-rates
 const (
@@ -56,6 +61,7 @@ const (
 	maxChunks        = 64
 	evalParallel     = 8
 	evaluationBudget = defaultTimeout
+	callReserve      = time.Second
 )
 
 var chunkSpec = textchunk.Spec{Max: chunkUnits, Overlap: chunkOverlap, Unit: textchunk.UTF16}
@@ -223,6 +229,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	evals := make([]chunkEval, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
 		Parallel: evalParallel,
+		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(evals[i].breaches) > 0 },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		resp, err := p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
@@ -239,23 +246,23 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	latency := time.Since(start).Milliseconds()
 	count := len(chunks)
 
-	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{},
-		func(i int, _ struct{}, err error) pluginutil.ChunkState {
-			if err != nil {
-				reason, detail := pluginutil.FailureOfError(err)
-				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
-			}
-			if len(evals[i].breaches) > 0 {
-				return pluginutil.ChunkState{Blocks: true}
-			}
-			if evals[i].missing != "" {
-				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{
-					Reason: appplugins.FailureVerdictIncomplete, Detail: evals[i].missing,
-				}}
-			}
-			return pluginutil.ChunkState{}
-		})
-	if decision.Kind == pluginutil.ChunkInputFailure || decision.Kind == pluginutil.ChunkAvailabilityFailure {
+	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
+		if err != nil {
+			reason, detail := pluginutil.FailureOfError(err)
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
+		}
+		if len(evals[i].breaches) > 0 {
+			return appplugins.ChunkState{Blocks: true}
+		}
+		if evals[i].missing != "" {
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{
+				Reason: appplugins.FailureVerdictIncomplete, Detail: evals[i].missing,
+			}}
+		}
+		return appplugins.ChunkState{}
+	}
+	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
+	if decision.Kind == appplugins.ChunkInputFailure || decision.Kind == appplugins.ChunkAvailabilityFailure {
 		return p.externalFailure(ctx, in, cfg, latency, count, decision.Reason, decision.Detail,
 			fmt.Errorf("azure_content_safety: chunk %d of %d: %s", decision.Index+1, count, failureText(decision, outs)))
 	}
@@ -333,7 +340,7 @@ func mergeEvals(evals []chunkEval, outs []textchunk.Outcome[struct{}]) (map[stri
 	return severities, breaches
 }
 
-func failureText(d pluginutil.ChunkDecision, outs []textchunk.Outcome[struct{}]) string {
+func failureText(d appplugins.ChunkDecision, outs []textchunk.Outcome[struct{}]) string {
 	if d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil {
 		return outs[d.Index].Err.Error()
 	}

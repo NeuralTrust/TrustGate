@@ -341,6 +341,11 @@ const (
 	chunkOverlap      = 2048
 	maxBufferedChunks = 16
 	chunkParallel     = 4
+	// callReserve is the budget a chunk that has to wait for a slot needs left
+	// to be started, about twice a call's usual latency. A chunk queued behind
+	// the request's own chunks that finds less is refused as chunk_budget: the
+	// request's size used the time, the provider was not slow.
+	callReserve = 1500 * time.Millisecond
 )
 
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
@@ -447,16 +452,16 @@ func (p *Plugin) evaluateChunk(in appplugins.ExecInput, cfg Settings, result *Sa
 	return ev
 }
 
-func (e chunkEval) state() pluginutil.ChunkState {
+func (e chunkEval) state() appplugins.ChunkState {
 	switch {
 	case e.failure != nil:
-		return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: e.failure.reason, Detail: e.failure.armorReason}}
+		return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: e.failure.reason, Detail: e.failure.armorReason}}
 	case e.res.block != nil:
-		return pluginutil.ChunkState{Blocks: true}
+		return appplugins.ChunkState{Blocks: true}
 	case e.res.anonymize != nil:
-		return pluginutil.ChunkState{Mask: true}
+		return appplugins.ChunkState{Mask: true}
 	}
-	return pluginutil.ChunkState{}
+	return appplugins.ChunkState{}
 }
 
 func (p *Plugin) runGuardrail(
@@ -489,6 +494,7 @@ func (p *Plugin) runGuardrail(
 	evals := make([]chunkEval, count)
 	outs := textchunk.Run(runCtx, chunks, textchunk.RunOptions{
 		Parallel: chunkParallel,
+		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		result, err := sanitize(ctx, c.Text)
@@ -499,20 +505,19 @@ func (p *Plugin) runGuardrail(
 		return struct{}{}, nil
 	})
 	latency := time.Since(start).Milliseconds()
+	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
+		if err != nil {
+			reason, detail := pluginutil.FailureOfError(err)
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
+		}
+		return evals[i].state()
+	}
+	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
 
-	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{},
-		func(i int, _ struct{}, err error) pluginutil.ChunkState {
-			if err != nil {
-				reason, detail := pluginutil.FailureOfError(err)
-				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
-			}
-			return evals[i].state()
-		})
-
-	var gap *pluginutil.ChunkDecision
+	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
-	case pluginutil.ChunkInputFailure, pluginutil.ChunkAvailabilityFailure:
-		if decision.Kind == pluginutil.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
+	case appplugins.ChunkInputFailure, appplugins.ChunkAvailabilityFailure:
+		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
 			gap = &decision
 			break
 		}
@@ -527,7 +532,7 @@ func (p *Plugin) runGuardrail(
 	var finding *finding
 	var from int
 	switch {
-	case decision.Kind == pluginutil.ChunkBlocked:
+	case decision.Kind == appplugins.ChunkBlocked:
 		from, finding = decision.Index, evals[decision.Index].res.block
 	case decision.Masked:
 		for i, ev := range evals {
@@ -552,7 +557,7 @@ func (p *Plugin) runGuardrail(
 		data.FailureClass = string(appplugins.FailureClassAvailability)
 	}
 
-	if decision.Kind == pluginutil.ChunkBlocked {
+	if decision.Kind == appplugins.ChunkBlocked {
 		applyFinding(data, finding)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
@@ -605,7 +610,7 @@ func filterVersionOf(evals []chunkEval, outs []textchunk.Outcome[struct{}], from
 // failureOfChunk is the failure that decided a chunked evaluation: the filter
 // and version Model Armor named for the chunk, or, when its call failed, the
 // error of that call.
-func failureOfChunk(d pluginutil.ChunkDecision, evals []chunkEval, outs []textchunk.Outcome[struct{}], count int) failureInfo {
+func failureOfChunk(d appplugins.ChunkDecision, evals []chunkEval, outs []textchunk.Outcome[struct{}], count int) failureInfo {
 	fi := failureInfo{reason: d.Reason, armorReason: d.Detail, chunks: count}
 	switch {
 	case d.Index >= 0 && d.Index < len(outs) && outs[d.Index].Err != nil:

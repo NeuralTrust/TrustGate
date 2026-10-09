@@ -16,12 +16,12 @@ package bedrockguardrail
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -69,13 +69,15 @@ type Plugin struct {
 	registry   *adapter.Registry
 	guardrails *cachedGuardrailClient
 	logger     *slog.Logger
-	// pacer spends each credential's text units under its region's quota, for
-	// the buffered leg and the stream leg alike, because they share it.
-	pacer pacer
-	// throttledStreams holds the streams whose first throttled block has been
-	// seen, so a sustained throttle does not add a backoff to every later
-	// block. A stream's closing segment removes its entry.
+	// throttledStreams maps the streams whose first throttled block has been
+	// seen to when it was, so a sustained throttle does not add a backoff to
+	// every later block. A stream's closing segment removes its entry, and one a
+	// closing never reached expires after throttledStreamTTL.
 	throttledStreams sync.Map
+	throttledSweptAt atomic.Int64
+	// budget is the time one buffered evaluation has for all of its chunks;
+	// zero means bufferedBudget.
+	budget time.Duration
 }
 
 func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
@@ -84,6 +86,13 @@ func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
 		guardrails: newCachedGuardrailClient(),
 		logger:     logger,
 	}
+}
+
+func (p *Plugin) evaluationBudget() time.Duration {
+	if p.budget > 0 {
+		return p.budget
+	}
+	return bufferedBudget
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -238,18 +247,21 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // text unit is up to 1,000 characters (a partial unit is billed whole), so 24
 // units per chunk fits it whatever the region. Bytes are never fewer than
 // characters, and AWS does not say whether its characters are code points or
-// UTF-16 units, which bytes bound both. The overlap keeps a pattern that
-// straddles a cut whole in one chunk; it re-bills about 4%.
+// UTF-16 units, which bytes bound both. The overlap keeps a secret or a pattern
+// that straddles a cut whole in one chunk; it re-bills about 4%.
 //
-// Only the last user message of a request (or the whole response) is sent, as
-// before; sending the rest of the conversation is a separate change.
+// Only the last user message of a request (or the whole response) is sent.
 //
-// A request is refused before any call when it splits into more than
-// maxBufferedChunks, or when its text units exceed what the region's floor can
-// serve inside bufferedBudget (demandBound). Pacing keeps the request's own
-// calls under that floor, so a throttle that still comes back is other traffic,
-// which is availability. Without the bound a client could pad a message until
-// the quota throttles it and have the throttle read as availability.
+// A text that splits into more than maxBufferedChunks is refused before any
+// call, and at most chunkParallel calls run at once inside bufferedBudget for
+// the whole evaluation. The calls are not paced: a client chooses how many
+// chunks it sends, and no pacing can make that safe, because the chunk that
+// waits longest is the one a client controls (padding delays it past the
+// budget, and a delay is an outage that fails open). What a client cannot
+// choose is handled by the shared chunk rules: a throttle on an evaluation of
+// several chunks is input (throttled_oversize), a chunk that waited on the
+// request's own earlier chunks and found less than callReserve of the budget is
+// chunk_budget, and a throttle on a single chunk stays availability.
 // https://aws.amazon.com/blogs/machine-learning/use-the-applyguardrail-api-with-long-context-inputs-and-streaming-outputs-in-amazon-bedrock/
 const (
 	chunkBytes        = 24000
@@ -257,15 +269,10 @@ const (
 	maxBufferedChunks = 32
 	chunkParallel     = 4
 	bufferedBudget    = 10 * time.Second
+	callReserve       = 1500 * time.Millisecond
 )
 
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
-
-// demandBound is the most text units a request may need: the burst plus what
-// the floor serves while the call's budget lasts.
-func demandBound(q regionQuota) int {
-	return q.burst + q.unitsPerSecond*int(bufferedBudget/time.Second)
-}
 
 // chunkEval is what ApplyGuardrail said about one chunk.
 type chunkEval struct {
@@ -281,26 +288,16 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 			fmt.Errorf("bedrock_guardrail: the text splits into %d chunks, above the %d evaluated", n, maxBufferedChunks))
 	}
 	chunks := textchunk.Split(text, chunkSpec)
-	units := 0
-	for _, c := range chunks {
-		units += textUnits(len(c.Text))
-	}
-	if bound := demandBound(floorFor(creds.region)); units > bound {
-		return p.externalFailure(ctx, in, cfg, 0, len(chunks), appplugins.FailureInputTooLarge, appplugins.DetailChunkLimit,
-			fmt.Errorf("bedrock_guardrail: the text needs %d text units, above the %d the region quota serves in %s", units, bound, bufferedBudget))
-	}
 
 	start := time.Now()
-	budget, cancel := context.WithTimeout(ctx, bufferedBudget)
+	budget, cancel := context.WithTimeout(ctx, p.evaluationBudget())
 	defer cancel()
 	evals := make([]chunkEval, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
 		Parallel: chunkParallel,
+		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
-		if err := p.pacer.Wait(ctx, creds, textUnits(len(c.Text))); err != nil {
-			return struct{}{}, err
-		}
 		out, err := p.guardrails.ApplyWithBackoff(ctx, creds, buildApplyInput(cfg, c.Text, source), callLimitsFor(len(c.Text)))
 		if err != nil {
 			return struct{}{}, err
@@ -310,20 +307,19 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	})
 	latency := time.Since(start).Milliseconds()
 	count := len(chunks)
+	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
+		if err != nil {
+			reason, detail := classifyApplyErr(err)
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
+		}
+		return evals[i].state()
+	}
+	decision := appplugins.ClassifyChunks(outs, ctx.Err() != nil, chunkState)
 
-	decision := pluginutil.ClassifyChunks(outs, pluginutil.ChunkOptions{},
-		func(i int, _ struct{}, err error) pluginutil.ChunkState {
-			if err != nil {
-				reason, detail := failureOfCall(err)
-				return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{Reason: reason, Detail: detail}}
-			}
-			return evals[i].state()
-		})
-
-	var gap *pluginutil.ChunkDecision
+	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
-	case pluginutil.ChunkInputFailure, pluginutil.ChunkAvailabilityFailure:
-		if decision.Kind == pluginutil.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
+	case appplugins.ChunkInputFailure, appplugins.ChunkAvailabilityFailure:
+		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
 			gap = &decision
 			break
 		}
@@ -332,7 +328,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 
 	var finding *finding
 	switch {
-	case decision.Kind == pluginutil.ChunkBlocked:
+	case decision.Kind == appplugins.ChunkBlocked:
 		finding = evals[decision.Index].res.block
 	case decision.Masked:
 		for i, ev := range evals {
@@ -348,7 +344,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		data.ChunkCount = count
 	}
 
-	if decision.Kind == pluginutil.ChunkBlocked {
+	if decision.Kind == appplugins.ChunkBlocked {
 		applyFinding(data, finding)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
@@ -390,37 +386,27 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 // state reads one chunk's answer as the shared verdict: a finding that blocks, a
 // gap in what the guardrail judged (coverage, or an intervention nothing here
 // explains), or a mask to apply.
-func (e chunkEval) state() pluginutil.ChunkState {
+func (e chunkEval) state() appplugins.ChunkState {
 	switch {
 	case e.res.block != nil:
-		return pluginutil.ChunkState{Blocks: true}
+		return appplugins.ChunkState{Blocks: true}
 	case e.res.judgedOnlyInPart():
-		return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{
+		return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{
 			Reason: appplugins.FailureVerdictIncomplete, Detail: appplugins.DetailCoveragePartial,
 		}}
 	case e.res.intervened && e.res.anonymize == nil:
-		return pluginutil.ChunkState{Failure: &pluginutil.ChunkFailure{
+		return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{
 			Reason: appplugins.FailureVerdictIncomplete, Detail: appplugins.DetailInterventionUnparsed,
 		}}
 	case e.res.anonymize != nil:
-		return pluginutil.ChunkState{Mask: true}
+		return appplugins.ChunkState{Mask: true}
 	}
-	return pluginutil.ChunkState{}
-}
-
-// failureOfCall maps the error of one chunk's call: the pacer giving up is the
-// quota held by other traffic, and every other error is what ApplyGuardrail
-// answered.
-func failureOfCall(err error) (appplugins.FailureReason, string) {
-	if errors.Is(err, errPacerSaturated) {
-		return appplugins.FailureTransport, appplugins.DetailThrottled
-	}
-	return classifyApplyErr(err)
+	return appplugins.ChunkState{}
 }
 
 func (p *Plugin) failedChunk(
 	ctx context.Context, in appplugins.ExecInput, cfg Settings, latency int64, count int,
-	d pluginutil.ChunkDecision, evals []chunkEval, outs []textchunk.Outcome[struct{}],
+	d appplugins.ChunkDecision, evals []chunkEval, outs []textchunk.Outcome[struct{}],
 ) (*appplugins.Result, error) {
 	var cause error
 	switch {

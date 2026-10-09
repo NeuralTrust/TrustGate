@@ -31,23 +31,30 @@ func StatusRejectsInput(status int) bool {
 }
 
 // FailureOfRejection is FailureOfStatus for a provider whose error body says
-// whether a 400 is about the content or about the call's own configuration (the
-// model, the API version, the resource the policy names). A configuration
-// rejection is config_invalid, which is availability: no request can change it,
-// so refusing traffic for it would turn one bad setting into a 403 on every
-// call. A 400 whose body is not recognised as configuration stays input, since
-// letting an unknown shape through would hand a client a way round the
-// guardrail. A 413 is always the content's.
+// whether the answer is about the call's own configuration. A 400 about the
+// model, the API version or the resource the policy names is config_invalid, and
+// so is a 429 that is an exhausted quota (an account out of credit or at its
+// billing limit) and not a rate: no request can change either, so refusing
+// traffic for them would turn one bad setting into a 403 on every call. A 400
+// whose body is not recognised as configuration stays input, since letting an
+// unknown shape through would hand a client a way round the guardrail. A 429
+// that is not recognised as a quota is a throttle. A 413 is always the
+// content's.
 func FailureOfRejection(status int, configShaped bool) (appplugins.FailureReason, string) {
-	if status == http.StatusBadRequest && configShaped {
-		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
+	if configShaped {
+		switch status {
+		case http.StatusBadRequest:
+			return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
+		case http.StatusTooManyRequests:
+			return appplugins.FailureConfigInvalid, appplugins.DetailProviderQuotaExhausted
+		}
 	}
 	return FailureOfStatus(status)
 }
 
 // Rejection is implemented by the error a provider client returns for a non-2xx
-// answer: the status, and whether a 400's envelope says it is about the call's
-// own configuration.
+// answer: the status, and whether the envelope says a 400 is about the call's
+// own configuration or a 429 is an exhausted quota.
 type Rejection interface {
 	error
 	Rejection() (status int, configShaped bool)
