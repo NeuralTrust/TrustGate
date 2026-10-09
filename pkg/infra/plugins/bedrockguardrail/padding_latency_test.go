@@ -181,9 +181,9 @@ func TestAMessageWhoseQuotaWaitsExceedHalfTheBudgetIsRefusedBeforeAnyCall(t *tes
 // reached and blocked instead of the request failing open.
 func TestACeilingTextWithSlowishCallsStillBlocksItsHarmfulTail(t *testing.T) {
 	t.Parallel()
-	g := &latencyGuardrail{delay: 160 * time.Millisecond, block: "HARMFUL-TAIL"}
+	g := &latencyGuardrail{delay: 800 * time.Millisecond, block: "HARMFUL-TAIL"}
 	p := pluginOver(g)
-	p.budget, p.reserve = time.Second, 100*time.Millisecond
+	p.budget, p.reserve = 5*time.Second, 500*time.Millisecond
 	require.Equal(t, 5, p.maxChunks())
 	atCeiling := chunkBytes + (p.maxChunks()-2)*(chunkBytes-chunkOverlap)
 	text := benignWords(atCeiling+19000) + " HARMFUL-TAIL"

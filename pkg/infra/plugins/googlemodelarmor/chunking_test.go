@@ -523,3 +523,34 @@ func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
 	assert.Equal(t, "availability", data.FailureClass)
 	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
 }
+
+// Fast calls and a forced cut: the request's own chunks used a deadline shorter
+// than the budget while every call answered at its usual pace, so the chunks that
+// were not started are the request's size, chunk_budget, input.
+func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
+	t.Parallel()
+	s := newArmorScript(t, func(int, string) (int, string) {
+		time.Sleep(240 * time.Millisecond)
+		return http.StatusOK, allowResponse
+	})
+	p := pluginWithStub(s.modelArmorStub)
+	p.clients = &clientCache{build: func(modelArmorCredentials) (*client, error) {
+		return newClientWithTokenSource(s.server.URL, 30*time.Second, staticTokenSource("test-token", nil)), nil
+	}}
+	event, span := newStreamEvent()
+	text := armorPlain(800 << 10)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, text)), nil)
+	in.Event = event
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+
+	_, err := p.Execute(ctx, in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DetailChunkBudget, data.FailureDetail)
+	assert.Equal(t, "input", data.FailureClass)
+}
