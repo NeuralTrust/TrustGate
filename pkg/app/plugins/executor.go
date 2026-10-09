@@ -264,6 +264,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		if seg.Closing || verdict == nil {
 			continue
 		}
+		if verdict.Incomplete != nil && ctx.Err() == nil {
+			spans.noteFailure(spanKey(seg, entry), verdict.Incomplete)
+		}
 		if verdict.HasTransform && head != "" {
 			whole := *verdict
 			whole.Transformed = head + verdict.Transformed

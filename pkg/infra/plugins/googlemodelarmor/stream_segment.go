@@ -118,11 +118,19 @@ func (p *Plugin) InspectSegment(
 	// Same rule as the buffered leg: a block_on filter that produced no
 	// verdict is not a clean one. It goes to the guard as an error, so
 	// it fails open, and a real match on another filter still
-	// wins because it is a verdict.
+	// wins because it is a verdict. A usable mask in a blocking mode is the
+	// exception: the de-identified text is already in hand, and releasing the
+	// original would send the raw PII, so the mask is applied and the incomplete
+	// verdict rides along on it.
+	var incomplete error
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, f,
+			failure := appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, f,
 				fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason))
+			if _, usable := maskedText(result); !(res.anonymize != nil && usable && appplugins.Blocks(in.Mode)) {
+				return nil, failure
+			}
+			incomplete = failure
 		}
 	}
 	switch {
@@ -145,6 +153,7 @@ func (p *Plugin) InspectSegment(
 			HasTransform: true,
 			Transformed:  masked,
 			Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+			Incomplete:   incomplete,
 		}, nil
 	default:
 		return segmentAllow(), nil

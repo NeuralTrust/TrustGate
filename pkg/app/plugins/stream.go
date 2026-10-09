@@ -176,6 +176,12 @@ type SegmentVerdict struct {
 	HasTransform bool
 	Transformed  string
 	Fingerprints []string
+	// Incomplete is the typed failure (ExternalStreamFailure) of a verdict that
+	// is usable but did not cover everything the policy asked for: a mask came
+	// back while another filter produced no verdict. The verdict is applied as
+	// any other, and the failure is kept as the entry's first one on the stream
+	// without counting as a failed call, so the entry is not retired for it.
+	Incomplete error
 }
 
 // StreamOptions is the streaming configuration of the entry that opted in.

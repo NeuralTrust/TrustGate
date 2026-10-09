@@ -294,3 +294,37 @@ func TestRunStreamSegment_UnclaimedFailureCutIsNotAnEntrysFailure(t *testing.T) 
 	assert.Equal(t, DecisionFailedOpen, spanFor(t, rt, "b_reader").Plugin.Decision,
 		"a closing failure on an entry that never failed is not failed_closed")
 }
+
+// A verdict that is usable but incomplete is applied, and its failure becomes
+// the entry's first on the stream without counting as a failed call: the entry
+// is not retired for it and the mask still reaches the client.
+func TestRunStreamSegment_IncompleteVerdictIsKeptWithoutCountingAsAFailedCall(t *testing.T) {
+	t.Parallel()
+	incomplete := WrapExternalStreamFailure("stub", FailureVerdictIncomplete, "rai", errors.New("filter skipped"))
+	exec, pols, inspectors := streamChain(t, entrySpec{
+		slug: "guard", mode: policy.ModeEnforce,
+		verdict: &SegmentVerdict{HasTransform: true, Transformed: "masked", Incomplete: incomplete},
+	})
+	withOnError(pols, "guard", "fail_open")
+	in := failureInput(pols)
+	ctx, _, publish := failureStreamCtx(t)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+
+	var outcome *SegmentOutcome
+	for i := 1; i <= 4; i++ {
+		got, err := runner.RunStreamSegment(ctx, in, segment(i, false))
+		require.NoError(t, err)
+		outcome = got
+	}
+	_, err := runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 4, Closing: true})
+	require.NoError(t, err)
+	publish()
+
+	require.NotNil(t, outcome)
+	assert.True(t, outcome.HasTransform, "the mask is applied on every block, the entry is never retired")
+	report := lastSeen(t, inspectors["guard"]).Report
+	assert.Equal(t, FailureVerdictIncomplete, report.FailureReason)
+	assert.Equal(t, "rai", report.FailureDetail)
+	assert.Zero(t, report.FailedEvals)
+}
