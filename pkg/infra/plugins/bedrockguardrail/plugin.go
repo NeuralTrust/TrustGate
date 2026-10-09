@@ -255,21 +255,20 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // Only the last user message of a request (or the whole response) is sent.
 //
 // A text that splits into more than maxBufferedChunks is refused before any
-// call, and at most chunkParallel calls run at once inside bufferedBudget for
-// the whole evaluation. The calls are not paced: a client chooses how many
-// chunks it sends, and no pacing can make that safe, because the chunk that
-// waits longest is the one a client controls (padding delays it past the
-// budget, and a delay is an outage that fails open). What a client cannot
-// choose is handled by the shared chunk rules: a throttle on an evaluation of
-// several chunks is input (throttled_oversize), a chunk that waited on the
-// request's own earlier chunks and found less than callReserve of the budget is
-// chunk_budget, and a throttle on a single chunk stays availability.
+// call, and the chunks are sent one at a time, spaced at the region's quota
+// floor (spacing.go), inside bufferedBudget for the whole evaluation. A request
+// whose waits and calls cannot fit the budget is refused before any call as
+// chunk_budget, so padding cannot push its last chunk to the deadline. Since the
+// request's own calls stay under the floor, a throttle AWS still returns is other
+// traffic and is availability, unlike on the guardrails that cannot space their
+// calls, where a throttle on several chunks is input. A chunk cut by the budget
+// after waiting on the request's own chunks is chunk_budget.
 // https://aws.amazon.com/blogs/machine-learning/use-the-applyguardrail-api-with-long-context-inputs-and-streaming-outputs-in-amazon-bedrock/
 const (
 	chunkBytes        = 24000
 	chunkOverlap      = 4096
 	maxBufferedChunks = 32
-	chunkParallel     = 4
+	chunkParallel     = 1
 	bufferedBudget    = 10 * time.Second
 	callReserve       = 1500 * time.Millisecond
 )
@@ -290,6 +289,12 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 			fmt.Errorf("bedrock_guardrail: the text splits into %d chunks, above the %d evaluated", n, maxBufferedChunks))
 	}
 	chunks := textchunk.Split(text, chunkSpec)
+	quota := floorFor(creds.region)
+	if need := estimateDuration(chunks, quota); need > p.evaluationBudget() {
+		return p.externalFailure(ctx, in, cfg, 0, len(chunks), appplugins.FailureInputTooLarge, appplugins.DetailChunkBudget,
+			fmt.Errorf("bedrock_guardrail: %d chunks need about %s with the region's quota and the budget is %s", len(chunks), need.Round(time.Second), p.evaluationBudget()))
+	}
+	pace := newSpacer(quota)
 
 	start := time.Now()
 	budget, cancel := context.WithTimeout(ctx, p.evaluationBudget())
@@ -300,6 +305,9 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		Reserve:  callReserve,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
+		if err := pace.wait(ctx, len(c.Text)); err != nil {
+			return struct{}{}, err
+		}
 		out, err := p.guardrails.ApplyWithBackoff(ctx, creds, buildApplyInput(cfg, c.Text, source), callLimitsFor(len(c.Text)))
 		if err != nil {
 			return struct{}{}, err
@@ -312,7 +320,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
 		if err != nil {
 			reason, detail := classifyApplyErr(err)
-			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
+			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail, OtherTraffic: true}}
 		}
 		return evals[i].state()
 	}

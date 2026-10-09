@@ -506,7 +506,11 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   throttled call gets within the block's deadline; a larger setting is treated
   as 8 KiB. A throttled block that is still throttled after its retries is
   released as an availability failure and does not count toward retiring the
-  guardrail for the rest of the stream.
+  guardrail for the rest of the stream. A buffered Bedrock request is different:
+  its chunks are sent one at a time and spaced under the region's quota, so a
+  throttle there is always availability. The chunks of one streamed block larger
+  than the window are not spaced, so a throttle on them is the content's, as for
+  the other guardrails.
 - `openai_moderation`: 32 KiB, and never more. OpenAI documents no per-request
   input limit for moderations, so the window is fitted to the 1.5 second block
   deadline.

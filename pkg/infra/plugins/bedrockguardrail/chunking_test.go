@@ -50,14 +50,14 @@ func TestALongMessageIsSentInChunksOfAtMostTwentyFourUnits(t *testing.T) {
 	t.Parallel()
 	g := allowing()
 	p := streamPlugin(t, g)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, benignWords(100000)), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, benignWords(60000)), nil)
 	event, span := eventFor(t)
 	in.Event = event
 
 	res, err := p.Execute(context.Background(), in)
 
 	assertPassThrough(t, res, err)
-	require.GreaterOrEqual(t, len(g.inputs), 5)
+	require.GreaterOrEqual(t, len(g.inputs), 3)
 	for _, text := range g.inputs {
 		assert.LessOrEqual(t, len(text), chunkBytes, "24,000 bytes are at most 24 text units, within the smallest burst of 25")
 	}
@@ -93,7 +93,7 @@ func blockOnMarker(marker string) *scriptedGuardrail {
 
 func TestABlockedChunkStopsTheRestInEnforceAndObserveScreensAll(t *testing.T) {
 	t.Parallel()
-	text := "BLOCKME " + benignWords(280000)
+	text := "BLOCKME " + benignWords(120000)
 	for _, tc := range []struct {
 		mode    policy.Mode
 		decided string
@@ -203,7 +203,7 @@ func TestPartialCoverageOnOneChunkRefusesTheRequest(t *testing.T) {
 	})
 	p := streamPlugin(t, g)
 	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("us-east-1"), chatRequestOf(t, benignWords(150000)), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("us-east-1"), chatRequestOf(t, benignWords(100000)), nil)
 	in.Event = event
 
 	_, err := p.Execute(context.Background(), in)

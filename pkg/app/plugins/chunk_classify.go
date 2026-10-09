@@ -32,6 +32,10 @@ type ChunkState struct {
 type ChunkFailure struct {
 	Reason FailureReason
 	Detail string
+	// OtherTraffic says the request's own calls cannot have caused a throttle
+	// (they are spaced under the provider's documented quota), so it stays
+	// availability on an evaluation of several chunks.
+	OtherTraffic bool
 }
 
 // ChunkOutcomeKind is the verdict of a whole chunked evaluation.
@@ -132,7 +136,7 @@ func DecideChunks(states []ChunkState, cancelled bool) ChunkDecision {
 	}
 	if len(states) > 1 {
 		for i, st := range states {
-			if st.Failure != nil && st.Failure.Detail == DetailThrottled {
+			if st.Failure != nil && st.Failure.Detail == DetailThrottled && !st.Failure.OtherTraffic {
 				return failedChunk(d, ChunkInputFailure, i, FailureInputTooLarge, DetailThrottledOversize)
 			}
 		}
