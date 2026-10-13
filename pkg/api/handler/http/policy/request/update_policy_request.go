@@ -48,8 +48,8 @@ func (r UpdatePolicyRequest) Validate() error {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 		}
 	}
-	if r.Description != nil && len(*r.Description) > maxPolicyDescriptionLen {
-		return fmt.Errorf("description too long (max %d): %w", maxPolicyDescriptionLen, commonerrors.ErrValidation)
+	if r.Description != nil && len(*r.Description) > domain.MaxDescriptionLen {
+		return fmt.Errorf("description too long (max %d): %w", domain.MaxDescriptionLen, commonerrors.ErrValidation)
 	}
 	if r.Slug != nil && strings.TrimSpace(*r.Slug) == "" {
 		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
