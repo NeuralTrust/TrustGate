@@ -82,11 +82,12 @@ func RetryThrottledOnce[T any](ctx context.Context, fn func(ctx context.Context)
 }
 
 // RetryFirstRoundThrottle is RetryThrottledOnce for chunk i of a run that sends
-// parallel calls at once: only a chunk of the first round (i below parallel) is
-// retried. A chunk that waited behind the request's own was queued by its size,
-// and its throttle is read as that.
-func RetryFirstRoundThrottle[T any](ctx context.Context, i, parallel int, fn func(ctx context.Context) (T, error)) (T, error) {
-	if i >= max(1, parallel) {
+// parallel calls at once: only a chunk of the first round the schedule releases
+// (textchunk.FirstReleased, with lead as the Run's LeadAlone) is retried. A
+// chunk that waited behind the request's own was queued by its size, and its
+// throttle is read as that.
+func RetryFirstRoundThrottle[T any](ctx context.Context, i, parallel int, lead bool, fn func(ctx context.Context) (T, error)) (T, error) {
+	if !textchunk.FirstReleased(i, parallel, lead) {
 		return fn(ctx)
 	}
 	return RetryThrottledOnce(ctx, fn)
