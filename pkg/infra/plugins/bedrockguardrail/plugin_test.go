@@ -366,9 +366,10 @@ func TestExecuteUnparsedInterventionByMode(t *testing.T) {
 }
 
 // What ApplyGuardrail answers is classified by the AWS error type and status, in
-// the shapes the SDK parses off the wire: a client error about the call is the
-// content's and is refused in a mode that blocks; credentials, throttling,
-// timeouts and 5xx stay availability and fail open.
+// the shapes the SDK parses off the wire: a ValidationException naming the
+// content is refused in a mode that blocks; any other client error is the
+// policy's configuration and, like credentials, throttling, timeouts and 5xx,
+// is availability and fails open.
 func TestExecuteProviderErrorByClass(t *testing.T) {
 	t.Parallel()
 	for _, tc := range awsApplyGuardrailErrors {
