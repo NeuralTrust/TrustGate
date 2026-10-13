@@ -45,9 +45,10 @@ type awsErrorEnvelope struct {
 }
 
 var awsApplyGuardrailErrors = []awsErrorEnvelope{
-	{"validation", http.StatusBadRequest, "ValidationException", "The input text is not valid.", appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
-	{"validation with another message", http.StatusBadRequest, "ValidationException", "1 validation error detected", appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
-	{"conflict", http.StatusConflict, "ConflictException", "conflict", appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
+	{"validation naming the content", http.StatusBadRequest, "ValidationException", "1 validation error detected: Value at 'content' failed to satisfy constraint: Member must not be null", appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput},
+	{"validation without a member", http.StatusBadRequest, "ValidationException", "The input text is not valid.", appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected},
+	{"validation with another message", http.StatusBadRequest, "ValidationException", "1 validation error detected", appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected},
+	{"conflict", http.StatusConflict, "ConflictException", "conflict", appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected},
 
 	{"access denied", http.StatusForbidden, "AccessDeniedException", "User is not authorized to perform: bedrock:ApplyGuardrail", appplugins.FailureTransport, ""},
 	{"unrecognized client", http.StatusForbidden, "UnrecognizedClientException", "The security token included in the request is invalid.", appplugins.FailureTransport, ""},
