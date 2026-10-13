@@ -181,36 +181,57 @@ func TestPluginE2E_TrustGuard_StreamingResponseSendsReasoningAndToolCalls(t *tes
 	tg.Reset()
 
 	up := newTrustGuardRichStreamUpstream(t)
-	// This pins the post-drain pass, which a streamed response only takes when
-	// the policy opts out of per-block inspection: since RUN-1712 that is on by
-	// default for any policy whose direction includes the response.
-	apiKey, path := setupPolicyRoute(t, up, policyPlugin("trustguard", map[string]any{
+	// A response-only policy with no streaming block: the stream guard inspects
+	// it block by block, its final block carries the reasoning and the tool
+	// calls, and post_response has nothing left to audit. The playground route
+	// is used because its stored trace is what records the post_response skip.
+	gatewaySlug, consumerSlug, path := setupStreamPlaygroundRoute(t, up, map[string]any{
 		"collector_id": trustGuardFunctionalCollectorID,
 		"direction":    "response",
-		"streaming":    map[string]any{"enabled": false},
-	}))
+	})
+	token := mintPlaygroundToken(t, consumerSlug)
 
 	req := trustGuardChatRequest("stream please")
 	req["stream"] = true
-	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, req))
+	status, headers, raw := playgroundPost(t, gatewaySlug, token, path, req)
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
 	assert.Contains(t, string(raw), "hello ")
 	assert.Contains(t, string(raw), "world")
 	assert.Contains(t, string(raw), "[DONE]")
 	assert.Equal(t, 1, up.Hits())
 
-	// post_response runs asynchronously and carries no stream envelope, so it
-	// is correlated by trace id rather than by a stub-wide GuardHits count.
 	traceID := headers.Get(traceIDHeader)
 	require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
-	require.Eventually(t, func() bool {
-		return tg.BufferedHitsForTrace(traceID) >= 1
-	}, 5*time.Second, 50*time.Millisecond, "expected TrustGuard evaluate for streamed output")
-
-	guard, ok := tg.GuardForTrace(traceID)
-	require.True(t, ok, "expected a buffered call captured for this request's trace id")
+	guard, ok := tg.FinalStreamGuardForTrace(traceID)
+	require.True(t, ok, "the stream must be inspected block by block, final block included")
 	assert.Equal(t, "output", guard.Direction)
 	assert.Equal(t, "llm", guard.Protocol)
+
+	var evt streamedEvent
+	require.Eventually(t, func() bool {
+		code, body := getPlaygroundTrace(t, traceID)
+		if code != http.StatusOK {
+			return false
+		}
+		evt = streamedEvent{}
+		if err := json.Unmarshal(body, &evt); err != nil {
+			return false
+		}
+		for _, entry := range evt.PolicyChain {
+			if entry.Stage == "post_response" {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond, "the post_response leg never reached the stored trace")
+	for _, entry := range evt.PolicyChain {
+		if entry.Stage == "post_response" {
+			assert.True(t, entry.Extras.Skipped, "post_response must be recorded as skipped")
+			assert.Equal(t, "stream_final_inspected", entry.Extras.SkipReason)
+		}
+	}
+	assert.Equal(t, 0, tg.BufferedHitsForTrace(traceID),
+		"post_response must not re-audit a stream whose final block was inspected")
 
 	var payload struct {
 		Messages []map[string]any `json:"messages"`

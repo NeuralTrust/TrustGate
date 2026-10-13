@@ -36,18 +36,17 @@ const (
 // openai_moderation and the block loop calls it less often to keep the hold on
 // a client's bytes bounded.
 //
-// Unlike google_model_armor and openai_moderation it is OPT-IN
-// (streaming.enabled: true). Every block resends the whole accumulated prefix to
-// ApplyGuardrail, and the on-demand quota is per account and region: 25 text
-// units per second per policy type in most regions (only the largest US and
-// EU regions get more), and a text unit is up to 1000 characters. A few streams
-// inspected per block would throttle the customer's account, and their buffered
-// requests would then go through uninspected (failed_open). Until the console
-// exposes the control (RUN-1661) a policy without the key is not inspected per
-// block, and the trace marks it skipped with reason streaming_disabled.
+// Every block resends its window to ApplyGuardrail, and the on-demand quota is
+// per account and region: 25 text units per second per policy type in most
+// regions (only the largest US and EU regions get more), and a text unit is up
+// to 1000 characters. A streamed response is inspected per block all the same
+// (RUN-1661), so concurrent streams share that quota with the policy's
+// buffered calls. When they use it up, a throttle is availability: a buffered
+// call or a stream block that is still throttled once its retries within the
+// deadline run out is released uninspected (failed_open).
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
 //
-// Once a policy opts in, the stream leg fails open by default and the window
+// The stream leg fails open by default and the window
 // each evaluation sends is capped at maxStreamWindowBytes whatever
 // streaming.max_accumulated_bytes asks for. ApplyGuardrail caps the input per
 // policy type at a number of text units per second (1 unit = up to 1000
@@ -100,8 +99,7 @@ type Settings struct {
 	PIIAction   string      `mapstructure:"pii_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
-	// Streaming tunes the per-block inspection of the pre_response leg. It is off
-	// when the block is absent; streaming.enabled: true turns it on.
+	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
