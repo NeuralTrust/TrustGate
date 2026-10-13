@@ -190,19 +190,22 @@ func TestRunMarksAChunkCutByTheDeadlineAfterWaiting(t *testing.T) {
 
 func TestRunDoesNotCallAStopOnCancelABudgetCut(t *testing.T) {
 	t.Parallel()
+	var entered sync.WaitGroup
+	entered.Add(3)
 	out := Run(context.Background(), chunksOf(4), RunOptions{Parallel: 4, StopOn: func(i int) bool { return i == 0 }},
 		func(ctx context.Context, i int, _ Chunk) (int, error) {
 			if i == 0 {
+				entered.Wait()
 				return 0, nil
 			}
+			entered.Done()
 			<-ctx.Done()
 			return 0, ctx.Err()
 		})
 
 	for i := 1; i < 4; i++ {
-		if out[i].Started {
-			assert.Error(t, out[i].Err, "a started chunk waits for the cancel")
-		}
+		require.True(t, out[i].Started)
+		assert.Error(t, out[i].Err, "a started chunk waits for the cancel")
 		assert.False(t, out[i].BudgetCut, "a chunk cancelled by StopOn was not cut by a deadline")
 	}
 }
@@ -363,6 +366,29 @@ func TestFirstReleasedFollowsTheSchedule(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, FirstReleased(tc.i, tc.parallel, tc.lead), "%+v", tc)
 	}
+}
+
+// FirstRound is the schedule FirstReleased describes, read from the Run itself.
+func TestFirstRoundIsTheRunsSchedule(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		lead bool
+		want [6]bool
+	}{
+		{true, [6]bool{true, true, true, true, true, false}},
+		{false, [6]bool{true, true, true, true, false, false}},
+	} {
+		var got [6]atomic.Bool
+		Run(context.Background(), chunksOf(6), RunOptions{Parallel: 4, LeadAlone: tc.lead},
+			func(ctx context.Context, i int, _ Chunk) (int, error) {
+				got[i].Store(FirstRound(ctx))
+				return 0, nil
+			})
+		for i := range got {
+			assert.Equal(t, tc.want[i], got[i].Load(), "lead %v chunk %d", tc.lead, i)
+		}
+	}
+	assert.False(t, FirstRound(context.Background()), "outside a Run")
 }
 
 func TestRunWaitedIsTheScheduleNotTheIndexWhenTheLeadRunsAlone(t *testing.T) {

@@ -514,7 +514,7 @@ func (p *Plugin) runGuardrail(
 		SlowCall:  slow,
 		StopOn:    func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
-		result, err := pluginutil.RetryFirstRoundThrottle(ctx, i, chunkParallel, true, func(ctx context.Context) (*SanitizationResult, error) {
+		result, err := pluginutil.RetryFirstRoundThrottle(ctx, func(ctx context.Context) (*SanitizationResult, error) {
 			return sanitize(ctx, c.Text)
 		})
 		if err != nil {

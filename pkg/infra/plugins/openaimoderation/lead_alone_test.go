@@ -17,8 +17,10 @@ package openaimoderation
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,9 +94,77 @@ func TestAHangStopsTheEvaluationAfterTheFirstCallTimesOut(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	assert.Less(t, took, timeout*3/2)
+	assert.Less(t, took, 2*timeout, "three rounds would take at least 3x")
 	assert.EqualValues(t, 1, calls.Load(), "no chunk starts after the first call timed out")
 	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
 	assert.Equal(t, "availability", extras.FailureClass)
+}
+
+// A text of six chunks with a marker that is in chunk k only.
+func markedChunks(t *testing.T) string {
+	t.Helper()
+	b := []byte(strings.Repeat("a ", 85000))
+	for k := range 6 {
+		copy(b[k*(chunkBytes-chunkOverlap)+10000:], fmt.Sprintf("MARK%d", k))
+	}
+	text := string(b)
+	require.Equal(t, 6, textchunk.Count(text, chunkSpec))
+	return text
+}
+
+// Under LeadAlone the first round is chunks 1..Parallel: a single throttle on
+// chunk 4 is other traffic and is retried once (two calls for that chunk), while
+// a throttle that persists on chunk 5, which waited for a slot, is the text's
+// size.
+func TestALeadAloneFirstRoundRetriesChunkParallelAndChunkParallelPlusOneDoesNot(t *testing.T) {
+	t.Parallel()
+	text := markedChunks(t)
+
+	run := func(t *testing.T, throttled string, persistent bool) (map[string]int, ModerationData, error) {
+		t.Helper()
+		var mu sync.Mutex
+		calls := map[string]int{}
+		srv := answeringServer(t, func(_ int32, w http.ResponseWriter, r *http.Request) {
+			raw, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			defer mu.Unlock()
+			for k := range 6 {
+				m := fmt.Sprintf("MARK%d", k)
+				if !strings.Contains(string(raw), m) {
+					continue
+				}
+				calls[m]++
+				if m == throttled && (persistent || calls[m] == 1) {
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = w.Write([]byte(rateLimited))
+					return
+				}
+			}
+			_, _ = w.Write([]byte(moderationAllowed))
+		})
+		p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+		event, span := newEvent()
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, blockSettings(), chatRequestOf(t, text), nil, event)
+		_, err := p.Execute(context.Background(), in)
+		extras, _ := span.PluginAttrsCopy().Extras.(ModerationData)
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string]int{}
+		for k, v := range calls {
+			out[k] = v
+		}
+		return out, extras, err
+	}
+
+	calls, _, err := run(t, "MARK4", false)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls["MARK4"], "a single throttle on chunk Parallel is retried")
+
+	calls, extras, err := run(t, "MARK5", true)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	assert.Equal(t, appplugins.DetailThrottledOversize, extras.FailureDetail)
+	assert.Equal(t, 1, calls["MARK5"], "a chunk that waited for a slot is not retried")
 }

@@ -34,8 +34,11 @@ type RunOptions struct {
 	StopOn func(i int) bool
 	// Reserve is the least time a chunk that has to wait for a slot may start
 	// with: when ctx's deadline is closer than that the chunk, and every one
-	// behind it, is not started. A chunk of the first round (index below
-	// Parallel) never waits and is not held back, and the reserve is capped at a
+	// behind it, is not started. A chunk of the first round never waits and is
+	// not held back (index below Parallel, or under LeadAlone 1..Parallel,
+	// released with the first free slots and queued behind no chunk but the
+	// lead, whose time is its own call and retry, not the text's size), and the
+	// reserve is capped at a
 	// quarter of the time ctx had when the run began, so a short budget that an
 	// operator configured shrinks the reserve instead of refusing every request
 	// of more than one round. Zero means no reserve.
@@ -119,10 +122,11 @@ func MaxChunks(limit, parallel int, reserve, budget time.Duration) int {
 }
 
 // FirstReleased reports whether chunk i is sent in the first round the schedule
-// releases, one that waited on no chunk of the same run: the chunks below
-// parallel, or, when lead is set (RunOptions.LeadAlone, with parallel above one),
-// chunk 0 alone and then chunks 1 through parallel, which start together once
-// chunk 0 has finished.
+// releases: the chunks below parallel, or, when lead is set (RunOptions.LeadAlone,
+// with parallel above one), chunk 0 alone and then chunks 1 through parallel.
+// Under LeadAlone that round is released with the first free slots and queued
+// behind no chunk but the lead, whose time is its own call and retry, not the
+// text's size. FirstRound is this fact for the call being run.
 func FirstReleased(i, parallel int, lead bool) bool {
 	parallel = max(1, parallel)
 	if lead && parallel > 1 {
@@ -136,8 +140,10 @@ func FirstReleased(i, parallel int, lead bool) bool {
 // StopOn fired first: the caller decides what that means, this package does not.
 //
 // Waited says the chunk was queued behind chunks of the same run (it is not in
-// the first round of the schedule, see FirstReleased), and BudgetCut says its call returned an error while
-// ctx's deadline had passed. Both together are a chunk whose time the request's
+// the first round of the schedule, see FirstReleased: under LeadAlone that is
+// 1..Parallel, released with the first free slots and queued behind no chunk
+// but the lead, whose time is its own call and retry, not the text's size), and
+// BudgetCut says its call returned an error while ctx's deadline had passed. Both together are a chunk whose time the request's
 // own earlier chunks used up. A chunk of the first round that is cut was the
 // provider being slow, and a call that ended on its own timeout leaves
 // BudgetCut false because ctx's deadline had not passed.
@@ -189,7 +195,8 @@ dispatch:
 			break
 		}
 		out[i].Started = true
-		out[i].Waited = !FirstReleased(i, parallel, lead)
+		first := FirstReleased(i, parallel, lead)
+		out[i].Waited = !first
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -200,7 +207,7 @@ dispatch:
 				err = o.Before(runCtx, i, chunks[i])
 			}
 			if err == nil {
-				pauses := &pauseClock{reserve: reserve, attemptStart: time.Now()}
+				pauses := &pauseClock{reserve: reserve, first: first, attemptStart: time.Now()}
 				v, err = call(context.WithValue(runCtx, pauseKey{}, pauses), i, chunks[i], fn)
 				out[i].Took = pauses.longest(time.Now())
 			}
@@ -235,10 +242,11 @@ func timedOut(err error) bool {
 type pauseKey struct{}
 
 // pauseClock is where a call's attempts begin and end (a Pause is the boundary
-// between two), the longest of them, and the effective reserve its waits are
-// capped at.
+// between two), the longest of them, the effective reserve its waits are
+// capped at, and whether it is of the first round.
 type pauseClock struct {
 	reserve      time.Duration
+	first        bool
 	mu           sync.Mutex
 	attemptStart time.Time
 	longestSoFar time.Duration
@@ -257,6 +265,14 @@ func (c *pauseClock) longest(end time.Time) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return max(0, c.longestSoFar, end.Sub(c.attemptStart))
+}
+
+// FirstRound reports whether the call ctx belongs to is of the first round its
+// Run's schedule releases (FirstReleased, with the Run's own Parallel and
+// LeadAlone). It is false outside a Run.
+func FirstRound(ctx context.Context) bool {
+	c, ok := ctx.Value(pauseKey{}).(*pauseClock)
+	return ok && c.first
 }
 
 // PauseCap is the longest a call of a Run over ctx may wait in Pause: the

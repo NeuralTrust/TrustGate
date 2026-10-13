@@ -211,7 +211,7 @@ func (e *executor) inspectChunked(
 		piece.Final = call.Final && c.End == len(call.Accumulated)
 		piece.Part, piece.Parts = i+1, len(chunks)
 		verdict, err := inspector.InspectSegment(ctx, in, piece)
-		if retryable && textchunk.FirstReleased(i, parallel, true) && pieceThrottled(verdict, err) {
+		if retryable && textchunk.FirstRound(ctx) && pieceThrottled(verdict, err) {
 			if textchunk.Pause(ctx, textchunk.RetryWait(ctx, 0)) {
 				verdict, err = inspector.InspectSegment(ctx, in, piece)
 			}

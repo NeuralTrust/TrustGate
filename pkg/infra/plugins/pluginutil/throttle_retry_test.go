@@ -105,12 +105,18 @@ func TestRetryThrottledOnceHonoursRetryAfterOnlyWhenItFits(t *testing.T) {
 
 func TestRetryFirstRoundThrottleSkipsAChunkThatWaited(t *testing.T) {
 	t.Parallel()
-	calls := 0
-	_, _ = RetryFirstRoundThrottle(context.Background(), 4, 4, false, func(context.Context) (int, error) { calls++; return 0, &stubRejection{status: 429} })
-	assert.Equal(t, 1, calls)
-	calls = 0
-	_, _ = RetryFirstRoundThrottle(context.Background(), 3, 4, false, func(context.Context) (int, error) { calls++; return 0, &stubRejection{status: 429} })
-	assert.Equal(t, 2, calls)
+	chunks := textchunk.Split(strings.Repeat("a", 50), textchunk.Spec{Max: 10, Overlap: 0, Unit: textchunk.Bytes})
+	require.Len(t, chunks, 5)
+	var calls [5]atomic.Int32
+	textchunk.Run(context.Background(), chunks, textchunk.RunOptions{Parallel: 4},
+		func(ctx context.Context, i int, _ textchunk.Chunk) (int, error) {
+			return RetryFirstRoundThrottle(ctx, func(context.Context) (int, error) {
+				calls[i].Add(1)
+				return 0, &stubRejection{status: 429}
+			})
+		})
+	assert.EqualValues(t, 2, calls[3].Load())
+	assert.EqualValues(t, 1, calls[4].Load(), "chunk 4 waited for a slot")
 }
 
 // The wait before a retry is the call's own and never counts as the provider's
@@ -123,7 +129,7 @@ func TestTheRetryWaitIsNotTheProvidersTimeAndIsCappedAtTheReserve(t *testing.T) 
 	var at []time.Time
 	outs := textchunk.Run(ctx, chunks, textchunk.RunOptions{Parallel: 1, Reserve: 400 * time.Millisecond},
 		func(ctx context.Context, i int, _ textchunk.Chunk) (int, error) {
-			return RetryFirstRoundThrottle(ctx, i, 1, false, func(context.Context) (int, error) {
+			return RetryFirstRoundThrottle(ctx, func(context.Context) (int, error) {
 				at = append(at, time.Now())
 				if len(at) == 1 {
 					return 0, &stubRejection{status: 429, retryAfter: 9 * time.Second}
@@ -154,7 +160,7 @@ func TestARetryWaitAndACutTailAreChunkBudgetNotAvailability(t *testing.T) {
 	var first atomic.Bool
 	outs := textchunk.Run(ctx, chunks, textchunk.RunOptions{Parallel: 1, Reserve: reserve},
 		func(ctx context.Context, i int, _ textchunk.Chunk) (int, error) {
-			return RetryFirstRoundThrottle(ctx, i, 1, false, func(ctx context.Context) (int, error) {
+			return RetryFirstRoundThrottle(ctx, func(ctx context.Context) (int, error) {
 				if i == 0 && first.CompareAndSwap(false, true) {
 					return 0, &stubRejection{status: 429, retryAfter: reserve}
 				}
