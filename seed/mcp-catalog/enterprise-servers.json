@@ -2414,17 +2414,17 @@
         "Manage brand kits"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.canva.com/mcp",
+      "server_url": "https://api.canva.com/connect/v1/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
-        "authorize_url": "https://mcp.canva.com/authorize",
-        "token_url": "https://mcp.canva.com/token",
+        "authorize_url": "https://www.canva.com/api/oauth/authorize",
+        "token_url": "https://api.canva.com/auth/v1/oauth/token",
         "scopes": [
           "profile:read",
           "design:meta:read",
@@ -2435,7 +2435,7 @@
           "folder:read",
           "comment:read"
         ],
-        "resource": "https://mcp.canva.com/mcp"
+        "resource": "https://api.canva.com/connect/v1/mcp"
       },
       "relevance": 70,
       "tools": [
