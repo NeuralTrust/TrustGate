@@ -4444,7 +4444,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Server is not on the shelf, or needs admin setup; connect it first",
+                        "description": "Server is not on the shelf, or needs admin setup; connect it first. stale_request: the server the request names was deleted; deny it",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -8883,6 +8883,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "server_deleted": {
+                    "description": "ServerDeleted marks a request whose server was deleted: approving it fails\nwith stale_request, so the only decision left is to deny it.",
+                    "type": "boolean"
                 }
             }
         },

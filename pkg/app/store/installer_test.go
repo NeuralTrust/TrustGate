@@ -103,6 +103,8 @@ type fakeInstalls struct {
 	byCode      []*installationdomain.Installation
 	byPrincipal []*installationdomain.Installation
 	pending     []*installationdomain.Installation
+	rebinds     []ids.RegistryID
+	rebindErr   error
 }
 
 // installsForCode is the set a code-scoped read returns: an explicit byCode list
@@ -156,6 +158,19 @@ func (f *fakeInstalls) ListByPrincipalAndCode(context.Context, ids.GatewayID, st
 
 func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) error {
 	f.deletes++
+	return nil
+}
+
+func (f *fakeInstalls) Rebind(_ context.Context, _ ids.GatewayID, _ string, id ids.InstallationID, registryID ids.RegistryID) error {
+	if f.rebindErr != nil {
+		return f.rebindErr
+	}
+	f.rebinds = append(f.rebinds, registryID)
+	for _, in := range f.installsForCode() {
+		if in != nil && in.ID == id {
+			in.RegistryID = registryID
+		}
+	}
 	return nil
 }
 

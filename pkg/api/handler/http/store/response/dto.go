@@ -134,6 +134,9 @@ type PendingRequest struct {
 	// the only ones an approval may grant instead of the person.
 	RequesterGroups []string  `json:"requester_groups,omitempty"`
 	RequestedAt     time.Time `json:"requested_at"`
+	// ServerDeleted marks a request whose server was deleted: approving it fails
+	// with stale_request, so the only decision left is to deny it.
+	ServerDeleted bool `json:"server_deleted"`
 }
 
 type PendingRequests struct {

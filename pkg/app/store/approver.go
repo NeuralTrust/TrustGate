@@ -16,6 +16,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -73,6 +74,9 @@ type PendingRequest struct {
 	// list the decision is checked against.
 	RequesterGroups []string
 	RequestedAt     time.Time
+	// ServerDeleted marks a request whose server instance was deleted and cannot
+	// be moved onto a current one: approving it fails, so it can only be denied.
+	ServerDeleted bool
 }
 
 // ApproveRequest / DenyRequest identify the install request to decide, plus the
@@ -147,6 +151,7 @@ type approver struct {
 	grants     GrantStore
 	ensurer    RegistryEnsurer
 	history    installationdomain.DecisionHistory
+	rebinder   installationdomain.Rebinder
 }
 
 // ApproverOption tunes NewApprover.
@@ -180,6 +185,9 @@ func NewApprover(
 		return nil, ErrUnavailable
 	}
 	a := &approver{catalog: catalog, registries: registries, installs: installs, grants: grants}
+	if r, ok := installs.(installationdomain.Rebinder); ok {
+		a.rebinder = r
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(a)
@@ -194,9 +202,16 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 		return nil, err
 	}
 	out := make([]PendingRequest, 0, len(rows))
+	instancesByCode := make(map[string]codeInstances)
 	for _, in := range rows {
 		if in == nil {
 			continue
+		}
+		instances, seen := instancesByCode[in.CatalogCode]
+		if !seen {
+			regs, lookupErr := findRegistriesByCode(ctx, a.registries, gatewayID, in.CatalogCode)
+			instances = codeInstances{regs: regs, known: lookupErr == nil}
+			instancesByCode[in.CatalogCode] = instances
 		}
 		out = append(out, PendingRequest{
 			GatewayID:       in.GatewayID,
@@ -208,9 +223,29 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 			Reason:          in.Reason,
 			RequesterGroups: append([]string(nil), in.RequesterGroups...),
 			RequestedAt:     in.CreatedAt,
+			ServerDeleted:   instances.known && a.serverDeleted(in, instances.regs),
 		})
 	}
 	return out, nil
+}
+
+// codeInstances is one code's configured instances as ListPending read them. A
+// failed read is not known, and leaves the code's requests unflagged: the queue
+// still lists them, and Approve reports the real error.
+type codeInstances struct {
+	regs  []*registrydomain.Registry
+	known bool
+}
+
+// serverDeleted reports whether Approve would refuse the request as stale.
+func (a *approver) serverDeleted(in *installationdomain.Installation, instances []*registrydomain.Registry) bool {
+	if _, custom := registrydomain.ParseCustomStoreCode(in.CatalogCode); custom && len(instances) == 0 {
+		return true
+	}
+	if in.RegistryID.IsNil() || pickRegistry(instances, in.RegistryID) != nil {
+		return false
+	}
+	return !orphanRebindable(in.CatalogCode, instances) || a.rebinder == nil
 }
 
 const decidedHistoryLimit = 200
@@ -265,15 +300,18 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 		return err
 	}
 	// A request bound to one configured instance is approved for that instance
-	// only; the instance must still exist and still carry the code.
+	// only; one whose instance was deleted is moved onto the current one or
+	// refused as stale.
 	if !existing.RegistryID.IsNil() && pickRegistry(instances, existing.RegistryID) == nil {
-		return fmt.Errorf("%w: instance %s of %q", ErrNotShelved, existing.RegistryID, code)
+		if err := a.rebindOrphan(ctx, existing, instances); err != nil {
+			return err
+		}
 	}
 	if len(instances) == 0 {
 		// A custom server has no catalog entry to materialise from: once its
 		// registry is gone there is nothing to approve it onto.
 		if _, custom := registrydomain.ParseCustomStoreCode(code); custom {
-			return fmt.Errorf("%w: %q", ErrNotShelved, code)
+			return fmt.Errorf("%w: %q", installationdomain.ErrStaleRequest, code)
 		}
 		// Nobody connected this server yet: materialise it so the install has a
 		// registry to land on, when we can.
@@ -317,6 +355,41 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 
 	existing.Decide(installationdomain.DecisionApproved, in.ApprovedBy, time.Now().UTC())
 	return a.installs.Upsert(ctx, existing)
+}
+
+// rebindOrphan moves a request whose bound instance was deleted onto the
+// server's current one (ENG-1802). That is only safe while the server has at
+// most one instance, where approving grants the whole code anyway; with several
+// the admin would be picking for the requester, and a custom server re-created
+// under a new id is a different server.
+func (a *approver) rebindOrphan(
+	ctx context.Context,
+	in *installationdomain.Installation,
+	instances []*registrydomain.Registry,
+) error {
+	stale := fmt.Errorf("%w: instance %s of %q", installationdomain.ErrStaleRequest, in.RegistryID, in.CatalogCode)
+	if !orphanRebindable(in.CatalogCode, instances) || a.rebinder == nil {
+		return stale
+	}
+	var target ids.RegistryID
+	if len(instances) == 1 {
+		target = instances[0].ID
+	}
+	if err := a.rebinder.Rebind(ctx, in.GatewayID, in.PrincipalSub, in.ID, target); err != nil {
+		if errors.Is(err, installationdomain.ErrInstanceExists) {
+			return stale
+		}
+		return fmt.Errorf("store: rebind request: %w", err)
+	}
+	in.RegistryID = target
+	return nil
+}
+
+func orphanRebindable(code string, instances []*registrydomain.Registry) bool {
+	if _, custom := registrydomain.ParseCustomStoreCode(code); custom {
+		return false
+	}
+	return len(instances) <= 1
 }
 
 // grantRequester adds the principal — or, when the admin chose a group, that
