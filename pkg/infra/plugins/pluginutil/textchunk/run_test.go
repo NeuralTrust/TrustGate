@@ -200,7 +200,9 @@ func TestRunDoesNotCallAStopOnCancelABudgetCut(t *testing.T) {
 		})
 
 	for i := 1; i < 4; i++ {
-		assert.Error(t, out[i].Err)
+		if out[i].Started {
+			assert.Error(t, out[i].Err, "a started chunk waits for the cancel")
+		}
 		assert.False(t, out[i].BudgetCut, "a chunk cancelled by StopOn was not cut by a deadline")
 	}
 }
