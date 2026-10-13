@@ -116,6 +116,15 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	for _, b := range comp.bindings {
 		t := attributeTool(b.tool, b.registry)
 		t.Name = b.exposed
+		if ClientAcceptsTypedOutput(ctx) {
+			out = append(out, t)
+			continue
+		}
+		if downgraded, dropped := withObjectOutputSchema(t); dropped {
+			c.logger.Debug("mcp composer: dropped outputSchema the client revision cannot carry",
+				"registry", b.registry.Name, "tool", b.tool.Name)
+			t = downgraded
+		}
 		out = append(out, t)
 	}
 	return out, nil
@@ -158,7 +167,10 @@ func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	if fixableByConnecting(err) {
 		c.forgetDiscovery(ctx, target.Registry)
 	}
-	return out, err
+	if err != nil || ClientAcceptsTypedOutput(ctx) {
+		return out, err
+	}
+	return withObjectStructuredContent(out), nil
 }
 
 // annotateUpstream records the resolved upstream registry on the active MCP
