@@ -273,15 +273,14 @@ func TestNativeToolDegrade_FailuresAreCountedAndRetire(t *testing.T) {
 // P6: a string that does not survive being read and written back is not
 // rewritten: a mask on such an input ends the stream, and an input nothing masks
 // is released as it came.
-func TestNativeToolMask_LoneSurrogateIsNeverAlteredAndFailsOpenOnAMask(t *testing.T) {
+func TestNativeToolMask_LoneSurrogateIsNeverAlteredAndEndsTheStreamOnAMask(t *testing.T) {
 	t.Parallel()
-	t.Run("a mask fails open", func(t *testing.T) {
+	t.Run("a mask ends the stream", func(t *testing.T) {
 		t.Parallel()
 		frames := append([][]byte{deltaFrame(t, "Sending it")}, converseToolFrames(t, 1, `{"x":"\ud83d","to":"bob@x.io"}`)...)
 		frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 		got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(&maskRunner{from: streamEmail, to: "<EMAIL>"}, toolBlocks), frames)
-		require.Nil(t, pe)
-		requireStreamFailedOpen(t, got, frames, rt, "tool_input_not_maskable")
+		requireStreamMaskBlocked(t, got, pe, frames, rt, "tool_input_not_maskable")
 	})
 	t.Run("nothing to mask is released as it came", func(t *testing.T) {
 		t.Parallel()
@@ -382,13 +381,13 @@ func TestStreamGuard_OnlyNativeStreamsKeepToolBookkeeping(t *testing.T) {
 
 // partialFailRunner answers the tool input with a mask and an error: an earlier
 // entry masked it and a later entry failed.
-type partialFailRunner struct{ block bool }
+type partialFailRunner struct{}
 
 func (r partialFailRunner) RunStreamSegment(_ context.Context, _ appplugins.StageInput, seg appplugins.StreamSegment) (*appplugins.SegmentOutcome, error) {
 	if !seg.Closing && strings.HasPrefix(strings.TrimSpace(seg.Accumulated), "{") {
 		return &appplugins.SegmentOutcome{
-			HasTransform: true, MaskFailureBlock: r.block,
-			Transformed: strings.Replace(seg.Accumulated, "bob@x.io", "[EMAIL]", 1),
+			HasTransform: true,
+			Transformed:  strings.Replace(seg.Accumulated, "bob@x.io", "[EMAIL]", 1),
 		}, errors.New("later entry down")
 	}
 	return &appplugins.SegmentOutcome{}, nil
@@ -421,12 +420,5 @@ func TestNativeToolInspection_PartialMaskThenFailureFollowsOnError(t *testing.T)
 		joined := strings.Join(fragmentsOf(got), "")
 		assert.Contains(t, joined, "[EMAIL]")
 		assert.NotContains(t, joined, "bob@x.io")
-	})
-	t.Run("fail_open with on_mask_failure block stops when the mask cannot be applied", func(t *testing.T) {
-		t.Parallel()
-		cfg := streamGuardConfig{headChars: 5, minChars: 1, maxHold: time.Hour, onError: streamFailOpen}
-		g := nativeGuardFor(partialFailRunner{block: true}, cfg)
-		got, _, _ := runNativeGuardTraced(t, g, frames)
-		assert.NotContains(t, strings.Join(fragmentsOf(got), ""), "bob@x.io")
 	})
 }

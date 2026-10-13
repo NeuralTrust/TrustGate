@@ -167,8 +167,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	// to be blamed for a later block's failure.
 	var cutKeys []string
 	var failedKey string
+	var inputCut bool
 	if !seg.Closing {
-		defer func() { spans.setCut(seg, cutKeys, failedKey, !outcome.Block) }()
+		defer func() { spans.setCut(seg, cutKeys, failedKey, !outcome.Block, inputCut) }()
 	}
 	for _, entry := range entries {
 		inspector, ok := streamInspector(entry.plugin)
@@ -196,7 +197,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			}
 		}
 		started := e.clock()
-		verdict, err := inspector.InspectSegment(ctx, ExecInput{
+		execIn := ExecInput{
 			Stage:    policy.StagePreResponse,
 			Mode:     entry.mode,
 			Config:   entry.config,
@@ -204,7 +205,14 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			Request:  in.Request,
 			Response: in.Response,
 			Event:    event,
-		}, call)
+		}
+		var verdict *SegmentVerdict
+		var err error
+		if !seg.Closing && entry.streamWindow > 0 && len(call.Accumulated) > entry.streamWindow && !boundsOwnPayload(inspector) {
+			verdict, err = e.inspectChunked(ctx, inspector, execIn, call, entry, func() { spans.chunked(spanKey(seg, entry)) })
+		} else {
+			verdict, err = inspector.InspectSegment(ctx, execIn, call)
+		}
 		if !seg.Closing {
 			spans.charge(seg, entry, e.clock().Sub(started))
 		}
@@ -223,13 +231,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			if !cancelled {
 				spans.noteFailure(spanKey(seg, entry), err)
 			}
-			// Observe never blocks, and streaming.on_error is the stream's
-			// answer for entries that can: an observe entry that could not
+			// Observe never blocks, and the stream's on_error is the answer
+			// for entries that can: an observe entry that could not
 			// inspect a segment records that it failed open and lets the
 			// rest of the chain carry on, as its buffered leg does.
 			//
-			// An enforcing entry whose own streaming.on_error resolved to
-			// fail_open is handled the same way. The stream carries ONE on_error
+			// An enforcing entry whose own stream options say fail_open
+			// (every guardrail) is handled the same way. The stream carries ONE on_error
 			// for the whole chain, so returning its error to the guard would
 			// apply another policy's fail_closed to it (and blame it for the
 			// cut), and would end the walk, blinding every entry behind it on
@@ -237,7 +245,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			// asked for fail_closed (or states nothing) hands its error back.
 			if !Blocks(entry.mode) || entryFailsOpen(inspector, entry) {
 				if !cancelled {
-					first, retiredNow := spans.fail(spanKey(seg, entry))
+					first, retiredNow := spans.fail(spanKey(seg, entry), err)
 					SetDecisionFromOutcome(event, DecisionFailedOpen)
 					outcome.FailedEntries++
 					e.warnAbsorbedStreamFailure(entry, seg, err, first, retiredNow)
@@ -264,6 +272,12 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		if seg.Closing || verdict == nil {
 			continue
 		}
+		if verdict.Incomplete != nil && ctx.Err() == nil {
+			spans.noteFailure(spanKey(seg, entry), verdict.Incomplete)
+		}
+		if verdict.Failure != nil && ctx.Err() == nil {
+			spans.noteCutFailure(spanKey(seg, entry), verdict.Failure)
+		}
 		if verdict.HasTransform && head != "" {
 			whole := *verdict
 			whole.Transformed = head + verdict.Transformed
@@ -275,9 +289,6 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			verdict = &SegmentVerdict{Block: true, Type: BedrockNativePassthrough, Message: NativeRewriteRefusal(entry.plugin.Name(), policy.StagePreResponse).Message}
 		}
 		stop := e.mergeVerdict(outcome, verdict, entry)
-		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && MaskFailureOf(entry.config.Settings) == MaskFailureBlock {
-			outcome.MaskFailureBlock = true
-		}
 		// Hand-off mirrors mergeVerdict: only a transform from an entry that
 		// blocks is applied to what the client receives, so only that one
 		// changes what the entries behind it see. An observe transform is
@@ -290,6 +301,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			// A block is the cut's one author: the transforms of the same
 			// segment are discarded with it, so their entries do not share it.
 			cutKeys = []string{spanKey(seg, entry)}
+			inputCut = verdict.Failure != nil
 		case verdict.HasTransform && Blocks(entry.mode):
 			// Every entry whose transform ends up in the final mask is a
 			// candidate for the rewrite that could not be applied.
@@ -304,8 +316,8 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	return outcome, nil
 }
 
-// entryFailsOpen reports whether the entry's own settings resolved
-// streaming.on_error to fail_open. An empty or unparseable answer is not an
+// entryFailsOpen reports whether the entry's own stream options say
+// fail_open. An empty or unparseable answer is not an
 // opt-in to swallowing: the error then goes to the guard, which resolves it with
 // the stream's on_error as it always did.
 func entryFailsOpen(inspector StreamInspector, entry chainEntry) bool {
@@ -330,7 +342,8 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 //
 // The block's own text is never cut: it is about to be released, and text this
 // entry never saw would reach the client uninspected. A block larger than the
-// window is sent whole, so the provider refuses it and on_error decides.
+// window therefore stays whole here, and the caller screens it in chunks of the
+// window (inspectChunked).
 func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
 	if window <= 0 {
 		return seg, ""
@@ -573,9 +586,8 @@ func nativeRewriteVerdict(
 		return NativeRewriteRefusal(entry.plugin.Name(), stage)
 	}
 	req.NativeMask.Add(infracontext.NativeMaskSource{
-		Plugin:    entry.plugin.Name(),
-		Stage:     stage,
-		OnFailure: MaskFailureOf(entry.config.Settings),
+		Plugin: entry.plugin.Name(),
+		Stage:  stage,
 	})
 	return nil
 }

@@ -180,10 +180,7 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
-const (
-	streamOnErrorFailOpen   = "fail_open"
-	streamOnErrorFailClosed = "fail_closed"
-)
+const streamOnErrorFailOpen = "fail_open"
 
 // StreamPlan reports whether any entry of the stage opted into per-segment
 // inspection *and* has it enabled, and yields the options that entry runs
@@ -200,19 +197,20 @@ const (
 // stream carries one of each, and the entries are already ordered by priority.
 // Merging those would invent a cadence no operator asked for.
 //
-// Two options are merged instead, because "first wins" let a policy with no
-// streaming block, which is now a participant, override another participant's
-// explicit choice or run its provider over a payload it cannot take:
+// Two options are not taken from the first owner, because "first wins" would let a
+// policy with no streaming block, which is a participant, override another
+// participant's explicit choice or run its provider over a payload it cannot
+// take:
 //
-//   - on_error is fail_closed when any ENFORCING owner resolved fail_closed,
-//     and fail_open otherwise. An observe entry never blocks, so its value
-//     decides nothing, and a passive rewriter never fails a call. The guard
-//     applies this one value only to an error the executor hands it, and
-//     RunStreamSegment hands back only the error of an entry that resolved
-//     fail_closed (or states nothing): an enforcing entry that resolved
-//     fail_open is absorbed per entry, like an observe one. So the merge is
-//     what makes the guard CUT on a fail_closed entry's error, and it can no
-//     longer cut on behalf of a fail_open entry that failed beside it.
+//   - on_error is fail_open whenever an owner takes part. Owners are the
+//     guardrails, whose availability failures fail open and whose content-
+//     dependent failures arrive as a cut verdict rather than an error. A
+//     passive rewriter's own fail_closed is not honoured beside a guardrail: it
+//     inherits the owner's fail_open. The guard applies this one value only to
+//     an error the executor hands it, and RunStreamSegment hands back only the
+//     error of an entry whose own options say fail_closed (a rewriter such as
+//     regex_replace); everything else is absorbed per entry, so the guard cannot
+//     cut on behalf of a guardrail that failed.
 //   - max_accumulated_bytes is the largest any participant asks for, passive
 //     ones included, and the executor narrows each entry to its own
 //     (segmentWithin). No provider receives a larger prefix than its policy
@@ -231,7 +229,6 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		hasPassive bool
 		owner      StreamOptions
 		hasOwner   bool
-		failClosed bool
 		maxBytes   int
 	)
 	for _, entry := range p.byStage[stage] {
@@ -253,15 +250,9 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		if !hasOwner {
 			owner, hasOwner = opts, true
 		}
-		if Blocks(entry.mode) && opts.OnError == streamOnErrorFailClosed {
-			failClosed = true
-		}
 	}
 	if hasOwner {
 		owner.OnError = streamOnErrorFailOpen
-		if failClosed {
-			owner.OnError = streamOnErrorFailClosed
-		}
 		if maxBytes > 0 {
 			owner.MaxAccumulatedBytes = maxBytes
 		}

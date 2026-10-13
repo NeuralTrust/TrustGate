@@ -15,14 +15,9 @@
 package trustguard
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
-
-	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
@@ -239,35 +234,5 @@ func TestBlockErrorKeepsMessageAcrossDirections(t *testing.T) {
 	}
 	if blockDirectionOf(t, in.Body) != "input" || blockDirectionOf(t, out.Body) != "output" {
 		t.Fatalf("bodies = %s / %s", in.Body, out.Body)
-	}
-}
-
-// transformDegraded is the second blockError call site: a mask that could not
-// be applied under on_error fail_closed.
-func TestTransformDegradedFailClosedCarriesDirection(t *testing.T) {
-	t.Parallel()
-
-	p := newTestPlugin(t, adapter.NewRegistry(), "http://127.0.0.1:1")
-	for _, tt := range []struct {
-		stage policy.Stage
-		want  string
-	}{
-		{policy.StagePreRequest, "input"},
-		{policy.StagePreResponse, "output"},
-	} {
-		t.Run(tt.want, func(t *testing.T) {
-			t.Parallel()
-			in := execInput(tt.stage, policy.ModeEnforce, settings(""), requestContext(), nil)
-			cfg := Settings{OnError: onErrorFailClosed}
-			data := guardData{Direction: stageDirection(tt.stage)}
-			_, err := p.transformDegraded(context.Background(), in, cfg, data, &GuardResponse{Status: statusTransform}, "unmaskable")
-			pe, ok := appplugins.AsPluginError(err)
-			if !ok {
-				t.Fatalf("expected *PluginError, got %v", err)
-			}
-			if got := blockDirectionOf(t, pe.Body); got != tt.want {
-				t.Fatalf("direction = %q, want %q in %s", got, tt.want, pe.Body)
-			}
-		})
 	}
 }

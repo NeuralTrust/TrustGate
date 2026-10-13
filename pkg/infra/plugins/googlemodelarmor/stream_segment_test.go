@@ -107,12 +107,12 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+func TestStreamSettingsIgnoreAStoredFailClosed(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "", 0, true, nil)
-	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
-	if !on || opts.OnError != "fail_closed" {
-		t.Errorf("on=%v OnError=%q, want an explicit fail_closed to be kept", on, opts.OnError)
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}))
+	if !on || opts.OnError != "fail_open" {
+		t.Errorf("on=%v OnError=%q, want a stored fail_closed to be ignored", on, opts.OnError)
 	}
 }
 
@@ -134,9 +134,9 @@ func TestStreamSettingsStaysWithinTheSanitizeLimit(t *testing.T) {
 		settings map[string]any
 		want     int
 	}{
-		{"default", streamSettings(nil), 65536},
+		{"default", streamSettings(nil), 57344},
 		{"configured below the limit", streamSettings(map[string]any{"max_accumulated_bytes": 8192}), 8192},
-		{"configured above the limit", streamSettings(map[string]any{"max_accumulated_bytes": 1048576}), 65536},
+		{"configured above the limit", streamSettings(map[string]any{"max_accumulated_bytes": 1048576}), 57344},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestStreamSettingsStaysWithinTheSanitizeLimit(t *testing.T) {
 				t.Fatal("expected the opt-in")
 			}
 			if opts.MaxAccumulatedBytes != tc.want {
-				t.Errorf("MaxAccumulatedBytes = %d, want %d: Model Armor skips its filters above 65,536 tokens",
+				t.Errorf("MaxAccumulatedBytes = %d, want %d: the block and the correlation prompt must fit 65,536 tokens",
 					opts.MaxAccumulatedBytes, tc.want)
 			}
 		})
@@ -271,8 +271,7 @@ func TestInspectSegmentAnonymisesAsATransform(t *testing.T) {
 
 // inspectSDP only reports an anonymise when de-identified text came back, so a
 // match with nothing to mask with arrives here already downgraded to a block.
-// What matters either way is that the unmasked prefix is not released; the
-// backstop in InspectSegment covers the same condition if that ever changes.
+// That is a provider block verdict, not an unappliable mask, so it still cuts.
 func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, sdpAnonymizeResponse(""))
@@ -308,7 +307,7 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 		t.Fatal("a failed sanitize must reach the guard as an error")
 	}
 	if got != nil {
-		t.Errorf("verdict = %+v, want nil so the guard resolves on_error", got)
+		t.Errorf("verdict = %+v, want nil so the executor absorbs the failure and fails open", got)
 	}
 	if !strings.Contains(err.Error(), "block 6") {
 		t.Errorf("error %q does not name the block", err)
@@ -316,18 +315,15 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 }
 
 // RUN-1667 on the streaming leg: a block_on filter absent from the response
-// (a template that never enabled it) or present but not executed must reach
-// the guard as an error, so streaming.on_error decides, instead of releasing
-// the block as clean.
-func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
+// (a template that never enabled it) or an invocation that failed outright must
+// reach the executor as an error, which fails open and is recorded, instead of
+// releasing the block as clean.
+func TestInspectSegmentFailsOpenWhenABlockOnFilterProducedNoVerdictForAvailability(t *testing.T) {
 	t.Parallel()
-	notExecuted := sanitizeOpen + noMatchSDP + `,` +
-		`"rai":{"raiFilterResult":{"executionState":"EXECUTION_SKIPPED","matchState":"NO_MATCH_FOUND"}}` + sanitizeClose
 	cases := []struct {
 		name, body, want string
 	}{
 		{"absent from template", sdpOnlyAllow, reasonFilterNotInTemplate},
-		{"not executed", notExecuted, reasonFilterNotExecuted},
 		{"invocation failure", invocationFailureResponse, "invocationResult FAILURE"},
 	}
 	for _, tc := range cases {
@@ -342,12 +338,45 @@ func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
 				t.Fatalf("expected an error for the guard, got verdict %+v", got)
 			}
 			if got != nil {
-				t.Errorf("verdict = %+v, want nil so the guard resolves on_error", got)
+				t.Errorf("verdict = %+v, want nil so the executor absorbs the failure and fails open", got)
 			}
 			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "block 3") {
 				t.Errorf("error %q should name the block and %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// A mask in hand outranks a block_on filter the template never enabled in a
+// blocking mode, as on the buffered leg: releasing the original text would send
+// the raw PII the mask exists to hide, and the missing filter is the customer's
+// configuration, not the content's. The incomplete verdict travels on the
+// transform.
+func TestInspectSegmentMasksWhenABlockOnFilterIsAbsentFromTheTemplate(t *testing.T) {
+	t.Parallel()
+	body := sanitizeOpen +
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"write to [EMAIL] soon"}}}}` +
+		sanitizeClose
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, body))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), nil), segment(2, "write to a@b.com soon"))
+
+	if err != nil {
+		t.Fatalf("a usable mask must not become an error: %v", err)
+	}
+	if !got.HasTransform || got.Transformed != "write to [EMAIL] soon" {
+		t.Fatalf("verdict = %+v, want the masked prefix as a transform", got)
+	}
+	var failure *appplugins.ExternalStreamFailure
+	if !errors.As(got.Incomplete, &failure) || failure.Reason != appplugins.FailureVerdictIncomplete || failure.Detail != reasonFilterNotInTemplate {
+		t.Fatalf("Incomplete = %v, want a typed verdict_incomplete/%s", got.Incomplete, reasonFilterNotInTemplate)
+	}
+
+	observed, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, anonymizeStreamSettings(), nil), segment(2, "write to a@b.com soon"))
+	if err == nil {
+		t.Fatalf("observe applies no mask, so the incomplete verdict stays an error, got %+v", observed)
 	}
 }
 
@@ -595,8 +624,7 @@ func TestFindingFingerprintsSkipBlockingModesAndNilFindings(t *testing.T) {
 }
 
 // RUN-1710: the closing write carries the first failed block's reason whatever
-// the decision settled on, and a cut that resolved this entry's failed call as
-// fail_closed is failed_closed, not blocked.
+// the decision settled on.
 func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	t.Parallel()
 	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
@@ -613,7 +641,6 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		wantDetail   string
 	}{
 		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "verdict_incomplete", "filter_not_executed"},
-		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "verdict_incomplete", "filter_not_executed"},
 		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "verdict_incomplete", "filter_not_executed"},
 		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
 	}
@@ -639,5 +666,67 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 				t.Errorf("failure = %q/%q, want %q/%q", data.FailureReason, data.FailureDetail, tc.wantReason, tc.wantDetail)
 			}
 		})
+	}
+}
+
+// A cut that is a mask over a confirmed finding stays blocked, flagged degraded.
+func TestClosingSegmentFlagsAnUnappliedMaskCutAsBlockedAndDegraded(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	event, span := newStreamEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 2, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != decisionBlocked || !data.Degraded || data.DegradedReason != reasonAnonymizeNoOutput || data.FailureClass != "input" {
+		t.Fatalf("extras = %+v, want blocked + degraded %q, class input", data, reasonAnonymizeNoOutput)
+	}
+}
+
+// A cut that is an input failure with no finding behind it records failed_closed.
+func TestClosingSegmentRecordsAnInputCutAsFailedClosed(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	event, span := newStreamEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, anonymizeStreamSettings(), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 1, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonFilterNotExecuted,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != appplugins.DecisionFailedClosed || data.Degraded || data.FailureClass != "input" {
+		t.Fatalf("extras = %+v, want failed_closed, not degraded, class input", data)
+	}
+}
+
+// The block's deadline and the slow-call threshold are made of the time a piece's
+// call really has.
+func TestTheStreamPieceTimeoutIsTheGuardTimeoutOfTheCall(t *testing.T) {
+	t.Parallel()
+	var declared appplugins.StreamPieceTimeout = &Plugin{}
+	if declared.StreamGuardTimeout() != streamingDefaults.GuardTimeout || declared.StreamGuardTimeout() <= 0 {
+		t.Fatalf("StreamGuardTimeout = %v, want %v", declared.StreamGuardTimeout(), streamingDefaults.GuardTimeout)
 	}
 }

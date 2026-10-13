@@ -245,20 +245,14 @@ func TestForward_NativeBedrock_RefusesAmbiguousBodies(t *testing.T) {
 }
 
 // A masking policy whose change is not a replacement of text cannot be carried onto
-// the request: the mask fails open, the bytes the client sent go to Bedrock as they
-// are, and the outcome is recorded as a failed-open policy result.
-func TestForward_NativeBedrock_RequestMaskThatCannotBeAppliedFailsOpen(t *testing.T) {
+// the request: the call is refused, since the bytes the client sent are what the
+// policy asked to mask, and the outcome is recorded as a blocked policy result.
+func TestForward_NativeBedrock_RequestMaskThatCannotBeAppliedBlocks(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "bedrock"))
 	rc.Policies = nativePolicy("regex_replace")
 
-	var forwarded []byte
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
-			forwarded = req.Body
-		}).
-		Return(nativeOKResponse(), nil).Once()
+	invoker := proxymocks.NewProviderInvoker(t) // Invoke must never be called
 	p := &stubPlugin{
 		name:   "regex_replace",
 		stages: []policy.Stage{policy.StagePreRequest},
@@ -272,9 +266,9 @@ func TestForward_NativeBedrock_RequestMaskThatCannotBeAppliedFailsOpen(t *testin
 		Request:   nativeForwardRequest("converse", nativeModel, nativeConverseBody),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, nativeConverseBody, string(forwarded), "the original bytes are what Bedrock gets")
-	requireFailedOpen(t, rt, "pre_request", "shape_mismatch")
+	assert.Equal(t, http.StatusForbidden, res.StatusCode)
+	assert.Contains(t, string(res.Body), "native_bedrock_passthrough")
+	requireMaskBlocked(t, rt, "pre_request", "shape_mismatch")
 }
 
 func TestForward_NativeBedrock_RequestRewriteToIdenticalBytesIsNotABlock(t *testing.T) {
@@ -368,8 +362,9 @@ func TestForward_NativeBedrock_ShortCircuitIsNeverAnAnswer(t *testing.T) {
 }
 
 // A masking policy's change to the response that is not a replacement of text
-// returns AWS's answer as it came, recorded as a failed-open policy result.
-func TestForward_NativeBedrock_ResponseMaskThatCannotBeAppliedFailsOpen(t *testing.T) {
+// refuses the response, recorded as a blocked policy result: AWS's answer carries
+// what the policy asked to mask.
+func TestForward_NativeBedrock_ResponseMaskThatCannotBeAppliedBlocks(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "bedrock"))
 	rc.Policies = nativePolicy("trustguard")
@@ -390,10 +385,10 @@ func TestForward_NativeBedrock_ResponseMaskThatCannotBeAppliedFailsOpen(t *testi
 		Request:   nativeForwardRequest("converse", nativeModel, nativeConverseBody),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.True(t, res.Upstream)
-	assert.Equal(t, string(provider.Body), string(res.Body), "AWS's answer, as AWS gave it")
-	requireFailedOpen(t, rt, "pre_response", "not_a_text_replacement")
+	assert.Equal(t, http.StatusForbidden, res.StatusCode)
+	assert.Contains(t, string(res.Body), "native_bedrock_passthrough")
+	assert.NotContains(t, string(res.Body), string(provider.Body), "AWS's answer is not relayed")
+	requireMaskBlocked(t, rt, "pre_response", "not_a_text_replacement")
 }
 
 // A policy that answers with a status of its own is answering for Bedrock, which
@@ -420,7 +415,7 @@ func TestForward_NativeBedrock_ResponseWithAStatusOfItsOwnIsStillRefused(t *test
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, res.StatusCode)
 	assert.NotContains(t, string(res.Body), "canned")
-	assert.Empty(t, failedOpenEntries(rt), "this is a refusal, not a failed-open mask")
+	assert.Empty(t, maskBlockedEntries(rt), "this is a refusal of a rewrite, not a blocked mask")
 }
 
 func TestForward_NativeBedrock_ResponseLegThatKeepsTheBytesPasses(t *testing.T) {
@@ -742,7 +737,7 @@ func TestForward_NativeBedrock_RefusesContentReferencedFromS3(t *testing.T) {
 	}
 }
 
-// Only a mask may fail open. A policy that rewrites a native call for enforcement
+// A mask that cannot be applied is refused, and so is a rewrite that is not a mask. A policy that rewrites a native call for enforcement
 // (a tool filter, a per-tool limit that strips a tool) is not masking text: its
 // change cannot be carried onto the client's bytes, and forwarding the original
 // would let through exactly what it removed. The call is refused.
@@ -769,7 +764,7 @@ func TestForward_NativeBedrock_ARewriteThatIsNotAMaskBlocksTheRequest(t *testing
 	assert.Equal(t, http.StatusForbidden, res.StatusCode)
 	assert.False(t, res.Upstream)
 	assert.Contains(t, string(res.Body), "native_bedrock_passthrough")
-	assert.Empty(t, failedOpenEntries(rt), "a refusal, not a failed-open mask")
+	assert.Empty(t, maskBlockedEntries(rt), "a refusal of a rewrite, not a blocked mask")
 }
 
 func TestForward_NativeBedrock_AResponseRewriteThatIsNotAMaskBlocksTheResponse(t *testing.T) {
@@ -794,7 +789,7 @@ func TestForward_NativeBedrock_AResponseRewriteThatIsNotAMaskBlocksTheResponse(t
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, res.StatusCode)
 	assert.NotContains(t, string(res.Body), `"text":"o"`)
-	assert.Empty(t, failedOpenEntries(rt))
+	assert.Empty(t, maskBlockedEntries(rt))
 }
 
 const (

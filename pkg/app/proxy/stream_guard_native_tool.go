@@ -97,11 +97,12 @@ func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
 // left in place with an empty input; nothing of the call is released before its
 // stop frame. A block verdict, or a mask that cannot be written back and checked,
 // stops the stream. A call whose inspection fails follows the stream's on_error:
-// fail_closed stops the stream, anything else releases the call as it came.
+// fail_closed (a rewriter's) stops the stream, anything else releases the call
+// as it came.
 //
 // Every other family, and any call the hold could not cover, is not understood
-// well enough to edit, so a mask on a window that holds one fails open as any mask
-// a native stream cannot apply does (see applyTransform).
+// well enough to edit, so a mask on a window that holds one stops the stream as
+// any mask a native stream cannot apply does (see applyTransform).
 func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 	if !g.native {
 		return toolVerdict{}
@@ -129,10 +130,8 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			}
 			if outcome != nil && outcome.HasTransform {
 				if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
-					if outcome.MaskFailureBlock {
-						return toolVerdict{outcome: outcome, stop: true}
-					}
-					g.maskFailedOpen(ctx, cause)
+					g.maskBlocked(ctx, cause)
+					return toolVerdict{outcome: outcome, stop: true}
 				}
 			}
 			g.degrade(blockFailureReason(err))
@@ -153,13 +152,11 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 		}
 		if outcome != nil && outcome.HasTransform {
 			if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
-				// The mask cannot be written into the held frames and read back: the
-				// call goes through as it came and the outcome is recorded, unless the
-				// policy asked for on_mask_failure: block.
-				if outcome.MaskFailureBlock {
-					return toolVerdict{outcome: outcome, stop: true}
-				}
-				g.maskFailedOpen(ctx, cause)
+				// The mask cannot be written into the held frames and read back:
+				// releasing the call as it came would send the input the policy
+				// asked to mask, so the stream stops and the outcome is recorded.
+				g.maskBlocked(ctx, cause)
+				return toolVerdict{outcome: outcome, stop: true}
 			}
 		}
 		g.markToolHandled(b)

@@ -25,17 +25,9 @@ import (
 
 const typeBlocked = "trustguard_blocked"
 const typeRateLimited = "trustguard_rate_limited"
-const typeUnavailable = "trustguard_unavailable"
-const typeUnauthorized = "trustguard_unauthorized"
-const typeGuardError = "trustguard_error"
 
 const blockMessage = "request blocked due to a policy infraction"
 const rateLimitMessage = "rate limit exceeded"
-const unavailableMessage = "rate limit entitlements unavailable"
-const unauthorizedMessage = "trustguard authentication or configuration rejected"
-const guardErrorMessage = "trustguard unavailable"
-
-const guardTimeoutMessage = "trustguard did not answer in time"
 
 // blockError renders a TrustGuard block. direction ("input" or "output") says
 // which leg of the exchange was blocked; it travels in the body so an
@@ -60,84 +52,6 @@ func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
 		Type:       typeRateLimited,
 		Message:    rateLimitMessage,
 		Headers:    err.headers,
-		Body:       body,
-	}
-}
-
-func unavailableError(err *entitlementsUnavailableError) *appplugins.PluginError {
-	body := []byte(`{"error":"rate limit entitlements unavailable"}`)
-	if err != nil && len(err.body) > 0 {
-		body = err.body
-	}
-	return &appplugins.PluginError{
-		StatusCode: http.StatusServiceUnavailable,
-		Type:       typeUnavailable,
-		Message:    unavailableMessage,
-		Body:       body,
-	}
-}
-
-func unauthorizedError(err *authRejectedError) *appplugins.PluginError {
-	upstream := http.StatusUnauthorized
-	if err != nil && err.status != 0 {
-		upstream = err.status
-	}
-	body, _ := json.Marshal(map[string]any{
-		"error":           typeUnauthorized,
-		"message":         unauthorizedMessage,
-		"upstream_status": upstream,
-	})
-	return &appplugins.PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeUnauthorized,
-		Message:    unauthorizedMessage,
-		Body:       body,
-	}
-}
-
-// notConfiguredError is unauthorizedError without an upstream status: the
-// gateway had no URL or no credentials, so TrustGuard was never asked. The
-// caller gets the same generic type and message; which configuration is
-// missing is the operator's to read, in the log and the trace.
-func notConfiguredError() *appplugins.PluginError {
-	body, _ := json.Marshal(map[string]any{
-		"error":   typeUnauthorized,
-		"message": unauthorizedMessage,
-	})
-	return &appplugins.PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeUnauthorized,
-		Message:    unauthorizedMessage,
-		Body:       body,
-	}
-}
-
-// timeoutFailClosedError is 504 rather than the transport path's 502: the
-// upstream guard was reachable and simply did not answer in time, and an
-// operator reading the status code should be able to tell those apart without
-// opening the trace.
-func timeoutFailClosedError() *appplugins.PluginError {
-	body, _ := json.Marshal(map[string]any{
-		"error":   typeGuardError,
-		"message": guardTimeoutMessage,
-	})
-	return &appplugins.PluginError{
-		StatusCode: http.StatusGatewayTimeout,
-		Type:       typeGuardError,
-		Message:    guardTimeoutMessage,
-		Body:       body,
-	}
-}
-
-func transportFailClosedError() *appplugins.PluginError {
-	body, _ := json.Marshal(map[string]any{
-		"error":   typeGuardError,
-		"message": guardErrorMessage,
-	})
-	return &appplugins.PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeGuardError,
-		Message:    guardErrorMessage,
 		Body:       body,
 	}
 }

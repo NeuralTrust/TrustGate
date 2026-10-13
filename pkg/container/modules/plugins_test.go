@@ -107,7 +107,7 @@ func TestNewPluginRegistry_OpenAIModerationCatalogMetadata(t *testing.T) {
 	for _, f := range entry.SettingsSchema.Fields {
 		keys = append(keys, f.Key)
 	}
-	assert.ElementsMatch(t, []string{"api_key", "on_error", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
+	assert.ElementsMatch(t, []string{"api_key", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
 }
 
 // TestNewPluginRegistry_ContentReaderSet pins which plugins the planner
@@ -157,8 +157,6 @@ func TestNewPluginRegistry_LocalRewriterSet(t *testing.T) {
 // native Amazon Bedrock Runtime call. Every plugin not listed runs and is refused
 // if it changes the bytes of the call, so adding a plugin that masks or that
 // transforms the request must be a conscious edit here as well as in the plugin.
-// The plugins that mask are exactly the ones that carry the on_mask_failure
-// setting in the catalog.
 func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 	reg := newTestPluginRegistry(t)
 	want := map[string]appplugins.BedrockNativeBehavior{
@@ -182,24 +180,56 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 	assert.Equal(t, want, got)
 
 	catalog := appplugins.NewCatalogService(reg).Catalog()
-	carriers := map[string]bool{}
 	for _, group := range catalog.Groups {
 		for _, item := range group.Items {
 			for _, f := range item.SettingsSchema.Fields {
-				if f.Key == appplugins.SettingOnMaskFailure {
-					carriers[item.Slug] = true
-					assert.Equal(t, appplugins.FieldTypeEnum, f.Type)
-					assert.Equal(t, string(appplugins.MaskFailurePass), f.Default)
-				}
+				assert.NotEqual(t, "on_mask_failure", f.Key, "%s: a mask that cannot be applied always blocks in a mode that blocks", item.Slug)
 			}
 		}
 	}
-	for slug, behavior := range want {
-		assert.Equal(t, behavior == appplugins.BedrockNativeMasks, carriers[slug], "%s: on_mask_failure belongs to the plugins that mask", slug)
-		if behavior == appplugins.BedrockNativeMasks {
-			err := reg.Validate(slug, map[string]any{appplugins.SettingOnMaskFailure: "Block"})
-			require.Error(t, err, "%s: an invalid on_mask_failure must be refused", slug)
-			assert.Contains(t, err.Error(), appplugins.SettingOnMaskFailure)
+}
+
+// TestNewPluginRegistry_RetiredSettingsSet pins which plugins refuse to store
+// which keys, by running the registry's own strip over a settings object that
+// carries every key a guardrail ignores. A plugin missing from the table
+// stores them all.
+func TestNewPluginRegistry_RetiredSettingsSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	stale := func() map[string]any {
+		return map[string]any{
+			"on_error": "fail_closed", "on_timeout": "fail_closed", "timeout": "1ms",
+			"on_mask_failure": "block",
+			"streaming":       map[string]any{"enabled": true, "on_error": "fail_closed", "guard_timeout": "1s"},
 		}
+	}
+	kept := map[string][]string{
+		"trustguard":           {"streaming"},
+		"bedrock_guardrail":    {"timeout", "on_timeout", "streaming"},
+		"google_model_armor":   {"timeout", "on_timeout", "streaming"},
+		"openai_moderation":    {"timeout", "on_timeout", "on_mask_failure", "streaming"},
+		"azure_content_safety": {"timeout", "on_timeout", "on_mask_failure", "streaming"},
+		"regex_replace":        {"on_error", "on_timeout", "timeout", "streaming"},
+	}
+	for slug, want := range kept {
+		t.Run(slug, func(t *testing.T) {
+			got := appplugins.StripRetiredSettings(reg, slug, stale())
+			keys := make([]string, 0, len(got))
+			for k := range got {
+				keys = append(keys, k)
+			}
+			assert.ElementsMatch(t, want, keys)
+			streaming, _ := got["streaming"].(map[string]any)
+			switch slug {
+			case "regex_replace":
+				assert.Contains(t, streaming, "on_error", "a rewriter keeps its stream failure policy")
+				assert.NotContains(t, streaming, "guard_timeout", "a rewriter has no stream guard timeout")
+			case "azure_content_safety":
+				assert.Contains(t, streaming, "on_error", "azure has no stream leg and retires only its own keys")
+			default:
+				assert.NotContains(t, streaming, "on_error")
+				assert.NotContains(t, streaming, "guard_timeout")
+				assert.Contains(t, streaming, "enabled")
+			}
+		})
 	}
 }

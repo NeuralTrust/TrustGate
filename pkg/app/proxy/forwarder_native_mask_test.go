@@ -27,7 +27,6 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
-	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -145,19 +144,25 @@ func TestForward_NativeMask_ObserveForwardsTheOriginal(t *testing.T) {
 	assert.Equal(t, nativeMaskBody(), string(forwarded), "observe never masks")
 }
 
-// If the patcher leaves one copy of the text a policy removed, the mask fails
-// open: the leak check decides masked-or-not, and what goes to Bedrock is the
-// original, never a half mask. The outcome is recorded as failed open.
-func TestForward_NativeMask_BrokenPatcherFailsOpenWithTheOriginal(t *testing.T) {
+// requireMaskRefused asserts a native call refused because its mask could not be
+// applied: a 403 native_bedrock_passthrough naming the policy, with nothing of the
+// masked value in it.
+func requireMaskRefused(t *testing.T, res *appproxy.ForwardResult, err error) {
+	t.Helper()
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, res.StatusCode)
+	assert.Contains(t, string(res.Body), "native_bedrock_passthrough")
+	assert.Contains(t, string(res.Body), "regex_replace")
+	assert.NotContains(t, string(res.Body), maskedEmail)
+}
+
+// If the patcher leaves one copy of the text a policy removed, the mask cannot be
+// applied: the leak check decides masked-or-not, and neither a half mask nor the
+// original reaches Bedrock. The call is refused and recorded as blocked.
+func TestForward_NativeMask_BrokenPatcherBlocksTheCall(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk, pol := maskConsumer(gatewayID, "request", policy.ModeEnforce, policy.StagePreRequest)
-	var forwarded []byte
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
-			forwarded = req.Body
-		}).
-		Return(nativeOKResponse(), nil).Once()
+	invoker := proxymocks.NewProviderInvoker(t) // Invoke must never be called
 	leaky := adapter.NativeMasker{Patch: func(body []byte, subs []adapter.Substitution) ([]byte, error) {
 		// A patcher that only masks the first copy and leaves the rest.
 		first := subs[0]
@@ -170,48 +175,34 @@ func TestForward_NativeMask_BrokenPatcherFailsOpenWithTheOriginal(t *testing.T) 
 	res, err := maskForwarder(t, invoker, appproxy.WithNativeMasker(leaky)).Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, nativeMaskBody()),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, nativeMaskBody(), string(forwarded), "the original reaches Bedrock, not a half mask")
-	entries := failedOpenEntries(rt)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "pre_request", entries[0].Stage)
-	assert.Contains(t, entries[0].FailureReason, "mask_not_applicable:")
+	requireMaskRefused(t, res, err)
+	requireMaskBlocked(t, rt, "pre_request", "shape_mismatch")
 }
 
 // A mask that would edit a signed thinking block cannot be applied, because the
-// edit would invalidate the signature: the call goes through as the client sent
-// it and the outcome is recorded with its cause.
-func TestForward_NativeMask_SignedBlockFailsOpen(t *testing.T) {
+// edit would invalidate the signature: the call is refused and the outcome is
+// recorded with its cause.
+func TestForward_NativeMask_SignedBlockBlocksTheCall(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk, pol := maskConsumer(gatewayID, "request", policy.ModeEnforce, policy.StagePreRequest)
 	body := `{"anthropic_version":"bedrock-2023-05-31","max_tokens":10,"messages":[` +
 		`{"role":"assistant","content":[{"type":"thinking","thinking":"mail ` + maskedEmail + `","signature":"EqQB"}]},` +
 		`{"role":"user","content":[{"type":"text","text":"go"}]}]}`
-	var forwarded []byte
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
-			forwarded = req.Body
-		}).
-		Return(nativeOKResponse(), nil).Once()
+	invoker := proxymocks.NewProviderInvoker(t) // Invoke must never be called
 	ctx, rt := tracedContext()
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{pol}
 	res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("invoke", nativeModel, body),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, body, string(forwarded))
-	entries := failedOpenEntries(rt)
+	requireMaskRefused(t, res, err)
+	entries := maskBlockedEntries(rt)
 	require.Len(t, entries, 1)
 	assert.Contains(t, entries[0].FailureReason, "mask_not_applicable:")
 }
 
-// A patcher that fails outright, and a mask that would edit a signed block, fail
-// open the same way, each with its own cause.
-func TestForward_NativeMask_PatchErrorsFailOpenWithTheirCause(t *testing.T) {
+// A patcher that fails outright refuses the call the same way, with its own cause.
+func TestForward_NativeMask_PatchErrorsBlockWithTheirCause(t *testing.T) {
 	for name, tc := range map[string]struct {
 		patch func([]byte, []adapter.Substitution) ([]byte, error)
 		cause string
@@ -221,16 +212,14 @@ func TestForward_NativeMask_PatchErrorsFailOpenWithTheirCause(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			gatewayID := ids.New[ids.GatewayKind]()
 			bk, pol := maskConsumer(gatewayID, "request", policy.ModeEnforce, policy.StagePreRequest)
-			invoker := proxymocks.NewProviderInvoker(t)
-			invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(nativeOKResponse(), nil).Once()
+			invoker := proxymocks.NewProviderInvoker(t) // Invoke must never be called
 			ctx, rt := tracedContext()
 			rc := routableConsumerWith(gatewayID, bk)
 			rc.Policies = []*policy.Policy{pol}
 			res, err := maskForwarder(t, invoker, appproxy.WithNativeMasker(adapter.NativeMasker{Patch: tc.patch})).Forward(ctx,
 				appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, nativeMaskBody())})
-			require.NoError(t, err)
-			assert.Equal(t, http.StatusOK, res.StatusCode)
-			requireFailedOpen(t, rt, "pre_request", tc.cause)
+			requireMaskRefused(t, res, err)
+			requireMaskBlocked(t, rt, "pre_request", tc.cause)
 		})
 	}
 }
@@ -256,7 +245,7 @@ func TestForward_NativeMask_BufferedResponseIsMasked(t *testing.T) {
 	assert.Equal(t, []string{"r-1"}, res.Headers["X-Amzn-Requestid"], "AWS headers are kept")
 }
 
-func TestForward_NativeMask_BufferedResponseBrokenPatcherFailsOpenWithAWSsAnswer(t *testing.T) {
+func TestForward_NativeMask_BufferedResponseBrokenPatcherBlocksTheResponse(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk, pol := maskConsumer(gatewayID, "response", policy.ModeEnforce, policy.StagePreResponse)
 	provider := &appproxy.ProviderResponse{
@@ -275,18 +264,15 @@ func TestForward_NativeMask_BufferedResponseBrokenPatcherFailsOpenWithAWSsAnswer
 	res, err := maskForwarder(t, invoker, appproxy.WithNativeMasker(leaky)).Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, `{"messages":[]}`),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, string(provider.Body), string(res.Body), "AWS's answer, as AWS gave it")
-	entries := failedOpenEntries(rt)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "pre_response", entries[0].Stage)
-	assert.Contains(t, entries[0].FailureReason, "mask_not_applicable:")
+	requireMaskRefused(t, res, err)
+	requireMaskBlocked(t, rt, "pre_response", "shape_mismatch")
 }
 
-// A response that is an AWS error is never masked: whatever a policy made of it,
-// it is relayed as it came, and the outcome is recorded as failed open.
-func TestForward_NativeMask_ErrorResponseFailsOpen(t *testing.T) {
+// A response that is an AWS error is never masked, and an error body typically
+// echoes the input: whatever a policy made of it, the answer is refused rather than
+// relayed with the value the policy asked to mask, and the outcome is recorded as
+// blocked.
+func TestForward_NativeMask_ErrorResponseBlocks(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "bedrock"))
 	rc.Policies = nativePolicy("trustguard")
@@ -308,9 +294,9 @@ func TestForward_NativeMask_ErrorResponseFailsOpen(t *testing.T) {
 		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, `{"messages":[]}`),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, res.StatusCode)
-	assert.Equal(t, string(provider.Body), string(res.Body))
-	requireFailedOpen(t, rt, "pre_response", "error_response")
+	assert.Equal(t, http.StatusForbidden, res.StatusCode)
+	assert.NotContains(t, string(res.Body), maskedEmail)
+	requireMaskBlocked(t, rt, "pre_response", "error_response")
 }
 
 func awsErrorProvider() *appproxy.ProviderResponse {
@@ -322,40 +308,20 @@ func awsErrorProvider() *appproxy.ProviderResponse {
 }
 
 // regex_replace keeps the status of the answer it masks, the other maskers answer
-// 200: either way an AWS error is relayed as it came.
-func TestForward_NativeMask_ErrorResponseWithARealMaskerFailsOpen(t *testing.T) {
+// 200: either way an AWS error is refused, never relayed as it came.
+func TestForward_NativeMask_ErrorResponseWithARealMaskerBlocks(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk, pol := maskConsumer(gatewayID, "response", policy.ModeEnforce, policy.StagePreResponse)
-	provider := awsErrorProvider()
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(provider, nil).Once()
-	rc := routableConsumerWith(gatewayID, bk)
-	rc.Policies = []*policy.Policy{pol}
-	ctx, rt := tracedContext()
-	res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
-		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, `{"messages":[]}`),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, res.StatusCode)
-	assert.Equal(t, string(provider.Body), string(res.Body))
-	requireFailedOpen(t, rt, "pre_response", "error_response")
-}
-
-func TestForward_NativeMask_ErrorResponseHonoursOnMaskFailureBlock(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	bk, pol := maskConsumerWith(gatewayID, "response", policy.ModeEnforce, policy.StagePreResponse, map[string]any{"on_mask_failure": "block"})
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(awsErrorProvider(), nil).Once()
-	ctx, rt := tracedContext()
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{pol}
+	ctx, rt := tracedContext()
 	res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, `{"messages":[]}`),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusForbidden, res.StatusCode)
-	assert.NotContains(t, string(res.Body), maskedEmail)
-	assert.Empty(t, failedOpenEntries(rt), "a block, not a failed-open")
+	requireMaskRefused(t, res, err)
+	requireMaskBlocked(t, rt, "pre_response", "error_response")
 }
 
 // A policy that is not a masker and answers an error with a status of its own is
@@ -388,53 +354,31 @@ func maskConsumerWith(gatewayID ids.GatewayID, target string, mode policy.Mode, 
 }
 
 // A client can deliberately make a mask impossible to apply: the value as a key of
-// requestMetadata, which no mask may rewrite, leaves a copy of it in the call. By
-// default the call goes through and is recorded as failed open; a policy set to
-// block refuses it instead.
-func TestForward_NativeMask_OnMaskFailure(t *testing.T) {
+// requestMetadata, which no mask may rewrite, leaves a copy of it in the call. The
+// call is refused and recorded as blocked, whatever an on_mask_failure still stored
+// on the policy says.
+func TestForward_NativeMask_AMaskThatCannotBeAppliedBlocks(t *testing.T) {
 	keyTrick := `{"messages":[{"role":"user","content":[{"text":"mail ` + maskedEmail + `"}]}],"requestMetadata":{"` + maskedEmail + `":"x"}}`
 	signed := `{"anthropic_version":"bedrock-2023-05-31","max_tokens":10,"messages":[` +
 		`{"role":"assistant","content":[{"type":"thinking","thinking":"mail ` + maskedEmail + `","signature":"EqQB"}]},` +
 		`{"role":"user","content":[{"type":"text","text":"go"}]}]}`
 	for name, body := range map[string]string{"the value as a metadata key (leak_remaining)": keyTrick, "a signed thinking block": signed} {
-		t.Run(name+"/default passes", func(t *testing.T) {
-			gatewayID := ids.New[ids.GatewayKind]()
-			bk, pol := maskConsumer(gatewayID, "request", policy.ModeEnforce, policy.StagePreRequest)
-			var forwarded []byte
-			invoker := proxymocks.NewProviderInvoker(t)
-			invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
-				Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
-					forwarded = req.Body
-				}).
-				Return(nativeOKResponse(), nil).Once()
-			ctx, rt := tracedContext()
-			rc := routableConsumerWith(gatewayID, bk)
-			rc.Policies = []*policy.Policy{pol}
-			res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
-				GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("invoke", nativeModel, body)})
-			require.NoError(t, err)
-			assert.Equal(t, http.StatusOK, res.StatusCode)
-			assert.Equal(t, body, string(forwarded), "the original goes through")
-			entries := failedOpenEntries(rt)
-			require.Len(t, entries, 1)
-			assert.Contains(t, entries[0].FailureReason, "mask_not_applicable:")
-		})
-		t.Run(name+"/block blocks", func(t *testing.T) {
-			gatewayID := ids.New[ids.GatewayKind]()
-			bk, pol := maskConsumerWith(gatewayID, "request", policy.ModeEnforce, policy.StagePreRequest, map[string]any{"on_mask_failure": "block"})
-			invoker := proxymocks.NewProviderInvoker(t) // Invoke must never be called
-			ctx, rt := tracedContext()
-			rc := routableConsumerWith(gatewayID, bk)
-			rc.Policies = []*policy.Policy{pol}
-			res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
-				GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("invoke", nativeModel, body)})
-			require.NoError(t, err)
-			assert.Equal(t, http.StatusForbidden, res.StatusCode)
-			assert.Contains(t, string(res.Body), "native_bedrock_passthrough")
-			assert.Contains(t, string(res.Body), "regex_replace")
-			assert.NotContains(t, string(res.Body), maskedEmail)
-			assert.Empty(t, failedOpenEntries(rt), "a block, not a failed-open")
-		})
+		for variant, extra := range map[string]map[string]any{"default": nil, "a stored on_mask_failure pass": {"on_mask_failure": "pass"}} {
+			t.Run(name+"/"+variant, func(t *testing.T) {
+				gatewayID := ids.New[ids.GatewayKind]()
+				bk, pol := maskConsumerWith(gatewayID, "request", policy.ModeEnforce, policy.StagePreRequest, extra)
+				invoker := proxymocks.NewProviderInvoker(t) // Invoke must never be called
+				ctx, rt := tracedContext()
+				rc := routableConsumerWith(gatewayID, bk)
+				rc.Policies = []*policy.Policy{pol}
+				res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
+					GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("invoke", nativeModel, body)})
+				requireMaskRefused(t, res, err)
+				entries := maskBlockedEntries(rt)
+				require.Len(t, entries, 1)
+				assert.Contains(t, entries[0].FailureReason, "mask_not_applicable:")
+			})
+		}
 	}
 
 	t.Run("a mask that can be applied is applied whatever the setting", func(t *testing.T) {
@@ -462,68 +406,13 @@ func TestForward_NativeMask_OnMaskFailure(t *testing.T) {
 		}
 		invoker := proxymocks.NewProviderInvoker(t)
 		invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(provider, nil).Once()
-		res, err := forwardMask(t, maskForwarder(t, invoker), gatewayID, bk, pol, `{"messages":[]}`)
-		require.NoError(t, err)
-		assert.Equal(t, http.StatusForbidden, res.StatusCode)
-		assert.NotContains(t, string(res.Body), maskedEmail)
+		ctx, rt := tracedContext()
+		rc := routableConsumerWith(gatewayID, bk)
+		rc.Policies = []*policy.Policy{pol}
+		res, err := maskForwarder(t, invoker).Forward(ctx, appproxy.ForwardInput{
+			GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, `{"messages":[]}`),
+		})
+		requireMaskRefused(t, res, err)
+		require.Len(t, maskBlockedEntries(rt), 1)
 	})
-}
-
-// scriptedMask is a masking plugin whose answer depends on how many times it ran.
-type scriptedMask struct {
-	*stubPlugin
-	answers []*appplugins.Result
-	calls   int
-}
-
-func (*scriptedMask) BedrockNative() appplugins.BedrockNativeBehavior {
-	return appplugins.BedrockNativeMasks
-}
-
-func (s *scriptedMask) Execute(context.Context, appplugins.ExecInput) (*appplugins.Result, error) {
-	defer func() { s.calls++ }()
-	if s.calls < len(s.answers) {
-		return s.answers[s.calls], nil
-	}
-	return nil, nil
-}
-
-// The masks a rejected attempt recorded belong to that attempt: the next one is
-// judged by its own policies' settings, not by a block source left behind.
-func TestForward_NativeMask_FailoverAttemptsDoNotShareMaskSources(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	bk1, bk2 := backendFor(gatewayID, "bedrock"), backendFor(gatewayID, "bedrock")
-	rc := routableConsumerWith(gatewayID, bk1, bk2)
-	rc.Consumer.Fallback = fallbackWithTriggers(bk2.ID, domainconsumer.TriggerPluginReject)
-
-	unmaskable := &appplugins.Result{StatusCode: http.StatusOK, StopUpstream: true, Body: []byte(`{"output":{"message":{"role":"assistant","content":[{"text":"hello"},{"text":"extra"}]}}}`)}
-	blocker := &scriptedMask{stubPlugin: &stubPlugin{name: "blocker", stages: []policy.Stage{policy.StagePreResponse}}, answers: []*appplugins.Result{unmaskable}}
-	passer := &scriptedMask{stubPlugin: &stubPlugin{name: "passer", stages: []policy.Stage{policy.StagePreResponse}}, answers: []*appplugins.Result{nil, unmaskable}}
-	rc.Policies = []*policy.Policy{
-		{ID: ids.New[ids.PolicyKind](), Name: "blocker", Slug: "blocker", Enabled: true, Priority: 1, Settings: map[string]any{"on_mask_failure": "block"}},
-		{ID: ids.New[ids.PolicyKind](), Name: "passer", Slug: "passer", Enabled: true, Priority: 2},
-	}
-
-	provider := &appproxy.ProviderResponse{
-		StatusCode: http.StatusOK,
-		Body:       []byte(`{"output":{"message":{"role":"assistant","content":[{"text":"hello"}]}}}`),
-	}
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(provider, nil).Twice()
-
-	reg := appplugins.NewRegistry()
-	require.NoError(t, reg.Register(blocker))
-	require.NoError(t, reg.Register(passer))
-	fwd := appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
-		newPermissiveCache(t), cache.NewTTLMapManager(time.Minute), invoker, appplugins.NewExecutor(reg, newTestLogger()), nil, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
-	)
-	ctx, rt := tracedContext()
-	res, err := fwd.Forward(ctx, appproxy.ForwardInput{
-		GatewayID: gatewayID, Consumer: rc, Request: nativeForwardRequest("converse", nativeModel, `{"messages":[]}`),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode, "the second attempt's own policy says pass")
-	assert.Equal(t, string(provider.Body), string(res.Body))
-	assert.Len(t, failedOpenEntries(rt), 1)
 }

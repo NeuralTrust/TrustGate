@@ -38,9 +38,28 @@ const (
 	failureReasonConfigInvalid           = "config_invalid"
 	failureReasonGatewayIDMissing        = "gateway_id_missing"
 	failureReasonPayloadUnreadable       = "payload_unreadable"
+	// failureReasonPayloadTooLarge is TrustGuard refusing the body for its size
+	// (HTTP 413): what the request carries, not the engine being unavailable.
+	failureReasonPayloadTooLarge = "payload_too_large"
+	// failureReasonStreamBlockTooLarge is a streamed block above the one evaluate
+	// this plugin sends for it (the stream window): refused before any call as the
+	// response's own size, with the detail chunk_limit. It is distinct from
+	// payload_too_large, which is TrustGuard's 413 or the 8 MiB buffered limit.
+	failureReasonStreamBlockTooLarge = "stream_block_too_large"
+	// failureReasonAttachmentRejected is TrustGuard answering 400 "invalid
+	// attachment": it could not fetch or decode an attachment it was sent.
+	failureReasonAttachmentRejected = "attachment_rejected"
+	// failureReasonResponseTooLarge is an answer above what the client reads:
+	// the mask echoes the request's text, so the request chose its size.
+	failureReasonResponseTooLarge = "response_too_large"
 	// failureReasonTransformFailed is TrustGuard asking for a mask this plugin
 	// could not write back; degraded_reason on the span says which step failed.
 	failureReasonTransformFailed = "transform_failed"
+	// failureReasonVerdictIncomplete is an evaluation that ran without part of
+	// what the request carried: an attachment sent as a URL that TrustGuard could
+	// not fetch. The shared reason of the same name, with the detail
+	// attachment_not_fetched; availability.
+	failureReasonVerdictIncomplete = "verdict_incomplete"
 )
 
 var (

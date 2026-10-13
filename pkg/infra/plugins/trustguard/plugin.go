@@ -59,7 +59,6 @@ const (
 	skipReasonEmptyResponseBody   = "empty_response_body"
 	skipReasonStreamingMismatch   = "streaming_stage_mismatch"
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
-	skipReasonUndecodableResponse = "undecodable_response"
 	skipReasonObserveMode         = "observe_mode"
 	// skipReasonProviderNotStreaming marks a response leg that opted into
 	// per-block inspection and never got a block to inspect: the provider
@@ -110,17 +109,16 @@ const (
 )
 
 const (
-	decisionBlocked      = "blocked"
-	decisionReported     = "reported"
-	decisionAllowed      = "allowed"
-	decisionFailedOpen   = "failed_open"
-	decisionFailedClosed = "failed_closed"
-	decisionTransformed  = "transformed"
-	statusBlock          = "block"
-	statusReport         = "report"
-	statusTransform      = "transform"
-	statusAsk            = "ask"
-	statusAllow          = "allow"
+	decisionBlocked     = "blocked"
+	decisionReported    = "reported"
+	decisionAllowed     = "allowed"
+	decisionFailedOpen  = "failed_open"
+	decisionTransformed = "transformed"
+	statusBlock         = "block"
+	statusReport        = "report"
+	statusTransform     = "transform"
+	statusAsk           = "ask"
+	statusAllow         = "allow"
 )
 
 const (
@@ -142,9 +140,8 @@ type Plugin struct {
 	tokens   *tokenManager
 	baseURL  string
 	logger   *slog.Logger
-	// timeout is the deployment-wide deadline of an evaluate call whose
-	// policy sets none. A policy can shorten or lengthen its own calls
-	// without every gateway sharing the change.
+	// timeout is the deployment-wide deadline (TRUSTGUARD_TIMEOUT) of every
+	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
 	cfgCache sync.Map
@@ -238,9 +235,7 @@ func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
-		// Settings that do not parse carry no on_error to honour, so the
-		// failure resolves the default way.
-		return p.guardFailure(ctx, in, stageDirection(in.Stage), failureReasonConfigInvalid, false, nil, err)
+		return p.guardFailure(ctx, in, stageDirection(in.Stage), failureReasonConfigInvalid, err)
 	}
 
 	if !cfg.selectsStage(in.Stage) {
@@ -266,26 +261,31 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	direction := stageDirection(in.Stage)
 
 	if strings.TrimSpace(in.Request.GatewayID) == "" {
-		return p.guardFailure(ctx, in, direction, failureReasonGatewayIDMissing, false, nil, nil)
+		return p.guardFailure(ctx, in, direction, failureReasonGatewayIDMissing, nil)
 	}
 
-	payload, tgt, skip := p.inspectionPayload(ctx, in, direction, mcpMode)
-	if skip {
-		return passThrough(), nil
+	payload, tgt, halt := p.inspectionPayload(ctx, in, direction, mcpMode)
+	if halt != nil {
+		return halt.result, halt.err
+	}
+
+	if tgt.textBytes > maxBufferedTextBytes {
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonPayloadTooLarge,
+			fmt.Errorf("trustguard: the text exceeds the %d bytes a buffered leg sends", maxBufferedTextBytes))
 	}
 
 	// A pod that cannot reach TrustGuard at all — no URL, no credentials: a
 	// Secret that did not mount, a partial rollout, a hybrid data plane that
 	// received the policy through config sync without the environment — is a
-	// failure of the guard, not a finding, so it follows on_error like any
+	// failure of the guard, not a finding, so it fails open like any
 	// other. Checked only once there is something to inspect, so the failure
 	// count is the traffic that actually went through uninspected.
 	baseURL := p.baseURL
 	if baseURL == "" {
-		return p.guardFailure(ctx, in, direction, failureReasonBaseURLMissing, cfg.failClosedOnTransport(), notConfiguredError(), nil)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonBaseURLMissing, nil)
 	}
 	if !p.tokens.configured() {
-		return p.guardFailure(ctx, in, direction, failureReasonCredentialsMissing, cfg.failClosedOnTransport(), notConfiguredError(), nil)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonCredentialsMissing, nil)
 	}
 
 	protocol := protocolFor(in.Request.ConsumerType)
@@ -314,46 +314,72 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	traceID := gatewayTraceID(ctx)
 	playground := requestHasPlaygroundToken(in.Request)
 	// The deadline is set here rather than left to the HTTP client so that a
-	// policy can carry its own, and so that a call that runs out of time is
-	// reported as a timeout rather than as an indistinguishable transport
-	// error. The client's own Timeout is only a backstop above any deadline
-	// a policy is allowed to set.
-	callCtx, cancel := context.WithTimeout(ctx, cfg.timeoutOr(p.timeout))
-	defer cancel()
-	resp, err := p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+	// call that runs out of time is reported as a timeout rather than as an
+	// indistinguishable transport error. The client's own Timeout is only a
+	// backstop above this deadline.
+	//
+	// The first call has the whole budget: a slow answer is still an answer. A
+	// request that sends a URL attachment may need a second call without it
+	// (below), and that call is made only when its minimum share is left, under
+	// the same deadline, never past it.
+	deadline := time.Now().Add(p.timeout)
+	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
+	defer cancelFirst()
+	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+	if err != nil {
+		var rejected *attachmentRejectedError
+		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
+			// TrustGuard answers "invalid attachment" for every attachment it
+			// cannot resolve, a URL it could not fetch included, which is the
+			// URL's availability and not this request's content: a CDN that is
+			// down must not block legitimate traffic. The text is evaluated again
+			// with the URL attachments left out, in a deadline slice of its own,
+			// and a verdict that comes back is applied. The call is recorded as a
+			// failure that alerts (verdict_incomplete, attachment_not_fetched),
+			// because part of what the request carried was never inspected. When
+			// less than the minimum share of the budget is left there is no
+			// second call, and the request goes through uninspected as the same
+			// availability failure. A rejection on the second call comes from an
+			// attachment sent as data, which is the content's.
+			if !retryHasBudget(time.Now(), deadline, p.timeout) {
+				return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonVerdictIncomplete,
+					fmt.Errorf("trustguard: a URL attachment could not be fetched and too little of the budget is left to evaluate without it"))
+			}
+			if without, buildErr := tgt.withoutURLAttachments(); buildErr == nil {
+				body.Payload = without
+				tgt.attachmentsOmitted += tgt.urlAttachments
+				tgt.attachmentsNotFetched += tgt.urlAttachments
+				tgt.urlAttachments = 0
+				retryCtx, cancelRetry := context.WithDeadline(ctx, deadline)
+				defer cancelRetry()
+				resp, err = p.guard(retryCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+			}
+		}
+	}
 	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
-			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted, AttachmentsNotFetched: tgt.attachmentsNotFetched})
 			return nil, rateLimitError(limited)
 		}
-		var unavailable *entitlementsUnavailableError
-		if errors.As(err, &unavailable) {
-			return p.guardFailure(ctx, in, direction, failureReasonEntitlementsUnavailable, cfg.failClosedOnTransport(), unavailableError(unavailable), err)
-		}
-		var auth *authRejectedError
-		if errors.As(err, &auth) {
-			return p.guardFailure(ctx, in, direction, failureReasonUnauthorized, cfg.failClosedOnTransport(), unauthorizedError(auth), err)
-		}
-		if errors.Is(err, errUnauthorized) {
-			return p.guardFailure(ctx, in, direction, failureReasonUnauthorized, cfg.failClosedOnTransport(),
-				unauthorizedError(&authRejectedError{status: http.StatusUnauthorized}), err)
-		}
-		// The caller's own cancellation is not ours to reinterpret: only a
-		// deadline this call imposed counts as the guard running out of time.
-		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-			return p.guardFailure(ctx, in, direction, failureReasonTimeout, cfg.failClosedOnTimeout(), timeoutFailClosedError(), err)
-		}
-		return p.guardFailure(ctx, in, direction, failureReasonTransport, cfg.failClosedOnTransport(), transportFailClosedError(), err)
+		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, reasonOfError(ctx, err), err)
 	}
 
 	data := guardData{
-		Direction:     direction,
-		Status:        resp.Status,
-		TraceID:       resp.TraceID,
-		RequestID:     resp.RequestID,
-		FindingsCount: len(resp.Findings),
-		Findings:      resp.Findings,
+		Direction:               direction,
+		AttachmentsNotInspected: tgt.attachmentsOmitted,
+		AttachmentsNotFetched:   tgt.attachmentsNotFetched,
+		Status:                  resp.Status,
+		TraceID:                 resp.TraceID,
+		RequestID:               resp.RequestID,
+		FindingsCount:           len(resp.Findings),
+		Findings:                resp.Findings,
+	}
+	if tgt.attachmentsNotFetched > 0 {
+		data.FailureReason = failureReasonVerdictIncomplete
+		data.FailureDetail = appplugins.DetailAttachmentNotFetched
+		data.FailureClass = string(appplugins.ClassOf(appplugins.FailureVerdictIncomplete, appplugins.DetailAttachmentNotFetched))
+		recordEvaluateFailure(ctx, failureReasonVerdictIncomplete)
 	}
 
 	if resp.Status == statusTransform {
@@ -374,23 +400,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 // output leg and leaves Execute untouched: the buffered path keeps calling the
 // guard once per response.
 //
-// Ownership of streaming.on_error: the caller owns it, this plugin never reads
-// it. The setting decides what happens to text the caller is holding — release
-// it and degrade, or cut — and only the caller knows how much is held, whether
-// the head block is still uncommitted, and how many blocks in a row have
-// failed. Applying it here as well would apply it twice. So a failure whose
-// handling is configurable comes back as an error and the caller resolves it.
-//
-// Two exceptions. A 429 is the engine answering, and comes back as a blocking
-// verdict whatever streaming.on_error says. And a failure of TrustGuard itself
-// — transport, rejected or missing credentials, no base URL, unavailable
-// entitlements, a mask that cannot be applied — is resolved here when
-// streaming.on_error is fail_open: the block is allowed and the failure is
-// published on the stream's span at closing. Returning it as an error instead
-// would stop the executor from running the rest of the chain on that block, and
-// after a few in a row retire inspection for every plugin on the stream, so one
-// broken guard would switch off the others. Under fail_closed it goes back as an
-// error and the caller cuts.
+// A 429 is the engine answering, and comes back as a blocking verdict. A
+// failure of TrustGuard itself — transport, a timeout, rejected or missing
+// credentials, no base URL, unavailable entitlements, a mask that cannot be
+// applied — is resolved here: the block is allowed and the failure is published
+// on the stream's span at closing. Returning it as an error instead would stop
+// the executor from running the rest of the chain on that block, and after a
+// few in a row retire inspection for every plugin on the stream, so one broken
+// guard would switch off the others.
 //
 // Mode is likewise not applied here. A block verdict is what the engine said;
 // the executor downgrades it to a report for an observe-mode entry.
@@ -402,6 +419,16 @@ func (p *Plugin) InspectSegment(
 	return p.inspectSegment(ctx, in, seg)
 }
 
+// BoundsStreamPayload declares that the stream executor must hand this plugin a
+// block whole (appplugins.StreamPayloadBound). The plugin is one evaluation of
+// the whole block, with the position of the block in the stream and the block
+// that ends the response as per-call state, and it bounds its own payload, so
+// splitting a block that is larger than its window would count the block once
+// per piece and send the end of the response several times.
+func (p *Plugin) BoundsStreamPayload() bool { return true }
+
+var _ appplugins.StreamPayloadBound = (*Plugin)(nil)
+
 // StreamSettings reports whether these policy settings enable per-block
 // inspection of the response leg, and the options the caller must run the
 // stream under. Implementing InspectSegment is not the opt-in on its own: this
@@ -409,7 +436,7 @@ func (p *Plugin) InspectSegment(
 // out with streaming.enabled: false or by not selecting the response leg, so
 // without this the head gate would be built for policies that turned it off.
 //
-// head_chars and streaming.on_error come back with the opt-in because this
+// head_chars and the rest of the cadence come back with the opt-in because this
 // settings map is this plugin's schema. Settings that fail to parse disable
 // the stream leg here; the buffered legs surface the same error where they
 // already do.
@@ -421,16 +448,22 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if err != nil {
 		return false, appplugins.StreamOptions{}
 	}
-	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.IsEnabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, appplugins.StreamOptions{
-		HeadChars:            cfg.Streaming.HeadChars,
-		OnError:              cfg.Streaming.OnError,
-		MinCharsBetweenEvals: cfg.Streaming.MinCharsBetweenEvals,
-		MaxHoldMS:            cfg.Streaming.MaxHoldMS,
-		MaxAccumulatedBytes:  cfg.Streaming.MaxAccumulatedBytes,
+	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
+}
+
+// streamGuardTimeout is how long one streamed block waits for TrustGuard. The
+// caller holds the client's bytes for that long, so it is the short stream
+// deadline, and the deployment-wide timeout bounds it from above: a deployment
+// that tightens TRUSTGUARD_TIMEOUT tightens its streams with it, and a looser
+// one never stretches the hold on a client.
+func (p *Plugin) streamGuardTimeout() time.Duration {
+	if p.timeout > 0 {
+		return min(streamingDefaults.GuardTimeout, p.timeout)
 	}
+	return streamingDefaults.GuardTimeout
 }
 
 // streamGuardOwns reports whether this policy's streamed response is inspected
@@ -445,7 +478,7 @@ func (p *Plugin) inspectionPayload(
 	in appplugins.ExecInput,
 	direction string,
 	mcpMode bool,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	if mcpMode {
 		return p.mcpInspectionPayload(ctx, in, direction)
 	}
@@ -456,7 +489,7 @@ func (p *Plugin) mcpInspectionPayload(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	direction string,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	if direction == directionInput {
 		if len(in.Request.Body) == 0 || strings.TrimSpace(mcpInputText(in.Request.Body)) == "" {
@@ -468,12 +501,12 @@ func (p *Plugin) mcpInspectionPayload(
 			return mcpTransformedRequest(payload, toolName)
 		}
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPRequest(reqBody, masked) }
+		tgt.textBytes = len(mcpInputText(reqBody))
 		payload, err := mcpToolsCallPayload(reqBody)
 		if err != nil {
-			p.payloadFailure(ctx, in, direction, "trustguard mcp tools/call payload build failed, failing open", err)
-			return nil, tgt, true
+			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard mcp tools/call payload build failed", err)
 		}
-		return payload, tgt, false
+		return payload, tgt, nil
 	}
 	// An MCP response never reaches the stream guard (the MCP runner buffers
 	// the result), so it is never labelled as one.
@@ -488,19 +521,19 @@ func (p *Plugin) mcpInspectionPayload(
 	respBody := in.Response.Body
 	tgt.applyPayload = mcpTransformedResult
 	tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPResponse(respBody, masked) }
+	tgt.textBytes = mcpOutputTextBytes(respBody)
 	payload, err := mcpToolsResultPayload(respBody)
 	if err != nil {
-		p.payloadFailure(ctx, in, direction, "trustguard mcp tools/result payload build failed, failing open", err)
-		return nil, tgt, true
+		return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard mcp tools/result payload build failed", err)
 	}
-	return payload, tgt, false
+	return payload, tgt, nil
 }
 
 func (p *Plugin) llmInspectionPayload(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	direction string,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
@@ -511,9 +544,11 @@ func (p *Plugin) llmInspectionPayload(
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		request, decodeErr := p.registry.DecodeRequestFor(in.Request.Body, format)
-		if adapter.IsRequestDecodeError(decodeErr) && adapter.IsChatRequest(in.Request.ProxyCapability, format) {
-			p.payloadFailure(ctx, in, direction, "trustguard request body decode failed, failing open", decodeErr)
-			return nil, tgt, true
+		if decodeErr != nil {
+			if adapter.IsRequestDecodeError(decodeErr) && adapter.IsChatRequest(in.Request.ProxyCapability, format) {
+				return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard request body decode failed", decodeErr)
+			}
+			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		if request != nil && request.DroppedInputItems > 0 {
 			p.debug(ctx, "trustguard request input items left out of inspection",
@@ -521,8 +556,16 @@ func (p *Plugin) llmInspectionPayload(
 				slog.Int("dropped_items", request.DroppedInputItems),
 			)
 		}
-		attachments := extractPayloadAttachments(in.Request.Body)
-		if decodeErr != nil || request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
+		found := extractPayloadAttachments(in.Request.Body)
+		attachments, omitted := partitionAttachments(found)
+		tgt.attachmentsOmitted = omitted
+		tgt.attachmentsNotFetched = countCallerAuthURLs(found)
+		tgt.textBytes = requestTextBytes(request)
+		tgt.urlAttachments = countURLAttachments(attachments)
+		tgt.withoutURLAttachments = func() (json.RawMessage, error) {
+			return llmRequestPayloadWithAttachments(request, dataAttachments(attachments))
+		}
+		if request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		original := in.Request.Body
@@ -538,10 +581,9 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		payload, payloadErr := llmRequestPayloadWithAttachments(request, attachments)
 		if payloadErr != nil {
-			p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed, failing open", payloadErr)
-			return nil, tgt, true
+			return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed", payloadErr)
 		}
-		return payload, tgt, false
+		return payload, tgt, nil
 	}
 	if reason := outputInspectSkipReason(in.Stage, in.Response, p.streamGuardOwns(in)); reason != "" {
 		return p.skipInspection(ctx, in, tgt, direction, reason)
@@ -550,7 +592,7 @@ func (p *Plugin) llmInspectionPayload(
 	if response == nil {
 		// canonicalResponse swallows the decode error; without this the gateway
 		// cannot tell an undecodable response from an empty one.
-		return p.skipInspection(ctx, in, tgt, direction, skipReasonUndecodableResponse)
+		return p.skipInspection(ctx, in, tgt, direction, pluginutil.SkipReasonUndecodableResponse)
 	}
 	if !responseHasInspectableContent(response) && len(tools) == 0 {
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
@@ -563,12 +605,12 @@ func (p *Plugin) llmInspectionPayload(
 	tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
 		return rewriteResponseFromPayload(p.registry, format, response, payload)
 	}
+	tgt.textBytes = responseTextBytes(response, tools)
 	payload, payloadErr := llmResponsePayload(response, tools)
 	if payloadErr != nil {
-		p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed, failing open", payloadErr)
-		return nil, tgt, true
+		return nil, tgt, p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed", payloadErr)
 	}
-	return payload, tgt, false
+	return payload, tgt, nil
 }
 
 func (p *Plugin) canonicalResponse(in appplugins.ExecInput, format adapter.Format) (*adapter.CanonicalResponse, []adapter.CanonicalTool) {
@@ -599,26 +641,28 @@ func (p *Plugin) skipInspection(
 	in appplugins.ExecInput,
 	tgt transformTarget,
 	direction, reason string,
-) (json.RawMessage, transformTarget, bool) {
+) (json.RawMessage, transformTarget, *inspectionHalt) {
 	p.debug(ctx, "trustguard leg not inspected, skipping",
 		slog.String("plugin", PluginName),
 		slog.String("stage", string(in.Stage)),
 		slog.String("direction", direction),
 		slog.String("reason", reason),
 	)
-	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason})
-	return nil, tgt, true
+	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason, AttachmentsNotInspected: tgt.attachmentsOmitted})
+	return nil, tgt, &inspectionHalt{result: passThrough()}
 }
 
-func (p *Plugin) payloadFailure(ctx context.Context, in appplugins.ExecInput, direction, message string, err error) {
-	recordEvaluateFailure(ctx, failureReasonPayloadUnreadable)
-	p.warn(ctx, message, slog.String("plugin", PluginName), slog.Any("error", err))
-	recordGuardOutcome(in.Event, guardData{
-		Direction:     direction,
-		Decision:      decisionFailedOpen,
-		FailedOpen:    true,
-		FailureReason: failureReasonPayloadUnreadable,
-	})
+// inspectionHalt is what the payload builders return when there is nothing to
+// send: the leg was skipped (a pass-through) or its payload could not be built
+// and the failure was resolved, which a mode that blocks answers with a refusal.
+type inspectionHalt struct {
+	result *appplugins.Result
+	err    error
+}
+
+func (p *Plugin) payloadFailure(ctx context.Context, in appplugins.ExecInput, direction, message string, err error) *inspectionHalt {
+	result, refusal := p.guardFailure(ctx, in, direction, failureReasonPayloadUnreadable, fmt.Errorf("%s: %w", message, err))
+	return &inspectionHalt{result: result, err: refusal}
 }
 
 func (p *Plugin) applyTransform(
@@ -654,22 +698,22 @@ func (p *Plugin) applyTransform(
 		}
 		if tgt.apply == nil {
 			if _, ok := transformedInput(resp.TransformedPayload); !ok {
-				return p.transformDegraded(ctx, in, cfg, data, resp, reasonTransformNoPayload)
+				return p.transformDegraded(ctx, in, data, resp, reasonTransformNoPayload)
 			}
-			return p.transformDegraded(ctx, in, cfg, data, resp, reasonTransformEncodeFailed)
+			return p.transformDegraded(ctx, in, data, resp, reasonTransformEncodeFailed)
 		}
 	}
 
 	masked, ok := transformedInput(resp.TransformedPayload)
 	if !ok {
-		return p.transformDegraded(ctx, in, cfg, data, resp, reasonTransformNoPayload)
+		return p.transformDegraded(ctx, in, data, resp, reasonTransformNoPayload)
 	}
 	if tgt.apply == nil {
-		return p.transformDegraded(ctx, in, cfg, data, resp, reasonTransformUnsupported)
+		return p.transformDegraded(ctx, in, data, resp, reasonTransformUnsupported)
 	}
 	body, ok := tgt.apply(masked)
 	if !ok {
-		return p.transformDegraded(ctx, in, cfg, data, resp, reasonTransformEncodeFailed)
+		return p.transformDegraded(ctx, in, data, resp, reasonTransformEncodeFailed)
 	}
 	return p.transformApplied(in, data, tgt, body)
 }
@@ -683,15 +727,14 @@ func (p *Plugin) transformApplied(in appplugins.ExecInput, data guardData, tgt t
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 }
 
-// transformDegraded is TrustGuard asking for content to be masked and this
-// plugin being unable to write the mask back. That is a failure on our side,
-// not a finding the guard missed, so it follows on_error like any other
-// failure: by default the original content goes on, unmasked, and the span
-// says so and why; a policy that opted into fail_closed blocks it instead.
+// transformDegraded is TrustGuard confirming a finding and asking for it to be
+// masked while this plugin cannot write the mask back. Forwarding the original
+// would send the data the detector flagged, so a mode that blocks refuses the
+// call with the finding's own block, recorded blocked and degraded with the step
+// that failed.
 func (p *Plugin) transformDegraded(
 	ctx context.Context,
 	in appplugins.ExecInput,
-	cfg Settings,
 	data guardData,
 	resp *GuardResponse,
 	reason string,
@@ -700,26 +743,28 @@ func (p *Plugin) transformDegraded(
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.FailureReason = failureReasonTransformFailed
-	attrs := []any{
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.String("direction", data.Direction),
-		slog.String("reason", reason),
-	}
-	if cfg.failClosedOnTransport() {
-		// TrustGuard did find something, so a policy that opted into
-		// fail_closed gets the block it always got, finding and all.
-		p.error(ctx, "trustguard transform could not be applied, blocking", attrs...)
-		data.Decision = decisionBlocked
-		data.FailureReason = ""
-		recordGuardOutcome(in.Event, data)
-		return nil, blockError(resp, data.Direction)
-	}
-	p.warn(ctx, "trustguard transform could not be applied, forwarding unmasked", attrs...)
-	data.Decision = decisionFailedOpen
-	data.FailedOpen = true
+	sharedReason, detail := sharedFailure(failureReasonTransformFailed, reason)
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:     ctx,
+		Plugin:  PluginName,
+		Stage:   in.Stage,
+		Mode:    in.Mode,
+		Reason:  sharedReason,
+		Detail:  detail,
+		Finding: blockError(resp, data.Direction),
+		Err:     fmt.Errorf("trustguard transform could not be applied: %s", reason),
+		Logger:  p.logger,
+		Event:   in.Event,
+	})
+	data.Decision = outcome.Decision
+	data.FailureClass = string(outcome.Class)
+	data.FailedOpen = outcome.Decision == decisionFailedOpen
+	data.FailedClosed = outcome.Decision == decisionFailedClosed
 	recordGuardOutcome(in.Event, data)
-	return passThrough(), nil
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
 }
 
 func guardOutcomeDecision(status string, mode policy.Mode) string {
@@ -877,49 +922,78 @@ func stageDirection(stage policy.Stage) string {
 	return directionInput
 }
 
-// guardFailure resolves every failure of the guard itself — as opposed to a
-// finding — the same way: the request carries on unless the policy opted into
-// failing closed, and it never carries on silently. The metric counts it and
-// the span carries failed_open with the reason, which is what the console
-// reads. A deliberate answer (a block, a 429) is not a failure and never comes
-// here. closed is only used when failClosed is set.
+// guardFailure resolves every failure of the guard itself, as opposed to a
+// finding, by the class of its reason (appplugins.ClassOf). One that does not
+// depend on the request, which is nearly all of them, lets the request carry on,
+// and never silently: the metric counts it and the span carries failed_open with
+// the reason, which is what the console reads. One that depends on the request
+// itself (a payload this plugin could not read, a body TrustGuard refused for
+// its size) is refused in a mode that blocks, as failed_closed, and only
+// recorded in observe. A deadline is a failure like any other, so a caller who
+// pushes the detector past it gets a payload through uninspected, on the
+// record. A deliberate answer (a block, a 429) is not a failure and never comes
+// here.
 func (p *Plugin) guardFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	direction string,
 	reason string,
-	failClosed bool,
-	closed *appplugins.PluginError,
+	err error,
+) (*appplugins.Result, error) {
+	return p.guardFailureOmitting(ctx, in, direction, 0, reason, err)
+}
+
+// guardFailureOmitting is guardFailure for a call that left attachments out of
+// the evaluate, so the failure's event still says so.
+func (p *Plugin) guardFailureOmitting(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	direction string,
+	attachmentsOmitted int,
+	reason string,
 	err error,
 ) (*appplugins.Result, error) {
 	recordEvaluateFailure(ctx, reason)
-	attrs := []any{
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.String("direction", direction),
-		slog.String("reason", reason),
-	}
-	if err != nil {
-		attrs = append(attrs, slog.Any("error", err))
-	}
-	if failClosed {
-		p.error(ctx, "trustguard could not inspect, failing closed", attrs...)
-		recordGuardOutcome(in.Event, guardData{
-			Direction:     direction,
-			Decision:      decisionFailedClosed,
-			FailedClosed:  true,
-			FailureReason: reason,
-		})
-		return nil, closed
-	}
-	p.warn(ctx, "trustguard could not inspect, failing open", attrs...)
-	recordGuardOutcome(in.Event, guardData{
-		Direction:     direction,
-		Decision:      decisionFailedOpen,
-		FailedOpen:    true,
-		FailureReason: reason,
+	sharedReason, detail := sharedFailure(reason, "")
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: sharedReason,
+		Detail: detail,
+		Err:    err,
+		Logger: p.logger,
+		Event:  in.Event,
 	})
-	return passThrough(), nil
+	failure := guardData{
+		Direction:               direction,
+		Decision:                outcome.Decision,
+		FailedOpen:              outcome.Decision == decisionFailedOpen,
+		FailedClosed:            outcome.Decision == decisionFailedClosed,
+		FailureReason:           reason,
+		FailureClass:            string(outcome.Class),
+		AttachmentsNotInspected: attachmentsOmitted,
+	}
+	if reason == failureReasonVerdictIncomplete {
+		failure.FailureDetail = detail
+	}
+	recordGuardOutcome(in.Event, failure)
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+	return outcome.Result, nil
+}
+
+// retryMinShare is the share of the evaluation's budget (one part in this many)
+// that a second call, without the attachments TrustGuard could not fetch, needs
+// to be worth making.
+const retryMinShare = 4
+
+// retryHasBudget reports whether the second call has its minimum share of the
+// budget left at now.
+func retryHasBudget(now, deadline time.Time, budget time.Duration) bool {
+	return deadline.Sub(now) >= budget/retryMinShare
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
@@ -934,13 +1008,6 @@ func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.DebugContext(ctx, msg, attrs...)
-}
-
-func (p *Plugin) error(ctx context.Context, msg string, attrs ...any) {
-	if p.logger == nil {
-		return
-	}
-	p.logger.ErrorContext(ctx, msg, attrs...)
 }
 
 func protocolFor(consumerType string) string {

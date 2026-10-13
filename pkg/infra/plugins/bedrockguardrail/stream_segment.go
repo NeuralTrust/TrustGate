@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
@@ -31,12 +32,39 @@ const streamIDSeparator = ":"
 
 const streamLegResponse = "response"
 
-// The buffered leg blocks when the guardrail asks to anonymise and gives
-// nothing to anonymise with, so the stream leg cuts for the same reason rather
-// than releasing text the policy ruled out.
+// The buffered leg refuses the call when the guardrail asks to anonymise and
+// gives nothing to anonymise with, so the stream leg cuts for the same reason
+// rather than releasing text the policy ruled out.
 const anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamChunkParallelism = (*Plugin)(nil)
+var _ appplugins.StreamPieceSpacing = (*Plugin)(nil)
+var _ appplugins.StreamThrottleAttribution = (*Plugin)(nil)
+var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+
+// SpaceStreamPieces spaces the pieces of one block with the buffered leg's
+// spacer, at the policy's region floor, so a block's own calls stay under the
+// quota. The spacer belongs to the block: it starts full and is dropped with it.
+func (p *Plugin) SpaceStreamPieces(in appplugins.ExecInput) func(ctx context.Context, bytes int) error {
+	cfg, err := parseConfig(in.Config.Settings)
+	if err != nil {
+		return nil
+	}
+	return newSpacer(floorFor(credentialsFromConfig(cfg.Credentials).region)).wait
+}
+
+// StreamThrottleIsOtherTraffic is true: the pieces of a block are spaced under
+// the region's floor, so a throttle on one is other traffic and availability.
+func (p *Plugin) StreamThrottleIsOtherTraffic() bool { return true }
+
+// StreamGuardTimeout is the time one piece's call may take.
+func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
+
+// StreamChunkParallel is 1: the pieces of a block are sent one at a time, as the
+// buffered leg sends its chunks, because the region's quota is on text units a
+// second and parallel pieces would spend it together.
+func (p *Plugin) StreamChunkParallel() int { return chunkParallel }
 
 // StreamSettings reports whether these policy settings ask for per-block
 // inspection of the response leg, and the options the block loop must run
@@ -51,7 +79,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() {
 		return false, appplugins.StreamOptions{}
 	}
-	return true, cfg.Streaming.Options()
+	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
 }
 
 // InspectSegment applies the guardrail to one closed block of a streamed
@@ -90,30 +118,40 @@ func (p *Plugin) InspectSegment(
 	// The deadline is enforced here because the caller is holding a client's
 	// bytes for the length of this call, and the knob is in this plugin's
 	// schema.
-	callCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.Timeout(streamingDefaults.GuardTimeout))
+	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
-	out, err := p.guardrails.ApplyGuardrail(
-		callCtx,
-		credentialsFromConfig(cfg.Credentials),
-		buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput),
-	)
+	id := streamID(ctx, seg)
+	limits := callLimitsFor(len(seg.Accumulated))
+	// A piece of a block that was cut into several is retried like any other
+	// call: the shortcut is for the blocks of a stream, not for the pieces of one.
+	if seg.Parts <= 1 && p.streamThrottled(id) {
+		limits.noThrottleRetry = true
+	}
+	creds := credentialsFromConfig(cfg.Credentials)
+	out, err := p.guardrails.ApplyWithBackoff(callCtx, creds, buildApplyInput(cfg, seg.Accumulated, types.GuardrailContentSourceOutput), limits)
 	if err != nil {
-		// Resolved by the guard, not here: only it knows whether the status is
-		// still uncommitted, which is what makes streaming.on_error a clean 403
-		// at the head and a terminator after it.
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+		// The provider answering for what the block carries (a 4xx that is not
+		// credentials or throttling) is the content's, and cuts a stream in a
+		// mode that blocks; every other failure releases the held text.
+		reason, detail := classifyApplyErr(err)
+		if detail == appplugins.DetailThrottled {
+			p.markStreamThrottled(id, time.Now())
+		}
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("applying guardrail to stream block %d: %w", seg.Seq, err))
 	}
 
 	res := inspect(out, cfg.PIIAction)
+	if res.judgedOnlyInPart() {
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial, nil,
+			fmt.Errorf("stream block %d: guardrail covered only part of the text", seg.Seq))
+	}
 	// Same rule as the buffered leg: an intervention neither block nor
-	// anonymize can explain is not a clean pass. Left to the guard the same
-	// way a transport failure is, since only it knows whether the block is
-	// still uncommitted.
+	// anonymize can explain is not a clean pass, and a mode that blocks cuts.
 	if res.intervened && res.block == nil && res.anonymize == nil {
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, unparsedPolicies(out.Assessments),
-			fmt.Errorf("stream block %d: guardrail intervened with no block or anonymize finding", seg.Seq))
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailInterventionUnparsed, nil,
+			fmt.Errorf("stream block %d: guardrail intervened with no block or anonymize finding (policies: %q)", seg.Seq, unparsedPolicies(out.Assessments)))
 	}
 	switch {
 	case res.block != nil:
@@ -128,13 +166,14 @@ func (p *Plugin) InspectSegment(
 		if !ok {
 			// The guardrail said to anonymise and gave nothing to anonymise
 			// with. Releasing the unmasked text would be the one outcome the
-			// policy ruled out, so this is a cut.
-			return &appplugins.SegmentVerdict{
-				Block:        true,
-				Type:         typeGuardrailBlocked,
-				Message:      anonymizeDegradedMessage,
-				Fingerprints: findingFingerprints(in.Mode, res.anonymize),
-			}, nil
+			// policy ruled out, so a mode that blocks cuts.
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
+				&appplugins.SegmentVerdict{
+					Type:         typeGuardrailBlocked,
+					Message:      anonymizeDegradedMessage,
+					Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+				},
+				fmt.Errorf("stream block %d: guardrail asked to anonymise and returned no masked text", seg.Seq))
 		}
 		return &appplugins.SegmentVerdict{
 			HasTransform: true,
@@ -156,6 +195,7 @@ func (p *Plugin) recordStreamOutcome(
 	cfg Settings,
 	seg appplugins.StreamSegment,
 ) {
+	p.forgetStreamThrottle(streamID(ctx, seg))
 	if in.Event == nil {
 		return
 	}
@@ -170,12 +210,8 @@ func (p *Plugin) recordStreamOutcome(
 		Streaming:   stream,
 	}
 	switch {
-	// A cut that resolved this entry's own failed call as fail_closed is a
-	// failure, not a block: the guardrail gave no verdict.
-	case pluginutil.StreamFailedClosed(seg.Report):
-		data.Decision = appplugins.DecisionFailedClosed
 	case seg.Report.CutAtEval > 0:
-		data.Decision = decisionBlocked
+		data.Decision = pluginutil.StreamCutDecision(seg.Report, decisionBlocked)
 	case seg.Report.MaskedEvals > 0:
 		// With no cut the guard applied every mask, as the buffered leg does.
 		data.Decision = decisionAnonymized
@@ -194,6 +230,11 @@ func (p *Plugin) recordStreamOutcome(
 	// block went uninspected. Extras are replaced, so this one write is the
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
+	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
+	if appplugins.IsMaskOverFinding(data.FailureDetail) {
+		data.Degraded = true
+		data.DegradedReason = data.FailureDetail
+	}
 
 	// A stream span's wall clock is the whole drain, provider generation
 	// included, and the fold in pkg/app/metrics counts a pre_response span as
@@ -238,4 +279,49 @@ func streamID(ctx context.Context, seg appplugins.StreamSegment) string {
 
 func segmentAllow() *appplugins.SegmentVerdict {
 	return &appplugins.SegmentVerdict{}
+}
+
+// throttledStreamTTL bounds a stream's entry whose closing segment never came.
+const throttledStreamTTL = 10 * time.Minute
+
+// streamThrottled reports whether an earlier block of this stream was throttled,
+// so a sustained throttle does not add a backoff to every later block.
+func (p *Plugin) streamThrottled(id string) bool {
+	p.sweepThrottledStreams(time.Now())
+	if id == "" {
+		return false
+	}
+	_, ok := p.throttledStreams.Load(id)
+	return ok
+}
+
+// markStreamThrottled records when the stream's last block was throttled.
+func (p *Plugin) markStreamThrottled(id string, now time.Time) {
+	if id != "" {
+		p.throttledStreams.Store(id, now)
+	}
+	p.sweepThrottledStreams(now)
+}
+
+func (p *Plugin) forgetStreamThrottle(id string) {
+	if id != "" {
+		p.throttledStreams.Delete(id)
+	}
+	p.sweepThrottledStreams(time.Now())
+}
+
+// sweepThrottledStreams drops the entries older than throttledStreamTTL, at most
+// once a minute, so a stream whose closing segment never arrived cannot grow the
+// map whichever of the three operations on it runs.
+func (p *Plugin) sweepThrottledStreams(now time.Time) {
+	last := p.throttledSweptAt.Load()
+	if now.UnixNano()-last < int64(time.Minute) || !p.throttledSweptAt.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	p.throttledStreams.Range(func(k, v any) bool {
+		if at, ok := v.(time.Time); !ok || now.Sub(at) > throttledStreamTTL {
+			p.throttledStreams.Delete(k)
+		}
+		return true
+	})
 }

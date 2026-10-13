@@ -49,8 +49,8 @@ func releasedText(t *testing.T, frames [][]byte) string {
 }
 
 // Reasoning arrives as JSON fragments that no text mask can edit, so a mask on a
-// window that holds any fails open: the frames go through as they came.
-func TestNativeStreamGuard_MaskWithReasoningInTheWindowFailsOpen(t *testing.T) {
+// window that holds any ends the stream: the held frames are never released.
+func TestNativeStreamGuard_MaskWithReasoningInTheWindowEndsTheStream(t *testing.T) {
 	t.Parallel()
 	for name, frames := range map[string][][]byte{
 		"converse reasoning": {
@@ -70,15 +70,14 @@ func TestNativeStreamGuard_MaskWithReasoningInTheWindowFailsOpen(t *testing.T) {
 			runner := &maskRunner{from: streamEmail, to: "<EMAIL>"}
 			g := nativeGuardFor(runner, streamGuardConfig{headChars: 1000, minChars: 1000, maxHold: time.Hour})
 			got, pe, rt := runNativeGuardTraced(t, g, frames)
-			require.Nil(t, pe)
-			requireStreamFailedOpen(t, got, frames, rt, "reasoning_not_maskable")
+			requireStreamMaskBlocked(t, got, pe, frames, rt, "reasoning_not_maskable")
 		})
 	}
 }
 
 // Tool input released before the window is part of what the stream has said: a
 // mask that decides on removed text that the arguments already carry cuts.
-func TestNativeStreamGuard_MaskedTextAlreadyInReleasedToolInputFailsOpen(t *testing.T) {
+func TestNativeStreamGuard_MaskedTextAlreadyInReleasedToolInputEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		testEventFrame(t, "contentBlockStart", `{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"t1","name":"send"}}}`),
@@ -90,6 +89,5 @@ func TestNativeStreamGuard_MaskedTextAlreadyInReleasedToolInputFailsOpen(t *test
 	// A policy that reads text only: the tool input is released as it came.
 	runner := &textOnlyMaskRunner{maskRunner{from: streamEmail, to: "<EMAIL>"}}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(runner, streamGuardConfig{headChars: 5, minChars: 1, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "already_released_input")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "already_released_input")
 }

@@ -50,10 +50,6 @@ type Settings struct {
 	Categories       []string       `mapstructure:"categories"`
 	CategorySeverity map[string]int `mapstructure:"category_severity"`
 	Message          string         `mapstructure:"message"`
-	// OnError decides what a request gets when the guardrail cannot give a
-	// verdict on its buffered leg: fail_open (the default) lets it through and
-	// records failed_open, fail_closed refuses it in a mode that blocks.
-	OnError string `mapstructure:"on_error"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -69,7 +65,6 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 func (s *Settings) applyDefaults() {
-	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if s.OutputType == "" {
 		s.OutputType = OutputTypeFourSeverityLevels
 	}
@@ -81,9 +76,6 @@ func (s *Settings) applyDefaults() {
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.APIKey) == "" {
 		return fmt.Errorf("azure_content_safety: api_key is required")
-	}
-	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
-		return err
 	}
 	if strings.TrimSpace(s.Endpoint) == "" {
 		return fmt.Errorf("azure_content_safety: endpoint is required")
@@ -197,4 +189,13 @@ func isSupportedCategory(category string) bool {
 		}
 	}
 	return false
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError,
+	}
 }

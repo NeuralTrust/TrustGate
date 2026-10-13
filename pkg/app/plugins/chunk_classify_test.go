@@ -1,0 +1,310 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package plugins
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
+)
+
+func started(n int) []textchunk.Outcome[ChunkState] {
+	out := make([]textchunk.Outcome[ChunkState], n)
+	for i := range out {
+		out[i].Started = true
+	}
+	return out
+}
+
+func classify(outs []textchunk.Outcome[ChunkState]) ChunkDecision {
+	return ClassifyChunks(outs, false, func(_ int, v ChunkState, _ error) ChunkState { return v })
+}
+
+func fail(reason FailureReason, detail string) *ChunkFailure {
+	return &ChunkFailure{Reason: reason, Detail: detail}
+}
+
+func TestClassifyChunksFollowsTheTable(t *testing.T) {
+	t.Parallel()
+	transport := fail(FailureTransport, "")
+	throttled := fail(FailureTransport, DetailThrottled)
+	notExecuted := fail(FailureVerdictIncomplete, DetailFilterNotExecuted)
+	quota := fail(FailureConfigInvalid, DetailProviderQuotaExhausted)
+
+	cases := []struct {
+		name   string
+		build  func() []textchunk.Outcome[ChunkState]
+		kind   ChunkOutcomeKind
+		index  int
+		reason FailureReason
+		detail string
+		masked bool
+	}{
+		{"every chunk allowed", func() []textchunk.Outcome[ChunkState] { return started(3) }, ChunkAllowed, -1, "", "", false},
+		{"the lowest blocking chunk wins over a failure", func() []textchunk.Outcome[ChunkState] {
+			o := started(4)
+			o[0].Value.Failure = transport
+			o[2].Value.Blocks, o[3].Value.Blocks = true, true
+			return o
+		}, ChunkBlocked, 2, "", "", false},
+		{"an input failure beats an availability one", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[0].Value.Failure = transport
+			o[2].Value.Failure = notExecuted
+			return o
+		}, ChunkInputFailure, 2, FailureVerdictIncomplete, DetailFilterNotExecuted, false},
+		{"a chunk that never started is chunk_budget", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Started = false
+			o[2].Started = false
+			o[0].Value.Failure = transport
+			return o
+		}, ChunkInputFailure, 1, FailureInputTooLarge, DetailChunkBudget, false},
+		{"a started chunk cut by the evaluation budget after waiting is chunk_budget", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[5].Err, o[5].Waited, o[5].BudgetCut = errors.New("context deadline exceeded"), true, true
+			return o
+		}, ChunkInputFailure, 5, FailureInputTooLarge, DetailChunkBudget, false},
+		{"a chunk of the first round cut by the budget is the provider being slow", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[1].Err, o[1].BudgetCut = errors.New("context deadline exceeded"), true
+			o[1].Value.Failure = transport
+			return o
+		}, ChunkAvailabilityFailure, 1, FailureTransport, "", false},
+		{"a waiting chunk that ended on its own timeout is availability", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[5].Err, o[5].Waited = errors.New("client timeout"), true
+			o[5].Value.Failure = transport
+			return o
+		}, ChunkAvailabilityFailure, 5, FailureTransport, "", false},
+		{"a throttle on a chunk that waited behind the request's own is input", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[5].Value.Failure, o[5].Waited = throttled, true
+			return o
+		}, ChunkInputFailure, 5, FailureInputTooLarge, DetailThrottledOversize, false},
+		{"a throttle on the first chunk of a long text is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[0].Value.Failure = throttled
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttle on a later chunk of the first round is the request's own", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[2].Value.Failure = throttled
+			return o
+		}, ChunkInputFailure, 2, FailureInputTooLarge, DetailThrottledOversize, false},
+		{"every call of a two-chunk evaluation throttled is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(2)
+			o[0].Value.Failure, o[1].Value.Failure = throttled, throttled
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"every call of a four-chunk evaluation throttled is other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(4)
+			for i := range o {
+				o[i].Value.Failure, o[i].Waited = throttled, i >= 2
+			}
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttled first chunk makes a later waited throttle other traffic", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[0].Value.Failure = throttled
+			o[2].Value.Failure, o[2].Waited = throttled, true
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttle on a later chunk after the first answered is the request's own", func() []textchunk.Outcome[ChunkState] {
+			o := started(4)
+			o[2].Value.Failure, o[3].Value.Failure = throttled, throttled
+			return o
+		}, ChunkInputFailure, 2, FailureInputTooLarge, DetailThrottledOversize, false},
+		{"a throttle that says it is other traffic stays availability on any chunk", func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[2].Value.Failure = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}
+			return o
+		}, ChunkAvailabilityFailure, 2, FailureTransport, DetailThrottled, false},
+		{"a throttle on one chunk stays availability", func() []textchunk.Outcome[ChunkState] {
+			o := started(1)
+			o[0].Value.Failure = throttled
+			return o
+		}, ChunkAvailabilityFailure, 0, FailureTransport, DetailThrottled, false},
+		{"a throttle on spaced calls is other traffic even on several chunks", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Value.Failure, o[1].Waited = &ChunkFailure{Reason: FailureTransport, Detail: DetailThrottled, OtherTraffic: true}, true
+			return o
+		}, ChunkAvailabilityFailure, 1, FailureTransport, DetailThrottled, false},
+		{"an exhausted provider quota is configuration even on several chunks", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Value.Failure, o[1].Waited = quota, true
+			return o
+		}, ChunkAvailabilityFailure, 1, FailureConfigInvalid, DetailProviderQuotaExhausted, false},
+		{"a mask is kept when another chunk fails open", func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[0].Value.Mask = true
+			o[2].Value.Failure = transport
+			return o
+		}, ChunkAvailabilityFailure, 2, FailureTransport, "", true},
+		{"a mask with no failure is reported", func() []textchunk.Outcome[ChunkState] {
+			o := started(2)
+			o[1].Value.Mask = true
+			return o
+		}, ChunkAllowed, -1, "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := classify(tc.build())
+			assert.Equal(t, tc.kind, got.Kind)
+			assert.Equal(t, tc.index, got.Index)
+			assert.Equal(t, tc.reason, got.Reason)
+			assert.Equal(t, tc.detail, got.Detail)
+			assert.Equal(t, tc.masked, got.Masked)
+		})
+	}
+}
+
+func TestClassifyChunksHandsTheCallErrorToThePlugin(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("boom")
+	outs := []textchunk.Outcome[int]{{Value: 1, Started: true}, {Err: boom, Started: true}}
+	got := ClassifyChunks(outs, false, func(_ int, _ int, err error) ChunkState {
+		if err != nil {
+			return ChunkState{Failure: fail(FailureTransport, "")}
+		}
+		return ChunkState{}
+	})
+	assert.Equal(t, ChunkAvailabilityFailure, got.Kind)
+	assert.Equal(t, 1, got.Index)
+}
+
+func TestTheChunkDetailsAreInput(t *testing.T) {
+	t.Parallel()
+	for _, d := range []string{DetailChunkLimit, DetailChunkBudget, DetailThrottledOversize} {
+		assert.Equal(t, FailureClassInput, ClassOf(FailureInputTooLarge, d), d)
+	}
+	assert.Equal(t, FailureClassAvailability, ClassOf(FailureConfigInvalid, DetailProviderQuotaExhausted))
+}
+
+// A caller whose own context ended is never an input: the content did not end
+// the evaluation, a client that left did.
+func TestAnEvaluationCutByTheCallersContextIsNeverInput(t *testing.T) {
+	t.Parallel()
+	pass := func(_ int, v ChunkState, _ error) ChunkState { return v }
+	cases := map[string]struct {
+		build  func() []textchunk.Outcome[ChunkState]
+		kind   ChunkOutcomeKind
+		reason FailureReason
+		detail string
+	}{
+		"chunks that never ran": {func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[4].Started, o[5].Started = false, false
+			return o
+		}, ChunkAvailabilityFailure, FailureTransport, ""},
+		"a waiting chunk the budget cut": {func() []textchunk.Outcome[ChunkState] {
+			o := started(6)
+			o[5].Err, o[5].Waited, o[5].BudgetCut = errors.New("context canceled"), true, true
+			o[5].Value.Failure = fail(FailureTransport, "")
+			return o
+		}, ChunkAvailabilityFailure, FailureTransport, ""},
+		"a throttle on a chunk that waited": {func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Value.Failure, o[1].Waited = fail(FailureTransport, DetailThrottled), true
+			return o
+		}, ChunkAvailabilityFailure, FailureTransport, DetailThrottled},
+		"an input failure": {func() []textchunk.Outcome[ChunkState] {
+			o := started(3)
+			o[1].Value.Failure = fail(FailureVerdictIncomplete, DetailFilterNotExecuted)
+			return o
+		}, ChunkAvailabilityFailure, FailureTransport, ""},
+		"every chunk answered": {func() []textchunk.Outcome[ChunkState] { return started(3) }, ChunkAllowed, "", ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyChunks(tc.build(), true, pass)
+			assert.Equal(t, tc.kind, got.Kind)
+			assert.Equal(t, tc.reason, got.Reason)
+			assert.Equal(t, tc.detail, got.Detail)
+		})
+	}
+
+	blocking := started(3)
+	blocking[1].Value.Blocks = true
+	assert.Equal(t, ChunkBlocked, ClassifyChunks(blocking, true, pass).Kind, "a finding that was made still decides")
+}
+
+// A time cut is the provider being slow only when a started chunk's call took
+// longer than the SlowCall threshold; calls at their usual pace that still ran
+// the budget out are the request's own size.
+func TestATimeCutIsAvailabilityOnlyWhenACallWasSlow(t *testing.T) {
+	t.Parallel()
+	const slow = 3 * time.Second
+	pass := func(_ int, v ChunkState, err error) ChunkState {
+		if err != nil {
+			return ChunkState{Failure: fail(FailureTransport, "")}
+		}
+		return v
+	}
+	cut := func(tookFirst time.Duration) map[string]func() []textchunk.Outcome[ChunkState] {
+		return map[string]func() []textchunk.Outcome[ChunkState]{
+			"a waiting chunk the budget cut": func() []textchunk.Outcome[ChunkState] {
+				o := started(3)
+				o[0].Took = tookFirst
+				o[2].Err, o[2].Waited, o[2].BudgetCut = errors.New("context deadline exceeded"), true, true
+				return o
+			},
+			"chunks never started for lack of reserve": func() []textchunk.Outcome[ChunkState] {
+				o := started(3)
+				o[0].Took = tookFirst
+				o[1].Started, o[2].Started = false, false
+				return o
+			},
+		}
+	}
+	for name, build := range cut(slow + time.Millisecond) {
+		t.Run("slow/"+name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyChunks(build(), false, pass, SlowCall(slow))
+			assert.Equal(t, ChunkAvailabilityFailure, got.Kind)
+			assert.Equal(t, FailureTransport, got.Reason)
+			assert.Empty(t, got.Detail)
+		})
+	}
+	for name, build := range cut(slow) {
+		t.Run("fast/"+name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyChunks(build(), false, pass, SlowCall(slow))
+			assert.Equal(t, ChunkInputFailure, got.Kind)
+			assert.Equal(t, DetailChunkBudget, got.Detail)
+			assert.Equal(t, ChunkInputFailure, ClassifyChunks(build(), false, pass).Kind, "with no threshold no call is slow")
+		})
+	}
+	t.Run("a client that left is never input", func(t *testing.T) {
+		t.Parallel()
+		o := started(3)
+		o[2].Err, o[2].Waited, o[2].BudgetCut = errors.New("context deadline exceeded"), true, true
+		assert.Equal(t, ChunkAvailabilityFailure, ClassifyChunks(o, true, pass, SlowCall(slow)).Kind)
+	})
+	t.Run("a block of an earlier chunk still decides", func(t *testing.T) {
+		t.Parallel()
+		o := started(3)
+		o[0].Value.Blocks = true
+		o[0].Took = 2 * slow
+		o[2].Started = false
+		assert.Equal(t, ChunkBlocked, ClassifyChunks(o, false, pass, SlowCall(slow)).Kind)
+	})
+}

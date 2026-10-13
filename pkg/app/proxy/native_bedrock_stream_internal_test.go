@@ -364,7 +364,7 @@ func TestNativeStreamGuard_MaskInAnInvokeChunk(t *testing.T) {
 
 // If the rebuilt window still holds the removed text anywhere, the mask is
 // refused and the stream is cut: the leak check is what stands behind the mask.
-func TestNativeStreamGuard_LeakInTheWindowFailsOpenAndReleasesTheOriginal(t *testing.T) {
+func TestNativeStreamGuard_LeakInTheWindowEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{
 		deltaFrame(t, "Hello there"),
@@ -374,11 +374,10 @@ func TestNativeStreamGuard_LeakInTheWindowFailsOpenAndReleasesTheOriginal(t *tes
 	}
 	runner := &maskRunner{from: streamEmail, to: "<EMAIL>"}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(runner, streamGuardConfig{headChars: 5, minChars: 1000, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "leak_remaining")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "leak_remaining")
 }
 
-func TestNativeStreamGuard_MaskOfTextAlreadyReleasedFailsOpenAndReleasesTheOriginal(t *testing.T) {
+func TestNativeStreamGuard_MaskOfTextAlreadyReleasedEndsTheStream(t *testing.T) {
 	t.Parallel()
 	// The first block is clean and released. The mask then names text inside it.
 	frames := [][]byte{
@@ -388,8 +387,7 @@ func TestNativeStreamGuard_MaskOfTextAlreadyReleasedFailsOpenAndReleasesTheOrigi
 	}
 	released := &lateMaskRunner{from: streamEmail, to: "<EMAIL>"}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(released, streamGuardConfig{headChars: 5, minChars: 1, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "already_released_text")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "already_released_text")
 }
 
 // lateMaskRunner answers the first block clean and masks from the second on.
@@ -421,17 +419,18 @@ func TestNativeStreamGuard_MaskInTheHeadBeforeAnythingIsReleased(t *testing.T) {
 	assert.Equal(t, frames[1], got[1])
 }
 
-// A native stream honours each policy's streaming.on_error like every other
-// stream: the default fails open, fail_closed refuses the stream.
+// A native stream resolves a failed inspection like every other stream: a
+// guardrail fails open whatever on_error it still stores, and a passive rewriter
+// that asks for fail_closed refuses the stream.
 func TestNativeStreamGuard_GuardrailFailureHonoursOnError(t *testing.T) {
 	t.Parallel()
-	run := func(t *testing.T, onError string) (*ForwardResult, [][]byte, *failingSegmentExecutor) {
+	run := func(t *testing.T, planFor func(*testing.T, map[string]any) *appplugins.StagePlan, onError string) (*ForwardResult, [][]byte, *failingSegmentExecutor) {
 		frames := textFrames(t, "Hello", " there", " friend")
 		settings := map[string]any{"enabled": true, "head_chars": 5}
 		if onError != "" {
 			settings["on_error"] = onError
 		}
-		plan := inspectorPlan(t, settings)
+		plan := planFor(t, settings)
 		exec := &failingSegmentExecutor{err: errors.New("provider down")}
 		fwd := &forwarder{executor: exec, codec: adapter.NewRegistry(), logger: newGuardLogger()}
 		req := &infracontext.RequestContext{
@@ -444,22 +443,18 @@ func TestNativeStreamGuard_GuardrailFailureHonoursOnError(t *testing.T) {
 			nil, time.Now())
 		return res, frames, exec
 	}
-	t.Run("the default fails open", func(t *testing.T) {
+	for _, stored := range []string{"", "fail_open", "fail_closed"} {
+		t.Run("a guardrail fails open with on_error "+stored, func(t *testing.T) {
+			t.Parallel()
+			res, frames, exec := run(t, inspectorPlan, stored)
+			require.NotNil(t, res.Stream)
+			assert.Equal(t, frames, collectFrames(t, res.Stream))
+			assert.Positive(t, exec.calls.Load(), "the guard did try to inspect it")
+		})
+	}
+	t.Run("a rewriter that asks for fail_closed refuses the stream before the first byte", func(t *testing.T) {
 		t.Parallel()
-		res, frames, exec := run(t, "")
-		require.NotNil(t, res.Stream)
-		assert.Equal(t, frames, collectFrames(t, res.Stream))
-		assert.Positive(t, exec.calls.Load(), "the guard did try to inspect it")
-	})
-	t.Run("fail_open fails open", func(t *testing.T) {
-		t.Parallel()
-		res, frames, _ := run(t, "fail_open")
-		require.NotNil(t, res.Stream)
-		assert.Equal(t, frames, collectFrames(t, res.Stream))
-	})
-	t.Run("fail_closed refuses the stream before the first byte", func(t *testing.T) {
-		t.Parallel()
-		res, _, exec := run(t, "fail_closed")
+		res, _, exec := run(t, rewriterPlan, "fail_closed")
 		assert.Positive(t, exec.calls.Load())
 		assert.Nil(t, res.Stream)
 		assert.Equal(t, http.StatusForbidden, res.StatusCode)
@@ -581,12 +576,11 @@ func (addRunner) RunStreamSegment(_ context.Context, _ appplugins.StageInput, se
 	return &appplugins.SegmentOutcome{HasTransform: true, Transformed: "ADDED " + seg.Accumulated}, nil
 }
 
-func TestNativeStreamGuard_AnAdditionIsNotAMaskAndFailsOpen(t *testing.T) {
+func TestNativeStreamGuard_AnAdditionIsNotAMaskAndEndsTheStream(t *testing.T) {
 	t.Parallel()
 	frames := [][]byte{deltaFrame(t, "Hello there friend"), deltaFrame(t, " and more")}
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(addRunner{}, streamGuardConfig{headChars: 1000, minChars: 1000, maxHold: time.Hour}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, "not_a_text_replacement")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, "not_a_text_replacement")
 }
 
 // A native stream outlives the lookup the call started, so the model is read again
