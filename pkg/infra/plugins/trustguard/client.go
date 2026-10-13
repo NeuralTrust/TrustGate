@@ -27,13 +27,21 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 const (
 	evaluatePath           = "/v1/evaluate"
 	traceIDHeader          = "X-Trace-ID"
 	playgroundOriginHeader = "X-AG-Playground"
-	maxResponseBytes       = 1 << 20
+	// maxResponseBytes is the floor of the answer a call reads, and the most the
+	// token endpoint's answer may be. An evaluate answer is sized by what the
+	// call sent (answerLimit).
+	maxResponseBytes = 1 << 20
+
+	// answerSlackBytes is what an answer may carry beyond the payload echoed
+	// back: findings, ids and the rest of the envelope.
+	answerSlackBytes = 64 << 10
 
 	// evaluateTimeoutHeader tells TrustGuard how long, in milliseconds, this
 	// call will wait. TrustGuard holds its detectors to a little less, so one
@@ -55,6 +63,26 @@ var rateLimitHeaderNames = []string{
 	"X-RateLimit-Limit",
 	"X-RateLimit-Remaining",
 	"X-RateLimit-Reason",
+}
+
+// payloadTooLargeError is TrustGuard refusing the body for its size (HTTP 413).
+// It is a verdict on the request's own content, so unlike a transport failure
+// it is classified as input.
+type payloadTooLargeError struct{}
+
+func (e *payloadTooLargeError) Error() string {
+	return "trustguard: payload too large"
+}
+
+// attachmentRejectedError is TrustGuard answering 400 "invalid attachment": the
+// resolver could not fetch or decode an attachment this request carried. Like a
+// 413 it is a verdict on the request's own content, so it is classified as
+// input. A 400 with any other body says the call itself was malformed, which no
+// client input can cause and is not this error.
+type attachmentRejectedError struct{}
+
+func (e *attachmentRejectedError) Error() string {
+	return "trustguard: invalid attachment"
 }
 
 type rateLimitedError struct {
@@ -111,19 +139,28 @@ func withBaseTransport(base http.RoundTripper) clientOption {
 }
 
 // newClient builds the evaluate client. Its Timeout is only a backstop:
-// every call brings its own deadline — the policy's timeout or
-// streaming.guard_timeout — and a shorter client timeout would cap it without
-// saying so. The backstop never sits below timeout, the deadline a policy
-// without its own inherits.
+// every call brings its own deadline, the deployment-wide timeout or the stream
+// guard timeout, and a shorter client timeout would cap it without saying so.
+// The backstop never sits below either.
 func newClient(timeout time.Duration, opts ...clientOption) *client {
 	cfg := clientConfig{baseTransport: http.DefaultTransport}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return &client{http: &http.Client{
-		Timeout:   max(maxPolicyTimeout, timeout),
+		Timeout:   max(defaultStreamingGuardTimeout, timeout),
 		Transport: o11y.InternalTransportOver(cfg.baseTransport, peerService, evaluateSpanName),
 	}}
+}
+
+// answerLimit is the most an evaluate answer is read up to for a call that sent
+// payloadBytes. A transform answers with the payload echoed back, attachments
+// included, so a fixed limit would turn any masked payload above half of it into
+// an answer that is too large; twice the payload plus a slack is what a faithful
+// echo and its envelope can come to, and still bounds what a client can make the
+// gateway read.
+func answerLimit(payloadBytes int) int {
+	return max(maxResponseBytes, 2*payloadBytes+answerSlackBytes)
 }
 
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
@@ -131,6 +168,7 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
 	}
+	limit := answerLimit(len(payload))
 	endpoint := strings.TrimRight(baseURL, "/") + evaluatePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
@@ -154,10 +192,10 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 		return nil, fmt.Errorf("trustguard: guard call: %w", err)
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxResponseBytes))
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, int64(limit)))
 		_ = res.Body.Close()
 	}()
-	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
+	raw, err := io.ReadAll(io.LimitReader(res.Body, int64(limit)))
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: read response: %w", err)
 	}
@@ -173,17 +211,35 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 			body:    append([]byte(nil), raw...),
 		}
 	}
+	if res.StatusCode == http.StatusRequestEntityTooLarge {
+		return nil, &payloadTooLargeError{}
+	}
+	if res.StatusCode == http.StatusBadRequest && isInvalidAttachment(raw) {
+		return nil, &attachmentRejectedError{}
+	}
 	if res.StatusCode == http.StatusServiceUnavailable {
 		return nil, &entitlementsUnavailableError{body: append([]byte(nil), raw...)}
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("trustguard: unexpected status %d", res.StatusCode)
 	}
+	if len(raw) >= limit {
+		return nil, &pluginutil.AnswerTooLargeError{Provider: "trustguard", Limit: limit}
+	}
 	var out GuardResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("trustguard: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+const invalidAttachmentMessage = "invalid attachment"
+
+func isInvalidAttachment(body []byte) bool {
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &envelope) == nil && envelope.Error == invalidAttachmentMessage
 }
 
 func copyRateLimitHeaders(h http.Header) map[string][]string {

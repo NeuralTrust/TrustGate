@@ -30,48 +30,19 @@ const (
 	legResponse        = "response"
 	legRequestResponse = "request_response"
 	defaultLegs        = legRequestResponse
-
-	onErrorFailOpen   = "fail_open"
-	onErrorFailClosed = "fail_closed"
-	defaultOnError    = onErrorFailOpen
-
-	// A timeout fails open by default like every other failure of the guard: a
-	// TrustGuard problem must not cut the client's request. The cost is known
-	// and accepted: a caller can push the detector past the deadline with
-	// enough text and so get a payload through uninspected. It is never
-	// silent — the span carries failed_open with reason timeout — and a policy
-	// that would rather refuse can set on_timeout (or on_error, which an unset
-	// on_timeout inherits) to fail_closed.
-
-	// minPolicyTimeout keeps a policy from setting a deadline so short that
-	// every call trips it, which would turn the safe default into an outage.
-	minPolicyTimeout = 250 * time.Millisecond
-	maxPolicyTimeout = 120 * time.Second
 )
 
 const (
 	defaultStreamingHeadChars            = 400
 	defaultStreamingMinCharsBetweenEvals = 2048
 	defaultStreamingMaxHoldMS            = 800
-	defaultStreamingMaxAccumulatedBytes  = 262144
-	defaultStreamingGuardTimeout         = 2 * time.Second
-
-	minStreamingHeadChars = 1
-	maxStreamingHeadChars = 4096
-
-	minStreamingMinCharsBetweenEvals = 256
-	maxStreamingMinCharsBetweenEvals = 65536
-
-	minStreamingMaxHoldMS = 50
-	maxStreamingMaxHoldMS = 5000
-
-	minStreamingMaxAccumulatedBytes = 4096
-	// The engine's detectAll returns nil above 1 MiB, so a payload larger than
-	// this is not inspected at all and nothing says so.
-	maxStreamingMaxAccumulatedBytes = 1048576
-
-	minStreamingGuardTimeout = 250 * time.Millisecond
-	maxStreamingGuardTimeout = 10 * time.Second
+	// maxStreamWindowBytes is the most of the accumulated text one evaluate call
+	// carries. The block waits at most defaultStreamingGuardTimeout for the token
+	// and the call together, so the window is fitted to that deadline and not to
+	// what the detectors accept.
+	maxStreamWindowBytes                = 65536
+	defaultStreamingMaxAccumulatedBytes = maxStreamWindowBytes
+	defaultStreamingGuardTimeout        = 2 * time.Second
 )
 
 type Settings struct {
@@ -83,44 +54,23 @@ type Settings struct {
 	//
 	// The key name is fixed by the policy catalog. Its values are legs, not the
 	// input/output direction reported to TrustGuard per evaluate call.
-	Direction   string `mapstructure:"direction"`
-	CollectorID string `mapstructure:"collector_id"`
-	// OnError controls every failure of the guard other than a timeout:
-	// transport and 5xx, rejected or missing credentials, a missing base URL,
-	// unavailable entitlements, and a mask that could not be applied. It
-	// defaults to fail_open. A block or a 429 is an answer, not a failure, and
-	// is never subject to it.
-	OnError string `mapstructure:"on_error"`
-	// OnTimeout is separate from OnError because the two failures differ in
-	// who can cause them. Unset, it inherits OnError.
-	OnTimeout string `mapstructure:"on_timeout"`
-	// Timeout bounds one evaluate call for this policy. Empty means the
-	// deployment-wide TRUSTGUARD_TIMEOUT, which is the only control that
-	// existed before and which cannot be raised for one slow detector without
-	// raising it for every call on every gateway.
-	Timeout   string            `mapstructure:"timeout"`
-	Streaming StreamingSettings `mapstructure:"streaming"`
+	Direction   string                       `mapstructure:"direction"`
+	CollectorID string                       `mapstructure:"collector_id"`
+	Streaming   pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
-// StreamingSettings configures per-block inspection of a streaming response
-// leg. There is no max_inflight key: exactly one guard call is in flight by
-// construction, which is what makes the contiguous-prefix invariant hold.
-type StreamingSettings struct {
-	// Enabled defaults to true: a policy whose direction includes the
-	// response has to inspect a streamed response too, or "Request &
-	// Response" silently means "request only" on the traffic that streams,
-	// which for chat is most of it. It is a pointer so an explicit false,
-	// the opt-out, is distinguishable from an absent key.
-	Enabled              *bool  `mapstructure:"enabled"`
-	HeadChars            int    `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int    `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int    `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int    `mapstructure:"max_accumulated_bytes"`
-	GuardTimeout         string `mapstructure:"guard_timeout"`
-	// OnError bounds the per-block guard call only. It inherits the policy's
-	// on_error when unset, so the stream leg cannot be made stricter or laxer
-	// by accident.
-	OnError string `mapstructure:"on_error"`
+// streamingDefaults enables per-block inspection when the policy does not say
+// otherwise: a policy whose direction includes the response has to inspect a
+// streamed response too, or "Request & Response" silently means "request only"
+// on the traffic that streams, which for chat is most of it. An explicit
+// streaming.enabled: false is the opt-out.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	EnabledByDefault:     true,
+	HeadChars:            defaultStreamingHeadChars,
+	MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
+	MaxHoldMS:            defaultStreamingMaxHoldMS,
+	MaxAccumulatedBytes:  defaultStreamingMaxAccumulatedBytes,
+	GuardTimeout:         defaultStreamingGuardTimeout,
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -139,39 +89,7 @@ func (s *Settings) applyDefaults() {
 	if s.Direction == "" {
 		s.Direction = defaultLegs
 	}
-	if s.OnError == "" {
-		s.OnError = defaultOnError
-	}
-	// An unset on_timeout inherits on_error, as streaming.on_error does, so a
-	// policy that asked for fail_closed does not quietly fail open on the one
-	// failure a caller can bring about.
-	if s.OnTimeout == "" {
-		s.OnTimeout = s.OnError
-	}
-	s.Timeout = strings.TrimSpace(s.Timeout)
-	s.Streaming.applyDefaults(s.OnError)
-}
-
-func (s *StreamingSettings) applyDefaults(onError string) {
-	if s.HeadChars == 0 {
-		s.HeadChars = defaultStreamingHeadChars
-	}
-	if s.MinCharsBetweenEvals == 0 {
-		s.MinCharsBetweenEvals = defaultStreamingMinCharsBetweenEvals
-	}
-	if s.MaxHoldMS == 0 {
-		s.MaxHoldMS = defaultStreamingMaxHoldMS
-	}
-	if s.MaxAccumulatedBytes == 0 {
-		s.MaxAccumulatedBytes = defaultStreamingMaxAccumulatedBytes
-	}
-	s.GuardTimeout = strings.TrimSpace(s.GuardTimeout)
-	if s.GuardTimeout == "" {
-		s.GuardTimeout = defaultStreamingGuardTimeout.String()
-	}
-	if s.OnError == "" {
-		s.OnError = onError
-	}
+	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
 func (s *Settings) validate() error {
@@ -180,112 +98,13 @@ func (s *Settings) validate() error {
 	default:
 		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
 	}
-	switch s.OnError {
-	case onErrorFailOpen, onErrorFailClosed:
-	default:
-		return fmt.Errorf("trustguard: on_error must be one of fail_open, fail_closed")
-	}
-	switch s.OnTimeout {
-	case onErrorFailOpen, onErrorFailClosed:
-	default:
-		return fmt.Errorf("trustguard: on_timeout must be one of fail_open, fail_closed")
-	}
-	if s.Timeout != "" {
-		d, err := time.ParseDuration(s.Timeout)
-		if err != nil {
-			return fmt.Errorf("trustguard: timeout must be a valid duration: %w", err)
-		}
-		if d < minPolicyTimeout || d > maxPolicyTimeout {
-			return fmt.Errorf("trustguard: timeout must be between %s and %s, got %s",
-				minPolicyTimeout, maxPolicyTimeout, d)
-		}
-	}
 	if strings.TrimSpace(s.CollectorID) == "" {
 		return fmt.Errorf("trustguard: collector_id is required")
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(s.CollectorID)); err != nil {
 		return fmt.Errorf("trustguard: collector_id must be a valid UUID")
 	}
-	return s.Streaming.validate()
-}
-
-func (s StreamingSettings) validate() error {
-	if s.HeadChars < minStreamingHeadChars || s.HeadChars > maxStreamingHeadChars {
-		return fmt.Errorf(
-			"trustguard: streaming.head_chars must be between %d and %d, got %d",
-			minStreamingHeadChars, maxStreamingHeadChars, s.HeadChars,
-		)
-	}
-	if s.MinCharsBetweenEvals < minStreamingMinCharsBetweenEvals ||
-		s.MinCharsBetweenEvals > maxStreamingMinCharsBetweenEvals {
-		return fmt.Errorf(
-			"trustguard: streaming.min_chars_between_evals must be between %d and %d, got %d",
-			minStreamingMinCharsBetweenEvals, maxStreamingMinCharsBetweenEvals, s.MinCharsBetweenEvals,
-		)
-	}
-	if s.MaxHoldMS < minStreamingMaxHoldMS || s.MaxHoldMS > maxStreamingMaxHoldMS {
-		return fmt.Errorf(
-			"trustguard: streaming.max_hold_ms must be between %d and %d, got %d",
-			minStreamingMaxHoldMS, maxStreamingMaxHoldMS, s.MaxHoldMS,
-		)
-	}
-	if s.MaxAccumulatedBytes < minStreamingMaxAccumulatedBytes ||
-		s.MaxAccumulatedBytes > maxStreamingMaxAccumulatedBytes {
-		return fmt.Errorf(
-			"trustguard: streaming.max_accumulated_bytes must be between %d and %d, got %d",
-			minStreamingMaxAccumulatedBytes, maxStreamingMaxAccumulatedBytes, s.MaxAccumulatedBytes,
-		)
-	}
-	d, err := time.ParseDuration(s.GuardTimeout)
-	if err != nil {
-		return fmt.Errorf("trustguard: streaming.guard_timeout must be a duration such as 2s: %w", err)
-	}
-	if d < minStreamingGuardTimeout || d > maxStreamingGuardTimeout {
-		return fmt.Errorf(
-			"trustguard: streaming.guard_timeout must be between %s and %s, got %s",
-			minStreamingGuardTimeout, maxStreamingGuardTimeout, d,
-		)
-	}
-	switch s.OnError {
-	case onErrorFailOpen, onErrorFailClosed:
-	default:
-		return fmt.Errorf("trustguard: streaming.on_error must be one of fail_open, fail_closed")
-	}
-	return nil
-}
-
-func (s StreamingSettings) enabled() bool {
-	return s.Enabled == nil || *s.Enabled
-}
-
-func (s StreamingSettings) guardTimeout() time.Duration {
-	d, err := time.ParseDuration(s.GuardTimeout)
-	if err != nil {
-		return defaultStreamingGuardTimeout
-	}
-	return d
-}
-
-func (s Settings) failClosedOnTransport() bool {
-	return s.OnError == onErrorFailClosed
-}
-
-func (s Settings) failClosedOnTimeout() bool {
-	return s.OnTimeout == onErrorFailClosed
-}
-
-// timeoutOr resolves the per-policy deadline, falling back to the
-// deployment-wide one the plugin was built with. validate has already rejected
-// anything unparseable, so a bad value here cannot silently widen the deadline.
-func (s Settings) timeoutOr(fallback time.Duration) time.Duration {
-	if s.Timeout == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(s.Timeout)
-	if err != nil {
-		return fallback
-	}
-	return d
+	return s.Streaming.Validate(PluginName)
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {
@@ -300,5 +119,16 @@ func (s Settings) selectsStage(stage policy.Stage) bool {
 			stage == policy.StagePostResponse
 	default:
 		return false
+	}
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+// on_timeout and timeout are the TrustGuard-specific failure and deadline keys: a failed call fails open and the deadline is the deployment-wide TRUSTGUARD_TIMEOUT.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError, "on_timeout", "timeout", pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
 	}
 }

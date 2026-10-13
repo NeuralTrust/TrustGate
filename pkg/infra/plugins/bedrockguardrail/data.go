@@ -20,29 +20,39 @@ import (
 )
 
 type Data struct {
-	GuardrailID    string `json:"guardrail_id,omitempty"`
-	Version        string `json:"version,omitempty"`
-	Region         string `json:"region,omitempty"`
-	Stage          string `json:"stage,omitempty"`
-	Mode           string `json:"mode,omitempty"`
-	Decision       string `json:"decision,omitempty"`
-	Policy         string `json:"policy,omitempty"`
-	MatchType      string `json:"type,omitempty"`
-	Action         string `json:"action,omitempty"`
-	Name           string `json:"name,omitempty"`
-	LatencyMS      int64  `json:"latency_ms,omitempty"`
+	GuardrailID string `json:"guardrail_id,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Region      string `json:"region,omitempty"`
+	Stage       string `json:"stage,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Decision    string `json:"decision,omitempty"`
+	Policy      string `json:"policy,omitempty"`
+	MatchType   string `json:"type,omitempty"`
+	Action      string `json:"action,omitempty"`
+	Name        string `json:"name,omitempty"`
+	LatencyMS   int64  `json:"latency_ms,omitempty"`
+	// ChunkCount is how many ApplyGuardrail calls the text was split into; it
+	// is set only when that is more than one.
+	ChunkCount     int    `json:"chunk_count,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
-	// FailureReason and FailureDetail are set on a failed_open (or
-	// failed_closed) decision, and on a streamed leg also whenever a block
-	// failed, whatever the final decision: FailureReason is one of
-	// appplugins.FailureReason (transport,
-	// verdict_incomplete, config_invalid, decode_failed). On verdict_incomplete
-	// FailureDetail names the policy assessments AWS returned that this plugin
-	// does not read (e.g. automated_reasoning_policy); it is empty when AWS
-	// intervened with no assessment at all.
+	// FailureReason and FailureDetail are set on a failed_open or failed_closed
+	// decision, on a blocked one whose mask could not be applied, and on a
+	// streamed leg also whenever a block failed, whatever the final decision:
+	// FailureReason is one of appplugins.FailureReason (transport,
+	// verdict_incomplete, config_invalid, decode_failed, input_too_large). On
+	// verdict_incomplete FailureDetail is the stable token of what was
+	// incomplete (intervention_unparsed, or the anonymize reason).
 	FailureReason string `json:"failure_reason,omitempty"`
 	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailurePolicies names the policy assessments AWS returned that this
+	// plugin does not read (e.g. automated_reasoning_policy) when it intervened
+	// with no finding to explain it (failure_detail intervention_unparsed). It
+	// is empty when AWS intervened with no assessment at all.
+	FailurePolicies string `json:"failure_policies,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
 	// Streaming is present only on a streamed response leg, written once when
 	// the stream closes.
 	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`

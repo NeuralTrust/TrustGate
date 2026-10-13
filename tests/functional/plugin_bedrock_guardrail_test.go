@@ -72,7 +72,7 @@ var bedrockPIIAnonymizeResponse = fmt.Sprintf(
 
 func bedrockGuardrailSettings(piiAction string) map[string]any {
 	return map[string]any{
-		"guardrail_id": "test-guardrail",
+		"guardrail_id": "testguardrail",
 		"version":      "DRAFT",
 		"pii_action":   piiAction,
 		"message":      "Request blocked by guardrail.",
@@ -129,6 +129,35 @@ func TestPluginE2E_BedrockGuardrail_Enforce(t *testing.T) {
 			string(raw),
 		)
 		assert.Equal(t, hitsBefore, up.Hits(), "a blocked request must not reach the upstream")
+	})
+
+	// The buffered ceiling is 10 chunks of 24,000 bytes sharing 4,096 bytes of
+	// overlap: 24,000 + 9*19,904 = 203,136 bytes, whatever the region.
+	const bedrockCeilingBytes = 24000 + 9*(24000-4096)
+	sentence := "an ordinary sentence about nothing. "
+
+	t.Run("a long prompt inside the chunk ceiling is screened in chunks and forwarded", func(t *testing.T) {
+		up := newJSONUpstream(t, "bedrock-long")
+		apiKey, path := setupPolicyRoute(t, up, bedrockGuardrailPolicy("block", "pre_request"))
+
+		prompt := strings.Repeat(sentence, 3000) // 108,000 bytes, 6 chunks
+		require.Less(t, len(prompt), bedrockCeilingBytes)
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, bedrockChatRequest(prompt)))
+		assert.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.Contains(t, string(raw), "bedrock-long")
+	})
+
+	t.Run("a prompt above the chunk ceiling is refused before the upstream", func(t *testing.T) {
+		up := newJSONUpstream(t, "bedrock-too-long")
+		apiKey, path := setupPolicyRoute(t, up, bedrockGuardrailPolicy("block", "pre_request"))
+
+		prompt := strings.Repeat(sentence, bedrockCeilingBytes/len(sentence)+100)
+		require.Greater(t, len(prompt), bedrockCeilingBytes)
+		hitsBefore := up.Hits()
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, bedrockChatRequest(prompt)))
+		assert.Equal(t, http.StatusForbidden, status, "body: %s", raw)
+		assert.Contains(t, string(raw), "guardrail_input_uninspectable")
+		assert.Equal(t, hitsBefore, up.Hits())
 	})
 
 	t.Run("PII anonymize rewrites the forwarded request body", func(t *testing.T) {

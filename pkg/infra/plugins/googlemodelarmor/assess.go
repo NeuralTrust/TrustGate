@@ -14,18 +14,30 @@
 
 package googlemodelarmor
 
+import appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+
 const (
 	matchStateMatchFound    = "MATCH_FOUND"
 	invocationResultFailure = "FAILURE"
+	// invocationResultPartial is Model Armor saying it ran only some of the
+	// filters of the template. It blocks only through a skipped filter selected
+	// in block_on (unevaluatedFilter); with every block_on filter run it is
+	// recorded and fails open.
+	invocationResultPartial = "PARTIAL"
 	executionStateSuccess   = "EXECUTION_SUCCESS"
+	executionStateSkipped   = "EXECUTION_SKIPPED"
 )
 
 // Reasons a filter selected in block_on produced no verdict. They are recorded
 // on the event so an operator can tell a template that never enabled a filter
 // (fix it in Google Cloud) from one whose filter failed on this call.
 const (
-	reasonFilterNotInTemplate = "filter_not_in_template"
-	reasonFilterNotExecuted   = "filter_not_executed"
+	reasonFilterNotInTemplate = appplugins.DetailFilterNotInTemplate
+	reasonFilterNotExecuted   = appplugins.DetailFilterNotExecuted
+	// reasonFilterStateUnspecified is a filter whose executionState is neither
+	// success nor a skip (EXECUTION_STATE_UNSPECIFIED, or a state Google adds):
+	// nothing says the content caused it, so it is availability.
+	reasonFilterStateUnspecified = appplugins.DetailFilterStateUnspecified
 )
 
 // unevaluatedFilter names the first filter selected in block_on that produced
@@ -41,7 +53,17 @@ const (
 //   - it is absent from filterResults, which is what a template that never
 //     enabled it returns. block_on defaults to every filter, so without this a
 //     template enabling one filter would silently pass the other four.
-//   - it is present with an executionState other than EXECUTION_SUCCESS.
+//   - it is present with an executionState other than EXECUTION_SUCCESS. Only
+//     EXECUTION_SKIPPED ("Detection skipped as token limit exceeded." above the
+//     filter's token limit) is the content, not the template, keeping it from
+//     running; any other state (EXECUTION_STATE_UNSPECIFIED) is Model Armor's
+//     own and is reported as filter_state_unspecified.
+//
+// The three are told apart because they are not the same kind of failure: a
+// skipped filter is the content's and is refused in a mode that blocks, while a
+// filter the template never enabled is the customer's configuration and fails
+// open. When both occur the skipped one is named, since it is the one a request
+// can cause.
 //
 // An empty executionState on a present filter is treated as success: the
 // field is absent on older filter versions, and inventing a failure from
@@ -50,49 +72,115 @@ func unevaluatedFilter(result *SanitizationResult, on map[string]bool) (filter, 
 	if result == nil {
 		return "", ""
 	}
-	failed := func(state string) bool { return state != "" && state != executionStateSuccess }
 	fr := result.FilterResults
 
+	var rai, pi, uris, csam *string
+	if fr.RAI != nil && fr.RAI.RaiFilterResult != nil {
+		rai = &fr.RAI.RaiFilterResult.ExecutionState
+	}
+	if fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil {
+		pi = &fr.PIAndJailbreak.PiAndJailbreakFilterResult.ExecutionState
+	}
+	if fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil {
+		uris = &fr.MaliciousURIs.MaliciousURIFilterResult.ExecutionState
+	}
+	if fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil {
+		csam = &fr.CSAM.CSAMFilterFilterResult.ExecutionState
+	}
 	checks := []struct {
 		name    string
 		present bool
-		failed  bool
+		state   string
 	}{
-		{filterSDP, result.sdp() != nil, sdpFailed(result.sdp(), failed)},
-		{filterRAI, fr.RAI != nil && fr.RAI.RaiFilterResult != nil,
-			fr.RAI != nil && fr.RAI.RaiFilterResult != nil && failed(fr.RAI.RaiFilterResult.ExecutionState)},
-		{filterPIAndJailbreak, fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil,
-			fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil &&
-				failed(fr.PIAndJailbreak.PiAndJailbreakFilterResult.ExecutionState)},
-		{filterMaliciousURIs, fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil,
-			fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil &&
-				failed(fr.MaliciousURIs.MaliciousURIFilterResult.ExecutionState)},
-		{filterCSAM, fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil,
-			fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil && failed(fr.CSAM.CSAMFilterFilterResult.ExecutionState)},
+		{filterSDP, result.sdp() != nil, sdpState(result.sdp())},
+		{filterRAI, rai != nil, stateOf(rai)},
+		{filterPIAndJailbreak, pi != nil, stateOf(pi)},
+		{filterMaliciousURIs, uris != nil, stateOf(uris)},
+		{filterCSAM, csam != nil, stateOf(csam)},
 	}
+	missing, unspecified := "", ""
 	for _, c := range checks {
 		if !on[c.name] {
 			continue
 		}
-		if !c.present {
-			return c.name, reasonFilterNotInTemplate
-		}
-		if c.failed {
+		switch {
+		case !c.present:
+			if missing == "" {
+				missing = c.name
+			}
+		case c.state == executionStateSkipped:
 			return c.name, reasonFilterNotExecuted
+		case c.state != "" && unspecified == "":
+			unspecified = c.name
 		}
+	}
+	if unspecified != "" {
+		return unspecified, reasonFilterStateUnspecified
+	}
+	if missing != "" {
+		return missing, reasonFilterNotInTemplate
 	}
 	return "", ""
 }
 
-// sdpFailed reports whether any branch the SDP filter answered with — inspect,
-// de-identify or redact — says it did not run.
-func sdpFailed(sdp *SDPResult, failed func(string) bool) bool {
-	if sdp == nil {
-		return false
+func stateOf(state *string) string {
+	if state == nil {
+		return ""
 	}
-	return (sdp.DeidentifyResult != nil && failed(sdp.DeidentifyResult.ExecutionState)) ||
-		(sdp.InspectResult != nil && failed(sdp.InspectResult.ExecutionState)) ||
-		(sdp.RedactResult != nil && failed(sdp.RedactResult.ExecutionState))
+	return unsuccessfulState(*state)
+}
+
+// unsuccessfulState is the executionState of a present filter when it is not
+// success, and "" when it succeeded. An empty state on a present filter is
+// treated as success: the field is absent on older filter versions, and
+// inventing a failure from silence would fail every call against them.
+func unsuccessfulState(state string) string {
+	if state == executionStateSuccess {
+		return ""
+	}
+	return state
+}
+
+// sdpState is the unsuccessful executionState of the SDP filter, across the
+// branches it answered with (inspect, de-identify or redact), or "" when every
+// branch ran. A skip outranks any other state.
+func sdpState(sdp *SDPResult) string {
+	if sdp == nil {
+		return ""
+	}
+	state := ""
+	for _, branch := range []string{
+		deidentifyState(sdp), inspectState(sdp), redactState(sdp),
+	} {
+		if branch == executionStateSkipped {
+			return branch
+		}
+		if branch != "" && state == "" {
+			state = branch
+		}
+	}
+	return state
+}
+
+func deidentifyState(sdp *SDPResult) string {
+	if sdp.DeidentifyResult == nil {
+		return ""
+	}
+	return unsuccessfulState(sdp.DeidentifyResult.ExecutionState)
+}
+
+func inspectState(sdp *SDPResult) string {
+	if sdp.InspectResult == nil {
+		return ""
+	}
+	return unsuccessfulState(sdp.InspectResult.ExecutionState)
+}
+
+func redactState(sdp *SDPResult) string {
+	if sdp.RedactResult == nil {
+		return ""
+	}
+	return unsuccessfulState(sdp.RedactResult.ExecutionState)
 }
 
 // finding names the single filter that decided the outcome, plus the SDP

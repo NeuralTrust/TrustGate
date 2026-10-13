@@ -135,16 +135,15 @@ func TestNativeBedrock_ARewriteByAPluginThatDoesNotMaskIsRefused(t *testing.T) {
 	})
 }
 
-func TestNativeBedrock_AMaskIsRecordedWithWhatThePolicyAsksForOnFailure(t *testing.T) {
+func TestNativeBedrock_AMaskIsRecordedWhateverAStoredOnMaskFailureSays(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
 		settings map[string]any
-		want     infracontext.MaskFailure
 	}{
-		"nothing set":   {nil, MaskFailurePass},
-		"pass":          {map[string]any{SettingOnMaskFailure: "pass"}, MaskFailurePass},
-		"block":         {map[string]any{SettingOnMaskFailure: "block"}, MaskFailureBlock},
-		"unknown value": {map[string]any{SettingOnMaskFailure: "explode"}, MaskFailurePass},
+		"nothing set":   {nil},
+		"pass":          {map[string]any{"on_mask_failure": "pass"}},
+		"block":         {map[string]any{"on_mask_failure": "block"}},
+		"unknown value": {map[string]any{"on_mask_failure": "explode"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -153,7 +152,7 @@ func TestNativeBedrock_AMaskIsRecordedWithWhatThePolicyAsksForOnFailure(t *testi
 			req := nativeRequest(`{"secret":true}`)
 			_, _, err := runNative(t, policy.StagePreRequest, req, &infracontext.ResponseContext{}, p, tc.settings, policy.ModeEnforce)
 			require.NoError(t, err)
-			require.Equal(t, []infracontext.NativeMaskSource{{Plugin: "regex_replace", Stage: policy.StagePreRequest, OnFailure: tc.want}},
+			require.Equal(t, []infracontext.NativeMaskSource{{Plugin: "regex_replace", Stage: policy.StagePreRequest}},
 				req.NativeMask.Sources(policy.StagePreRequest))
 			assert.Equal(t, `{"masked":true}`, string(req.Body), "the executor applies the plugin's body: the forwarder carries it onto the original")
 		})
@@ -169,9 +168,9 @@ func TestNativeBedrock_TheResponseLegIsClassifiedTheSame(t *testing.T) {
 
 	maskPlugin := &nativeFake{fakePlugin: fakePlugin{name: "trustguard", stages: []policy.Stage{policy.StagePreResponse}, result: mask}, behavior: BedrockNativeMasks}
 	req := nativeRequest(`{}`)
-	_, _, err := runNative(t, policy.StagePreResponse, req, resp(), maskPlugin, map[string]any{SettingOnMaskFailure: "block"}, policy.ModeEnforce)
+	_, _, err := runNative(t, policy.StagePreResponse, req, resp(), maskPlugin, nil, policy.ModeEnforce)
 	require.NoError(t, err)
-	assert.Equal(t, []infracontext.NativeMaskSource{{Plugin: "trustguard", Stage: policy.StagePreResponse, OnFailure: MaskFailureBlock}}, req.NativeMask.Sources(policy.StagePreResponse))
+	assert.Equal(t, []infracontext.NativeMaskSource{{Plugin: "trustguard", Stage: policy.StagePreResponse}}, req.NativeMask.Sources(policy.StagePreResponse))
 
 	other := &nativeFake{fakePlugin: fakePlugin{name: "tool_allowlist", stages: []policy.Stage{policy.StagePreResponse}, result: mask}, behavior: BedrockNativeRuns}
 	_, _, err = runNative(t, policy.StagePreResponse, nativeRequest(`{}`), resp(), other, nil, policy.ModeEnforce)
@@ -207,14 +206,14 @@ func TestNativeBedrock_StreamTransformsFollowTheSameRule(t *testing.T) {
 		require.NoError(t, err)
 		return out
 	}
-	t.Run("a mask is kept, with what the policy asks for on failure", func(t *testing.T) {
+	t.Run("a mask is kept, whatever a stored on_mask_failure says", func(t *testing.T) {
 		t.Parallel()
 		out := run(t, BedrockNativeMasks, nil)
 		assert.True(t, out.HasTransform)
-		assert.False(t, out.MaskFailureBlock)
-		out = run(t, BedrockNativeMasks, map[string]any{SettingOnMaskFailure: "block"})
+		assert.False(t, out.Block)
+		out = run(t, BedrockNativeMasks, map[string]any{"on_mask_failure": "block"})
 		assert.True(t, out.HasTransform)
-		assert.True(t, out.MaskFailureBlock)
+		assert.False(t, out.Block)
 	})
 	t.Run("a transform that is not a mask is a block", func(t *testing.T) {
 		t.Parallel()
@@ -232,36 +231,12 @@ type nativeStream struct {
 
 func (n *nativeStream) BedrockNative() BedrockNativeBehavior { return n.behavior }
 
-func TestValidateMaskFailure(t *testing.T) {
-	t.Parallel()
-	assert.NoError(t, ValidateMaskFailure(nil))
-	assert.NoError(t, ValidateMaskFailure(map[string]any{}))
-	assert.NoError(t, ValidateMaskFailure(map[string]any{SettingOnMaskFailure: "pass"}))
-	assert.NoError(t, ValidateMaskFailure(map[string]any{SettingOnMaskFailure: "block"}))
-	for _, bad := range []any{"explode", "", "BLOCK", 1, true, []string{"block"}} {
-		assert.Error(t, ValidateMaskFailure(map[string]any{SettingOnMaskFailure: bad}), "%v", bad)
-	}
-	field := MaskFailureField()
-	assert.Equal(t, SettingOnMaskFailure, field.Key)
-	assert.Equal(t, FieldTypeEnum, field.Type)
-	assert.Equal(t, string(MaskFailurePass), field.Default)
-	assert.Len(t, field.Enum, 2)
-}
-
-// Every plugin that masks gets the on_mask_failure check from the registry, so a
-// plugin that forgets it cannot accept a value the executor would then read as pass.
-func TestRegistry_ValidatesOnMaskFailureForMaskingPlugins(t *testing.T) {
+func TestRegistry_AcceptsAStoredOnMaskFailure(t *testing.T) {
 	t.Parallel()
 	masker := &nativeFake{fakePlugin: fakePlugin{name: "masker", stages: []policy.Stage{policy.StagePreRequest}}, behavior: BedrockNativeMasks}
-	runner := &nativeFake{fakePlugin: fakePlugin{name: "runner", stages: []policy.Stage{policy.StagePreRequest}}, behavior: BedrockNativeRuns}
-	reg := newRegistry(t, masker, runner)
+	reg := newRegistry(t, masker)
 
-	require.NoError(t, reg.Validate("masker", map[string]any{SettingOnMaskFailure: "block"}))
-	require.NoError(t, reg.Validate("masker", nil))
-	err := reg.Validate("masker", map[string]any{SettingOnMaskFailure: "Block"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), SettingOnMaskFailure)
-	assert.Contains(t, err.Error(), "masker")
-
-	assert.NoError(t, reg.Validate("runner", map[string]any{SettingOnMaskFailure: "Block"}), "the setting belongs to the plugins that mask")
+	for _, stored := range []any{"pass", "block", "Block", "explode", 1} {
+		assert.NoError(t, reg.Validate("masker", map[string]any{"on_mask_failure": stored}), "%v", stored)
+	}
 }

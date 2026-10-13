@@ -79,6 +79,14 @@ type StreamSegment struct {
 	// — how many calls it cost, how long it was held, how it ended — would
 	// count one response once per policy if every entry recorded it.
 	ReportsStream bool
+	// Part and Parts say which piece of a block this is when the executor
+	// screened one block in several calls: Part counts from 1 and Parts is how
+	// many the block was cut into. Both are zero for a block sent whole. The
+	// pieces of a block share Seq, which is the block's own position in the
+	// stream, and Part tells them apart; only the piece that reaches the end of
+	// the block carries Final, so an inspector never sees the end of the
+	// response twice.
+	Part, Parts int
 }
 
 // StreamReport is what one streamed response cost, as the component that held
@@ -105,15 +113,22 @@ type StreamReport struct {
 	AddedLatency    time.Duration
 	CutAtEval       int
 	CutOffsetChars  int
-	// CutOnFailure says the cut resolved a failed call as fail_closed. Its
-	// author is the entry whose call failed, not the maskers of that block,
-	// whose mask the guard never got to apply (RUN-1745 F6).
+	// CutOnFailure says the cut is a failure and not a finding: a failed call
+	// the guard resolved as fail_closed, or a Block verdict that carried an
+	// input-class failure (SegmentVerdict.Failure). Its author is the entry
+	// whose call failed, not the maskers of that block, whose mask the guard
+	// never got to apply (RUN-1745 F6). For the second kind the executor sets
+	// it on the author's own report, with that failure as FailureReason,
+	// FailureDetail and FailureClass.
 	CutOnFailure bool
 	// MaskedEvals counts the blocks on which this entry's enforced mask went
 	// into the one handed to the guard. Only the executor knows it, so it is
 	// zero on the guard's chain-wide report and set per entry. With no cut,
 	// the guard applied every one of them: it applies a mask or cuts.
 	MaskedEvals int
+	// ChunkedEvals counts the blocks that were larger than this entry's window
+	// and were screened in chunks of it. Only the executor knows it, per entry.
+	ChunkedEvals int
 	// FailedEvals counts the blocks on which this entry's own call failed and
 	// the held text was released (or the stream was cut) without its verdict.
 	// Like MaskedEvals only the executor knows it, so it is zero on the guard's
@@ -127,8 +142,10 @@ type StreamReport struct {
 	// failure whose error was not an ExternalStreamFailure. They are kept
 	// whatever the final decision was: a cut, a finding or a mask does not
 	// erase that an earlier block went uninspected.
-	FailureReason  FailureReason
-	FailureDetail  string
+	FailureReason FailureReason
+	FailureDetail string
+	// FailureClass is the class of that failure (ClassOf).
+	FailureClass   FailureClass
 	FinalPass      bool
 	DegradedReason string
 	FallbackReason string
@@ -176,13 +193,26 @@ type SegmentVerdict struct {
 	HasTransform bool
 	Transformed  string
 	Fingerprints []string
+	// Incomplete is the typed failure (ExternalStreamFailure) of a verdict that
+	// is usable but did not cover everything the policy asked for: a mask came
+	// back while another filter produced no verdict. The verdict is applied as
+	// any other, and the failure is kept as the entry's first one on the stream
+	// without counting as a failed call, so the entry is not retired for it.
+	Incomplete error
+	// Failure is set on a Block verdict that is a failure and not a finding:
+	// the guardrail could not inspect the content of the block (or could not
+	// apply the mask it asked for), and the stream is cut for that. The executor
+	// records it on the entry that authored the cut, as failed_closed, or as
+	// blocked plus degraded when it is a mask over a confirmed finding. Unlike
+	// an absorbed failure it does not count toward retiring the entry.
+	Failure *ExternalStreamFailure
 }
 
 // StreamOptions is the streaming configuration of the entry that opted in.
 // HeadChars and OnError live in the plugin's own settings schema, so they
 // travel with the opt-in rather than being re-read by a caller that cannot
-// parse them: an operator who sets streaming.on_error to fail_closed must not
-// silently get fail_open. The block-loop knobs travel the same way and for the
+// parse them: a rewriter that asks for fail_closed must not silently get
+// fail_open. The block-loop knobs travel the same way and for the
 // same reason: MinCharsBetweenEvals floors how often a block closes,
 // MaxHoldMS ceilings how long one may be held, and MaxAccumulatedBytes bounds
 // what a single call carries before the payload degrades to a tail window.
@@ -218,7 +248,7 @@ type StreamInspector interface {
 // stream-wide options. One stream carries one head gate, one cadence and one
 // failure direction, so whichever entry owns them decides how every other
 // participant's stream behaves. A local rewriter that owned them would flip a
-// third-party guardrail's chosen on_error and cadence just by sorting first.
+// third-party guardrail's on_error and cadence just by sorting first.
 //
 // An inspector that does not implement it owns its options.
 type StreamOptionsOwner interface {
@@ -252,10 +282,7 @@ type SegmentOutcome struct {
 	Message         string
 	HasTransform    bool
 	Transformed     string
-	// MaskFailureBlock says an entry whose transform is in this outcome asked, with
-	// on_mask_failure, for the stream to end when its mask cannot be applied.
-	MaskFailureBlock bool
-	Fingerprints     []StreamFinding
+	Fingerprints    []StreamFinding
 }
 
 // StreamFinding is one finding fingerprint and the chain entry that reported
@@ -286,6 +313,9 @@ type streamSpans struct {
 	cutBy    map[string][]string
 	failedBy map[string]string
 	masked   map[string]int
+	// chunkedEvals counts, per entry, the blocks that were larger than its window
+	// and were screened in chunks.
+	chunkedEvals map[string]int
 	// failed counts, per entry, the blocks on which its own call failed and
 	// the failure was not the caller's cancellation. It is per entry because
 	// the guard's DegradedReason is one value for the whole chain: it is copied
@@ -298,6 +328,10 @@ type streamSpans struct {
 	// tracked, so a typed one behind it is the first recorded.
 	failureReason map[string]FailureReason
 	failureDetail map[string]string
+	failureClass  map[string]FailureClass
+	// inputCut marks the streams whose cut is an input-class failure of its
+	// author, not a finding.
+	inputCut map[string]bool
 	// streak counts the consecutive absorbed failures of an entry and retired
 	// records the ones that reached streamEntryRetireAfter. A streak ends on a
 	// call that returns.
@@ -323,8 +357,12 @@ func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 		masked:   make(map[string]int),
 		failed:   make(map[string]int),
 
+		chunkedEvals: make(map[string]int),
+
 		failureReason: make(map[string]FailureReason),
 		failureDetail: make(map[string]string),
+		failureClass:  make(map[string]FailureClass),
+		inputCut:      make(map[string]bool),
 		streak:        make(map[string]int),
 		retired:       make(map[string]bool),
 	}
@@ -375,14 +413,26 @@ func (s *streamSpans) handedBack(key string) {
 
 // fail records that this entry's own call failed on a block and was absorbed,
 // and reports whether it was the first failure of the stream and whether it has
-// now reached the retirement streak.
-func (s *streamSpans) fail(key string) (first, retiredNow bool) {
+// now reached the retirement streak. A failure that depends on the content
+// (FailureClassInput) is counted as failed but never extends the streak: the
+// provider is healthy, and retiring the entry on content a client chose would
+// let it switch the inspection off by padding the stream. A throttle
+// (DetailThrottled) is the provider's quota, which concurrent traffic can
+// exhaust, so it never extends the streak either.
+func (s *streamSpans) fail(key string, err error) (first, retiredNow bool) {
 	if s == nil {
 		return false, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failed[key]++
+	var failure *ExternalStreamFailure
+	if errors.As(err, &failure) && failure.Class == FailureClassInput {
+		return s.failed[key] == 1, false
+	}
+	if failure != nil && failure.Detail == DetailThrottled {
+		return s.failed[key] == 1, false
+	}
 	s.streak[key]++
 	if s.streak[key] >= streamEntryRetireAfter && !s.retired[key] {
 		s.retired[key] = true
@@ -410,12 +460,27 @@ func (s *streamSpans) noteFailure(key string, err error) {
 	}
 	s.failureReason[key] = failure.Reason
 	s.failureDetail[key] = failure.Detail
+	s.failureClass[key] = failure.Class
+}
+
+// noteCutFailure records the failure that authored a cut. Unlike noteFailure it
+// replaces an earlier one: the cut is what the entry's span is about, and an
+// earlier released block's failure must not be read as its cause.
+func (s *streamSpans) noteCutFailure(key string, failure *ExternalStreamFailure) {
+	if s == nil || failure == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failureReason[key] = failure.Reason
+	s.failureDetail[key] = failure.Detail
+	s.failureClass[key] = failure.Class
 }
 
 // closingFailure gives an entry whose closing segment itself failed the
 // decision its plugin could not write, so the span does not end with none.
-// failsOpen is the entry's own answer (observe, or streaming.on_error
-// fail_open): it records failed_open. Otherwise the stream's on_error decided
+// failsOpen is the entry's own answer (observe, or a stream
+// on_error of fail_open): it records failed_open. Otherwise the stream's on_error decided
 // for it, and the guard's answer is in the report it was handed: a cut it
 // resolved on this entry's failed call is failed_closed, anything else is a
 // release, so failed_open. The guard's on_error is not visible from here, so a
@@ -445,12 +510,15 @@ func (s *streamSpans) closingFailure(event *metrics.EventContext, key string, er
 		return
 	}
 	s.mu.Lock()
-	reason, detail := s.failureReason[key], s.failureDetail[key]
+	reason, detail, class := s.failureReason[key], s.failureDetail[key], s.failureClass[key]
 	s.mu.Unlock()
 	if reason == "" || event.HasExtras() {
 		return
 	}
 	extras := map[string]any{"decision": decision, "failure_reason": string(reason)}
+	if class != "" {
+		extras["failure_class"] = string(class)
+	}
 	if detail != "" {
 		extras["failure_detail"] = detail
 	}
@@ -518,6 +586,16 @@ func (s *streamSpans) charge(seg StreamSegment, entry chainEntry, d time.Duratio
 	s.spent[spanKey(seg, entry)] += d
 }
 
+// chunked counts one block that an entry screened in chunks.
+func (s *streamSpans) chunked(key string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chunkedEvals[key]++
+}
+
 // setCut records which entries author the cut on the segment just evaluated,
 // replacing whatever an earlier segment stored. The guard knows a stream was
 // cut but not by whom, and only the chain can tell: without this an
@@ -527,7 +605,9 @@ func (s *streamSpans) charge(seg StreamSegment, entry chainEntry, d time.Duratio
 // enforcing entry whose call failed on the segment, the author of the cut when
 // the guard resolves that failure as fail_closed. masks says the keys' masks
 // were handed to the guard, which counts them per entry (MaskedEvals).
-func (s *streamSpans) setCut(seg StreamSegment, keys []string, failed string, masks bool) {
+// inputCut says the block's cut is an input-class failure of its author, which
+// the author's closing report then carries as CutOnFailure.
+func (s *streamSpans) setCut(seg StreamSegment, keys []string, failed string, masks, inputCut bool) {
 	if s == nil {
 		return
 	}
@@ -537,6 +617,11 @@ func (s *streamSpans) setCut(seg StreamSegment, keys []string, failed string, ma
 		for _, key := range keys {
 			s.masked[key]++
 		}
+	}
+	if inputCut {
+		s.inputCut[seg.StreamID] = true
+	} else {
+		delete(s.inputCut, seg.StreamID)
 	}
 	if failed == "" {
 		delete(s.failedBy, seg.StreamID)
@@ -616,9 +701,11 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	key := spanKey(seg, entry)
 	report.GuardLatency = s.spent[key]
 	report.MaskedEvals = s.masked[key]
+	report.ChunkedEvals = s.chunkedEvals[key]
 	report.FailedEvals = s.failed[key]
 	report.FailureReason = s.failureReason[key]
 	report.FailureDetail = s.failureDetail[key]
+	report.FailureClass = s.failureClass[key]
 	if s.retired[key] && report.FallbackReason == "" {
 		report.FallbackReason = StreamFallbackEntryRetired
 	}
@@ -637,6 +724,9 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	// masked, observed, or failed open earlier) must not read it as its own.
 	if report.CutAtEval == 0 {
 		report.CutOnFailure = false
+	}
+	if report.CutAtEval > 0 && claimedByEntry && s.inputCut[seg.StreamID] {
+		report.CutOnFailure = true
 	}
 	return report
 }

@@ -37,14 +37,14 @@ func testDefaults() StreamingDefaults {
 func validSettings() StreamingSettings {
 	on := true
 	s := StreamingSettings{Enabled: &on}
-	s.ApplyDefaults(testDefaults(), StreamOnErrorFailOpen)
+	s.ApplyDefaults(testDefaults())
 	return s
 }
 
 func TestApplyDefaultsFillsAbsentKeys(t *testing.T) {
 	t.Parallel()
 	var s StreamingSettings
-	s.ApplyDefaults(testDefaults(), StreamOnErrorFailClosed)
+	s.ApplyDefaults(testDefaults())
 
 	if s.HeadChars != 400 {
 		t.Errorf("HeadChars = %d, want 400", s.HeadChars)
@@ -58,12 +58,6 @@ func TestApplyDefaultsFillsAbsentKeys(t *testing.T) {
 	if s.MaxAccumulatedBytes != 262144 {
 		t.Errorf("MaxAccumulatedBytes = %d, want 262144", s.MaxAccumulatedBytes)
 	}
-	if s.GuardTimeout != "2s" {
-		t.Errorf("GuardTimeout = %q, want %q", s.GuardTimeout, "2s")
-	}
-	if s.OnError != StreamOnErrorFailClosed {
-		t.Errorf("OnError = %q, want inherited %q", s.OnError, StreamOnErrorFailClosed)
-	}
 }
 
 func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
@@ -73,20 +67,12 @@ func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
 		MinCharsBetweenEvals: 300,
 		MaxHoldMS:            60,
 		MaxAccumulatedBytes:  8192,
-		GuardTimeout:         "  1500ms  ",
-		OnError:              StreamOnErrorFailClosed,
 	}
-	s.ApplyDefaults(testDefaults(), StreamOnErrorFailOpen)
+	s.ApplyDefaults(testDefaults())
 
 	if s.HeadChars != 10 || s.MinCharsBetweenEvals != 300 || s.MaxHoldMS != 60 ||
 		s.MaxAccumulatedBytes != 8192 {
 		t.Fatalf("defaults overwrote explicit numbers: %+v", s)
-	}
-	if s.GuardTimeout != "1500ms" {
-		t.Errorf("GuardTimeout = %q, want the trimmed explicit value", s.GuardTimeout)
-	}
-	if s.OnError != StreamOnErrorFailClosed {
-		t.Errorf("OnError = %q, want the explicit value to survive inheritance", s.OnError)
 	}
 }
 
@@ -146,7 +132,7 @@ func TestStoredFinalPassStillDecodes(t *testing.T) {
 			t.Errorf("final_pass %v: a stored policy must keep loading, got %v", v, err)
 			continue
 		}
-		cfg.Streaming.ApplyDefaults(testDefaults(), StreamOnErrorFailOpen)
+		cfg.Streaming.ApplyDefaults(testDefaults())
 		if err := cfg.Streaming.Validate("acme"); err != nil {
 			t.Errorf("final_pass %v: a stored policy must keep validating, got %v", v, err)
 		}
@@ -175,10 +161,6 @@ func TestValidateRejectsOutOfBounds(t *testing.T) {
 		{"max_hold above max", func(s *StreamingSettings) { s.MaxHoldMS = 5001 }, "streaming.max_hold_ms"},
 		{"accumulated below min", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 4095 }, "streaming.max_accumulated_bytes"},
 		{"accumulated above max", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 1048577 }, "streaming.max_accumulated_bytes"},
-		{"timeout below min", func(s *StreamingSettings) { s.GuardTimeout = "249ms" }, "streaming.guard_timeout"},
-		{"timeout above max", func(s *StreamingSettings) { s.GuardTimeout = "11s" }, "streaming.guard_timeout"},
-		{"timeout unparseable", func(s *StreamingSettings) { s.GuardTimeout = "soon" }, "streaming.guard_timeout"},
-		{"unknown on_error", func(s *StreamingSettings) { s.OnError = "fail_sideways" }, "streaming.on_error"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -213,9 +195,6 @@ func TestValidateAcceptsBoundaries(t *testing.T) {
 		{"max_hold at max", func(s *StreamingSettings) { s.MaxHoldMS = 5000 }},
 		{"accumulated at min", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 4096 }},
 		{"accumulated at max", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 1048576 }},
-		{"timeout at min", func(s *StreamingSettings) { s.GuardTimeout = "250ms" }},
-		{"timeout at max", func(s *StreamingSettings) { s.GuardTimeout = "10s" }},
-		{"on_error fail_closed", func(s *StreamingSettings) { s.OnError = StreamOnErrorFailClosed }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,31 +208,6 @@ func TestValidateAcceptsBoundaries(t *testing.T) {
 	}
 }
 
-func TestTimeoutFallsBackOnUnparseableValue(t *testing.T) {
-	t.Parallel()
-	s := StreamingSettings{GuardTimeout: "3s"}
-	if got := s.Timeout(time.Second); got != 3*time.Second {
-		t.Errorf("Timeout() = %s, want 3s", got)
-	}
-	s.GuardTimeout = "whenever"
-	if got := s.Timeout(time.Second); got != time.Second {
-		t.Errorf("Timeout() = %s, want the fallback 1s", got)
-	}
-}
-
-func TestFailClosed(t *testing.T) {
-	t.Parallel()
-	if (StreamingSettings{OnError: StreamOnErrorFailClosed}).FailClosed() != true {
-		t.Error("fail_closed must report FailClosed")
-	}
-	if (StreamingSettings{OnError: StreamOnErrorFailOpen}).FailClosed() != false {
-		t.Error("fail_open must not report FailClosed")
-	}
-	if (StreamingSettings{}).FailClosed() != false {
-		t.Error("an unset on_error must not report FailClosed")
-	}
-}
-
 func TestOptionsCarriesEveryKnob(t *testing.T) {
 	t.Parallel()
 	s := StreamingSettings{
@@ -261,7 +215,6 @@ func TestOptionsCarriesEveryKnob(t *testing.T) {
 		MinCharsBetweenEvals: 22,
 		MaxHoldMS:            33,
 		MaxAccumulatedBytes:  44,
-		OnError:              StreamOnErrorFailClosed,
 	}
 	got := s.Options()
 	if got.HeadChars != 11 {
@@ -276,8 +229,8 @@ func TestOptionsCarriesEveryKnob(t *testing.T) {
 	if got.MaxAccumulatedBytes != 44 {
 		t.Errorf("MaxAccumulatedBytes = %d, want 44", got.MaxAccumulatedBytes)
 	}
-	if got.OnError != StreamOnErrorFailClosed {
-		t.Errorf("OnError = %q, want %q", got.OnError, StreamOnErrorFailClosed)
+	if got.OnError != StreamOnErrorFailOpen {
+		t.Errorf("OnError = %q, want %q: a failed inspection call is released", got.OnError, StreamOnErrorFailOpen)
 	}
 }
 
@@ -432,7 +385,7 @@ type hostSettings struct {
 	Streaming StreamingSettings `mapstructure:"streaming"`
 }
 
-func TestStreamingDecodesFromASettingsMap(t *testing.T) {
+func TestStreamingDecodesFromASettingsMapAndIgnoresTheRemovedKeys(t *testing.T) {
 	t.Parallel()
 	cfg, err := Parse[hostSettings](map[string]any{
 		"streaming": map[string]any{
@@ -442,7 +395,7 @@ func TestStreamingDecodesFromASettingsMap(t *testing.T) {
 			"max_hold_ms":             300,
 			"max_accumulated_bytes":   8192,
 			"final_pass":              false,
-			"guard_timeout":           "5s",
+			"guard_timeout":           "1ms",
 			"on_error":                StreamOnErrorFailClosed,
 		},
 	})
@@ -457,11 +410,12 @@ func TestStreamingDecodesFromASettingsMap(t *testing.T) {
 		s.MaxAccumulatedBytes != 8192 {
 		t.Errorf("numeric keys did not decode: %+v", s)
 	}
-	if s.GuardTimeout != "5s" || s.OnError != StreamOnErrorFailClosed {
-		t.Errorf("string keys did not decode: %+v", s)
-	}
+	s.ApplyDefaults(testDefaults())
 	if err := s.Validate("acme"); err != nil {
-		t.Fatalf("decoded settings must validate, got %v", err)
+		t.Fatalf("a stored guard_timeout or on_error must not reject the settings, got %v", err)
+	}
+	if got := s.Options().OnError; got != StreamOnErrorFailOpen {
+		t.Errorf("a stored on_error: fail_closed gave OnError = %q, want fail_open", got)
 	}
 }
 
@@ -474,7 +428,7 @@ func TestAbsentStreamingBlockIsDisabled(t *testing.T) {
 	if cfg.Streaming.Enabled != nil {
 		t.Error("an absent streaming block must decode to an absent enabled key")
 	}
-	cfg.Streaming.ApplyDefaults(testDefaults(), StreamOnErrorFailClosed)
+	cfg.Streaming.ApplyDefaults(testDefaults())
 	if cfg.Streaming.IsEnabled() {
 		t.Error("a plugin that does not default streaming on must not enable per-block inspection for an absent key")
 	}
@@ -502,7 +456,7 @@ func TestIsEnabledResolvesAbsentKeyFromPluginDefault(t *testing.T) {
 			s := StreamingSettings{Enabled: tc.enabled}
 			d := testDefaults()
 			d.EnabledByDefault = tc.defaultOn
-			s.ApplyDefaults(d, StreamOnErrorFailClosed)
+			s.ApplyDefaults(d)
 			if got := s.IsEnabled(); got != tc.want {
 				t.Errorf("IsEnabled() = %v, want %v", got, tc.want)
 			}
@@ -528,7 +482,7 @@ func TestIsEnabledFromDecodedSettings(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: decode: %v", name, err)
 		}
-		cfg.Streaming.ApplyDefaults(d, StreamOnErrorFailClosed)
+		cfg.Streaming.ApplyDefaults(d)
 		if got := cfg.Streaming.IsEnabled(); got != tc.want {
 			t.Errorf("%s: IsEnabled() = %v, want %v", name, got, tc.want)
 		}
@@ -561,27 +515,30 @@ func TestStreamFailedOpen(t *testing.T) {
 	}
 }
 
-// An unclaimed fail_closed cut (the guard's tool-inspection failure names no
-// entry) leaves CutOnFailure on every blocking entry; only the one whose own
-// call failed is failed_closed.
-func TestStreamFailedClosedRequiresTheEntrysOwnFailure(t *testing.T) {
+func TestOptionsWithinCapsTheWindowWhateverTheSettingAsks(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name   string
-		report appplugins.StreamReport
-		want   bool
-	}{
-		{"the author: cut on failure and its own call failed", appplugins.StreamReport{CutAtEval: 1, CutOnFailure: true, FailedEvals: 1}, true},
-		{"unclaimed cut, this entry never failed", appplugins.StreamReport{CutAtEval: 1, CutOnFailure: true}, false},
-		{"a block verdict", appplugins.StreamReport{CutAtEval: 1, FailedEvals: 1}, false},
-		{"no cut", appplugins.StreamReport{CutOnFailure: true, FailedEvals: 1}, false},
+	if got := (StreamingSettings{MaxAccumulatedBytes: 1 << 20}).OptionsWithin(32768).MaxAccumulatedBytes; got != 32768 {
+		t.Fatalf("window = %d, want the 32768 ceiling", got)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := StreamFailedClosed(tc.report); got != tc.want {
-				t.Errorf("StreamFailedClosed = %v, want %v", got, tc.want)
-			}
-		})
+	if got := (StreamingSettings{MaxAccumulatedBytes: 4096}).OptionsWithin(32768).MaxAccumulatedBytes; got != 4096 {
+		t.Fatalf("window = %d, want the smaller window the policy asked for", got)
+	}
+}
+
+func TestNewStreamDataCountsChunkedBlocksOnlyWhenThereWereAny(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(NewStreamData("id", appplugins.StreamReport{ChunkedEvals: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"chunked_blocks":2`) {
+		t.Fatalf("chunked_blocks missing from %s", raw)
+	}
+	raw, err = json.Marshal(NewStreamData("id", appplugins.StreamReport{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "chunked_blocks") {
+		t.Fatalf("chunked_blocks must be omitted when no block was chunked: %s", raw)
 	}
 }

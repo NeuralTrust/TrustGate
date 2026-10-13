@@ -43,16 +43,22 @@ const (
 // client sets stream: true is not a guardrail. A policy opts out with
 // streaming.enabled: false.
 //
-// MaxAccumulatedBytes stays at 256 KiB: OpenAI documents no input size limit
-// for the moderations endpoint, so there is nothing authoritative to fit to.
+// Each block sends at most maxStreamWindowBytes of the accumulated text. OpenAI
+// documents no input size limit for the moderations endpoint, so the window is
+// fitted to the deadline instead: the classifier's latency grows with the text,
+// and the 1.5 s a block waits is spent long before a quarter of a megabyte. It
+// stays above 30 blocks of the default cadence, so the text that straddles two
+// blocks is always inside the window.
 var streamingDefaults = pluginutil.StreamingDefaults{
 	EnabledByDefault:     true,
 	HeadChars:            400,
 	MinCharsBetweenEvals: 1024,
 	MaxHoldMS:            500,
-	MaxAccumulatedBytes:  262144,
+	MaxAccumulatedBytes:  maxStreamWindowBytes,
 	GuardTimeout:         1500 * time.Millisecond,
 }
+
+const maxStreamWindowBytes = 32768
 
 type Settings struct {
 	APIKey         string             `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential
@@ -62,10 +68,6 @@ type Settings struct {
 	Thresholds     map[string]float64 `mapstructure:"thresholds"`
 	BlockOnFlagged bool               `mapstructure:"block_on_flagged"`
 	Action         ActionSettings     `mapstructure:"action"`
-	// OnError decides what a request gets when the guardrail cannot give a
-	// verdict on its buffered leg: fail_open (the default) lets it through and
-	// records failed_open, fail_closed refuses it in a mode that blocks.
-	OnError string `mapstructure:"on_error"`
 	// Streaming tunes the per-block inspection of the pre_response leg. It is on
 	// when the block is absent; streaming.enabled: false opts out.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -95,26 +97,18 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 func (s *Settings) applyDefaults() {
-	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if s.Model == "" {
 		s.Model = defaultModel
 	}
 	if len(s.Stages) == 0 {
 		s.Stages = []string{stagePreRequest, stagePreResponse}
 	}
-	// The stream leg fails open by default whatever the buffered leg does: an
-	// endpoint outage must not cut a response the client is already reading.
-	// An explicit streaming.on_error: fail_closed is still honoured, and in the
-	// modes that do not block the executor never turns an error into a cut.
-	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailOpen)
+	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.APIKey) == "" {
 		return fmt.Errorf("openai_moderation: api_key is required")
-	}
-	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
-		return err
 	}
 	for _, stage := range s.Stages {
 		if stage != stagePreRequest && stage != stagePreResponse {
@@ -166,4 +160,14 @@ func (s Settings) unknownAgainstModel() (modelUnknown bool, thresholds, categori
 	}
 	sort.Strings(categories)
 	return false, thresholds, categories
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
+	}
 }

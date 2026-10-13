@@ -16,6 +16,7 @@ package bedrockguardrail
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -46,23 +47,42 @@ const (
 // block, and the trace marks it skipped with reason streaming_disabled.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
 //
-// Once a policy opts in, the stream leg fails open by default and
-// MaxAccumulatedBytes is 24 KiB because ApplyGuardrail caps the input per
-// policy at a number of text units (1 unit = up to 1000 characters) that
-// depends on region and tier, and the smallest default is 25 units
-// (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
-// tier). Bytes are never fewer than characters, so 24576 bytes fits in 25
-// units. Past it this policy is sent only the tail window, whatever window the
-// rest of the stream keeps. Regions with a larger quota can raise
-// streaming.max_accumulated_bytes.
+// Once a policy opts in, the stream leg fails open by default and the window
+// each evaluation sends is capped at maxStreamWindowBytes whatever
+// streaming.max_accumulated_bytes asks for. ApplyGuardrail caps the input per
+// policy type at a number of text units per second (1 unit = up to 1000
+// characters) that depends on region and tier, and the smallest default is 25
+// units (eu-south-1, eu-west-3, sa-east-1 and, for content filters, the classic
+// tier). Bytes are never fewer than characters, so a block of 8192 bytes is at
+// most 9 units: a little over a third of that quota. The headroom is the point:
+// every block resends its whole window, so concurrent streams, or traffic
+// aimed at the account, throttle it, and a throttled block is released
+// uninspected. A window the size of the whole quota (24 KiB) would let one block
+// use all 25 units; at 8192, two concurrent blocks still fit a second and a
+// retry after a throttle has quota to land in. The cost is that a topic or word
+// spread over more than the last 8 KiB of a response is judged on that tail
+// alone.
 // https://docs.aws.amazon.com/general/latest/gr/bedrock.html
+const maxStreamWindowBytes = 8192
+
 var streamingDefaults = pluginutil.StreamingDefaults{
 	HeadChars:            400,
 	MinCharsBetweenEvals: 2048,
 	MaxHoldMS:            800,
-	MaxAccumulatedBytes:  24576,
+	MaxAccumulatedBytes:  maxStreamWindowBytes,
 	GuardTimeout:         2 * time.Second,
 }
+
+// The shapes AWS accepts for the values the plugin sends on every call. A value
+// outside them is refused by the service as a ValidationException on every
+// request, which is a configuration error that must surface when the policy is
+// saved and not as a failing guardrail at run time.
+var (
+	guardrailIDPattern = regexp.MustCompile(`^([a-z0-9]+|arn:aws(-[^:]+)?:bedrock:[a-z0-9-]{1,20}:[0-9]{12}:guardrail/[a-z0-9]+)$`)
+	versionPattern     = regexp.MustCompile(`^([1-9][0-9]{0,7}|DRAFT)$`)
+	roleARNPattern     = regexp.MustCompile(`^arn:aws(-[a-z]+)*:iam::[0-9]{12}:role/[\w+=,.@/-]+$`)
+	sessionNamePattern = regexp.MustCompile(`^[\w+=,.@-]{2,64}$`)
+)
 
 type Credentials struct {
 	AWSRegion       string `mapstructure:"aws_region"`
@@ -80,10 +100,6 @@ type Settings struct {
 	PIIAction   string      `mapstructure:"pii_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
-	// OnError decides what a request gets when the guardrail cannot give a
-	// verdict on its buffered leg: fail_open (the default) lets it through and
-	// records failed_open, fail_closed refuses it in a mode that blocks.
-	OnError string `mapstructure:"on_error"`
 	// Streaming tunes the per-block inspection of the pre_response leg. It is off
 	// when the block is absent; streaming.enabled: true turns it on.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -108,25 +124,24 @@ func (s *Settings) applyDefaults() {
 	if s.PIIAction == "" {
 		s.PIIAction = piiActionBlock
 	}
-	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if s.Credentials.AWSRegion == "" {
 		s.Credentials.AWSRegion = defaultRegion
 	}
 	if s.Credentials.UseRole && s.Credentials.SessionName == "" {
 		s.Credentials.SessionName = defaultSessionName
 	}
-	// The stream leg fails open by default whatever the buffered leg does: a
-	// guardrail outage must not cut a response the client is already reading.
-	// An explicit streaming.on_error: fail_closed is still honoured.
-	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailOpen)
+	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.GuardrailID) == "" {
 		return fmt.Errorf("bedrock_guardrail: guardrail_id is required")
 	}
-	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
-		return err
+	if !guardrailIDPattern.MatchString(s.GuardrailID) {
+		return fmt.Errorf("bedrock_guardrail: guardrail_id must be a guardrail id (lowercase letters and digits) or a guardrail ARN")
+	}
+	if !versionPattern.MatchString(s.Version) {
+		return fmt.Errorf("bedrock_guardrail: version must be DRAFT or a guardrail version number")
 	}
 	switch s.PIIAction {
 	case piiActionBlock, piiActionAnonymize:
@@ -137,10 +152,26 @@ func (s *Settings) validate() error {
 		if strings.TrimSpace(s.Credentials.RoleARN) == "" {
 			return fmt.Errorf("bedrock_guardrail: role_arn is required when use_role is true")
 		}
+		if !roleARNPattern.MatchString(s.Credentials.RoleARN) {
+			return fmt.Errorf("bedrock_guardrail: role_arn must be an IAM role ARN")
+		}
+		if !sessionNamePattern.MatchString(s.Credentials.SessionName) {
+			return fmt.Errorf("bedrock_guardrail: session_name must be 2 to 64 characters from letters, digits and _+=,.@-")
+		}
 		return s.Streaming.Validate(PluginName)
 	}
 	if strings.TrimSpace(s.Credentials.AccessKeyID) == "" || strings.TrimSpace(s.Credentials.SecretAccessKey) == "" {
 		return fmt.Errorf("bedrock_guardrail: access_key_id and secret_access_key are required when use_role is false")
 	}
 	return s.Streaming.Validate(PluginName)
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError, pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
+	}
 }

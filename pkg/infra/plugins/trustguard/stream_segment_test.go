@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -220,8 +220,8 @@ func TestSegmentVerdicts(t *testing.T) {
 		})
 	}
 
-	// A mask this plugin cannot apply is a failure on our side, not a finding:
-	// it goes back for streaming.on_error to resolve instead of cutting.
+	// A mask this plugin cannot apply is reported as an error here; the caller
+	// resolves it by mode, cutting in a mode that blocks.
 	for name, tc := range map[string]struct {
 		seg  appplugins.StreamSegment
 		resp GuardResponse
@@ -460,9 +460,9 @@ func TestInspectSegmentDropsTheEnvelopeWithoutAnID(t *testing.T) {
 		"an empty id would correlate every stream in the process into one bucket")
 }
 
-// A 429 is the engine answering, and cuts whatever streaming.on_error says.
-// Rejected credentials and unavailable entitlements are failures of the guard
-// and follow streaming.on_error.
+// A 429 is the engine answering, and cuts. Rejected credentials and unavailable
+// entitlements are failures of the guard and fail open, whatever streaming.on_error
+// a stored policy still carries.
 func TestInspectSegmentSortsAnswersFromFailures(t *testing.T) {
 	t.Parallel()
 
@@ -470,7 +470,7 @@ func TestInspectSegmentSortsAnswersFromFailures(t *testing.T) {
 		t.Parallel()
 		g := &segmentGuard{status: http.StatusTooManyRequests}
 		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
-		set := streamingSettings(map[string]any{"on_error": onErrorFailOpen})
+		set := streamingSettings(map[string]any{"on_error": "fail_open"})
 		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
 		require.NoError(t, err)
@@ -488,26 +488,22 @@ func TestInspectSegmentSortsAnswersFromFailures(t *testing.T) {
 			t.Parallel()
 			g := &segmentGuard{status: status}
 			p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
-			set := streamingSettings(map[string]any{"on_error": onErrorFailOpen})
-			verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
-				appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
-			require.NoError(t, err)
-			require.NotNil(t, verdict)
-			assert.False(t, verdict.Block, "a failure of the guard is not a finding and must not cut")
-
-			set = streamingSettings(map[string]any{"on_error": onErrorFailClosed})
-			verdict, err = p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
-				appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
-			require.Error(t, err, "fail_closed goes back to the caller")
-			assert.Nil(t, verdict)
+			for _, stored := range []string{"fail_open", "fail_closed"} {
+				set := streamingSettings(map[string]any{"on_error": stored})
+				verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
+					appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+				require.NoError(t, err, stored)
+				require.NotNil(t, verdict, stored)
+				assert.False(t, verdict.Block, "a failure of the guard is not a finding and must not cut (%s)", stored)
+			}
 		})
 	}
 }
 
-func TestInspectSegmentTransportFailureFollowsStreamingOnError(t *testing.T) {
+func TestInspectSegmentTransportFailureFailsOpenWhateverIsStored(t *testing.T) {
 	t.Parallel()
 
-	for _, onError := range []string{onErrorFailOpen, onErrorFailClosed} {
+	for _, onError := range []string{"fail_open", "fail_closed"} {
 		t.Run(onError, func(t *testing.T) {
 			t.Parallel()
 			g := &segmentGuard{status: http.StatusInternalServerError}
@@ -515,12 +511,7 @@ func TestInspectSegmentTransportFailureFollowsStreamingOnError(t *testing.T) {
 			set := streamingSettings(map[string]any{"on_error": onError})
 			verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 				appplugins.StreamSegment{Seq: 2, Accumulated: "Hello world"})
-			if onError == onErrorFailClosed {
-				require.Error(t, err)
-				assert.Nil(t, verdict, "fail_closed goes back to the caller, which cuts")
-				return
-			}
-			require.NoError(t, err, "fail_open is resolved here, so the rest of the chain still inspects the block")
+			require.NoError(t, err, "a failure is resolved here, so the rest of the chain still inspects the block")
 			require.NotNil(t, verdict)
 			assert.False(t, verdict.Block)
 		})
@@ -537,16 +528,18 @@ func TestInspectSegmentPerBlockDeadline(t *testing.T) {
 	srv := newSegmentServer(t, g)
 	p := New(adapter.NewRegistry(), srv.URL, testClientTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)))
-	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "250ms", "on_error": onErrorFailClosed}))
+	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "1ms", "on_error": "fail_closed"}))
 	ctx := segmentTraceContext()
 
 	start := time.Now()
 	verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 1, Accumulated: "held text"})
 	elapsed := time.Since(start)
-	require.Error(t, err)
-	assert.Nil(t, verdict)
+	require.NoError(t, err, "a block that runs out of time fails open")
+	require.NotNil(t, verdict)
+	assert.False(t, verdict.Block)
+	assert.Greater(t, elapsed, 1500*time.Millisecond, "a stored guard_timeout of 1ms is ignored: the default 2s bound applies")
 	assert.Less(t, elapsed, 5*time.Second,
-		"a block is bounded by streaming.guard_timeout, never by TRUSTGUARD_TIMEOUT")
+		"a block is bounded by the default stream guard timeout, never by TRUSTGUARD_TIMEOUT")
 
 	verdict, err = p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 2, Accumulated: "held text and more"})
 	require.NoError(t, err, "each block gets its own deadline, so a slow block does not spend the next one's")
@@ -569,17 +562,18 @@ func TestInspectSegmentDeadlineCoversTheTokenFetch(t *testing.T) {
 	srv := newSegmentServer(t, g)
 	p := New(adapter.NewRegistry(), srv.URL, testClientTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)))
-	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "250ms", "on_error": onErrorFailClosed}))
+	in := segmentInput(t, streamingSettings(nil))
 
 	start := time.Now()
 	verdict, err := p.InspectSegment(segmentTraceContext(), in,
 		appplugins.StreamSegment{Seq: 1, Accumulated: "held text"})
 	elapsed := time.Since(start)
 
-	require.Error(t, err)
-	assert.Nil(t, verdict, "a token that did not arrive in time is a failure the caller resolves")
-	assert.Less(t, elapsed, 2*time.Second,
-		"the token leg is bounded by streaming.guard_timeout too, not by TRUSTGUARD_TIMEOUT")
+	require.NoError(t, err)
+	require.NotNil(t, verdict, "a token that did not arrive in time is a failure that fails open")
+	assert.False(t, verdict.Block)
+	assert.Less(t, elapsed, 4*time.Second,
+		"the token leg is bounded by the stream guard timeout too, not by TRUSTGUARD_TIMEOUT")
 	assert.Empty(t, g.calls(), "evaluate is never reached without a token")
 }
 
@@ -627,24 +621,23 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 
 	enabled, opts := p.StreamSettings(streamingSettings(map[string]any{
 		"head_chars": 1024,
-		"on_error":   onErrorFailClosed,
+		"on_error":   "fail_closed",
 	}))
 	assert.True(t, enabled)
 	assert.Equal(t, appplugins.StreamOptions{
 		HeadChars:            1024,
-		OnError:              onErrorFailClosed,
+		OnError:              "fail_open",
 		MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
 		MaxHoldMS:            defaultStreamingMaxHoldMS,
 		MaxAccumulatedBytes:  defaultStreamingMaxAccumulatedBytes,
 	}, opts, "the block-loop knobs travel with the opt-in, so the caller never runs on defaults it was not given")
 
-	inherited := streamingSettings(nil)
-	inherited["on_error"] = onErrorFailClosed
-	enabled, opts = p.StreamSettings(inherited)
+	stored := streamingSettings(nil)
+	stored["on_error"] = "fail_closed"
+	enabled, opts = p.StreamSettings(stored)
 	assert.True(t, enabled)
 	assert.Equal(t, defaultStreamingHeadChars, opts.HeadChars)
-	assert.Equal(t, onErrorFailClosed, opts.OnError,
-		"streaming.on_error inherits the policy on_error, and the caller must be given what it inherited")
+	assert.Equal(t, "fail_open", opts.OnError, "a stored on_error is ignored: the stream always fails open")
 
 	// RUN-1712: a policy that says nothing about streaming is on, with the
 	// defaults, because its direction already says it inspects the response.
@@ -802,61 +795,223 @@ func TestInspectSegmentObserveModeReportsNoCutItDidNotMake(t *testing.T) {
 		"the observing entry is charged its own share of the hold")
 }
 
-// RUN-1786: a fail_closed failure at the head is a refusal, so the stream guard
-// reports it as a cut by this entry (CutOnFailure). The policy's decision and the
-// outcome label of trustguard_stream_* are then blocked, and the cut is
-// attributed to this entry, not left to read as a fail-open failure.
-func TestHeadFailureUnderFailClosedIsReportedAsABlockByTheFailingEntry(t *testing.T) {
+func segmentInputIn(t *testing.T, mode policy.Mode) appplugins.ExecInput {
+	t.Helper()
+	return execInput(policy.StagePreResponse, mode, streamingSettings(nil), segmentRequest(), nil)
+}
+
+// A 413 is TrustGuard refusing the body for its size: the request's own content,
+// so a mode that blocks cuts the stream, carrying the failure the executor
+// records, while observe and every availability failure release the block.
+func TestInspectSegmentPayloadTooLargeByMode(t *testing.T) {
 	t.Parallel()
 
-	g := &segmentGuard{status: http.StatusInternalServerError}
-	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
-	reg := appplugins.NewRegistry()
-	require.NoError(t, reg.Register(p))
-	pol := &policy.Policy{
-		ID:       ids.New[ids.PolicyKind](),
-		Name:     PluginName,
-		Slug:     PluginName,
-		Enabled:  true,
-		Parallel: true,
-		Stages:   []policy.Stage{policy.StagePreResponse},
-		Mode:     policy.ModeEnforce,
-		Settings: streamingSettings(map[string]any{"on_error": onErrorFailClosed}),
-	}
-	rt := trace.New(testStreamTraceID, trace.Metadata{})
-	ctx, publish := appplugins.NewStreamSpanContext(trace.NewContext(context.Background(), rt))
-	in := appplugins.StageInput{
-		Stage:    policy.StagePreResponse,
-		Policies: []*policy.Policy{pol},
-		Request:  segmentRequest(),
-		Response: &infracontext.ResponseContext{},
-	}
-	runner, ok := appplugins.NewExecutor(reg, nil).(interface {
-		RunStreamSegment(context.Context, appplugins.StageInput, appplugins.StreamSegment) (*appplugins.SegmentOutcome, error)
+	t.Run("enforce cuts", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusRequestEntityTooLarge}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, verdict.Type)
+		require.NotNil(t, verdict.Failure)
+		assert.Equal(t, appplugins.FailureInputTooLarge, verdict.Failure.Reason)
+		assert.Equal(t, appplugins.DetailPayloadTooLarge, verdict.Failure.Detail)
+		assert.Equal(t, appplugins.FailureClassInput, verdict.Failure.Class)
 	})
-	require.True(t, ok)
+	t.Run("observe releases the block", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusRequestEntityTooLarge}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeObserve),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+		assert.Nil(t, verdict.Failure)
+	})
+	t.Run("an availability failure releases the block in enforce", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusInternalServerError}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+	})
+}
 
-	_, err := runner.RunStreamSegment(ctx, in, appplugins.StreamSegment{StreamID: "s-1", Seq: 1, Accumulated: "Hello world"})
-	require.Error(t, err, "fail_closed hands the head failure to the guard, which refuses with a 403")
+// A block above what one evaluate carries is refused before any call: a cut in a
+// mode that blocks, recorded and released in observe.
+func TestInspectSegmentABlockAboveTheWindowIsTheRequestsOwnSize(t *testing.T) {
+	t.Parallel()
+	big := strings.Repeat("a", 200<<10)
 
-	// What the guard publishes after refusing at the head.
-	report := appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}
-	_, err = runner.RunStreamSegment(ctx, in, appplugins.StreamSegment{StreamID: "s-1", Seq: 1, Closing: true, Report: report})
-	require.NoError(t, err)
-	publish()
+	t.Run("enforce cuts", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Text: big, Accumulated: big})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, verdict.Type)
+		require.NotNil(t, verdict.Failure)
+		assert.Equal(t, appplugins.FailureInputTooLarge, verdict.Failure.Reason)
+		assert.Equal(t, appplugins.DetailChunkLimit, verdict.Failure.Detail)
+		assert.Empty(t, g.calls(), "nothing is sent")
+	})
+	t.Run("observe records it and releases the block", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		event, span := newEvent()
+		in := execInputWithEvent(policy.StagePreResponse, policy.ModeObserve, streamingSettings(nil), segmentRequest(), nil, event)
+		ctx := segmentTraceContext()
 
-	var found bool
-	for _, span := range rt.Spans() {
-		if span.Name != PluginName {
-			continue
-		}
-		found = true
-		attrs := span.PluginAttrsCopy()
-		data, ok := attrs.Extras.(guardData)
-		require.True(t, ok, "extras = %T", attrs.Extras)
-		assert.Equal(t, "block", attrs.Decision)
-		assert.Equal(t, 1, data.Streaming.CutAtEval, "the cut is this entry's")
+		verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 1, Text: big, Accumulated: big})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+		assert.Empty(t, g.calls())
+
+		_, err = p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 2, Closing: true, Report: appplugins.StreamReport{Evals: 1}})
+		require.NoError(t, err)
+		data, ok := span.PluginAttrsCopy().Extras.(guardData)
+		require.True(t, ok)
+		assert.Equal(t, decisionFailedOpen, data.Decision)
+		assert.Equal(t, failureReasonStreamBlockTooLarge, data.FailureReason)
+		assert.Equal(t, "input", data.FailureClass)
+	})
+	t.Run("a block at the window is sent", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		at := strings.Repeat("a", maxStreamWindowBytes)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Text: at, Accumulated: at})
+		require.NoError(t, err)
+		assert.False(t, verdict.Block)
+		assert.Len(t, g.calls(), 1)
+	})
+}
+
+// A client padding a stream must not retire the inspection: an input failure
+// never extends the run that stops this policy calling TrustGuard, where the
+// same number of availability failures does.
+func TestInspectSegmentInputFailuresDoNotRetireTheStream(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		status      int
+		wantRetired bool
+	}{
+		"payload too large": {http.StatusRequestEntityTooLarge, false},
+		"server error":      {http.StatusInternalServerError, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			g := &segmentGuard{status: tc.status}
+			p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+			in := segmentInputIn(t, policy.ModeObserve)
+			ctx := segmentTraceContext()
+			for seq := 1; seq <= streamRetireAfter+2; seq++ {
+				_, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: seq, Accumulated: "Hello world"})
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.wantRetired, p.streamRetired(ctx, in, appplugins.StreamSegment{Seq: 1, Accumulated: "x"}))
+			if tc.wantRetired {
+				assert.Len(t, g.calls(), streamRetireAfter)
+			} else {
+				assert.Len(t, g.calls(), streamRetireAfter+2)
+			}
+		})
 	}
-	require.True(t, found)
-	assert.Equal(t, streamOutcomeBlocked, streamOutcomeLabel(report))
+}
+
+// A mask TrustGuard asked for that cannot be written into the stream is a mask
+// over a confirmed finding: a mode that blocks cuts with the finding's own block
+// and the failure that records it blocked and degraded; observe releases.
+func TestInspectSegmentUnappliableTransformCutsInEnforce(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enforce", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusTransform}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeEnforce),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, typeBlocked, verdict.Type)
+		assert.False(t, verdict.HasTransform)
+		require.NotNil(t, verdict.Failure)
+		assert.Equal(t, appplugins.DetailAnonymizeNoOutput, verdict.Failure.Detail)
+	})
+	t.Run("observe", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{response: GuardResponse{Status: statusTransform}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInputIn(t, policy.ModeObserve),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.False(t, verdict.Block)
+	})
+}
+
+// The closing write of a cut that is a failure: an input failure is failed_closed,
+// a mask over a finding stays blocked and degraded in the plugin's own words.
+func TestInspectSegmentClosingRecordsACutThatIsAFailure(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		report       appplugins.StreamReport
+		wantDecision string
+		wantReason   string
+		wantDegraded string
+	}{
+		"payload too large": {
+			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,
+				FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailPayloadTooLarge,
+				FailureClass: appplugins.FailureClassInput},
+			wantDecision: decisionFailedClosed, wantReason: failureReasonPayloadTooLarge,
+		},
+		"stream block too large": {
+			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,
+				FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailChunkLimit,
+				FailureClass: appplugins.FailureClassInput},
+			wantDecision: decisionFailedClosed, wantReason: failureReasonStreamBlockTooLarge,
+		},
+		"mask over a finding": {
+			report: appplugins.StreamReport{Evals: 2, CutAtEval: 2, CutOnFailure: true,
+				FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: appplugins.DetailAnonymizeNoOutput,
+				FailureClass: appplugins.FailureClassInput},
+			wantDecision: decisionBlocked, wantReason: failureReasonTransformFailed, wantDegraded: reasonTransformNoPayload,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p := newTestPlugin(t, adapter.NewRegistry(), "")
+			event, span := newEvent()
+			in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, streamingSettings(nil), segmentRequest(), nil, event)
+
+			_, err := p.InspectSegment(segmentTraceContext(), in, appplugins.StreamSegment{Seq: 2, Closing: true, Report: tc.report})
+			require.NoError(t, err)
+
+			data, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantDecision, data.Decision)
+			assert.Equal(t, tc.wantReason, data.FailureReason)
+			assert.Equal(t, "input", data.FailureClass)
+			assert.Equal(t, tc.wantDegraded != "", data.Degraded)
+			assert.Equal(t, tc.wantDegraded, data.DegradedReason)
+			assert.False(t, data.FailedOpen)
+		})
+	}
 }

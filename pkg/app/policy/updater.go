@@ -141,6 +141,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if in.Settings != nil {
 		existing.Settings = *in.Settings
 	}
+	// Whatever settings the policy ends up holding for this plugin, a key it
+	// ignores is not stored.
+	if in.Settings != nil || slugChanged {
+		existing.Settings = appplugins.StripRetiredSettings(u.registry, existing.Slug, existing.Settings)
+	}
 	if in.Stages != nil {
 		existing.Stages = *in.Stages
 	}

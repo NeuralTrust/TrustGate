@@ -465,26 +465,11 @@ func TestTrustGuardSchema(t *testing.T) {
 	assert.Equal(t, FieldTypeString, collectorID.Type)
 	assert.True(t, collectorID.Required)
 
-	// RUN-1670: on_error, on_timeout and timeout must stay in the catalogue
-	// schema so the console can render them. They exist in the plugin's own
-	// settings (pkg/infra/plugins/trustguard/config.go) regardless of whether
-	// the catalogue lists them, so a silent removal here would once again make
-	// them reachable only through a raw admin-API call.
-	onError, ok := fieldByKey(fields, "on_error")
-	require.True(t, ok, "trustguard schema must expose on_error so fail_closed is reachable from the console")
-	assert.Equal(t, FieldTypeEnum, onError.Type)
-	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onError.Enum))
-	assert.Equal(t, "fail_open", onError.Default)
-
-	onTimeout, ok := fieldByKey(fields, "on_timeout")
-	require.True(t, ok, "trustguard schema must expose on_timeout")
-	assert.Equal(t, FieldTypeEnum, onTimeout.Type)
-	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onTimeout.Enum))
-	assert.Equal(t, "fail_open", onTimeout.Default)
-
-	timeoutField, ok := fieldByKey(fields, "timeout")
-	require.True(t, ok, "trustguard schema must expose timeout")
-	assert.Equal(t, FieldTypeDuration, timeoutField.Type)
+	// A guardrail always fails open, so none of its failure controls is a setting.
+	for _, removed := range []string{"on_error", "on_timeout", "timeout", "on_mask_failure"} {
+		_, ok := fieldByKey(fields, removed)
+		assert.False(t, ok, "trustguard schema must not expose %s", removed)
+	}
 }
 
 func TestAzureContentSafetySchema(t *testing.T) {
@@ -817,4 +802,21 @@ func TestPromptCompressionSchema_ExposesNoFields(t *testing.T) {
 	require.True(t, ok)
 	assert.Empty(t, meta.schema.Fields, "prompt_compression must run on its defaults; a field here puts a Configuration tab back in the console")
 	assert.Contains(t, meta.description, "nothing to configure")
+}
+
+func TestGuardrailSchemasExposeNoFailureControls(t *testing.T) {
+	for _, slug := range []string{"trustguard", "bedrock_guardrail", "google_model_armor", "azure_content_safety", "openai_moderation", "regex_replace"} {
+		meta, ok := pluginCatalogMeta[slug]
+		require.True(t, ok, slug)
+		for _, removed := range []string{"on_error", "on_timeout", "on_mask_failure", "streaming.on_error", "streaming.guard_timeout"} {
+			_, ok := fieldByKey(meta.schema.Fields, removed)
+			assert.False(t, ok, "%s must not expose %s", slug, removed)
+		}
+		if slug != "regex_replace" {
+			assert.NotContains(t, meta.description, "fail_closed", slug)
+		}
+	}
+	for _, slug := range []string{"trustguard", "bedrock_guardrail", "google_model_armor", "azure_content_safety", "openai_moderation"} {
+		assert.Contains(t, pluginCatalogMeta[slug].description, "fail", slug)
+	}
 }

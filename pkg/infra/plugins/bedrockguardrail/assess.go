@@ -46,8 +46,11 @@ type finding struct {
 
 type assessmentResult struct {
 	intervened bool
-	block      *finding
-	anonymize  *finding
+	// partialCoverage is the guardrail reporting that it guarded fewer of the
+	// text's characters than the text has: the rest was never judged.
+	partialCoverage bool
+	block           *finding
+	anonymize       *finding
 }
 
 func buildApplyInput(cfg Settings, text string, source types.GuardrailContentSource) *bedrockruntime.ApplyGuardrailInput {
@@ -71,6 +74,7 @@ func inspect(output *bedrockruntime.ApplyGuardrailOutput, piiAction string) asse
 		return res
 	}
 	res.intervened = output.Action == types.GuardrailActionGuardrailIntervened
+	res.partialCoverage = partiallyCovered(output.GuardrailCoverage)
 	for i := range output.Assessments {
 		inspectTopic(output.Assessments[i].TopicPolicy, &res)
 	}
@@ -263,4 +267,24 @@ func inspectContextualGrounding(p *types.GuardrailContextualGroundingPolicyAsses
 			return
 		}
 	}
+}
+
+// partiallyCovered reports whether ApplyGuardrail guarded fewer text characters
+// than it was sent. An answer that reports no coverage is not partial: the
+// field is absent on answers that predate it. A total with no guarded count
+// means none of the text was guarded.
+func partiallyCovered(coverage *types.GuardrailCoverage) bool {
+	if coverage == nil || coverage.TextCharacters == nil || coverage.TextCharacters.Total == nil {
+		return false
+	}
+	text := coverage.TextCharacters
+	return *text.Total > 0 && aws.ToInt32(text.Guarded) < *text.Total
+}
+
+// judgedOnlyInPart reports whether the guardrail judged part of the text and
+// found nothing in that part. A finding is a verdict on the part that was
+// guarded and wins over the coverage gap; without one, what was not judged is
+// something a client can steer by padding.
+func (r assessmentResult) judgedOnlyInPart() bool {
+	return r.partialCoverage && r.block == nil
 }

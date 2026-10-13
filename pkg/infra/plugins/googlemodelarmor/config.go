@@ -81,9 +81,10 @@ type Credentials struct {
 // client sets stream: true is not a guardrail. A policy opts out with
 // streaming.enabled: false.
 //
-// MaxAccumulatedBytes is maxSanitizeBytes, below Model Armor's documented
-// screening limit of 65,536 tokens for the prompt injection, Responsible AI and
-// CSAM filters. Past it a filter answers EXECUTION_SKIPPED.
+// MaxAccumulatedBytes is maxSanitizeBytes, which together with the correlation
+// prompt stays within Model Armor's documented screening limit of 65,536 tokens
+// for the prompt injection, Responsible AI and CSAM filters. Past it a filter
+// answers EXECUTION_SKIPPED.
 // https://docs.cloud.google.com/model-armor/quotas
 var streamingDefaults = pluginutil.StreamingDefaults{
 	EnabledByDefault:     true,
@@ -94,15 +95,17 @@ var streamingDefaults = pluginutil.StreamingDefaults{
 	GuardTimeout:         2 * time.Second,
 }
 
-// maxSanitizeBytes caps the streaming window. Model Armor screens at most
-// 65,536 tokens and skips a filter above that, which this plugin counts as a
-// filter that did not run: a longer payload is a cut on fail_closed and a block
-// released uninspected on fail_open. About 262,144 characters of English fit in
-// 65,536 tokens, but code and most other languages take more tokens per byte; a
-// token covers at least one byte, so 64 KiB stays under the limit in any
-// language. The limit is Google's and cannot be raised. Only a block whose own
-// new text exceeds it is sent larger (segmentWithin).
-const maxSanitizeBytes = 65536
+// maxSanitizeBytes caps one sanitize call's text: the streaming window and a
+// buffered chunk. Model Armor screens at most 65,536 tokens and skips a filter
+// above that, which this plugin counts as a filter that did not run. The limit
+// is Google's and cannot be raised. About 262,144 characters of English fit in
+// 65,536 tokens, but code and most other languages take more tokens per byte,
+// and a token covers at least one byte (an assumption: Google does not document
+// it). The call also carries the correlation prompt of a response, at most
+// maxCorrelationPromptBytes (8 KiB), and counts against the same limit, so the
+// text is 65,536 minus that: 57,344 bytes. A stream block whose own new text
+// exceeds the window is split by the stream executor.
+const maxSanitizeBytes = 57344
 
 type Settings struct {
 	Project     string      `mapstructure:"project"`
@@ -112,10 +115,6 @@ type Settings struct {
 	SDPAction   string      `mapstructure:"sdp_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
-	// OnError decides what a request gets when the guardrail cannot give a
-	// verdict on its buffered leg: fail_open (the default) lets it through and
-	// records failed_open, fail_closed refuses it in a mode that blocks.
-	OnError string `mapstructure:"on_error"`
 	// Streaming tunes the per-block inspection of the pre_response leg. It is on
 	// when the block is absent; streaming.enabled: false opts out.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -134,17 +133,13 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 func (s *Settings) applyDefaults() {
-	s.OnError = pluginutil.DefaultOnError(s.OnError)
 	if len(s.BlockOn) == 0 {
 		s.BlockOn = append([]string(nil), allFilters...)
 	}
 	if s.SDPAction == "" {
 		s.SDPAction = sdpActionBlock
 	}
-	// The stream leg fails open by default whatever the buffered leg does: a
-	// Model Armor outage must not cut a response the client is already reading.
-	// An explicit streaming.on_error: fail_closed is still honoured.
-	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailOpen)
+	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
 var (
@@ -163,9 +158,6 @@ var (
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.Project) == "" {
 		return fmt.Errorf("google_model_armor: project is required")
-	}
-	if err := pluginutil.ValidateOnError(PluginName, s.OnError); err != nil {
-		return err
 	}
 	if strings.TrimSpace(s.Location) == "" {
 		return fmt.Errorf("google_model_armor: location is required")
@@ -222,4 +214,14 @@ func (s Settings) blockOnSet() map[string]bool {
 		set[f] = true
 	}
 	return set
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError, pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
+	}
 }

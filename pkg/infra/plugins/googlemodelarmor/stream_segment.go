@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -31,12 +32,18 @@ const streamIDSeparator = ":"
 
 const streamLegResponse = "response"
 
-// The buffered leg blocks when SDP asks to anonymise and returns nothing to
-// anonymise with, so the stream leg cuts for the same reason rather than
-// releasing text the policy ruled out.
+// The buffered leg refuses the call when SDP asks to anonymise and returns
+// nothing to anonymise with, so the stream leg cuts for the same reason rather
+// than releasing text the policy ruled out.
 const anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+
+// StreamGuardTimeout is the time one piece's call may take: the guard timeout the
+// call itself runs under, so the block's deadline and the slow-call threshold are
+// made of the same time.
+func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
 
 // StreamSettings reports whether these policy settings ask for per-block
 // sanitization of the response leg, and the options the block loop must run
@@ -51,9 +58,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 	if !cfg.Streaming.IsEnabled() {
 		return false, appplugins.StreamOptions{}
 	}
-	opts := cfg.Streaming.Options()
-	opts.MaxAccumulatedBytes = min(opts.MaxAccumulatedBytes, maxSanitizeBytes)
-	return true, opts
+	return true, cfg.Streaming.OptionsWithin(maxSanitizeBytes)
 }
 
 // InspectSegment sanitizes one closed block of a streamed response.
@@ -99,7 +104,7 @@ func (p *Plugin) InspectSegment(
 	// The deadline is enforced here because the caller is holding a client's
 	// bytes for the length of this call, and the knob is in this plugin's
 	// schema.
-	callCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.Timeout(streamingDefaults.GuardTimeout))
+	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
 	defer cancel()
 
 	result, err := cl.SanitizeModelResponse(
@@ -108,9 +113,10 @@ func (p *Plugin) InspectSegment(
 	)
 	if err != nil {
 		// Resolved by the guard, not here: only it knows whether the status is
-		// still uncommitted, which is what makes streaming.on_error a clean 403
-		// at the head and a terminator after it.
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+		// still uncommitted, which decides whether the held text is
+		// released; a guardrail that fails is always released.
+		reason, detail := pluginutil.FailureOfError(err)
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
 			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
 	}
 
@@ -121,13 +127,28 @@ func (p *Plugin) InspectSegment(
 
 	res := inspect(result, cfg)
 	// Same rule as the buffered leg: a block_on filter that produced no
-	// verdict is not a clean one. It goes to the guard as an error, so
-	// streaming.on_error decides, and a real match on another filter still
-	// wins because it is a verdict.
+	// verdict is not a clean one, and a real match on another filter still
+	// wins because it is a verdict. A filter that was skipped is the content's, so
+	// a mode that blocks cuts; an invocation that came back PARTIAL with every
+	// block_on filter run is recorded and released. A
+	// filter the template never enabled is the customer's configuration: it is
+	// released as a failed inspection, except for a usable mask in a blocking
+	// mode, where the de-identified text is already in hand and releasing the
+	// original would send the raw PII, so the mask is applied and the incomplete
+	// verdict rides along on it.
+	var incomplete error
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, f,
-				fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason))
+			cause := fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason)
+			_, usable := maskedText(result)
+			if usable && keepsMaskDespiteGap(res, in.Mode, reason) {
+				incomplete = appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, reason, cause)
+			} else {
+				return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reason, nil, cause)
+			}
+		} else if result.InvocationResult == invocationResultPartial {
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailInvocationPartial, nil,
+				fmt.Errorf("stream block %d: invocationResult PARTIAL", seg.Seq))
 		}
 	}
 	switch {
@@ -142,20 +163,22 @@ func (p *Plugin) InspectSegment(
 		masked, ok := maskedText(result)
 		if !ok {
 			// A backstop rather than a live path: inspectSDP only reports an
-			// anonymise once de-identified text came back, so the two cannot
-			// disagree today. If that classification ever loosens, releasing
-			// the unmasked prefix is the one outcome the policy ruled out.
-			return &appplugins.SegmentVerdict{
-				Block:        true,
-				Type:         typeModelArmorBlocked,
-				Message:      anonymizeDegradedMessage,
-				Fingerprints: findingFingerprints(in.Mode, res.anonymize),
-			}, nil
+			// anonymise once de-identified text came back. If that
+			// classification ever loosens, releasing the unmasked prefix is the
+			// one outcome the policy ruled out, so a mode that blocks cuts.
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
+				&appplugins.SegmentVerdict{
+					Type:         typeModelArmorBlocked,
+					Message:      anonymizeDegradedMessage,
+					Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+				},
+				fmt.Errorf("stream block %d: guardrail asked to anonymise and returned no masked text", seg.Seq))
 		}
 		return &appplugins.SegmentVerdict{
 			HasTransform: true,
 			Transformed:  masked,
 			Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+			Incomplete:   incomplete,
 		}, nil
 	default:
 		return segmentAllow(), nil
@@ -200,12 +223,8 @@ func (p *Plugin) recordStreamOutcome(
 		Streaming: stream,
 	}
 	switch {
-	// A cut that resolved this entry's own failed call as fail_closed is a
-	// failure, not a block: the guardrail gave no verdict.
-	case pluginutil.StreamFailedClosed(seg.Report):
-		data.Decision = appplugins.DecisionFailedClosed
 	case seg.Report.CutAtEval > 0:
-		data.Decision = decisionBlocked
+		data.Decision = pluginutil.StreamCutDecision(seg.Report, decisionBlocked)
 	case seg.Report.MaskedEvals > 0:
 		// With no cut the guard applied every mask, as the buffered leg does.
 		data.Decision = decisionAnonymized
@@ -224,6 +243,11 @@ func (p *Plugin) recordStreamOutcome(
 	// block went uninspected. Extras are replaced, so this one write is the
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
+	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
+	if appplugins.IsMaskOverFinding(data.FailureDetail) {
+		data.Degraded = true
+		data.DegradedReason = data.FailureDetail
+	}
 
 	// A stream span's wall clock is the whole drain, provider generation
 	// included, and the fold in pkg/app/metrics counts a pre_response span as

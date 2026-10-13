@@ -31,8 +31,8 @@ import (
 
 // ENG-1735: regex_replace now joins every response-target stream by default
 // with on_error fail_closed. It sorts before trustguard here, and must not
-// decide the stream-wide failure direction or cadence: trustguard's fail_open
-// default (RUN-1725) is what the operator configured for this stream.
+// decide the stream-wide failure direction or cadence: trustguard always fails
+// open.
 func TestForwarder_StreamGuardOptionsBelongToTheGuardNotTheRegexRewriter(t *testing.T) {
 	t.Parallel()
 	reg := appplugins.NewRegistry()

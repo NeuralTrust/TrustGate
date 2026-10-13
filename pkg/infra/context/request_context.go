@@ -69,23 +69,11 @@ func (t *BedrockNativeTarget) IsStream() bool {
 
 // NativeMaskSource is a policy whose change to a native Bedrock call is a mask:
 // the plugin declared it masks text, and the change is carried onto the bytes the
-// client sent. OnFailure is what the policy asks for when that cannot be done.
+// client sent.
 type NativeMaskSource struct {
-	Plugin    string
-	Stage     policy.Stage
-	OnFailure MaskFailure
+	Plugin string
+	Stage  policy.Stage
 }
-
-// MaskFailure is what a masking policy asks for when its mask cannot be carried
-// onto the bytes of a native call.
-type MaskFailure string
-
-const (
-	// MaskFailurePass lets the call through unmasked and records it as failed open.
-	MaskFailurePass MaskFailure = "pass"
-	// MaskFailureBlock refuses the call.
-	MaskFailureBlock MaskFailure = "block"
-)
 
 // NativeMaskLog collects the masks the plugins of a native call made, per stage.
 // A request context is copied for parallel plugins and the log is shared by every

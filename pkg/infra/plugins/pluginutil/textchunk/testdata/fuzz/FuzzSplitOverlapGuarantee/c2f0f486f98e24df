@@ -1,0 +1,5 @@
+go test fuzz v1
+string("00ö00000\x9f\x98\x8000000000000000000000000")
+byte('(')
+byte('\x05')
+bool(false)

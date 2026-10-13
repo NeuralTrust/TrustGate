@@ -138,7 +138,7 @@ func TestResponseToolCallArgumentsAreMasked(t *testing.T) {
 	})
 }
 
-func TestResponseToolCallEchoOfAnotherLengthIsNotApplied(t *testing.T) {
+func TestResponseToolCallEchoOfAnotherLengthBlocks(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi","tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_email","arguments":"{\"to\":\"` + toolResponseEmail + `\"}"}}]},"finish_reason":"tool_calls"}]}`)
 	f := &fakeGuard{response: GuardResponse{
@@ -148,15 +148,10 @@ func TestResponseToolCallEchoOfAnotherLengthIsNotApplied(t *testing.T) {
 	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 	event, span := newEvent()
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), &infracontext.ResponseContext{StatusCode: 200, Body: body}, event))
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Nil(t, res.Body)
-	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-	require.True(t, ok)
-	assert.True(t, extras.FailedOpen)
+	assertTransformBlocked(t, res, err, span, reasonTransformEncodeFailed)
 }
 
-func TestResponseToolCallsWithLegacyInputEchoAreNotApplied(t *testing.T) {
+func TestResponseToolCallsWithLegacyInputEchoBlock(t *testing.T) {
 	t.Parallel()
 	legacy := map[string]any{"input": "Writing to " + toolResponseMask}
 	openai := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"Writing to ` + toolResponseEmail + `","tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_email","arguments":"{\"to\":\"` + toolResponseEmail + `\"}"}}]},"finish_reason":"tool_calls"}]}`)
@@ -177,20 +172,12 @@ func TestResponseToolCallsWithLegacyInputEchoAreNotApplied(t *testing.T) {
 			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 			event, span := newEvent()
 			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), tc.req, &infracontext.ResponseContext{StatusCode: 200, Body: tc.body}, event))
-			require.NoError(t, err)
-			require.NotNil(t, res)
-			assert.Nil(t, res.Body, "a body that keeps the raw argument must not be returned as a transform")
-			assert.False(t, res.StopUpstream)
-			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-			require.True(t, ok)
-			assert.Equal(t, decisionFailedOpen, extras.Decision)
-			assert.True(t, extras.FailedOpen)
-			assert.True(t, extras.Degraded)
+			assertTransformBlocked(t, res, err, span, reasonTransformEncodeFailed)
 		})
 	}
 }
 
-func TestResponseToolCallEchoInAnotherOrderIsNotApplied(t *testing.T) {
+func TestResponseToolCallEchoInAnotherOrderBlocks(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi","tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_email","arguments":"{\"to\":\"` + toolResponseEmail + `\"}"}},{"id":"call_2","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"weather\"}"}}]},"finish_reason":"tool_calls"}]}`)
 	f := &fakeGuard{response: GuardResponse{
@@ -203,11 +190,5 @@ func TestResponseToolCallEchoInAnotherOrderIsNotApplied(t *testing.T) {
 	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 	event, span := newEvent()
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), &infracontext.ResponseContext{StatusCode: 200, Body: body}, event))
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Nil(t, res.Body, "arguments echoed for another call must not be written onto this one")
-	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-	require.True(t, ok)
-	assert.True(t, extras.FailedOpen)
-	assert.True(t, extras.Degraded)
+	assertTransformBlocked(t, res, err, span, reasonTransformEncodeFailed)
 }

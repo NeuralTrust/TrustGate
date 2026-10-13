@@ -114,7 +114,7 @@ func TestNativeStream_AnthropicInvokeMaskLandsInTheDeltasNotInMessageStart(t *te
 			got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
 			require.Nil(t, pe)
 			require.Len(t, got, len(frames))
-			assert.Empty(t, streamFailedOpenEntries(rt))
+			assert.Empty(t, streamMaskBlockedEntries(rt))
 			assert.Equal(t, frames[0], got[0], "message_start is released byte for byte")
 			released := textDeltas(t, got)
 			assert.Contains(t, released, "[MASKED_EMAIL]")
@@ -126,17 +126,18 @@ func TestNativeStream_AnthropicInvokeMaskLandsInTheDeltasNotInMessageStart(t *te
 }
 
 // A frame can carry text a delta did not write, and a match that runs from it
-// into a delta has no honest place to land: the mask fails open, flagged,
-// rather than empty the deltas.
-func TestNativeStream_MaskSpanningPlumbingTextFailsOpen(t *testing.T) {
+// into a delta has no honest place to land: the stream ends, flagged, rather than
+// empty the deltas or release the text the policy asked to mask.
+func TestNativeStream_MaskSpanningPlumbingTextEndsTheStream(t *testing.T) {
 	t.Parallel()
 	// The "note" field is synthetic, and the pattern reads across the line break
 	// that fences it: the guard is pinned with a constructed spanning case.
 	frames := anthropicInvokeTextStream(t, `,"note":"standard"`, "jane", ".doe", "@example", ".com")
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(spanningMaskRunner{}, streamGuardConfig{}), frames)
-	require.Nil(t, pe)
-	requireStreamFailedOpen(t, got, frames, rt, string(adapter.MaskCauseGluedText))
-	assert.Equal(t, "jane.doe@example.com", textDeltas(t, got), "the text is released whole, never emptied")
+	requireStreamMaskBlocked(t, got, pe, frames, rt, string(adapter.MaskCauseGluedText))
+	if pe == nil {
+		assert.NotContains(t, textDeltas(t, got[:len(got)-1]), "jane.doe@example.com", "the text is never released")
+	}
 }
 
 // message_delta reports the stop sequence the model ended on. It is a label, not
@@ -155,7 +156,7 @@ func TestNativeStream_StopSequenceIsNotGluedToTheLastDelta(t *testing.T) {
 			got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
 			require.Nil(t, pe)
 			require.Len(t, got, len(frames))
-			assert.Empty(t, streamFailedOpenEntries(rt))
+			assert.Empty(t, streamMaskBlockedEntries(rt))
 			assert.Equal(t, frames[stop], got[stop], "message_delta is released byte for byte")
 			released := textDeltas(t, got)
 			assert.Contains(t, released, "[MASKED_EMAIL]")
@@ -177,7 +178,7 @@ func TestNativeStream_CitedTextIsNotGluedToTheLastDelta(t *testing.T) {
 	got, pe, rt := runNativeGuardTraced(t, nativeGuardFor(regexMaskRunner{}, streamGuardConfig{}), frames)
 	require.Nil(t, pe)
 	require.Len(t, got, len(frames))
-	assert.Empty(t, streamFailedOpenEntries(rt))
+	assert.Empty(t, streamMaskBlockedEntries(rt))
 	assert.Equal(t, cite, got[at+1], "the citation is released byte for byte")
 	released := textDeltas(t, got)
 	assert.Contains(t, released, "[MASKED_EMAIL]")

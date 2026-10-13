@@ -17,6 +17,8 @@ package bedrockguardrail
 import (
 	"context"
 	"errors"
+	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 )
 
 type scriptedGuardrail struct {
+	mu      sync.Mutex
 	calls   int
 	inputs  []string
 	sources []types.GuardrailContentSource
@@ -45,6 +48,7 @@ func (s *scriptedGuardrail) ApplyGuardrail(
 	in *bedrockruntime.ApplyGuardrailInput,
 	_ ...func(*bedrockruntime.Options),
 ) (*bedrockruntime.ApplyGuardrailOutput, error) {
+	s.mu.Lock()
 	s.calls++
 	s.sources = append(s.sources, in.Source)
 	for _, c := range in.Content {
@@ -52,6 +56,7 @@ func (s *scriptedGuardrail) ApplyGuardrail(
 			s.inputs = append(s.inputs, aws.ToString(text.Value.Text))
 		}
 	}
+	s.mu.Unlock()
 	return s.apply(in)
 }
 
@@ -114,7 +119,7 @@ func streamSettings(over map[string]any) map[string]any {
 		stream[k] = v
 	}
 	return map[string]any{
-		"guardrail_id": "gr-1",
+		"guardrail_id": "gr1abc",
 		"pii_action":   piiActionAnonymize,
 		"credentials": map[string]any{
 			"access_key_id":     "AKIAEXAMPLE",
@@ -190,13 +195,13 @@ func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
 	}
 }
 
-func TestStreamSettingsHonoursAnExplicitFailClosed(t *testing.T) {
+func TestStreamSettingsIgnoreAStoredFailClosed(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
-	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed"}))
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}))
 
 	require.True(t, on)
-	assert.Equal(t, "fail_closed", opts.OnError)
+	assert.Equal(t, "fail_open", opts.OnError)
 }
 
 func TestStreamSettingsDefaultsFitTheProviderLimit(t *testing.T) {
@@ -218,7 +223,10 @@ func TestStreamSettingsDefaultWindowFitsTheSmallestQuota(t *testing.T) {
 		"25 text units of 1,000 characters is the default per-request quota in eu-west-3")
 
 	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 524288}))
-	assert.Equal(t, 524288, opts.MaxAccumulatedBytes, "the quota is adjustable, so an explicit window is honoured")
+	assert.Equal(t, maxStreamWindowBytes, opts.MaxAccumulatedBytes, "a larger window is capped so every evaluation fits the smallest quota")
+
+	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 4096}))
+	assert.Equal(t, 4096, opts.MaxAccumulatedBytes, "a smaller window is honoured")
 }
 
 func TestInspectSegmentAllowsCleanText(t *testing.T) {
@@ -303,7 +311,8 @@ func TestInspectSegmentAnonymisesAsATransform(t *testing.T) {
 }
 
 // Releasing the unmasked text is the one outcome the policy ruled out, and the
-// buffered leg blocks for the same reason.
+// buffered leg blocks for the same reason: a mode that blocks cuts the stream,
+// carrying the failure so the span records blocked and degraded.
 func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
 	t.Parallel()
 	p := streamPlugin(t, intervening(anonymisingOutput("")))
@@ -313,9 +322,78 @@ func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
 		segment(2, "write to a@b.com for details"))
 
 	require.NoError(t, err)
+	require.NotNil(t, got)
 	assert.True(t, got.Block)
 	assert.False(t, got.HasTransform, "there is nothing to transform with")
 	assert.Equal(t, anonymizeDegradedMessage, got.Message)
+	assert.Equal(t, typeGuardrailBlocked, got.Type)
+	require.NotNil(t, got.Failure)
+	assert.Equal(t, reasonAnonymizeNoOutput, got.Failure.Detail)
+	assert.Equal(t, appplugins.FailureClassInput, got.Failure.Class)
+}
+
+// Observe never blocks: the finding is still reported and the failure is kept
+// without counting as a failed call.
+func TestInspectSegmentObserveReportsTheFindingWhenAnonymisationProducedNothing(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(anonymisingOutput("")))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(nil), nil),
+		segment(2, "write to a@b.com for details"))
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, got.Block)
+	assert.False(t, got.HasTransform)
+	assert.NotEmpty(t, got.Fingerprints)
+	require.NotNil(t, got.Incomplete)
+}
+
+// A cut that is a mask over a confirmed finding stays blocked, flagged degraded.
+func TestClosingSegmentFlagsAnUnappliedMaskCutAsBlockedAndDegraded(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, allowing())
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 2, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	require.NoError(t, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, decisionBlocked, data.Decision)
+	assert.True(t, data.Degraded)
+	assert.Equal(t, reasonAnonymizeNoOutput, data.DegradedReason)
+	assert.Equal(t, "input", data.FailureClass)
+}
+
+// A cut that is an input failure with no finding behind it records failed_closed.
+func TestClosingSegmentRecordsAnInputCutAsFailedClosed(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, allowing())
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 1, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailProviderRejectedInput,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	require.NoError(t, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DecisionFailedClosed, data.Decision)
+	assert.False(t, data.Degraded)
+	assert.Equal(t, "input_too_large", data.FailureReason)
+	assert.Equal(t, "input", data.FailureClass)
 }
 
 func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
@@ -336,38 +414,77 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "block 5")
 }
 
-func TestInspectSegmentReturnsTheVerdictIncompleteFailure(t *testing.T) {
+// An intervention none of the read policy families can explain is not a clean
+// pass on the stream either: a mode that blocks cuts, carrying the failure, and
+// observe releases the block with the typed error.
+func TestInspectSegmentUnparsedInterventionByMode(t *testing.T) {
 	t.Parallel()
-	// Same shape as TestExecuteVerdictIncompleteEnforceFailsClosed: an
-	// intervention none of the read policy families can explain.
-	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
-		Action:      types.GuardrailActionGuardrailIntervened,
-		Assessments: []types.GuardrailAssessment{{}},
-	}))
+	unparsed := func() *scriptedGuardrail {
+		return intervening(&bedrockruntime.ApplyGuardrailOutput{
+			Action:      types.GuardrailActionGuardrailIntervened,
+			Assessments: []types.GuardrailAssessment{{AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{}}},
+		})
+	}
 
-	got, err := p.InspectSegment(context.Background(),
+	got, err := streamPlugin(t, unparsed()).InspectSegment(context.Background(),
 		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, got.Type)
+	require.NotNil(t, got.Failure)
+	assert.Equal(t, appplugins.FailureVerdictIncomplete, got.Failure.Reason)
+	assert.Equal(t, appplugins.DetailInterventionUnparsed, got.Failure.Detail)
+	assert.Contains(t, got.Failure.Error(), "automated_reasoning_policy")
 
+	got, err = streamPlugin(t, unparsed()).InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(nil), nil), segment(5, "some text"))
 	require.Error(t, err)
-	assert.Nil(t, got, "an incomplete verdict must not be reported as a clean allow")
-	assert.Contains(t, err.Error(), "verdict_incomplete")
+	assert.Nil(t, got, "observe never cuts")
+	var failure *appplugins.ExternalStreamFailure
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, appplugins.DetailInterventionUnparsed, failure.Detail)
 }
 
-func TestInspectSegmentVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
+// A block larger than the window that AWS rejects as a client error is the
+// content's: it cuts in a mode that blocks instead of releasing text no one
+// read. Credentials, throttling and 5xx stay availability and release the block.
+func TestInspectSegmentProviderErrorByClass(t *testing.T) {
 	t.Parallel()
-	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
-		Action: types.GuardrailActionGuardrailIntervened,
-		Assessments: []types.GuardrailAssessment{{
-			AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
-		}},
-	}))
+	for _, tc := range awsApplyGuardrailErrors {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			awsErr := applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Amzn-Errortype", tc.errType+":http://internal.amazon.com/coral/com.amazon.bedrock/")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+			})
+			newPlugin := func() *Plugin {
+				return streamPlugin(t, &scriptedGuardrail{apply: func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+					return nil, awsErr
+				}})
+			}
+			input := tc.reason == appplugins.FailureInputTooLarge
 
-	got, err := p.InspectSegment(context.Background(),
-		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+			got, err := newPlugin().InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+			if input {
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.True(t, got.Block)
+				require.NotNil(t, got.Failure)
+				assert.Equal(t, appplugins.FailureInputTooLarge, got.Failure.Reason)
+			} else {
+				require.Error(t, err, "an availability failure releases the block")
+				assert.Nil(t, got)
+			}
 
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.Contains(t, err.Error(), "verdict_incomplete (automated_reasoning_policy)")
+			got, err = newPlugin().InspectSegment(context.Background(),
+				streamInput(policy.ModeObserve, streamSettings(nil), nil), segment(5, "some text"))
+			require.Error(t, err, "observe never cuts")
+			assert.Nil(t, got)
+		})
+	}
 }
 
 func TestInspectSegmentIsInertWhenStreamingIsOptedOut(t *testing.T) {
@@ -424,7 +541,7 @@ func TestClosingSegmentPublishesTheStreamAccount(t *testing.T) {
 	assert.Equal(t, 310, data.Streaming.CutOffsetChars)
 	assert.Equal(t, int64(900), data.Streaming.GuardLatencyMsTotal)
 	assert.Equal(t, decisionBlocked, data.Decision)
-	assert.Equal(t, "gr-1", data.GuardrailID)
+	assert.Equal(t, "gr1abc", data.GuardrailID)
 }
 
 func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
@@ -528,14 +645,13 @@ func TestStreamSettingsAbsentKeyIsOffAndUnparsedOptInStaysOff(t *testing.T) {
 }
 
 // RUN-1710: the closing write carries the first failed block's reason whatever
-// the decision settled on, and a cut that resolved this entry's failed call as
-// fail_closed is failed_closed, not blocked.
+// the decision settled on.
 func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 	t.Parallel()
 	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
 		r.FailedEvals = 1
 		r.FailureReason = appplugins.FailureTransport
-		r.FailureDetail = "throttled"
+		r.FailureDetail = appplugins.DetailThrottled
 		return r
 	}
 	cases := []struct {
@@ -545,9 +661,8 @@ func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
 		wantReason   string
 		wantDetail   string
 	}{
-		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", "throttled"},
-		{"fail_closed cut", failed(appplugins.StreamReport{Evals: 1, CutAtEval: 1, CutOnFailure: true}), "failed_closed", "transport", "throttled"},
-		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", "throttled"},
+		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", appplugins.DetailThrottled},
+		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", appplugins.DetailThrottled},
 		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
 	}
 	for _, tc := range cases {

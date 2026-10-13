@@ -399,7 +399,7 @@ func TestStagePlan_StreamPlan(t *testing.T) {
 	plainSpec := polSpec{slug: "plain", enabled: true, priority: 20, stages: pre}
 
 	enabled := NewStagePlan(reg, streamPolicies(t,
-		map[string]any{"enabled": true, "head_chars": 32, "on_error": "fail_closed"},
+		map[string]any{"enabled": true, "head_chars": 32},
 		guardSpec, plainSpec,
 	), nil)
 	disabled := NewStagePlan(reg, streamPolicies(t,
@@ -412,7 +412,7 @@ func TestStagePlan_StreamPlan(t *testing.T) {
 
 	ok, opts := enabled.StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
-	assert.Equal(t, StreamOptions{HeadChars: 32, OnError: "fail_closed"}, opts,
+	assert.Equal(t, StreamOptions{HeadChars: 32, OnError: "fail_open"}, opts,
 		"the opt-in carries the settings the plugin parsed, so the caller never re-reads them")
 
 	ok, opts = enabled.StreamPlan(policy.StagePostResponse)
@@ -495,7 +495,8 @@ func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing
 			polSpec{slug: "guard", enabled: true, priority: 3, stages: pre},
 		).StreamPlan(policy.StagePreResponse)
 		assert.True(t, ok)
-		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_closed"}, opts)
+		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_open"}, opts,
+			"an owner's own on_error is not read: owners are guardrails and always fail open")
 	})
 
 	t.Run("owner first, passive second: unchanged", func(t *testing.T) {
@@ -521,8 +522,8 @@ func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing
 }
 
 // A policy with no streaming block is a participant now, so which entry sorts
-// first must not decide the failure direction or the payload cap for the whole
-// stream.
+// first must not decide the payload cap for the whole stream, and no owner can
+// turn the stream's failure direction to fail_closed.
 func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) {
 	pre := []policy.Stage{policy.StagePreResponse}
 	a := newStreamPlugin("guard_a", nil)
@@ -543,15 +544,11 @@ func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) 
 	defaults := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open", "max_accumulated_bytes": 262144}
 	closed := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_closed", "max_accumulated_bytes": 24576}
 
-	t.Run("a later explicit fail_closed is not overridden by an earlier default", func(t *testing.T) {
+	t.Run("a stored fail_closed on an owner never makes the stream fail closed", func(t *testing.T) {
 		opts := plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce)
-		assert.Equal(t, "fail_closed", opts.OnError)
+		assert.Equal(t, "fail_open", opts.OnError)
 		assert.Equal(t, 400, opts.HeadChars, "the first owner still supplies the head gate")
-	})
-	t.Run("an earlier explicit fail_closed stays", func(t *testing.T) {
-		assert.Equal(t, "fail_closed", plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
-	})
-	t.Run("an observe entry's fail_closed decides nothing", func(t *testing.T) {
+		assert.Equal(t, "fail_open", plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
 		assert.Equal(t, "fail_open", plan(t, closed, defaults, policy.ModeObserve, policy.ModeEnforce).OnError)
 	})
 	t.Run("both fail_open stays fail_open", func(t *testing.T) {

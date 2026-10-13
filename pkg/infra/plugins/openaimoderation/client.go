@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
@@ -33,8 +34,20 @@ const (
 )
 
 type errModeration struct {
-	status int
+	status     int
+	retryAfter time.Duration
+	// configShaped is set from the error envelope when a 400 is about the
+	// policy's model or key and not about the input, or a 429 is the account's
+	// quota and not a rate.
+	configShaped bool
 }
+
+var _ pluginutil.Rejection = (*errModeration)(nil)
+
+func (e *errModeration) Rejection() (int, bool) { return e.status, e.configShaped }
+
+// RetryAfter is the wait the answer asked for, zero when it asked for none.
+func (e *errModeration) RetryAfter() time.Duration { return e.retryAfter }
 
 func (e *errModeration) Error() string {
 	return fmt.Sprintf("openai_moderation: unexpected status %d", e.status)
@@ -80,7 +93,10 @@ func (c *client) Moderate(ctx context.Context, baseURL, apiKey string, body mode
 		return nil, fmt.Errorf("openai_moderation: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &errModeration{status: res.StatusCode}
+		return nil, &errModeration{
+			status: res.StatusCode, configShaped: rejectsConfiguration(res.StatusCode, raw),
+			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 
 	var out moderationResponse
@@ -88,4 +104,50 @@ func (c *client) Moderate(ctx context.Context, baseURL, apiKey string, body mode
 		return nil, fmt.Errorf("openai_moderation: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+type errorEnvelope struct {
+	Error struct {
+		Param string `json:"param"`
+		Code  string `json:"code"`
+	} `json:"error"`
+}
+
+// configurationCodes are the error codes of a 400 that is about the policy's
+// model or key and not about the input.
+var configurationCodes = map[string]struct{}{
+	"model_not_found": {}, "invalid_api_key": {}, "invalid_model": {},
+}
+
+// quotaCodes are the error codes of a 429 that is the account's own quota, not
+// a rate: no credit left, or the billing limit reached. They are documented as
+// code values of the error object in OpenAI's error-codes guide, and waiting
+// does not clear them, unlike rate_limit_exceeded.
+var quotaCodes = map[string]struct{}{
+	"insufficient_quota": {}, "billing_hard_limit_reached": {},
+}
+
+// rejectsConfiguration reports whether an error in OpenAI's envelope is about
+// the policy and not about the input: a 400 that names the model or whose code
+// says the model or key is unusable, or a 429 whose code says the account's
+// quota is spent. Anything else, an input param above all and any shape this
+// does not recognise, is read as the content's (a 400) or a rate (a 429), so an
+// unknown error cannot be used to skip the guardrail.
+func rejectsConfiguration(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusTooManyRequests {
+		return false
+	}
+	var env errorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	if status == http.StatusTooManyRequests {
+		_, ok := quotaCodes[env.Error.Code]
+		return ok
+	}
+	if env.Error.Param == "model" {
+		return true
+	}
+	_, ok := configurationCodes[env.Error.Code]
+	return ok
 }

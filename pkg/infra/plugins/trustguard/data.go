@@ -20,6 +20,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 type GuardRequest struct {
@@ -139,24 +140,43 @@ type GuardFinding struct {
 }
 
 type guardData struct {
-	Direction      string         `json:"direction,omitempty"`
-	Status         string         `json:"status,omitempty"`
-	Decision       string         `json:"decision,omitempty"`
-	TraceID        string         `json:"trace_id,omitempty"`
-	RequestID      string         `json:"request_id,omitempty"`
-	FindingsCount  int            `json:"findings_count,omitempty"`
-	Findings       []GuardFinding `json:"findings,omitempty"`
-	FailedOpen     bool           `json:"failed_open,omitempty"`
-	FailedClosed   bool           `json:"failed_closed,omitempty"`
-	FailureReason  string         `json:"failure_reason,omitempty"`
-	Degraded       bool           `json:"degraded,omitempty"`
-	DegradedReason string         `json:"degraded_reason,omitempty"`
+	Direction     string         `json:"direction,omitempty"`
+	Status        string         `json:"status,omitempty"`
+	Decision      string         `json:"decision,omitempty"`
+	TraceID       string         `json:"trace_id,omitempty"`
+	RequestID     string         `json:"request_id,omitempty"`
+	FindingsCount int            `json:"findings_count,omitempty"`
+	Findings      []GuardFinding `json:"findings,omitempty"`
+	FailedOpen    bool           `json:"failed_open,omitempty"`
+	// FailedClosed is set with decision failed_closed: the guard could not
+	// inspect the request's own content and a mode that blocks refused it.
+	FailedClosed  bool   `json:"failed_closed,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was TrustGuard's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
+	// FailureDetail refines FailureReason when it is the shared verdict_incomplete
+	// (attachment_not_fetched). It is absent for every other reason, which this
+	// plugin names in its own vocabulary.
+	FailureDetail  string `json:"failure_detail,omitempty"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	DegradedReason string `json:"degraded_reason,omitempty"`
 	// Skipped marks a leg the plugin decided not to inspect at all. Without
 	// it, "inspected and clean" and "never looked" produce an identical
 	// event, which is what let response coverage lapse unnoticed. Both fields
 	// are omitempty, so events that did inspect are unchanged.
 	Skipped    bool   `json:"skipped,omitempty"`
 	SkipReason string `json:"skip_reason,omitempty"`
+	// AttachmentsNotInspected counts the attachments of the request that were
+	// not sent because TrustGuard cannot resolve them (a file_id, a gs:// URI,
+	// data that is not base64). The text beside them was inspected; the
+	// attachments were not.
+	AttachmentsNotInspected int `json:"attachments_not_inspected,omitempty"`
+	// AttachmentsNotFetched counts the attachments sent as a URL that TrustGuard
+	// could not fetch (a Gemini Files URI needs the caller's key, or the fetch
+	// failed), so the text was evaluated without them. They are also in
+	// AttachmentsNotInspected.
+	AttachmentsNotFetched int `json:"attachments_not_fetched,omitempty"`
 	// Streaming carries the per-stream aggregate for a response inspected
 	// block by block. It is a pointer so the buffered path, which has nothing
 	// to say about streaming, keeps emitting an identical event.
@@ -242,6 +262,15 @@ func streamOutcome(streamID string, r appplugins.StreamReport) guardData {
 	switch {
 	case r.CutAtEval > 0:
 		data.Decision = decisionBlocked
+		if r.CutOnFailure {
+			data.FailureReason, data.FailureClass = failureOfCut(r)
+			data.Decision = pluginutil.StreamCutDecision(r, decisionBlocked)
+			data.FailedClosed = data.Decision == decisionFailedClosed
+			if appplugins.IsMaskOverFinding(r.FailureDetail) {
+				data.Degraded = true
+				data.DegradedReason = transformReasonOf(r.FailureDetail)
+			}
+		}
 	case r.Evals == 0:
 		data.Skipped = true
 		data.SkipReason = skipReasonProviderNotStreaming

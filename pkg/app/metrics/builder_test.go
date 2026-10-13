@@ -1028,12 +1028,12 @@ func TestBuilder_CostForNativeBedrockARNs(t *testing.T) {
 }
 
 // A mask a native Bedrock call could not have applied reaches the product event as
-// a policy-chain entry named native_bedrock_passthrough with decision failed_open and
+// a policy-chain entry named native_bedrock_passthrough with decision block and
 // a failure_reason; docs/telemetry/otlp-metadata-contract.md documents it, so the
 // shape is pinned here.
 func TestBuilder_NativeBedrockMaskNotApplicableIsAPolicyChainEntry(t *testing.T) {
 	rt := trace.New("trace-native-mask", trace.Metadata{GatewayID: "gw-1"})
-	appplugins.RecordNativeMaskNotApplied(trace.NewContext(context.Background(), rt), nil, policy.StagePreRequest, "leak_remaining", false)
+	appplugins.RecordNativeMaskBlocked(trace.NewContext(context.Background(), rt), nil, policy.StagePreRequest, "leak_remaining", false)
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/acme/model/m/converse"}
 	start := time.UnixMilli(1_000_000)
@@ -1043,8 +1043,8 @@ func TestBuilder_NativeBedrockMaskNotApplicableIsAPolicyChainEntry(t *testing.T)
 	entry := evt.PolicyChain[0]
 	assert.Equal(t, "native_bedrock_passthrough", entry.Name)
 	assert.Equal(t, "pre_request", entry.Stage)
-	assert.Equal(t, "failed_open", entry.Decision)
+	assert.Equal(t, "block", entry.Decision)
 	raw, err := json.Marshal(entry.Extras)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"decision":"failed_open","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining"}`, string(raw))
+	assert.JSONEq(t, `{"decision":"blocked","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining","failure_detail":"anonymize_no_output","failure_class":"input","degraded":true,"degraded_reason":"leak_remaining"}`, string(raw))
 }

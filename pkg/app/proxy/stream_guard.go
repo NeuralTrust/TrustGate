@@ -130,7 +130,7 @@ const (
 	cutDrainDeadline = 30 * time.Second
 	// abortFinalDeadline bounds the final evaluation a client disconnect still
 	// owes the chain. Each entry also bounds its own call with
-	// streaming.guard_timeout; this is the ceiling over the whole chain, so the
+	// the guard timeout of its plugin; this is the ceiling over the whole chain, so the
 	// detached call can never outlive the stream by more than a fixed amount.
 	abortFinalDeadline = 15 * time.Second
 )
@@ -492,8 +492,8 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	return nil
 }
 
-// headFailure resolves streaming.on_error. The plugin hands a configurable
-// failure back as an error precisely so that it is resolved here: only the
+// headFailure resolves the stream's on_error. The plugin hands a failure that
+// is not its to absorb back as an error precisely so that it is resolved here: only the
 // guard knows that at the head nothing is committed, which is what makes
 // fail_closed a clean status code instead of a truncated body.
 func (g *streamGuard) headFailure(ctx context.Context, err error, partial *appplugins.SegmentOutcome) *appplugins.PluginError {
@@ -1181,7 +1181,7 @@ func tailWithin(s string, limit int) (string, bool) {
 	return tail, true
 }
 
-// blockFailure resolves streaming.on_error for a block the client is already
+// blockFailure resolves the stream's on_error for a block the client is already
 // reading. fail_closed can no longer be a clean status code, so it is the same
 // stop a block verdict is; fail_open releases and counts, because a guard that
 // is failing is not a reason to hold text indefinitely.
@@ -1674,7 +1674,7 @@ func (g *streamGuard) remaskNative(masked string) bool {
 	}
 	// Reasoning arrives as JSON fragments, split anywhere and escaped any way,
 	// that a text mask cannot edit, and so does the input of a tool call the guard
-	// did not hold whole. A window that holds either cannot be masked: the mask fails open, or blocks.
+	// did not hold whole. A window that holds either cannot be masked, so the stream stops.
 	// The input of a call that was held and inspected is not in the text the mask
 	// is made of: it was masked, or cleared, on its own.
 	for i := g.releasedIdx; i < len(g.produced); i++ {
@@ -1816,27 +1816,22 @@ func (g *streamGuard) cannotMask(cause adapter.MaskCause) bool {
 	return false
 }
 
-// applyTransform applies a transform verdict. On a native Bedrock stream a mask
-// that cannot be applied never cuts, unless the policy asked for it with
-// on_mask_failure: block: the held frames are released as they came,
-// the stream goes on and later segments are inspected as usual, and the outcome
-// is recorded as a failed-open policy result with its cause. Anywhere else a mask
-// that cannot be applied ends the stream, as it always did.
+// applyTransform applies a transform verdict. A mask that cannot be applied ends
+// the stream, on a native Bedrock stream as anywhere else: releasing the held
+// frames as they came would send the text the policy asked to mask. A native
+// stream also records the outcome as a blocked policy result with its cause.
 func (g *streamGuard) applyTransform(ctx context.Context, outcome *appplugins.SegmentOutcome) bool {
 	g.maskCause = ""
 	if g.rewrite(outcome) {
 		return true
 	}
-	if !g.native || outcome.MaskFailureBlock {
-		// A policy that asked for on_mask_failure: block ends the stream like a
-		// block verdict.
-		return false
+	if g.native {
+		g.maskBlocked(ctx, g.maskCause)
 	}
-	g.maskFailedOpen(ctx, g.maskCause)
-	return true
+	return false
 }
 
-func (g *streamGuard) maskFailedOpen(ctx context.Context, cause adapter.MaskCause) {
+func (g *streamGuard) maskBlocked(ctx context.Context, cause adapter.MaskCause) {
 	if cause == "" {
 		cause = adapter.MaskCausePatch
 	}
@@ -1847,7 +1842,7 @@ func (g *streamGuard) maskFailedOpen(ctx context.Context, cause adapter.MaskCaus
 		g.maskFailed = map[adapter.MaskCause]struct{}{}
 	}
 	g.maskFailed[cause] = struct{}{}
-	appplugins.RecordNativeMaskNotApplied(ctx, g.logger, g.in.Stage, cause, true)
+	appplugins.RecordNativeMaskBlocked(ctx, g.logger, g.in.Stage, cause, true)
 }
 
 func (g *streamGuard) maskedHeadError() *appplugins.PluginError {

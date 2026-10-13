@@ -111,7 +111,7 @@ func (m *tokenManager) token(ctx context.Context, params tokenParams) (string, e
 // so a caller that walks away does not poison the shared singleflight result
 // for the callers still waiting on it: what ctx bounds is this caller's wait,
 // not the round trip. A streamed block needs that bound. It holds bytes back
-// under streaming.guard_timeout, and on a cold or expired token an unbounded
+// under the stream guard timeout, and on a cold or expired token an unbounded
 // wait would stretch the hold to the whole TRUSTGUARD_TIMEOUT — twice over,
 // since a 401 makes guard invalidate and fetch again.
 func (m *tokenManager) tokenWithin(ctx context.Context, params tokenParams) (string, error) {
@@ -223,7 +223,7 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 // endpoint refusing these credentials: TrustGuard answers a wrong platform
 // secret with 400 invalid_scope and empty ones with 401 invalid_client. They
 // are typed as the same rejection a 401/403 from /v1/evaluate is, so both legs
-// report reason unauthorized and follow on_error the same way. Every other
+// report reason unauthorized and fail open the same way. Every other
 // status stays on the transport path: 5xx and 429 are transient, and a 404 or
 // 421 is an ingress or a wrong base URL answering rather than the guard. It is
 // never errUnauthorized: that one sends guard to refetch the token, which is

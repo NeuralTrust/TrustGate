@@ -24,7 +24,7 @@ import (
 func TestParseConfigDefaults(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseConfig(map[string]any{
-		"guardrail_id": "gr-123",
+		"guardrail_id": "gr123abc",
 		"credentials": map[string]any{
 			"access_key_id":     "AKIA",
 			"secret_access_key": "secret",
@@ -39,7 +39,7 @@ func TestParseConfigDefaults(t *testing.T) {
 func TestParseConfigSessionNameDefaultedForRole(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseConfig(map[string]any{
-		"guardrail_id": "gr-123",
+		"guardrail_id": "gr123abc",
 		"credentials": map[string]any{
 			"use_role": true,
 			"role_arn": "arn:aws:iam::123456789012:role/bedrock",
@@ -59,7 +59,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "valid static credentials",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"credentials": map[string]any{
 					"access_key_id":     "AKIA",
 					"secret_access_key": "secret",
@@ -69,7 +69,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "valid role credentials",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"credentials": map[string]any{
 					"use_role": true,
 					"role_arn": "arn:aws:iam::123456789012:role/bedrock",
@@ -100,7 +100,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "invalid pii_action rejected",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"pii_action":   "mask",
 				"credentials": map[string]any{
 					"access_key_id":     "AKIA",
@@ -112,7 +112,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "use_role without role_arn rejected",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"credentials": map[string]any{
 					"use_role": true,
 				},
@@ -122,7 +122,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "access_key_id without secret_access_key rejected",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"credentials": map[string]any{
 					"access_key_id": "AKIA",
 				},
@@ -132,7 +132,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "secret_access_key without access_key_id rejected",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"credentials": map[string]any{
 					"secret_access_key": "secret",
 				},
@@ -142,7 +142,7 @@ func TestParseConfigValidation(t *testing.T) {
 		{
 			name: "no credentials and no role rejected",
 			settings: map[string]any{
-				"guardrail_id": "gr-123",
+				"guardrail_id": "gr123abc",
 				"credentials":  map[string]any{},
 			},
 			wantErr: true,
