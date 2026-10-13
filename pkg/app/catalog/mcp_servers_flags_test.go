@@ -114,8 +114,10 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// answers, which is worth looking at deliberately. 114 since Dropbox moved
 	// to manual registration: it refuses dynamic client registration outright
 	// ("only pre-registered MCP trusted partners"), so an operator's client is
-	// the only way in (RUN-1641).
-	require.Equal(t, 114, self, "self_service count changed")
+	// the only way in (RUN-1641). 113 since Canva followed: its DCR server only
+	// authorizes allowlisted redirect URIs, so an operator's Developer Portal
+	// app is the only way in (RUN-1639).
+	require.Equal(t, 113, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
