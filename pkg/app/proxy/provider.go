@@ -487,15 +487,21 @@ func (p *providerInvoker) backendErrorResponse(
 		body = adapter.AdaptErrorBody(body, be.StatusCode, prep.sourceFormat)
 	}
 	headers := be.PassthroughHeaders()
+	sentModel := ""
 	if prep != nil {
-		headers = withOutputLimitHeader(withSelectionHeaders(headers, bk, prep.sentModel), prep)
+		sentModel = prep.sentModel
+		headers = withOutputLimitHeader(withSelectionHeaders(headers, bk, sentModel), prep)
 	} else {
 		headers = withSelectionHeaders(headers, bk, "")
 	}
+	// The model the attempt went out with, as X-Selected-Model already says: a
+	// failed request is recorded under it rather than under the client's
+	// routing keyword ("auto", "pool:…"), which names no model.
 	return &ProviderResponse{
 		StatusCode: be.StatusCode,
 		Headers:    headers,
 		Body:       body,
+		SentModel:  sentModel,
 	}
 }
 

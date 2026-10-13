@@ -463,7 +463,7 @@ func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContex
 	if served != nil {
 		evt.Request.Provider = served.Provider
 		evt.Request.RegistryID = served.RegistryID
-		evt.Request.Model = served.Model
+		evt.Request.Model = servedModelName(served)
 	}
 	canonical := b.decodeRequest(req)
 	if canonical == nil {
@@ -475,6 +475,20 @@ func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContex
 	evt.Request.Temperature = canonical.Temperature
 	evt.Request.MaxTokens = canonical.MaxTokens
 	evt.Request.Stream = canonical.Stream
+}
+
+// servedModelName is the model a served attempt is recorded under: the one the
+// provider echoed, else the one the gateway sent, else the one its route
+// names. A failed upstream call echoes nothing, and falling through to the
+// request body would record the client's routing keyword ("auto", "pool:…")
+// instead of the model that was tried.
+func servedModelName(served *trace.LLMAttrs) string {
+	for _, model := range []string{served.Model, served.SentModel, served.RouteModel} {
+		if model != "" {
+			return model
+		}
+	}
+	return ""
 }
 
 func (b *Builder) decodeRequest(req *infracontext.RequestContext) *adapter.CanonicalRequest {
