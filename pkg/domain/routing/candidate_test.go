@@ -130,8 +130,12 @@ func TestCandidateSet_ResolveQualifiedUnknownProvider(t *testing.T) {
 	s.Add(routing.Candidate{Registry: openai})
 
 	_, err := s.ResolveIntent(routing.Intent{Provider: "anthropic", Model: "claude-4"})
-	if !errors.Is(err, routing.ErrModelDenied) {
-		t.Fatalf("expected ErrModelDenied, got %v", err)
+	var denied *routing.ModelDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected *ModelDeniedError, got %v", err)
+	}
+	if want := `provider "anthropic" is not available for this application`; denied.Reason != want {
+		t.Fatalf("reason = %q, want %q", denied.Reason, want)
 	}
 }
 
@@ -180,6 +184,13 @@ func TestCandidateSet_ResolveShortModelDenied(t *testing.T) {
 	_, err := s.ResolveIntent(routing.Intent{Model: "claude-4"})
 	if !errors.Is(err, routing.ErrModelDenied) {
 		t.Fatalf("expected ErrModelDenied, got %v", err)
+	}
+	var denied *routing.ModelDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected *ModelDeniedError, got %T", err)
+	}
+	if want := `model "claude-4" is not allowed for this application`; denied.Reason != want {
+		t.Fatalf("reason = %q, want %q", denied.Reason, want)
 	}
 }
 

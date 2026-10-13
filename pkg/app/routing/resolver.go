@@ -102,7 +102,7 @@ func (r *resolver) resolveInlinePool(in ResolveInput) (*routingdomain.CandidateS
 	alias := in.Intent.PoolAlias
 	lbCfg := in.Consumer.Consumer.LBConfig
 	if lbCfg == nil || !lbCfg.Enabled || lbCfg.PoolAlias == "" || !strings.EqualFold(lbCfg.PoolAlias, alias) {
-		return nil, fmt.Errorf("%w: pool %q is not configured for this consumer", routingdomain.ErrUnknownPoolAlias, alias)
+		return nil, fmt.Errorf("%w: pool %q is not configured for this application", routingdomain.ErrUnknownPoolAlias, alias)
 	}
 	byID := registriesByID(in.Consumer)
 	policies := in.Consumer.Consumer.ModelPolicies
@@ -121,7 +121,7 @@ func (r *resolver) resolveInlinePool(in ResolveInput) (*routingdomain.CandidateS
 		})
 	}
 	if out.Len() == 0 {
-		return nil, fmt.Errorf("%w: pool %q has no resolvable members", routingdomain.ErrModelDenied, alias)
+		return nil, routingdomain.DenyModel("pool %q has no resolvable members", alias)
 	}
 	return out, nil
 }

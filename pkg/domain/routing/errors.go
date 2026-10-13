@@ -28,3 +28,18 @@ var (
 	ErrModelDenied           = errors.New("routing: model denied")
 	ErrNoRegistryServesModel = errors.New("routing: no registry serves the requested model")
 )
+
+// ModelDeniedError is an ErrModelDenied whose Reason is safe to return to the
+// API client; Error keeps the routing prefix for logs.
+type ModelDeniedError struct {
+	Reason string
+}
+
+func (e *ModelDeniedError) Error() string { return ErrModelDenied.Error() + ": " + e.Reason }
+
+func (e *ModelDeniedError) Unwrap() error { return ErrModelDenied }
+
+// DenyModel builds a ModelDeniedError from a formatted reason.
+func DenyModel(format string, args ...any) error {
+	return &ModelDeniedError{Reason: fmt.Sprintf(format, args...)}
+}
