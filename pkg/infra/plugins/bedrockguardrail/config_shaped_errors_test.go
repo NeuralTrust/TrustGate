@@ -175,9 +175,38 @@ func TestContentValidationExceptionStaysInput(t *testing.T) {
 	assert.Equal(t, appplugins.DetailProviderRejectedInput, detail)
 }
 
+// A guardrail id that does not exist in the region the policy calls, from a
+// typo in either or from a guardrail deleted in AWS, answers a
+// ValidationException that names no member. No request can change it, so it is
+// the policy's configuration and fails open (ENG-1818).
+func TestValidationExceptionNamingNoMemberIsConfigNotInput(t *testing.T) {
+	t.Parallel()
+	for name, message := range map[string]string{
+		"guardrail missing in the region": guardrailNotInRegion,
+		"no message":                      "",
+		"a count with no clause":          "1 validation error detected",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := applyGuardrailAgainst(t, validationException(t, message))
+			require.Error(t, err)
+			reason, detail := classify(err)
+			assert.Equal(t, appplugins.FailureConfigInvalid, reason)
+			assert.Equal(t, appplugins.DetailProviderConfigRejected, detail)
+			assert.Equal(t, appplugins.FailureClassAvailability, appplugins.ClassOf(reason, detail))
+		})
+	}
+}
+
+// guardrailNotInRegion is the answer for a guardrail the called region does not
+// hold. AWS does not document the text; the classification reads only that no
+// member clause is present.
+const guardrailNotInRegion = "The guardrail identifier or version provided in the request does not exist."
+
 func TestConfigShapedAWSErrorsNeverRefuseTraffic(t *testing.T) {
 	t.Parallel()
 	staleVersion := validationException(t, "1 validation error detected: "+violation("DRAFT", "guardrailVersion"))
+	missingGuardrail := validationException(t, guardrailNotInRegion)
 	for name, call := range map[string]func(t *testing.T) error{
 		"sts validation error": func(t *testing.T) error {
 			return applyGuardrailThroughAssumeRole(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -186,6 +215,7 @@ func TestConfigShapedAWSErrorsNeverRefuseTraffic(t *testing.T) {
 			})
 		},
 		"guardrail version": func(t *testing.T) error { return applyGuardrailAgainst(t, staleVersion) },
+		"guardrail missing": func(t *testing.T) error { return applyGuardrailAgainst(t, missingGuardrail) },
 	} {
 		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
 			t.Run(name+" "+string(mode), func(t *testing.T) {

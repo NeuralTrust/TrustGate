@@ -444,9 +444,10 @@ func TestInspectSegmentUnparsedInterventionByMode(t *testing.T) {
 	assert.Equal(t, appplugins.DetailInterventionUnparsed, failure.Detail)
 }
 
-// A block larger than the window that AWS rejects as a client error is the
+// A block AWS rejects with a ValidationException naming the content is the
 // content's: it cuts in a mode that blocks instead of releasing text no one
-// read. Credentials, throttling and 5xx stay availability and release the block.
+// read. Any other client error is the policy's configuration and, like
+// credentials, throttling and 5xx, is availability and releases the block.
 func TestInspectSegmentProviderErrorByClass(t *testing.T) {
 	t.Parallel()
 	for _, tc := range awsApplyGuardrailErrors {

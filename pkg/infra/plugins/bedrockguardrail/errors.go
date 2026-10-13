@@ -72,27 +72,30 @@ func isThrottled(err error) bool {
 }
 
 // classifyApplyErr maps what ApplyGuardrail answered to the shared failure
-// vocabulary. A client error (4xx) that ApplyGuardrail itself returns for what
-// the call carries, a ValidationException above all, is the request's own
-// content (input_too_large, provider_rejected_input). Everything else is the
-// provider, the network, the credentials or the policy's own configuration:
-// transport or config_invalid, which fail open.
+// vocabulary. Only a ValidationException that names a content member in one of
+// its "at '<member>' failed to satisfy constraint" clauses is the request's own
+// content (input_too_large, provider_rejected_input), which blocks in Enforce.
+// Every other client error (4xx) is the policy's configuration (config_invalid)
+// and everything else is the provider, the network or the credentials
+// (transport); both fail open.
+//
+// A client error is config unless AWS names the content because the policy is
+// what most of them are about: a guardrail id that does not exist in the
+// region the policy calls answers a ValidationException with no member clause
+// at all, and a typo there must not turn into a 403 on all traffic. An oversize
+// text, the content problem AWS is known to reject, never reaches the call: it
+// is split into chunks that fit every region, and a text above the chunk limit
+// is refused before any call.
 //
 // Only an error raised by the ApplyGuardrail operation can be about the input.
 // A role that cannot be assumed surfaces from the same call wrapped by the
 // signer, and STS answers a malformed role_arn or session_name with the very
 // ValidationError a content problem would produce, so the credential chain is
-// told apart before the answer is read. A ValidationException that names the
-// guardrail identifier or version is the policy pointing at a guardrail AWS
-// cannot take, which no request can change, so it is config_invalid.
+// told apart before the answer is read.
 //
-// The answer is classified on the AWS error type, the HTTP status and, for the
-// guardrail reference only, the members a ValidationException names, never on
-// the rest of the message. The exact error
-// AWS returns for an oversize text is not documented (the quotas page lists 25
-// text units in some regions and the API reference lists ValidationException
-// among the errors without tying it to size), so a match on message text would
-// be a guess that breaks when AWS rewords it.
+// The answer is classified on the AWS error type, the HTTP status and the
+// members a ValidationException names, never on the rest of the message, whose
+// wording AWS does not document and may change.
 func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	if !raisedByApplyGuardrail(err) {
 		return appplugins.FailureTransport, ""
@@ -107,8 +110,8 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	if _, skip := notAboutTheInput[api.ErrorCode()]; skip {
 		return appplugins.FailureTransport, ""
 	}
-	if api.ErrorCode() == "ValidationException" && namesGuardrailReference(api.ErrorMessage()) {
-		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
+	if api.ErrorCode() == "ValidationException" && namesContentMember(api.ErrorMessage()) {
+		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
 	}
 	status := 0
 	var response *awshttp.ResponseError
@@ -118,14 +121,14 @@ func classifyApplyErr(err error) (appplugins.FailureReason, string) {
 	switch {
 	case status == 0:
 		if api.ErrorFault() == smithy.FaultClient {
-			return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
+			return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
 		}
 	case status == http.StatusTooManyRequests:
 		return appplugins.FailureTransport, appplugins.DetailThrottled
 	case status == http.StatusUnauthorized, status == http.StatusForbidden,
 		status == http.StatusRequestTimeout:
 	case status >= http.StatusBadRequest && status < http.StatusInternalServerError:
-		return appplugins.FailureInputTooLarge, appplugins.DetailProviderRejectedInput
+		return appplugins.FailureConfigInvalid, appplugins.DetailProviderConfigRejected
 	}
 	return appplugins.FailureTransport, ""
 }
@@ -157,23 +160,19 @@ const applyGuardrailOperation = "ApplyGuardrail"
 // caller sent, and the echoed value can hold newlines.
 var constraintMember = regexp.MustCompile(`(?s)at '([^']*)' failed to satisfy constraint`)
 
-// namesGuardrailReference reports whether a ValidationException is about the
-// guardrail identifier or version the policy configures and about nothing
-// else. AWS echoes the offending value, so client content can spell a
-// guardrail clause inside the message; but AWS's own clause for a content
-// member is always present and a client cannot remove it. Every clause in the
-// message is therefore counted, and the rejection is the policy's only when
-// each one names the identifier or the version. Any other member, the content
-// above all, makes it the input's.
-func namesGuardrailReference(message string) bool {
-	members := constraintMember.FindAllStringSubmatch(message, -1)
-	if len(members) == 0 {
-		return false
-	}
-	for _, m := range members {
+// namesContentMember reports whether a ValidationException names a member
+// other than the guardrail identifier or version the policy configures, the
+// content above all. AWS echoes the offending value, so client content can
+// spell a guardrail clause inside the message; but AWS's own clause for a
+// content member is always present and a client cannot remove it. Every clause
+// in the message is therefore counted, and one naming any other member makes
+// the rejection the input's. A message with no clause, or whose clauses all
+// name the guardrail reference, is the policy's.
+func namesContentMember(message string) bool {
+	for _, m := range constraintMember.FindAllStringSubmatch(message, -1) {
 		if m[1] != "guardrailIdentifier" && m[1] != "guardrailVersion" {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
