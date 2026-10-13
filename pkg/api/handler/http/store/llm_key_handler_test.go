@@ -16,6 +16,7 @@ package store_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +52,20 @@ func newLLMKeyApp(keys appauth.PersonalKeys, identity middleware.AdminIdentity) 
 	app.Post(path, h.Create)
 	app.Post(path+"/rotate", h.Rotate)
 	app.Delete(path, h.Revoke)
+	app.Post("/v1/gateways/:gateway_id/store/users/:user_id/llm-key", h.CreateForUser)
 	return app
+}
+
+func callUserLLMKey(t *testing.T, app *fiber.App, gw ids.GatewayID, userID, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/gateways/"+gw.String()+"/store/users/"+userID+"/llm-key", strings.NewReader(body))
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req)
+	require.NoError(t, err)
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	return res.StatusCode, string(raw)
 }
 
 func callLLMKey(t *testing.T, app *fiber.App, method string, gw ids.GatewayID, suffix, body, contentType string) (int, string) {
@@ -81,6 +95,8 @@ func TestLLMKeyHandler_RefusesCallersWithoutATenantUser(t *testing.T) {
 			status, raw := callLLMKey(t, app, route[0], gw, route[1], validLLMKeyBody, fiber.MIMEApplicationJSON)
 			require.Equal(t, http.StatusForbidden, status, "%s on %s %s: %s", name, route[0], route[1], raw)
 		}
+		status, raw := callUserLLMKey(t, app, gw, "bob", validLLMKeyBody)
+		require.Equal(t, http.StatusForbidden, status, "%s creating another user's key: %s", name, raw)
 	}
 }
 
@@ -194,6 +210,62 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 			if tc.hides != "" {
 				require.NotContains(t, raw, tc.hides)
 			}
+		})
+	}
+}
+
+// An admin issues bob's key: it is bob's, under bob's email, whoever asked.
+func TestLLMKeyHandler_CreatesAnotherUsersKeyForTheAdmin(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	expiry := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "bob", time.Now().Add(time.Hour), time.Now())
+	require.NoError(t, err)
+	keys := appauthmocks.NewPersonalKeys(t)
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "bob", Email: "bob@acme.test"}, mock.MatchedBy(expiry.Equal)).
+		Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
+
+	status, raw := callUserLLMKey(t, newLLMKeyApp(keys, alice), gw, "bob", `{"expires_at":"2099-01-01T00:00:00Z","owner_email":"bob@acme.test","owner_id":"carol"}`)
+
+	require.Equal(t, http.StatusCreated, status, raw)
+	require.Contains(t, raw, `"api_key":"`+a.RawKey+`"`)
+	require.Contains(t, raw, `"consumer_ids":[]`)
+	require.NotContains(t, raw, "carol")
+}
+
+func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
+	t.Parallel()
+	bob := appauth.PersonalKeyOwner{ID: "bob"}
+	cases := map[string]struct {
+		body   string
+		expect func(m *appauthmocks.PersonalKeys)
+		want   int
+		says   string
+	}{
+		"without expires_at":          {body: `{"owner_email":"bob@acme.test"}`, want: http.StatusUnprocessableEntity, says: "expires_at is required"},
+		"with a malformed expires_at": {body: `{"expires_at":"soon"}`, want: http.StatusUnprocessableEntity, says: "expires_at must be an RFC 3339 instant"},
+		"with a malformed body":       {body: `{"owner_email":1}`, want: http.StatusUnprocessableEntity},
+		"for a user who has a key": {body: validLLMKeyBody, want: http.StatusConflict, says: "already exists", expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, bob, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
+		}},
+		"with an email that is not one": {body: `{"expires_at":"2099-01-01T00:00:00Z","owner_email":"bob at acme"}`, want: http.StatusUnprocessableEntity, says: "not an email address", expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "bob", Email: "bob at acme"}, mock.Anything).
+				Return(nil, fmt.Errorf("%w: %q is not an email address", domain.ErrInvalidOwnerEmail, "bob at acme")).Once()
+		}},
+		"on a hybrid gateway": {body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, bob, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			keys := appauthmocks.NewPersonalKeys(t)
+			if tc.expect != nil {
+				tc.expect(keys)
+			}
+			status, raw := callUserLLMKey(t, newLLMKeyApp(keys, alice), ids.New[ids.GatewayKind](), "bob", tc.body)
+			require.Equal(t, tc.want, status, raw)
+			require.Contains(t, raw, tc.says)
 		})
 	}
 }

@@ -106,9 +106,10 @@ func (m *AdminAuthzMiddleware) RequireGatewayCollectionAccess() fiber.Handler {
 // RequireInteractiveIdentity rejects service credentials on routes that are not
 // gateway-scoped (catalogs, playground traces, config-sync) and on
 // gateway-scoped routes that act only on the calling user (the caller's
-// personal LLM key). A machine credential is deliberately narrow: anything it
-// cannot be bound to a gateway for is out of its reach, and it is no user, so
-// it holds nothing of its own.
+// personal LLM key) or that a person runs for another user (an admin creating
+// a user's personal key). A machine credential is deliberately narrow: anything
+// it cannot be bound to a gateway for is out of its reach, and it is no user,
+// so it holds nothing of its own and issues nothing in anyone's name.
 func (m *AdminAuthzMiddleware) RequireInteractiveIdentity() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		identity := AdminIdentityFromContext(c)
