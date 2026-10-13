@@ -252,11 +252,13 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Delete("/principal/connections/:registry_id", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.StorePrincipal.Disconnect)
 		}
 		if r.deps.StoreLLMKey != nil {
-			selfOnly := r.deps.AdminAuthz.RequireInteractiveIdentity()
-			store.Get("/principal/llm-key", selfOnly, r.deps.StoreLLMKey.Get)
-			store.Post("/principal/llm-key", selfOnly, r.deps.StoreLLMKey.Create)
-			store.Post("/principal/llm-key/rotate", selfOnly, r.deps.StoreLLMKey.Rotate)
-			store.Delete("/principal/llm-key", selfOnly, r.deps.StoreLLMKey.Revoke)
+			interactive := r.deps.AdminAuthz.RequireInteractiveIdentity()
+			store.Get("/principal/llm-key", interactive, r.deps.StoreLLMKey.Get)
+			store.Post("/principal/llm-key", interactive, r.deps.StoreLLMKey.Create)
+			store.Post("/principal/llm-key/rotate", interactive, r.deps.StoreLLMKey.Rotate)
+			store.Delete("/principal/llm-key", interactive, r.deps.StoreLLMKey.Revoke)
+			// An admin issuing a user's key for them: a person in the console, never a machine.
+			store.Post("/users/:user_id/llm-key", interactive, r.deps.StoreLLMKey.CreateForUser)
 		}
 	}
 

@@ -38,3 +38,10 @@ func (r CreateLLMKeyRequest) Expiry() (time.Time, error) {
 	}
 	return *at, nil
 }
+
+// CreateUserLLMKeyRequest is the body of a personal key an admin creates for a
+// user: the same expiry, and the email the key's calls are shown under.
+type CreateUserLLMKeyRequest struct {
+	CreateLLMKeyRequest
+	OwnerEmail string `json:"owner_email,omitempty" example:"alice@example.com"`
+}
