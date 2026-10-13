@@ -118,12 +118,12 @@ func TestBufferedLegsRefuseATextAboveTheChunkLimitLocally(t *testing.T) {
 }
 
 // The ceiling is what half of the budget admits: with the default 15 s budget,
-// 4 parallel calls and a 2 s reserve, three rounds, so 12 chunks. A text of 12
-// chunks is moderated, and one byte more is refused before any call.
+// 4 parallel calls and a 2 s reserve, seven rounds (chunk 0 alone, then six of
+// four), so 25 chunks. A text of 25 chunks is moderated, and one byte more is refused before any call.
 func TestTheChunkCeilingKeepsHalfTheBudgetInHand(t *testing.T) {
 	t.Parallel()
 	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, evaluationBudget)
-	require.Equal(t, 28, ceiling)
+	require.Equal(t, 25, ceiling)
 	atCeiling := chunkBytes + (ceiling-1)*(chunkBytes-chunkOverlap)
 	require.Equal(t, ceiling, textchunk.Count(strings.Repeat("a", atCeiling), chunkSpec))
 

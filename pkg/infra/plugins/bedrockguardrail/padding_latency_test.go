@@ -406,23 +406,29 @@ func regionOrDefault(region string) string {
 	return region
 }
 
-// A provider that hangs on the first chunk is cut by the call's own timeout, not
-// by the evaluation's budget: the request fails open after about one call.
-func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
+// A provider that hangs is found on the first chunk: no other chunk starts after
+// its call timed out, so the request fails open after about one call however many
+// chunks the text has.
+func TestAHangStopsTheEvaluationAfterTheFirstCallTimesOut(t *testing.T) {
 	t.Parallel()
 	g := &latencyGuardrail{delay: 10 * time.Millisecond, hang: "HANG-HERE"}
 	p := pluginOver(g)
-	p.callTimeout = 400 * time.Millisecond
+	const timeout = 500 * time.Millisecond
+	p.callTimeout = timeout
 	require.Equal(t, bufferedBudget, p.evaluationBudget())
+	text := "HANG-HERE " + strings.ReplaceAll(benignWords(60000), " ", " HANG-HERE ")
+	require.GreaterOrEqual(t, textchunk.Count(text, chunkSpec), 3)
 	event, span := eventFor(t)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, "HANG-HERE "+benignWords(15000)), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settingsIn("eu-west-3"), chatRequestOf(t, text), nil)
 	in.Event = event
 
 	started := time.Now()
 	res, err := p.Execute(context.Background(), in)
+	took := time.Since(started)
 
 	assertPassThrough(t, res, err)
-	assert.Less(t, time.Since(started), 3*time.Second, "far below the evaluation budget")
+	assert.Less(t, took, timeout*3/2)
+	assert.EqualValues(t, 1, g.calls.Load(), "no chunk starts after the first call timed out")
 	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
 	require.True(t, ok)
 	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)

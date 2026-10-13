@@ -51,14 +51,16 @@ const (
 // a context that a cut separates by more than it, can still be cut in two. A
 // text is evaluated when its estimate, one callReserve per round of evalParallel
 // requests, is at most half of evaluationBudget:
-// that is the ceiling, at most maxChunks, 28 at the default 30 s, and a text above
+// that is the ceiling (chunk 0 is sent alone and is a round of its own), at most
+// maxChunks, 25 at the default 30 s, and a text above
 // it is refused before any call as chunk_limit. The headroom lets OpenAI answer
 // up to twice as slowly as callReserve, about twice a call's usual latency, on
 // every round without the budget cutting a chunk. A chunk that is not started or
 // is cut by the budget is availability only when some call took longer than twice
 // callReserve, and otherwise chunk_budget, input: the request's own size used the
 // time. OpenAI meters tokens per minute per tier, which the gateway cannot see,
-// so a rate limit on a chunk of the first round is retried once, and if it
+// so a rate limit on a chunk of the first round is retried once (chunk 0 is sent
+// alone and finishes, with its retry, before the others start), and if it
 // persists on the first chunk or on a single-chunk text it is other traffic and
 // fails open, with every other throttle of the text, and otherwise it is input
 // (throttled_oversize) on a later chunk, which the request's own calls beside or
@@ -78,8 +80,8 @@ const (
 // not a call's timeout: every call keeps the client's own, so a provider that
 // hangs fails the evaluation open after about one call and not after the whole
 // budget. It sets the ceiling (see above): 15 s of admitted estimate at two
-// seconds a round of four calls is 28 chunks, about 807,000 bytes, or about
-// 200,000 tokens.
+// seconds a round is chunk 0 and six rounds of four calls, 25 chunks, 720,896
+// bytes, or about 180,000 tokens.
 const evaluationBudget = 30 * time.Second
 
 var chunkSpec = textchunk.Spec{Max: chunkBytes, Overlap: chunkOverlap, Unit: textchunk.Bytes}
@@ -369,9 +371,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	slow := textchunk.SlowCallOf(budget, callReserve)
 	verdicts := make([]chunkVerdict, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
-		Parallel: evalParallel,
-		Reserve:  callReserve,
-		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(verdicts[i].violations) > 0 },
+		Parallel:  evalParallel,
+		Reserve:   callReserve,
+		LeadAlone: true,
+		SlowCall:  slow,
+		StopOn:    func(i int) bool { return appplugins.Blocks(in.Mode) && len(verdicts[i].violations) > 0 },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		resp, err := pluginutil.RetryFirstRoundThrottle(ctx, i, evalParallel, func(ctx context.Context) (*moderationResponse, error) {
 			return p.client.Moderate(ctx, p.baseURL, cfg.APIKey, moderationRequest{

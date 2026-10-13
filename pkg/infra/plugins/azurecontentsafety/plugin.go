@@ -49,13 +49,15 @@ const (
 // so can a context that a cut separates by more than the overlap. A conversation
 // above the ceiling is refused before any call as chunk_limit, so a padded request
 // costs nothing at Azure. The ceiling is what half of one evaluationBudget admits
-// at evalParallel calls at once and callReserve a round, at most maxChunks: 60 at
-// the 30 s budget. The headroom lets Azure answer up to twice as slowly as
+// at evalParallel calls at once and callReserve a round, chunk 0 being a round of
+// its own because it is sent alone (textchunk.Rounds), at most maxChunks: 57 at
+// the 30 s budget, 458,000 UTF-16 units. The headroom lets Azure answer up to twice as slowly as
 // callReserve, about twice a call's usual latency, without the budget cutting a
 // chunk. A chunk that is not started or is cut by the budget is availability only
 // when some call took longer than twice callReserve, and otherwise chunk_budget,
 // input. The free tier (F0) allows 5 requests a second, so a long conversation
-// throttles itself there. A throttle on a chunk of the first round is retried
+// throttles itself there. Chunk 0 is sent alone and finishes, with its retry,
+// before the others start, so a throttle on it is never its siblings'. A throttle on a chunk of the first round is retried
 // once; if it persists on the first chunk or on a single-chunk
 // conversation it is other traffic and fails open, with every other throttle of
 // the conversation, and otherwise it is input (throttled_oversize) on a later
@@ -75,8 +77,8 @@ const (
 // not a call's timeout: every call keeps defaultTimeout, so a provider that
 // hangs fails the evaluation open after about one call and not after the whole
 // budget. It sets the ceiling (see above): 15 s of admitted estimate at one
-// second a round of four calls is 60 chunks, about 490,000 UTF-16 units, or
-// about 120,000 tokens.
+// second a round is chunk 0 and fourteen rounds of four calls, 57 chunks, 458,000
+// UTF-16 units, or about 115,000 tokens.
 const evaluationBudget = 30 * time.Second
 
 var chunkSpec = textchunk.Spec{Max: chunkUnits, Overlap: chunkOverlap, Unit: textchunk.UTF16}
@@ -245,9 +247,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	slow := textchunk.SlowCallOf(budget, callReserve)
 	evals := make([]chunkEval, len(chunks))
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
-		Parallel: evalParallel,
-		Reserve:  callReserve,
-		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && len(evals[i].breaches) > 0 },
+		Parallel:  evalParallel,
+		Reserve:   callReserve,
+		LeadAlone: true,
+		SlowCall:  slow,
+		StopOn:    func(i int) bool { return appplugins.Blocks(in.Mode) && len(evals[i].breaches) > 0 },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		resp, err := pluginutil.RetryFirstRoundThrottle(ctx, i, evalParallel, func(ctx context.Context) (*analyzeResponse, error) {
 			return p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{

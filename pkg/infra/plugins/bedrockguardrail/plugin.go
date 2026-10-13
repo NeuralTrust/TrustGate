@@ -349,6 +349,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	outs := textchunk.Run(budget, chunks, textchunk.RunOptions{
 		Parallel: chunkParallel,
 		Reserve:  reserve,
+		SlowCall: slow,
 		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 		Before:   func(ctx context.Context, _ int, c textchunk.Chunk) error { return pace.wait(ctx, len(c.Text)) },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {

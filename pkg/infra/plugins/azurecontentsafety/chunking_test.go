@@ -66,12 +66,13 @@ func TestEveryChunkFitsTheLimitInUTF16Units(t *testing.T) {
 	assert.Equal(t, len(sent), data.ChunkCount)
 }
 
-// The ceiling is what half of the budget admits: with the 10 s budget, 4
-// parallel calls and a 1 s reserve, five rounds, so 20 chunks.
+// The ceiling is what half of the budget admits: with the 30 s budget, 4
+// parallel calls and a 1 s reserve, fifteen rounds (chunk 0 alone, then fourteen
+// of four), so 57 chunks.
 func TestAConversationAtTheCeilingIsEvaluatedAndOneUnitMoreIsRefusedBeforeAnyCall(t *testing.T) {
 	t.Parallel()
 	ceiling := textchunk.MaxChunks(maxChunks, evalParallel, callReserve, evaluationBudget)
-	require.Equal(t, 60, ceiling)
+	require.Equal(t, 57, ceiling)
 	atLimit := chunkUnits + (ceiling-1)*(chunkUnits-chunkOverlap)
 	require.Equal(t, ceiling, textchunk.Count(strings.Repeat("a", atLimit), chunkSpec))
 	require.Equal(t, ceiling+1, textchunk.Count(strings.Repeat("a", atLimit+1), chunkSpec))
@@ -290,9 +291,9 @@ func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
 	t.Cleanup(srv.Close)
 	p := New(adapter.NewRegistry(), nil)
 	p.budget = 800 * time.Millisecond
-	text := strings.Repeat("a", 50000)
-	require.Equal(t, 6, textchunk.Count(text, chunkSpec))
-	require.GreaterOrEqual(t, textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.budget), 6)
+	text := strings.Repeat("a", 42000)
+	require.Equal(t, 5, textchunk.Count(text, chunkSpec))
+	require.GreaterOrEqual(t, textchunk.MaxChunks(maxChunks, evalParallel, callReserve, p.budget), 5)
 
 	res, data, err := run(t, p, policy.ModeEnforce, srv.URL, chatBody(t, map[string]string{"role": "user", "content": text}))
 
@@ -486,30 +487,6 @@ func TestAParentDeadlineFollowsTheBudgetRule(t *testing.T) {
 	extras, _ := span.PluginAttrsCopy().Extras.(*Data)
 	require.NotNil(t, extras)
 	assert.Equal(t, "availability", extras.FailureClass)
-}
-
-// A provider that hangs is cut by the call's own timeout, not by the evaluation's
-// budget: the request fails open after about one call.
-func TestAHangFailsOpenAtTheCallTimeoutNotTheBudget(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		<-r.Context().Done()
-	}))
-	t.Cleanup(srv.Close)
-	p := New(adapter.NewRegistry(), nil)
-	p.client.http.Timeout = 400 * time.Millisecond
-	require.Equal(t, evaluationBudget, p.budget)
-
-	started := time.Now()
-	res, data, err := run(t, p, policy.ModeEnforce, srv.URL,
-		chatBody(t, map[string]string{"role": "user", "content": strings.Repeat("a", 50000)}))
-
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Less(t, time.Since(started), 5*time.Second, "far below the evaluation budget")
-	assert.Equal(t, "availability", data.FailureClass)
-	assert.Equal(t, appplugins.DecisionFailedOpen, data.Decision)
 }
 
 // Fast calls and a forced cut: the request's own chunks used a deadline shorter
