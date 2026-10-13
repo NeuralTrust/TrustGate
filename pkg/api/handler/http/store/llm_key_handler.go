@@ -16,6 +16,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
@@ -29,7 +30,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// LLMKeyHandler serves the caller's own personal LLM key.
+// LLMKeyHandler serves the caller's own personal LLM key, and the create an
+// admin runs for another user.
 type LLMKeyHandler struct {
 	keys appauth.PersonalKeys
 }
@@ -95,6 +97,45 @@ func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	key, err := h.keys.Create(c.UserContext(), gatewayID, appauth.PersonalKeyOwner{ID: owner, Email: callerEmail(c)}, expiresAt)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	return httpio.WriteCreated(c, storeresponse.FromIssuedPersonalKey(key))
+}
+
+// CreateForUser godoc
+// @Summary      Create a user's personal LLM key
+// @Description  Issues the personal key of the user named in the path, on the gateway, linked to no consumer, and returns its secret once, for the admin to hand over. It is the key the user would create themselves: one per user per gateway, expires_at required and within the next 90 days, and the user rotates or revokes it afterwards as their own. owner_email is the email every call the key makes is shown under; absent, it is recorded when the console next reconciles the key. Which users an admin may issue keys for is the console's call; TrustGate checks only that the gateway is the caller's tenant's. Needs a signed-in tenant user: a service credential or a platform token answers 403.
+// @Tags         store
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                                true  "Gateway id"  format(uuid)
+// @Param        user_id     path      string                                true  "Platform user id of the key's owner"
+// @Param        body        body      storerequest.CreateUserLLMKeyRequest  true  "Expiry of the key and the owner's email"
+// @Success      201         {object}  storeresponse.IssuedPersonalKeyResponse
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      403         {object}  httpio.ErrorBody  "Not a signed-in tenant user: service credential, platform token or no user id"
+// @Failure      404         {object}  httpio.ErrorBody  "No such gateway"
+// @Failure      409         {object}  httpio.ErrorBody  "The user already holds a key on this gateway"
+// @Failure      422         {object}  httpio.ErrorBody  "Missing or out-of-range expires_at, an owner_email that is not an address, or a hybrid gateway"
+// @Router       /v1/gateways/{gateway_id}/store/users/{user_id}/llm-key [post]
+func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
+	gatewayID, _, err := selfScope(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	var req storerequest.CreateUserLLMKeyRequest
+	if err := c.BodyParser(&req); err != nil {
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+	}
+	expiresAt, err := req.Expiry()
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	owner := appauth.PersonalKeyOwner{ID: strings.TrimSpace(c.Params("user_id")), Email: req.OwnerEmail}
+	key, err := h.keys.Create(c.UserContext(), gatewayID, owner, expiresAt)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}

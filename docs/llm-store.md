@@ -118,6 +118,24 @@ names another owner.
 | `POST …/llm-key/rotate` `{"expires_at"?}` | 200 with a new secret. Same id, same links. Without `expires_at` the current expiry stays, unless it has passed (422). Two rotations racing each other: the first wins and the second answers 409 `conflict` without changing anything, so the secret shown is always the live one. |
 | `DELETE …/llm-key` | 204. The key and its links are gone in one transaction; a new create starts with no links. |
 
+An admin can also create the key for a user, from the console, and hand the
+secret over:
+
+```json
+POST /v1/gateways/{gateway_id}/store/users/{user_id}/llm-key
+{"expires_at": "<RFC 3339>", "owner_email": "alice@example.com"}
+```
+
+The answer is the create's: 201 with the secret in `api_key`, shown once, 409
+if the user already has a key, 422 for an expiry out of range, an
+`owner_email` that is not an address, or a hybrid gateway. The key is the
+user's like any other: their calls, their self-only routes to rotate or revoke
+it. `owner_email` is optional; without it the email is recorded when the
+console next reconciles the key. TrustGate only checks that the gateway is the
+caller's tenant's and that the caller is a signed-in user (403 for service
+credentials and platform tokens); which admins may create keys for whom is the
+console's decision.
+
 A rotation or revocation reaches every full-plane replica at the next
 `InvalidateGatewayDataEvent` for the gateway and every DB-less proxy at the next
 snapshot apply. A key lookup that was already reading when the caches were
