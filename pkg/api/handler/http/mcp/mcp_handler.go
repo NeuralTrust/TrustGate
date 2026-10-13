@@ -47,6 +47,7 @@ const (
 	// initialize can give.
 	handshakeProtocolVersion = "2025-11-25"
 	modernServerInfoMetaKey  = "io.modelcontextprotocol/serverInfo"
+	protocolVersionHeader    = "Mcp-Protocol-Version"
 )
 
 // advertisedProtocolVersions is what server/discover offers and what
@@ -230,6 +231,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	// setting (Rate Limiter's Group by header) read them the same way it would
 	// on the LLM plane.
 	c.SetUserContext(infracontext.WithInboundHeaders(c.UserContext(), reqHeaders))
+	c.SetUserContext(appmcp.WithClientRevision(c.UserContext(), c.Get(protocolVersionHeader)))
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
 		skipMetrics(c)
