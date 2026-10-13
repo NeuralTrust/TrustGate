@@ -53,7 +53,7 @@ var newline = []byte("\n")
 
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
-var errForbidden = errors.New("credential is not authorized for the matched consumer")
+var errForbidden = errors.New("credential is not authorized for the matched application")
 var errMethodNotAllowed = errors.New("method is not allowed for this route")
 
 // errNoModelAccess answers a valid personal key linked to no personal
@@ -813,7 +813,7 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeModelNotSupported, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
-		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
+		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeModelNotAllowed, Message: modelDeniedMessage(err)}
 	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
 		return fiber.StatusBadGateway, httpio.ErrorBody{
 			Error:   errCodeProviderCredential,
@@ -822,4 +822,17 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	default:
 		return fiber.StatusBadGateway, httpio.ErrorBody{Error: errCodeBackendError}
 	}
+}
+
+// modelDeniedMessage keeps routing internals out of a model_not_allowed body:
+// a denial with no client-facing reason gets a generic message.
+func modelDeniedMessage(err error) string {
+	var denied *routingdomain.ModelDeniedError
+	if errors.As(err, &denied) {
+		return denied.Reason
+	}
+	if errors.Is(err, routingdomain.ErrModelDenied) {
+		return "the requested model is not allowed"
+	}
+	return err.Error()
 }
