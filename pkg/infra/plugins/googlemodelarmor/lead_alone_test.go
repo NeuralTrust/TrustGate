@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
@@ -49,13 +50,14 @@ func TestAQuotaThatAdmitsTheFirstArrivalNeverThrottlesChunkZero(t *testing.T) {
 				return http.StatusOK, allowResponse
 			})
 			p := pluginWithStub(s.modelArmorStub)
-			event, _ := newStreamEvent()
+			event, span := newStreamEvent()
 			in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, text)), nil)
 			in.Event = event
 
 			_, err := p.Execute(context.Background(), in)
 
-			if err == nil {
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if err == nil || !ok || data.FailureDetail != appplugins.DetailThrottledOversize {
 				failedOpen.Add(1)
 			}
 		})

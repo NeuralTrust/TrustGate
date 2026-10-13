@@ -338,11 +338,38 @@ func TestRunTookIsTheLongestAttemptNotTheSumOfBoth(t *testing.T) {
 	t.Parallel()
 	out := Run(context.Background(), chunksOf(1), RunOptions{Parallel: 1},
 		func(ctx context.Context, _ int, _ Chunk) (int, error) {
-			time.Sleep(60 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond)
 			Pause(ctx, 100*time.Millisecond)
-			time.Sleep(40 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond)
 			return 0, nil
 		})
-	assert.GreaterOrEqual(t, out[0].Took, 60*time.Millisecond)
-	assert.Less(t, out[0].Took, 95*time.Millisecond, "60 ms and 40 ms attempts are not 100 ms")
+	assert.GreaterOrEqual(t, out[0].Took, 150*time.Millisecond)
+	assert.Less(t, out[0].Took, 290*time.Millisecond, "two 150 ms attempts are not 300 ms")
+}
+
+func TestFirstReleasedFollowsTheSchedule(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		i, parallel int
+		lead        bool
+		want        bool
+	}{
+		{3, 4, false, true},
+		{4, 4, false, false},
+		{4, 4, true, true},
+		{5, 4, true, false},
+		{1, 1, true, false},
+		{0, 1, true, true},
+	} {
+		assert.Equal(t, tc.want, FirstReleased(tc.i, tc.parallel, tc.lead), "%+v", tc)
+	}
+}
+
+func TestRunWaitedIsTheScheduleNotTheIndexWhenTheLeadRunsAlone(t *testing.T) {
+	t.Parallel()
+	out := Run(context.Background(), chunksOf(6), RunOptions{Parallel: 4, LeadAlone: true},
+		func(context.Context, int, Chunk) (int, error) { return 0, nil })
+	for i, o := range out {
+		assert.Equal(t, i == 5, o.Waited, "chunk %d", i)
+	}
 }

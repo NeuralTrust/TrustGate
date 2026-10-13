@@ -118,12 +118,25 @@ func MaxChunks(limit, parallel int, reserve, budget time.Duration) int {
 	return max(1, min(limit, (rounds-1)*max(1, parallel)+1))
 }
 
+// FirstReleased reports whether chunk i is sent in the first round the schedule
+// releases, one that waited on no chunk of the same run: the chunks below
+// parallel, or, when lead is set (RunOptions.LeadAlone, with parallel above one),
+// chunk 0 alone and then chunks 1 through parallel, which start together once
+// chunk 0 has finished.
+func FirstReleased(i, parallel int, lead bool) bool {
+	parallel = max(1, parallel)
+	if lead && parallel > 1 {
+		return i <= parallel
+	}
+	return i < parallel
+}
+
 // Outcome is what evaluating one chunk produced. Started is false when the
 // chunk was never sent because the context ended, the reserve was not there or
 // StopOn fired first: the caller decides what that means, this package does not.
 //
-// Waited says the chunk was queued behind chunks of the same run (its index is
-// at least Parallel), and BudgetCut says its call returned an error while
+// Waited says the chunk was queued behind chunks of the same run (it is not in
+// the first round of the schedule, see FirstReleased), and BudgetCut says its call returned an error while
 // ctx's deadline had passed. Both together are a chunk whose time the request's
 // own earlier chunks used up. A chunk of the first round that is cut was the
 // provider being slow, and a call that ended on its own timeout leaves
@@ -171,12 +184,12 @@ dispatch:
 		case <-runCtx.Done():
 			break dispatch
 		}
-		if runCtx.Err() != nil || slowFailure.Load() || (i >= parallel && lacksReserve(runCtx, reserve)) {
+		if runCtx.Err() != nil || slowFailure.Load() || (!FirstReleased(i, parallel, lead) && lacksReserve(runCtx, reserve)) {
 			<-sem
 			break
 		}
 		out[i].Started = true
-		out[i].Waited = i >= parallel
+		out[i].Waited = !FirstReleased(i, parallel, lead)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -280,10 +293,10 @@ func Pause(ctx context.Context, d time.Duration) bool {
 // limits RetryWait puts on it.
 const RetryBackoff = 250 * time.Millisecond
 
-// RetryWait is the wait before a throttled call is sent again: RetryBackoff, or
-// the provider's own retryAfter when it asks for one that fits in half of the
-// time ctx has left, and never more than a quarter of that time or than the
-// reserve of the Run the call belongs to.
+// RetryWait is the wait before a throttled call is sent again:
+// RetryBackoff capped at a quarter of the time ctx has left, or the provider's
+// own retryAfter when it fits in half of it; never more than the reserve of the
+// Run the call belongs to.
 func RetryWait(ctx context.Context, retryAfter time.Duration) time.Duration {
 	wait := RetryBackoff
 	if deadline, ok := ctx.Deadline(); ok {

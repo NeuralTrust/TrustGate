@@ -106,10 +106,10 @@ func TestRetryThrottledOnceHonoursRetryAfterOnlyWhenItFits(t *testing.T) {
 func TestRetryFirstRoundThrottleSkipsAChunkThatWaited(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	_, _ = RetryFirstRoundThrottle(context.Background(), 4, 4, func(context.Context) (int, error) { calls++; return 0, &stubRejection{status: 429} })
+	_, _ = RetryFirstRoundThrottle(context.Background(), 4, 4, false, func(context.Context) (int, error) { calls++; return 0, &stubRejection{status: 429} })
 	assert.Equal(t, 1, calls)
 	calls = 0
-	_, _ = RetryFirstRoundThrottle(context.Background(), 3, 4, func(context.Context) (int, error) { calls++; return 0, &stubRejection{status: 429} })
+	_, _ = RetryFirstRoundThrottle(context.Background(), 3, 4, false, func(context.Context) (int, error) { calls++; return 0, &stubRejection{status: 429} })
 	assert.Equal(t, 2, calls)
 }
 
@@ -123,7 +123,7 @@ func TestTheRetryWaitIsNotTheProvidersTimeAndIsCappedAtTheReserve(t *testing.T) 
 	var at []time.Time
 	outs := textchunk.Run(ctx, chunks, textchunk.RunOptions{Parallel: 1, Reserve: 400 * time.Millisecond},
 		func(ctx context.Context, i int, _ textchunk.Chunk) (int, error) {
-			return RetryFirstRoundThrottle(ctx, i, 1, func(context.Context) (int, error) {
+			return RetryFirstRoundThrottle(ctx, i, 1, false, func(context.Context) (int, error) {
 				at = append(at, time.Now())
 				if len(at) == 1 {
 					return 0, &stubRejection{status: 429, retryAfter: 9 * time.Second}
@@ -154,7 +154,7 @@ func TestARetryWaitAndACutTailAreChunkBudgetNotAvailability(t *testing.T) {
 	var first atomic.Bool
 	outs := textchunk.Run(ctx, chunks, textchunk.RunOptions{Parallel: 1, Reserve: reserve},
 		func(ctx context.Context, i int, _ textchunk.Chunk) (int, error) {
-			return RetryFirstRoundThrottle(ctx, i, 1, func(ctx context.Context) (int, error) {
+			return RetryFirstRoundThrottle(ctx, i, 1, false, func(ctx context.Context) (int, error) {
 				if i == 0 && first.CompareAndSwap(false, true) {
 					return 0, &stubRejection{status: 429, retryAfter: reserve}
 				}

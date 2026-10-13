@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
 
 // A provider whose quota admits only the first piece to arrive throttles pieces
@@ -36,21 +37,27 @@ import (
 func TestRunStreamSegment_AQuotaThatAdmitsTheFirstArrivalNeverThrottlesPieceZero(t *testing.T) {
 	t.Parallel()
 	text := words(40000)
+	require.Equal(t, 6, textchunk.Count(text, streamChunkSpec(8192)), "a later piece exists for the quota to throttle")
 	var failedOpen atomic.Int32
 	for n := range 60 {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			t.Parallel()
 			var arrivals atomic.Int32
-			exec, in, _ := chunkChain(t, policy.ModeEnforce, 8192, func(StreamSegment) (*SegmentVerdict, error) {
+			exec, in, guard := chunkChain(t, policy.ModeEnforce, 8192, func(StreamSegment) (*SegmentVerdict, error) {
 				if arrivals.Add(1) > 1 {
 					return nil, newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
 				}
 				return &SegmentVerdict{}, nil
 			})
 
-			out, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+			ctx, _, publish := failureStreamCtx(t)
+			out, err := exec.RunStreamSegment(ctx, in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+			if err == nil {
+				_, err = exec.RunStreamSegment(ctx, in, StreamSegment{StreamID: "s", Seq: 1, Closing: true})
+			}
+			publish()
 
-			if err != nil || !out.Block {
+			if err != nil || !out.Block || guard.last.FailureDetail != DetailThrottledOversize {
 				failedOpen.Add(1)
 			}
 		})
@@ -103,4 +110,27 @@ func TestRunStreamSegment_AHangStopsTheBlockAfterTheFirstPieceTimesOut(t *testin
 	assert.False(t, out.Block, "a hang is availability")
 	assert.Less(t, took, g.timeout*3/2)
 	assert.EqualValues(t, 1, g.calls.Load(), "no piece starts after the first timed out")
+}
+
+// With the lead piece alone, the first round released is pieces 1 through
+// parallel. The piece at index parallel is a round-mate of the pieces below it
+// and is retried like them: one throttle on it, whatever the index, is not a
+// failure.
+func TestRunStreamSegment_AThrottleOnTheLastPieceOfTheFirstRoundIsRetried(t *testing.T) {
+	t.Parallel()
+	text := words(40000)
+	require.Equal(t, 6, textchunk.Count(text, streamChunkSpec(8192)))
+	var attempts atomic.Int32
+	exec, in, _ := chunkChain(t, policy.ModeEnforce, 8192, func(seg StreamSegment) (*SegmentVerdict, error) {
+		if seg.Part == streamChunkParallel+1 && attempts.Add(1) == 1 {
+			return nil, newExternalStreamFailure("guard", FailureTransport, DetailThrottled, errors.New("429"))
+		}
+		return &SegmentVerdict{}, nil
+	})
+
+	out, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+
+	require.NoError(t, err)
+	assert.False(t, out.Block)
+	assert.EqualValues(t, 2, attempts.Load(), "the throttled piece is sent once more")
 }
