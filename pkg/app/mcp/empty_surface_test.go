@@ -42,11 +42,18 @@ func TestEmptySurfaceInsteadOfError(t *testing.T) {
 		Method:  identity.MethodAPIKey,
 	})
 
-	// A pending consent degrades to an empty list for everyone.
-	consent := &ConsentRequiredError{Provider: "github"}
-	for _, ctx := range []context.Context{asApp, asPerson} {
-		if !emptySurfaceInsteadOfError(ctx, rc, consent) {
-			t.Fatal("a pending consent must yield an empty surface, not an error")
+	// A server waiting on an account degrades to an empty list for everyone:
+	// a pending consent, and a server with no account for this caller — the
+	// application itself on a per-user instance included (ENG-1787).
+	for name, waiting := range map[string]error{
+		"a pending consent":                     &ConsentRequiredError{Provider: "github"},
+		"a per-user instance that names nobody": &ApplicationNotConnectedError{Provider: "com.google.workspace/drive", Registry: "Google Drive"},
+		"a shared account nobody has connected": &ApplicationNotConnectedError{Provider: "linear", Registry: "Linear", Shared: true},
+	} {
+		for _, ctx := range []context.Context{asApp, asPerson} {
+			if !emptySurfaceInsteadOfError(ctx, rc, waiting) {
+				t.Fatalf("%s must yield an empty surface, not an error", name)
+			}
 		}
 	}
 	// No exposed registry is an empty surface only where the surface is per
