@@ -72,7 +72,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.cost.currency` | `cost.currency` (when cost present) |
 | `trustgate.cost.savings_usd` | `cost.savings_usd` (when smart routing's tier table chose the route) |
 | `trustgate.latency.total_ms` | `latency.total_ms` |
-| `trustgate.latency.provider_ms` | `latency.provider_ms` |
+| `trustgate.latency.provider_ms` | `latency.provider_ms` (omitted when the request made no provider attempt; `0` is a real attempt under 1ms) |
 | `trustgate.latency.policies_ms` | `latency.policies_ms` |
 | `trustgate.latency.gateway_ms` | `latency.gateway_ms` |
 | `trustgate.is_flagged` | `is_flagged` (bool) |
@@ -110,7 +110,7 @@ separately:
 | Attribute | Meaning |
 |-----------|---------|
 | `total_ms` | Wall clock from the moment the gateway accepted the request until the response was written. |
-| `provider_ms` | Time spent in the upstream provider, summed across attempts (retries and fallbacks included), **net of any time a streaming policy held bytes back during drain** — see below. |
+| `provider_ms` | Time spent in the upstream provider, summed across attempts (retries and fallbacks included), **net of any time a streaming policy held bytes back during drain** — see below. Omitted when the request made no provider attempt. A missing value reads as zero in the reconciliation below; `0` means a real attempt finished in under a millisecond. |
 | `policies_ms` | Time spent in the policy chain across **every** stage: `pre_request`, `pre_response` and `post_response`. |
 | `gateway_ms` | The gateway's own overhead: routing, adapter translation, serialization. |
 
