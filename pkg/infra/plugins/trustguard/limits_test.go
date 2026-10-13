@@ -63,12 +63,23 @@ func attachmentsOf(t *testing.T, payload json.RawMessage) []GuardAttachment {
 	return p.Attachments
 }
 
+// largePayloadTimeout keeps the evaluate deadline out of the tests that only
+// check what a multi-MiB payload carries: under -race on a CI runner, encoding
+// and posting it to the fake guard can outlast testTimeout, and the call then
+// fails open for a reason the test is not about.
+const largePayloadTimeout = 30 * time.Second
+
+func newLargePayloadPlugin(t *testing.T, baseURL string) *Plugin {
+	t.Helper()
+	return New(adapter.NewRegistry(), baseURL, largePayloadTimeout, "test-client", "test-secret", nil, withBaseTransport(testTransport(t)))
+}
+
 // An image is not text: the ceiling counts what a model reads, so a 2 MiB text
 // with a 3 MiB image is evaluated whole.
 func TestATextAndAnImageAreEvaluatedWhenOnlyTheTextCounts(t *testing.T) {
 	t.Parallel()
 	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+	p := newLargePayloadPlugin(t, newServer(t, f).URL)
 	req := requestWith(t, strings.Repeat("a", 2<<20), dataURL(3<<20))
 	event, span := newEvent()
 
@@ -121,7 +132,7 @@ func TestATransformEchoOfALargeTextIsAccepted(t *testing.T) {
 	text := strings.Repeat("an ordinary sentence. ", (5<<19)/22) + " victim@example.com"
 	require.Greater(t, len(text), 2<<20+400<<10)
 	f := &fakeGuard{echoMask: func(s string) string { return strings.ReplaceAll(s, "victim@example.com", "[EMAIL]") }}
-	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+	p := newLargePayloadPlugin(t, newServer(t, f).URL)
 	event, span := newEvent()
 
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), chatRequestOf(t, text), nil, event))
