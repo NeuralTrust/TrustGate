@@ -86,6 +86,32 @@ func TestRPCGateway_ConsentPendingStillListsTheInventoryMetaTool(t *testing.T) {
 	require.Contains(t, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)), appmcp.InventoryToolName)
 }
 
+// ENG-1787: an application whose every server keeps one account per user,
+// called with only its own key, has no account anywhere. That is a server
+// waiting on someone, as a pending consent is, so tools/list answers with the
+// gateway's tools — the inventory says which servers wait and why — and only a
+// call to one of those servers' tools is refused.
+func TestRPCGateway_NoAccountForTheApplicationStillListsTheInventoryMetaTool(t *testing.T) {
+	t.Parallel()
+	refusal := &appmcp.ApplicationNotConnectedError{Provider: "com.google.workspace/drive", Registry: "Google Drive"}
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(nil, refusal).Once()
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "google_drive__search").Return(nil, refusal).Once()
+	inventory, err := appmcp.NewInventoryTool(composer, nil)
+	require.NoError(t, err)
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil).WithInventoryTool(inventory)
+
+	rc := inventoryConsumer(t)
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{appmcp.InventoryToolName}, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)))
+
+	_, err = g.Dispatch(context.Background(), rc, "tools/call", json.RawMessage(`{"name":"google_drive__search"}`))
+	var notConnected *appmcp.ApplicationNotConnectedError
+	require.ErrorAs(t, err, &notConnected)
+	require.Equal(t, "Google Drive", notConnected.Registry)
+}
+
 // A consumer whose toolkit names no tool is meant to expose nothing. Handing it
 // an inventory would name every server behind that empty surface, so the
 // gateway withholds its own tools there too.
