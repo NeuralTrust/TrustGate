@@ -80,8 +80,8 @@ func (p *streamPlugin) InspectSegment(_ context.Context, in ExecInput, seg Strea
 }
 
 // StreamSettings answers from the settings map the way a real plugin does, so
-// the plan can tell an enabled policy from a disabled one without knowing any
-// plugin's schema.
+// the plan can tell a participating policy from one that is not on the
+// response leg without knowing any plugin's schema.
 func (p *streamPlugin) StreamSettings(settings map[string]any) (bool, StreamOptions) {
 	enabled, _ := settings["enabled"].(bool)
 	if !enabled {

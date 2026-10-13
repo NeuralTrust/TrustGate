@@ -36,7 +36,8 @@ type ResponseContext struct {
 	// guard evaluated the stream's final block in full: every entry answered and
 	// the call carried the whole accumulated text, not a tail window. The
 	// post_response pass over the drained body would read the same text again, so
-	// a plugin whose own policy entry opted into per-block inspection skips it.
+	// a plugin whose own policy entry inspected the stream block by block skips
+	// it.
 	// Nothing derived from the request or the upstream response can set it.
 	StreamFinalInspected bool
 	TargetLatency        float64

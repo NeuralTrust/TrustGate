@@ -85,10 +85,11 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 
 var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 
-// ValidateSettingsWrite rejects a new streaming.final_pass: false, which the
-// block loop cannot honour (pluginutil.ValidateFinalPassWrite).
+// ValidateSettingsWrite rejects a new streaming.final_pass: false or
+// streaming.enabled: false, which the block loop cannot honour
+// (pluginutil.ValidateStreamingWrite).
 func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
-	return pluginutil.ValidateFinalPassWrite(PluginName, settings, previous)
+	return pluginutil.ValidateStreamingWrite(PluginName, settings, previous)
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
@@ -138,15 +139,9 @@ func (p *Plugin) executeResponse(ctx context.Context, in appplugins.ExecInput, c
 	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	// A streamed response is rewritten block by block by the stream guard when
-	// streaming is on for this policy, so this buffered run has nothing to do
-	// with it. When streaming is off the response goes out unrewritten, and the
-	// trace has to say so: this check sits ahead of the body checks because a
-	// streamed response carries no buffered body to find.
+	// A streamed response is rewritten block by block by the stream guard, so
+	// this buffered run has nothing to do with it.
 	if in.Response.Streaming {
-		if !cfg.Streaming.IsEnabled() {
-			pluginutil.RecordStreamingDisabled(in.Event, string(in.Stage))
-		}
 		return passThrough(), nil
 	}
 	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
