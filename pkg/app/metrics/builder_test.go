@@ -204,7 +204,8 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, "USD", evt.Cost.Currency)
 
 	assert.Equal(t, int64(320), evt.Latency.TotalMs)
-	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
+	require.NotNil(t, evt.Latency.ProviderMs)
+	assert.Equal(t, int64(300), *evt.Latency.ProviderMs)
 	assert.Equal(t, int64(6), evt.Latency.PoliciesMs)
 	assert.Equal(t, int64(14), evt.Latency.GatewayMs)
 
@@ -520,7 +521,8 @@ func TestBuilder_FailoverAttemptsAndFlaggedPlugin(t *testing.T) {
 
 	require.Len(t, evt.Attempts, 2)
 	assert.True(t, evt.Attempts[1].Fallback)
-	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
+	require.NotNil(t, evt.Latency.ProviderMs)
+	assert.Equal(t, int64(300), *evt.Latency.ProviderMs)
 
 	require.Len(t, evt.PolicyChain, 1)
 	assert.True(t, evt.PolicyChain[0].Flagged)
@@ -966,15 +968,17 @@ func TestBuilder_StreamedPoliciesLeaveProviderMs(t *testing.T) {
 	}
 
 	got := build(true)
-	assert.Equal(t, int64(380), got.ProviderMs,
+	require.NotNil(t, got.ProviderMs)
+	assert.Equal(t, int64(380), *got.ProviderMs,
 		"the 120ms the guard held bytes elapsed inside the 500ms drain, so it is not the provider's")
 	assert.Equal(t, int64(126), got.PoliciesMs, "policies_ms still reports the full chain cost")
 	assert.Equal(t, int64(24), got.GatewayMs)
-	assert.Equal(t, got.TotalMs, got.ProviderMs+got.PoliciesMs+got.GatewayMs,
+	assert.Equal(t, got.TotalMs, *got.ProviderMs+got.PoliciesMs+got.GatewayMs,
 		"the three buckets must reconcile against total_ms on a streamed leg")
 
 	unmarked := build(false)
-	assert.Equal(t, int64(500), unmarked.ProviderMs)
+	require.NotNil(t, unmarked.ProviderMs)
+	assert.Equal(t, int64(500), *unmarked.ProviderMs)
 	assert.Zero(t, unmarked.GatewayMs,
 		"without the marker the guard's hold is counted twice and the remainder clamps to zero")
 }
@@ -1114,4 +1118,49 @@ func TestBuilder_SucceededAttemptKeepsTheModelTheProviderEchoed(t *testing.T) {
 	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
 
 	assert.Equal(t, "gpt-4o-mini-2024-07-18", evt.Request.Model)
+}
+
+// ENG-1836: a pre-request refusal never called the provider, so provider_ms is
+// omitted. A real attempt that finished in under a millisecond still emits 0.
+func TestBuilder_ProviderMsOmittedWithoutAttempt(t *testing.T) {
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Method:       "POST",
+		Path:         "/v1/chat/completions",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+	}
+	start := time.UnixMilli(1_000_000)
+
+	t.Run("pre-request refusal", func(t *testing.T) {
+		rt := trace.New("trace-blocked", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(pluginSpan("request_size_limiter",
+			&trace.PluginAttrs{Stage: "pre_request", Decision: "block"}, 413, time.Millisecond, ""))
+		resp := &infracontext.ResponseContext{StatusCode: 413, Body: []byte(`{"error":"plugin_rejected"}`)}
+
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+		assert.Empty(t, evt.Attempts)
+		assert.Nil(t, evt.Latency.ProviderMs)
+		raw, err := json.Marshal(evt.Latency)
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "provider_ms")
+	})
+
+	t.Run("attempt under 1ms", func(t *testing.T) {
+		rt := trace.New("trace-fast", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+			200, 500*time.Microsecond, ""))
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(500*time.Microsecond))
+
+		require.Len(t, evt.Attempts, 1)
+		require.NotNil(t, evt.Latency.ProviderMs)
+		assert.Equal(t, int64(0), *evt.Latency.ProviderMs)
+		raw, err := json.Marshal(evt.Latency)
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"provider_ms":0`)
+	})
 }

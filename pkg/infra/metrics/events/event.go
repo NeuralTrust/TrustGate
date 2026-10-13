@@ -226,14 +226,19 @@ type Cost struct {
 // on: the provider, the policy chain and the gateway itself. PoliciesMs covers
 // every stage the chain ran, including post_response, which executes after the
 // response was already sent. GatewayMs discounts that asynchronous share, so the
-// stages reconcile as TotalMs = ProviderMs + blocking policies + GatewayMs. The
-// per-stage split is not duplicated here: it is derivable from PolicyChain,
-// where every entry carries its Stage and LatencyMs.
+// stages reconcile as TotalMs = ProviderMs + blocking policies + GatewayMs,
+// reading a nil ProviderMs as zero. The per-stage split is not duplicated
+// here: it is derivable from PolicyChain, where every entry carries its Stage
+// and LatencyMs.
+//
+// ProviderMs is nil when the request made no provider attempt, so a
+// pre-request refusal omits provider_ms. A real attempt is always set,
+// including zero for a call that finished in under a millisecond.
 type Latency struct {
-	TotalMs    int64 `json:"total_ms"`
-	ProviderMs int64 `json:"provider_ms"`
-	PoliciesMs int64 `json:"policies_ms"`
-	GatewayMs  int64 `json:"gateway_ms"`
+	TotalMs    int64  `json:"total_ms"`
+	ProviderMs *int64 `json:"provider_ms,omitempty"`
+	PoliciesMs int64  `json:"policies_ms"`
+	GatewayMs  int64  `json:"gateway_ms"`
 }
 
 type Attempt struct {
