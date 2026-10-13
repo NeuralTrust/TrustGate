@@ -21,6 +21,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+// MaxDescriptionLen is the longest policy description, in bytes, the Admin API
+// accepts. Any text a client seeds a description with, such as a catalogue
+// description, must fit within it.
+const MaxDescriptionLen = 1000
+
 type Policy struct {
 	ID          ids.PolicyID     `json:"id"`
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
