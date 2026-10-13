@@ -532,17 +532,21 @@ ceilings follow the providers' per-request limits and deadlines, and a larger
   covers the token and the evaluate call.
 
 A buffered request (the whole prompt or response, not a stream block) is split
-too, and the text a guardrail screens is bounded by what half of its 30 second
-evaluation budget admits, which is separate from the timeout of each call (a
-provider that hangs fails open after about one call, not after the budget). A
+too, and the text a guardrail screens is bounded by what half of its evaluation budget
+admits, which is separate from the timeout of each call (a provider that hangs
+fails open after about one call, not after the budget). The budget is 30 seconds
+for `azure_content_safety`, `openai_moderation` and `bedrock_guardrail`; Model
+Armor's is the timeout of its call (15 seconds by default), which admits 16
+chunks, and fewer with a shorter timeout. The first chunk is sent alone, so it is
+a round of its own in the estimate. A
 text above the ceiling is refused before any call as `input_too_large` /
 `chunk_limit` in a mode that blocks. The ceilings, in characters or bytes and
 in tokens at about four characters a token:
 
 | Guardrail | Chunks | Text | Tokens |
 |---|---|---|---|
-| `azure_content_safety` | 60 | about 482,000 UTF-16 units | about 120,000 |
-| `openai_moderation` | 28 | about 807,000 bytes | about 200,000 |
+| `azure_content_safety` | 57 | about 458,000 UTF-16 units | about 115,000 |
+| `openai_moderation` | 25 | about 721,000 bytes | about 180,000 |
 | `bedrock_guardrail` | 10 | about 203,000 bytes | about 50,000 |
 | `google_model_armor` | 16 | about 856,000 bytes | about 210,000 |
 
