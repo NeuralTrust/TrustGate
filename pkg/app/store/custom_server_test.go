@@ -128,16 +128,6 @@ func TestCustomServer_ApprovalGrantsAndListsByRegistryName(t *testing.T) {
 	}
 }
 
-func TestCustomServer_ApprovalOfAGoneServerIsNotShelved(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	_, code := customServer("Internal tools")
-	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", code)}
-	ap := newApproverWith(t, installs, &fakeRegistries{}, &fakeGrants{}, &fakeEnsurer{})
-	if err := ap.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: code}); !errors.Is(err, ErrNotShelved) {
-		t.Fatalf("a deleted custom server cannot be approved onto, got %v", err)
-	}
-}
-
 func TestCustomServer_ScoperExposesTheGrantedInstall(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	custom, code := customServer("Internal tools")

@@ -32,6 +32,12 @@ import (
 var (
 	ErrInvalidInstallation = fmt.Errorf("installation: invalid installation: %w", commonerrors.ErrValidation)
 	ErrNotFound            = fmt.Errorf("installation: not found: %w", commonerrors.ErrNotFound)
+	// ErrStaleRequest is a request for a server instance that was deleted and
+	// cannot be moved onto a current one.
+	ErrStaleRequest = fmt.Errorf("installation: the server this request names was deleted: %w", commonerrors.ErrConflict)
+	// ErrInstanceExists is a rebind onto an instance the principal already holds a
+	// row for.
+	ErrInstanceExists = fmt.Errorf("installation: the principal already holds that instance: %w", commonerrors.ErrAlreadyExists)
 )
 
 // Status is the lifecycle state of a Store installation.
@@ -284,6 +290,20 @@ func (i *Installation) SameConfig(other map[string]string) bool {
 // need it — so it is a separate capability rather than part of Repository.
 type DecisionHistory interface {
 	ListDecidedByGateway(ctx context.Context, gatewayID ids.GatewayID, limit int) ([]*Installation, error)
+}
+
+// Rebinder moves one installation onto another configured instance of its
+// server, or onto none (a code-level row) when registryID is nil. It returns
+// ErrInstanceExists when the principal already holds a row for the target.
+// Served by the durable store only.
+type Rebinder interface {
+	Rebind(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID, registryID ids.RegistryID) error
+}
+
+// PendingDenier denies every pending request for one Store code on a gateway and
+// reports how many it denied. Served by the durable store only.
+type PendingDenier interface {
+	DenyPending(ctx context.Context, gatewayID ids.GatewayID, catalogCode, deniedBy string, at time.Time) (int64, error)
 }
 
 // Reader provides principal-scoped installation lookups.
