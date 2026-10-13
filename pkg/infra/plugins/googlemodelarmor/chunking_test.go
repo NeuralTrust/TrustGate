@@ -511,7 +511,7 @@ func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
 		return newClientWithTokenSource(s.server.URL, 800*time.Millisecond, staticTokenSource("test-token", nil)), nil
 	}}
 	event, span := newStreamEvent()
-	text := armorPlain(300 << 10)
+	text := armorPlain(250 << 10)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(chatBody(t, text)), nil)
 	in.Event = event
 

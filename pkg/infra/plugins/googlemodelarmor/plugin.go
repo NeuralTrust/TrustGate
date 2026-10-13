@@ -336,13 +336,15 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // key, a service-account JSON of about 3.5 KB) to lie whole in one chunk; a
 // pattern longer than it, or a context that a cut separates by more than it,
 // can still be cut in two. The ceiling is what half of the client's timeout for the
-// whole evaluation admits at chunkParallel calls at once and callReserve a round,
-// at most maxBufferedChunks (16 at the default 15 s): a text above it is refused
+// whole evaluation admits at chunkParallel calls at once and callReserve a round
+// (chunk 0, sent alone, is a round of its own), at most maxBufferedChunks (16 at
+// the default 15 s, 856,064 bytes): a text above it is refused
 // before any call as chunk_limit. The project's quota is 1,200 requests a minute,
 // which maxBufferedChunks calls cannot exhaust alone. A chunk that is not started
 // or is cut by the budget is availability only when some call took longer than
 // twice callReserve, and otherwise chunk_budget, input. A throttle on a chunk of
-// the first round is retried once; if it persists on the first chunk or on a
+// the first round is retried once, and chunk 0 is sent alone and finishes, with its
+// retry, before the others start; if it persists on the first chunk or on a
 // single-chunk text it is availability, with every other throttle of the
 // evaluation, and otherwise input (throttled_oversize) on a later chunk.
 const (
@@ -506,9 +508,11 @@ func (p *Plugin) runGuardrail(
 	slow := textchunk.SlowCallOf(runCtx, callReserve)
 	evals := make([]chunkEval, count)
 	outs := textchunk.Run(runCtx, chunks, textchunk.RunOptions{
-		Parallel: chunkParallel,
-		Reserve:  callReserve,
-		StopOn:   func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
+		Parallel:  chunkParallel,
+		Reserve:   callReserve,
+		LeadAlone: true,
+		SlowCall:  slow,
+		StopOn:    func(i int) bool { return appplugins.Blocks(in.Mode) && evals[i].res.block != nil },
 	}, func(ctx context.Context, i int, c textchunk.Chunk) (struct{}, error) {
 		result, err := pluginutil.RetryFirstRoundThrottle(ctx, i, chunkParallel, func(ctx context.Context) (*SanitizationResult, error) {
 			return sanitize(ctx, c.Text)

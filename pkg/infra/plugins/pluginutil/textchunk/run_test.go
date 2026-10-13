@@ -235,13 +235,112 @@ func TestRunTimesTheCallWithoutWhatBeforeHeldItFor(t *testing.T) {
 func TestAdmissionKeepsHalfTheBudgetInHand(t *testing.T) {
 	t.Parallel()
 	const reserve, budget = 2 * time.Second, 15 * time.Second
-	assert.Equal(t, 12, MaxChunks(32, 4, reserve, budget))
+	assert.Equal(t, 9, MaxChunks(32, 4, reserve, budget), "chunk 0 alone, then two rounds of four")
 	assert.Equal(t, 5, MaxChunks(1<<30, 1, 1500*time.Millisecond, budget))
 	assert.Equal(t, 32, MaxChunks(32, 4, reserve, 0), "with no budget only the limit applies")
 	assert.Equal(t, 1, MaxChunks(0, 4, reserve, budget), "a single chunk is always evaluated")
-	assert.True(t, Admits(12, 4, reserve, budget))
-	assert.False(t, Admits(13, 4, reserve, budget))
+	assert.True(t, Admits(9, 4, reserve, budget))
+	assert.False(t, Admits(10, 4, reserve, budget))
+	assert.Equal(t, 1, Rounds(1, 4))
+	assert.Equal(t, 2, Rounds(5, 4))
+	assert.Equal(t, 3, Rounds(6, 4))
+	assert.Equal(t, 5, Rounds(5, 1))
 	assert.True(t, Admits(1, 1, reserve, time.Millisecond))
 	assert.Equal(t, 2*time.Second, SlowCall(time.Second, 15*time.Second))
 	assert.Equal(t, time.Second, SlowCall(2*time.Second, 2*time.Second), "a short budget shrinks the threshold with the reserve")
+}
+
+func TestRunLeadAloneFinishesChunkZeroBeforeAnyOtherStarts(t *testing.T) {
+	t.Parallel()
+	var zeroDone atomic.Bool
+	var early atomic.Int32
+	out := Run(context.Background(), chunksOf(6), RunOptions{Parallel: 4, LeadAlone: true},
+		func(_ context.Context, i int, _ Chunk) (int, error) {
+			if i == 0 {
+				time.Sleep(60 * time.Millisecond)
+				zeroDone.Store(true)
+				return i, nil
+			}
+			if !zeroDone.Load() {
+				early.Add(1)
+			}
+			return i, nil
+		})
+	assert.Zero(t, early.Load(), "no chunk starts while chunk 0 is running")
+	for _, o := range out {
+		assert.True(t, o.Started)
+	}
+}
+
+func TestRunLeadAloneStopOnChunkZeroSkipsTheRest(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	out := Run(context.Background(), chunksOf(6), RunOptions{
+		Parallel: 4, LeadAlone: true, StopOn: func(i int) bool { return i == 0 },
+	}, func(context.Context, int, Chunk) (int, error) {
+		calls.Add(1)
+		return 0, nil
+	})
+	assert.EqualValues(t, 1, calls.Load())
+	assert.True(t, out[0].Started)
+	for _, o := range out[1:] {
+		assert.False(t, o.Started)
+	}
+}
+
+func TestRunStopsStartingChunksAfterASlowFailure(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	out := Run(context.Background(), chunksOf(10), RunOptions{
+		Parallel: 4, LeadAlone: true, SlowCall: 30 * time.Millisecond,
+	}, func(context.Context, int, Chunk) (int, error) {
+		calls.Add(1)
+		time.Sleep(60 * time.Millisecond)
+		return 0, errors.New("provider slow")
+	})
+	assert.EqualValues(t, 1, calls.Load())
+	assert.True(t, out[0].Started)
+	assert.False(t, out[1].Started)
+}
+
+func TestRunKeepsStartingChunksAfterAFastFailure(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	Run(context.Background(), chunksOf(6), RunOptions{
+		Parallel: 4, LeadAlone: true, SlowCall: time.Second,
+	}, func(context.Context, int, Chunk) (int, error) {
+		calls.Add(1)
+		return 0, errors.New("rejected")
+	})
+	assert.EqualValues(t, 6, calls.Load())
+}
+
+func TestRunStopsAfterACallThatEndedOnItsOwnTimeout(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	out := Run(context.Background(), chunksOf(6), RunOptions{
+		Parallel: 4, LeadAlone: true, SlowCall: time.Minute,
+	}, func(ctx context.Context, _ int, _ Chunk) (int, error) {
+		calls.Add(1)
+		callCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		<-callCtx.Done()
+		return 0, callCtx.Err()
+	})
+	assert.EqualValues(t, 1, calls.Load())
+	assert.True(t, out[0].TimedOut)
+	assert.False(t, out[0].BudgetCut)
+}
+
+func TestRunTookIsTheLongestAttemptNotTheSumOfBoth(t *testing.T) {
+	t.Parallel()
+	out := Run(context.Background(), chunksOf(1), RunOptions{Parallel: 1},
+		func(ctx context.Context, _ int, _ Chunk) (int, error) {
+			time.Sleep(60 * time.Millisecond)
+			Pause(ctx, 100*time.Millisecond)
+			time.Sleep(40 * time.Millisecond)
+			return 0, nil
+		})
+	assert.GreaterOrEqual(t, out[0].Took, 60*time.Millisecond)
+	assert.Less(t, out[0].Took, 95*time.Millisecond, "60 ms and 40 ms attempts are not 100 ms")
 }

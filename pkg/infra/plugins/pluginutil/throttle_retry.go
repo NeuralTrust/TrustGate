@@ -25,10 +25,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 )
 
-// throttleBackoff is the wait before a throttled call is retried when the
-// provider names none that fits the budget.
-const throttleBackoff = 250 * time.Millisecond
-
 // RetryAfterer is implemented by the error of a provider that said how long to
 // wait (a Retry-After header).
 type RetryAfterer interface {
@@ -63,10 +59,9 @@ func IsThrottle(err error) bool {
 }
 
 // RetryThrottledOnce calls fn and, when it fails with a throttle, calls it once
-// more. The wait is the provider's Retry-After when it is at most half of the
-// time ctx has left, and otherwise a short backoff that never takes more than a
-// quarter of it; inside a textchunk.Run it never exceeds the Run's effective
-// reserve, and it is not counted in the call's Outcome.Took. A wait that ctx
+// more. The wait is textchunk.RetryWait, which is the provider's Retry-After when
+// it fits in half of the time ctx has left and otherwise a short backoff; it is
+// not counted in the call's Outcome.Took. A wait that ctx
 // cannot afford is not taken and the throttle is returned as it is. Only a throttle is retried: any other failure, and a
 // second throttle, is returned unchanged.
 func RetryThrottledOnce[T any](ctx context.Context, fn func(ctx context.Context) (T, error)) (T, error) {
@@ -74,20 +69,12 @@ func RetryThrottledOnce[T any](ctx context.Context, fn func(ctx context.Context)
 	if err == nil || !IsThrottle(err) {
 		return v, err
 	}
-	wait := throttleBackoff
-	if deadline, ok := ctx.Deadline(); ok {
-		left := time.Until(deadline)
-		wait = min(wait, left/4)
-		var ra RetryAfterer
-		if errors.As(err, &ra) {
-			if d := ra.RetryAfter(); d > 0 && d <= left/2 {
-				wait = d
-			}
-		}
+	var retryAfter time.Duration
+	var ra RetryAfterer
+	if errors.As(err, &ra) {
+		retryAfter = ra.RetryAfter()
 	}
-	if limit := textchunk.PauseCap(ctx); limit > 0 {
-		wait = min(wait, limit)
-	}
+	wait := textchunk.RetryWait(ctx, retryAfter)
 	if !textchunk.Pause(ctx, wait) {
 		return v, err
 	}

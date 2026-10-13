@@ -109,7 +109,7 @@ func ClassifyChunks[T any](
 	}
 	slow := false
 	for _, out := range outs {
-		if out.Started && cfg.slow > 0 && out.Took > cfg.slow {
+		if out.Started && (out.TimedOut || (cfg.slow > 0 && out.Took > cfg.slow)) {
 			slow = true
 		}
 	}

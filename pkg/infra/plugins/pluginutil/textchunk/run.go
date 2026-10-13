@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -43,6 +45,18 @@ type RunOptions struct {
 	// not part of Outcome.Took, which is the provider's alone, and an error from
 	// it is the chunk's error.
 	Before func(ctx context.Context, i int, c Chunk) error
+	// LeadAlone runs chunk 0, with whatever retry fn gives it, to completion
+	// before any other chunk starts: the chunks are then sent in the order of the
+	// text, so a throttle on chunk 0 can only be other traffic, never its
+	// siblings' calls that reached the provider first. Chunks 1 and on are then
+	// released with the normal parallelism, unless StopOn fired on chunk 0.
+	LeadAlone bool
+	// SlowCall, when positive, stops new chunks from starting once a call has
+	// ended in an error after taking longer than it, or on its own timeout: the
+	// provider is slow or hung, so the evaluation can only be availability unless
+	// a block wins, and starting more calls only holds the request. The calls in
+	// flight run on.
+	SlowCall time.Duration
 }
 
 // EffectiveReserve is the reserve a Run really holds back: Run caps it at a
@@ -71,9 +85,13 @@ func SlowCallOf(ctx context.Context, reserve time.Duration) time.Duration {
 	return SlowCall(reserve, time.Until(deadline))
 }
 
-// Rounds is how many rounds of at most parallel calls n chunks take.
+// Rounds is how many rounds of calls n chunks take in a Run with LeadAlone:
+// chunk 0 alone, then the rest at most parallel at a time.
 func Rounds(n, parallel int) int {
-	return (n + max(1, parallel) - 1) / max(1, parallel)
+	if n <= 0 {
+		return 0
+	}
+	return 1 + (n-1+max(1, parallel)-1)/max(1, parallel)
 }
 
 // Admits reports whether n chunks sent parallel at a time fit a budget with
@@ -96,7 +114,8 @@ func MaxChunks(limit, parallel int, reserve, budget time.Duration) int {
 	if r <= 0 {
 		return max(1, limit)
 	}
-	return max(1, min(limit, int((budget/2)/r)*max(1, parallel)))
+	rounds := int((budget / 2) / r)
+	return max(1, min(limit, (rounds-1)*max(1, parallel)+1))
 }
 
 // Outcome is what evaluating one chunk produced. Started is false when the
@@ -110,22 +129,25 @@ func MaxChunks(limit, parallel int, reserve, budget time.Duration) int {
 // provider being slow, and a call that ended on its own timeout leaves
 // BudgetCut false because ctx's deadline had not passed.
 //
-// Took is how long the call itself ran, without what RunOptions.Before held it
-// back for and without what the call spent in Pause: the provider's time, which
-// says whether it was slow.
+// Took is how long the longest single attempt of the call ran, without what
+// RunOptions.Before held it back for and without what the call spent in Pause
+// (which is also where one attempt ends and the next begins): the provider's
+// time, which says whether it was slow. TimedOut says the call ended on its own
+// timeout, with ctx's deadline not passed: the provider never answered.
 type Outcome[T any] struct {
 	Value     T
 	Err       error
 	Started   bool
 	Waited    bool
 	BudgetCut bool
+	TimedOut  bool
 	Took      time.Duration
 }
 
 // Run evaluates fn over chunks in index order with at most o.Parallel calls in
 // flight and returns one Outcome per chunk, in chunk order. A failed chunk does
-// not stop the others; only StopOn and the end of ctx do. A panic in fn is
-// returned as that chunk's error.
+// not stop the others; only StopOn, a slow failure (SlowCall) and the end of ctx
+// do. A panic in fn is returned as that chunk's error.
 func Run[T any](ctx context.Context, chunks []Chunk, o RunOptions,
 	fn func(ctx context.Context, i int, c Chunk) (T, error),
 ) []Outcome[T] {
@@ -140,6 +162,8 @@ func Run[T any](ctx context.Context, chunks []Chunk, o RunOptions,
 	}
 	sem := make(chan struct{}, parallel)
 	var wg, stopMu = sync.WaitGroup{}, sync.Mutex{}
+	var slowFailure atomic.Bool
+	lead := o.LeadAlone && parallel > 1
 dispatch:
 	for i := range chunks {
 		select {
@@ -147,7 +171,7 @@ dispatch:
 		case <-runCtx.Done():
 			break dispatch
 		}
-		if runCtx.Err() != nil || (i >= parallel && lacksReserve(runCtx, reserve)) {
+		if runCtx.Err() != nil || slowFailure.Load() || (i >= parallel && lacksReserve(runCtx, reserve)) {
 			<-sem
 			break
 		}
@@ -163,13 +187,16 @@ dispatch:
 				err = o.Before(runCtx, i, chunks[i])
 			}
 			if err == nil {
-				pauses := &pauseClock{reserve: reserve}
-				began := time.Now()
+				pauses := &pauseClock{reserve: reserve, attemptStart: time.Now()}
 				v, err = call(context.WithValue(runCtx, pauseKey{}, pauses), i, chunks[i], fn)
-				out[i].Took = max(0, time.Since(began)-pauses.total())
+				out[i].Took = pauses.longest(time.Now())
 			}
 			out[i].Value, out[i].Err = v, err
 			out[i].BudgetCut = err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded)
+			out[i].TimedOut = err != nil && runCtx.Err() == nil && timedOut(err)
+			if o.SlowCall > 0 && err != nil && (out[i].TimedOut || out[i].Took > o.SlowCall) {
+				slowFailure.Store(true)
+			}
 			if o.StopOn != nil {
 				stopMu.Lock()
 				stop := o.StopOn(i)
@@ -179,25 +206,44 @@ dispatch:
 				}
 			}
 		}()
+		if lead && i == 0 {
+			wg.Wait()
+		}
 	}
 	wg.Wait()
 	return out
 }
 
-type pauseKey struct{}
-
-// pauseClock is what a call spent waiting in Pause, and the effective reserve
-// its waits are capped at.
-type pauseClock struct {
-	reserve time.Duration
-	mu      sync.Mutex
-	waited  time.Duration
+func timedOut(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
 }
 
-func (c *pauseClock) total() time.Duration {
+type pauseKey struct{}
+
+// pauseClock is where a call's attempts begin and end (a Pause is the boundary
+// between two), the longest of them, and the effective reserve its waits are
+// capped at.
+type pauseClock struct {
+	reserve      time.Duration
+	mu           sync.Mutex
+	attemptStart time.Time
+	longestSoFar time.Duration
+}
+
+// pause closes the attempt that ran until began and opens the next at resumed.
+func (c *pauseClock) pause(began, resumed time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.waited
+	c.longestSoFar = max(c.longestSoFar, began.Sub(c.attemptStart))
+	c.attemptStart = resumed
+}
+
+// longest is the longest attempt, the one still running closed at end.
+func (c *pauseClock) longest(end time.Time) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return max(0, c.longestSoFar, end.Sub(c.attemptStart))
 }
 
 // PauseCap is the longest a call of a Run over ctx may wait in Pause: the
@@ -211,9 +257,9 @@ func PauseCap(ctx context.Context) time.Duration {
 }
 
 // Pause waits d, or until ctx ends, and reports whether the whole wait was
-// taken. Inside a Run the wait is not part of the call's Outcome.Took: a call
-// that backs off before a retry waits for its own reasons, and Took is only the
-// provider's time.
+// taken. Inside a Run the wait is not part of the call's Outcome.Took and ends
+// the attempt before it: a call that backs off before a retry waits for its own
+// reasons, and Took is only the provider's time, at its longest attempt.
 func Pause(ctx context.Context, d time.Duration) bool {
 	began := time.Now()
 	timer := time.NewTimer(d)
@@ -225,11 +271,32 @@ func Pause(ctx context.Context, d time.Duration) bool {
 		done = true
 	}
 	if c, ok := ctx.Value(pauseKey{}).(*pauseClock); ok {
-		c.mu.Lock()
-		c.waited += time.Since(began)
-		c.mu.Unlock()
+		c.pause(began, time.Now())
 	}
 	return done
+}
+
+// RetryBackoff is the wait before a throttled call is sent again, before the
+// limits RetryWait puts on it.
+const RetryBackoff = 250 * time.Millisecond
+
+// RetryWait is the wait before a throttled call is sent again: RetryBackoff, or
+// the provider's own retryAfter when it asks for one that fits in half of the
+// time ctx has left, and never more than a quarter of that time or than the
+// reserve of the Run the call belongs to.
+func RetryWait(ctx context.Context, retryAfter time.Duration) time.Duration {
+	wait := RetryBackoff
+	if deadline, ok := ctx.Deadline(); ok {
+		left := time.Until(deadline)
+		wait = min(wait, left/4)
+		if retryAfter > 0 && retryAfter <= left/2 {
+			wait = retryAfter
+		}
+	}
+	if limit := PauseCap(ctx); limit > 0 {
+		wait = min(wait, limit)
+	}
+	return max(wait, 0)
 }
 
 func lacksReserve(ctx context.Context, reserve time.Duration) bool {
