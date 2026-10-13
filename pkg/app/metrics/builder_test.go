@@ -1048,3 +1048,70 @@ func TestBuilder_NativeBedrockMaskNotApplicableIsAPolicyChainEntry(t *testing.T)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"decision":"blocked","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining","failure_detail":"anonymize_no_output","failure_class":"input","degraded":true,"degraded_reason":"leak_remaining"}`, string(raw))
 }
+
+// ENG-1811: a request sent with "auto" that fails upstream echoes no model, so
+// the event fell through to the request body and was recorded as "auto".
+func TestBuilder_FailedAttemptIsRecordedUnderTheModelItWentOutWith(t *testing.T) {
+	autoBody := []byte(`{"model":"auto","messages":[{"role":"user","content":"hello"}]}`)
+	req := &infracontext.RequestContext{
+		GatewayID:      "gw-1",
+		RequestedModel: "auto",
+		Body:           autoBody,
+		SourceFormat:   string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 401, Body: []byte(`{"error":{"message":"Unauthorized"}}`)}
+
+	cases := []struct {
+		name  string
+		attrs trace.LLMAttrs
+		want  string
+	}{
+		{
+			name:  "the model the gateway sent",
+			attrs: trace.LLMAttrs{Provider: "mistral", SentModel: "mistral-small-latest", RouteModel: "mistral-large-latest", RequestedModel: "auto", Attempt: 1, Outcome: "error"},
+			want:  "mistral-small-latest",
+		},
+		{
+			name:  "the route's model when nothing was sent",
+			attrs: trace.LLMAttrs{Provider: "mistral", RouteModel: "mistral-large-latest", RequestedModel: "auto", Attempt: 1, Outcome: "error"},
+			want:  "mistral-large-latest",
+		},
+		{
+			name:  "the request's model as a last resort",
+			attrs: trace.LLMAttrs{Provider: "mistral", RequestedModel: "auto", Attempt: 1, Outcome: "error"},
+			want:  "auto",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := tc.attrs
+			rt := trace.New("trace-failed", trace.Metadata{GatewayID: "gw-1"})
+			_ = rt.AddSpan(llmSpan("mistral", &attrs, 401, 50*time.Millisecond, ""))
+
+			evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+			assert.Equal(t, tc.want, evt.Request.Model)
+			assert.Equal(t, "auto", evt.Request.RequestedModel)
+			assert.Equal(t, "mistral", evt.Request.Provider)
+		})
+	}
+}
+
+func TestBuilder_SucceededAttemptKeepsTheModelTheProviderEchoed(t *testing.T) {
+	rt := trace.New("trace-ok", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai", &trace.LLMAttrs{
+		Provider:       "openai",
+		Model:          "gpt-4o-mini-2024-07-18",
+		SentModel:      "gpt-4o-mini",
+		RouteModel:     "gpt-4o-mini",
+		RequestedModel: "auto",
+		Attempt:        1,
+		Outcome:        "success",
+	}, 200, 50*time.Millisecond, ""))
+	req := &infracontext.RequestContext{GatewayID: "gw-1", RequestedModel: "auto", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+	assert.Equal(t, "gpt-4o-mini-2024-07-18", evt.Request.Model)
+}

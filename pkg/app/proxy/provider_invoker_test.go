@@ -277,6 +277,8 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
 	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
 		"a failed attempt must still say which route was tried")
+	assert.Equal(t, "gpt-4", resp.SentModel,
+		"a failed attempt is recorded under the model it went out with")
 }
 
 func TestProviderInvoke_CrossFormatBackendErrorUsesIngressEnvelope(t *testing.T) {
