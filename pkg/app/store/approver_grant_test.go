@@ -84,24 +84,6 @@ func TestApprover_Approve_BoundRequestGrantsThatInstanceOnly(t *testing.T) {
 	}
 }
 
-// TestApprover_Approve_BoundRequestInstanceGone: the bound instance was deleted
-// meanwhile — the request cannot be approved onto nothing.
-func TestApprover_Approve_BoundRequestInstanceGone(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	p := pendingInstall(t, gw, "ana", "github")
-	p.RegistryID = ids.New[ids.RegistryKind]()
-	installs := &fakeInstalls{findValue: p}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
-	a := newApproverT(t, installs, regs)
-	err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", InstanceID: p.ID.String()})
-	if !errors.Is(err, ErrNotShelved) {
-		t.Fatalf("expected ErrNotShelved, got %v", err)
-	}
-	if len(installs.upserts) != 0 {
-		t.Fatal("nothing may change")
-	}
-}
-
 // TestApprover_Approve_NotShelved_MaterialisesWithEnsurer: a Selected principal
 // may request a catalog server nobody connected yet; approving it materialises
 // the registry (when an ensurer is wired), grants the code and installs, instead

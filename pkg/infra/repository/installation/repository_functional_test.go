@@ -18,6 +18,7 @@ package installation
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -32,13 +33,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
+// openTestSchema creates the store_installations table in a throwaway schema
+// and one gateway row to hang installations off.
+func openTestSchema(t *testing.T) (context.Context, *pgxpool.Pool, ids.GatewayID) {
+	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
 	if dsn == "" {
 		t.Skip("PG_TEST_URL not set")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 
 	schema := "installation_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
@@ -46,11 +50,11 @@ func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open admin pool: %v", err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
-	defer func() { _, _ = admin.Exec(context.Background(), "DROP SCHEMA "+quotedSchema+" CASCADE") }()
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP SCHEMA "+quotedSchema+" CASCADE") })
 
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -65,7 +69,7 @@ func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test pool: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const setup = `
 		CREATE TABLE gateways (id UUID PRIMARY KEY);
@@ -104,7 +108,11 @@ func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO gateways (id) VALUES ($1)`, gatewayID); err != nil {
 		t.Fatalf("insert gateway: %v", err)
 	}
+	return ctx, pool, gatewayID
+}
 
+func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
 	repo := NewRepository(&database.Connection{Pool: pool})
 	const workers = 16
 	installations := make([]*domain.Installation, workers)
@@ -152,5 +160,118 @@ func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
 	}
 	if !found.SameConfig(map[string]string{"host": "acme"}) {
 		t.Fatalf("stored config = %v", found.Config)
+	}
+}
+
+func pendingRow(t *testing.T, gatewayID ids.GatewayID, sub, code string, registryID ids.RegistryID) *domain.Installation {
+	t.Helper()
+	in, err := domain.New(gatewayID, sub, code, sub, nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	in.Status = domain.StatusPendingApproval
+	in.RegistryID = registryID
+	return in
+}
+
+func TestRepositoryRebindMovesTheRowInPlace(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
+	repo := NewRepository(&database.Connection{Pool: pool})
+	deleted, current := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	request := pendingRow(t, gatewayID, "alice", "com.notion/mcp", deleted)
+	if err := repo.Upsert(ctx, request); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	if err := repo.Rebind(ctx, gatewayID, "alice", request.ID, current); err != nil {
+		t.Fatalf("Rebind: %v", err)
+	}
+	found, err := repo.FindByID(ctx, gatewayID, "alice", request.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if found.RegistryID != current {
+		t.Fatalf("registry_id = %s, want %s", found.RegistryID, current)
+	}
+
+	found.Decide(domain.DecisionApproved, "admin", time.Now().UTC())
+	if err := repo.Upsert(ctx, found); err != nil {
+		t.Fatalf("Upsert after rebind: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM store_installations`).Scan(&count); err != nil {
+		t.Fatalf("count installations: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("installation rows = %d, want 1: the approve must update the rebound row", count)
+	}
+}
+
+func TestRepositoryRebindOntoAHeldInstanceIsInstanceExists(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
+	repo := NewRepository(&database.Connection{Pool: pool})
+	deleted, current := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	orphan := pendingRow(t, gatewayID, "alice", "com.notion/mcp", deleted)
+	fresh := pendingRow(t, gatewayID, "alice", "com.notion/mcp", current)
+	for _, in := range []*domain.Installation{orphan, fresh} {
+		if err := repo.Upsert(ctx, in); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	if err := repo.Rebind(ctx, gatewayID, "alice", orphan.ID, current); !errors.Is(err, domain.ErrInstanceExists) {
+		t.Fatalf("Rebind onto a held instance = %v, want ErrInstanceExists", err)
+	}
+	if err := repo.Rebind(ctx, gatewayID, "bob", orphan.ID, current); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Rebind of another principal's row = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRepositoryDenyPendingDeniesOnlyThatCodesPendingRows(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
+	repo := NewRepository(&database.Connection{Pool: pool})
+	deleted := ids.New[ids.RegistryKind]()
+	code := "custom:" + deleted.String()
+	alice := pendingRow(t, gatewayID, "alice", code, deleted)
+	bob := pendingRow(t, gatewayID, "bob", code, deleted)
+	installed := pendingRow(t, gatewayID, "carol", code, deleted)
+	installed.Status = domain.StatusInstalled
+	other := pendingRow(t, gatewayID, "alice", "com.notion/mcp", ids.RegistryID{})
+	for _, in := range []*domain.Installation{alice, bob, installed, other} {
+		if err := repo.Upsert(ctx, in); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	denied, err := repo.DenyPending(ctx, gatewayID, code, "system: server deleted", at)
+	if err != nil {
+		t.Fatalf("DenyPending: %v", err)
+	}
+	if denied != 2 {
+		t.Fatalf("denied = %d, want 2", denied)
+	}
+	pending, err := repo.ListPendingByGateway(ctx, gatewayID)
+	if err != nil {
+		t.Fatalf("ListPendingByGateway: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != other.ID {
+		t.Fatalf("pending after deny = %+v, want only the other code's request", pending)
+	}
+	history, err := repo.ListDecidedByGateway(ctx, gatewayID, 10)
+	if err != nil {
+		t.Fatalf("ListDecidedByGateway: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history = %d rows, want the 2 denied requests", len(history))
+	}
+	for _, row := range history {
+		if row.Decision != domain.DecisionDenied || row.DecidedBy != "system: server deleted" || !row.DecidedAt.Equal(at) {
+			t.Fatalf("history row = %+v, want denied by the system at %s", row, at)
+		}
+	}
+	found, err := repo.FindByID(ctx, gatewayID, "carol", installed.ID)
+	if err != nil || found.Status != domain.StatusInstalled {
+		t.Fatalf("an installed row is not a request and stays installed, got %+v / %v", found, err)
 	}
 }

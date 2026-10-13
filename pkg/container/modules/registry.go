@@ -21,9 +21,11 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -84,11 +86,24 @@ func provideRegistryRepository(c *container.Container) error {
 	})
 }
 
-// registryDeleterGrants carries the optional Store grant repository (full plane
-// only) so a registry delete can clean its instance-level grants.
-type registryDeleterGrants struct {
+// registryDeleterCleaners carries the optional Store repositories (full plane
+// only) so a registry delete can clean its instance-level grants and deny the
+// pending requests for a deleted custom server.
+type registryDeleterCleaners struct {
 	dig.In
-	Grants storeaccessdomain.Repository `optional:"true"`
+	Grants   storeaccessdomain.Repository  `optional:"true"`
+	Installs installationdomain.Repository `optional:"true"`
+}
+
+func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.DeleterOption {
+	var opts []appregistry.DeleterOption
+	if p.Grants != nil {
+		opts = append(opts, appregistry.WithDependentCleaner(p.Grants))
+	}
+	if denier, ok := p.Installs.(installationdomain.PendingDenier); ok {
+		opts = append(opts, appregistry.WithDependentCleaner(appstore.NewDeletedServerRequests(denier, logger)))
+	}
+	return opts
 }
 
 // registryAuthParams carries the auth repository a save uses to check
@@ -118,13 +133,8 @@ func provideRegistryServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, grants registryDeleterGrants) appregistry.Deleter {
-		var opts []appregistry.DeleterOption
-		if grants.Grants != nil {
-			// Deleting a configured instance removes the Store grants scoped to it.
-			opts = append(opts, appregistry.WithDependentCleaner(grants.Grants))
-		}
-		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler, opts...)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, cleaners registryDeleterCleaners) appregistry.Deleter {
+		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler, cleaners.options(logger)...)
 	}); err != nil {
 		return err
 	}

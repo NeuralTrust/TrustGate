@@ -28,7 +28,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const pgForeignKeyViolation = "23503"
+const (
+	pgForeignKeyViolation = "23503"
+	pgUniqueViolation     = "23505"
+)
 
 const selectColumns = `
 	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
@@ -251,6 +254,59 @@ func (r *Repository) DeleteByID(
 		return domain.ErrNotFound
 	}
 	return nil
+}
+
+var (
+	_ domain.Rebinder      = (*Repository)(nil)
+	_ domain.PendingDenier = (*Repository)(nil)
+)
+
+// Rebind updates registry_id in place because Upsert keys on (principal, code,
+// registry, config): upserting the moved row would collide on its own id
+// instead of updating it.
+func (r *Repository) Rebind(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+	registryID ids.RegistryID,
+) error {
+	const query = `
+		UPDATE store_installations
+		   SET registry_id = $4, updated_at = $5
+		 WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
+	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, id,
+		nullableRegistryID(registryID), time.Now().UTC())
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return domain.ErrInstanceExists
+		}
+		return mapPgError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) DenyPending(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	catalogCode, deniedBy string,
+	at time.Time,
+) (int64, error) {
+	const query = `
+		UPDATE store_installations
+		   SET status = $4, decision = $5, decided_by = $6, decided_at = $7, updated_at = $7
+		 WHERE gateway_id = $1 AND catalog_code = $2 AND status = $3`
+	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, catalogCode,
+		string(domain.StatusPendingApproval), string(domain.StatusRevoked),
+		string(domain.DecisionDenied), deniedBy, at)
+	if err != nil {
+		return 0, mapPgError(err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r *Repository) queryList(ctx context.Context, query string, args ...any) ([]*domain.Installation, error) {
