@@ -97,6 +97,7 @@ func federate[T any](
 	var out []T
 	reachable := 0
 	var firstConsent *ConsentRequiredError
+	var firstNotConnected *ApplicationNotConnectedError
 	for _, found := range discoverAll(c, ctx, rc, registries, kind, list) {
 		reg := found.registry
 		if found.err != nil {
@@ -112,6 +113,18 @@ func federate[T any](
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
 			}
+			// Skipped like a pending consent, as compose does for tools: an
+			// account is what is missing, so it is not an unreachable upstream,
+			// and a consumer that fails closed must not refuse the rest over it.
+			var notConnected *ApplicationNotConnectedError
+			if errors.As(found.err, &notConnected) {
+				if firstNotConnected == nil {
+					firstNotConnected = notConnected
+				}
+				c.logger.Info("mcp composer: skipping upstream with no account for this caller",
+					"registry", reg.Name, "provider", notConnected.Provider, "shared", notConnected.Shared)
+				continue
+			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, found.err)
 			}
@@ -125,6 +138,9 @@ func federate[T any](
 	if reachable == 0 {
 		if firstConsent != nil {
 			return nil, firstConsent
+		}
+		if firstNotConnected != nil {
+			return nil, firstNotConnected
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}

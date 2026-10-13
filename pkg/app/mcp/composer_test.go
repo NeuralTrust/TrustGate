@@ -1020,6 +1020,72 @@ func TestComposer_ApplicationNotConnectedWhenNoUpstreamHasAnAccount(t *testing.T
 	}
 }
 
+// Prompts and resources are the same surface as tools, so a server with no
+// account for this caller is skipped there too, even by a consumer that fails
+// closed: a client listing everything after initialize must not fail on prompts
+// what it no longer fails on tools (ENG-1787).
+func TestComposer_ApplicationNotConnectedIsSkippedForPromptsAndResources(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPerUser := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {prompts: prompts("triage"), resources: []Resource{{URI: "linear://issues"}}},
+		"https://notion.example.com/mcp": {prompts: prompts("summarize"), resources: []Resource{{URI: "notion://pages"}}},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ApplicationNotConnectedError{Provider: "com.notion/mcp", Registry: "notion"},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}}
+	rc := routable(consumer, regLinked, regPerUser)
+
+	listed, err := c.ListPrompts(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Name != namedFor(regLinked, "triage") {
+		t.Fatalf("prompts = %v, want only the connected upstream's", listed)
+	}
+	resources, err := c.ListResources(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].URI != "linear://issues" {
+		t.Fatalf("resources = %v, want only the connected upstream's", resources)
+	}
+
+	// A prompt nobody reachable serves may be the unconnected server's, so what
+	// that server waits on is the answer, as Resolve gives it for a tool.
+	_, err = c.GetPrompt(context.Background(), rc, namedFor(regPerUser, "summarize"), nil)
+	var notConnected *ApplicationNotConnectedError
+	if !errors.As(err, &notConnected) || notConnected.Provider != "com.notion/mcp" {
+		t.Fatalf("error = %v, want ApplicationNotConnectedError for notion", err)
+	}
+}
+
+func TestComposer_PromptsAndResourcesWhenNoUpstreamHasAnAccount(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp": {prompts: prompts("summarize"), resources: []Resource{{URI: "notion://pages"}}},
+	}}
+	creds := &fakeCreds{err: &ApplicationNotConnectedError{Provider: "com.notion/mcp", Registry: "notion"}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+
+	_, promptsErr := c.ListPrompts(context.Background(), rc)
+	_, resourcesErr := c.ListResources(context.Background(), rc)
+	for kind, err := range map[string]error{"prompts": promptsErr, "resources": resourcesErr} {
+		var notConnected *ApplicationNotConnectedError
+		if !errors.As(err, &notConnected) {
+			t.Fatalf("%s: error = %v, want ApplicationNotConnectedError", kind, err)
+		}
+		if errors.Is(err, ErrUpstreamUnavailable) {
+			t.Fatalf("%s: error = %v reads as an unreachable upstream", kind, err)
+		}
+	}
+}
+
 // evictingCache is a mapCache that can drop entries by prefix, as the TTL map
 // the gateway wires can.
 type evictingCache struct{ *mapCache }

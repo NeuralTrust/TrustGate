@@ -948,8 +948,10 @@ What this means in practice:
 
 `tools/list` can only carry the tools of servers that answered discovery. A
 server the user has but has not connected contributes nothing to it — the
-composer skips it on `ConsentRequiredError` so the connected ones still federate
-(§12.3) — and neither does one that is down, or one whose tools the consumer's
+composer skips it on `ConsentRequiredError`, and on `ApplicationNotConnectedError`
+when the caller has no account there and cannot connect one, so the connected
+ones still federate (§12.3) and a surface left with none lists empty rather than
+failing (ENG-1787) — and neither does one that is down, or one whose tools the consumer's
 toolkit turns away. The result is a list that is silent about exactly the servers
 someone needs to act on: an agent asked "can you query Notion?" sees no Notion
 tool and answers no, when the truth is "you have Notion, it needs one click".

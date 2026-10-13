@@ -398,6 +398,12 @@ says so:
 is for (`forEndUser`). The SDK raises `UpstreamNotConnectedError` for it, never
 a `ConsentRequiredError` with an empty link.
 
+Only a call to that server answers it (`tools/call`, `prompts/get`). Listings
+never do: `tools/list`, `prompts/list` and `resources/list` leave the server
+out and list the rest plus the gateway's own tools, and `trustgate_list_tools`
+reports it as `needs_connect` with cause `end_user_not_named` or
+`shared_account_not_connected` (ENG-1787).
+
 ### `GET {host}/whoami` → `200`
 
 Served at the MCP host with no slug, authenticated with the same key. It is what
