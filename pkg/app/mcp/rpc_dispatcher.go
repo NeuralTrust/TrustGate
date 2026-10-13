@@ -131,13 +131,20 @@ func (d *RPCDispatcher) Dispatch(
 // emptySurfaceInsteadOfError reports whether a listing should come back empty
 // rather than as an error.
 //
-// It is about who is asking, not about how the consumer was configured: a
-// person — or an end user an application named — may simply have connected
-// nothing yet, and an empty list is the honest answer to "what can I use". A
-// request running as the application itself is a different matter: its surface
-// is what an admin bound, so nothing there is a fault worth reporting.
+// A server waiting on an account is never a fault, whoever is asking: a pending
+// consent waits on the person, and a server with no account for this caller
+// waits on an administrator or on the end user the application names
+// (ENG-1787). The listing leaves it out, the inventory meta-tool says why, and a
+// call to one of its tools still answers the refusal.
+//
+// Anything else is about who is asking, not about how the consumer was
+// configured: a person — or an end user an application named — may simply have
+// connected nothing yet, and an empty list is the honest answer to "what can I
+// use". A request running as the application itself is a different matter: its
+// surface is what an admin bound, so an empty or unreachable one is a fault
+// worth reporting.
 func emptySurfaceInsteadOfError(ctx context.Context, consumer *appconsumer.RoutableConsumer, err error) bool {
-	if _, ok := errors.AsType[*ConsentRequiredError](err); ok {
+	if fixableByConnecting(err) {
 		return true
 	}
 	return perUserCaller(ctx, consumer) && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))

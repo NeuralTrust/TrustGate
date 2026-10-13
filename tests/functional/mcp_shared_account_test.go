@@ -524,6 +524,58 @@ func TestMCPUserInstance_RefusesARequestThatRunsAsTheApplication(t *testing.T) {
 	require.Equal(t, http.StatusConflict, status, "a user instance has no shared account: %v", body)
 }
 
+// ENG-1787: the refusal is the call's, not the listing's. An application that
+// sends only its key to a surface with a per-user server lists everything else
+// it can call plus the gateway's own tools, even when it fails closed; the
+// inventory says the per-user server waits on an end user, and only a call to
+// that server's tool is refused.
+func TestMCPUserInstance_ListsTheRestOfTheSurfaceToTheApplication(t *testing.T) {
+	fx := newForwardedFixture(t, false)
+	plain := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "ping") })
+	plainID := CreateRegistry(t, fx.gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), plain.URL))
+
+	t.Run("a surface with only the per-user server lists the gateway's tools", func(t *testing.T) {
+		consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
+		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+		names := listedNames(t, rpcResult(t, status, body), "tools")
+		require.Contains(t, names, "trustgate_list_tools")
+		require.NotContains(t, names, exposedToolName(fx.registryID, "echo"))
+
+		for _, method := range []string{"prompts/list", "resources/list"} {
+			status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), method, nil)
+			rpcResult(t, status, body)
+		}
+
+		status, body = mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
+		requireNotConnected(t, status, body, false)
+		_, seen := fx.capture.observed()
+		require.Zero(t, seen, "a refused call must not reach the upstream")
+	})
+
+	t.Run("a mixed surface lists the callable servers, even failing closed", func(t *testing.T) {
+		consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID, plainID}, nil, "closed")
+		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+		names := listedNames(t, rpcResult(t, status, body), "tools")
+		require.Contains(t, names, exposedToolName(plainID, "ping"))
+		require.Contains(t, names, "trustgate_list_tools")
+		require.NotContains(t, names, exposedToolName(fx.registryID, "echo"))
+
+		ping := map[string]any{"name": exposedToolName(plainID, "ping"), "arguments": map[string]any{"message": "hola"}}
+		status, body = mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", ping)
+		rpcResult(t, status, body)
+
+		status, body = mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+			map[string]any{"name": "trustgate_list_tools", "arguments": map[string]any{}})
+		raw, err := json.Marshal(rpcResult(t, status, body))
+		require.NoError(t, err)
+		require.Contains(t, string(raw), "needs_connect")
+		require.Contains(t, string(raw), "end_user_not_named")
+
+		status, body = mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
+		requireNotConnected(t, status, body, false)
+	})
+}
+
 // appConnections is GET /{slug}/connections with no end_user: what the
 // application itself has connected, which is the preflight a batch runs.
 func appConnections(t *testing.T, gatewayID, consumerID, key string) []map[string]any {
