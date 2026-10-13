@@ -364,6 +364,35 @@ func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 	}
 }
 
+func TestHandler_ToolsList_RecordsClientRevision(t *testing.T) {
+	t.Parallel()
+	cases := map[string]bool{"": false, "2025-06-18": false, "2025-11-25": false, "2026-07-28": true}
+	for header, typed := range cases {
+		t.Run("header "+header, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().ListTools(mock.MatchedBy(func(ctx context.Context) bool {
+				return appmcp.ClientAcceptsTypedOutput(ctx) == typed
+			}), mock.Anything).Return([]appmcp.Tool{{Name: "gh_search"}}, nil).Once()
+			app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+			req := httptest.NewRequest(fiber.MethodPost, mcpPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+			if header != "" {
+				req.Header.Set("MCP-Protocol-Version", header)
+			}
+			res, err := app.Test(req, -1)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			_ = res.Body.Close()
+			if res.StatusCode != fiber.StatusOK {
+				t.Fatalf("status = %d", res.StatusCode)
+			}
+		})
+	}
+}
+
 func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
