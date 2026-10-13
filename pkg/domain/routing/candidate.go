@@ -15,7 +15,6 @@
 package routing
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -184,7 +183,7 @@ func (s *CandidateSet) resolveAuto() (*CandidateSet, error) {
 		out.Add(c)
 	}
 	if out.Len() == 0 {
-		return nil, fmt.Errorf("%w: auto routing requires at least one registry with a default model", ErrModelDenied)
+		return nil, DenyModel("auto routing requires at least one registry with a default model")
 	}
 	return out, nil
 }
@@ -207,9 +206,9 @@ func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, 
 		return out, nil
 	}
 	if providerSeen {
-		return nil, fmt.Errorf("%w: model %q is not allowed for provider %q", ErrModelDenied, model, provider)
+		return nil, DenyModel("model %q is not allowed for provider %q", model, provider)
 	}
-	return nil, fmt.Errorf("%w: provider %q is not available for this consumer", ErrModelDenied, provider)
+	return nil, DenyModel("provider %q is not available for this application", provider)
 }
 
 func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
@@ -222,7 +221,7 @@ func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
 		out.Add(c)
 	}
 	if out.Len() == 0 {
-		return nil, fmt.Errorf("%w: model %q is not allowed for this consumer", ErrModelDenied, model)
+		return nil, DenyModel("model %q is not allowed for this application", model)
 	}
 	return out, nil
 }

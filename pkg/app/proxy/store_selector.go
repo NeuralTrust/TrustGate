@@ -31,7 +31,7 @@ import (
 
 // ErrNoStoreConsumer is returned when none of the caller's personal consumers
 // admits the request's model.
-var ErrNoStoreConsumer = fmt.Errorf("store: no consumer admits the request: %w", routingdomain.ErrModelDenied)
+var ErrNoStoreConsumer = fmt.Errorf("store: no application admits the request: %w", routingdomain.ErrModelDenied)
 
 var errNoPrimaryCandidate = fmt.Errorf("store: no primary candidate admits the request: %w", routingdomain.ErrModelDenied)
 
@@ -148,9 +148,9 @@ func (r *refusals) err(intent routingdomain.Intent) error {
 		return ErrNoStoreConsumer
 	}
 	if r.kind == routingdomain.ErrUnknownPoolAlias {
-		return fmt.Errorf("%w: pool %q is not configured for any linked consumer", routingdomain.ErrUnknownPoolAlias, intent.PoolAlias)
+		return fmt.Errorf("%w: pool %q is not configured for any linked application", routingdomain.ErrUnknownPoolAlias, intent.PoolAlias)
 	}
-	return fmt.Errorf("store: no linked consumer can serve the request: %w", r.kind)
+	return fmt.Errorf("store: no linked application can serve the request: %w", r.kind)
 }
 
 func refusalKind(err error) error {

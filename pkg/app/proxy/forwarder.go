@@ -46,7 +46,7 @@ import (
 
 var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
-	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
+	ErrNoBackendsInPool       = errors.New("application has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
 	// ErrAmbiguousRequestBody refuses a chat request whose body
 	// adapter.HasAmbiguousKeys reports: one that is not valid JSON, starts

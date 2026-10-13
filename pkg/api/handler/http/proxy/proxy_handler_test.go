@@ -1063,6 +1063,67 @@ func TestHandle_NoBackendAvailable(t *testing.T) {
 	}
 }
 
+func TestHandle_ModelDeniedMessageHidesRoutingInternals(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		path string
+		want string
+	}{
+		{
+			name: "routing denial",
+			err:  fmt.Errorf("resolve: %w", routingdomain.DenyModel("model %q is not allowed for this application", "gpt-4o")),
+			want: `"message":"model \"gpt-4o\" is not allowed for this application"`,
+		},
+		{
+			name: "anthropic envelope",
+			err:  routingdomain.DenyModel("model %q is not allowed for this application", "claude-sonnet-4-5"),
+			path: "/v1/messages",
+			want: `"message":"model \"claude-sonnet-4-5\" is not allowed for this application"`,
+		},
+		{
+			name: "denial without a reason",
+			err:  appproxy.ErrNoStoreConsumer,
+			want: `"message":"the requested model is not allowed"`,
+		},
+		{
+			name: "binding allowlist",
+			err:  fmt.Errorf("%w: %s", appproxy.ErrModelNotAllowed, `model not allowed: "gpt-4o"`),
+			want: `"message":"model not allowed: model not allowed: \"gpt-4o\""`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app, fwd := newTestApp(t)
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(nil, tc.err).
+				Once()
+
+			req := newProxyRequest()
+			if tc.path != "" {
+				req = httptest.NewRequest(http.MethodPost, "/"+consumerSlug+tc.path, strings.NewReader(`{"model":"claude"}`))
+				req.Header.Set("Content-Type", "application/json")
+			}
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			if resp.StatusCode != fiber.StatusForbidden {
+				t.Fatalf("status = %d, want 403", resp.StatusCode)
+			}
+			raw, _ := io.ReadAll(resp.Body)
+			body := string(raw)
+			if !strings.Contains(body, tc.want) {
+				t.Fatalf("body = %s, want %s", body, tc.want)
+			}
+			if strings.Contains(body, "routing:") || strings.Contains(body, "consumer") {
+				t.Fatalf("body = %s leaks routing internals", body)
+			}
+		})
+	}
+}
+
 func TestHandle_CredentialAcquisitionReturnsSanitized502(t *testing.T) {
 	app, fwd := newTestApp(t)
 	idpDetail := "AADSTS7000222: secret expired for app 'ee8407bd' tenant '5ce772a7'"
