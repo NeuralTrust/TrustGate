@@ -37,7 +37,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 		Status:           events.Status{Code: 200},
 		Request:          events.Request{Method: "POST", Path: "/mcp"},
 		Response:         events.Response{StatusCode: 200},
-		Latency:          events.Latency{TotalMs: 200, ProviderMs: 120, GatewayMs: 80},
+		Latency:          events.Latency{TotalMs: 200, ProviderMs: i64ptr(120), GatewayMs: 80},
 		MCP: &events.MCP{
 			Method:            "tools/call",
 			Operation:         "tool",

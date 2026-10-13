@@ -26,6 +26,8 @@ import (
 
 func strptr(s string) *string { return &s }
 
+func i64ptr(v int64) *int64 { return &v }
+
 func attrsOf(rec otellog.Record) map[string]attribute.Value {
 	m := make(map[string]attribute.Value, rec.AttributesLen())
 	rec.WalkAttributes(func(kv attribute.KeyValue) bool {
@@ -76,7 +78,7 @@ func fullEvent() *events.Event {
 			ReasoningOutputTokens:   1,
 		},
 		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), SavingsUsd: &savingsUsd, Currency: "USD"},
-		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
+		Latency: events.Latency{TotalMs: 120, ProviderMs: i64ptr(100), PoliciesMs: 14, GatewayMs: 6},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
 		},

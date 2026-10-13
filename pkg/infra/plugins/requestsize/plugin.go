@@ -84,6 +84,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	if cfg.RequireContentLength && contentLength(in.Request) == "" {
 		if blocks {
+			appplugins.SetDecision(in.Event, in.Mode)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusLengthRequired,
 				Message:    "Content-Length header is required",
@@ -111,6 +112,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			ExceededType:       "bytes",
 		})
 		if blocks {
+			appplugins.SetDecision(in.Event, in.Mode)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusRequestEntityTooLarge,
 				Message:    fmt.Sprintf("request size limit exceeded: received %d bytes", byteSize),
@@ -130,6 +132,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			ExceededType:       "chars",
 		})
 		if blocks {
+			appplugins.SetDecision(in.Event, in.Mode)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusRequestEntityTooLarge,
 				Message:    fmt.Sprintf("character limit exceeded: received %d characters", charCount),

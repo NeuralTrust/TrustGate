@@ -114,9 +114,13 @@ func (b *Builder) Build(
 	providerMs := providerLatency(attempts, policies)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
-		ProviderMs: providerMs,
 		PoliciesMs: policies.totalMs,
 		GatewayMs:  gatewayLatency(totalMs, providerMs, policies),
+	}
+	// A pre-request refusal has no provider attempt. Leaving the pointer nil
+	// omits provider_ms. A real attempt is recorded even when it rounds to 0.
+	if len(attempts) > 0 {
+		evt.Latency.ProviderMs = &providerMs
 	}
 
 	b.fillRequest(evt, req, served)
@@ -377,7 +381,7 @@ func (b *Builder) buildMCP(
 	totalMs := endTime.Sub(startTime).Milliseconds()
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
-		ProviderMs: upstreamMs,
+		ProviderMs: &upstreamMs,
 		PoliciesMs: policies.totalMs,
 		GatewayMs:  gatewayLatency(totalMs, upstreamMs, policies),
 	}
