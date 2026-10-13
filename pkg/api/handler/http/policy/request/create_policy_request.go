@@ -22,8 +22,6 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-const maxPolicyDescriptionLen = 1000
-
 type CreatePolicyRequest struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
@@ -47,8 +45,8 @@ func (r CreatePolicyRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	if len(r.Description) > maxPolicyDescriptionLen {
-		return fmt.Errorf("description too long (max %d): %w", maxPolicyDescriptionLen, commonerrors.ErrValidation)
+	if len(r.Description) > domain.MaxDescriptionLen {
+		return fmt.Errorf("description too long (max %d): %w", domain.MaxDescriptionLen, commonerrors.ErrValidation)
 	}
 	if strings.TrimSpace(r.Slug) == "" {
 		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
