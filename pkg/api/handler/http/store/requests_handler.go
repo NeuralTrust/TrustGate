@@ -84,6 +84,7 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 			Reason:          p.Reason,
 			RequesterGroups: p.RequesterGroups,
 			RequestedAt:     p.RequestedAt,
+			ServerDeleted:   p.ServerDeleted,
 		})
 	}
 	return httpio.WriteOK(c, out)
@@ -142,7 +143,7 @@ func (h *RequestsHandler) History(c *fiber.Ctx) error {
 // @Success      204         "Approved"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody  "Server is not on the shelf, or needs admin setup; connect it first"
+// @Failure      409         {object}  httpio.ErrorBody  "Server is not on the shelf, or needs admin setup; connect it first. stale_request: the server the request names was deleted; deny it"
 // @Router       /v1/gateways/{gateway_id}/store/requests/approve [post]
 func (h *RequestsHandler) Approve(c *fiber.Ctx) error {
 	gatewayID, req, err := h.parseDecide(c)

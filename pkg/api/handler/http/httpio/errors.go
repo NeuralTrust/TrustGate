@@ -24,6 +24,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/gofiber/fiber/v2"
 )
@@ -75,6 +76,7 @@ const (
 	msgHasDependentsHint       = "Remove or reassign dependent resources first, then retry the delete."
 	msgInvalidConfigHint       = "Check the configuration fields and types against the Admin API docs and retry."
 	msgResultTooLargeHint      = "Narrow the query with filters or pagination (smaller page size) and retry."
+	msgStaleStoreRequest       = "This request is for an MCP server that was deleted. Deny it and ask the requester to request access again."
 	msgOwnedKeyHint            = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
 	msgApplicationKeyHint      = "Budgets and owner groups apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
 	msgPersonalKeyHint         = "You already hold a key on this gateway. Rotate or revoke it instead."
@@ -113,6 +115,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
 	case errors.Is(err, commonerrors.ErrHasDependents):
 		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: publicMessage(err, msgHasDependentsHint)}
+	case errors.Is(err, installationdomain.ErrStaleRequest):
+		return fiber.StatusConflict, ErrorBody{Error: "stale_request", Message: msgStaleStoreRequest}
 	case errors.Is(err, commonerrors.ErrConflict):
 		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: publicMessage(err, msgConflictHint)}
 	case errors.Is(err, authdomain.ErrOwnedKey):
