@@ -81,3 +81,36 @@ func TestInjectPreviousResponseID_SkipsConversationRequests(t *testing.T) {
 	_, ok := fieldString(t, out, "previous_response_id")
 	assert.False(t, ok, "conversation and previous_response_id are mutually exclusive upstream")
 }
+
+func TestTranslatedResponsesState(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{name: "previous response", body: `{"previous_response_id":"resp_abc"}`, want: []string{fieldPreviousResponse}},
+		{name: "blank previous response", body: `{"previous_response_id":"  "}`},
+		{name: "null previous response", body: `{"previous_response_id":null}`},
+		{name: "store true", body: `{"store":true}`, want: []string{fieldStore}},
+		{name: "store false", body: `{"store":false}`},
+		{name: "both", body: `{"previous_response_id":"resp_abc","store":true}`, want: []string{fieldPreviousResponse, fieldStore}},
+		{name: "conversation is not response state", body: `{"conversation":"conv_abc"}`},
+		{name: "not json", body: `not-json`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, translatedResponsesState([]byte(tc.body)))
+		})
+	}
+}
+
+func TestResponsesStateError_UnwrapsInvalidRequest(t *testing.T) {
+	err := &responsesStateError{params: []string{fieldPreviousResponse}}
+	assert.ErrorIs(t, err, ErrInvalidRequestPayload)
+	assert.Contains(t, err.Error(), "previous_response_id")
+
+	both := &responsesStateError{params: []string{fieldPreviousResponse, fieldStore}}
+	assert.Contains(t, both.Error(), "previous_response_id and store")
+}

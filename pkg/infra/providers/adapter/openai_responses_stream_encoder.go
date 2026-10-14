@@ -45,23 +45,24 @@ const responsesKeepaliveInterval = 10 * time.Second
 // where they always follow the message in arrival order, whatever order the
 // upstream interleaved text and calls in. It is not safe for concurrent use.
 type ResponsesStreamEncoder struct {
-	now       func() time.Time
-	lastSent  time.Time
-	nonce     string
-	id        string
-	model     string
-	createdAt int64
-	started   bool
-	done      bool
-	aborted   bool
-	dropped   int
-	withheld  int
-	sequence  int
-	items     []*responsesStreamItem
-	message   *responsesStreamItem
-	calls     map[int]*responsesStreamItem
-	pending   []*responsesStreamItem
-	callIDs   map[string]bool
+	now             func() time.Time
+	lastSent        time.Time
+	nonce           string
+	id              string
+	model           string
+	createdAt       int64
+	upstreamCreated int64
+	started         bool
+	done            bool
+	aborted         bool
+	dropped         int
+	withheld        int
+	sequence        int
+	items           []*responsesStreamItem
+	message         *responsesStreamItem
+	calls           map[int]*responsesStreamItem
+	pending         []*responsesStreamItem
+	callIDs         map[string]bool
 }
 
 type responsesStreamItem struct {
@@ -276,8 +277,17 @@ func (e *ResponsesStreamEncoder) terminalResponse(itemStatus string, usage *Cano
 }
 
 func (e *ResponsesStreamEncoder) remember(chunk *CanonicalStreamChunk) {
-	if e.id == "" && !e.started {
+	if chunk == nil || e.started {
+		if chunk != nil && e.model == "" {
+			e.model = chunk.Model
+		}
+		return
+	}
+	if e.id == "" {
 		e.id = chunk.ID
+	}
+	if e.upstreamCreated == 0 && chunk.Created > 0 {
+		e.upstreamCreated = chunk.Created
 	}
 	if e.model == "" {
 		e.model = chunk.Model
@@ -291,8 +301,10 @@ func (e *ResponsesStreamEncoder) start() [][]byte {
 	e.started = true
 	if e.id == "" {
 		e.id = "resp_" + e.nonce
+	} else {
+		e.id = responsesWireID(e.id)
 	}
-	e.createdAt = e.now().Unix()
+	e.createdAt = responsesCreatedAt(e.upstreamCreated, e.now())
 	lines := e.event("response.created", map[string]any{"response": e.response(responsesStatusInProgress)})
 	return append(lines, e.event("response.in_progress", map[string]any{"response": e.response(responsesStatusInProgress)})...)
 }
