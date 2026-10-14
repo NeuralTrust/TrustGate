@@ -24,31 +24,103 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAdaptErrorBody(t *testing.T) {
+func TestClientErrorBody(t *testing.T) {
 	t.Parallel()
 	openai := []byte(`{"error":{"message":"bad","type":"invalid_request_error","param":"max_tokens"}}`)
+	anthropic := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`)
 	tests := []struct {
 		name   string
 		status int
 		source Format
+		target Format
 		body   []byte
 		want   string
 	}{
-		{name: "openai passthrough", status: 400, source: FormatOpenAI, body: openai, want: string(openai)},
-		{name: "anthropic 400", status: 400, source: FormatAnthropic, body: openai, want: `{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`},
-		{name: "anthropic 401", status: 401, source: FormatAnthropic, body: openai, want: `{"type":"error","error":{"type":"authentication_error","message":"bad"}}`},
-		{name: "anthropic 429", status: 429, source: FormatAnthropic, body: openai, want: `{"type":"error","error":{"type":"rate_limit_error","message":"bad"}}`},
-		{name: "gemini 400", status: 400, source: FormatGemini, body: openai, want: `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`},
-		{name: "cohere", status: 400, source: FormatCohere, body: openai, want: `{"message":"bad"}`},
-		{name: "empty body uses status text", status: 400, source: FormatAnthropic, body: nil, want: `{"type":"error","error":{"type":"invalid_request_error","message":"Bad Request"}}`},
-		{name: "bedrock type extracted", status: 400, source: FormatAnthropic, body: []byte(`{"__type":"ValidationException","message":"nope"}`), want: `{"type":"error","error":{"type":"invalid_request_error","message":"nope"}}`},
+		{name: "openai passthrough", status: 400, source: FormatOpenAI, target: FormatOpenAI, body: openai, want: string(openai)},
+		{name: "openai-compatible upstream keeps the body", status: 400, source: FormatOpenAI, target: FormatGroq, body: openai, want: string(openai)},
+		{name: "responses client keeps an openai body", status: 400, source: FormatOpenAIResponses, target: FormatOpenAI, body: openai, want: string(openai)},
+		{name: "anthropic passthrough", status: 400, source: FormatAnthropic, target: FormatAnthropic, body: anthropic, want: string(anthropic)},
+		{name: "anthropic 400", status: 400, source: FormatAnthropic, target: FormatOpenAI, body: openai, want: `{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`},
+		{name: "anthropic 429", status: 429, source: FormatAnthropic, target: FormatOpenAI, body: openai, want: `{"type":"error","error":{"type":"rate_limit_error","message":"bad"}}`},
+		{name: "gemini 400", status: 400, source: FormatGemini, target: FormatOpenAI, body: openai, want: `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`},
+		{name: "cohere", status: 400, source: FormatCohere, target: FormatOpenAI, body: openai, want: `{"message":"bad"}`},
+		{name: "empty body uses status text", status: 400, source: FormatAnthropic, target: FormatOpenAI, body: nil, want: `{"type":"error","error":{"type":"invalid_request_error","message":"Bad Request"}}`},
+		{name: "bedrock type extracted", status: 400, source: FormatAnthropic, target: FormatBedrock, body: []byte(`{"__type":"ValidationException","message":"nope"}`), want: `{"type":"error","error":{"type":"invalid_request_error","message":"nope"}}`},
+		{
+			// ENG-1899: an OpenAI client routed to Anthropic got Anthropic's envelope.
+			name:   "openai client gets an openai envelope from anthropic",
+			status: 400, source: FormatOpenAI, target: FormatAnthropic, body: anthropic,
+			want: `{"error":{"type":"invalid_request_error","message":"bad"}}`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := AdaptErrorBody(tc.body, tc.status, tc.source)
+			t.Parallel()
+			got := ClientErrorBody(tc.body, tc.status, tc.source, tc.target)
 			assert.JSONEq(t, tc.want, string(got))
 		})
 	}
+}
+
+// ENG-1899: OpenAI's 401 echoes the stored key's prefix and last characters,
+// and that body reached the caller and Activity.
+func TestClientErrorBody_UpstreamAuthFailureDropsProviderText(t *testing.T) {
+	t.Parallel()
+	openaiKey := []byte(`{"error":{"message":"Incorrect API key provided: sk-proj-********************abcd. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`)
+	anthropicKey := []byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`)
+	tests := []struct {
+		name   string
+		source Format
+		target Format
+		body   []byte
+		want   string
+	}{
+		{name: "openai to openai", source: FormatOpenAI, target: FormatOpenAI, body: openaiKey, want: `{"error":{"type":"invalid_request_error","message":"upstream provider authentication failed"}}`},
+		{name: "openai to anthropic", source: FormatOpenAI, target: FormatAnthropic, body: anthropicKey, want: `{"error":{"type":"invalid_request_error","message":"upstream provider authentication failed"}}`},
+		{name: "anthropic to anthropic", source: FormatAnthropic, target: FormatAnthropic, body: anthropicKey, want: `{"type":"error","error":{"type":"authentication_error","message":"upstream provider authentication failed"}}`},
+		{name: "gemini to openai", source: FormatGemini, target: FormatOpenAI, body: openaiKey, want: `{"error":{"code":401,"message":"upstream provider authentication failed","status":"UNAUTHENTICATED"}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClientErrorBody(tc.body, http.StatusUnauthorized, tc.source, tc.target)
+			assert.JSONEq(t, tc.want, string(got))
+			assert.NotContains(t, string(got), "abcd")
+		})
+	}
+}
+
+// A provider can refuse a key with another status (OpenAI sometimes answers a
+// bad key with a 400), so key-shaped strings are masked on every error.
+func TestClientErrorBody_MasksKeysOnOtherStatuses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		source Format
+		target Format
+		body   string
+	}{
+		{name: "same dialect", source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"Incorrect API key provided: sk-proj-****abcd.","code":"invalid_api_key"}}`},
+		{name: "rewritten dialect", source: FormatAnthropic, target: FormatOpenAI, body: `{"error":{"message":"Incorrect API key provided: sk-proj-****abcd."}}`},
+		{name: "anthropic key", source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"key sk-ant-api03-abcdefgh rejected"}}`},
+		{name: "google key", source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"key AIzaSyA1234567890abcdefghijk rejected"}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := string(ClientErrorBody([]byte(tc.body), http.StatusBadRequest, tc.source, tc.target))
+			assert.Contains(t, got, "[REDACTED]")
+			assert.NotContains(t, got, "abcd")
+			assert.NotContains(t, got, "1234567890")
+			assert.True(t, json.Valid([]byte(got)), got)
+		})
+	}
+}
+
+func TestClientErrorBody_LeavesOrdinaryTextAlone(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"error":{"message":"task-runner-1234 hit the rate limit for gpt-4o; ask-ops if it persists"}}`)
+	assert.Equal(t, string(body), string(ClientErrorBody(body, http.StatusTooManyRequests, FormatOpenAI, FormatOpenAI)))
 }
 
 func TestEncodeErrorBody_AnthropicTypes(t *testing.T) {

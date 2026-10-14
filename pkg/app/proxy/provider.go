@@ -85,6 +85,10 @@ type ProviderResponse struct {
 	// and post_response read; it never feeds what the client receives.
 	RawFrames  bool
 	StreamView func(frame []byte) [][]byte
+	// upstreamBody is the provider's error body as it came, kept for the
+	// retry and failover checks that read the provider's own wording. Body is
+	// what the client gets (see adapter.ClientErrorBody).
+	upstreamBody []byte
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -482,10 +486,11 @@ func (p *providerInvoker) backendErrorResponse(
 	bk *registry.Registry,
 	prep *preparedInvocation,
 ) *ProviderResponse {
-	body := be.Body
-	if prep != nil && prep.crossFormat {
-		body = adapter.AdaptErrorBody(body, be.StatusCode, prep.sourceFormat)
+	source, target := adapter.FormatOpenAI, adapter.FormatOpenAI
+	if prep != nil {
+		source, target = prep.sourceFormat, prep.targetFormat
 	}
+	body := adapter.ClientErrorBody(be.Body, be.StatusCode, source, target)
 	headers := be.PassthroughHeaders()
 	sentModel := ""
 	if prep != nil {
@@ -498,10 +503,11 @@ func (p *providerInvoker) backendErrorResponse(
 	// failed request is recorded under it rather than under the client's
 	// routing keyword ("auto", "pool:…"), which names no model.
 	return &ProviderResponse{
-		StatusCode: be.StatusCode,
-		Headers:    headers,
-		Body:       body,
-		SentModel:  sentModel,
+		StatusCode:   be.StatusCode,
+		Headers:      headers,
+		Body:         body,
+		SentModel:    sentModel,
+		upstreamBody: be.Body,
 	}
 }
 
