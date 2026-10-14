@@ -400,6 +400,9 @@ func TestProtectedResourceMetadataAdvertisesToolCallScopes(t *testing.T) {
 	if !slices.Equal(meta.ScopesSupported, toolScopes) {
 		t.Fatalf("per-resource scopes_supported = %v, want every scope tool calls enforce", meta.ScopesSupported)
 	}
+	if slices.Contains(meta.ScopesSupported, "tenant:secret") {
+		t.Fatalf("per-resource scopes_supported = %v, includes another tenant's scope", meta.ScopesSupported)
+	}
 
 	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/gh/mcp")
 	if err != nil {
@@ -407,6 +410,9 @@ func TestProtectedResourceMetadataAdvertisesToolCallScopes(t *testing.T) {
 	}
 	if !slices.Equal(meta.ScopesSupported, []string{"read:user"}) {
 		t.Fatalf("per-resource scopes_supported = %v, want only the scopes that auth enforces", meta.ScopesSupported)
+	}
+	if slices.Contains(meta.ScopesSupported, "tenant:secret") {
+		t.Fatalf("per-resource scopes_supported = %v, includes another tenant's scope", meta.ScopesSupported)
 	}
 
 	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
