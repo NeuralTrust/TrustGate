@@ -144,6 +144,60 @@ func TestSyncer_Sync(t *testing.T) {
 	}
 }
 
+func TestSyncer_Sync_DerivesCapabilitiesFromFamily(t *testing.T) {
+	t.Parallel()
+	const payload = `{
+		"openai": {
+			"id": "openai",
+			"name": "OpenAI",
+			"models": {
+				"gpt-4.1": {"id":"gpt-4.1","name":"GPT-4.1","family":"gpt"},
+				"text-embedding-3-small": {"id":"text-embedding-3-small","name":"text-embedding-3-small","family":"text-embedding"},
+				"gpt-image-1.5": {"id":"gpt-image-1.5","name":"gpt-image-1.5","family":"gpt-image"},
+				"mystery-model": {"id":"mystery-model","name":"Mystery"}
+			}
+		}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer srv.Close()
+
+	repo := newFakeRepo()
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil)
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync error: %v", err)
+	}
+
+	want := map[string]string{
+		"gpt-4.1":                "chat",
+		"text-embedding-3-small": "embed",
+		"gpt-image-1.5":          "image",
+		"mystery-model":          "",
+	}
+	found := map[string]domain.Model{}
+	for _, m := range repo.upsertedModels {
+		if _, ok := want[m.Slug]; ok {
+			found[m.Slug] = m
+		}
+	}
+	if len(found) != len(want) {
+		t.Fatalf("synced models = %v, want %v", found, want)
+	}
+	for slug, key := range want {
+		flags := found[slug].Capabilities
+		if key == "" {
+			if len(flags) != 0 {
+				t.Fatalf("%s capabilities = %v, want unknown", slug, flags)
+			}
+			continue
+		}
+		if flags[key] != true || len(flags) != 1 {
+			t.Fatalf("%s capabilities = %v, want {%s: true}", slug, flags, key)
+		}
+	}
+}
+
 // Bedrock lists some models twice: once under the InvokeModel ID and once
 // behind an alternative OpenAI-compatible endpoint the Bedrock client cannot
 // reach. Only the invocable one belongs in the catalog — while the same marker

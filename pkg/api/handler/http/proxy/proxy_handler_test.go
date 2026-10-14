@@ -1047,6 +1047,29 @@ func TestHandle_CapabilityNotSupported(t *testing.T) {
 	}
 }
 
+func TestHandle_ModelNotChatCapable(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("%w: %s", appproxy.ErrModelNotChatCapable, "text-embedding-3-small")).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	eb := decodeError(t, resp.Body)
+	if eb.Error != "model_not_chat_capable" {
+		t.Fatalf("error = %q, want model_not_chat_capable", eb.Error)
+	}
+	if eb.Message != "model does not support chat completions: text-embedding-3-small" {
+		t.Fatalf("message = %q", eb.Message)
+	}
+}
+
 func TestHandle_NoBackendAvailable(t *testing.T) {
 	app, fwd := newTestApp(t)
 	fwd.EXPECT().

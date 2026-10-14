@@ -49,6 +49,10 @@ func (c storeCatalog) Lists(_ context.Context, provider, model string) appcatalo
 
 func (storeCatalog) InvalidateCache() {}
 
+func (storeCatalog) Capabilities(context.Context, string, string) (map[string]any, bool) {
+	return nil, false
+}
+
 func (storeCatalog) ListProviders(context.Context) ([]catalogdomain.Provider, error) { return nil, nil }
 
 func (c storeCatalog) ListModels(_ context.Context, provider string) ([]catalogdomain.Model, error) {

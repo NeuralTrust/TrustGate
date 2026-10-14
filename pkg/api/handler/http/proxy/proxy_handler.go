@@ -72,6 +72,7 @@ const (
 	errCodeContextLengthExceeded = "context_length_exceeded"
 	errCodeInvalidModel          = "invalid_model"
 	errCodeModelNotAllowed       = "model_not_allowed"
+	errCodeModelNotChatCapable   = "model_not_chat_capable"
 	errCodeNoModelAccess         = "no_model_access"
 	errCodeModelNotSupported     = "model_not_supported"
 	errCodeProviderCredential    = "provider_credential_error"
@@ -801,6 +802,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrAmbiguousRequestBody):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequestBody, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrModelNotChatCapable):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeModelNotChatCapable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
 		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}

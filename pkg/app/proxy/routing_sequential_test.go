@@ -52,6 +52,10 @@ func (s stubListing) Lists(_ context.Context, providerCode, model string) appcat
 
 func (s stubListing) InvalidateCache() {}
 
+func (s stubListing) Capabilities(context.Context, string, string) (map[string]any, bool) {
+	return nil, false
+}
+
 func newSequentialForwarder(
 	t *testing.T,
 	invoker appproxy.ProviderInvoker,
