@@ -114,14 +114,17 @@ const UpstreamAuthFailedMessage = "upstream provider authentication failed"
 
 const (
 	// UpstreamTimeoutCode and UpstreamTimeoutMessage replace an upstream
-	// timeout body. Providers answer a slow non-streaming completion with 504
-	// and the plain text "stream timeout", which names a stream the caller
-	// did not ask for and is not an ingress error envelope.
+	// timeout body. Provider gateways answer slow non-streaming completions
+	// with 504 and plain text such as "stream timeout" or "upstream request
+	// timeout", neither of which is an ingress error envelope.
 	UpstreamTimeoutCode    = "upstream_timeout"
 	UpstreamTimeoutMessage = "upstream request timed out"
 )
 
-var streamTimeoutText = []byte("stream timeout")
+var upstreamTimeoutTexts = [][]byte{
+	[]byte("stream timeout"),
+	[]byte("upstream request timeout"),
+}
 
 const redactedCredential = "[REDACTED]"
 
@@ -252,15 +255,22 @@ func EncodeUpstreamTimeout(source Format) []byte {
 }
 
 // upstreamTimedOut reports a response whose body must not be relayed: a 504,
-// or the plain "stream timeout" text some providers write for a slow completion.
+// or one of the plain timeout texts provider gateways write for a slow
+// completion.
 func upstreamTimedOut(status int, body []byte) bool {
 	if status == http.StatusGatewayTimeout {
 		return true
 	}
-	if bytes.EqualFold(bytes.TrimSpace(body), streamTimeoutText) {
-		return true
+	text := bytes.TrimSpace(body)
+	if message := ProviderErrorMessage(body); message != "" {
+		text = bytes.TrimSpace([]byte(message))
 	}
-	return bytes.EqualFold(bytes.TrimSpace([]byte(ProviderErrorMessage(body))), streamTimeoutText)
+	for _, timeoutText := range upstreamTimeoutTexts {
+		if bytes.EqualFold(text, timeoutText) {
+			return true
+		}
+	}
+	return false
 }
 
 func openaiErrorType(status int) string {

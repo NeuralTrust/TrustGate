@@ -283,22 +283,32 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 
 func TestProviderInvoke_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
 	tests := []struct {
-		name   string
-		body   string
-		format adapter.Format
-		want   string
+		name        string
+		body        string
+		timeoutBody string
+		format      adapter.Format
+		want        string
 	}{
 		{
-			name:   "openai chat",
-			body:   openaiRequestBody,
-			format: adapter.FormatOpenAI,
-			want:   `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+			name:        "openai chat stream timeout",
+			body:        openaiRequestBody,
+			timeoutBody: "stream timeout",
+			format:      adapter.FormatOpenAI,
+			want:        `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
 		},
 		{
-			name:   "anthropic messages",
-			body:   anthropicRequestBody,
-			format: adapter.FormatAnthropic,
-			want:   `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+			name:        "openai chat foundry request timeout",
+			body:        openaiRequestBody,
+			timeoutBody: "upstream request timeout",
+			format:      adapter.FormatOpenAI,
+			want:        `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:        "anthropic messages",
+			body:        anthropicRequestBody,
+			timeoutBody: "upstream request timeout",
+			format:      adapter.FormatAnthropic,
+			want:        `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
 		},
 	}
 	for _, tc := range tests {
@@ -306,7 +316,7 @@ func TestProviderInvoke_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
 			client := providermocks.NewClient(t)
 			client.EXPECT().
 				Completions(mock.Anything, mock.Anything, mock.Anything).
-				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte("stream timeout"))).
+				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte(tc.timeoutBody))).
 				Once()
 			locator := factorymocks.NewProviderLocator(t)
 			locator.EXPECT().Get("openai").Return(client, nil).Once()
@@ -322,6 +332,7 @@ func TestProviderInvoke_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
 			assert.Nil(t, resp.Stream)
 			assert.JSONEq(t, tc.want, string(resp.Body))
 			assert.NotContains(t, string(resp.Body), "stream timeout")
+			assert.NotContains(t, string(resp.Body), "upstream request timeout")
 		})
 	}
 }
