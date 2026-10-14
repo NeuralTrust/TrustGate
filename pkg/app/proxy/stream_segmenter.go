@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,9 +131,15 @@ type streamEvent struct {
 	// content block it does it to (-1 when the frame does not say).
 	tool      toolPhase
 	toolIndex int
-	// choice is the chat-completions choice the event belongs to. It is read
-	// only while the guard holds chat tool calls, and is -1 otherwise.
-	choice int
+	// choice is the chat-completions choice the event belongs to, and choiceSet
+	// says it was read. choiceMany and choiceBad are set only while the guard
+	// holds chat tool calls: more than one choice in the chunk, or an index
+	// that is not a JSON integer. The decoder reads choices[0] only, so either
+	// one would otherwise release tool calls it never parsed.
+	choice     int
+	choiceSet  bool
+	choiceMany bool
+	choiceBad  bool
 	// toolHandled is set once the guard has asked the chain about the tool call
 	// this frame belongs to and applied its verdict, so a mask on the text of the
 	// same window no longer has to treat the frame as tool input it cannot edit.
@@ -426,7 +433,7 @@ func (s *segmenter) classify(ev *streamEvent) error {
 		ev.tool, ev.toolIndex = nativeToolPhase(payload)
 	}
 	if s.choices {
-		ev.choice = chatChoiceIndex(payload)
+		s.readChoice(ev, payload)
 	}
 	ev.mark = streamMarkFor(s.format, eventType, payload)
 	ev.beyondText = ev.mark.op != markNone
@@ -472,18 +479,72 @@ func ssePayloadType(payload []byte) string {
 	return probe.Type
 }
 
-// chatChoiceIndex reads the index of the choice a chat-completions chunk
-// carries, the one the decode reads, or -1 when it names none.
-func chatChoiceIndex(payload []byte) int {
+// readChoice records the choice a chat-completions chunk belongs to. More than
+// one choice, or an index that is not a JSON integer, is marked and not given
+// a choice: the decoder reads choices[0] only, and a string or fractional
+// index makes that decode fail, so the raw chunk would be released with tool
+// calls the guard never saw.
+func (s *segmenter) readChoice(ev *streamEvent, payload []byte) {
 	var probe struct {
-		Choices []struct {
-			Index int `json:"index"`
-		} `json:"choices"`
+		Choices json.RawMessage `json:"choices"`
 	}
-	if json.Unmarshal(payload, &probe) != nil || len(probe.Choices) == 0 {
-		return -1
+	if json.Unmarshal(payload, &probe) != nil {
+		return
 	}
-	return probe.Choices[0].Index
+	raw := bytes.TrimSpace(probe.Choices)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return
+	}
+	var choices []struct {
+		Index json.RawMessage `json:"index"`
+	}
+	if json.Unmarshal(raw, &choices) != nil {
+		ev.choiceBad = true
+		return
+	}
+	switch len(choices) {
+	case 0:
+		return
+	case 1:
+		idx, ok := jsonChoiceIndex(choices[0].Index)
+		if !ok {
+			ev.choiceBad = true
+			return
+		}
+		ev.choice, ev.choiceSet = idx, true
+	default:
+		ev.choiceMany = true
+	}
+}
+
+// jsonChoiceIndex reads a choice index. An absent index is 0, which is what
+// the decoder stores. A string, a fraction or an exponent is not an index the
+// guard can trust.
+func jsonChoiceIndex(raw json.RawMessage) (int, bool) {
+	s := bytes.TrimSpace(raw)
+	if len(s) == 0 || bytes.Equal(s, []byte("null")) {
+		return 0, true
+	}
+	body := s
+	if body[0] == '-' {
+		body = body[1:]
+	}
+	if len(body) == 0 || body[0] < '0' || body[0] > '9' {
+		return 0, false
+	}
+	if body[0] == '0' && len(body) > 1 {
+		return 0, false
+	}
+	for _, c := range body {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(string(s))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func isTerminalPayload(payloadType string) bool {

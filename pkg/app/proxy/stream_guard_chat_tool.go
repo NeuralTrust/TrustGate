@@ -49,12 +49,15 @@ func (g *streamGuard) chatTools() bool {
 // after it. Deltas of other indexes of the same choice keep it open, so
 // interleaved calls are held together until all of them are whole.
 //
-// A second choice is refused (noteChatChoice), not held. Holding each choice
-// on its own would still be wrong: toolCallDigest merges by tool index alone,
-// so two choices that both use index 0 become one arguments string, and a
-// finish_reason on one choice is the stream's terminal event, which releases
-// whatever the other choice still had open. The refusal runs before any of
-// those bytes are released.
+// A second choice is refused (noteChatChoice), not held, including a second
+// choice in the same chunk and a choice index that is not a JSON integer.
+// The decoder reads choices[0] only, so either chunk would otherwise leave
+// with tool calls the guard never saw. Holding each choice on its own would
+// still be wrong: toolCallDigest merges by tool index alone, so two choices
+// that both use index 0 become one arguments string, and a finish_reason on
+// one choice is the stream's terminal event, which releases whatever the
+// other choice still had open. The refusal runs before any of those bytes
+// are released.
 func (g *streamGuard) trackChatTool(ev *streamEvent) {
 	g.noteChatChoice(ev)
 	g.checkToolNames(ev)
@@ -72,10 +75,18 @@ func (g *streamGuard) trackChatTool(ev *streamEvent) {
 	g.toolOpen, g.toolOpenIdx, g.toolSince, g.toolChoice = true, ev.toolCalls[0].Index, g.now(), ev.choice
 }
 
-// noteChatChoice records the choice indexes of the stream. More than one is
-// refused: see trackChatTool.
+// noteChatChoice records the choice indexes of the stream. More than one, in
+// one chunk or across the stream, is refused, and so is a chunk whose index
+// is not a JSON integer: see trackChatTool.
 func (g *streamGuard) noteChatChoice(ev *streamEvent) {
-	if ev.choice < 0 {
+	switch {
+	case ev.choiceMany:
+		g.toolMultiChoice = true
+		return
+	case ev.choiceBad:
+		g.toolChoiceUnread = true
+		return
+	case !ev.choiceSet:
 		return
 	}
 	if g.chatSeen == nil {
@@ -88,14 +99,17 @@ func (g *streamGuard) noteChatChoice(ev *streamEvent) {
 }
 
 // refusedChatTool reports a chat tool stream the guard will not release: a
-// call whose name changed, or more than one choice. Both are cuts, whichever
-// way on_error is set. The cap is a separate decision (chatToolCapped).
+// call whose name changed, more than one choice, or a choice index that could
+// not be read. Each is a cut, whichever way on_error is set. The cap is a
+// separate decision (chatToolCapped).
 func (g *streamGuard) refusedChatTool() (string, bool) {
 	switch {
 	case g.toolRenamed:
 		return streamToolRenamedMessage, true
 	case g.toolMultiChoice:
 		return streamToolMultiChoiceMessage, true
+	case g.toolChoiceUnread:
+		return streamToolChoiceUnreadMessage, true
 	default:
 		return "", false
 	}
