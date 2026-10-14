@@ -281,6 +281,51 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 		"a failed attempt is recorded under the model it went out with")
 }
 
+func TestProviderInvoke_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		format adapter.Format
+		want   string
+	}{
+		{
+			name:   "openai chat",
+			body:   openaiRequestBody,
+			format: adapter.FormatOpenAI,
+			want:   `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:   "anthropic messages",
+			body:   anthropicRequestBody,
+			format: adapter.FormatAnthropic,
+			want:   `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte("stream timeout"))).
+				Once()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:         []byte(tc.body),
+				SourceFormat: string(tc.format),
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+			assert.Nil(t, resp.Stream)
+			assert.JSONEq(t, tc.want, string(resp.Body))
+			assert.NotContains(t, string(resp.Body), "stream timeout")
+		})
+	}
+}
+
 func TestProviderInvoke_CrossFormatBackendErrorUsesIngressEnvelope(t *testing.T) {
 	errBody := []byte(`{"error":{"message":"bad request","type":"invalid_request_error"}}`)
 	be := registrydomain.NewBackendHTTPError(http.StatusBadRequest, errBody, http.Header{"Retry-After": []string{"2"}})

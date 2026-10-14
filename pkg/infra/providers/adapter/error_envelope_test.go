@@ -117,6 +117,38 @@ func TestClientErrorBody_MasksKeysOnOtherStatuses(t *testing.T) {
 	}
 }
 
+func TestClientErrorBody_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	t.Parallel()
+	const (
+		openaiWant    = `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`
+		anthropicWant = `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`
+	)
+	tests := []struct {
+		name   string
+		status int
+		source Format
+		target Format
+		body   string
+		want   string
+	}{
+		{name: "openai plain text", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatXAI, body: "stream timeout", want: openaiWant},
+		{name: "openai plain text with whitespace", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: "  Stream Timeout\n", want: openaiWant},
+		{name: "openai json still rewritten", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"stream timeout","type":"server_error"}}`, want: openaiWant},
+		{name: "empty 504", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: "", want: openaiWant},
+		{name: "anthropic messages", status: http.StatusGatewayTimeout, source: FormatAnthropic, target: FormatOpenAI, body: "stream timeout", want: anthropicWant},
+		{name: "anthropic to anthropic", status: http.StatusGatewayTimeout, source: FormatAnthropic, target: FormatAnthropic, body: "stream timeout", want: anthropicWant},
+		{name: "message names a stream on another status", status: http.StatusBadGateway, source: FormatOpenAI, target: FormatOpenAI, body: "stream timeout", want: openaiWant},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClientErrorBody([]byte(tc.body), tc.status, tc.source, tc.target)
+			assert.JSONEq(t, tc.want, string(got))
+			assert.NotContains(t, string(got), "stream timeout")
+		})
+	}
+}
+
 func TestClientErrorBody_LeavesOrdinaryTextAlone(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"error":{"message":"task-runner-1234 hit the rate limit for gpt-4o; ask-ops if it persists"}}`)
