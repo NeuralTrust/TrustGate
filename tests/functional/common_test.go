@@ -575,7 +575,7 @@ func assertWorkedExample(t *testing.T, base string, f *storeFixture) {
 		status int
 		marker string
 	}{
-		{"gpt-4.1", http.StatusForbidden, `"error":"model_not_allowed"`},
+		{"gpt-4.1", http.StatusForbidden, `"code":"model_not_allowed"`},
 		{"gpt6", http.StatusOK, "store-d-openai"},
 		{"opus-5.5", http.StatusForbidden, storeGuard("C")},
 		{"opus-4.8", http.StatusForbidden, storeGuard("B")},

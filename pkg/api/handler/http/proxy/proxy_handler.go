@@ -774,6 +774,9 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 		}
 		return c.Status(status).Type("json").Send(adapter.EncodeErrorBody(format, status, msg))
 	}
+	if adapter.OpenAIErrorDialect(format) {
+		return c.Status(status).Type("json").Send(adapter.EncodeOpenAIGatewayError(status, body.Error, body.Message))
+	}
 	return c.Status(status).JSON(body)
 }
 

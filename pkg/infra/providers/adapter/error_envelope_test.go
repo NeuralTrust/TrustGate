@@ -123,6 +123,83 @@ func TestClientErrorBody_LeavesOrdinaryTextAlone(t *testing.T) {
 	assert.Equal(t, string(body), string(ClientErrorBody(body, http.StatusTooManyRequests, FormatOpenAI, FormatOpenAI)))
 }
 
+func TestOpenAIErrorDialect(t *testing.T) {
+	t.Parallel()
+	for _, format := range []Format{
+		FormatOpenAI, FormatOpenAIResponses, FormatOpenAIEmbeddings,
+		FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
+		FormatAzure, FormatGroq, Format(""),
+	} {
+		assert.True(t, OpenAIErrorDialect(format), format)
+	}
+	for _, format := range []Format{
+		FormatAnthropic, FormatGemini, FormatVertex, FormatCohere,
+		FormatCohereRerank, FormatBedrock, FormatBedrockTitanEmbed,
+	} {
+		assert.False(t, OpenAIErrorDialect(format), format)
+	}
+}
+
+func TestEncodeOpenAIGatewayError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		status  int
+		code    string
+		message string
+		want    string
+	}{
+		{
+			name:    "forbidden model carries the gateway code",
+			status:  http.StatusForbidden,
+			code:    "model_not_allowed",
+			message: `model "no-such-model-xyz" is not allowed for this application`,
+			want:    `{"error":{"message":"model \"no-such-model-xyz\" is not allowed for this application","type":"permission_error","code":"model_not_allowed"}}`,
+		},
+		{
+			name:    "bad request",
+			status:  http.StatusBadRequest,
+			code:    "invalid_request",
+			message: "invalid request payload",
+			want:    `{"error":{"message":"invalid request payload","type":"invalid_request_error","code":"invalid_request"}}`,
+		},
+		{
+			name:   "missing message uses the status text",
+			status: http.StatusNotFound,
+			code:   "not_found",
+			want:   `{"error":{"message":"Not Found","type":"not_found_error","code":"not_found"}}`,
+		},
+		{
+			name:    "server failure",
+			status:  http.StatusBadGateway,
+			code:    "backend_error",
+			message: "",
+			want:    `{"error":{"message":"Bad Gateway","type":"server_error","code":"backend_error"}}`,
+		},
+		{
+			name:    "unauthorized",
+			status:  http.StatusUnauthorized,
+			code:    "unauthenticated",
+			message: "request is not authenticated",
+			want:    `{"error":{"message":"request is not authenticated","type":"authentication_error","code":"unauthenticated"}}`,
+		},
+		{
+			name:    "rate limit",
+			status:  http.StatusTooManyRequests,
+			code:    "rate_limit_unavailable",
+			message: "rate limit unavailable",
+			want:    `{"error":{"message":"rate limit unavailable","type":"rate_limit_error","code":"rate_limit_unavailable"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := EncodeOpenAIGatewayError(tc.status, tc.code, tc.message)
+			assert.JSONEq(t, tc.want, string(got))
+		})
+	}
+}
+
 func TestEncodeErrorBody_AnthropicTypes(t *testing.T) {
 	t.Parallel()
 	raw := EncodeErrorBody(FormatAnthropic, http.StatusNotFound, "missing")
