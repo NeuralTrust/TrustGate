@@ -105,6 +105,13 @@ func extras(t *testing.T, span *trace.Span) *Data {
 	return data
 }
 
+func spanDecision(span *trace.Span) string {
+	if span == nil || span.Plugin == nil {
+		return ""
+	}
+	return span.Plugin.Decision
+}
+
 func TestDescriptor(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
@@ -262,6 +269,10 @@ func TestObserveModeDoesNotMutate(t *testing.T) {
 		if d := extras(t, span); d.Decision != decisionObserved || !d.Changed {
 			t.Fatalf("extras = %+v, want observed+changed", d)
 		}
+		want := appplugins.DecisionForMode(policy.ModeObserve)
+		if got := spanDecision(span); got != want {
+			t.Fatalf("span decision = %q, want %q", got, want)
+		}
 	})
 
 	t.Run("response", func(t *testing.T) {
@@ -273,6 +284,10 @@ func TestObserveModeDoesNotMutate(t *testing.T) {
 		assertPassThrough(t, res, err)
 		if d := extras(t, span); d.Decision != decisionObserved {
 			t.Fatalf("decision = %q, want %q", d.Decision, decisionObserved)
+		}
+		want := appplugins.DecisionForMode(policy.ModeObserve)
+		if got := spanDecision(span); got != want {
+			t.Fatalf("span decision = %q, want %q", got, want)
 		}
 	})
 }
@@ -303,6 +318,9 @@ func TestNoMatchNoMutation(t *testing.T) {
 	d := extras(t, span)
 	if d.Decision != decisionNoMatch || d.Changed {
 		t.Fatalf("extras = %+v, want no_match and changed=false", d)
+	}
+	if got := spanDecision(span); got != "" {
+		t.Fatalf("span decision = %q, want empty on no match", got)
 	}
 }
 

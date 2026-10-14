@@ -180,6 +180,7 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 	if !appplugins.Blocks(in.Mode) {
 		data.Decision = decisionObserved
 		setExtras(in.Event, data)
+		appplugins.SetDecisionFromOutcome(in.Event, appplugins.DecisionForMode(in.Mode))
 		return passThrough()
 	}
 	data.Decision = decisionRewritten
