@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"regexp"
 )
 
 type anthropicErrorEnvelope struct {
@@ -96,17 +97,54 @@ func streamBlockedReason(reason string) string {
 	}
 }
 
-// AdaptErrorBody rewrites an upstream error body into the ingress client's
-// dialect when the two formats differ. OpenAI-family bodies are returned intact.
-func AdaptErrorBody(body []byte, status int, source Format) []byte {
-	if !NeedsAdaptedError(source) {
-		return body
+// UpstreamAuthFailedMessage replaces the provider's own text when it rejects
+// the credentials stored in the registry. That text is about the tenant's key,
+// not the caller's, and OpenAI's echoes the key's prefix and last characters.
+const UpstreamAuthFailedMessage = "upstream provider authentication failed"
+
+const redactedCredential = "[REDACTED]"
+
+// credentialPattern matches provider API keys as providers echo them in error
+// messages, masked or not: OpenAI and Anthropic `sk-…` keys (OpenAI masks the
+// middle with asterisks and keeps the prefix and last characters) and Google
+// `AIza…` keys.
+var credentialPattern = regexp.MustCompile(`\b(?:sk|rk)-[A-Za-z0-9_*.\-]{6,}|\bAIza[0-9A-Za-z_\-]{20,}`)
+
+// ClientErrorBody is the upstream error the client receives, and so the one
+// Activity records. A 401 says only that the provider refused the gateway's
+// credentials. Any other error keeps the provider's message, rewritten into
+// the client's dialect when the provider speaks another one, with anything
+// shaped like a provider key masked out.
+func ClientErrorBody(body []byte, status int, source, target Format) []byte {
+	dialect := errorDialect(source)
+	if status == http.StatusUnauthorized {
+		return EncodeErrorBody(dialect, status, UpstreamAuthFailedMessage)
 	}
-	msg := ProviderErrorMessage(body)
+	if dialect == errorDialect(target) {
+		return credentialPattern.ReplaceAll(body, []byte(redactedCredential))
+	}
+	msg := credentialPattern.ReplaceAllString(ProviderErrorMessage(body), redactedCredential)
 	if msg == "" {
 		msg = http.StatusText(status)
 	}
-	return EncodeErrorBody(source, status, msg)
+	return EncodeErrorBody(dialect, status, msg)
+}
+
+// errorDialect is coarser than the request format: every OpenAI-compatible
+// surface shares OpenAI's error envelope.
+func errorDialect(f Format) Format {
+	switch normalizeFormat(f) {
+	case FormatAnthropic:
+		return FormatAnthropic
+	case FormatGemini, FormatVertexEmbed:
+		return FormatGemini
+	case FormatCohere, FormatCohereEmbed, FormatCohereRerank:
+		return FormatCohere
+	case FormatBedrock, FormatBedrockTitanEmbed:
+		return FormatBedrock
+	default:
+		return FormatOpenAI
+	}
 }
 
 // EncodeErrorBody encodes a gateway-originated error in the client's dialect.
