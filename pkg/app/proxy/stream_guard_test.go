@@ -1324,7 +1324,7 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 				`data: {"type":"response.output_text.done","output_index":0,"content_index":0}`, "",
 				"event: response.content_part.done",
 				`data: {"type":"response.content_part.done","output_index":0,"content_index":0,` +
-					`"part":{"type":"output_text","text":""}}`, "",
+					`"part":{"type":"output_text","text":"","annotations":[]}}`, "",
 				"event: response.output_item.done",
 				`data: {"type":"response.output_item.done","output_index":0,` +
 					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
@@ -1624,7 +1624,7 @@ func TestStreamGuard_CutClosesTheOpenResponsesItem(t *testing.T) {
 			wantClose: []string{
 				`data: {"type":"response.output_text.done","output_index":2,"content_index":0}`,
 				`data: {"type":"response.content_part.done","output_index":2,"content_index":0,` +
-					`"part":{"type":"output_text","text":""}}`,
+					`"part":{"type":"output_text","text":"","annotations":[]}}`,
 				`data: {"type":"response.output_item.done","output_index":2,` +
 					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
 					`"status":"incomplete","content":[]}}`,

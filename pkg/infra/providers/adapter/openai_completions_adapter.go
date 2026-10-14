@@ -203,6 +203,7 @@ func isEmptyJSON(raw json.RawMessage) bool {
 type openaiResponse struct {
 	ID        string           `json:"id"`
 	Object    string           `json:"object"`
+	Created   int64            `json:"created,omitempty"`
 	Model     string           `json:"model"`
 	Choices   []openaiChoice   `json:"choices"`
 	Usage     *openaiUsage     `json:"usage,omitempty"`
@@ -305,6 +306,7 @@ func openaiUsageFromCanonical(u *CanonicalUsage) *openaiUsage {
 type openaiStreamChunk struct {
 	ID      string               `json:"id,omitempty"`
 	Object  string               `json:"object"`
+	Created int64                `json:"created,omitempty"`
 	Model   string               `json:"model,omitempty"`
 	Choices []openaiStreamChoice `json:"choices"`
 	Usage   *openaiUsage         `json:"usage,omitempty"`
@@ -635,9 +637,10 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	}
 
 	cr := &CanonicalResponse{
-		ID:    resp.ID,
-		Model: resp.Model,
-		Role:  "assistant",
+		ID:      resp.ID,
+		Model:   resp.Model,
+		Created: resp.Created,
+		Role:    "assistant",
 	}
 
 	if len(resp.Choices) > 0 {
@@ -741,8 +744,9 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 
 func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChunk {
 	sc := &CanonicalStreamChunk{
-		ID:    raw.ID,
-		Model: raw.Model,
+		ID:      raw.ID,
+		Model:   raw.Model,
+		Created: raw.Created,
 	}
 
 	usage := raw.Usage

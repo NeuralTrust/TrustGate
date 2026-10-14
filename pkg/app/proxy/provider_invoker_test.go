@@ -1158,3 +1158,169 @@ func TestProviderInvoke_CrossFormatSendsNoBetaOptIn(t *testing.T) {
 	require.NotNil(t, sent)
 	assert.Empty(t, sent.AnthropicBeta)
 }
+
+func TestProviderInvoke_TranslatedResponsesRejectsServerState(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		param   string
+		message string
+	}{
+		{
+			name:    "previous_response_id",
+			body:    `{"model":"gpt-5.4-mini-std","input":"Reply OK","previous_response_id":"resp_prev"}`,
+			param:   `"previous_response_id"`,
+			message: "previous_response_id requires an OpenAI registry",
+		},
+		{
+			name:    "store true",
+			body:    `{"model":"gpt-5.4-mini-std","input":"Reply OK","store":true}`,
+			param:   `"store"`,
+			message: "store requires an OpenAI registry",
+		},
+		{
+			name:    "both",
+			body:    `{"model":"gpt-5.4-mini-std","input":"Reply OK","previous_response_id":"resp_prev","store":true}`,
+			param:   `null`,
+			message: "previous_response_id and store require an OpenAI registry",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{
+				Body:         []byte(tt.body),
+				SourceFormat: string(adapter.FormatOpenAIResponses),
+			}
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, []string{"application/json"}, resp.Headers["Content-Type"])
+			assert.Equal(t, []string{"azure"}, resp.Headers["X-Selected-Provider"])
+
+			var env struct {
+				Error struct {
+					Message string          `json:"message"`
+					Type    string          `json:"type"`
+					Param   json.RawMessage `json:"param"`
+					Code    json.RawMessage `json:"code"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(resp.Body, &env))
+			assert.Equal(t, "invalid_request_error", env.Error.Type)
+			assert.Contains(t, env.Error.Message, tt.message)
+			assert.JSONEq(t, tt.param, string(env.Error.Param))
+			assert.JSONEq(t, `null`, string(env.Error.Code))
+		})
+	}
+}
+
+func TestProviderInvokeStream_TranslatedResponsesRejectsPreviousResponseID(t *testing.T) {
+	client := providermocks.NewClient(t)
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-5.4-mini-std","input":"Reply OK","stream":true,"previous_response_id":"resp_prev"}`),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, string(resp.Body), `"type":"invalid_request_error"`)
+}
+
+func TestProviderInvoke_TranslatedResponsesAllowsStoreFalse(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-5.4-mini-std","input":"Reply OK","store":false}`),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestProviderInvoke_OpenAIResponsesKeepsPreviousResponseID(t *testing.T) {
+	const body = `{"model":"gpt-5.4-mini-std","input":"Reply OK","previous_response_id":"resp_prev","store":true}`
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) ([]byte, error) {
+			sent = b
+			return []byte(`{"id":"resp_prev","object":"response","status":"completed","output":[]}`), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openai", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(body),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(sent), `"previous_response_id":"resp_prev"`)
+	assert.Contains(t, string(sent), `"store":true`)
+}
+
+func TestProviderInvoke_TranslatedResponsesIsConformant(t *testing.T) {
+	upstream := `{
+		"id":"chatcmpl-abc",
+		"object":"chat.completion",
+		"created":1710000000,
+		"model":"gpt-5.4-mini-std",
+		"choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}
+	}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(upstream), nil).
+		Once()
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-5.4-mini-std","input":"Reply OK"}`),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got struct {
+		ID        string `json:"id"`
+		Object    string `json:"object"`
+		CreatedAt int64  `json:"created_at"`
+		Status    string `json:"status"`
+		Output    []struct {
+			ID      string `json:"id"`
+			Type    string `json:"type"`
+			Content []struct {
+				Type        string            `json:"type"`
+				Text        string            `json:"text"`
+				Annotations []json.RawMessage `json:"annotations"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body, &got))
+	assert.Equal(t, "resp_abc", got.ID)
+	assert.Equal(t, "response", got.Object)
+	assert.Equal(t, int64(1710000000), got.CreatedAt)
+	assert.Equal(t, "completed", got.Status)
+	require.Len(t, got.Output, 1)
+	assert.Equal(t, "msg_abc", got.Output[0].ID)
+	assert.Equal(t, "message", got.Output[0].Type)
+	require.Len(t, got.Output[0].Content, 1)
+	assert.Equal(t, "OK", got.Output[0].Content[0].Text)
+	assert.NotNil(t, got.Output[0].Content[0].Annotations)
+	assert.Empty(t, got.Output[0].Content[0].Annotations)
+}

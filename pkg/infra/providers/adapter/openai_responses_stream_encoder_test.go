@@ -637,3 +637,86 @@ func TestOpenAIResponsesUsageFromCanonical_AlwaysHasDetails(t *testing.T) {
 	assert.JSONEq(t, `{"input_tokens":1,"output_tokens":1,"total_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`,
 		jsonField(t, string(body), "usage"))
 }
+
+func TestResponsesStreamEncoder_RewritesChatCompletionIdentity(t *testing.T) {
+	clock := time.Unix(1_800_000_000, 0)
+	enc := NewResponsesStreamEncoder(WithResponsesClock(func() time.Time { return clock }))
+	lines := enc.Content(&CanonicalStreamChunk{
+		ID:      "chatcmpl-abc",
+		Model:   "gpt-5.4-mini-std",
+		Created: 1710000000,
+		Role:    "assistant",
+		Delta:   "OK",
+		ToolCallDeltas: []StreamToolCallDelta{{
+			Index: 0, ID: "call_abc", Name: "lookup", ArgumentsDelta: "{}",
+		}},
+	})
+	lines = append(lines, enc.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls"})...)
+
+	var created, completed map[string]any
+	var messageID, callID string
+	for _, payload := range responsesEncoderPayloads(lines) {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(payload), &event))
+		switch event["type"] {
+		case "response.created":
+			created, _ = event["response"].(map[string]any)
+		case "response.output_item.added":
+			item, _ := event["item"].(map[string]any)
+			switch item["type"] {
+			case "message":
+				messageID, _ = item["id"].(string)
+			case "function_call":
+				callID, _ = item["id"].(string)
+			}
+		case "response.content_part.added":
+			part, _ := event["part"].(map[string]any)
+			annotations, ok := part["annotations"].([]any)
+			require.True(t, ok)
+			assert.Empty(t, annotations)
+		case "response.completed":
+			completed, _ = event["response"].(map[string]any)
+		}
+	}
+	require.NotNil(t, created)
+	assert.Equal(t, "resp_abc", created["id"])
+	assert.Equal(t, float64(1710000000), created["created_at"])
+	assert.True(t, strings.HasPrefix(messageID, "msg_"), messageID)
+	assert.True(t, strings.HasPrefix(callID, "fc_"), callID)
+	require.NotNil(t, completed)
+	assert.Equal(t, "resp_abc", completed["id"])
+	assert.Equal(t, float64(1710000000), completed["created_at"])
+
+	output, _ := completed["output"].([]any)
+	require.NotEmpty(t, output)
+	for _, raw := range output {
+		item, _ := raw.(map[string]any)
+		if item["type"] != "message" {
+			continue
+		}
+		content, _ := item["content"].([]any)
+		require.NotEmpty(t, content)
+		part, _ := content[0].(map[string]any)
+		annotations, ok := part["annotations"].([]any)
+		require.True(t, ok)
+		assert.Empty(t, annotations)
+	}
+}
+
+func TestResponsesStreamEncoder_KeepsNonChatCompletionIdentity(t *testing.T) {
+	clock := time.Unix(1_800_000_000, 0)
+	enc := NewResponsesStreamEncoder(WithResponsesClock(func() time.Time { return clock }))
+	lines := enc.Content(&CanonicalStreamChunk{ID: "c", Role: "assistant", Delta: "OK"})
+
+	var created map[string]any
+	for _, payload := range responsesEncoderPayloads(lines) {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(payload), &event))
+		if event["type"] == "response.created" {
+			created, _ = event["response"].(map[string]any)
+		}
+	}
+	require.NotNil(t, created)
+	assert.Equal(t, "c", created["id"])
+	assert.Equal(t, float64(clock.Unix()), created["created_at"])
+}
