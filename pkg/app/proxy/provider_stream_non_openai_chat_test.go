@@ -212,12 +212,8 @@ func TestInvokeStream_NonOpenAIChatCompletion(t *testing.T) {
 						lines := collectStream(t, response.Stream)
 						assertNonOpenAIChatCompletion(t, fixture, lines, usage.include, reason)
 						var text strings.Builder
-						var calls []struct {
-							ID       string `json:"id"`
-							Function struct {
-								Name, Arguments string
-							} `json:"function"`
-						}
+						var id, name, args string
+						var argFragments int
 						for _, line := range lines {
 							payload, ok := strings.CutPrefix(line, "data: ")
 							if !ok || payload == "[DONE]" {
@@ -234,22 +230,42 @@ func TestInvokeStream_NonOpenAIChatCompletion(t *testing.T) {
 							require.NoError(t, json.Unmarshal([]byte(payload), &chunk))
 							for _, choice := range chunk.Choices {
 								text.WriteString(choice.Delta.Content)
-								if choice.Delta.ToolCalls != nil {
-									var decoded = calls[:0:0]
-									require.NoError(t, json.Unmarshal(choice.Delta.ToolCalls, &decoded))
-									calls = append(calls, decoded...)
+								if choice.Delta.ToolCalls == nil {
+									continue
+								}
+								var decoded []struct {
+									ID       string `json:"id"`
+									Function struct {
+										Name, Arguments string
+									} `json:"function"`
+								}
+								require.NoError(t, json.Unmarshal(choice.Delta.ToolCalls, &decoded))
+								for _, call := range decoded {
+									if call.ID != "" {
+										id = call.ID
+									}
+									if call.Function.Name != "" {
+										name = call.Function.Name
+									}
+									if call.Function.Arguments != "" {
+										args += call.Function.Arguments
+										argFragments++
+									}
 								}
 							}
 						}
 						if tool {
 							assert.Empty(t, text.String())
-							require.Len(t, calls, 1)
-							assert.Equal(t, "call_non_openai", calls[0].ID)
-							assert.Equal(t, "lookup", calls[0].Function.Name)
-							assert.JSONEq(t, `{"answer":42}`, calls[0].Function.Arguments)
+							assert.Equal(t, "call_non_openai", id)
+							assert.Equal(t, "lookup", name)
+							assert.JSONEq(t, `{"answer":42}`, args)
+							if fixture.provider != "google" {
+								assert.Greater(t, argFragments, 1, "argument fragments reach the chat client as they arrive")
+							}
 						} else {
 							assert.Equal(t, "hello", text.String())
-							assert.Empty(t, calls)
+							assert.Empty(t, id)
+							assert.Empty(t, args)
 						}
 						observed, ok := request.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
 						require.True(t, ok)

@@ -20,7 +20,6 @@ import (
 	"errors"
 	"iter"
 	"log/slog"
-	"sort"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -90,71 +89,6 @@ func (e *ClientNotifiedStreamError) Unwrap() error {
 	return e.Err
 }
 
-// toolCallEntry holds accumulated tool call data for a single index.
-type toolCallEntry struct {
-	ID   string
-	Kind adapter.CanonicalToolKind
-	Name string
-	Args string
-}
-
-// toolCallAccumulator merges incremental tool call deltas (e.g. from OpenAI)
-// and flushes them as complete deltas.
-type toolCallAccumulator map[int]*toolCallEntry
-
-// Merge incorporates a set of incremental deltas into the accumulator.
-func (a *toolCallAccumulator) Merge(deltas []adapter.StreamToolCallDelta) {
-	if len(deltas) == 0 {
-		return
-	}
-	if *a == nil {
-		*a = make(toolCallAccumulator)
-	}
-	for i := range deltas {
-		tc := &deltas[i]
-		cur := (*a)[tc.Index]
-		if cur == nil {
-			cur = &toolCallEntry{ID: tc.ID, Kind: tc.Kind, Name: tc.Name}
-			(*a)[tc.Index] = cur
-		}
-		if tc.Name != "" {
-			cur.Name = tc.Name
-		}
-		if tc.ID != "" {
-			cur.ID = tc.ID
-		}
-		if tc.Kind != adapter.ToolKindFunction {
-			cur.Kind = tc.Kind
-		}
-		cur.Args += tc.ArgumentsDelta
-	}
-}
-
-// Flush returns all accumulated tool calls sorted by index and resets the accumulator.
-func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
-	indices := make([]int, 0, len(*a))
-	for idx := range *a {
-		indices = append(indices, idx)
-	}
-	sort.Ints(indices)
-	deltas := make([]adapter.StreamToolCallDelta, 0, len(*a))
-	for _, idx := range indices {
-		cur := (*a)[idx]
-		if cur == nil {
-			continue
-		}
-		deltas = append(deltas, adapter.StreamToolCallDelta{
-			Index:          idx,
-			ID:             cur.ID,
-			Kind:           cur.Kind,
-			Name:           cur.Name,
-			ArgumentsDelta: cur.Args,
-		})
-	}
-	*a = nil
-	return deltas
-}
-
 // adaptStream transforms a sequence of raw backend SSE lines (in the target
 // provider's wire format) into the source (client) format. When the two formats
 // are wire-compatible it yields each line verbatim (byte-exact passthrough);
@@ -162,6 +96,16 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // adapter registry. A Gemini client gets each tool call once, with its whole
 // arguments, as adapter.GeminiStreamEncoder holds and releases them, whatever
 // upstream streamed the arguments.
+//
+// An OpenAI Chat Completions client, including Azure, gets each
+// tool_calls[].function.arguments delta as it arrives. Those deltas used to be
+// absorbed and flushed as one chunk immediately before finish_reason so an
+// older SDK (langchain-mistralai) could read a finished argument string. That
+// hold is not a policy check: a guardrail folds the same fragments in the
+// stream guard's toolCallDigest, and tool_allowlist and per_tool_rate_limiter
+// read the request's tools before the stream starts. Holding the call until
+// the arguments are finished is what delayed the first tool byte until the
+// model had finished writing them.
 //
 // onChunk, when non-nil, is invoked with every decoded upstream chunk in both
 // passthrough and cross-format paths. Cross-format streams to Bedrock,
@@ -357,9 +301,6 @@ func adaptStream(
 		}
 	}
 
-	if source != adapter.FormatOpenAIResponses && adapter.IsSameWireFormat(source, adapter.FormatOpenAI) {
-		return coalesceOpenAIToolCallStream(stream)
-	}
 	return stream
 }
 

@@ -333,8 +333,8 @@ func (e *streamEvent) chars() int {
 // Ownership: a line fed in is handed over, not copied, and comes back out in
 // streamEvent.lines unchanged. The caller must feed lines it will not mutate or
 // reuse afterwards, and must not mutate the lines it gets back. Every producer
-// in the chain allocates per line today (providers/stream.go:62, the
-// cross-format path, stream_toolcall_coalesce.go:71-73); a future one that
+// in the chain allocates per line today (providers/stream.go:62 and the
+// cross-format path); a future one that
 // reuses a scratch buffer would silently corrupt held blocks, and no test can
 // catch it from the outside.
 type segmenter struct {
