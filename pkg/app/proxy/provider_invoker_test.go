@@ -1239,6 +1239,21 @@ func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T
 	}
 }
 
+func TestProviderInvoke_NonStringModelWithAllowListStaysDenied(t *testing.T) {
+	t.Parallel()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body:          []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`),
+		AllowedModels: []string{"gpt-4o-mini"},
+	})
+
+	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+	require.NotErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+}
+
 func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {
 	t.Parallel()
 	client := providermocks.NewClient(t)

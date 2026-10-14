@@ -337,12 +337,23 @@ func (p *providerInvoker) applyModelEnforcement(body []byte, allowed []string, d
 	if errors.Is(verr, adapter.ErrModelNotAllowed) {
 		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
 	}
-	if len(allowed) > 0 {
+	// An empty body or a JSON array is not a request. A JSON object whose
+	// model is not a string is still a model denial, which is what callers
+	// already receive for a model the binding rejects.
+	if len(allowed) > 0 && !jsonObject(body) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidJSONObjectMessage)
+	}
+	if len(allowed) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
 	}
 	p.logger.Warn("model enforcement failed, proceeding without override",
 		slog.String("error", verr.Error()))
 	return body, nil
+}
+
+func jsonObject(body []byte) bool {
+	var raw map[string]json.RawMessage
+	return json.Unmarshal(body, &raw) == nil && raw != nil
 }
 
 // clientRequestError turns a body the provider client could not decode into a
