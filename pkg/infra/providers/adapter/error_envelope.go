@@ -50,6 +50,16 @@ type bedrockErrorEnvelope struct {
 	Message string `json:"message"`
 }
 
+type openaiGatewayErrorEnvelope struct {
+	Error openaiGatewayErrorBody `json:"error"`
+}
+
+type openaiGatewayErrorBody struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code,omitempty"`
+}
+
 type openaiStreamErrorEnvelope struct {
 	Error openaiStreamErrorBody `json:"error"`
 }
@@ -147,6 +157,13 @@ func errorDialect(f Format) Format {
 	}
 }
 
+// OpenAIErrorDialect reports whether gateway-generated errors for format use
+// OpenAI's error envelope. Chat completions, responses, embeddings, files,
+// images and audio do. Anthropic, Gemini, Cohere and Bedrock do not.
+func OpenAIErrorDialect(format Format) bool {
+	return errorDialect(format) == FormatOpenAI
+}
+
 // EncodeErrorBody encodes a gateway-originated error in the client's dialect.
 func EncodeErrorBody(source Format, status int, message string) []byte {
 	if message == "" {
@@ -186,6 +203,44 @@ func EncodeErrorBody(source Format, status int, message string) []byte {
 		})
 		return out
 	}
+}
+
+// EncodeOpenAIGatewayError encodes a gateway-generated error in OpenAI's
+// envelope. code is the gateway's stable error code, such as model_not_allowed,
+// and type follows status. An empty message becomes the status text so an
+// internal error string is not substituted for a message the gateway withheld.
+func EncodeOpenAIGatewayError(status int, code, message string) []byte {
+	if message == "" {
+		message = http.StatusText(status)
+	}
+	if message == "" {
+		message = http.StatusText(http.StatusInternalServerError)
+	}
+	out, _ := json.Marshal(openaiGatewayErrorEnvelope{
+		Error: openaiGatewayErrorBody{
+			Message: message,
+			Type:    openaiErrorType(status),
+			Code:    code,
+		},
+	})
+	return out
+}
+
+func openaiErrorType(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusForbidden:
+		return "permission_error"
+	case http.StatusNotFound:
+		return "not_found_error"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	}
+	if status >= http.StatusInternalServerError {
+		return "server_error"
+	}
+	return "invalid_request_error"
 }
 
 // StreamErrorEvent encodes a mid-stream error as SSE in the client's dialect.

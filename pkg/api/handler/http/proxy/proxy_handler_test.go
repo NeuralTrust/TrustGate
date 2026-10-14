@@ -186,11 +186,24 @@ func TestHandleCapturesOriginalRequestWithoutTelemetry(t *testing.T) {
 
 func decodeError(t *testing.T, body io.Reader) httpio.ErrorBody {
 	t.Helper()
-	var eb httpio.ErrorBody
-	if err := json.NewDecoder(body).Decode(&eb); err != nil {
-		t.Fatalf("decode error body: %v", err)
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read error body: %v", err)
 	}
-	return eb
+	var flat httpio.ErrorBody
+	if err := json.Unmarshal(raw, &flat); err == nil && flat.Error != "" {
+		return flat
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error.Code == "" {
+		t.Fatalf("decode error body %s: %v", raw, err)
+	}
+	return httpio.ErrorBody{Error: envelope.Error.Code, Message: envelope.Error.Message}
 }
 
 func TestHandle_Unauthenticated(t *testing.T) {
@@ -1142,6 +1155,97 @@ func TestHandle_ModelDeniedMessageHidesRoutingInternals(t *testing.T) {
 			}
 			if strings.Contains(body, "routing:") || strings.Contains(body, "consumer") {
 				t.Fatalf("body = %s leaks routing internals", body)
+			}
+		})
+	}
+}
+
+func TestHandle_OpenAIGatewayErrorsUseEnvelope(t *testing.T) {
+	denied := routingdomain.DenyModel("model %q is not allowed for this application", "no-such-model-xyz")
+	cases := []struct {
+		name    string
+		path    string
+		err     error
+		status  int
+		want    string
+		absent  string
+		forward bool
+	}{
+		{
+			name:    "chat completions",
+			path:    proxyPath,
+			err:     denied,
+			status:  fiber.StatusForbidden,
+			want:    `{"error":{"message":"model \"no-such-model-xyz\" is not allowed for this application","type":"permission_error","code":"model_not_allowed"}}`,
+			absent:  `"error":"model_not_allowed"`,
+			forward: true,
+		},
+		{
+			name:    "embeddings",
+			path:    "/" + consumerSlug + "/v1/embeddings",
+			err:     appproxy.ErrInvalidRequestPayload,
+			status:  fiber.StatusBadRequest,
+			want:    `{"error":{"message":"invalid request payload","type":"invalid_request_error","code":"invalid_request"}}`,
+			forward: true,
+		},
+		{
+			name:    "responses",
+			path:    "/" + consumerSlug + "/v1/responses",
+			err:     appproxy.ErrNoBackendAvailable,
+			status:  fiber.StatusServiceUnavailable,
+			want:    `{"error":{"message":"no backend available","type":"server_error","code":"no_backend_available"}}`,
+			forward: true,
+		},
+		{
+			name:    "withheld message stays the status text",
+			path:    proxyPath,
+			err:     errors.New("registry token sk-secret"),
+			status:  fiber.StatusBadGateway,
+			want:    `{"error":{"message":"Bad Gateway","type":"server_error","code":"backend_error"}}`,
+			absent:  "sk-secret",
+			forward: true,
+		},
+		{
+			name:   "unknown consumer",
+			path:   "/missing/v1/chat/completions",
+			status: fiber.StatusNotFound,
+			want:   `{"error":{"message":"Not Found","type":"not_found_error","code":"not_found"}}`,
+			absent: "no consumer matches",
+		},
+		{
+			name:    "anthropic keeps its envelope",
+			path:    "/" + consumerSlug + "/v1/messages",
+			err:     denied,
+			status:  fiber.StatusForbidden,
+			want:    `{"type":"error","error":{"type":"permission_error","message":"model \"no-such-model-xyz\" is not allowed for this application"}}`,
+			absent:  `"code":"model_not_allowed"`,
+			forward: true,
+		},
+		{
+			name:    "cohere rerank stays on its own writer",
+			path:    "/" + consumerSlug + "/v1/rerank",
+			err:     appproxy.ErrModelNotAllowed,
+			status:  fiber.StatusForbidden,
+			want:    `{"error":"model_not_allowed","message":"model not allowed"}`,
+			forward: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app, fwd := newTestApp(t)
+			if tc.forward {
+				fwd.EXPECT().Forward(mock.Anything, mock.Anything).Return(nil, tc.err).Once()
+			}
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(`{"model":"no-such-model-xyz"}`))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, tc.status, resp.StatusCode)
+			raw, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.want, string(raw))
+			if tc.absent != "" {
+				assert.NotContains(t, string(raw), tc.absent)
 			}
 		})
 	}
