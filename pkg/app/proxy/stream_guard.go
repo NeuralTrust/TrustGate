@@ -84,6 +84,10 @@ const (
 	// choice while a guard reads tool calls. One hold cannot cover two choices,
 	// and the digest folds both into the same call when they share a tool index.
 	streamToolMultiChoiceMessage = "Response blocked: streamed tool calls across multiple choices cannot be inspected."
+	// streamToolChoiceUnreadMessage refuses a chat chunk whose choice index is
+	// not a JSON integer. The decoder rejects the chunk, so its tool calls
+	// would otherwise leave as raw bytes no guard has read.
+	streamToolChoiceUnreadMessage = "Response blocked: a streamed choice index could not be read."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -293,11 +297,13 @@ type streamGuard struct {
 	toolNames   map[chatToolKey]chatToolName
 	toolRenamed bool
 	// chatSeen is the choice indexes this stream has carried, and toolMultiChoice
-	// is set once there are two: that stream is refused rather than held.
-	chatSeen        map[int]struct{}
-	toolMultiChoice bool
-	degradedReason  string
-	fallbackReason  string
+	// is set once there are two, in one chunk or across the stream. toolChoiceUnread
+	// is a chunk whose choice index is not a JSON integer. Either is refused.
+	chatSeen         map[int]struct{}
+	toolMultiChoice  bool
+	toolChoiceUnread bool
+	degradedReason   string
+	fallbackReason   string
 
 	// What the stream cost, handed to the chain once on the closing segment.
 	// holdStart is the moment the oldest unreleased event arrived, so the added
@@ -465,8 +471,10 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	// call entirely when the whole head is opaque. It is not an early release —
 	// nothing reaches the client before replay, which runs strictly after the
 	// verdict. Once the block carries anything else the event rides with it, or
-	// the wire order changes.
-	if ev.unit == unitOpaque && g.clearedIdx == len(g.produced)-1 {
+	// the wire order changes. A chunk whose choices cannot be read is not
+	// opaque in that sense: its raw bytes can carry a tool call the decoder
+	// never parsed, and clearing it would let replay release them.
+	if ev.unit == unitOpaque && !ev.choiceMany && !ev.choiceBad && g.clearedIdx == len(g.produced)-1 {
 		g.clearedIdx = len(g.produced)
 	}
 	if ev.unit == unitTerminal {
@@ -486,12 +494,14 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 }
 
 func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
-	if g.clearedIdx == len(g.produced) {
-		return nil
-	}
+	// Before the opaque short-circuit. A chunk the decoder could not read is
+	// opaque, and clearing it would skip this check and release its bytes.
 	if msg, ok := g.refusedChatTool(); ok {
 		g.markCut()
 		return streamError(g.source, streamUnverifiableType, msg)
+	}
+	if g.clearedIdx == len(g.produced) {
+		return nil
 	}
 	if g.chatToolCapped() {
 		g.markCut()
@@ -681,6 +691,12 @@ func (g *streamGuard) blockLoop(ctx context.Context, yield func([]byte, error) b
 // stops the stream where it stands and the loop cuts it with the terminator
 // the caller's dialect carries for a content filter.
 func (g *streamGuard) inspect(ctx context.Context) {
+	if msg, ok := g.refusedChatTool(); ok {
+		g.stopStream(&appplugins.SegmentOutcome{
+			Block: true, Type: streamUnverifiableType, Message: msg,
+		})
+		return
+	}
 	if g.clearedIdx == len(g.produced) {
 		return
 	}
@@ -694,12 +710,6 @@ func (g *streamGuard) inspect(ctx context.Context) {
 	}
 	if ctx.Err() != nil {
 		g.retire(fallbackClientDisconnected)
-		return
-	}
-	if msg, ok := g.refusedChatTool(); ok {
-		g.stopStream(&appplugins.SegmentOutcome{
-			Block: true, Type: streamUnverifiableType, Message: msg,
-		})
 		return
 	}
 	if g.chatToolCapped() {

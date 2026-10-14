@@ -428,6 +428,52 @@ func TestStreamGuard_ChatToolMultipleChoicesRefused(t *testing.T) {
 	})
 }
 
+// One chunk carries two choices, and the blocking tool call is on choices[1].
+// The decoder never reads that choice, so the chunk used to leave as opaque
+// bytes. It is refused, and the pattern does not reach the client. on_error
+// is fail_open so a cap-style degrade would show up as a release.
+func TestStreamGuard_ChatToolChoicesInOneChunkRefused(t *testing.T) {
+	const pattern = "rm -rf"
+	payload := `{"id":"c1","choices":[` +
+		`{"index":0,"delta":{"content":"hello"}},` +
+		`{"index":1,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run_shell","arguments":"{\"cmd\":\"rm -rf /\"}"}}]}}` +
+		`]}`
+	g := chatToolGuard(&toolGuardStub{pattern: pattern}, adapter.FormatOpenAI,
+		streamGuardConfig{headChars: 5, minChars: 8, onError: streamFailOpen, holdChatTools: true})
+
+	run := runChatToolGuard(t, g, []string{"data: " + payload, "", "data: [DONE]", ""}, nil)
+
+	require.NotNil(t, run.pe)
+	assert.Equal(t, streamUnverifiableType, run.pe.Type)
+	assert.Equal(t, streamToolMultiChoiceMessage, run.pe.Message)
+	assert.NotContains(t, strings.Join(run.out, "\n"), pattern)
+	assert.Zero(t, run.argLines)
+	assert.Empty(t, g.degradedReason)
+}
+
+// A choice index that is not a JSON integer makes the decoder reject the
+// chunk, which would otherwise release its tool call uninspected.
+func TestStreamGuard_ChatToolUnreadableChoiceIndexRefused(t *testing.T) {
+	const pattern = "rm -rf"
+	for _, index := range []string{`"1"`, `1.0`} {
+		t.Run(index, func(t *testing.T) {
+			payload := `{"id":"c1","choices":[{"index":` + index +
+				`,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run_shell","arguments":"rm -rf"}}]}}]}`
+			g := chatToolGuard(&toolGuardStub{pattern: pattern}, adapter.FormatOpenAI,
+				streamGuardConfig{headChars: 5, onError: streamFailOpen, holdChatTools: true})
+
+			run := runChatToolGuard(t, g, []string{"data: " + payload, "", "data: [DONE]", ""}, nil)
+
+			require.NotNil(t, run.pe)
+			assert.Equal(t, streamUnverifiableType, run.pe.Type)
+			assert.Equal(t, streamToolChoiceUnreadMessage, run.pe.Message)
+			assert.NotContains(t, strings.Join(run.out, "\n"), pattern)
+			assert.Zero(t, run.argLines)
+			assert.Empty(t, g.degradedReason)
+		})
+	}
+}
+
 // toolCallDigest keys a call by its tool index and nothing else. Choice 0 and
 // choice 1 both use index 0, and a fragment of the other choice landing between
 // the two halves of "rm -rf" hides the pattern from the guard.
