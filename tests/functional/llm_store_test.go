@@ -151,7 +151,7 @@ func TestLLMStore_FallbackAndFreshness(t *testing.T) {
 	for _, model := range []string{"@openai_compatible/deepseek-chat", "deepseek-chat"} {
 		status, body = storeChat(t, base, f.gatewayID, f.key, model)
 		assert.Equal(t, http.StatusForbidden, status, "%s: %s", model, body)
-		assert.Contains(t, body, `"error":"model_not_allowed"`, model)
+		assert.Contains(t, body, `"code":"model_not_allowed"`, model)
 	}
 	assert.Equal(t, 1, f.deepseekA.Hits(), "a fallback registry never admits a request")
 
@@ -173,7 +173,7 @@ func TestLLMStore_FallbackAndFreshness(t *testing.T) {
 	eventuallyStore(t, func() bool { return len(storeModels(t, base, f.gatewayID, f.key)) == 0 }, "a key without links still lists models")
 	status, body = storeChat(t, base, f.gatewayID, f.key, "opus-5.5")
 	assert.Equal(t, http.StatusForbidden, status, body)
-	assert.Contains(t, body, `"error":"no_model_access"`, "a key without links is told it has no model access")
+	assert.Contains(t, body, `"code":"no_model_access"`, "a key without links is told it has no model access")
 	_, key = GetLLMKey(t, f.gatewayID, f.owner)
 	assert.Equal(t, []any{}, key["consumer_ids"])
 }
@@ -227,7 +227,7 @@ func TestLLMStore_KeyIsolation(t *testing.T) {
 	assert.Empty(t, storeModels(t, ProxyURL, f.gatewayID, bobKey), "a key without links authenticates and lists nothing")
 	status, body := storeChat(t, ProxyURL, f.gatewayID, bobKey, "gpt6")
 	assert.Equal(t, http.StatusForbidden, status, body)
-	assert.Contains(t, body, `"error":"no_model_access"`, "a key its owner can no longer use says why")
+	assert.Contains(t, body, `"code":"no_model_access"`, "a key its owner can no longer use says why")
 	assert.Equal(t, http.StatusOK, storeModelsStatus(t, ProxyURL, f.gatewayID, carolKey))
 	require.Equal(t, http.StatusNoContent, RevokeLLMKey(t, f.gatewayID, carol))
 	eventuallyStore(t, func() bool { return storeModelsStatus(t, ProxyURL, f.gatewayID, carolKey) == http.StatusUnauthorized }, "a revoked key")
@@ -397,7 +397,7 @@ func TestLLMStore_KeyWithoutModelAccessIsForbidden(t *testing.T) {
 		status, body = storeChat(t, ProxyURL, gatewayID, key, "gpt-4o-mini")
 		return status == http.StatusForbidden
 	}, "the key kept reaching a model")
-	assert.Contains(t, body, `"error":"no_model_access"`)
+	assert.Contains(t, body, `"code":"no_model_access"`)
 	assert.Equal(t, http.StatusOK, storeModelsStatus(t, ProxyURL, gatewayID, key), "listing models still answers, with nothing in it")
 
 	unknownKey := "ag_" + strings.ReplaceAll(uuid.NewString(), "-", "")
