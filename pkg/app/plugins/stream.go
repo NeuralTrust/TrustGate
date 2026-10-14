@@ -222,6 +222,24 @@ type StreamOptions struct {
 	MinCharsBetweenEvals int
 	MaxHoldMS            int
 	MaxAccumulatedBytes  int
+	// ReadsToolCalls is set by StreamPlan when any participating entry reads the
+	// tool calls of a segment (StreamToolCallReader). It is chain-wide, never a
+	// setting of one policy.
+	ReadsToolCalls bool
+}
+
+// StreamToolCallReader is the optional declaration of a StreamInspector that
+// reads StreamSegment.ToolCalls. A chat-completions tool call arrives as
+// argument fragments, and the guard holds an open call until it is whole only
+// when an entry on the chain reads it: a chain that inspects text alone gets
+// the fragments as they arrive.
+type StreamToolCallReader interface {
+	ReadsStreamToolCalls() bool
+}
+
+func readsStreamToolCalls(d PluginDescriptor) bool {
+	r, ok := d.(StreamToolCallReader)
+	return ok && r.ReadsStreamToolCalls()
 }
 
 // StreamInspector is the capability a plugin declares to be consulted per

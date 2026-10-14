@@ -130,6 +130,9 @@ type streamEvent struct {
 	// content block it does it to (-1 when the frame does not say).
 	tool      toolPhase
 	toolIndex int
+	// choice is the chat-completions choice the event belongs to. It is read
+	// only while the guard holds chat tool calls, and is -1 otherwise.
+	choice int
 	// toolHandled is set once the guard has asked the chain about the tool call
 	// this frame belongs to and applied its verdict, so a mask on the text of the
 	// same window no longer has to treat the frame as tool input it cannot edit.
@@ -347,6 +350,8 @@ type segmenter struct {
 	// read-only view, while the event keeps the frame's own bytes, which is
 	// what the guard releases.
 	frames bool
+	// choices reads the choice index of each chat-completions event.
+	choices bool
 }
 
 // newSegmenter builds a segmenter for the source format. After adaptStream the
@@ -379,7 +384,7 @@ func (s *segmenter) flush() (*streamEvent, error) {
 	if len(s.buf) == 0 {
 		return nil, nil
 	}
-	ev := &streamEvent{lines: s.buf}
+	ev := &streamEvent{lines: s.buf, choice: -1}
 	s.buf = nil
 	return ev, s.classify(ev)
 }
@@ -419,6 +424,9 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	}
 	if s.frames {
 		ev.tool, ev.toolIndex = nativeToolPhase(payload)
+	}
+	if s.choices {
+		ev.choice = chatChoiceIndex(payload)
 	}
 	ev.mark = streamMarkFor(s.format, eventType, payload)
 	ev.beyondText = ev.mark.op != markNone
@@ -462,6 +470,20 @@ func ssePayloadType(payload []byte) string {
 		return ""
 	}
 	return probe.Type
+}
+
+// chatChoiceIndex reads the index of the choice a chat-completions chunk
+// carries, the one the decode reads, or -1 when it names none.
+func chatChoiceIndex(payload []byte) int {
+	var probe struct {
+		Choices []struct {
+			Index int `json:"index"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(payload, &probe) != nil || len(probe.Choices) == 0 {
+		return -1
+	}
+	return probe.Choices[0].Index
 }
 
 func isTerminalPayload(payloadType string) bool {
