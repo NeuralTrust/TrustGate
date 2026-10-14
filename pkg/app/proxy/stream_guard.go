@@ -76,6 +76,10 @@ const (
 	// "the guard rejected it" on the wire, which are different incidents for
 	// a client deciding whether to retry.
 	streamUnverifiableType = "guardrail_unverifiable"
+	// streamToolRenamedMessage refuses a streamed tool call whose name changed
+	// after it opened: the guard was shown one name and a client joining the
+	// deltas may run another.
+	streamToolRenamedMessage = "Response blocked: a streamed tool call changed its name."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -158,6 +162,10 @@ type streamGuardConfig struct {
 	// frame, before its frames are released as they are. It does not depend on
 	// maxHold: a short block hold must not turn tool inspection off.
 	nativeToolHold time.Duration
+	// holdChatTools holds a chat-completions tool call until it is whole, under
+	// the same nativeToolHold cap. It is set only when an entry on the chain
+	// reads tool calls; otherwise the argument deltas stream as they arrive.
+	holdChatTools bool
 }
 
 func (c streamGuardConfig) withDefaults() streamGuardConfig {
@@ -272,8 +280,16 @@ type streamGuard struct {
 	unhandledTools        toolCallDigest
 	toolEvents            map[int][]*streamEvent
 	toolUninspectedLogged bool
-	degradedReason        string
-	fallbackReason        string
+	// chatHold is holdChatTools on a chat-completions source: an open tool call
+	// is tracked off its deltas, toolChoice is the choice it belongs to,
+	// toolNames the name and id each call was opened with, and toolRenamed
+	// records a call whose name changed after it was opened.
+	chatHold       bool
+	toolChoice     int
+	toolNames      map[chatToolKey]chatToolName
+	toolRenamed    bool
+	degradedReason string
+	fallbackReason string
 
 	// What the stream cost, handed to the chain once on the closing segment.
 	// holdStart is the moment the oldest unreleased event arrived, so the added
@@ -313,16 +329,19 @@ func newStreamGuard(
 	cfg streamGuardConfig,
 	logger *slog.Logger,
 ) *streamGuard {
-	return &streamGuard{
-		runner: runner,
-		seg:    newSegmenter(codec, source),
-		codec:  codec,
-		in:     in,
-		cfg:    cfg.withDefaults(),
-		source: source,
-		logger: logger,
-		now:    time.Now,
+	g := &streamGuard{
+		runner:   runner,
+		seg:      newSegmenter(codec, source),
+		codec:    codec,
+		in:       in,
+		cfg:      cfg.withDefaults(),
+		source:   source,
+		logger:   logger,
+		now:      time.Now,
+		chatHold: cfg.holdChatTools && chatCompletionsWire(source),
 	}
+	g.seg.choices = g.chatHold
+	return g
 }
 
 // Run evaluates the head of the stream before a single byte reaches the client,
@@ -425,10 +444,13 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	g.text.WriteString(ev.text)
 	g.reasoning.WriteString(ev.reasoning)
 	g.tools.merge(ev.toolCalls)
-	if g.native {
+	switch {
+	case g.native:
 		g.unhandledTools.merge(ev.toolCalls)
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
+	case g.chatTools():
+		g.trackChatTool(ev)
 	}
 	// The prelude fast-path: an opaque event that opens a block carries no
 	// inspectable text, so counting it as cleared lets evaluate skip the guard
@@ -458,6 +480,14 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	if g.clearedIdx == len(g.produced) {
 		return nil
+	}
+	if g.toolRenamed {
+		g.markCut()
+		return streamError(g.source, streamUnverifiableType, streamToolRenamedMessage)
+	}
+	if g.chatToolCapped() {
+		g.markCut()
+		return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
 	}
 	if v := g.inspectTools(ctx); v.stop {
 		if v.failed {
@@ -656,6 +686,16 @@ func (g *streamGuard) inspect(ctx context.Context) {
 	}
 	if ctx.Err() != nil {
 		g.retire(fallbackClientDisconnected)
+		return
+	}
+	if g.toolRenamed {
+		g.stopStream(&appplugins.SegmentOutcome{
+			Block: true, Type: streamUnverifiableType, Message: streamToolRenamedMessage,
+		})
+		return
+	}
+	if g.chatToolCapped() {
+		g.stopStream(nil)
 		return
 	}
 	v := g.inspectTools(ctx)
