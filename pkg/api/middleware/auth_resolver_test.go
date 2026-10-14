@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -174,6 +173,62 @@ func TestAuthMiddleware_APIKeyBearerUnknownUnauthorized(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }
 
+func TestAuthMiddleware_LLMProxyAuthUsesDialectEnvelope(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	const (
+		openai    = `{"error":{"message":"unauthenticated","type":"authentication_error","code":"unauthenticated"}}`
+		anthropic = `{"type":"error","error":{"type":"authentication_error","message":"unauthenticated"}}`
+	)
+	tests := []struct {
+		name   string
+		path   string
+		header string
+		value  string
+		want   string
+	}{
+		{name: "no key on chat completions", path: "/cons1234/v1/chat/completions", want: openai},
+		{name: "no key on messages", path: "/cons1234/v1/messages", want: anthropic},
+		{name: "unknown ag key", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Bearer ag_unknown", want: openai},
+		{name: "unknown ag key on messages", path: "/cons1234/v1/messages", header: resolver.HeaderAPIKey, value: "ag_unknown", want: anthropic},
+		{name: "provider key in x-api-key", path: "/cons1234/v1/chat/completions", header: resolver.HeaderAPIKeyCompat, value: "sk-proj-abc", want: openai},
+		{name: "provider key as bearer", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Bearer sk-proj-abc", want: openai},
+		{name: "provider key as bearer on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Bearer sk-proj-abc", want: anthropic},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(fiber.MethodPost, tt.path, nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			if tt.header != "" {
+				req.Header.Set(tt.header, tt.value)
+			}
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+			raw, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.JSONEq(t, tt.want, string(raw))
+		})
+	}
+}
+
+func TestAuthMiddleware_UnknownProxyPathStaysFlat(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/not-a-proxy-route", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"error":"not_found"}`, string(raw))
+}
+
 func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
@@ -204,6 +259,9 @@ func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"error":{"message":"forbidden","type":"permission_error","code":"forbidden"}}`, string(raw))
 }
 
 func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
@@ -703,9 +761,20 @@ func decodeAuthErrorBody(t *testing.T, resp *http.Response) httpio.ErrorBody {
 
 func decodeErrorBytes(t *testing.T, body []byte) httpio.ErrorBody {
 	t.Helper()
-	var eb httpio.ErrorBody
-	require.NoError(t, json.NewDecoder(strings.NewReader(string(body))).Decode(&eb))
-	return eb
+	var flat httpio.ErrorBody
+	if err := json.Unmarshal(body, &flat); err == nil && flat.Error != "" {
+		return flat
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Error.Code == "" {
+		t.Fatalf("decode error body %s: %v", body, err)
+	}
+	return httpio.ErrorBody{Error: envelope.Error.Code, Message: envelope.Error.Message}
 }
 
 // TestAuthMiddleware_AuthBindingRestrictsClients: a consumer bound to specific

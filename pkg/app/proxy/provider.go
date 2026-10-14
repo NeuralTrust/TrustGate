@@ -58,6 +58,10 @@ var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
+// invalidJSONObjectMessage is what a client sees when model enforcement cannot
+// read the body as a JSON object. The parser's own text stays in the log.
+const invalidJSONObjectMessage = "request body must be a JSON object"
+
 var ErrContextWindowExceeded = errors.New("context window exceeded")
 
 type ProviderResponse struct {
@@ -321,6 +325,26 @@ func (p *providerInvoker) InvokeStream(
 	}, nil
 }
 
+// applyModelEnforcement runs the binding's model rules. A body it cannot read,
+// when the binding restricts models, is an invalid request with a generic
+// message. The parser's text stays in the log. With no allow-list the call
+// proceeds on the original body.
+func (p *providerInvoker) applyModelEnforcement(body []byte, allowed []string, defaultModel string) ([]byte, error) {
+	normalized, _, verr := adapter.EnforceModel(body, allowed, defaultModel)
+	if verr == nil {
+		return normalized, nil
+	}
+	if errors.Is(verr, adapter.ErrModelNotAllowed) {
+		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+	}
+	if len(allowed) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidJSONObjectMessage)
+	}
+	p.logger.Warn("model enforcement failed, proceeding without override",
+		slog.String("error", verr.Error()))
+	return body, nil
+}
+
 // clientRequestError turns a body the provider client could not decode into a
 // terminal ErrInvalidRequestPayload; on a same-format passthrough the client is
 // the first to parse what the caller sent.
@@ -394,18 +418,9 @@ func (p *providerInvoker) prepare(
 		body = adapter.CarryModel(req.Body, body)
 	}
 
-	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-	if verr != nil {
-		if errors.Is(verr, adapter.ErrModelNotAllowed) {
-			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
-		}
-		if len(req.AllowedModels) > 0 {
-			return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-		}
-		p.logger.Warn("model enforcement failed, proceeding without override",
-			slog.String("error", verr.Error()))
-	} else {
-		body = normalized
+	body, err = p.applyModelEnforcement(body, req.AllowedModels, req.DefaultModel)
+	if err != nil {
+		return nil, err
 	}
 
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
@@ -642,19 +657,11 @@ func (p *providerInvoker) prepareAudio(
 			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
 		}
 	} else {
-		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-		if verr != nil {
-			if errors.Is(verr, adapter.ErrModelNotAllowed) {
-				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
-			}
-			if len(req.AllowedModels) > 0 {
-				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-			}
-			p.logger.Warn("model enforcement failed, proceeding without override",
-				slog.String("error", verr.Error()))
-		} else {
-			body = normalized
+		enforced, err := p.applyModelEnforcement(body, req.AllowedModels, req.DefaultModel)
+		if err != nil {
+			return nil, err
 		}
+		body = enforced
 		sentModel = resolveSentModel(body, req)
 	}
 	audio := audioRequestFromContext(req)
@@ -781,19 +788,11 @@ func (p *providerInvoker) prepareImages(
 			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
 		}
 	} else {
-		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-		if verr != nil {
-			if errors.Is(verr, adapter.ErrModelNotAllowed) {
-				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
-			}
-			if len(req.AllowedModels) > 0 {
-				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-			}
-			p.logger.Warn("model enforcement failed, proceeding without override",
-				slog.String("error", verr.Error()))
-		} else {
-			body = normalized
+		enforced, err := p.applyModelEnforcement(body, req.AllowedModels, req.DefaultModel)
+		if err != nil {
+			return nil, err
 		}
+		body = enforced
 		sentModel = resolveSentModel(body, req)
 	}
 	images := imagesRequestFromContext(req)

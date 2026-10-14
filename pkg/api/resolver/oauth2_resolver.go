@@ -50,8 +50,11 @@ func (r *OAuth2IdentityResolver) Resolve(
 	if err != nil {
 		return nil, err
 	}
+	// The token is not a TrustGate api key (those are resolved earlier) and this
+	// consumer has no identity provider that could verify it. It is the same
+	// failure as any other key the gateway does not recognise.
 	if !hasEnabledIdentityProvider(rc) {
-		return nil, ErrForbidden
+		return nil, ErrUnauthenticated
 	}
 	candidates, err := r.finder.FindCandidates(c.UserContext(), rc.Auths, token)
 	if err != nil {
