@@ -548,6 +548,7 @@ func TestHandle_Streaming_MidStreamError(t *testing.T) {
 		want string
 	}{
 		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + genericFrame + "\n\n"},
+		{name: "deadline after headers stays in the stream", err: context.DeadlineExceeded, want: clientFrame + genericFrame + "\n\n"},
 		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame},
 	}
 	for _, tt := range tests {
@@ -573,6 +574,9 @@ func TestHandle_Streaming_MidStreamError(t *testing.T) {
 			resp, err := app.Test(newProxyRequest())
 			if err != nil {
 				t.Fatalf("app.Test: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200 after headers were sent", resp.StatusCode)
 			}
 			body, _ := io.ReadAll(resp.Body)
 			if string(body) != tt.want {
@@ -1160,6 +1164,12 @@ func TestHandle_ModelDeniedMessageHidesRoutingInternals(t *testing.T) {
 	}
 }
 
+type timeoutNetErr struct{}
+
+func (timeoutNetErr) Error() string   { return "i/o timeout" }
+func (timeoutNetErr) Timeout() bool   { return true }
+func (timeoutNetErr) Temporary() bool { return true }
+
 func TestHandle_OpenAIGatewayErrorsUseEnvelope(t *testing.T) {
 	denied := routingdomain.DenyModel("model %q is not allowed for this application", "no-such-model-xyz")
 	cases := []struct {
@@ -1212,6 +1222,41 @@ func TestHandle_OpenAIGatewayErrorsUseEnvelope(t *testing.T) {
 			err:     appproxy.ErrNoBackendAvailable,
 			status:  fiber.StatusServiceUnavailable,
 			want:    `{"error":{"message":"no backend available","type":"server_error","code":"no_backend_available"}}`,
+			forward: true,
+		},
+		{
+			name:    "slow upstream on chat completions",
+			path:    proxyPath,
+			err:     fmt.Errorf("HTTP request failed: %w", context.DeadlineExceeded),
+			status:  fiber.StatusGatewayTimeout,
+			want:    `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+			absent:  "stream timeout",
+			forward: true,
+		},
+		{
+			name:    "slow upstream on messages",
+			path:    "/" + consumerSlug + "/v1/messages",
+			err:     fmt.Errorf("provider completions: %w", context.DeadlineExceeded),
+			status:  fiber.StatusGatewayTimeout,
+			want:    `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+			absent:  "stream timeout",
+			forward: true,
+		},
+		{
+			name:    "dial timeout",
+			path:    proxyPath,
+			err:     timeoutNetErr{},
+			status:  fiber.StatusGatewayTimeout,
+			want:    `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+			absent:  "i/o timeout",
+			forward: true,
+		},
+		{
+			name:    "client cancel stays a backend error",
+			path:    proxyPath,
+			err:     context.Canceled,
+			status:  fiber.StatusBadGateway,
+			want:    `{"error":{"message":"Bad Gateway","type":"server_error","code":"backend_error"}}`,
 			forward: true,
 		},
 		{
