@@ -364,6 +364,63 @@ func TestAuthorizationServerMetadataIsGatewayFacade(t *testing.T) {
 	}
 }
 
+// Tool calls accept a bearer only when it satisfies the matched auth's
+// RequiredScopes (session, JWT, and introspection all call HasScopes on that
+// config). The per-resource document must list every one of those scopes, and
+// must not copy scopes that belong to some other auth on the platform.
+func TestProtectedResourceMetadataAdvertisesToolCallScopes(t *testing.T) {
+	t.Parallel()
+	toolScopes := []string{"mcp.access", "mcp:tools:invoke", "read:user"}
+	matched := enabledOAuth2Auth(t, authdomain.OAuth2Config{
+		Issuer:         "https://idp.example.com",
+		RequiredScopes: toolScopes,
+		LoginScopes:    []string{"api://gw/mcp.access", "offline_access"},
+	})
+	other := enabledOAuth2Auth(t, authdomain.OAuth2Config{
+		Issuer:         "https://other.example.com",
+		RequiredScopes: []string{"tenant:secret"},
+	})
+	readUserOnly := enabledOAuth2Auth(t, authdomain.OAuth2Config{
+		Issuer:         "https://github.example.com",
+		RequiredScopes: []string{"read:user"},
+	})
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/full/mcp": {{GatewayID: matched.GatewayID, Auths: []*authdomain.Auth{matched}}},
+		"/gh/mcp":   {{GatewayID: readUserOnly.GatewayID, Auths: []*authdomain.Auth{readUserOnly}}},
+	}}
+	svc := NewMetadataService(
+		&fakeCredentialFinder{oauth2: []*authdomain.Auth{matched, other, readUserOnly}},
+		paths, nil, newMemFlowStore(),
+	)
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/full/mcp")
+	if err != nil {
+		t.Fatalf("protected resource: %v", err)
+	}
+	if !slices.Equal(meta.ScopesSupported, toolScopes) {
+		t.Fatalf("per-resource scopes_supported = %v, want every scope tool calls enforce", meta.ScopesSupported)
+	}
+
+	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/gh/mcp")
+	if err != nil {
+		t.Fatalf("read:user resource: %v", err)
+	}
+	if !slices.Equal(meta.ScopesSupported, []string{"read:user"}) {
+		t.Fatalf("per-resource scopes_supported = %v, want only the scopes that auth enforces", meta.ScopesSupported)
+	}
+
+	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
+	if err != nil {
+		t.Fatalf("authorization server: %v", err)
+	}
+	root, _ := doc["scopes_supported"].([]string)
+	for _, scope := range []string{"mcp.access", "mcp:tools:invoke", "read:user", "tenant:secret"} {
+		if !slices.Contains(root, scope) {
+			t.Fatalf("AS scopes_supported = %v, want the platform union including %s", root, scope)
+		}
+	}
+}
+
 func TestProtectedResourceMetadataDoesNotAdvertiseLoginScopes(t *testing.T) {
 	t.Parallel()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{

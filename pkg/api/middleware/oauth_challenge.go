@@ -50,6 +50,12 @@ func bearerChallenge(c *fiber.Ctx) string {
 	if resourcePath := strings.Trim(c.Path(), "/"); resourcePath != "" {
 		metadata += "/" + resourcePath
 	}
+	// RFC 6750 §3.1: a missing token is a discovery challenge. A presented
+	// bearer that this request already rejected is invalid_token, so the
+	// client refreshes or signs in again instead of reusing it.
+	if bearerToken(c) != "" {
+		return `Bearer error="invalid_token", error_description="The access token is invalid or expired", resource_metadata="` + metadata + `"`
+	}
 	return `Bearer resource_metadata="` + metadata + `"`
 }
 
