@@ -132,12 +132,14 @@ func TestClientErrorBody_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
 		want   string
 	}{
 		{name: "openai plain text", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatXAI, body: "stream timeout", want: openaiWant},
+		{name: "foundry request timeout", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatAzure, body: "upstream request timeout", want: openaiWant},
 		{name: "openai plain text with whitespace", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: "  Stream Timeout\n", want: openaiWant},
 		{name: "openai json still rewritten", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"stream timeout","type":"server_error"}}`, want: openaiWant},
 		{name: "empty 504", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: "", want: openaiWant},
 		{name: "anthropic messages", status: http.StatusGatewayTimeout, source: FormatAnthropic, target: FormatOpenAI, body: "stream timeout", want: anthropicWant},
 		{name: "anthropic to anthropic", status: http.StatusGatewayTimeout, source: FormatAnthropic, target: FormatAnthropic, body: "stream timeout", want: anthropicWant},
 		{name: "message names a stream on another status", status: http.StatusBadGateway, source: FormatOpenAI, target: FormatOpenAI, body: "stream timeout", want: openaiWant},
+		{name: "foundry text on another status", status: http.StatusBadGateway, source: FormatOpenAI, target: FormatAzure, body: "upstream request timeout", want: openaiWant},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,6 +147,7 @@ func TestClientErrorBody_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
 			got := ClientErrorBody([]byte(tc.body), tc.status, tc.source, tc.target)
 			assert.JSONEq(t, tc.want, string(got))
 			assert.NotContains(t, string(got), "stream timeout")
+			assert.NotContains(t, string(got), "upstream request timeout")
 		})
 	}
 }
