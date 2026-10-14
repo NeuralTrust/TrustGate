@@ -56,6 +56,11 @@ func (r *toolGuardStub) RunStreamSegment(
 
 func chatToolDelta(t *testing.T, index int, id, name, args string) string {
 	t.Helper()
+	return chatChoiceToolDelta(t, 0, index, id, name, args)
+}
+
+func chatChoiceToolDelta(t *testing.T, choice, index int, id, name, args string) string {
+	t.Helper()
 	fn := map[string]any{"arguments": args}
 	if name != "" {
 		fn["name"] = name
@@ -66,7 +71,7 @@ func chatToolDelta(t *testing.T, index int, id, name, args string) string {
 	}
 	raw, err := json.Marshal(map[string]any{
 		"id":      "c1",
-		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{call}}}},
+		"choices": []any{map[string]any{"index": choice, "delta": map[string]any{"tool_calls": []any{call}}}},
 	})
 	require.NoError(t, err)
 	return "data: " + string(raw)
@@ -368,4 +373,72 @@ func TestStreamGuard_ChatToolHoldCapFollowsOnError(t *testing.T) {
 		assert.Contains(t, logs, "tool call released without inspecting its input")
 		assert.Contains(t, logs, "cause=time")
 	})
+}
+
+// Two choices interleave tool deltas and the blocking pattern sits in the first
+// choice, in the half that arrives after the other choice has already spoken.
+// The stream is refused and none of either call is released. on_error is
+// fail_open so a cap-style degrade would show up as a release; it must not.
+func TestStreamGuard_ChatToolMultipleChoicesRefused(t *testing.T) {
+	first := `{"path":"/tmp/report.txt","command":"rm -rf / --no-preserve-root"}`
+	second := `{"path":"/tmp/other.txt","command":"ls -la /tmp"}`
+	require.Greater(t, strings.Index(first, "rm -rf"), len(first)/2, "the pattern must be in the second half")
+
+	interleaved := func(t *testing.T) []string {
+		t.Helper()
+		deltas := []string{
+			chatChoiceToolDelta(t, 0, 0, "call_0", "run_shell", ""),
+			chatChoiceToolDelta(t, 1, 0, "call_1", "list_dir", ""),
+		}
+		a, b := splitArgs(first, 8), splitArgs(second, 8)
+		for i := 0; i < max(len(a), len(b)); i++ {
+			if i < len(a) {
+				deltas = append(deltas, chatChoiceToolDelta(t, 0, 0, "", "", a[i]))
+			}
+			if i < len(b) {
+				deltas = append(deltas, chatChoiceToolDelta(t, 1, 0, "", "", b[i]))
+			}
+		}
+		return deltas
+	}
+
+	cfg := streamGuardConfig{headChars: 5, minChars: 8, onError: streamFailOpen, holdChatTools: true}
+
+	t.Run("after the head", func(t *testing.T) {
+		g := chatToolGuard(&toolGuardStub{pattern: "rm -rf"}, adapter.FormatOpenAI, cfg)
+		run := runChatToolGuard(t, g, chatToolStream(interleaved(t)...), nil)
+
+		require.Nil(t, run.pe)
+		assert.True(t, g.wasCut())
+		assert.Zero(t, run.argLines, "no fragment of either choice reaches the client")
+		assert.NotContains(t, strings.Join(run.out, "\n"), "rm -rf")
+		assert.Equal(t, streamToolMultiChoiceMessage, g.cutMessage)
+		assert.Empty(t, g.degradedReason, "multi-choice is a cut, not the cap's fail-open degrade")
+	})
+
+	t.Run("at the head", func(t *testing.T) {
+		g := chatToolGuard(&toolGuardStub{pattern: "rm -rf"}, adapter.FormatOpenAI,
+			streamGuardConfig{headChars: 4096, onError: streamFailOpen, holdChatTools: true})
+		run := runChatToolGuard(t, g, chatToolStream(interleaved(t)...), nil)
+
+		require.NotNil(t, run.pe)
+		assert.Equal(t, streamUnverifiableType, run.pe.Type)
+		assert.Equal(t, streamToolMultiChoiceMessage, run.pe.Message)
+		assert.Zero(t, run.argLines)
+	})
+}
+
+// toolCallDigest keys a call by its tool index and nothing else. Choice 0 and
+// choice 1 both use index 0, and a fragment of the other choice landing between
+// the two halves of "rm -rf" hides the pattern from the guard.
+func TestToolCallDigest_MergesByIndexNotChoice(t *testing.T) {
+	var d toolCallDigest
+	d.merge([]adapter.StreamToolCallDelta{{Index: 0, Name: "run_shell", ArgumentsDelta: `{"command":"rm`}})
+	d.merge([]adapter.StreamToolCallDelta{{Index: 0, Name: "list_dir", ArgumentsDelta: `{"path":"/tmp"}`}})
+	d.merge([]adapter.StreamToolCallDelta{{Index: 0, ArgumentsDelta: ` -rf /"}`}})
+
+	calls := d.calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, `{"command":"rm{"path":"/tmp"} -rf /"}`, calls[0].Arguments)
+	assert.NotContains(t, calls[0].Arguments, "rm -rf")
 }

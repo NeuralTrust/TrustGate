@@ -80,6 +80,10 @@ const (
 	// after it opened: the guard was shown one name and a client joining the
 	// deltas may run another.
 	streamToolRenamedMessage = "Response blocked: a streamed tool call changed its name."
+	// streamToolMultiChoiceMessage refuses a chat stream with more than one
+	// choice while a guard reads tool calls. One hold cannot cover two choices,
+	// and the digest folds both into the same call when they share a tool index.
+	streamToolMultiChoiceMessage = "Response blocked: streamed tool calls across multiple choices cannot be inspected."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -284,12 +288,16 @@ type streamGuard struct {
 	// is tracked off its deltas, toolChoice is the choice it belongs to,
 	// toolNames the name and id each call was opened with, and toolRenamed
 	// records a call whose name changed after it was opened.
-	chatHold       bool
-	toolChoice     int
-	toolNames      map[chatToolKey]chatToolName
-	toolRenamed    bool
-	degradedReason string
-	fallbackReason string
+	chatHold    bool
+	toolChoice  int
+	toolNames   map[chatToolKey]chatToolName
+	toolRenamed bool
+	// chatSeen is the choice indexes this stream has carried, and toolMultiChoice
+	// is set once there are two: that stream is refused rather than held.
+	chatSeen        map[int]struct{}
+	toolMultiChoice bool
+	degradedReason  string
+	fallbackReason  string
 
 	// What the stream cost, handed to the chain once on the closing segment.
 	// holdStart is the moment the oldest unreleased event arrived, so the added
@@ -481,9 +489,9 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	if g.clearedIdx == len(g.produced) {
 		return nil
 	}
-	if g.toolRenamed {
+	if msg, ok := g.refusedChatTool(); ok {
 		g.markCut()
-		return streamError(g.source, streamUnverifiableType, streamToolRenamedMessage)
+		return streamError(g.source, streamUnverifiableType, msg)
 	}
 	if g.chatToolCapped() {
 		g.markCut()
@@ -688,9 +696,9 @@ func (g *streamGuard) inspect(ctx context.Context) {
 		g.retire(fallbackClientDisconnected)
 		return
 	}
-	if g.toolRenamed {
+	if msg, ok := g.refusedChatTool(); ok {
 		g.stopStream(&appplugins.SegmentOutcome{
-			Block: true, Type: streamUnverifiableType, Message: streamToolRenamedMessage,
+			Block: true, Type: streamUnverifiableType, Message: msg,
 		})
 		return
 	}
@@ -1643,6 +1651,9 @@ func (a *cutAnchor) observe(chunk *adapter.CanonicalStreamChunk) {
 
 // toolCallDigest folds tool-call deltas into whole calls by index, so a segment
 // carries arguments a guard can read rather than the fragments they arrived in.
+// The key is the tool index alone. Two chat choices that both use index 0 fold
+// into one call, which is why a stream with more than one choice is refused
+// (noteChatChoice) instead of being inspected through this digest.
 type toolCallDigest struct {
 	order []int
 	byIdx map[int]*adapter.CanonicalToolCall

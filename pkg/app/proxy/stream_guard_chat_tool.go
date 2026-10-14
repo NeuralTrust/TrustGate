@@ -45,11 +45,18 @@ func (g *streamGuard) chatTools() bool {
 }
 
 // trackChatTool opens a tool call on its first tool_calls delta and closes it
-// on the finish reason or any other terminal event, on an event of another
-// choice, or on text or reasoning after it. Deltas of other indexes of the same
-// choice keep it open, so interleaved calls are held together until all of
-// them are whole.
+// on the finish reason or any other terminal event, or on text or reasoning
+// after it. Deltas of other indexes of the same choice keep it open, so
+// interleaved calls are held together until all of them are whole.
+//
+// A second choice is refused (noteChatChoice), not held. Holding each choice
+// on its own would still be wrong: toolCallDigest merges by tool index alone,
+// so two choices that both use index 0 become one arguments string, and a
+// finish_reason on one choice is the stream's terminal event, which releases
+// whatever the other choice still had open. The refusal runs before any of
+// those bytes are released.
 func (g *streamGuard) trackChatTool(ev *streamEvent) {
+	g.noteChatChoice(ev)
 	g.checkToolNames(ev)
 	if g.toolOpen {
 		switch {
@@ -63,6 +70,35 @@ func (g *streamGuard) trackChatTool(ev *streamEvent) {
 		return
 	}
 	g.toolOpen, g.toolOpenIdx, g.toolSince, g.toolChoice = true, ev.toolCalls[0].Index, g.now(), ev.choice
+}
+
+// noteChatChoice records the choice indexes of the stream. More than one is
+// refused: see trackChatTool.
+func (g *streamGuard) noteChatChoice(ev *streamEvent) {
+	if ev.choice < 0 {
+		return
+	}
+	if g.chatSeen == nil {
+		g.chatSeen = map[int]struct{}{}
+	}
+	g.chatSeen[ev.choice] = struct{}{}
+	if len(g.chatSeen) > 1 {
+		g.toolMultiChoice = true
+	}
+}
+
+// refusedChatTool reports a chat tool stream the guard will not release: a
+// call whose name changed, or more than one choice. Both are cuts, whichever
+// way on_error is set. The cap is a separate decision (chatToolCapped).
+func (g *streamGuard) refusedChatTool() (string, bool) {
+	switch {
+	case g.toolRenamed:
+		return streamToolRenamedMessage, true
+	case g.toolMultiChoice:
+		return streamToolMultiChoiceMessage, true
+	default:
+		return "", false
+	}
 }
 
 // checkToolNames records the name each call opened with. The segments carry
