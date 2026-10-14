@@ -48,6 +48,10 @@ var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
 	ErrNoBackendsInPool       = errors.New("application has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
+	// ErrModelNotChatCapable is returned when a chat request names a catalog
+	// model whose known capabilities do not include chat. A model with no
+	// capability flags is not this error.
+	ErrModelNotChatCapable = errors.New("model does not support chat completions")
 	// ErrAmbiguousRequestBody refuses a chat request whose body
 	// adapter.HasAmbiguousKeys reports: one that is not valid JSON, starts
 	// with a byte order mark, repeats a key, or has two keys the decoder

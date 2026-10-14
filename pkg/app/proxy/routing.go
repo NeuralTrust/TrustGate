@@ -144,7 +144,52 @@ func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingd
 	if q.intent.IsShortModel() {
 		candidates = p.filterCandidatesByProviderListing(ctx, candidates, q.intent.Model, q.strictListing)
 	}
-	return candidates, nil
+	return p.rejectNonChatModels(ctx, candidates, q)
+}
+
+func isChatRequest(req *infracontext.RequestContext) bool {
+	if req == nil {
+		return false
+	}
+	return req.ProxyCapability == "" || req.ProxyCapability == capabilityChat
+}
+
+func (p candidatePipeline) rejectNonChatModels(
+	ctx context.Context,
+	candidates *routingdomain.CandidateSet,
+	q candidateQuery,
+) (*routingdomain.CandidateSet, error) {
+	if p.listing == nil || candidates == nil || !isChatRequest(q.request) {
+		return candidates, nil
+	}
+	if !q.intent.IsShortModel() && !q.intent.IsQualified() {
+		return candidates, nil
+	}
+	model := q.intent.Model
+	dropped := false
+	kept := candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		flags, known := p.listing.Capabilities(ctx, c.Registry.Provider(), model)
+		if !known || capabilityFlag(flags, "chat", "text") {
+			return true
+		}
+		dropped = true
+		return false
+	})
+	if kept.Len() > 0 {
+		return kept, nil
+	}
+	if !dropped {
+		return candidates, nil
+	}
+	if p.logger != nil {
+		p.logger.Debug("chat request rejected: model capabilities do not include chat",
+			slog.String("model", model),
+		)
+	}
+	return nil, fmt.Errorf("%w: %s", ErrModelNotChatCapable, model)
 }
 
 func keepCandidates(candidates *routingdomain.CandidateSet, keep CandidateFilter) (*routingdomain.CandidateSet, error) {

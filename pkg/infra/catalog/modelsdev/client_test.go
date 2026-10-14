@@ -129,6 +129,86 @@ func TestClient_ListModels_OmitsZeroPrice(t *testing.T) {
 	}
 }
 
+func TestClient_ListModels_DerivesCapabilitiesFromFamily(t *testing.T) {
+	t.Parallel()
+	const payload = `{
+		"openai": {
+			"id": "openai",
+			"models": {
+				"gpt-4.1": {"id":"gpt-4.1","name":"GPT-4.1","family":"gpt"},
+				"text-embedding-3-small": {"id":"text-embedding-3-small","name":"text-embedding-3-small","family":"text-embedding"},
+				"gpt-image-1.5": {"id":"gpt-image-1.5","name":"gpt-image-1.5","family":"gpt-image"},
+				"mystery": {"id":"mystery","name":"Mystery"}
+			}
+		}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+
+	models, err := NewClient(srv.URL).ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels error: %v", err)
+	}
+	got := map[string]map[string]any{}
+	for _, m := range models {
+		got[m.Slug] = m.Capabilities
+	}
+	assertCaps := func(slug, key string) {
+		t.Helper()
+		flags := got[slug]
+		if key == "" {
+			if flags != nil {
+				t.Fatalf("%s capabilities = %v, want unknown", slug, flags)
+			}
+			return
+		}
+		if flags[key] != true || len(flags) != 1 {
+			t.Fatalf("%s capabilities = %v, want {%s: true}", slug, flags, key)
+		}
+	}
+	assertCaps("gpt-4.1", "chat")
+	assertCaps("text-embedding-3-small", "embed")
+	assertCaps("gpt-image-1.5", "image")
+	assertCaps("mystery", "")
+}
+
+func TestCapabilitiesFromFamily(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		family string
+		key    string
+	}{
+		{family: "", key: ""},
+		{family: "  ", key: ""},
+		{family: "gpt", key: "chat"},
+		{family: "GPT", key: "chat"},
+		{family: "chat", key: "chat"},
+		{family: "text-embedding", key: "embed"},
+		{family: "cohere-embed", key: "embed"},
+		{family: "embed", key: "embed"},
+		{family: "gpt-image", key: "image"},
+		{family: "imagen", key: "image"},
+		{family: "image", key: "image"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.family, func(t *testing.T) {
+			t.Parallel()
+			flags := capabilitiesFromFamily(tc.family)
+			if tc.key == "" {
+				if flags != nil {
+					t.Fatalf("capabilities = %v, want nil", flags)
+				}
+				return
+			}
+			if flags[tc.key] != true || len(flags) != 1 {
+				t.Fatalf("capabilities = %v, want {%s: true}", flags, tc.key)
+			}
+		})
+	}
+}
+
 func TestClient_ListModels_Non2xx(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

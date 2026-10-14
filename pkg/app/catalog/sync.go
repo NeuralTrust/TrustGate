@@ -226,6 +226,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			ReleaseDate:      parseReleaseDate(m.ReleaseDate),
 			InputModalities:  m.InputModalities,
 			OutputModalities: m.OutputModalities,
+			Capabilities:     m.Capabilities,
 			Enabled:          true,
 			Source:           sourceModelsDev,
 		}

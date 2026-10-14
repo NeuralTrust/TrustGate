@@ -154,7 +154,12 @@ func (r *refusals) err(intent routingdomain.Intent) error {
 }
 
 func refusalKind(err error) error {
-	for _, kind := range []error{routingdomain.ErrUnknownPoolAlias, ErrCapabilityNotSupported, ErrNoBackendsInPool} {
+	for _, kind := range []error{
+		routingdomain.ErrUnknownPoolAlias,
+		ErrCapabilityNotSupported,
+		ErrModelNotChatCapable,
+		ErrNoBackendsInPool,
+	} {
 		if errors.Is(err, kind) {
 			return kind
 		}

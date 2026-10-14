@@ -38,13 +38,18 @@ const opaqueModelRefPrefix = "arn:"
 //go:generate mockery --name=ModelListing --dir=. --output=./mocks --filename=catalog_model_listing_mock.go --case=underscore --with-expecter
 type ModelListing interface {
 	Lists(ctx context.Context, providerCode, model string) Verdict
+	// Capabilities returns the catalog capability flags for a model.
+	// known is false when the catalog has no flags for it; callers pass
+	// those requests through.
+	Capabilities(ctx context.Context, providerCode, model string) (map[string]any, bool)
 	InvalidateCache()
 }
 
 var _ ModelListing = (*modelListing)(nil)
 
 type listedModels struct {
-	slugs map[string]struct{}
+	slugs        map[string]struct{}
+	capabilities map[string]map[string]any
 }
 
 type modelListing struct {
@@ -93,6 +98,38 @@ func (a *modelListing) Lists(ctx context.Context, providerCode, model string) Ve
 	return VerdictAbsent
 }
 
+func (a *modelListing) Capabilities(ctx context.Context, providerCode, model string) (map[string]any, bool) {
+	if a == nil || a.repo == nil {
+		return nil, false
+	}
+	providerCode = strings.ToLower(strings.TrimSpace(providerCode))
+	model = strings.TrimSpace(model)
+	if providerCode == "" || model == "" || isOpaqueModelRef(model) {
+		return nil, false
+	}
+	listing := a.listing(ctx, providerCode)
+	if len(listing.slugs) == 0 {
+		return nil, false
+	}
+	if flags, known := listing.capabilityFlags(model); known {
+		return flags, true
+	}
+	for _, slug := range SlugCandidates(model) {
+		if flags, known := listing.capabilityFlags(slug); known {
+			return flags, true
+		}
+	}
+	return nil, false
+}
+
+func (listing listedModels) capabilityFlags(model string) (map[string]any, bool) {
+	flags, ok := listing.capabilities[strings.ToLower(model)]
+	if !ok || len(flags) == 0 {
+		return nil, false
+	}
+	return flags, true
+}
+
 func (a *modelListing) InvalidateCache() {
 	a.memoryCache.Clear()
 }
@@ -138,15 +175,24 @@ func (a *modelListing) load(ctx context.Context, providerCode string) listedMode
 		return listedModels{}
 	}
 	slugs := make(map[string]struct{}, len(models))
+	capabilities := make(map[string]map[string]any)
 	for _, model := range models {
 		if !model.Enabled {
 			continue
 		}
 		for _, slug := range SlugCandidates(model.Slug, model.ExternalID) {
-			slugs[strings.ToLower(slug)] = struct{}{}
+			key := strings.ToLower(slug)
+			slugs[key] = struct{}{}
+			if len(model.Capabilities) == 0 {
+				continue
+			}
+			if _, exists := capabilities[key]; exists {
+				continue
+			}
+			capabilities[key] = model.Capabilities
 		}
 	}
-	return listedModels{slugs: slugs}
+	return listedModels{slugs: slugs, capabilities: capabilities}
 }
 
 func isOpaqueModelRef(model string) bool {
