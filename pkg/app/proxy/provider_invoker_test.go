@@ -307,6 +307,45 @@ func TestProviderInvoke_CrossFormatBackendErrorUsesIngressEnvelope(t *testing.T)
 	assert.Equal(t, []string{"2"}, resp.Headers["Retry-After"])
 }
 
+// ENG-1899: OpenAI's 401 names the registry's key by prefix and last
+// characters. The caller holds an application key, not that one.
+func TestProviderInvoke_UpstreamAuthFailureHidesProviderText(t *testing.T) {
+	errBody := []byte(`{"error":{"message":"Incorrect API key provided: sk-proj-****abcd.","type":"invalid_request_error","code":"invalid_api_key"}}`)
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusUnauthorized, errBody)).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(openaiRequestBody)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"upstream provider authentication failed"}}`, string(resp.Body))
+}
+
+// ENG-1899: an OpenAI client routed to Anthropic got Anthropic's own envelope.
+func TestProviderInvoke_OpenAIClientGetsOpenAIEnvelopeFromAnthropic(t *testing.T) {
+	errBody := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}`)
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, errBody)).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), &infracontext.RequestContext{Body: []byte(openaiRequestBody)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"max_tokens: too large"}}`, string(resp.Body))
+}
+
 func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
