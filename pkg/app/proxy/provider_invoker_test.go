@@ -1158,3 +1158,56 @@ func TestProviderInvoke_CrossFormatSendsNoBetaOptIn(t *testing.T) {
 	require.NotNil(t, sent)
 	assert.Empty(t, sent.AnthropicBeta)
 }
+
+func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		capability string
+		body       []byte
+		client     providers.Client
+	}{
+		{name: "chat empty", body: nil, client: &upstreamRecorder{}},
+		{name: "chat blank", body: []byte{}, client: &upstreamRecorder{}},
+		{name: "chat array", body: []byte("[]"), client: &upstreamRecorder{}},
+		{name: "images array", capability: "images", body: []byte("[]"), client: &imagesTestClient{}},
+		{name: "audio empty", capability: "audio_speech", body: nil, client: &audioTestClient{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(tt.client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:            tt.body,
+				ProxyCapability: tt.capability,
+				AllowedModels:   []string{"gpt-4o"},
+			})
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			require.NotErrorIs(t, err, appproxy.ErrModelNotAllowed)
+			assert.Contains(t, err.Error(), "request body must be a JSON object")
+			assert.NotContains(t, err.Error(), "unexpected end of JSON input")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.NotContains(t, err.Error(), "model enforcement")
+		})
+	}
+}
+
+func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {
+	t.Parallel()
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, []byte("[]")).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body: []byte("[]"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}

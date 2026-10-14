@@ -211,7 +211,7 @@ func TestAuthMiddleware_NonNativeErrorsAreUnchanged(t *testing.T) {
 	assert.Empty(t, resp.Header.Get("X-Amzn-Errortype"))
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"error":"unauthenticated","message":"unauthenticated"}`, string(raw))
+	assert.JSONEq(t, `{"error":{"message":"unauthenticated","type":"authentication_error","code":"unauthenticated"}}`, string(raw))
 }
 
 // A native Bedrock path is never a store path: the store slug addresses the LLM
