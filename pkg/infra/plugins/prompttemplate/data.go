@@ -20,6 +20,10 @@ const (
 	decisionObserved = "observed"
 	decisionNoOp     = "no_op"
 	decisionSkipped  = "skipped"
+	// decisionBlock is the span token other enforce refusals already record
+	// (rate limit, request size). A refusal must not use no_op, and must not
+	// use "rejected": SetDecisionFromOutcome maps that to "reported".
+	decisionBlock = "block"
 	// decisionSkippedFormat marks a request whose wire format the plugin does
 	// not model, and decisionSkippedShape one whose body is shaped in a way it
 	// cannot edit safely. Both leave the body untouched.
