@@ -97,6 +97,29 @@ func TestOAuthChallengeInvalidTokenWhenBearerPresented(t *testing.T) {
 	}
 }
 
+func TestOAuthChallengeEscapesQuotesInResourceMetadata(t *testing.T) {
+	t.Parallel()
+	app := fiber.New()
+	app.Use(NewOAuthChallengeMiddleware().Middleware())
+	app.Post("/*", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+	})
+
+	req := httptest.NewRequest(fiber.MethodPost, `/v1/"mcp\dev`, nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.StatusCode)
+	}
+	const want = `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/\"mcp\\dev"`
+	if got := res.Header.Get(fiber.HeaderWWWAuthenticate); got != want {
+		t.Fatalf("challenge = %q, want %q", got, want)
+	}
+}
+
 func TestOAuthChallengeUsesRootMetadataForRootPath(t *testing.T) {
 	t.Parallel()
 	app := fiber.New()
