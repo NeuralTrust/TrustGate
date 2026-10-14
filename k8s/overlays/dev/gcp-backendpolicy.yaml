@@ -1,0 +1,34 @@
+# GCPBackendPolicy for agentgateway backends on the dev Gateways.
+#
+# timeoutSec lives here because it is a GCPBackendPolicy field. Omitting it
+# yields the GCP default of 30s, which cuts LLM completions mid-generation; the
+# proxy and MCP backends serve long-running upstream calls and need the higher
+# bound. The admin backend keeps the default: its requests are short.
+#
+# No securityPolicy: dev has no Cloudflare-only Cloud Armor policy. The
+# *.dev.neuraltrust.ai names are served by the internal gateway, and the
+# temporary sandbox exposure does not attach Armor. Namespace is applied by
+# the overlay.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: agentgateway-proxy-timeout
+spec:
+  default:
+    timeoutSec: 300
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-proxy
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: agentgateway-mcp-timeout
+spec:
+  default:
+    timeoutSec: 300
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-mcp
