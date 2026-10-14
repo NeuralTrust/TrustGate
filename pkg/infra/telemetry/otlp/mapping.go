@@ -244,13 +244,14 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attrs = append(attrs, attribute.Float64(attrCostSavingsUsd, float64(*evt.Cost.SavingsUsd)))
 		}
 	}
-	providerMs := int64(0)
+	attrs = append(attrs, attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs))
+	// Absent and zero are different answers. A pre-request refusal has no
+	// provider attempt, so the attribute is omitted. A real attempt that
+	// finished in under a millisecond still emits 0.
 	if evt.Latency.ProviderMs != nil {
-		providerMs = *evt.Latency.ProviderMs
+		attrs = append(attrs, attribute.Int64(attrLatencyProviderMs, *evt.Latency.ProviderMs))
 	}
 	attrs = append(attrs,
-		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
-		attribute.Int64(attrLatencyProviderMs, providerMs),
 		attribute.Int64(attrLatencyPoliciesMs, evt.Latency.PoliciesMs),
 		attribute.Int64(attrLatencyGatewayMs, evt.Latency.GatewayMs),
 		attribute.Bool(attrIsFlagged, evt.IsFlagged),

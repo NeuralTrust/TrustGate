@@ -275,6 +275,31 @@ func TestEventToRecord_Nil(t *testing.T) {
 	assert.Equal(t, "", rec.EventName())
 }
 
+func TestEventToRecord_OmitsProviderMsWhenNoAttempt(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Latency.ProviderMs = nil
+	evt.Attempts = nil
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	_, ok := attrs["trustgate.latency.provider_ms"]
+	assert.False(t, ok, "a request that never called the provider must not emit provider_ms")
+	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
+	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
+}
+
+func TestEventToRecord_EmitsZeroProviderMsForFastAttempt(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	zero := int64(0)
+	evt.Latency.ProviderMs = &zero
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	assert.Equal(t, int64(0), attrs["trustgate.latency.provider_ms"].AsInt64())
+}
+
 func TestEventToRecord_OmitsSavingsWhenAbsent(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()
