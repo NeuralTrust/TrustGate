@@ -112,6 +112,54 @@ func TestModelListing_Lists(t *testing.T) {
 	}
 }
 
+func TestModelListing_Capabilities(t *testing.T) {
+	t.Parallel()
+	repo := newListingRepo(map[string][]domain.Model{
+		providers.ProviderOpenAI: {
+			{Slug: "gpt-4.1", Enabled: true, Capabilities: map[string]any{"chat": true}},
+			{Slug: "text-embedding-3-small", Enabled: true, Capabilities: map[string]any{"embed": true}},
+			{Slug: "gpt-image-1.5", Enabled: true, Capabilities: map[string]any{"image": true}},
+			{Slug: "legacy-model", Enabled: true},
+			{Slug: "retired-embed", Enabled: false, Capabilities: map[string]any{"embed": true}},
+		},
+		providers.ProviderAzure: {
+			{Slug: "text-embedding-3-small", Enabled: true, Capabilities: map[string]any{"embed": true}},
+		},
+	})
+	subject := newModelListing(repo)
+
+	flags, known := subject.Capabilities(context.Background(), providers.ProviderOpenAI, "text-embedding-3-small")
+	require.True(t, known)
+	assert.Equal(t, true, flags["embed"])
+
+	flags, known = subject.Capabilities(context.Background(), providers.ProviderOpenAI, "gpt-image-1.5")
+	require.True(t, known)
+	assert.Equal(t, true, flags["image"])
+
+	flags, known = subject.Capabilities(context.Background(), providers.ProviderOpenAI, "gpt-4.1")
+	require.True(t, known)
+	assert.Equal(t, true, flags["chat"])
+
+	_, known = subject.Capabilities(context.Background(), providers.ProviderOpenAI, "legacy-model")
+	assert.False(t, known, "a catalog row with no flags is unknown and must pass through")
+
+	_, known = subject.Capabilities(context.Background(), providers.ProviderOpenAI, "retired-embed")
+	assert.False(t, known)
+
+	_, known = subject.Capabilities(context.Background(), providers.ProviderOpenAI, "not-in-catalog")
+	assert.False(t, known)
+
+	flags, known = subject.Capabilities(context.Background(), providers.ProviderAzure, "text-embedding-3-small")
+	require.True(t, known)
+	assert.Equal(t, true, flags["embed"])
+
+	_, known = subject.Capabilities(context.Background(), providers.ProviderAzure, "my-deployment")
+	assert.False(t, known, "an account-specific deployment name stays unknown")
+
+	_, known = subject.Capabilities(context.Background(), providers.ProviderBedrock, "arn:aws:bedrock:eu-west-1::foundation-model/x")
+	assert.False(t, known)
+}
+
 func TestModelListing_DisabledModelsAreNotListed(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(map[string][]domain.Model{

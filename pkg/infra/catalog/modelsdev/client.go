@@ -63,6 +63,10 @@ type Model struct {
 	// URL). Callers that can only speak the provider's native API use this to
 	// skip entries they could never invoke.
 	AltAPI string
+	// Capabilities are the catalog flags derived from models.dev family:
+	// "chat", "embed", or "image". Nil when family is absent, which callers
+	// treat as unknown.
+	Capabilities map[string]any
 }
 
 type Client struct {
@@ -94,6 +98,7 @@ type apiModel struct {
 		CacheWrite float64 `json:"cache_write"`
 	} `json:"cost"`
 	ReleaseDate string `json:"release_date"`
+	Family      string `json:"family"`
 	Modalities  struct {
 		Input  []string `json:"input"`
 		Output []string `json:"output"`
@@ -166,6 +171,7 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 				InputModalities:  m.Modalities.Input,
 				OutputModalities: m.Modalities.Output,
 				AltAPI:           altAPI,
+				Capabilities:     capabilitiesFromFamily(m.Family),
 			})
 		}
 	}
@@ -177,6 +183,25 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 		return out[i].Slug < out[j].Slug
 	})
 	return out, nil
+}
+
+// capabilitiesFromFamily maps a models.dev family lineage onto the catalog
+// capability flags the gateway already stores. models.dev publishes lineages
+// such as "text-embedding" and "gpt-image", not the words chat, embed, and
+// image. An empty family stays unknown so the caller does not invent a flag.
+func capabilitiesFromFamily(family string) map[string]any {
+	family = strings.ToLower(strings.TrimSpace(family))
+	if family == "" {
+		return nil
+	}
+	switch {
+	case strings.Contains(family, "embed"):
+		return map[string]any{"embed": true}
+	case strings.Contains(family, "image"):
+		return map[string]any{"image": true}
+	default:
+		return map[string]any{"chat": true}
+	}
 }
 
 // formatPerTokenPrice converts a models.dev per-million-token price into a
