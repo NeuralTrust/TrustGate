@@ -1233,3 +1233,57 @@ func TestAdaptStream_ResponsesClientStopReleasesTheUpstreamReader(t *testing.T) 
 		}
 	})
 }
+
+func TestAdaptStream_TranslatedResponsesFillsResponseIdentity(t *testing.T) {
+	upstream := linesSeq(
+		`data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","created":1710000000,"model":"gpt-5.4-mini-std","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"}}]}`,
+		`data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","created":1710000000,"model":"gpt-5.4-mini-std","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`,
+		`data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","created":1710000000,"model":"gpt-5.4-mini-std","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	)
+	lines := collectLines(t, adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatAzure, slog.Default(), nil))
+	events := responsesWireEvents(t, lines)
+	require.NotEmpty(t, events)
+	require.Equal(t, "response.created", events[0].Type)
+	require.NotNil(t, events[0].Response)
+	assert.Equal(t, "resp_abc", events[0].Response.ID)
+	require.NotNil(t, events[0].Response.CreatedAt)
+	assert.Equal(t, int64(1710000000), *events[0].Response.CreatedAt)
+
+	var messageID, callID string
+	for _, ev := range events {
+		if ev.Type == "response.content_part.added" || ev.Type == "response.content_part.done" {
+			require.NotNil(t, ev.Part)
+			assert.NotNil(t, ev.Part.Annotations)
+			assert.Empty(t, ev.Part.Annotations)
+		}
+		if ev.Type != "response.output_item.added" || ev.Item == nil {
+			continue
+		}
+		switch ev.Item.Type {
+		case "message":
+			messageID = ev.Item.ID
+		case "function_call":
+			callID = ev.Item.ID
+			assert.Equal(t, "call_abc", ev.Item.CallID)
+		}
+	}
+	assert.True(t, strings.HasPrefix(messageID, "msg_"), messageID)
+	assert.True(t, strings.HasPrefix(callID, "fc_"), callID)
+
+	last := events[len(events)-1]
+	require.Equal(t, "response.completed", last.Type)
+	require.NotNil(t, last.Response)
+	assert.Equal(t, "resp_abc", last.Response.ID)
+	require.NotNil(t, last.Response.CreatedAt)
+	assert.Equal(t, int64(1710000000), *last.Response.CreatedAt)
+	require.NotEmpty(t, last.Response.Output)
+	for _, item := range last.Response.Output {
+		assert.NotEmpty(t, item.ID)
+		if item.Type != "message" || len(item.Content) == 0 {
+			continue
+		}
+		assert.NotNil(t, item.Content[0].Annotations)
+		assert.Empty(t, item.Content[0].Annotations)
+	}
+}

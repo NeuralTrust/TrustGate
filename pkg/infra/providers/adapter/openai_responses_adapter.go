@@ -16,9 +16,11 @@ package adapter
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type openaiResponsesRequest struct {
@@ -120,6 +122,7 @@ type openaiResponsesTool struct {
 type openaiResponsesResponse struct {
 	ID                string                            `json:"id"`
 	Object            string                            `json:"object"`
+	CreatedAt         int64                             `json:"created_at,omitempty"`
 	Model             string                            `json:"model"`
 	Status            string                            `json:"status"`
 	IncompleteDetails *openaiResponsesIncompleteDetails `json:"incomplete_details,omitempty"`
@@ -145,6 +148,9 @@ type openaiResponsesItem struct {
 type openaiResponsesContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	// Annotations is required by the Responses API. A nil slice encodes as null,
+	// which clients reject, so every encoded part sets an empty slice.
+	Annotations []json.RawMessage `json:"annotations"`
 }
 
 type openaiResponsesUsage struct {
@@ -463,9 +469,10 @@ func decodeResponsesResponse(body []byte) (*CanonicalResponse, error) {
 	}
 
 	cr := &CanonicalResponse{
-		ID:    resp.ID,
-		Model: resp.Model,
-		Role:  "assistant",
+		ID:      resp.ID,
+		Model:   resp.Model,
+		Created: resp.CreatedAt,
+		Role:    "assistant",
 	}
 
 	var texts []string
@@ -855,11 +862,66 @@ func canonicalFinishToResponsesStatus(reason string) (status, incompleteReason s
 	}
 }
 
+// responsesWireID rewrites a Chat Completions id onto the Responses prefix.
+// Any other upstream id is kept: a Responses client of a translated stream
+// still sees the identity the upstream assigned when it is not a chatcmpl id.
+func responsesWireID(upstream string) string {
+	if rest, ok := strings.CutPrefix(upstream, "chatcmpl-"); ok && rest != "" {
+		return "resp_" + rest
+	}
+	return upstream
+}
+
+// responsesObjectID is the id of a translated Response. An empty upstream id
+// is synthesized; a chatcmpl- id is rewritten; a resp_ id is kept.
+func responsesObjectID(upstream string) string {
+	id := responsesWireID(upstream)
+	if id == "" {
+		return "resp_" + rand.Text()
+	}
+	return id
+}
+
+func responsesCreatedAt(upstream int64, now time.Time) int64 {
+	if upstream > 0 {
+		return upstream
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.Unix()
+}
+
+func responsesMessageItemID(responseID string) string {
+	base := strings.TrimPrefix(responseID, "resp_")
+	if base == "" {
+		base = "0"
+	}
+	return "msg_" + base
+}
+
+func responsesFunctionCallItemID(callID string, index int) string {
+	if strings.HasPrefix(callID, "fc_") {
+		return callID
+	}
+	rest := strings.TrimPrefix(callID, "call_")
+	if rest == "" {
+		return fmt.Sprintf("fc_%d", index)
+	}
+	return "fc_" + rest
+}
+
+func emptyAnnotations() []json.RawMessage {
+	return []json.RawMessage{}
+}
+
 func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
+	responseID := responsesObjectID(resp.ID)
 	out := openaiResponsesResponse{
-		ID:     resp.ID,
-		Object: "response",
-		Model:  resp.Model,
+		ID:        responseID,
+		Object:    "response",
+		CreatedAt: responsesCreatedAt(resp.Created, time.Time{}),
+		Model:     resp.Model,
 	}
 
 	status, incompleteReason := canonicalFinishToResponsesStatus(resp.FinishReason)
@@ -875,18 +937,21 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 		}
 		out.Output = append(out.Output, openaiResponsesItem{
 			Type: "message",
+			ID:   responsesMessageItemID(responseID),
 			Role: "assistant",
 			Content: []openaiResponsesContent{{
-				Type: "output_text",
-				Text: resp.Content,
+				Type:        "output_text",
+				Text:        resp.Content,
+				Annotations: emptyAnnotations(),
 			}},
 			Status: messageStatus,
 		})
 	}
 
-	for _, tc := range resp.ToolCalls {
+	for i, tc := range resp.ToolCalls {
 		out.Output = append(out.Output, openaiResponsesItem{
 			Type:      "function_call",
+			ID:        responsesFunctionCallItemID(tc.ID, i),
 			CallID:    tc.ID,
 			Name:      tc.Name,
 			Arguments: tc.Arguments,
@@ -943,7 +1008,7 @@ func responsesCloseMessageItem(item *StreamOpenItem) [][]byte {
 		Type:        "response.content_part.done",
 		OutputIndex: item.Index,
 	}
-	partEvent.Part, _ = json.Marshal(openaiResponsesContent{Type: "output_text"})
+	partEvent.Part, _ = json.Marshal(openaiResponsesContent{Type: "output_text", Annotations: emptyAnnotations()})
 	partDone, _ := json.Marshal(partEvent)
 	lines = append(lines, SSEEvent("response.content_part.done", partDone)...)
 
@@ -1040,7 +1105,10 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 			respObj["incomplete_details"] = map[string]string{"reason": incompleteReason}
 		}
 		if chunk.ID != "" {
-			respObj["id"] = chunk.ID
+			respObj["id"] = responsesWireID(chunk.ID)
+		}
+		if chunk.Created > 0 {
+			respObj["created_at"] = chunk.Created
 		}
 		if chunk.Model != "" {
 			respObj["model"] = chunk.Model
