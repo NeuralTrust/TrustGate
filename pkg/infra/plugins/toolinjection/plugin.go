@@ -142,6 +142,9 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 
 	if len(outcomes) > 0 {
 		setExtras(in.Event, data(string(policy.StagePreRequest), outcomes))
+		// extras.injected keeps every tool. The span records the last token
+		// (appended, replaced, or dropped). No outcomes leave it empty.
+		appplugins.SetDecisionFromOutcome(in.Event, outcomes[len(outcomes)-1].Outcome)
 	}
 
 	// A body adapter.HasAmbiguousKeys reports is re-encoded even when
@@ -166,6 +169,8 @@ func rejected(in appplugins.ExecInput, err error) error {
 	if pe, ok := appplugins.AsPluginError(err); ok {
 		setExtras(in.Event, rejectData(string(policy.StagePreRequest), reservedName(pe)))
 	}
+	// Record block directly. SetDecisionFromOutcome("rejected") maps to "reported".
+	appplugins.SetDecision(in.Event, in.Mode)
 	return err
 }
 
