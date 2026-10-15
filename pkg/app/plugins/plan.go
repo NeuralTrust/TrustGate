@@ -310,57 +310,118 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 
 	batches := make([][]chainEntry, 0, len(sorted))
 	var current []chainEntry
-	var usedReq, usedResp, usedMeta, hasRewriter bool
+	var claims batchClaims
 	for i := range sorted {
 		entry := sorted[i]
 		if !entry.parallel {
 			if len(current) > 0 {
 				batches = append(batches, current)
 				current = nil
-				usedReq, usedResp, usedMeta, hasRewriter = false, false, false, false
+				claims = batchClaims{}
 			}
 			batches = append(batches, []chainEntry{entry})
 			continue
 		}
 		if len(current) > 0 {
 			samePriority := current[0].priority == entry.priority
-			capability := ""
+			var hit collision
+			collides := false
 			if samePriority {
-				switch {
-				case entry.mutatesReq && usedReq:
-					capability = "request_body"
-				case entry.mutatesResp && usedResp:
-					capability = "response_body"
-				case entry.mutatesMeta && usedMeta:
-					capability = "metadata"
-				}
+				hit, collides = claims.collide(entry, stage)
 			}
 			// A pure reader never shares a batch with a rewriter of its
 			// priority: a batch runs on isolated copies, so it would judge the
 			// original content (RUN-1693).
-			readerAfterRewriter := samePriority && hasRewriter && entry.onlyReadsAt(stage)
-			if !samePriority || capability != "" || readerAfterRewriter {
-				if capability != "" && logger != nil {
-					logger.Warn("plugin forced sequential: parallel batch capability cap exceeded",
-						slog.String("stage", string(stage)),
-						slog.String("slug", entry.config.Slug),
-						slog.String("capability", capability))
+			readerAfterRewriter := samePriority && claims.rewriter && entry.onlyReadsAt(stage)
+			if !samePriority || collides || readerAfterRewriter {
+				if collides {
+					logForcedSequential(logger, stage, entry, hit)
 				}
 				batches = append(batches, current)
 				current = nil
-				usedReq, usedResp, usedMeta, hasRewriter = false, false, false, false
+				claims = batchClaims{}
 			}
 		}
 		current = append(current, entry)
-		usedReq = usedReq || entry.mutatesReq
-		usedResp = usedResp || entry.mutatesResp
-		usedMeta = usedMeta || entry.mutatesMeta
-		hasRewriter = hasRewriter || entry.rewritesAt(stage)
+		claims.add(&sorted[i], stage)
 	}
 	if len(current) > 0 {
 		batches = append(batches, current)
 	}
 	return batches
+}
+
+// batchClaims tracks the batch being filled: the entry holding each write
+// capability and whether a rewriter of the stage's content is in it.
+type batchClaims struct {
+	req, resp, meta *chainEntry
+	rewriter        bool
+}
+
+type collision struct {
+	capability string
+	holder     *chainEntry
+	offBox     bool
+}
+
+func (c *batchClaims) add(entry *chainEntry, stage policy.Stage) {
+	if entry.mutatesReq {
+		c.req = entry
+	}
+	if entry.mutatesResp {
+		c.resp = entry
+	}
+	if entry.mutatesMeta {
+		c.meta = entry
+	}
+	c.rewriter = c.rewriter || entry.rewritesAt(stage)
+}
+
+// collide reports the capability entry would claim a second time in the batch.
+// The Mutates flags are plugin-wide, so on a response stage the response body
+// is named ahead of the request body. offBox is set when neither side of the
+// collision opted in as a local rewriter.
+func (c *batchClaims) collide(entry chainEntry, stage policy.Stage) (collision, bool) {
+	req := entry.mutatesReq && c.req != nil
+	resp := entry.mutatesResp && c.resp != nil
+	meta := entry.mutatesMeta && c.meta != nil
+	responseStage := stage == policy.StagePreResponse || stage == policy.StagePostResponse
+	var hit collision
+	switch {
+	case resp && (responseStage || !req):
+		hit = collision{capability: "response_body", holder: c.resp}
+	case req:
+		hit = collision{capability: "request_body", holder: c.req}
+	case meta:
+		hit = collision{capability: "metadata", holder: c.meta}
+	default:
+		return collision{}, false
+	}
+	hit.offBox = !entry.local &&
+		((req && !c.req.local) || (resp && !c.resp.local) || (meta && !c.meta.local))
+	return hit, true
+}
+
+// logForcedSequential warns only when two off-box rewriters collide. Behind a
+// local rewriter the wait is in-process and the order is the intended one
+// (RUN-1745); policies default to one priority and parallel, so that case
+// fires on every plan build.
+func logForcedSequential(logger *slog.Logger, stage policy.Stage, entry chainEntry, hit collision) {
+	if logger == nil {
+		return
+	}
+	attrs := []any{
+		slog.String("stage", string(stage)),
+		slog.String("slug", entry.config.Slug),
+		slog.String("held_by", hit.holder.config.Slug),
+		slog.String("capability", hit.capability),
+	}
+	const msg = "plugin forced sequential: parallel batch capability cap exceeded"
+	if hit.offBox {
+		logger.Warn(msg, attrs...)
+		return
+	}
+	logger.Debug(msg, attrs...)
 }
 
 // streamParticipants keeps the entries that take part in per-segment
