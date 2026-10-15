@@ -1206,6 +1206,69 @@ func TestForward_PrecheckedIsExplicit(t *testing.T) {
 	})
 }
 
+func TestPrecheck_RefusesANonArrayMessagesBeforeTheRateLimit(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	cases := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano","messages":"x"}`)}},
+		{name: "object", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"messages":{"role":"user"}}`)}},
+		{name: "anthropic string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "anthropic", Body: []byte(`{"model":"claude","messages":"x"}`)}},
+		{name: "cohere string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "cohere", Body: []byte(`{"messages":"x"}`)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), ratelimitmocks.NewChecker(t))
+			res, err := fwd.Precheck(context.Background(), gatewayID, tc.req)
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			assert.ErrorContains(t, err, "messages must be an array")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.Nil(t, res)
+		})
+	}
+
+	allowed := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "array", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano","messages":[{"role":"user","content":"hi"}]}`)}},
+		{name: "absent", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano"}`)}},
+		{name: "responses input string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai_responses", Body: []byte(`{"model":"gpt-4.1-nano","input":"x"}`)}},
+		{name: "gemini ignores a stray messages string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "google", Body: []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"messages":"x"}`)}},
+		{name: "embeddings", req: &infracontext.RequestContext{ProxyCapability: "embeddings", SourceFormat: "openai", Body: []byte(`{"input":"x","messages":"x"}`)}},
+	}
+	for _, tc := range allowed {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := ratelimitmocks.NewChecker(t)
+			limiter.EXPECT().Check(mock.Anything, gatewayID).Return(nil).Once()
+			fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter)
+			res, err := fwd.Precheck(context.Background(), gatewayID, tc.req)
+			require.NoError(t, err)
+			assert.Nil(t, res)
+		})
+	}
+}
+
+func TestForward_NonArrayMessagesNeverReachesTheUpstream(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	invoker := proxymocks.NewProviderInvoker(t)
+	fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  routableConsumerWith(gatewayID),
+		Request: &infracontext.RequestContext{
+			ProxyCapability: "chat",
+			SourceFormat:    "openai",
+			Body:            []byte(`{"model":"gpt-4.1-nano","messages":"x"}`),
+		},
+	})
+	require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	assert.Nil(t, res)
+	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+	invoker.AssertNotCalled(t, "InvokeStream", mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestPrecheck_RefusesAnAmbiguousBodyBeforeTheRateLimit(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), ratelimitmocks.NewChecker(t))

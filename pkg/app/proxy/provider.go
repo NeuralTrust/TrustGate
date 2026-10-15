@@ -63,6 +63,10 @@ var ErrModelNotAllowed = errors.New("model not allowed")
 // read the body as a JSON object. The parser's own text stays in the log.
 const invalidJSONObjectMessage = "request body must be a JSON object"
 
+// invalidMessagesMessage is what a client sees when chat messages are present
+// but are not an array. The decoder's type error stays in the log.
+const invalidMessagesMessage = "messages must be an array"
+
 var ErrContextWindowExceeded = errors.New("context window exceeded")
 
 type ProviderResponse struct {
