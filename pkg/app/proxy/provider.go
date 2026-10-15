@@ -306,7 +306,7 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) {
-		body = injectStreamIncludeUsage(body)
+		body = applyStreamIncludeUsage(body, prep.providerName, prep.sentModel)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
