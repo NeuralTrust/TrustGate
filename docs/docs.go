@@ -6525,6 +6525,11 @@ const docTemplate = `{
                 "auth_binding": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
                 },
+                "description": {
+                    "description": "Description is free text for the people managing the consumer. It plays\nno part in routing, policy evaluation or matching.",
+                    "type": "string",
+                    "maxLength": 500
+                },
                 "fail_mode": {
                     "type": "string"
                 },
@@ -6833,6 +6838,11 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "description": {
+                    "description": "Description replaces the free-text description. Omit it to keep the\ncurrent one; send an empty string to clear it.",
+                    "type": "string",
+                    "maxLength": 500
+                },
                 "fail_mode": {
                     "type": "string"
                 },
@@ -6965,6 +6975,9 @@ const docTemplate = `{
                     }
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "description": {
                     "type": "string"
                 },
                 "fail_mode": {

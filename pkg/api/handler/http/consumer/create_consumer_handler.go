@@ -82,6 +82,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:       gatewayID,
 		Name:            req.Name,
+		Description:     req.Description,
 		Type:            req.ToType(),
 		Audience:        req.ToAudience(),
 		LBConfig:        lbConfig,
