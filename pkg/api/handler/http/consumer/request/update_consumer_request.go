@@ -49,6 +49,9 @@ type UpdateConsumerRequest struct {
 	// Audience is set at create and cannot change: a value other than the stored
 	// one answers 422.
 	Audience *string `json:"audience,omitempty" enums:"application,personal"`
+	// Description replaces the free-text description. Omit it to keep the
+	// current one; send an empty string to clear it.
+	Description *string `json:"description,omitempty" maxLength:"500"`
 }
 
 // MaxAuthAssociations bounds how many auth ids one update may associate.
@@ -61,6 +64,11 @@ func (r UpdateConsumerRequest) Validate() error {
 		}
 		if len(*r.Name) > 255 {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+		}
+	}
+	if r.Description != nil {
+		if err := validateDescription(*r.Description); err != nil {
+			return err
 		}
 	}
 	if r.Audience != nil {

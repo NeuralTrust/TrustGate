@@ -94,6 +94,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		ID:            id,
 		GatewayID:     gatewayID,
 		Name:          req.Name,
+		Description:   req.Description,
 		Type:          req.ToType(),
 		Audience:      req.ToAudience(),
 		LBConfig:      lbConfig,

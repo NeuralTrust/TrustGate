@@ -186,6 +186,37 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+func TestRepository_PersistsDescription(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "described")
+	beID := seedRegistry(t, f.be, gwID, "be-described")
+
+	c := validConsumer(t, gwID, "described-consumer", beID)
+	c.Description = "Owned by the billing team, fronts the invoicing assistant"
+	saveWithRegistries(t, f, c)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Description != c.Description {
+		t.Fatalf("Description after Save = %q, want %q", got.Description, c.Description)
+	}
+
+	got.Description = "Owned by the support team"
+	if err := f.repo.Update(ctx, got, nil, nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	updated, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID after Update: %v", err)
+	}
+	if updated.Description != "Owned by the support team" {
+		t.Fatalf("Description after Update = %q, want %q", updated.Description, "Owned by the support team")
+	}
+}
+
 func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()

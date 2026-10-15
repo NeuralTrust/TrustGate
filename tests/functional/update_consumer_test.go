@@ -5,6 +5,7 @@ package functional_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -134,6 +135,36 @@ func TestUpdateConsumer_Partial(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, renamed, body["name"])
 	assert.Equal(t, expectedSlug, body["slug"], "slug must be preserved on a partial update")
+}
+
+func TestUpdateConsumer_Description(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-desc-gw")})
+	name := uniqueName("co-upd-desc")
+	payload := validConsumerPayload(name)
+	payload["description"] = "Owned by the billing team"
+	coID := CreateConsumer(t, gwID, payload)
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID)
+
+	status, body := sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "Owned by the billing team", body["description"])
+
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": uniqueName("co-upd-desc-to"), "active": false})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "Owned by the billing team", body["description"], "an edit of other fields must keep the description")
+
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{"description": ""})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.NotContains(t, body, "description", "an empty description clears it")
+
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{"description": strings.Repeat("a", 501)})
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
 }
 
 func TestUpdateConsumer_Partial_EmptyTypePreservesExisting(t *testing.T) {

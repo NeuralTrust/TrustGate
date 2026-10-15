@@ -48,3 +48,21 @@ func TestFromConsumer_PersonalListsAuthIDsWithoutLinks(t *testing.T) {
 	require.Equal(t, authIDs, got)
 	require.JSONEq(t, `"personal"`, string(body["audience"]))
 }
+
+func TestFromConsumer_Description(t *testing.T) {
+	t.Parallel()
+	described := domain.Rehydrate(domain.RehydrateParams{
+		ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Name: "billing", Type: domain.TypeLLM,
+		Description: "Owned by the billing team",
+	})
+	require.Equal(t, "Owned by the billing team", response.FromConsumer(described).Description)
+
+	undescribed := domain.Rehydrate(domain.RehydrateParams{
+		ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Name: "support", Type: domain.TypeLLM,
+	})
+	raw, err := json.Marshal(response.FromConsumer(undescribed))
+	require.NoError(t, err)
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.NotContains(t, body, "description")
+}
