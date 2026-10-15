@@ -38,8 +38,9 @@ func withPrincipalGroups(sub string, groups ...string) context.Context {
 
 func snowflakeShelf() *registrydomain.Registry {
 	return &registrydomain.Registry{
-		ID:   ids.New[ids.RegistryKind](),
-		Name: "Snowflake",
+		ID:      ids.New[ids.RegistryKind](),
+		Name:    "Snowflake",
+		Enabled: true,
 		MCPTarget: &registrydomain.MCPTarget{
 			Code:         "snowflake",
 			URL:          "https://acme/api/v2/databases/{database}/mcp",
