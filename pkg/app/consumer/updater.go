@@ -54,6 +54,8 @@ type UpdateInput struct {
 	Identity *domain.Identity
 	// AuthBinding replaces the whole binding. A nil value keeps it.
 	AuthBinding *domain.AuthBinding
+	// Description replaces the free-text description. A nil value keeps it.
+	Description *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -106,6 +108,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	}
 	if in.Name != nil {
 		existing.Name = *in.Name
+	}
+	if in.Description != nil {
+		existing.Description = *in.Description
 	}
 	previousType := existing.Type
 	if in.Type != nil && *in.Type != existing.Type {

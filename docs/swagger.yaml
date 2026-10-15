@@ -541,6 +541,12 @@ definitions:
         type: string
       auth_binding:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
+      description:
+        description: |-
+          Description is free text for the people managing the consumer. It plays
+          no part in routing, policy evaluation or matching.
+        maxLength: 500
+        type: string
       fail_mode:
         type: string
       fallback:
@@ -759,6 +765,12 @@ definitions:
         items:
           type: string
         type: array
+      description:
+        description: |-
+          Description replaces the free-text description. Omit it to keep the
+          current one; send an empty string to clear it.
+        maxLength: 500
+        type: string
       fail_mode:
         type: string
       fallback:
@@ -849,6 +861,8 @@ definitions:
           type: string
         type: array
       created_at:
+        type: string
+      description:
         type: string
       fail_mode:
         type: string

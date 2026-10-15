@@ -28,6 +28,7 @@ type ConsumerResponse struct {
 	ID              ids.ConsumerID           `json:"id"`
 	GatewayID       ids.GatewayID            `json:"gateway_id"`
 	Name            string                   `json:"name"`
+	Description     string                   `json:"description,omitempty"`
 	Type            string                   `json:"type"`
 	Audience        string                   `json:"audience" enums:"application,personal"`
 	Slug            string                   `json:"slug"`
@@ -143,6 +144,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		ID:              c.ID,
 		GatewayID:       c.GatewayID,
 		Name:            c.Name,
+		Description:     c.Description,
 		Type:            string(c.Type),
 		Audience:        string(c.AudienceName()),
 		Slug:            c.Slug,

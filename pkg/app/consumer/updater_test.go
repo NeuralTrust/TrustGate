@@ -127,6 +127,61 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_Description(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   func(appconsumer.UpdateInput) appconsumer.UpdateInput
+		want string
+	}{
+		{
+			name: "an edit of another field keeps it",
+			in:   func(in appconsumer.UpdateInput) appconsumer.UpdateInput { in.Name = ptr("renamed"); return in },
+			want: "Owned by the billing team",
+		},
+		{
+			name: "a new value replaces it",
+			in: func(in appconsumer.UpdateInput) appconsumer.UpdateInput {
+				in.Description = ptr("Owned by the support team")
+				return in
+			},
+			want: "Owned by the support team",
+		},
+		{
+			name: "an empty value clears it",
+			in:   func(in appconsumer.UpdateInput) appconsumer.UpdateInput { in.Description = ptr(""); return in },
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
+			existing.Description = "Owned by the billing team"
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			repo.EXPECT().
+				Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool { return c.Description == tc.want }),
+					(*domain.RegistryBindings)(nil), (*[]ids.AuthID)(nil)).
+				Return(nil).
+				Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+			updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+			got, err := updater.Update(context.Background(), tc.in(appconsumer.UpdateInput{ID: existing.ID, GatewayID: gwID}))
+			if err != nil {
+				t.Fatalf("Update error: %v", err)
+			}
+			if got.Description != tc.want {
+				t.Fatalf("Description = %q, want %q", got.Description, tc.want)
+			}
+		})
+	}
+}
+
 func TestUpdater_Update_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

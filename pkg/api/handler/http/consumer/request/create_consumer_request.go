@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -42,6 +43,9 @@ type CreateConsumerRequest struct {
 	// Audience is application (the default) or personal. It is set at create
 	// and cannot change afterwards.
 	Audience string `json:"audience,omitempty" enums:"application,personal" default:"application"`
+	// Description is free text for the people managing the consumer. It plays
+	// no part in routing, policy evaluation or matching.
+	Description string `json:"description,omitempty" maxLength:"500"`
 }
 
 // AuthBindingRequest narrows which callers of a shared auth (external IdP,
@@ -272,8 +276,21 @@ func (r CreateConsumerRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
+	if err := validateDescription(r.Description); err != nil {
+		return err
+	}
 	_, err := domain.ParseAudience(r.Audience)
 	return err
+}
+
+func validateDescription(description string) error {
+	if strings.ContainsRune(description, 0) {
+		return fmt.Errorf("description must not contain NUL characters: %w", commonerrors.ErrValidation)
+	}
+	if utf8.RuneCountInString(description) > domain.MaxDescriptionLen {
+		return fmt.Errorf("description too long (max %d characters): %w", domain.MaxDescriptionLen, commonerrors.ErrValidation)
+	}
+	return nil
 }
 
 func (r CreateConsumerRequest) ToType() domain.Type {
