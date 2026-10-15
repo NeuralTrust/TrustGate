@@ -378,40 +378,42 @@ func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	assert.Contains(t, string(resp.Body), `"type":"message"`)
 }
 
-func TestProviderInvoke_ToolInjectionDoesNotSendReasoningEffortNone(t *testing.T) {
-	// The body is what Tool Injection leaves behind: the client's prompt plus
-	// one gateway function, and no reasoning_effort. GPT-6.1 Sol rejects none.
-	body := `{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"hello, write me a short greeting"}],"tools":[{"type":"function","function":{"name":"qa_escalate","description":"escalate","parameters":{"type":"object"}}}]}`
-	client := providermocks.NewClient(t)
-	client.EXPECT().
-		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
-			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
-				strings.Contains(string(sent), `"qa_escalate"`)
-		})).
-		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
-		Once()
+func TestProviderInvoke_ClientToolsOnModelsWithoutChatFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := `{"model":"` + model + `","messages":[{"role":"user","content":"hello, write me a short greeting"}],"tools":[{"type":"function","function":{"name":"qa_escalate","description":"escalate","parameters":{"type":"object"}}}]}`
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+					return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+						strings.Contains(string(sent), `"qa_escalate"`)
+				})).
+				Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+				Once()
 
-	locator := factorymocks.NewProviderLocator(t)
-	locator.EXPECT().Get("openai").Return(client, nil).Once()
-	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
-	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
 
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	var decoded struct {
-		Error struct {
-			Message string `json:"message"`
-			Type    string `json:"type"`
-			Param   string `json:"param"`
-		} `json:"error"`
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			var decoded struct {
+				Error struct {
+					Message string `json:"message"`
+					Type    string `json:"type"`
+					Param   string `json:"param"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(resp.Body, &decoded))
+			assert.Equal(t, "invalid_request_error", decoded.Error.Type)
+			assert.Equal(t, "tools", decoded.Error.Param)
+			assert.Contains(t, decoded.Error.Message, model)
+			assert.Contains(t, decoded.Error.Message, "Responses API")
+			assert.NotContains(t, decoded.Error.Message, "set reasoning_effort to 'none'")
+		})
 	}
-	require.NoError(t, json.Unmarshal(resp.Body, &decoded))
-	assert.Equal(t, "invalid_request_error", decoded.Error.Type)
-	assert.Equal(t, "tools", decoded.Error.Param)
-	assert.Contains(t, decoded.Error.Message, "gpt-6.1-sol")
-	assert.Contains(t, decoded.Error.Message, "Responses API")
-	assert.NotContains(t, decoded.Error.Message, "set reasoning_effort to 'none'")
 }
 
 func TestProviderInvoke_SolKeepsUnrelatedProviderError(t *testing.T) {
