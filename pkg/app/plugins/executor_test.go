@@ -15,8 +15,13 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -961,4 +966,90 @@ func TestExecutor_RunStage_ParallelBatchSiblingCancellationIsNotFailedOpen(t *te
 		assert.NotEqual(t, "failed_open", decision,
 			"a sibling's cancellation must not be recorded as this plugin failing open")
 	}
+}
+
+// guardrailPlugin stands in for an external guardrail: its call outlives the
+// sibling's verdict, comes back with the batch context's cause as net/http
+// returns it, and is resolved through HandleExternalFailure like the real ones.
+type guardrailPlugin struct {
+	fakePlugin
+	logger *slog.Logger
+}
+
+func (g *guardrailPlugin) Execute(ctx context.Context, in ExecInput) (*Result, error) {
+	<-ctx.Done()
+	return HandleExternalFailure(ExternalFailure{
+		Ctx:    ctx,
+		Plugin: g.name,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: FailureTransport,
+		Err:    fmt.Errorf("guard call: Post \"http://guard/v1/evaluate\": %w", context.Cause(ctx)),
+		Logger: g.logger,
+		Event:  in.Event,
+	}).Returns()
+}
+
+// TestExecutor_RunStage_SiblingBlockIsNotAGuardrailFailedOpen is the production
+// log of RUN-1884: request_size blocked with a 413 in the same parallel batch as
+// an external guardrail, whose call then failed with the 413's own message and
+// was logged and recorded as failed_open / transport.
+func TestExecutor_RunStage_SiblingBlockIsNotAGuardrailFailedOpen(t *testing.T) {
+	sizeLimit := &PluginError{StatusCode: http.StatusRequestEntityTooLarge, Message: "character limit exceeded: received 604 characters"}
+	limiter := &fakePlugin{
+		name:   "request-size",
+		stages: []policy.Stage{policy.StagePreRequest},
+		err:    sizeLimit,
+	}
+	var logs bytes.Buffer
+	var mu sync.Mutex
+	guard := &guardrailPlugin{
+		fakePlugin: fakePlugin{name: "guardrail", stages: []policy.Stage{policy.StagePreRequest}},
+		logger:     slog.New(slog.NewTextHandler(&lockedBuffer{mu: &mu, b: &logs}, nil)),
+	}
+	exec := NewExecutor(newRegistry(t, limiter, guard), nil)
+
+	rt := trace.New("t", trace.Metadata{})
+	pols := policies(t,
+		polSpec{slug: "request-size", enabled: true, priority: 1, parallel: true, mode: policy.ModeEnforce},
+		polSpec{slug: "guardrail", enabled: true, priority: 1, parallel: true, mode: policy.ModeEnforce},
+	)
+	_, err := exec.RunStage(trace.NewContext(context.Background(), rt), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	pe, ok := AsPluginError(err)
+	require.True(t, ok, "err = %v, want the limiter's own refusal", err)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, pe.StatusCode)
+
+	spans := rt.Spans()
+	require.Len(t, spans, 2)
+	seen := false
+	for _, span := range spans {
+		if span.Name != "guardrail" {
+			continue
+		}
+		seen = true
+		decision := ""
+		if span.Plugin != nil {
+			decision = span.Plugin.Decision
+		}
+		assert.Empty(t, decision, "a sibling's block must not be recorded as the guardrail failing")
+	}
+	require.True(t, seen, "the guardrail's span must be published")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Empty(t, logs.String(), "a sibling's block must not be logged as a guardrail failure")
+}
+
+type lockedBuffer struct {
+	mu *sync.Mutex
+	b  *bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
 }

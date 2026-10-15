@@ -961,7 +961,6 @@ func (p *Plugin) guardFailureOmitting(
 	reason string,
 	err error,
 ) (*appplugins.Result, error) {
-	recordEvaluateFailure(ctx, reason)
 	sharedReason, detail := sharedFailure(reason, "")
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:    ctx,
@@ -974,6 +973,10 @@ func (p *Plugin) guardFailureOmitting(
 		Logger: p.logger,
 		Event:  in.Event,
 	})
+	if outcome.Abandoned {
+		return outcome.Returns()
+	}
+	recordEvaluateFailure(ctx, reason)
 	failure := guardData{
 		Direction:               direction,
 		Decision:                outcome.Decision,
