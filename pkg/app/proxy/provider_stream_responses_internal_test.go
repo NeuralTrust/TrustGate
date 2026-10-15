@@ -909,7 +909,7 @@ func TestAdaptStream_ResponsesClientGetsTheResponsesStreamContract(t *testing.T)
 	}
 }
 
-func TestAdaptStream_ResponsesClientKeepsUpstreamResponseIdentity(t *testing.T) {
+func TestAdaptStream_ResponsesClientPrefixesUpstreamResponseIdentity(t *testing.T) {
 	tests := []struct {
 		name      string
 		target    adapter.Format
@@ -917,7 +917,7 @@ func TestAdaptStream_ResponsesClientKeepsUpstreamResponseIdentity(t *testing.T) 
 		wantID    string
 		wantModel string
 	}{
-		{name: "openai", target: adapter.FormatOpenAI, upstream: openAIUpstreamWithIncludeUsage(), wantID: "c", wantModel: "gpt"},
+		{name: "openai", target: adapter.FormatOpenAI, upstream: openAIUpstreamWithIncludeUsage(), wantID: "resp_c", wantModel: "gpt"},
 		{
 			name:   "bedrock without an id",
 			target: adapter.FormatBedrock,
@@ -939,6 +939,8 @@ func TestAdaptStream_ResponsesClientKeepsUpstreamResponseIdentity(t *testing.T) 
 			} else {
 				assert.Equal(t, tt.wantID, final.ID)
 			}
+			assert.True(t, strings.HasPrefix(events[0].Response.ID, "resp_"), events[0].Response.ID)
+			assert.Equal(t, events[0].Response.ID, final.ID)
 			assert.Equal(t, tt.wantModel, final.Model)
 			assert.Equal(t, final.Model, events[0].Response.Model)
 		})
