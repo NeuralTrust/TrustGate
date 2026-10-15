@@ -459,19 +459,48 @@ func TestProviderInvoke_ClientToolsOnModelsWithoutChatFunctionTools(t *testing.T
 
 			require.NoError(t, err)
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-			var decoded struct {
-				Error struct {
-					Message string `json:"message"`
-					Type    string `json:"type"`
-					Param   string `json:"param"`
-				} `json:"error"`
-			}
-			require.NoError(t, json.Unmarshal(resp.Body, &decoded))
-			assert.Equal(t, "invalid_request_error", decoded.Error.Type)
-			assert.Equal(t, "tools", decoded.Error.Param)
-			assert.Contains(t, decoded.Error.Message, model)
-			assert.Contains(t, decoded.Error.Message, "Responses API")
-			assert.NotContains(t, decoded.Error.Message, "set reasoning_effort to 'none'")
+			assert.JSONEq(t, `{
+				"error": {
+					"message": "function tools are not supported on Chat Completions for `+model+`. Use the Responses API for tool calling.",
+					"type": "invalid_request_error",
+					"param": "tools",
+					"code": "unsupported_value"
+				}
+			}`, string(resp.Body))
+		})
+	}
+}
+
+func TestProviderInvoke_ClientToolsMentionsReasoningEffortWhenSent(t *testing.T) {
+	for _, effort := range []string{`"none"`, `"low"`} {
+		t.Run(effort, func(t *testing.T) {
+			body := `{"model":"gpt-6.1-sol","reasoning_effort":` + effort + `,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+					hasEffort := strings.Contains(string(sent), `"reasoning_effort"`)
+					// "none" is dropped before the upstream call; any other value is kept.
+					return hasEffort == (effort != `"none"`) && strings.Contains(string(sent), `"qa_escalate"`)
+				})).
+				Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+				Once()
+
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.JSONEq(t, `{
+				"error": {
+					"message": "function tools are not supported on Chat Completions for gpt-6.1-sol. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+					"type": "invalid_request_error",
+					"param": "tools",
+					"code": "unsupported_value"
+				}
+			}`, string(resp.Body))
 		})
 	}
 }

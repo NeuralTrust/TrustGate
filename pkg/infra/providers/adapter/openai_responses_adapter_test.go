@@ -1988,3 +1988,72 @@ func TestAdaptStreamChunk_TranslatedResponsesRewritesTerminatorIdentity(t *testi
 	assert.Equal(t, int64(1710000000), event.Response.CreatedAt)
 	assert.Equal(t, "gpt-5.4-mini-std", event.Response.Model)
 }
+
+func TestResponsesWireID_PrefixesEveryUpstreamID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		upstream string
+		want     string
+	}{
+		{upstream: "", want: ""},
+		{upstream: "chatcmpl-abc", want: "resp_abc"},
+		{upstream: "resp_abc", want: "resp_abc"},
+		{upstream: "chatcmpl-resp_abc", want: "resp_abc"},
+		{upstream: "2853b97153014cb28bd036a249a5175b", want: "resp_2853b97153014cb28bd036a249a5175b"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.upstream, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, responsesWireID(tc.upstream))
+		})
+	}
+}
+
+func TestAdaptResponse_BareUpstreamIDGetsRespPrefix(t *testing.T) {
+	t.Parallel()
+	const upstream = "2853b97153014cb28bd036a249a5175b"
+	body := `{
+		"id": "` + upstream + `",
+		"object": "chat.completion",
+		"created": 1710000000,
+		"model": "Llama-3.3-70B-Instruct",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": "OK"},
+			"finish_reason": "stop"
+		}]
+	}`
+	out, err := testRegistry().AdaptResponse([]byte(body), FormatOpenAIResponses, FormatAzure)
+	require.NoError(t, err)
+
+	var resp openaiResponsesResponse
+	require.NoError(t, json.Unmarshal(out, &resp))
+	assert.Equal(t, "resp_"+upstream, resp.ID)
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, "msg_"+upstream, resp.Output[0].ID)
+}
+
+func TestAdaptStreamChunk_BareUpstreamIDGetsRespPrefix(t *testing.T) {
+	t.Parallel()
+	const upstream = "2853b97153014cb28bd036a249a5175b"
+	chunk := `{"id":"` + upstream + `","object":"chat.completion.chunk","created":1710000000,"model":"mistral-small","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	lines, err := testRegistry().AdaptStreamChunk([]byte(chunk), FormatOpenAIResponses, FormatAzure)
+	require.NoError(t, err)
+
+	var payload string
+	for _, line := range lines {
+		if rest, ok := strings.CutPrefix(string(line), "data: "); ok {
+			payload = rest
+		}
+	}
+	require.NotEmpty(t, payload)
+	var event struct {
+		Type     string `json:"type"`
+		Response struct {
+			ID string `json:"id"`
+		} `json:"response"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(payload), &event))
+	assert.Equal(t, "response.completed", event.Type)
+	assert.Equal(t, "resp_"+upstream, event.Response.ID)
+}

@@ -63,6 +63,10 @@ var ErrModelNotAllowed = errors.New("model not allowed")
 // read the body as a JSON object. The parser's own text stays in the log.
 const invalidJSONObjectMessage = "request body must be a JSON object"
 
+// invalidMessagesMessage is what a client sees when chat messages are present
+// but are not an array. The decoder's type error stays in the log.
+const invalidMessagesMessage = "messages must be an array"
+
 var ErrContextWindowExceeded = errors.New("context window exceeded")
 
 type ProviderResponse struct {
@@ -227,7 +231,7 @@ func (p *providerInvoker) Invoke(
 		respBody, err = p.invokeUpstream(ctx, &retryPrep)
 		prep = &retryPrep
 	} else {
-		err = unsupportedReasoningToolsError(prep, err)
+		err = unsupportedReasoningToolsError(prep, req.Body, err)
 	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
@@ -314,7 +318,7 @@ func (p *providerInvoker) InvokeStream(
 	if retryBody, ok := p.retryBodyFor(ctx, prep, body, err); ok {
 		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
 	} else {
-		err = unsupportedReasoningToolsError(prep, err)
+		err = unsupportedReasoningToolsError(prep, req.Body, err)
 	}
 	if err != nil {
 		cancel()
@@ -594,10 +598,11 @@ func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) 
 }
 
 // unsupportedReasoningToolsError replaces OpenAI's "set reasoning_effort to
-// none" instruction when the model rejects that value. The instruction is not
-// actionable: sending none is a second 400, and another effort still counts as
-// reasoning, which Chat Completions rejects for these models.
-func unsupportedReasoningToolsError(prep *preparedInvocation, err error) error {
+// none" instruction when the model rejects that value. Function tools are not
+// supported on Chat Completions for these models at any effort, so the
+// instruction is not actionable. reasoning_effort is named only when the
+// client request included it.
+func unsupportedReasoningToolsError(prep *preparedInvocation, requestBody []byte, err error) error {
 	if prep == nil || err == nil || prep.providerName != provider.OpenAI || prep.targetFormat != adapter.FormatOpenAI ||
 		!adapter.ModelRejectsReasoningEffortNone(prep.sentModel) {
 		return err
@@ -606,15 +611,22 @@ func unsupportedReasoningToolsError(prep *preparedInvocation, err error) error {
 	if !ok || !adapter.BodyRequiresReasoningEffortNone(backendErr.Body) {
 		return err
 	}
+	message := fmt.Sprintf(
+		"function tools are not supported on Chat Completions for %s. Use the Responses API for tool calling.",
+		prep.sentModel,
+	)
+	if clientSentReasoningEffort(requestBody) {
+		message = fmt.Sprintf(
+			"function tools are not supported on Chat Completions for %s. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+			prep.sentModel,
+		)
+	}
 	body, marshalErr := json.Marshal(map[string]any{
 		"error": map[string]any{
-			"message": fmt.Sprintf(
-				"function tools are not supported on Chat Completions for %s. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
-				prep.sentModel,
-			),
-			"type":  "invalid_request_error",
-			"param": "tools",
-			"code":  "unsupported_value",
+			"message": message,
+			"type":    "invalid_request_error",
+			"param":   "tools",
+			"code":    "unsupported_value",
 		},
 	})
 	if marshalErr != nil {
@@ -624,6 +636,27 @@ func unsupportedReasoningToolsError(prep *preparedInvocation, err error) error {
 		StatusCode: http.StatusBadRequest,
 		Body:       body,
 		RetryAfter: backendErr.RetryAfter,
+	}
+}
+
+// clientSentReasoningEffort reports whether the original client body set
+// reasoning_effort. A missing, empty, or null field does not count. The body
+// forwarded upstream is not a substitute: "none" is removed before the call
+// for models that reject it.
+func clientSentReasoningEffort(body []byte) bool {
+	var request map[string]json.RawMessage
+	if json.Unmarshal(body, &request) != nil {
+		return false
+	}
+	effort, ok := request["reasoning_effort"]
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(string(effort)) {
+	case "", "null", `""`:
+		return false
+	default:
+		return true
 	}
 }
 

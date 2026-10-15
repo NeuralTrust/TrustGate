@@ -825,6 +825,31 @@ func TestDetectFormat_CompletionsStillDetected(t *testing.T) {
 	assert.Equal(t, FormatOpenAI, got)
 }
 
+func TestChatMessagesNotArray(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "string", body: `{"model":"gpt-4.1-nano","messages":"x"}`, want: true},
+		{name: "object", body: `{"messages":{"role":"user"}}`, want: true},
+		{name: "number", body: `{"messages":1}`, want: true},
+		{name: "null", body: `{"messages":null}`, want: true},
+		{name: "array", body: `{"messages":[{"role":"user","content":"hi"}]}`, want: false},
+		{name: "empty array", body: `{"messages":[]}`, want: false},
+		{name: "absent", body: `{"model":"gpt-4.1-nano"}`, want: false},
+		{name: "not an object", body: `[]`, want: false},
+		{name: "empty", body: ``, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, ChatMessagesNotArray([]byte(tc.body)))
+		})
+	}
+}
+
 func TestAdaptRequest_ResponsesAPIToAnthropic(t *testing.T) {
 	input := `{
 		"model": "gpt-4o",
