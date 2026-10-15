@@ -153,7 +153,8 @@ func TestASlowProviderOnAChunkOfTheFirstRoundIsAvailability(t *testing.T) {
 	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
 }
 
-// A client that left is not the request's content.
+// A client that left is not the request's content: it is never refused as
+// input, and, the request being over, it is not recorded as a failure either.
 func TestAClientThatLeavesIsNeverInput(t *testing.T) {
 	t.Parallel()
 	srv := answeringServer(t, func(n int32, w http.ResponseWriter, r *http.Request) {
@@ -174,10 +175,9 @@ func TestAClientThatLeavesIsNeverInput(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	extras, ok := span.PluginAttrsCopy().Extras.(ModerationData)
-	require.True(t, ok)
-	assert.Equal(t, "availability", extras.FailureClass)
-	assert.Equal(t, appplugins.DecisionFailedOpen, extras.Decision)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	extras, recorded := span.PluginAttrsCopy().Extras.(ModerationData)
+	assert.False(t, recorded, "a client that left must not be recorded as this guardrail failing, got %+v", extras)
 }
 
 // Fast calls and a forced cut: the request's own chunks used a deadline shorter

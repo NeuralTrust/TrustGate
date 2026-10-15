@@ -17,6 +17,7 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1077,4 +1078,58 @@ func TestSettingsWriteRefusesANewStreamingOptOut(t *testing.T) {
 	require.NoError(t, p.ValidateSettingsWrite(off, off), "a policy stored with the value stays editable")
 	require.NoError(t, p.ValidateSettingsWrite(on, nil))
 	require.NoError(t, p.ValidateSettingsWrite(streamingSettings(nil), nil))
+}
+
+// RUN-1884, stream leg: a client that leaves mid-stream cancels the evaluate in
+// flight. The block is resolved as before, but the guard did not fail, so
+// nothing is logged and the closing segment does not carry it as failed_open. A
+// guard that does fail still is, which is what makes the first case meaningful.
+func TestInspectSegmentCancelledEvaluateIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		guard      *segmentGuard
+		cancel     bool
+		wantLogged bool
+	}{
+		"client left":  {guard: &segmentGuard{response: GuardResponse{Status: statusAllow}, delays: []time.Duration{time.Second}}, cancel: true},
+		"guard failed": {guard: &segmentGuard{status: http.StatusInternalServerError}, wantLogged: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var logs strings.Builder
+			var mu sync.Mutex
+			logger := slog.New(slog.NewTextHandler(&lockedWriter{mu: &mu, w: &logs}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			p := New(adapter.NewRegistry(), newSegmentServer(t, tc.guard).URL, testClientTimeout, "test-client", "test-secret", logger,
+				withBaseTransport(testTransport(t)))
+			set := streamingSettings(nil)
+
+			ctx, cancel := context.WithCancel(segmentTraceContext())
+			t.Cleanup(cancel)
+			if tc.cancel {
+				timer := time.AfterFunc(200*time.Millisecond, cancel)
+				t.Cleanup(func() { timer.Stop() })
+			}
+			verdict, err := p.InspectSegment(ctx, segmentInput(t, set), appplugins.StreamSegment{Seq: 2, Accumulated: "Hello world"})
+			require.NoError(t, err)
+			require.NotNil(t, verdict)
+			assert.False(t, verdict.Block)
+
+			event, span := newEvent()
+			closing := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, set, segmentRequest(), nil, event)
+			_, err = p.InspectSegment(segmentTraceContext(), closing, appplugins.StreamSegment{Seq: 3, Closing: true, Report: appplugins.StreamReport{Evals: 1}})
+			require.NoError(t, err)
+			data, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantLogged, data.FailedOpen, "closing data = %+v", data)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if tc.wantLogged {
+				assert.Contains(t, logs.String(), "failing open")
+			} else {
+				assert.Empty(t, logs.String())
+			}
+		})
+	}
 }

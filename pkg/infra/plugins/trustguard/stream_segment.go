@@ -385,8 +385,17 @@ func (p *Plugin) segmentFailureOf(
 	block *appplugins.SegmentVerdict,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
-	recordEvaluateFailure(ctx, reason)
 	verdict, _ := appplugins.ExternalStreamOutcome(PluginName, in.Mode, sharedReason, detail, block, err)
+	if block == nil && appplugins.Cancelled(ctx) {
+		// The client left mid-stream: the guard did not fail, so the outcome is
+		// unchanged but nothing is counted, logged or carried to the closing
+		// segment as failed_open, as on the buffered leg.
+		if verdict != nil {
+			return verdict, nil
+		}
+		return segmentAllow(), nil
+	}
+	recordEvaluateFailure(ctx, reason)
 	if verdict != nil && verdict.Block {
 		p.warn(ctx, "trustguard could not inspect stream segment, cutting the stream",
 			slog.String("plugin", PluginName),
