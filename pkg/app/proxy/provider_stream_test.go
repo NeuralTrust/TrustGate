@@ -16,6 +16,7 @@ package proxy_test
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"net/http"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	factorymocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
 	providermocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/mocks"
@@ -369,4 +371,75 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	attrs, ok := span.LLMAttrsCopy()
 	require.True(t, ok)
 	assert.Equal(t, "chatcmpl-stream", attrs.TurnID, "streamed provider id captured as turn id")
+}
+
+func TestInvokeStream_OpenAIStillInjectsStreamIncludeUsage(t *testing.T) {
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) (iter.Seq2[[]byte, error], error) {
+			sent = body
+			return seqOf([]byte("data: [DONE]")), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openai", client)
+	req := &infracontext.RequestContext{Body: []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}`)}
+
+	_, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `{"include_usage":true}`, string(got["stream_options"]))
+}
+
+func TestInvokeStream_AzureMistralOmitsStreamOptionsAndRecordsFinishUsage(t *testing.T) {
+	const mistralFinish = `data: {"id":"chatcmpl-mistral","object":"chat.completion.chunk","model":"mistral-small-2503","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}`
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "client omits stream_options", body: `{"model":"probe-mistral","messages":[{"role":"user","content":"hi"}],"stream":true}`},
+		{name: "client sends stream_options", body: `{"model":"probe-mistral","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) (iter.Seq2[[]byte, error], error) {
+					sent = body
+					return seqOf(
+						[]byte(`data: {"id":"chatcmpl-mistral","choices":[{"index":0,"delta":{"content":"hi"}}]}`),
+						[]byte(mistralFinish),
+						[]byte("data: [DONE]"),
+					), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{Body: []byte(tc.body)}
+			rt := trace.New("trace-mistral", trace.Metadata{})
+			require.NotNil(t, rt.StartSpan(trace.SpanLLM, "azure"))
+			ctx := trace.NewContext(context.Background(), rt)
+
+			resp, err := inv.InvokeStream(ctx, apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+			collectStream(t, resp.Stream)
+
+			var got map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(sent, &got))
+			assert.NotContains(t, got, "stream_options", "Foundry Mistral must not be sent stream_options")
+
+			usage := rt.LLMUsage()
+			require.NotNil(t, usage, "Mistral streams usage on the finish chunk by default")
+			assert.Equal(t, 12, usage.InputTokens)
+			assert.Equal(t, 4, usage.OutputTokens)
+			assert.Equal(t, 16, usage.TotalTokens)
+			metadataUsage, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
+			require.True(t, ok)
+			assert.Equal(t, 16, metadataUsage.TotalTokens)
+		})
+	}
 }
