@@ -260,11 +260,23 @@ func (i *Installation) InstanceLabel() string {
 // with config is this very install: same configured instance and identical
 // per-user config. It is the dedupe rule — such an install refreshes this row
 // rather than creating a new instance.
-func (i *Installation) SameInstance(registryID ids.RegistryID, config map[string]string) bool {
+//
+// An unbound install is served by the code's canonical instance, so on either
+// side a nil binding stands for canonical. Comparing bindings alone made a
+// request bound to a code's sole instance, once approved, and a later unbound
+// install of that code two instances of one server.
+func (i *Installation) SameInstance(registryID, canonical ids.RegistryID, config map[string]string) bool {
 	if i == nil {
 		return false
 	}
-	return i.RegistryID == registryID && i.SameConfig(config)
+	return servedBy(i.RegistryID, canonical) == servedBy(registryID, canonical) && i.SameConfig(config)
+}
+
+func servedBy(binding, canonical ids.RegistryID) ids.RegistryID {
+	if binding.IsNil() {
+		return canonical
+	}
+	return binding
 }
 
 // SameConfig reports whether two installs carry the identical per-user config,
