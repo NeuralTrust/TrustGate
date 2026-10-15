@@ -3,13 +3,13 @@ kind: Kustomization
 metadata:
   name: agentgateway
 # config-sync gRPC public endpoint (hybrid data planes) + its cert-manager cert
+# PSC edge (ENG-1601) — parented to psc-gateway in the gateway-psc namespace
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
 - cloudflare-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# PSC edge (ENG-1601) — parented to psc-gateway in the gateway-psc namespace
 - psc-services.yaml
 - psc-httproutes.yaml
 - psc-healthchecks.yaml
@@ -67,7 +67,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
-  newTag: v0.63.11
+  newTag: v0.64.0
 configMapGenerator:
 - behavior: create
   envs:
