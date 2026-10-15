@@ -329,6 +329,30 @@ func TestGemini_DecodeRequest_SkipsThoughtParts(t *testing.T) {
 	assert.NotContains(t, cr.Messages[0].Content, "secret")
 }
 
+func TestGemini_DecodeRequest_KeepsThoughtFunctionResponse(t *testing.T) {
+	input := `{
+		"contents":[
+			{"role":"user","parts":[{"text":"Weather?"}]},
+			{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"}}]},
+			{"role":"user","parts":[
+				{"thought":true,"text":"secret thought","functionResponse":{"name":"get_weather","id":"call_1","response":{"result":"sunny"}}}
+			]}
+		]
+	}`
+	cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 3)
+	assert.Equal(t, CanonicalMessage{Role: "tool", ToolCallID: "call_1", Content: `{"result":"sunny"}`}, cr.Messages[2])
+	assert.NotContains(t, cr.Messages[2].Content, "secret")
+
+	encoded, err := (&OpenAIAdapter{}).EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"role":"tool"`)
+	assert.Contains(t, string(encoded), `"tool_call_id":"call_1"`)
+	assert.Contains(t, string(encoded), `sunny`)
+	assert.NotContains(t, string(encoded), "secret")
+}
+
 func TestGemini_DecodeStreamChunk_SkipsThoughtParts(t *testing.T) {
 	chunk := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"secret"},{"text":"hello"}]}}]}`)
 	sc, err := (&GeminiAdapter{}).DecodeStreamChunk(chunk)
