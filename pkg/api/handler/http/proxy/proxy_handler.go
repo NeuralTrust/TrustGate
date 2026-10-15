@@ -264,6 +264,7 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 		return writeProxyError(c, err)
 	}
 	if limited != nil {
+		preparePlanRateLimitBody(reqCtx, limited)
 		relayHeaders(c, limited.Headers)
 		return c.Status(limited.StatusCode).Send(limited.Body)
 	}
@@ -296,6 +297,7 @@ func (h *ForwardedHandler) forward(c *fiber.Ctx, in appproxy.ForwardInput) error
 		return writeProxyError(c, err)
 	}
 
+	preparePlanRateLimitBody(in.Request, result)
 	if in.Request.IsBedrockNative() {
 		envelopeNativeError(result)
 	}
@@ -366,6 +368,17 @@ func envelopeNativeError(result *appproxy.ForwardResult) {
 		headers[name] = values
 	}
 	result.Headers, result.Body = headers, body
+}
+
+// preparePlanRateLimitBody turns a flat plan burst or quota 429 into the
+// ingress dialect before it is written. Native Bedrock is left flat:
+// envelopeNativeError wraps that shape in the AWS envelope. Retry-After is
+// already on the result and is not touched.
+func preparePlanRateLimitBody(req *infracontext.RequestContext, result *appproxy.ForwardResult) {
+	if result == nil || req == nil || req.IsBedrockNative() {
+		return
+	}
+	result.Body = appproxy.RewritePlanRateLimitBody(req, result.StatusCode, result.Headers, result.Body)
 }
 
 func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
