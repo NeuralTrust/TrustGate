@@ -1324,3 +1324,40 @@ func TestUsageUnfold_CacheAboveInput(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bedrockBody, &bedrockWire))
 	assert.Equal(t, 0, bedrockWire.Usage.InputTokens)
 }
+
+func TestAdaptResponseWithModel(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		source      Format
+		target      Format
+		body        string
+		sentModel   string
+		wantModel   string
+		passthrough bool
+	}{
+		{name: "missing model", source: FormatOpenAI, target: FormatCohere,
+			body: `{"id":"r","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`, sentModel: "command-r7b-12-2024", wantModel: "command-r7b-12-2024"},
+		{name: "responses format", source: FormatOpenAIResponses, target: FormatCohere,
+			body: `{"id":"r","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`, sentModel: "command-r7b-12-2024", wantModel: "command-r7b-12-2024"},
+		{name: "upstream version takes precedence", source: FormatOpenAI, target: FormatAnthropic,
+			body: `{"id":"r","type":"message","model":"claude-haiku-4-5-20251001","role":"assistant","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}`, sentModel: "claude-haiku-4-5", wantModel: "claude-haiku-4-5-20251001"},
+		{name: "native cohere untouched", source: FormatCohere, target: FormatCohere,
+			body: `{"id":"r","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`, sentModel: "command-r7b-12-2024", passthrough: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := NewRegistry().AdaptResponseWithModel([]byte(tc.body), tc.source, tc.target, tc.sentModel)
+			require.NoError(t, err)
+			if tc.passthrough {
+				assert.Equal(t, tc.body, string(out))
+				return
+			}
+			var response struct {
+				Model string `json:"model"`
+			}
+			require.NoError(t, json.Unmarshal(out, &response))
+			assert.Equal(t, tc.wantModel, response.Model)
+		})
+	}
+}
