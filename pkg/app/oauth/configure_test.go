@@ -120,6 +120,7 @@ func (f *fakeShelf) List(context.Context, registrydomain.ListFilter) ([]*registr
 func shelf(code string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
+		Enabled:   true,
 		MCPTarget: &registrydomain.MCPTarget{Code: code},
 	}
 }
