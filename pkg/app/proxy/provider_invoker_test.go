@@ -1309,6 +1309,9 @@ func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T
 		{name: "chat empty", body: nil, client: &upstreamRecorder{}},
 		{name: "chat blank", body: []byte{}, client: &upstreamRecorder{}},
 		{name: "chat array", body: []byte("[]"), client: &upstreamRecorder{}},
+		{name: "chat model number", body: []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`), client: &upstreamRecorder{}},
+		{name: "chat model object", body: []byte(`{"model":{"id":"gpt-4o"},"messages":[{"role":"user","content":"Hello"}]}`), client: &upstreamRecorder{}},
+		{name: "chat model null", body: []byte(`{"model":null,"messages":[{"role":"user","content":"Hello"}]}`), client: &upstreamRecorder{}},
 		{name: "images array", capability: "images", body: []byte("[]"), client: &imagesTestClient{}},
 		{name: "audio empty", capability: "audio_speech", body: nil, client: &audioTestClient{}},
 	}
@@ -1328,24 +1331,28 @@ func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T
 			assert.Contains(t, err.Error(), "request body must be a JSON object")
 			assert.NotContains(t, err.Error(), "unexpected end of JSON input")
 			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.NotContains(t, err.Error(), "Go value of type")
+			assert.NotContains(t, err.Error(), "model must be a string")
 			assert.NotContains(t, err.Error(), "model enforcement")
 		})
 	}
 }
 
-func TestProviderInvoke_NonStringModelWithAllowListStaysDenied(t *testing.T) {
+func TestProviderInvoke_DisallowedStringModelStaysDenied(t *testing.T) {
 	t.Parallel()
 	locator := factorymocks.NewProviderLocator(t)
 	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
 	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
 	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
-		Body:          []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`),
+		Body:          []byte(`{"model":"gpt-4-forbidden","messages":[{"role":"user","content":"Hello"}]}`),
 		AllowedModels: []string{"gpt-4o-mini"},
 	})
 
 	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
 	require.NotErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	assert.NotContains(t, err.Error(), "cannot unmarshal")
+	assert.NotContains(t, err.Error(), "Go value of type")
 }
 
 func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {

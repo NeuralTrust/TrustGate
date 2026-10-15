@@ -63,6 +63,12 @@ func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]b
 		return body, "", nil
 	}
 
+	// Null, numbers, and objects are not model names. Returning a plain error
+	// (not ErrModelNotAllowed) lets callers use the invalid-request path
+	// without echoing the JSON decoder.
+	if !isJSONString(modelRaw) {
+		return body, "", errors.New("model must be a string")
+	}
 	var model string
 	if err := json.Unmarshal(modelRaw, &model); err != nil {
 		return body, "", err
