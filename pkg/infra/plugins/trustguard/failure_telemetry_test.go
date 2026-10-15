@@ -17,8 +17,12 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,4 +125,60 @@ func TestObserveKeepsTheFindingOfAnUnappliableMask(t *testing.T) {
 	assert.False(t, verdict.Block)
 	assert.Len(t, verdict.Fingerprints, 1)
 	require.NotNil(t, verdict.Incomplete)
+}
+
+// RUN-1884: a sibling that blocks in the same parallel batch cancels the
+// evaluate call in flight, and net/http returns the sibling's error from it.
+// TrustGuard did not fail, so the plugin neither warns nor records failed_open.
+// A call that runs out of its own time is still a failure on the record.
+func TestCancelledEvaluateIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, ctx context.Context) (string, *guardData) {
+		t.Helper()
+		f := &fakeGuard{response: GuardResponse{Status: statusAllow}, delay: time.Second}
+		srv := newServer(t, f)
+		var logs strings.Builder
+		var mu sync.Mutex
+		logger := slog.New(slog.NewTextHandler(&lockedWriter{mu: &mu, w: &logs}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", logger)
+		event, span := newEvent()
+
+		res, err := p.Execute(ctx, execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event))
+		require.NoError(t, err)
+		require.NotNil(t, res)
+
+		mu.Lock()
+		defer mu.Unlock()
+		if extras, ok := span.PluginAttrsCopy().Extras.(guardData); ok {
+			return logs.String(), &extras
+		}
+		return logs.String(), nil
+	}
+
+	t.Run("sibling block", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancelCause(context.Background())
+		sibling := &appplugins.PluginError{StatusCode: http.StatusRequestEntityTooLarge, Message: "character limit exceeded: received 604 characters"}
+		timer := time.AfterFunc(200*time.Millisecond, func() { cancel(sibling) })
+		t.Cleanup(func() { timer.Stop() })
+
+		logs, extras := run(t, ctx)
+		assert.Empty(t, logs)
+		if extras != nil {
+			assert.False(t, extras.FailedOpen, "extras = %+v", *extras)
+			assert.Empty(t, extras.Decision)
+			assert.Empty(t, extras.FailureReason)
+		}
+	})
+	t.Run("deadline", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		t.Cleanup(cancel)
+
+		logs, extras := run(t, ctx)
+		assert.Contains(t, logs, "external guardrail call failed")
+		require.NotNil(t, extras)
+		assert.True(t, extras.FailedOpen)
+	})
 }

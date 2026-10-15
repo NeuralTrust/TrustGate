@@ -17,6 +17,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -231,6 +232,13 @@ type ExternalFailureOutcome struct {
 	Class    FailureClass
 	Result   *Result
 	Err      *PluginError
+	// Abandoned is any failure with no finding on a call whose context the
+	// caller cancelled: a sibling in the same parallel batch blocked, or the
+	// client left. The request is already over, so nothing was logged
+	// and no span decision was set, and the caller records nothing either: it
+	// returns Result or Err as they are. A deadline is not a cancellation, so a
+	// guardrail that ran out of time is still a failure on the record.
+	Abandoned bool
 }
 
 // HandleExternalFailure applies the one rule every external guardrail follows
@@ -246,6 +254,11 @@ type ExternalFailureOutcome struct {
 //     plugin's own block error, blocked.
 //
 // There is no policy setting that changes this.
+//
+// A failure with no finding on a cancelled context is Abandoned: the outcome is
+// the same, but it is neither logged nor set as the span decision, as the
+// executor does for any plugin error under a cancelled context. A failure that
+// carries a finding is a verdict the guardrail reached, and is always recorded.
 //
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
@@ -268,9 +281,30 @@ func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
 			outcome.Err = UninspectableError(f.Message)
 		}
 	}
+	if f.Finding == nil && Cancelled(f.Ctx) {
+		outcome.Abandoned = true
+		return outcome
+	}
 	SetDecisionFromOutcome(f.Event, outcome.Decision)
 	logExternalFailure(f, outcome.Decision)
 	return outcome
+}
+
+// Cancelled reports whether the caller cancelled ctx: a sibling in the same
+// parallel batch blocked (errgroup cancels the batch with the sibling's error
+// as the cause, which net/http then returns from the guardrail's own call), or
+// the client left. A deadline is not a cancellation.
+func Cancelled(ctx context.Context) bool {
+	return ctx != nil && errors.Is(ctx.Err(), context.Canceled)
+}
+
+// Returns is what the plugin's Execute returns for this outcome, without
+// turning a nil *PluginError into a non-nil error.
+func (o ExternalFailureOutcome) Returns() (*Result, error) {
+	if o.Err != nil {
+		return nil, o.Err
+	}
+	return o.Result, nil
 }
 
 // UninspectableError is the 403 a guardrail answers when it could not inspect
