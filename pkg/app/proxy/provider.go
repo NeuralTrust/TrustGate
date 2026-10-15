@@ -411,6 +411,7 @@ func (p *providerInvoker) prepare(
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
 
 	sentModel := resolveSentModel(body, req)
+	body = adapter.OmitUnsupportedReasoningEffort(body, sentModel)
 
 	prep := &preparedInvocation{
 		client: client,
@@ -530,6 +531,12 @@ func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) 
 	}
 	var tools []json.RawMessage
 	if json.Unmarshal(request["tools"], &tools) != nil || len(tools) == 0 {
+		return nil, false
+	}
+	// Some reasoning models reject the value OpenAI's tool error asks for.
+	// Injecting it turns a recoverable 400 into "reasoning_effort does not
+	// support none". Leave the client's payload alone for those models.
+	if adapter.ModelRejectsReasoningEffortNone(prep.sentModel) {
 		return nil, false
 	}
 	request["reasoning_effort"] = json.RawMessage(`"none"`)

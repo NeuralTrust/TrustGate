@@ -163,6 +163,26 @@ func TestInvokeStream_RetriesMaxTokensOnce(t *testing.T) {
 	assert.Contains(t, got, "ok")
 }
 
+func TestInvokeStream_ToolInjectionDoesNotSendReasoningEffortNone(t *testing.T) {
+	body := `{"model":"gpt-6.1-sol","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+				strings.Contains(string(sent), `"qa_escalate"`)
+		})).
+		Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
+		Once()
+
+	inv := newStreamInvoker(t, "openai", client)
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
+	assert.Contains(t, string(resp.Body), "Function tools with reasoning_effort")
+	assert.NotContains(t, string(resp.Body), "does not support 'none'")
+}
+
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
 	const defaultModel = "gpt-4o-mini"
 	client := providermocks.NewClient(t)
