@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -176,6 +177,31 @@ func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 	}
 	if !names["Snowflake (analytics)"] || !names["Snowflake (finance)"] {
 		t.Fatalf("instances must be labelled by their config, got %v", names)
+	}
+}
+
+// An approved request stays bound to the server it named, and a later install of
+// the code is unbound: two rows, one server. Exposed as two clones they served
+// every tool twice under one name, so they surface once, as the shelf itself.
+func TestScoperExposesTwoInstallsOfOneServerOnce(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := githubRegistry()
+	approved := mustInstall(t, gw, "ana", "github")
+	approved.RegistryID = shelf.ID
+	later := mustInstall(t, gw, "ana", "github")
+	later.CreatedAt = approved.CreatedAt.Add(time.Minute)
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{later, approved}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 1 || scoped.Registries[0] != shelf {
+		t.Fatalf("one server must surface once, as the shelf registry, got %+v", scoped.Registries)
 	}
 }
 

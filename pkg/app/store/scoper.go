@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -106,11 +107,9 @@ func (s *scoper) Scope(
 		return nil, fmt.Errorf("store scoper: list installations: %w", err)
 	}
 	active := make([]*installationdomain.Installation, 0, len(installs))
-	countByCode := make(map[string]int)
 	for _, in := range installs {
 		if in.IsActive() {
 			active = append(active, in)
-			countByCode[in.CatalogCode]++
 		}
 	}
 	if len(active) == 0 {
@@ -127,7 +126,7 @@ func (s *scoper) Scope(
 		return active[i].ID.String() < active[j].ID.String()
 	})
 
-	regs, err := s.installedRegistries(ctx, rc.Consumer.GatewayID, principal, active, countByCode)
+	regs, err := s.installedRegistries(ctx, rc.Consumer.GatewayID, principal, active)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +148,8 @@ func (s *scoper) Scope(
 // resolver reads this exact instance's values. A code with several active
 // installs (two Snowflake schemas, or two configured instances) exposes one
 // per-install clone each: a distinct registry id and a disambiguating label so
-// the composer names their tools apart.
+// the composer names their tools apart. Installs that reach the same server with
+// the same config are one instance, exposed once (see distinctInstalls).
 //
 // Access is re-checked here, not only at install time: under Selected an
 // install stays exposed only while a grant still names the principal for its
@@ -160,7 +160,6 @@ func (s *scoper) installedRegistries(
 	gatewayID ids.GatewayID,
 	principal *identity.Principal,
 	active []*installationdomain.Installation,
-	countByCode map[string]int,
 ) ([]*registrydomain.Registry, error) {
 	items, err := listRegistriesForInstalls(ctx, s.registries, gatewayID, active)
 	if err != nil {
@@ -194,8 +193,9 @@ func (s *scoper) installedRegistries(
 			return nil, fmt.Errorf("store scoper: %w", err)
 		}
 	}
-	out := make([]*registrydomain.Registry, 0, len(active))
-	for _, in := range active {
+	distinct, countByCode := distinctInstalls(active, byID, byCode)
+	out := make([]*registrydomain.Registry, 0, len(distinct))
+	for _, in := range distinct {
 		shelf := resolveInstance(in, byID, byCode)
 		if shelf == nil {
 			continue
@@ -214,6 +214,37 @@ func (s *scoper) installedRegistries(
 		out = append(out, instanceRegistry(shelf, in))
 	}
 	return out, nil
+}
+
+// distinctInstalls drops every install that reaches the same server with the
+// same config as an earlier one in active, and counts what is left per code.
+//
+// Such installs are one instance recorded twice: an approved request stays bound
+// to the server it named, while a later install of the same code binds
+// implicitly. Exposed as two per-install clones, they served the same tools
+// under the same names, and a client that refuses duplicate names lost all of
+// them. An install whose server is gone is kept and counted as before.
+func distinctInstalls(
+	active []*installationdomain.Installation,
+	byID map[ids.RegistryID]*registrydomain.Registry,
+	byCode map[string][]*registrydomain.Registry,
+) ([]*installationdomain.Installation, map[string]int) {
+	out := make([]*installationdomain.Installation, 0, len(active))
+	countByCode := make(map[string]int, len(active))
+	kept := make(map[ids.RegistryID][]*installationdomain.Installation, len(active))
+	for _, in := range active {
+		if shelf := resolveInstance(in, byID, byCode); shelf != nil {
+			if slices.ContainsFunc(kept[shelf.ID], func(k *installationdomain.Installation) bool {
+				return k.SameConfig(in.Config)
+			}) {
+				continue
+			}
+			kept[shelf.ID] = append(kept[shelf.ID], in)
+		}
+		out = append(out, in)
+		countByCode[in.CatalogCode]++
+	}
+	return out, countByCode
 }
 
 // resolveInstance returns the registry an install exposes: the one it is bound
