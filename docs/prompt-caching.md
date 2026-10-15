@@ -25,6 +25,7 @@ and 1h writes (W1h) are subsets of it, never added on top.
 | DeepSeek | the larger of `prompt_cache_hit_tokens` and `details.cached_tokens` | none | `prompt_tokens` |
 | Moonshot | the larger of top-level `cached_tokens` and `details.cached_tokens`; a stream's usage is read from its last choice | none | `prompt_tokens` |
 | OpenRouter | `details.cached_tokens` | `details.cache_write_tokens` | `prompt_tokens` |
+| DigitalOcean | the larger of `cache_read_input_tokens` and `details.cached_tokens` | `cache_created_input_tokens`; W1h from `cache_creation.ephemeral_1h_input_tokens` | `prompt_tokens`, plus R + W when `prompt_tokens_details` is absent (Claude) |
 | Groq | `details.cached_tokens` (also read from `x_groq.usage`) | none | `prompt_tokens` |
 | Cohere | `usage.cached_tokens` | none | `tokens.input_tokens` |
 | Gemini, Vertex | `cachedContentTokenCount` | none | `promptTokenCount` |
@@ -73,7 +74,7 @@ accepts:
 | OpenRouter, `anthropic/*` | – | yes | yes | 4 | yes | – | – | – | yes |
 | OpenRouter, `google/gemini*`, `qwen/*`, `openai/` GPT-5.6+ | – | yes | yes | 4 | – | – | – | – | – |
 | Mistral | – | – | – | – | – | yes | – | – | – |
-| Groq, DeepSeek, Moonshot, Gemini, Vertex, Cohere, xAI, Cerebras, OpenAI-compatible | – | – | – | – | – | – | – | – | – |
+| Groq, DeepSeek, Moonshot, DigitalOcean, Gemini, Vertex, Cohere, xAI, Cerebras, OpenAI-compatible | – | – | – | – | – | – | – | – | – |
 
 Trimming follows these rules, in this order:
 
