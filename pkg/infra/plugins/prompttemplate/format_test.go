@@ -573,7 +573,7 @@ func TestSkippedRequestsUnderRequiredModeB(t *testing.T) {
 		{"mcp unresolved format", "", "", true, `{"name":"t","arguments":{}}`, "unresolved_format", decisionSkippedFormat},
 	}
 	for _, tt := range tests {
-		run := func(mode policy.Mode, settings map[string]any) (*appplugins.Result, PromptTemplateData, error) {
+		run := func(mode policy.Mode, settings map[string]any) (*appplugins.Result, PromptTemplateData, string, error) {
 			rt := trace.New("t", trace.Metadata{})
 			span := rt.StartSpan(trace.SpanPlugin, PluginName)
 			res, err := New().Execute(context.Background(), appplugins.ExecInput{
@@ -584,38 +584,43 @@ func TestSkippedRequestsUnderRequiredModeB(t *testing.T) {
 				},
 				Event: metrics.NewEventContext(span),
 			})
-			data, _ := span.PluginAttrsCopy().Extras.(PromptTemplateData)
-			return res, data, err
+			attrs := span.PluginAttrsCopy()
+			data, _ := attrs.Extras.(PromptTemplateData)
+			return res, data, attrs.Decision, err
 		}
 
 		t.Run(tt.name+" enforce rejects with template_required", func(t *testing.T) {
-			_, data, err := run(policy.ModeEnforce, requiredModeBSettings())
+			_, data, spanDecision, err := run(policy.ModeEnforce, requiredModeBSettings())
 			pe := requirePluginError(t, err)
 			assert.Equal(t, http.StatusBadRequest, pe.StatusCode)
 			assert.Equal(t, typeRequired, pe.Type)
 			assert.Equal(t, tt.wantReason, data.SkippedReason)
-			assert.Equal(t, decisionNoOp, data.Decision)
+			assert.Equal(t, decisionBlock, data.Decision)
+			assert.Equal(t, decisionBlock, spanDecision)
 		})
 		t.Run(tt.name+" observe never blocks", func(t *testing.T) {
-			res, data, err := run(policy.ModeObserve, requiredModeBSettings())
+			res, data, spanDecision, err := run(policy.ModeObserve, requiredModeBSettings())
 			require.NoError(t, err)
 			assert.Nil(t, res.RequestBody)
 			assert.Equal(t, tt.wantReason, data.SkippedReason)
 			assert.Equal(t, tt.wantDecision, data.Decision)
+			assert.Equal(t, "observe", spanDecision)
 		})
 		t.Run(tt.name+" permissive mode B passes through", func(t *testing.T) {
 			settings := geminiModeBSettings()
 			settings["allow_untemplated_requests"] = true
-			res, data, err := run(policy.ModeEnforce, settings)
+			res, data, spanDecision, err := run(policy.ModeEnforce, settings)
 			require.NoError(t, err)
 			assert.Nil(t, res.RequestBody)
 			assert.Equal(t, tt.wantReason, data.SkippedReason)
+			assert.Empty(t, spanDecision)
 		})
 		t.Run(tt.name+" mode A only passes through", func(t *testing.T) {
-			res, data, err := run(policy.ModeEnforce, injectSettings("system", "merge", "x"))
+			res, data, spanDecision, err := run(policy.ModeEnforce, injectSettings("system", "merge", "x"))
 			require.NoError(t, err)
 			assert.Nil(t, res.RequestBody)
 			assert.Equal(t, tt.wantReason, data.SkippedReason)
+			assert.Empty(t, spanDecision)
 		})
 	}
 }
