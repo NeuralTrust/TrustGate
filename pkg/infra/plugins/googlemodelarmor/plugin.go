@@ -766,6 +766,9 @@ func (p *Plugin) externalFailure(
 		Logger:  p.logger,
 		Event:   in.Event,
 	})
+	if outcome.Abandoned {
+		return outcome.Returns()
+	}
 	data := newData(in, cfg, latencyMS)
 	data.Decision = outcome.Decision
 	data.FailureReason = string(fi.reason)

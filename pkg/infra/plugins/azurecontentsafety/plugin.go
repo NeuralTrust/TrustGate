@@ -399,6 +399,9 @@ func (p *Plugin) externalFailure(
 		Logger:  p.logger,
 		Event:   in.Event,
 	})
+	if outcome.Abandoned {
+		return outcome.Returns()
+	}
 	data := &Data{
 		Endpoint:      cfg.Endpoint,
 		OutputType:    cfg.OutputType,

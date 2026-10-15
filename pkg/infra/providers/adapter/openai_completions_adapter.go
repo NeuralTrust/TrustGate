@@ -554,6 +554,8 @@ func openaiFileFromCanonical(doc CanonicalDocument) (openaiFile, error) {
 		return openaiFile{FileID: doc.FileID, Filename: doc.Name}, nil
 	case doc.FileID != "":
 		return openaiFile{}, &UnsupportedContentError{Reason: "file references are not supported by the target; send inline base64 file data"}
+	case emptyBase64DataURL(doc.URL):
+		return openaiFile{FileData: doc.URL, Filename: documentFilename(doc)}, nil
 	default:
 		return openaiFile{}, &UnsupportedContentError{Reason: "document URLs are not supported by the target; send inline base64 file data"}
 	}

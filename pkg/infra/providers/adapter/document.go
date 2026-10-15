@@ -117,6 +117,23 @@ func normalizeDocumentMediaType(mediaType, name string) string {
 	return mediaTypeOctetStream
 }
 
+// emptyBase64DataURL reports a data URL whose payload is empty base64
+// (`data:application/pdf;base64,`). It is inline file data with no bytes.
+// parseDocumentData stores it as a URL because the inline branch requires a
+// non-empty payload; an OpenAI re-encode can still carry it as file_data.
+func emptyBase64DataURL(raw string) bool {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(raw), "data:")
+	if !ok {
+		return false
+	}
+	meta, data, found := strings.Cut(rest, ",")
+	if !found || data != "" {
+		return false
+	}
+	params := strings.Split(meta, ";")
+	return len(params) >= 2 && params[len(params)-1] == "base64"
+}
+
 // parseDocumentData reads a document payload as clients send it: a base64
 // data URI, an http(s) URL, or bare base64.
 func parseDocumentData(raw, mediaType, name string) CanonicalDocument {

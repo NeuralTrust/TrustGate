@@ -211,6 +211,24 @@ func TestAdaptRequest_DocumentsReachOpenAIAndBedrock(t *testing.T) {
 	}
 }
 
+func TestOpenAIEncode_EmptyBase64FileDataRoundTrips(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"gpt-4.1-nano","max_tokens":40,"stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"Summarise the attached file in 5 words."},{"type":"file","file":{"filename":"j.pdf","file_data":"data:application/pdf;base64,"}}]}]}`)
+	ad := &OpenAIAdapter{}
+	cr, err := ad.DecodeRequest(body)
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 1)
+	require.Len(t, cr.Messages[0].Documents, 1)
+	assert.Equal(t, "data:application/pdf;base64,", cr.Messages[0].Documents[0].URL)
+	assert.Empty(t, cr.Messages[0].Documents[0].Data)
+
+	out, err := ad.EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"file_data":"data:application/pdf;base64,"`)
+	assert.Contains(t, string(out), "Summarise the attached file in 5 words.")
+	assert.Contains(t, string(out), `"filename":"j.pdf"`)
+}
+
 func TestAdaptRequest_DocumentTheTargetCannotResolve(t *testing.T) {
 	t.Parallel()
 	fileID := openAIBodyWithFiles(`{"type":"file","file":{"file_id":"file-abc123"}}`)

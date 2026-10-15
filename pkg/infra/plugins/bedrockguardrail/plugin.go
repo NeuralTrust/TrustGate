@@ -586,6 +586,9 @@ func (p *Plugin) externalFailureWithPolicies(
 		Logger:  p.logger,
 		Event:   in.Event,
 	})
+	if outcome.Abandoned {
+		return outcome.Returns()
+	}
 	data := newData(in, cfg, latencyMS)
 	if chunks > 1 {
 		data.ChunkCount = chunks
