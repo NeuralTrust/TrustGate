@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +131,15 @@ type streamEvent struct {
 	// content block it does it to (-1 when the frame does not say).
 	tool      toolPhase
 	toolIndex int
+	// choice is the chat-completions choice the event belongs to, and choiceSet
+	// says it was read. choiceMany and choiceBad are set only while the guard
+	// holds chat tool calls: more than one choice in the chunk, or an index
+	// that is not a JSON integer. The decoder reads choices[0] only, so either
+	// one would otherwise release tool calls it never parsed.
+	choice     int
+	choiceSet  bool
+	choiceMany bool
+	choiceBad  bool
 	// toolHandled is set once the guard has asked the chain about the tool call
 	// this frame belongs to and applied its verdict, so a mask on the text of the
 	// same window no longer has to treat the frame as tool input it cannot edit.
@@ -333,8 +343,8 @@ func (e *streamEvent) chars() int {
 // Ownership: a line fed in is handed over, not copied, and comes back out in
 // streamEvent.lines unchanged. The caller must feed lines it will not mutate or
 // reuse afterwards, and must not mutate the lines it gets back. Every producer
-// in the chain allocates per line today (providers/stream.go:62, the
-// cross-format path, stream_toolcall_coalesce.go:71-73); a future one that
+// in the chain allocates per line today (providers/stream.go:62 and the
+// cross-format path); a future one that
 // reuses a scratch buffer would silently corrupt held blocks, and no test can
 // catch it from the outside.
 type segmenter struct {
@@ -347,6 +357,8 @@ type segmenter struct {
 	// read-only view, while the event keeps the frame's own bytes, which is
 	// what the guard releases.
 	frames bool
+	// choices reads the choice index of each chat-completions event.
+	choices bool
 }
 
 // newSegmenter builds a segmenter for the source format. After adaptStream the
@@ -379,7 +391,7 @@ func (s *segmenter) flush() (*streamEvent, error) {
 	if len(s.buf) == 0 {
 		return nil, nil
 	}
-	ev := &streamEvent{lines: s.buf}
+	ev := &streamEvent{lines: s.buf, choice: -1}
 	s.buf = nil
 	return ev, s.classify(ev)
 }
@@ -419,6 +431,9 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	}
 	if s.frames {
 		ev.tool, ev.toolIndex = nativeToolPhase(payload)
+	}
+	if s.choices {
+		s.readChoice(ev, payload)
 	}
 	ev.mark = streamMarkFor(s.format, eventType, payload)
 	ev.beyondText = ev.mark.op != markNone
@@ -462,6 +477,74 @@ func ssePayloadType(payload []byte) string {
 		return ""
 	}
 	return probe.Type
+}
+
+// readChoice records the choice a chat-completions chunk belongs to. More than
+// one choice, or an index that is not a JSON integer, is marked and not given
+// a choice: the decoder reads choices[0] only, and a string or fractional
+// index makes that decode fail, so the raw chunk would be released with tool
+// calls the guard never saw.
+func (s *segmenter) readChoice(ev *streamEvent, payload []byte) {
+	var probe struct {
+		Choices json.RawMessage `json:"choices"`
+	}
+	if json.Unmarshal(payload, &probe) != nil {
+		return
+	}
+	raw := bytes.TrimSpace(probe.Choices)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return
+	}
+	var choices []struct {
+		Index json.RawMessage `json:"index"`
+	}
+	if json.Unmarshal(raw, &choices) != nil {
+		ev.choiceBad = true
+		return
+	}
+	switch len(choices) {
+	case 0:
+		return
+	case 1:
+		idx, ok := jsonChoiceIndex(choices[0].Index)
+		if !ok {
+			ev.choiceBad = true
+			return
+		}
+		ev.choice, ev.choiceSet = idx, true
+	default:
+		ev.choiceMany = true
+	}
+}
+
+// jsonChoiceIndex reads a choice index. An absent index is 0, which is what
+// the decoder stores. A string, a fraction or an exponent is not an index the
+// guard can trust.
+func jsonChoiceIndex(raw json.RawMessage) (int, bool) {
+	s := bytes.TrimSpace(raw)
+	if len(s) == 0 || bytes.Equal(s, []byte("null")) {
+		return 0, true
+	}
+	body := s
+	if body[0] == '-' {
+		body = body[1:]
+	}
+	if len(body) == 0 || body[0] < '0' || body[0] > '9' {
+		return 0, false
+	}
+	if body[0] == '0' && len(body) > 1 {
+		return 0, false
+	}
+	for _, c := range body {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(string(s))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func isTerminalPayload(payloadType string) bool {

@@ -48,6 +48,10 @@ const (
 	reasoningToolsError   = `{"error":{"message":"Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."}}`
 )
 
+func anthropicRequestWithModel(model string) string {
+	return `{"model":"` + model + `","max_tokens":10,"system":"be nice","messages":[{"role":"user","content":"hi"}]}`
+}
+
 func apiKeyTarget(provider string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:   ids.New[ids.RegistryKind](),
@@ -279,6 +283,62 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 		"a failed attempt must still say which route was tried")
 	assert.Equal(t, "gpt-4", resp.SentModel,
 		"a failed attempt is recorded under the model it went out with")
+}
+
+func TestProviderInvoke_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		timeoutBody string
+		format      adapter.Format
+		want        string
+	}{
+		{
+			name:        "openai chat stream timeout",
+			body:        openaiRequestBody,
+			timeoutBody: "stream timeout",
+			format:      adapter.FormatOpenAI,
+			want:        `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:        "openai chat foundry request timeout",
+			body:        openaiRequestBody,
+			timeoutBody: "upstream request timeout",
+			format:      adapter.FormatOpenAI,
+			want:        `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:        "anthropic messages",
+			body:        anthropicRequestBody,
+			timeoutBody: "upstream request timeout",
+			format:      adapter.FormatAnthropic,
+			want:        `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte(tc.timeoutBody))).
+				Once()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:         []byte(tc.body),
+				SourceFormat: string(tc.format),
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+			assert.Nil(t, resp.Stream)
+			assert.JSONEq(t, tc.want, string(resp.Body))
+			assert.NotContains(t, string(resp.Body), "stream timeout")
+			assert.NotContains(t, string(resp.Body), "upstream request timeout")
+		})
+	}
 }
 
 func TestProviderInvoke_CrossFormatBackendErrorUsesIngressEnvelope(t *testing.T) {
@@ -530,7 +590,8 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 		absentKey    string
 	}{
 		{name: "anthropic ingress to openai", provider: "openai", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
-		{name: "anthropic ingress to azure", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure openai", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("gpt-4o"), wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure mistral keeps max_tokens", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("probe-mistral"), wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "anthropic ingress to cerebras keeps max_tokens", provider: "cerebras", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "openai passthrough to openai", provider: "openai", body: openaiPassthroughBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
 		{name: "openai passthrough to openai_compatible keeps max_tokens", provider: "openai_compatible", body: openaiPassthroughBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
@@ -1217,6 +1278,41 @@ func TestProviderInvoke_TranslatedResponsesRejectsServerState(t *testing.T) {
 	}
 }
 
+func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		capability string
+		body       []byte
+		client     providers.Client
+	}{
+		{name: "chat empty", body: nil, client: &upstreamRecorder{}},
+		{name: "chat blank", body: []byte{}, client: &upstreamRecorder{}},
+		{name: "chat array", body: []byte("[]"), client: &upstreamRecorder{}},
+		{name: "images array", capability: "images", body: []byte("[]"), client: &imagesTestClient{}},
+		{name: "audio empty", capability: "audio_speech", body: nil, client: &audioTestClient{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(tt.client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:            tt.body,
+				ProxyCapability: tt.capability,
+				AllowedModels:   []string{"gpt-4o"},
+			})
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			require.NotErrorIs(t, err, appproxy.ErrModelNotAllowed)
+			assert.Contains(t, err.Error(), "request body must be a JSON object")
+			assert.NotContains(t, err.Error(), "unexpected end of JSON input")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.NotContains(t, err.Error(), "model enforcement")
+		})
+	}
+}
+
 func TestProviderInvokeStream_TranslatedResponsesRejectsPreviousResponseID(t *testing.T) {
 	client := providermocks.NewClient(t)
 	inv := newStreamInvoker(t, "azure", client)
@@ -1323,4 +1419,37 @@ func TestProviderInvoke_TranslatedResponsesIsConformant(t *testing.T) {
 	assert.Equal(t, "OK", got.Output[0].Content[0].Text)
 	assert.NotNil(t, got.Output[0].Content[0].Annotations)
 	assert.Empty(t, got.Output[0].Content[0].Annotations)
+}
+
+func TestProviderInvoke_NonStringModelWithAllowListStaysDenied(t *testing.T) {
+	t.Parallel()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body:          []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`),
+		AllowedModels: []string{"gpt-4o-mini"},
+	})
+
+	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+	require.NotErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+}
+
+func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {
+	t.Parallel()
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, []byte("[]")).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body: []byte("[]"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }

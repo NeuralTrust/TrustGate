@@ -433,6 +433,12 @@ func (p *Plugin) BoundsStreamPayload() bool { return true }
 
 var _ appplugins.StreamPayloadBound = (*Plugin)(nil)
 
+// ReadsStreamToolCalls declares that the engine is sent the tool calls of each
+// segment, so a streamed tool call must reach it whole.
+func (p *Plugin) ReadsStreamToolCalls() bool { return true }
+
+var _ appplugins.StreamToolCallReader = (*Plugin)(nil)
+
 // StreamSettings reports whether a policy with these settings inspects a
 // streamed response block by block, and the options the caller must run the
 // stream under. Every policy whose direction includes the response does,

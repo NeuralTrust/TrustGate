@@ -9,6 +9,7 @@ metadata:
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
+- gcp-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
 - external-exposure/agentgateway-routes-external.yaml
@@ -46,7 +47,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 01a1d0deddce4a249103aadda417802f094a14e2
+  newTag: 6672a727daf7c3dc9894c71c381aaf58927bf1dd
 configMapGenerator:
 - behavior: create
   envs:

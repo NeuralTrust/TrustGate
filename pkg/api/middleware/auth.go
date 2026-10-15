@@ -31,6 +31,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -247,15 +248,42 @@ func internalError(c *fiber.Ctx, message string) error {
 	})
 }
 
-// writeAuthBody sends the gateway's error body. On a native Bedrock path it
-// carries the AWS envelope as well, with the x-amzn-ErrorType header, because
-// an AWS SDK reads the exception name from there and cannot classify a bare
-// gateway error.
+// writeAuthBody sends the gateway's error body. A native Bedrock path carries
+// the AWS envelope, with the x-amzn-ErrorType header, because an AWS SDK reads
+// the exception name from there. Every other proxy route uses the client's
+// dialect, the same envelopes the proxy handler writes for a gateway error.
+// A path that is not a proxy route keeps the flat body.
 func writeAuthBody(c *fiber.Ctx, status int, body httpio.ErrorBody) error {
-	if !isBedrockNativePath(c) {
+	if isBedrockNativePath(c) {
+		return httpio.WriteBedrockError(c, status, body)
+	}
+	format, ok := ingressErrorFormat(c)
+	if !ok {
 		return c.Status(status).JSON(body)
 	}
-	return httpio.WriteBedrockError(c, status, body)
+	if adapter.NeedsAdaptedError(format) {
+		return c.Status(status).Type("json").Send(adapter.EncodeErrorBody(format, status, body.Message))
+	}
+	if adapter.OpenAIErrorDialect(format) {
+		return c.Status(status).Type("json").Send(adapter.EncodeOpenAIGatewayError(status, body.Error, body.Message))
+	}
+	return c.Status(status).JSON(body)
+}
+
+// ingressErrorFormat is the dialect of a proxy route. The route may not be
+// stored yet when authentication fails, so the path is parsed again. An
+// unknown path has no dialect.
+func ingressErrorFormat(c *fiber.Ctx) (adapter.Format, bool) {
+	if route, ok := c.Locals(resolver.ProxyRouteLocalsKey).(resolver.ProxyRoute); ok {
+		if route.SourceFormat != "" && !route.IsBedrockNative() {
+			return route.SourceFormat, true
+		}
+	}
+	route, err := resolver.ResolveProxyPath(c.Path())
+	if err != nil || route.SourceFormat == "" || route.IsBedrockNative() {
+		return "", false
+	}
+	return route.SourceFormat, true
 }
 
 // isBedrockNativePath reports whether the request is addressed to a native

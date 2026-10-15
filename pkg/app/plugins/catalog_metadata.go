@@ -289,8 +289,8 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"per_tool_rate_limiter": {
 		name:  "Per-Tool Rate Limiter",
 		group: groupTrafficControl,
-		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global or MCP-wide policies, otherwise per consumer. " +
-			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
+		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with fixed windows. Applies gateway-wide for global or MCP-wide policies, otherwise per consumer. " +
+			"If the counter store is unavailable, both the LLM leg and the MCP leg allow the request through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{

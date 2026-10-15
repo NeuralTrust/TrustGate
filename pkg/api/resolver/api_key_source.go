@@ -35,7 +35,8 @@ const HeaderAPIKeyGoogle = "x-goog-api-key" // #nosec G101 -- HTTP header name, 
 // an empty string when none is present. Precedence is X-AG-API-Key, then
 // x-api-key, then x-goog-api-key, then Authorization: Bearer when the token
 // carries the TrustGate api-key prefix. A bearer without that prefix is left
-// for OAuth2/OIDC.
+// for OAuth2/OIDC, which answers unauthenticated when the consumer has no
+// identity provider.
 func APIKeyFromRequest(c *fiber.Ctx) string {
 	if key := strings.TrimSpace(c.Get(HeaderAPIKey)); key != "" {
 		return key
