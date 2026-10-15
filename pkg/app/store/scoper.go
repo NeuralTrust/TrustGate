@@ -193,13 +193,10 @@ func (s *scoper) installedRegistries(
 			return nil, fmt.Errorf("store scoper: %w", err)
 		}
 	}
-	distinct, countByCode := distinctInstalls(active, byID, byCode)
-	out := make([]*registrydomain.Registry, 0, len(distinct))
-	for _, in := range distinct {
-		shelf := resolveInstance(in, byID, byCode)
-		if shelf == nil {
-			continue
-		}
+	exposed, countByCode := distinctInstalls(active, byID, byCode)
+	out := make([]*registrydomain.Registry, 0, len(exposed))
+	for _, e := range exposed {
+		in, shelf := e.install, e.shelf
 		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, principal.Subject) {
 			continue
 		}
@@ -216,32 +213,45 @@ func (s *scoper) installedRegistries(
 	return out, nil
 }
 
-// distinctInstalls drops every install that reaches the same server with the
-// same config as an earlier one in active, and counts what is left per code.
+type installedInstance struct {
+	install *installationdomain.Installation
+	shelf   *registrydomain.Registry
+}
+
+// distinctInstalls pairs each install with the registry that serves it, drops
+// every one that reaches the same server with the same config as an earlier one
+// in active, and counts what is left per code.
 //
 // Such installs are one instance recorded twice: an approved request stays bound
 // to the server it named, while a later install of the same code binds
 // implicitly. Exposed as two per-install clones, they served the same tools
 // under the same names, and a client that refuses duplicate names lost all of
-// them. An install whose server is gone is kept and counted as before.
+// them.
+//
+// An install whose server is gone is dropped too. Counted, it made its live
+// sibling a clone whose tools carry a per-instance name, which changed again
+// once the dead row was cleaned up; one bound to a deleted registry never comes
+// back, since registry ids are not reused. Grants are applied later, on
+// purpose: a sibling's grant can be restored, and the names of the instance
+// still exposed must not change each time it is.
 func distinctInstalls(
 	active []*installationdomain.Installation,
 	byID map[ids.RegistryID]*registrydomain.Registry,
 	byCode map[string][]*registrydomain.Registry,
-) ([]*installationdomain.Installation, map[string]int) {
-	out := make([]*installationdomain.Installation, 0, len(active))
+) ([]installedInstance, map[string]int) {
+	out := make([]installedInstance, 0, len(active))
 	countByCode := make(map[string]int, len(active))
-	kept := make(map[ids.RegistryID][]*installationdomain.Installation, len(active))
 	for _, in := range active {
-		if shelf := resolveInstance(in, byID, byCode); shelf != nil {
-			if slices.ContainsFunc(kept[shelf.ID], func(k *installationdomain.Installation) bool {
-				return k.SameConfig(in.Config)
-			}) {
-				continue
-			}
-			kept[shelf.ID] = append(kept[shelf.ID], in)
+		shelf := resolveInstance(in, byID, byCode)
+		if shelf == nil {
+			continue
 		}
-		out = append(out, in)
+		if slices.ContainsFunc(out, func(e installedInstance) bool {
+			return e.shelf.ID == shelf.ID && e.install.SameConfig(in.Config)
+		}) {
+			continue
+		}
+		out = append(out, installedInstance{install: in, shelf: shelf})
 		countByCode[in.CatalogCode]++
 	}
 	return out, countByCode
