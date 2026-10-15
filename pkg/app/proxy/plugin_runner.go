@@ -74,11 +74,16 @@ func (f *forwarder) runPreRequest(
 
 // Precheck runs what a request answers before anything routes it: a chat body
 // the decoder may read otherwise than the upstream is refused with
-// ErrAmbiguousRequestBody, so a malformed body never consumes a rate-limit
-// token, and then the gateway plan limit is charged.
+// ErrAmbiguousRequestBody, and a messages field that is not an array is
+// refused with ErrInvalidRequestPayload. A malformed body never consumes a
+// rate-limit token and never reaches a guardrail. Then the gateway plan
+// limit is charged.
 func (f *forwarder) Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error) {
 	if ambiguousChatBody(req) {
 		return nil, ErrAmbiguousRequestBody
+	}
+	if malformedChatMessages(req) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidMessagesMessage)
 	}
 	if req.IsBedrockNative() && adapter.HasInvalidText(req.Body) {
 		// The view decodes to U+FFFD what a tokenizer given the raw bytes would

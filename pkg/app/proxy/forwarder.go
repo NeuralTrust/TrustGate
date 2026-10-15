@@ -306,6 +306,28 @@ func ambiguousChatBody(req *infracontext.RequestContext) bool {
 	return adapter.IsChatRequest(req.ProxyCapability, format) && adapter.HasAmbiguousKeys(format, req.Body)
 }
 
+// malformedChatMessages reports a chat body whose messages field is present
+// and is not an array. It runs with ambiguousChatBody, before routing and
+// before any plugin: a guardrail that cannot decode the field would otherwise
+// refuse the call as uninspectable. Responses and Gemini do not decode
+// messages as that array, and a native invoke body is not a converse request.
+func malformedChatMessages(req *infracontext.RequestContext) bool {
+	if req == nil || len(req.Body) == 0 {
+		return false
+	}
+	if req.IsBedrockNative() {
+		return adapter.BedrockNativeOp(req.BedrockNative.Op).IsConverse() && adapter.ChatMessagesNotArray(req.Body)
+	}
+	format := sourceFormatFromRequest(req)
+	if !adapter.IsChatRequest(req.ProxyCapability, format) {
+		return false
+	}
+	if format == adapter.FormatOpenAIResponses || format == adapter.FormatGemini || format == adapter.FormatVertex {
+		return false
+	}
+	return adapter.ChatMessagesNotArray(req.Body)
+}
+
 func (f *forwarder) invokeWithFailover(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
