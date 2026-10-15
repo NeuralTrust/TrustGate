@@ -564,6 +564,41 @@ func TestDecodeConverseBody_Image(t *testing.T) {
 	assert.Equal(t, "what is it?", text.Value)
 }
 
+func TestDecodeConverseBody_Document(t *testing.T) {
+	t.Parallel()
+
+	body := `{"messages":[{"role":"user","content":[
+		{"document":{"format":"pdf","name":"Informe Q3","source":{"bytes":"JVBERi0xLjQK"}}},
+		{"document":{"format":"pptx","name":"deck","source":{"bytes":"UEsDBA=="}}},
+		{"document":{"format":"txt","name":"empty","source":{}}},
+		{"document":{"format":"md","name":"notes","source":{"text":"# hola"}}},
+		{"text":"summarize"}
+	]}]}`
+
+	params, err := decodeConverseBody([]byte(body))
+	require.NoError(t, err)
+
+	in := params.input("eu.anthropic.claude-sonnet-4-5-20250929-v1:0")
+	require.Len(t, in.Messages, 1)
+	content := in.Messages[0].Content
+	require.Len(t, content, 4, "a document without a source is dropped")
+	pdf, ok := content[0].(*bedrockTypes.ContentBlockMemberDocument)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.DocumentFormatPdf, pdf.Value.Format)
+	assert.Equal(t, "Informe Q3", aws.ToString(pdf.Value.Name))
+	source, ok := pdf.Value.Source.(*bedrockTypes.DocumentSourceMemberBytes)
+	require.True(t, ok)
+	assert.Equal(t, []byte("%PDF-1.4\n"), source.Value)
+	pptx, ok := content[1].(*bedrockTypes.ContentBlockMemberDocument)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.DocumentFormat("pptx"), pptx.Value.Format, "Bedrock, not the gateway, rejects formats it does not read")
+	notes, ok := content[2].(*bedrockTypes.ContentBlockMemberDocument)
+	require.True(t, ok)
+	text, ok := notes.Value.Source.(*bedrockTypes.DocumentSourceMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "# hola", text.Value)
+}
+
 func TestDecodeConverseBody_InvalidImageBytesIsARequestDecodeError(t *testing.T) {
 	t.Parallel()
 
@@ -642,13 +677,13 @@ func TestDecodeConverseBody_CachePointAfterUntranslatedBlockIsDropped(t *testing
 		want    []bedrockTypes.ContentBlock
 	}{
 		{
-			name:    "document before the cachePoint (AWS documentation example)",
-			content: `[{"document":{"format":"pdf","name":"report","source":{"bytes":"JVBERi0="}}},{"cachePoint":{"type":"default"}},{"text":"Summarize"}]`,
+			name:    "S3 document before the cachePoint",
+			content: `[{"document":{"format":"pdf","name":"report","source":{"s3Location":{"uri":"s3://b/report.pdf"}}}},{"cachePoint":{"type":"default"}},{"text":"Summarize"}]`,
 			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "Summarize"}},
 		},
 		{
-			name:    "document and cachePoint only",
-			content: `[{"document":{"format":"txt","name":"d","source":{"bytes":"aGk="}}},{"cachePoint":{"type":"default"}}]`,
+			name:    "S3 document and cachePoint only",
+			content: `[{"document":{"format":"txt","name":"d","source":{"s3Location":{"uri":"s3://b/d.txt"}}}},{"cachePoint":{"type":"default"}}]`,
 			want:    []bedrockTypes.ContentBlock{},
 		},
 		{
@@ -658,7 +693,7 @@ func TestDecodeConverseBody_CachePointAfterUntranslatedBlockIsDropped(t *testing
 		},
 		{
 			name:    "dropped block between text and cachePoint keeps one cachePoint",
-			content: `[{"text":"doc"},{"cachePoint":{"type":"default"}},{"document":{"format":"txt","name":"d","source":{"bytes":"aGk="}}},{"cachePoint":{"type":"default"}},{"text":"q"}]`,
+			content: `[{"text":"doc"},{"cachePoint":{"type":"default"}},{"document":{"format":"txt","name":"d","source":{"s3Location":{"uri":"s3://b/d.txt"}}}},{"cachePoint":{"type":"default"}},{"text":"q"}]`,
 			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "doc"}, cp, &bedrockTypes.ContentBlockMemberText{Value: "q"}},
 		},
 	}
@@ -671,6 +706,20 @@ func TestDecodeConverseBody_CachePointAfterUntranslatedBlockIsDropped(t *testing
 			assert.Equal(t, tt.want, params.messages[0].Content)
 		})
 	}
+}
+
+// An inline document is translated, so the cachePoint after it is kept, as in
+// the AWS documentation example.
+func TestDecodeConverseBody_CachePointAfterInlineDocumentIsKept(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{"messages":[{"role":"user","content":[{"document":{"format":"pdf","name":"report","source":{"bytes":"JVBERi0="}}},{"cachePoint":{"type":"default"}},{"text":"Summarize"}]}]}`))
+	require.NoError(t, err)
+	content := params.messages[0].Content
+	require.Len(t, content, 3)
+	assert.IsType(t, &bedrockTypes.ContentBlockMemberDocument{}, content[0])
+	assert.IsType(t, &bedrockTypes.ContentBlockMemberCachePoint{}, content[1])
+	assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "Summarize"}, content[2])
 }
 
 func TestDecodeConverseBody_ToolCachePointNeedsAToolBefore(t *testing.T) {

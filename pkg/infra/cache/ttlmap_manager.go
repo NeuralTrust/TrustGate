@@ -55,7 +55,7 @@ const (
 	CatalogModelCacheTTL   = 24 * time.Hour
 	CatalogListingCacheTTL = 24 * time.Hour
 	OutputLimitCacheTTL    = 24 * time.Hour
-	MCPToolsCacheTTL       = 5 * time.Minute
+	MCPToolsCacheTTL       = 1 * time.Hour
 )
 
 // AuthKeyMissCacheMaxEntries caps the unknown api key digests remembered at
