@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"iter"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -262,6 +263,49 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 	assert.Empty(t, resp.Headers["X-Selected-Registry"])
 	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
 		"a route that fails before streaming must still be identifiable")
+}
+
+func TestInvokeStream_PreStreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		format string
+		want   string
+	}{
+		{
+			name:   "openai chat",
+			body:   openaiRequestBody,
+			format: string(adapter.FormatOpenAI),
+			want:   `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:   "anthropic messages",
+			body:   anthropicRequestBody,
+			format: string(adapter.FormatAnthropic),
+			want:   `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte("stream timeout"))).
+				Once()
+			inv := newStreamInvoker(t, "openai", client)
+
+			resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:         []byte(tc.body),
+				SourceFormat: tc.format,
+			})
+
+			require.NoError(t, err)
+			assert.Nil(t, resp.Stream, "a timeout before headers must not open a stream")
+			assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+			assert.JSONEq(t, tc.want, string(resp.Body))
+			assert.NotContains(t, string(resp.Body), "stream timeout")
+		})
+	}
 }
 
 func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
