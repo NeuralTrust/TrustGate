@@ -152,11 +152,8 @@ func (f *geminiFileData) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-// geminiImageMediaType reports whether mimeType names an image, the only
-// attachment kind the canonical model has a home for (CanonicalImage). A
-// non-image inlineData/fileData part (PDF, audio, video) is left for
-// geminiImageFromPart to drop, the same treatment any other part type this
-// adapter does not model already gets.
+// geminiImageMediaType reports whether mimeType names an image. A non-image
+// inlineData/fileData part (PDF, audio, video) is a CanonicalDocument instead.
 func geminiImageMediaType(mimeType string) bool {
 	return strings.HasPrefix(mimeType, "image/")
 }
@@ -174,17 +171,14 @@ func geminiImageFromPart(p geminiPart) (CanonicalImage, bool) {
 }
 
 // geminiImagePart encodes a canonical image back as inlineData (base64) or
-// fileData (a Cloud Storage/Files API reference). A URL-only image whose URL
-// is not one of those two Gemini/Vertex can resolve is dropped rather than
-// sent as a fileData Gemini would reject: an ordinary http(s) image URL,
-// such as one that arrived from an OpenAI/Anthropic-sourced cross-format
-// request, has no Gemini request shape at all.
+// as fileData naming its URL: a Cloud Storage object, a Files API URI or an
+// http(s) URL, which Gemini and Vertex fetch themselves.
 func geminiImagePart(img CanonicalImage) (geminiPart, bool) {
 	if img.Data != "" {
 		return geminiPart{InlineData: &geminiBlob{MimeType: img.MediaType, Data: img.Data}}, true
 	}
-	if img.URL != "" && isGeminiFileURI(img.URL) {
-		return geminiPart{FileData: &geminiFileData{MimeType: img.MediaType, FileURI: img.URL}}, true
+	if img.URL != "" {
+		return geminiPart{FileData: &geminiFileData{MimeType: cmp.Or(img.MediaType, imageMediaTypeFromURL(img.URL)), FileURI: img.URL}}, true
 	}
 	return geminiPart{}, false
 }
@@ -454,14 +448,19 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	ids := newGeminiCallIDs(req.Tools)
 	for _, c := range req.Contents {
 		role := c.Role
-		if role == "model" {
+		switch role {
+		case "model":
 			role = "assistant"
 			pending = geminiPendingCalls{}
+		case "":
+			role = "user"
 		}
 		var textParts []string
+		var images []CanonicalImage
+		var documents []CanonicalDocument
+		documentsFirst := false
 		var toolCalls []CanonicalToolCall
 		var toolResults []CanonicalMessage
-		var images []CanonicalImage
 		for _, p := range c.Parts {
 			if p.Thought {
 				continue
@@ -471,6 +470,9 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 			}
 			if img, ok := geminiImageFromPart(p); ok {
 				images = append(images, img)
+			} else if doc, ok := geminiDocumentFromPart(p); ok && role == "user" {
+				documentsFirst = documentsFirst || (len(documents) == 0 && len(textParts) == 0)
+				documents = append(documents, doc)
 			}
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
@@ -500,13 +502,15 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 				ToolCalls: toolCalls,
 				Images:    images,
 			})
-		} else if len(textParts) > 0 || len(images) > 0 {
+		} else if len(textParts) > 0 || len(images) > 0 || len(documents) > 0 {
 			// An image-only turn (no text part at all) must still produce a
 			// message, or its inlineData/fileData parts vanish entirely (RUN-1678).
 			cr.Messages = append(cr.Messages, CanonicalMessage{
-				Role:    role,
-				Content: strings.Join(textParts, "\n"),
-				Images:  images,
+				Role:           role,
+				Content:        strings.Join(textParts, "\n"),
+				Images:         images,
+				Documents:      documents,
+				DocumentsFirst: documentsFirst,
 			})
 		}
 		cr.Messages = append(cr.Messages, toolResults...)
@@ -556,6 +560,35 @@ func geminiFunctionResponseName(callID string, toolNames map[string]string, tool
 	return callID
 }
 
+// geminiDocumentFromPart reads a non-image inlineData or fileData part as a
+// CanonicalDocument.
+func geminiDocumentFromPart(p geminiPart) (CanonicalDocument, bool) {
+	if b := p.InlineData; b != nil && !geminiImageMediaType(b.MimeType) && b.Data != "" {
+		return CanonicalDocument{MediaType: normalizeDocumentMediaType(b.MimeType, ""), Data: b.Data}, true
+	}
+	if f := p.FileData; f != nil && !geminiImageMediaType(f.MimeType) && f.FileURI != "" {
+		return CanonicalDocument{MediaType: inferDocumentMediaType(f.MimeType, urlPath(f.FileURI)), URL: f.FileURI}, true
+	}
+	return CanonicalDocument{}, false
+}
+
+func geminiDocumentParts(documents []CanonicalDocument) ([]geminiPart, error) {
+	parts := make([]geminiPart, 0, len(documents))
+	for _, doc := range documents {
+		switch {
+		case doc.Data != "":
+			parts = append(parts, geminiPart{InlineData: &geminiBlob{MimeType: doc.MediaType, Data: doc.Data}})
+		case isHTTPImageURL(doc.URL) || strings.HasPrefix(doc.URL, "gs://"):
+			parts = append(parts, geminiPart{FileData: &geminiFileData{MimeType: doc.MediaType, FileURI: doc.URL}})
+		case doc.URL != "":
+			return nil, &UnsupportedContentError{Reason: "document must be inline base64 data, an http(s) URL or a Cloud Storage URI"}
+		default:
+			return nil, &UnsupportedContentError{Reason: "file references are not supported by the target; send inline base64 file data"}
+		}
+	}
+	return parts, nil
+}
+
 func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := geminiRequest{
 		Model: req.Model,
@@ -594,9 +627,17 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 				}
 			}
 		}
+		var text, docs []geminiPart
 		if m.Content != "" && m.ToolCallID == "" {
-			parts = append(parts, geminiPart{Text: m.Content})
+			text = []geminiPart{{Text: m.Content}}
 		}
+		if m.Role == "user" {
+			var err error
+			if docs, err = geminiDocumentParts(m.Documents); err != nil {
+				return nil, err
+			}
+		}
+		parts = append(parts, inClientOrder(m.DocumentsFirst, docs, text)...)
 		for i, tc := range m.ToolCalls {
 			args, err := geminiCallArgs(strings.TrimSpace(tc.Arguments))
 			if err != nil {

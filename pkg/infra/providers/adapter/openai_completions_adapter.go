@@ -73,6 +73,7 @@ type openaiContentPart struct {
 	Text     string          `json:"text,omitempty"`
 	Refusal  string          `json:"refusal,omitempty"`
 	ImageURL json.RawMessage `json:"image_url,omitempty"`
+	File     json.RawMessage `json:"file,omitempty"`
 	// CacheControl is the OpenRouter and Anthropic-compatible marker on Chat
 	// parts; PromptCacheBreakpoint is the Responses marker on input parts.
 	CacheControl          *anthropicCacheControl       `json:"cache_control,omitempty"`
@@ -85,6 +86,12 @@ type openaiPromptCacheBreakpoint struct {
 
 func openAIPartCacheControl(p openaiContentPart) *CanonicalCacheBreakpoint {
 	return anthropicCacheBreakpoint(p.CacheControl)
+}
+
+type openaiFile struct {
+	FileData string `json:"file_data,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	Filename string `json:"filename,omitempty"`
 }
 
 type openaiImageURL struct {
@@ -411,7 +418,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 			continue
 		}
 		var text cacheTextJoin
-		images := decodeOpenAIParts(m.Content, &text, openAIPartCacheControl, m.Role == "user")
+		media := decodeOpenAIParts(m.Content, &text, openAIPartCacheControl, m.Role == "user")
 		cm := CanonicalMessage{
 			Role:       m.Role,
 			Content:    text.String(),
@@ -419,7 +426,9 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 			Cache:      text.breakpoint(),
 		}
 		if m.Role == "user" {
-			cm.Images = images
+			cm.Images = media.Images
+			cm.Documents = media.Documents
+			cm.DocumentsFirst = media.DocumentsFirst
 		}
 		for _, tc := range m.ToolCalls {
 			cm.ToolCalls = append(cm.ToolCalls, decodeOpenAIToolCall(tc))
@@ -486,16 +495,19 @@ func decodeOptionalBool(raw json.RawMessage) *bool {
 	return b
 }
 
-func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalCacheBreakpoint) json.RawMessage {
-	imageAt, onImage := cachedImageIndex(cache, len(images))
+// encodeOpenAIContent encodes the text, images and documents of m with its
+// cache marker.
+func encodeOpenAIContent(m CanonicalMessage) (json.RawMessage, error) {
+	cache := m.Cache
+	imageAt, onImage := cachedImageIndex(cache, len(m.Images))
 	if cache.onImage() && !onImage {
 		cache = nil
 	}
-	if len(images) == 0 && cache == nil {
-		return stringToContent(text)
+	if len(m.Images) == 0 && len(m.Documents) == 0 && cache == nil {
+		return stringToContent(m.Content), nil
 	}
-	parts := make([]openaiContentPart, 0, len(images)+2)
-	for _, img := range images {
+	parts := make([]openaiContentPart, 0, len(m.Images)+len(m.Documents)+2)
+	for _, img := range m.Images {
 		imageURL, _ := json.Marshal(openaiImageURL{URL: img.dataURI(), Detail: img.Detail})
 		parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: imageURL})
 	}
@@ -503,23 +515,48 @@ func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalC
 		parts[imageAt].CacheControl = anthropicCacheControlFrom(cache)
 		cache = nil
 	}
-	texts, placed := cachedTextParts(text, cache)
-	first := len(parts)
-	for _, t := range texts {
-		parts = append(parts, openaiContentPart{Type: "text", Text: t})
+	files := make([]openaiContentPart, 0, len(m.Documents))
+	for _, doc := range m.Documents {
+		file, err := openaiFileFromCanonical(doc)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(file)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, openaiContentPart{Type: "file", File: raw})
 	}
+	texts, placed := cachedTextParts(m.Content, cache)
+	text := make([]openaiContentPart, 0, len(texts))
+	for _, t := range texts {
+		text = append(text, openaiContentPart{Type: "text", Text: t})
+	}
+	if placed && cache != nil {
+		text[0].CacheControl = anthropicCacheControlFrom(cache)
+		cache = nil
+	}
+	parts = append(parts, inClientOrder(m.DocumentsFirst, files, text)...)
 	if len(parts) == 0 {
-		return stringToContent(text)
+		return stringToContent(m.Content), nil
 	}
 	if cache != nil {
-		at := len(parts) - 1
-		if placed {
-			at = first
-		}
-		parts[at].CacheControl = anthropicCacheControlFrom(cache)
+		parts[len(parts)-1].CacheControl = anthropicCacheControlFrom(cache)
 	}
-	b, _ := json.Marshal(parts)
-	return b
+	return json.Marshal(parts)
+}
+
+func openaiFileFromCanonical(doc CanonicalDocument) (openaiFile, error) {
+	switch {
+	case doc.Data != "":
+		return openaiFile{FileData: doc.dataURI(), Filename: documentFilename(doc)}, nil
+	case doc.FileID != "" && doc.FileOwner == FormatOpenAI:
+		return openaiFile{FileID: doc.FileID, Filename: doc.Name}, nil
+	case doc.FileID != "":
+		return openaiFile{}, &UnsupportedContentError{Reason: "file references are not supported by the target; send inline base64 file data"}
+	default:
+		return openaiFile{}, &UnsupportedContentError{Reason: "document URLs are not supported by the target; send inline base64 file data"}
+	}
 }
 
 func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
@@ -546,17 +583,21 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	carriedRequestKeys(req, chatCarriedKeys, []*json.RawMessage{&out.Store})
 
 	if req.System != "" {
-		out.Messages = append(out.Messages, openaiMessage{
-			Role:    "system",
-			Content: encodeOpenAIContent(req.System, nil, req.SystemCache),
-		})
+		system, err := encodeOpenAIContent(CanonicalMessage{Content: req.System, Cache: req.SystemCache})
+		if err != nil {
+			return nil, err
+		}
+		out.Messages = append(out.Messages, openaiMessage{Role: "system", Content: system})
 	}
 	for _, m := range req.Messages {
-		var images []CanonicalImage
+		media := CanonicalMessage{Content: m.Content, Cache: m.Cache}
 		if m.Role == "user" {
-			images = m.Images
+			media.Images, media.Documents, media.DocumentsFirst = m.Images, m.Documents, m.DocumentsFirst
 		}
-		content := encodeOpenAIContent(m.Content, images, m.Cache)
+		content, err := encodeOpenAIContent(media)
+		if err != nil {
+			return nil, err
+		}
 		msg := openaiMessage{
 			Role:       m.Role,
 			Content:    content,
