@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	oidcauth "github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
 )
 
@@ -113,5 +114,52 @@ func TestBrowserSignIn_ReturnsOnlyToThisGateway(t *testing.T) {
 		if _, err := signIn.BeginBrowserSignIn(fx.ctx, "http://gw.example.com", returnTo); err == nil {
 			t.Fatalf("returnTo %q must be refused", returnTo)
 		}
+	}
+}
+
+func (f *defaultIdPFixture) onTenant(tenant string) *defaultIdPFixture {
+	gw, _ := appgateway.FromContext(f.ctx)
+	tenanted := *gw
+	tenanted.Metadata = gatewaydomain.WithTenantID(nil, tenant)
+	f.ctx = appgateway.WithGateway(f.ctx, &tenanted)
+	return f
+}
+
+func (f *defaultIdPFixture) browserCallback(t *testing.T) (string, error) {
+	t.Helper()
+	loc, err := f.proxy.(BrowserSignIn).BeginBrowserSignIn(f.ctx, "http://gw.example.com", pageReturn)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse authorize redirect: %v", err)
+	}
+	return f.proxy.Callback(f.ctx, "http://gw.example.com", u.Query().Get("state"), "platform-code", "", "")
+}
+
+// A page on a tenant's gateway vouches only for people of that tenant, as the
+// MCP plane admits only their sessions.
+func TestBrowserSignIn_RefusesAPersonOfAnotherTenant(t *testing.T) {
+	t.Parallel()
+	for name, claims := range map[string]map[string]any{
+		"another org": {"sub": "u", "aud": "neuraltrust-mcp", "org": "team-b"},
+		"no org":      {"sub": "u", "aud": "neuraltrust-mcp"},
+	} {
+		fx := browserSignInFixture(t, claims).onTenant("team-a")
+		back, err := fx.browserCallback(t)
+		var oe *OAuthError
+		if !errors.As(err, &oe) || oe.Code != "access_denied" {
+			t.Fatalf("%s: the sign-in must be refused, got %q / %v", name, back, err)
+		}
+	}
+}
+
+func TestBrowserSignIn_AdmitsAPersonOfTheGatewaysTenant(t *testing.T) {
+	t.Parallel()
+	fx := browserSignInFixture(t, map[string]any{"sub": "u", "aud": "neuraltrust-mcp", "org": "team-a"}).onTenant("team-a")
+	back, err := fx.browserCallback(t)
+	if err != nil || !strings.HasPrefix(back, pageReturn+"&"+BrowserProofParam+"=") {
+		t.Fatalf("a person of the tenant must get a proof, got %q / %v", back, err)
 	}
 }

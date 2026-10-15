@@ -61,6 +61,10 @@ var (
 	// (registry) that does not exist on the gateway or is not an instance of the
 	// requested catalog code.
 	ErrUnknownInstance = fmt.Errorf("store: unknown server instance: %w", commonerrors.ErrValidation)
+
+	// ErrServerDisabled is returned when an install names a server, or an instance
+	// of it, that an administrator turned off on the gateway.
+	ErrServerDisabled = fmt.Errorf("store: an administrator turned this server off on this gateway: %w", commonerrors.ErrConflict)
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -467,7 +471,11 @@ func (i *installer) decide(
 	entry catalogdomain.MCPServer,
 	code string,
 ) (installDecision, error) {
-	instances, err := findRegistriesByCode(ctx, i.registries, in.GatewayID, code)
+	all, err := findRegistriesByCode(ctx, i.registries, in.GatewayID, code)
+	if err != nil {
+		return installDecision{}, err
+	}
+	instances, err := enabledInstances(in, all, code)
 	if err != nil {
 		return installDecision{}, err
 	}
@@ -475,10 +483,37 @@ func (i *installer) decide(
 	if err != nil {
 		return installDecision{}, err
 	}
-	if len(instances) > 0 {
-		d.canonical = instances[0].ID
+	// An implicit binding resolves to the code's oldest registry, a turned-off
+	// one included, so with several the instance chosen is pinned.
+	if d.registryID.IsNil() && d.bound != nil && len(all) > 1 {
+		d.registryID = d.bound.ID
+	}
+	if len(all) > 0 {
+		d.canonical = all[0].ID
 	}
 	return d, nil
+}
+
+// enabledInstances narrows a code's instances to the ones an administrator has
+// not turned off. Naming a turned-off instance, or a code whose every instance
+// is off, is refused rather than decided: materialising a fresh registry for
+// it would undo the administrator's decision.
+func enabledInstances(in InstallRequest, all []*registrydomain.Registry, code string) ([]*registrydomain.Registry, error) {
+	if !in.RegistryID.IsNil() {
+		if reg := pickRegistry(all, in.RegistryID); reg != nil && !reg.Enabled {
+			return nil, fmt.Errorf("%w: %q", ErrServerDisabled, code)
+		}
+	}
+	out := make([]*registrydomain.Registry, 0, len(all))
+	for _, reg := range all {
+		if reg != nil && reg.Enabled {
+			out = append(out, reg)
+		}
+	}
+	if len(all) > 0 && len(out) == 0 {
+		return nil, fmt.Errorf("%w: %q", ErrServerDisabled, code)
+	}
+	return out, nil
 }
 
 func (i *installer) decideAmong(

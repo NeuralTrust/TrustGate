@@ -154,7 +154,9 @@ func (s *scoper) Scope(
 // Access is re-checked here, not only at install time: under Selected an
 // install stays exposed only while a grant still names the principal for its
 // code or its instance, so tightening a grant later revokes access immediately
-// rather than only for future installs.
+// rather than only for future installs. An instance an administrator turned off
+// is not exposed either, and the install is not moved onto another instance in
+// its place: that one may hold a different account.
 func (s *scoper) installedRegistries(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -197,6 +199,11 @@ func (s *scoper) installedRegistries(
 	out := make([]*registrydomain.Registry, 0, len(exposed))
 	for _, e := range exposed {
 		in, shelf := e.install, e.shelf
+		// Checked after counting, like a grant: turning an instance off and on
+		// again must not rename its siblings' tools.
+		if !shelf.Enabled {
+			continue
+		}
 		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, principal.Subject) {
 			continue
 		}
