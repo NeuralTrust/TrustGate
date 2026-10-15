@@ -53,6 +53,13 @@ func TestExceededHeaders(t *testing.T) {
 	}
 }
 
+func TestExceededHeadersOmitsRetryAfterWhenResetIsUnknown(t *testing.T) {
+	headers := (&Exceeded{Reason: ReasonBurst, Limit: 60}).Headers()
+	if _, ok := headers["Retry-After"]; ok {
+		t.Fatalf("Retry-After = %v, want it omitted when the reset is unknown", headers["Retry-After"])
+	}
+}
+
 func TestExceededBodyExplainsReason(t *testing.T) {
 	err := &Exceeded{Reason: ReasonBurst, Limit: 60, Remaining: 0, RetryAfter: 42 * time.Second}
 	var payload map[string]any

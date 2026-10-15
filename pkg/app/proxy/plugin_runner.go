@@ -98,15 +98,19 @@ func (f *forwarder) Precheck(ctx context.Context, gatewayID ids.GatewayID, req *
 	if req.IsBedrockNative() && adapter.HasS3Source(req.Body) {
 		return nil, fmt.Errorf("%w: content referenced from S3 cannot be inspected", ErrInvalidRequestPayload)
 	}
-	return f.checkRateLimit(ctx, gatewayID)
+	return f.checkRateLimit(ctx, gatewayID, req)
 }
 
+// rateLimitExceededCode is the OpenAI error code of a plan limit. SDKs retry
+// on rate_limit_error / rate_limit_exceeded.
+const rateLimitExceededCode = "rate_limit_exceeded"
+
 // checkRateLimit enforces the gateway plan burst/quota before the request
-// reaches the upstream. An exceeded limit renders a 429 ForwardResult with the
-// standard rate-limit headers; an unavailable plan (unknown/missing tier)
-// propagates as an error so mapProxyError maps it to HTTP 503, matching how an
-// unusable guard is treated.
-func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
+// reaches the upstream. An exceeded limit renders a 429 ForwardResult in the
+// ingress dialect, with Retry-After when the limiter knows the reset; an
+// unavailable plan (unknown/missing tier) propagates as an error so
+// mapProxyError maps it to HTTP 503, matching how an unusable guard is treated.
+func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error) {
 	err := f.limiter.Check(ctx, gatewayID)
 	if err == nil {
 		return nil, nil
@@ -116,10 +120,28 @@ func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID)
 		return &ForwardResult{
 			StatusCode: http.StatusTooManyRequests,
 			Headers:    exceeded.Headers(),
-			Body:       exceeded.Body(),
+			Body:       planRateLimitBody(req, exceeded),
 		}, nil
 	}
 	return nil, err
+}
+
+// planRateLimitBody is the 429 a caller of this ingress reads. OpenAI-family
+// routes get OpenAI's envelope and the other dialects get theirs. A native
+// Bedrock body stays flat: the handler wraps that shape in the AWS envelope.
+func planRateLimitBody(req *infracontext.RequestContext, exceeded *ratelimitapp.Exceeded) []byte {
+	if req != nil && req.IsBedrockNative() {
+		return exceeded.Body()
+	}
+	format := adapter.FormatOpenAI
+	if req != nil {
+		format = sourceFormatFromRequest(req)
+	}
+	message := exceeded.ClientMessage()
+	if adapter.OpenAIErrorDialect(format) {
+		return adapter.EncodeOpenAIGatewayError(http.StatusTooManyRequests, rateLimitExceededCode, message)
+	}
+	return adapter.EncodeErrorBody(format, http.StatusTooManyRequests, message)
 }
 
 // runPreResponseGated runs the pre_response stage and hands back both ways it

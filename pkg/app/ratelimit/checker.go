@@ -55,19 +55,28 @@ func (e *Exceeded) Error() string {
 }
 
 func (e *Exceeded) Headers() map[string][]string {
-	return map[string][]string{
-		"Retry-After":           {strconv.Itoa(RetryAfterSeconds(e.RetryAfter))},
+	headers := map[string][]string{
 		"X-RateLimit-Limit":     {strconv.Itoa(e.Limit)},
 		"X-RateLimit-Remaining": {strconv.Itoa(e.Remaining)},
 		"X-RateLimit-Reason":    {e.Reason},
 	}
+	if e.RetryAfter > 0 {
+		headers["Retry-After"] = []string{strconv.Itoa(RetryAfterSeconds(e.RetryAfter))}
+	}
+	return headers
+}
+
+// ClientMessage is the sentence a person or an SDK reads. The HTTP proxy puts
+// it in the ingress dialect envelope; Body keeps the flat shape MCP embeds.
+func (e *Exceeded) ClientMessage() string {
+	return rateLimitClientMessage(e.Reason, RetryAfterSeconds(e.RetryAfter))
 }
 
 func (e *Exceeded) Body() []byte {
 	retryAfter := RetryAfterSeconds(e.RetryAfter)
 	payload := map[string]any{
 		"error":               "rate limit exceeded",
-		"message":             rateLimitClientMessage(e.Reason, retryAfter),
+		"message":             e.ClientMessage(),
 		"reason":              e.Reason,
 		"limit":               e.Limit,
 		"retry_after_seconds": retryAfter,
