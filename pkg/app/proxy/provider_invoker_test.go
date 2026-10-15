@@ -700,6 +700,7 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 		{name: "anthropic ingress to azure openai", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("gpt-4o"), wantKey: "max_completion_tokens", absentKey: "max_tokens"},
 		{name: "anthropic ingress to azure mistral keeps max_tokens", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("probe-mistral"), wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "anthropic ingress to cerebras keeps max_tokens", provider: "cerebras", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
+		{name: "anthropic ingress to digitalocean", provider: "digitalocean", sourceFormat: "anthropic", body: anthropicRequestWithModel("anthropic-claude-5.5-haiku"), wantKey: "max_completion_tokens", absentKey: "max_tokens"},
 		{name: "openai passthrough to openai", provider: "openai", body: openaiPassthroughBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
 		{name: "openai passthrough to openai_compatible keeps max_tokens", provider: "openai_compatible", body: openaiPassthroughBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "anthropic ingress to openai stream", provider: "openai", sourceFormat: "anthropic", body: anthropicRequestBody, stream: true, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
@@ -760,6 +761,7 @@ func TestProviderInvoke_CacheKeysFollowTheTargetProvider(t *testing.T) {
 		{provider: "azure", want: map[string]any{"prompt_cache_key": "k", "prompt_cache_retention": "24h"}},
 		{provider: "mistral", want: map[string]any{"prompt_cache_key": "k"}},
 		{provider: "cerebras"},
+		{provider: "digitalocean"},
 		{provider: "openai_compatible"},
 	}
 	for _, tc := range tests {
