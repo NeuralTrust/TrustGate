@@ -15,11 +15,15 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -249,5 +253,95 @@ func TestWrapExternalStreamFailure(t *testing.T) {
 	withDetail := WrapExternalStreamFailure("some_guardrail", FailureVerdictIncomplete, "hate", base)
 	if !strings.Contains(withDetail.Error(), "hate") {
 		t.Fatalf("error = %q, want detail in text", withDetail.Error())
+	}
+}
+
+// A sibling that blocks in a parallel batch cancels the batch's context, and
+// net/http hands the sibling's error back from the guardrail's own call. That is
+// not the guardrail failing, so it is neither logged nor recorded, whatever the
+// mode; a deadline and a failure that carries a finding still are.
+func TestHandleExternalFailureCancelledContextIsAbandoned(t *testing.T) {
+	t.Parallel()
+	sibling := &PluginError{StatusCode: http.StatusRequestEntityTooLarge, Message: "character limit exceeded: received 604 characters"}
+	finding := &PluginError{StatusCode: http.StatusForbidden, Type: "plugin_blocked", Message: "blocked by the plugin"}
+
+	cancelled, cancel := context.WithCancelCause(context.Background())
+	cancel(sibling)
+	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	t.Cleanup(stop)
+
+	cases := []struct {
+		name      string
+		ctx       context.Context
+		reason    FailureReason
+		detail    string
+		finding   *PluginError
+		mode      policy.Mode
+		abandoned bool
+		decision  string
+	}{
+		{"transport enforce", cancelled, FailureTransport, "", nil, policy.ModeEnforce, true, DecisionFailedOpen},
+		{"transport observe", cancelled, FailureTransport, "", nil, policy.ModeObserve, true, DecisionFailedOpen},
+		{"input enforce", cancelled, FailureInputTooLarge, DetailProviderRejectedInput, nil, policy.ModeEnforce, true, DecisionFailedClosed},
+		{"mask over finding", cancelled, FailureVerdictIncomplete, DetailAnonymizeNoOutput, finding, policy.ModeEnforce, false, DecisionBlocked},
+		{"deadline", expired, FailureTransport, "", nil, policy.ModeEnforce, false, DecisionFailedOpen},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var logs bytes.Buffer
+			event, span := newTestEvent()
+			f := ExternalFailure{
+				Ctx:     tc.ctx,
+				Plugin:  "some_guardrail",
+				Stage:   policy.StagePreRequest,
+				Mode:    tc.mode,
+				Reason:  tc.reason,
+				Detail:  tc.detail,
+				Finding: tc.finding,
+				Err:     fmt.Errorf("Post \"http://guard/v1/evaluate\": %w", context.Cause(tc.ctx)),
+				Logger:  slog.New(slog.NewTextHandler(&logs, nil)),
+				Event:   event,
+			}
+			out := HandleExternalFailure(f)
+
+			if out.Abandoned != tc.abandoned {
+				t.Fatalf("abandoned = %v, want %v", out.Abandoned, tc.abandoned)
+			}
+			if out.Decision != tc.decision {
+				t.Fatalf("decision = %q, want %q: the outcome itself must not change", out.Decision, tc.decision)
+			}
+			// What Execute returns is the same as on a live context.
+			f.Ctx, f.Logger, f.Event = context.Background(), nil, nil
+			live := HandleExternalFailure(f)
+			gotRes, gotErr := out.Returns()
+			wantRes, wantErr := live.Returns()
+			if (gotRes == nil) != (wantRes == nil) || (gotErr == nil) != (wantErr == nil) {
+				t.Fatalf("returns = %+v/%v, want %+v/%v", gotRes, gotErr, wantRes, wantErr)
+			}
+			if tc.abandoned {
+				if logs.Len() != 0 {
+					t.Fatalf("logged %q, want nothing", logs.String())
+				}
+				if span.Plugin != nil && span.Plugin.Decision != "" {
+					t.Fatalf("span decision = %q, want none", span.Plugin.Decision)
+				}
+				return
+			}
+			if !strings.Contains(logs.String(), "external guardrail call failed") {
+				t.Fatalf("logs = %q, want the failure warning", logs.String())
+			}
+			if span.Plugin == nil || span.Plugin.Decision != SpanDecisionFromOutcome(tc.decision) {
+				t.Fatalf("span decision = %+v, want %q", span.Plugin, SpanDecisionFromOutcome(tc.decision))
+			}
+		})
+	}
+}
+
+func TestExternalFailureOutcomeReturnsNoTypedNilError(t *testing.T) {
+	t.Parallel()
+	res, err := ExternalFailureOutcome{Result: &Result{StatusCode: http.StatusOK}}.Returns()
+	if err != nil || res == nil {
+		t.Fatalf("returns = %+v/%v, want a result and a nil error", res, err)
 	}
 }
