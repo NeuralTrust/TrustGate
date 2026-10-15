@@ -593,6 +593,11 @@ func (a *BedrockNativeAdapter) DecodeRequest(body []byte) (*CanonicalRequest, er
 	if err != nil {
 		return nil, err
 	}
+	// The view reads a document's text with the leftover strings; a modelled
+	// copy would be read twice, under a name Converse encoding sanitises.
+	for i := range cr.Messages {
+		cr.Messages[i].Documents, cr.Messages[i].DocumentsFirst = nil, false
+	}
 	if extra := leftoverText(body, requestParts(cr)); extra != "" {
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: roleUser, Content: extra})
 	}

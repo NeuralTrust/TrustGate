@@ -49,6 +49,7 @@ type ConverseMessage struct {
 type ConverseContentBlock struct {
 	Text             string                    `json:"text,omitempty"`
 	Image            *ConverseImageBlock       `json:"image,omitempty"`
+	Document         *ConverseDocumentBlock    `json:"document,omitempty"`
 	ToolUse          *ConverseToolUse          `json:"toolUse,omitempty"`
 	ToolResult       *ConverseToolResult       `json:"toolResult,omitempty"`
 	ReasoningContent *ConverseReasoningContent `json:"reasoningContent,omitempty"`
@@ -71,6 +72,21 @@ type ConverseImageBlock struct {
 // ConverseImageSource carries the raw image; encoding/json renders it as base64.
 type ConverseImageSource struct {
 	Bytes []byte `json:"bytes,omitempty"`
+}
+
+// ConverseDocumentBlock is an inline document. Bedrock takes bytes only and
+// validates Format itself, so any format the client's file implies is sent.
+type ConverseDocumentBlock struct {
+	Format string                 `json:"format"`
+	Name   string                 `json:"name"`
+	Source ConverseDocumentSource `json:"source"`
+}
+
+// ConverseDocumentSource carries the raw document, which encoding/json renders
+// as base64, or its text.
+type ConverseDocumentSource struct {
+	Bytes []byte `json:"bytes,omitempty"`
+	Text  string `json:"text,omitempty"`
 }
 
 // ConverseSystemBlock is one system instruction.
@@ -454,6 +470,11 @@ func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 				text.addImage()
 				mark = text.markImage
 			}
+		case b.Document != nil:
+			if doc, ok := converseDocumentToCanonical(b.Document); ok && m.Role == converseRoleUser {
+				turn.DocumentsFirst = turn.DocumentsFirst || (len(turn.Documents) == 0 && len(text.parts) == 0)
+				turn.Documents = append(turn.Documents, doc)
+			}
 		case b.ToolUse != nil:
 			turn.ToolCalls = append(turn.ToolCalls, CanonicalToolCall{
 				ID:        b.ToolUse.ToolUseID,
@@ -467,7 +488,7 @@ func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 		}
 	}
 	turn.Content, turn.Cache = text.String(), text.breakpoint()
-	if turn.Content != "" || len(turn.ToolCalls) > 0 || len(turn.Images) > 0 {
+	if turn.Content != "" || len(turn.ToolCalls) > 0 || len(turn.Images) > 0 || len(turn.Documents) > 0 {
 		out = append(out, turn)
 	}
 	return out
@@ -510,6 +531,7 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		Messages: make([]ConverseMessage, 0, len(req.Messages)),
 		System:   converseSystemBlocks(nil, req.System, req.SystemCache),
 	}
+	names := converseDocumentNames{}
 	var lastCache *CanonicalCacheBreakpoint
 	for _, m := range req.Messages {
 		// Converse has no system turn; instructions found in the conversation
@@ -518,7 +540,7 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			out.System = converseSystemBlocks(out.System, m.Content, m.Cache)
 			continue
 		}
-		msg, err := converseMessageFromCanonical(m)
+		msg, err := converseMessageFromCanonical(m, names)
 		if err != nil {
 			return nil, err
 		}
@@ -592,7 +614,7 @@ func appendConverseMessage(msgs []ConverseMessage, msg ConverseMessage) []Conver
 // of the joined text) or the tool result. When that boundary is lost it goes
 // last. A marker whose image is gone is dropped rather than moved onto the
 // text after it.
-func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
+func converseMessageFromCanonical(m CanonicalMessage, names converseDocumentNames) (ConverseMessage, error) {
 	if m.Role == "tool" {
 		blocks := []ConverseContentBlock{{ToolResult: &ConverseToolResult{
 			ToolUseID: m.ToolCallID,
@@ -608,8 +630,10 @@ func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 		role = converseRoleAssistant
 	}
 	var images []CanonicalImage
+	var documents []CanonicalDocument
 	if m.Role == converseRoleUser {
 		images = m.Images
+		documents = m.Documents
 	}
 	cache := m.Cache
 	imageAt := -1
@@ -618,7 +642,7 @@ func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 			imageAt = at
 		}
 	}
-	blocks := make([]ConverseContentBlock, 0, len(images)+3+len(m.ToolCalls))
+	blocks := make([]ConverseContentBlock, 0, len(images)+len(documents)+3+len(m.ToolCalls))
 	for i, img := range images {
 		block, err := converseImageFromCanonical(img)
 		if err != nil {
@@ -632,13 +656,23 @@ func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 	if cache.onImage() {
 		cache = nil
 	}
+	docs := make([]ConverseContentBlock, 0, len(documents))
+	for _, doc := range documents {
+		block, err := converseDocumentFromCanonical(doc, names)
+		if err != nil {
+			return ConverseMessage{}, err
+		}
+		docs = append(docs, ConverseContentBlock{Document: block})
+	}
 	parts, placed := cachedTextParts(m.Content, cache)
+	text := make([]ConverseContentBlock, 0, len(parts)+1)
 	for i, part := range parts {
-		blocks = append(blocks, ConverseContentBlock{Text: part})
+		text = append(text, ConverseContentBlock{Text: part})
 		if i == 0 && placed {
-			blocks = append(blocks, ConverseContentBlock{CachePoint: converseCachePointFrom(cache)})
+			text = append(text, ConverseContentBlock{CachePoint: converseCachePointFrom(cache)})
 		}
 	}
+	blocks = append(blocks, inClientOrder(m.DocumentsFirst, docs, text)...)
 	for _, tc := range m.ToolCalls {
 		blocks = append(blocks, ConverseContentBlock{ToolUse: &ConverseToolUse{
 			ToolUseID: tc.ID,
@@ -665,6 +699,37 @@ func converseImageFromCanonical(img CanonicalImage) (*ConverseImageBlock, error)
 		return nil, &UnsupportedContentError{Reason: "image data is not valid base64"}
 	}
 	return &ConverseImageBlock{Format: format, Source: ConverseImageSource{Bytes: raw}}, nil
+}
+
+func converseDocumentToCanonical(d *ConverseDocumentBlock) (CanonicalDocument, bool) {
+	mediaType := documentMediaTypeForFormat(d.Format)
+	switch {
+	case len(d.Source.Bytes) > 0:
+		return CanonicalDocument{MediaType: mediaType, Data: base64.StdEncoding.EncodeToString(d.Source.Bytes), Name: d.Name}, true
+	case d.Source.Text != "":
+		return textDocument(d.Source.Text, mediaType, d.Name), true
+	default:
+		return CanonicalDocument{}, false
+	}
+}
+
+func converseDocumentFromCanonical(doc CanonicalDocument, names converseDocumentNames) (*ConverseDocumentBlock, error) {
+	if doc.Data == "" {
+		return nil, &UnsupportedContentError{Reason: "document URLs and file references are not supported by the target; send inline base64 file data"}
+	}
+	format := documentFormat(doc)
+	if format == "" {
+		return nil, &UnsupportedContentError{Reason: "document type is unknown; send a media type or a filename with an extension"}
+	}
+	raw, err := decodeBase64(doc.Data)
+	if err != nil {
+		return nil, &UnsupportedContentError{Reason: "document data is not valid base64"}
+	}
+	return &ConverseDocumentBlock{
+		Format: format,
+		Name:   names.next(doc.Name),
+		Source: ConverseDocumentSource{Bytes: raw},
+	}, nil
 }
 
 func converseImageFormat(mediaType string) (string, bool) {
