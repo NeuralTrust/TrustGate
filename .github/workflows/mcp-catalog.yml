@@ -1,0 +1,46 @@
+name: MCP Catalog
+
+# The catalog's tool names are what the console's tool pickers offer and what
+# application toolkits are saved with, so a name the upstream server does not
+# expose grants nothing and hides the real tool. Servers that answer tools/list
+# without credentials are compared on every catalog change and every night,
+# since upstream servers rename tools without notice.
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "seed/mcp-catalog/**"
+      - "cmd/mcp-catalog-probe/**"
+      - ".github/workflows/mcp-catalog.yml"
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: mcp-catalog-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tool-names:
+    name: Tool names match upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache: true
+      - name: Test the probe
+        run: go test -race ./cmd/mcp-catalog-probe/...
+      - name: Compare catalog tools with tools/list
+        run: go run ./cmd/mcp-catalog-probe -check-tools -timeout 30s -out tools-report.jsonl
+      - name: Show drift
+        if: failure()
+        run: |
+          jq -c 'select(.status == "listed" and ((.only_upstream // [] | length > 0) or (.partial != true and (.only_in_catalog // [] | length > 0))))' tools-report.jsonl
+          echo "Run 'make mcp-catalog-probe ARGS=\"-check-tools -apply-tools\"' to take the upstream names."
