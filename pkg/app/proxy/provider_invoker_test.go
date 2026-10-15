@@ -1521,6 +1521,21 @@ func TestProviderInvoke_DisallowedStringModelStaysDenied(t *testing.T) {
 	assert.NotContains(t, err.Error(), "Go value of type")
 }
 
+func TestProviderInvoke_EmptyModelIsDeniedOnce(t *testing.T) {
+	t.Parallel()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body:          []byte(`{"model":"","messages":[{"role":"user","content":"Hello"}]}`),
+		AllowedModels: []string{"gpt-4o-mini"},
+	})
+
+	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+	require.EqualError(t, err, `model not allowed: ""`)
+}
+
 func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {
 	t.Parallel()
 	client := providermocks.NewClient(t)
