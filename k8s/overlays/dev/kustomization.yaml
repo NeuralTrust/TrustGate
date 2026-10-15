@@ -9,6 +9,7 @@ metadata:
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
+- gcp-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
 - external-exposure/agentgateway-routes-external.yaml
