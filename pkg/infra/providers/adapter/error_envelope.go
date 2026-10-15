@@ -112,6 +112,20 @@ func streamBlockedReason(reason string) string {
 // not the caller's, and OpenAI's echoes the key's prefix and last characters.
 const UpstreamAuthFailedMessage = "upstream provider authentication failed"
 
+const (
+	// UpstreamTimeoutCode and UpstreamTimeoutMessage replace an upstream
+	// timeout body. Provider gateways answer slow non-streaming completions
+	// with 504 and plain text such as "stream timeout" or "upstream request
+	// timeout", neither of which is an ingress error envelope.
+	UpstreamTimeoutCode    = "upstream_timeout"
+	UpstreamTimeoutMessage = "upstream request timed out"
+)
+
+var upstreamTimeoutTexts = [][]byte{
+	[]byte("stream timeout"),
+	[]byte("upstream request timeout"),
+}
+
 const redactedCredential = "[REDACTED]"
 
 // credentialPattern matches provider API keys as providers echo them in error
@@ -129,6 +143,9 @@ func ClientErrorBody(body []byte, status int, source, target Format) []byte {
 	dialect := errorDialect(source)
 	if status == http.StatusUnauthorized {
 		return EncodeErrorBody(dialect, status, UpstreamAuthFailedMessage)
+	}
+	if upstreamTimedOut(status, body) {
+		return EncodeUpstreamTimeout(dialect)
 	}
 	if dialect == errorDialect(target) {
 		return credentialPattern.ReplaceAll(body, []byte(redactedCredential))
@@ -226,6 +243,36 @@ func EncodeOpenAIGatewayError(status int, code, message string) []byte {
 	return out
 }
 
+// EncodeUpstreamTimeout is the 504 a caller sees when the upstream did not
+// answer in time, in the ingress dialect. The message does not say "stream":
+// the same timeout fires for a non-streaming completion and for a stream that
+// has not sent headers yet.
+func EncodeUpstreamTimeout(source Format) []byte {
+	if OpenAIErrorDialect(source) {
+		return EncodeOpenAIGatewayError(http.StatusGatewayTimeout, UpstreamTimeoutCode, UpstreamTimeoutMessage)
+	}
+	return EncodeErrorBody(source, http.StatusGatewayTimeout, UpstreamTimeoutMessage)
+}
+
+// upstreamTimedOut reports a response whose body must not be relayed: a 504,
+// or one of the plain timeout texts provider gateways write for a slow
+// completion.
+func upstreamTimedOut(status int, body []byte) bool {
+	if status == http.StatusGatewayTimeout {
+		return true
+	}
+	text := bytes.TrimSpace(body)
+	if message := ProviderErrorMessage(body); message != "" {
+		text = bytes.TrimSpace([]byte(message))
+	}
+	for _, timeoutText := range upstreamTimeoutTexts {
+		if bytes.EqualFold(text, timeoutText) {
+			return true
+		}
+	}
+	return false
+}
+
 func openaiErrorType(status int) string {
 	switch status {
 	case http.StatusUnauthorized:
@@ -236,6 +283,8 @@ func openaiErrorType(status int) string {
 		return "not_found_error"
 	case http.StatusTooManyRequests:
 		return "rate_limit_error"
+	case http.StatusGatewayTimeout:
+		return "timeout_error"
 	}
 	if status >= http.StatusInternalServerError {
 		return "server_error"
@@ -371,6 +420,8 @@ func anthropicErrorType(status int) string {
 		return "not_found_error"
 	case http.StatusTooManyRequests:
 		return "rate_limit_error"
+	case http.StatusGatewayTimeout:
+		return "timeout_error"
 	case http.StatusServiceUnavailable, 529:
 		return "overloaded_error"
 	default:

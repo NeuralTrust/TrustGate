@@ -50,7 +50,20 @@ func bearerChallenge(c *fiber.Ctx) string {
 	if resourcePath := strings.Trim(c.Path(), "/"); resourcePath != "" {
 		metadata += "/" + resourcePath
 	}
-	return `Bearer resource_metadata="` + metadata + `"`
+	// RFC 6750 §3.1: a missing token is a discovery challenge. A presented
+	// bearer that this request already rejected is invalid_token, so the
+	// client refreshes or signs in again instead of reusing it.
+	quoted := quoteAuthParam(metadata)
+	if bearerToken(c) != "" {
+		return `Bearer error="invalid_token", error_description="The access token is invalid or expired", resource_metadata=` + quoted
+	}
+	return `Bearer resource_metadata=` + quoted
+}
+
+// quoteAuthParam quotes a WWW-Authenticate auth-param. A " or \ in the
+// resource URL would otherwise end the quoted-string early.
+func quoteAuthParam(value string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
 }
 
 func isUnauthorized(c *fiber.Ctx, err error) bool {

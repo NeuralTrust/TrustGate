@@ -240,15 +240,104 @@ func resolveProviderWireFormat(providerName string) Format {
 	}
 }
 
-// prefersMaxCompletionTokens reports whether the provider's Chat Completions
-// surface takes max_completion_tokens instead of max_tokens; Azure requires
-// api-version 2024-10-21 or 2024-09-01-preview and later.
-func prefersMaxCompletionTokens(providerName string) bool {
+// prefersMaxCompletionTokens reports whether this Chat Completions call should
+// send max_completion_tokens instead of max_tokens. That field is valid for
+// OpenAI and Azure OpenAI models (the reasoning families reject max_tokens).
+// Azure Foundry serves other families on the same wire, and those reject the
+// field. The OpenAI provider only hosts OpenAI models, so the model is not
+// consulted there.
+func prefersMaxCompletionTokens(providerName, model string) bool {
 	switch providerName {
-	case provider.OpenAI, provider.Azure:
+	case provider.OpenAI:
 		return true
+	case provider.Azure:
+		return !foundryModelKeepsMaxTokens(model)
+	default:
+		return false
+	}
+}
+
+// foundryMaxTokensFamilies are non-OpenAI chat families Azure Foundry hosts on
+// its OpenAI-compatible surface. A deployment name often only embeds the
+// family (probe-mistral, probe-llama33), so matching is by family token, not
+// the full model id. OpenAI families are absent: gpt-*, chatgpt-*, and the
+// o-series take max_completion_tokens.
+var foundryMaxTokensFamilies = []string{
+	"aya",
+	"claude",
+	"codestral",
+	"cohere",
+	"command-a",
+	"command-r",
+	"deepseek",
+	"devstral",
+	"gemma",
+	"gpt-oss",
+	"grok",
+	"jamba",
+	"llama",
+	"magistral",
+	"ministral",
+	"mistral",
+	"mixtral",
+	"nemotron",
+	"phi",
+	"pixtral",
+	"qwen",
+}
+
+func foundryModelKeepsMaxTokens(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return false
+	}
+	for _, family := range foundryMaxTokensFamilies {
+		if modelHasFamily(model, family) {
+			return true
+		}
 	}
 	return false
+}
+
+// modelHasFamily reports whether family occurs in model on an identifier
+// boundary. A following digit still matches, so llama33 is the llama family,
+// while a following letter does not, so phi is not graphite.
+func modelHasFamily(model, family string) bool {
+	if family == "" || len(model) < len(family) {
+		return false
+	}
+	from := 0
+	for from <= len(model)-len(family) {
+		rel := strings.Index(model[from:], family)
+		if rel < 0 {
+			return false
+		}
+		start := from + rel
+		end := start + len(family)
+		if familyBounded(model, start, end) {
+			return true
+		}
+		from = start + 1
+	}
+	return false
+}
+
+func familyBounded(model string, start, end int) bool {
+	if start > 0 && isModelNameChar(model[start-1]) {
+		return false
+	}
+	if end < len(model) && isModelNameLetter(model[end]) {
+		return false
+	}
+	return true
+}
+
+func isModelNameChar(c byte) bool {
+	return isModelNameLetter(c) || (c >= '0' && c <= '9')
+}
+
+func isModelNameLetter(c byte) bool {
+	return c >= 'a' && c <= 'z'
 }
 
 func ResolveTargetFormat(providerName string, providerOptions map[string]any) Format {

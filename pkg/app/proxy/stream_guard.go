@@ -76,6 +76,18 @@ const (
 	// "the guard rejected it" on the wire, which are different incidents for
 	// a client deciding whether to retry.
 	streamUnverifiableType = "guardrail_unverifiable"
+	// streamToolRenamedMessage refuses a streamed tool call whose name changed
+	// after it opened: the guard was shown one name and a client joining the
+	// deltas may run another.
+	streamToolRenamedMessage = "Response blocked: a streamed tool call changed its name."
+	// streamToolMultiChoiceMessage refuses a chat stream with more than one
+	// choice while a guard reads tool calls. One hold cannot cover two choices,
+	// and the digest folds both into the same call when they share a tool index.
+	streamToolMultiChoiceMessage = "Response blocked: streamed tool calls across multiple choices cannot be inspected."
+	// streamToolChoiceUnreadMessage refuses a chat chunk whose choice index is
+	// not a JSON integer. The decoder rejects the chunk, so its tool calls
+	// would otherwise leave as raw bytes no guard has read.
+	streamToolChoiceUnreadMessage = "Response blocked: a streamed choice index could not be read."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -158,6 +170,10 @@ type streamGuardConfig struct {
 	// frame, before its frames are released as they are. It does not depend on
 	// maxHold: a short block hold must not turn tool inspection off.
 	nativeToolHold time.Duration
+	// holdChatTools holds a chat-completions tool call until it is whole, under
+	// the same nativeToolHold cap. It is set only when an entry on the chain
+	// reads tool calls; otherwise the argument deltas stream as they arrive.
+	holdChatTools bool
 }
 
 func (c streamGuardConfig) withDefaults() streamGuardConfig {
@@ -272,8 +288,22 @@ type streamGuard struct {
 	unhandledTools        toolCallDigest
 	toolEvents            map[int][]*streamEvent
 	toolUninspectedLogged bool
-	degradedReason        string
-	fallbackReason        string
+	// chatHold is holdChatTools on a chat-completions source: an open tool call
+	// is tracked off its deltas, toolChoice is the choice it belongs to,
+	// toolNames the name and id each call was opened with, and toolRenamed
+	// records a call whose name changed after it was opened.
+	chatHold    bool
+	toolChoice  int
+	toolNames   map[chatToolKey]chatToolName
+	toolRenamed bool
+	// chatSeen is the choice indexes this stream has carried, and toolMultiChoice
+	// is set once there are two, in one chunk or across the stream. toolChoiceUnread
+	// is a chunk whose choice index is not a JSON integer. Either is refused.
+	chatSeen         map[int]struct{}
+	toolMultiChoice  bool
+	toolChoiceUnread bool
+	degradedReason   string
+	fallbackReason   string
 
 	// What the stream cost, handed to the chain once on the closing segment.
 	// holdStart is the moment the oldest unreleased event arrived, so the added
@@ -313,16 +343,19 @@ func newStreamGuard(
 	cfg streamGuardConfig,
 	logger *slog.Logger,
 ) *streamGuard {
-	return &streamGuard{
-		runner: runner,
-		seg:    newSegmenter(codec, source),
-		codec:  codec,
-		in:     in,
-		cfg:    cfg.withDefaults(),
-		source: source,
-		logger: logger,
-		now:    time.Now,
+	g := &streamGuard{
+		runner:   runner,
+		seg:      newSegmenter(codec, source),
+		codec:    codec,
+		in:       in,
+		cfg:      cfg.withDefaults(),
+		source:   source,
+		logger:   logger,
+		now:      time.Now,
+		chatHold: cfg.holdChatTools && chatCompletionsWire(source),
 	}
+	g.seg.choices = g.chatHold
+	return g
 }
 
 // Run evaluates the head of the stream before a single byte reaches the client,
@@ -425,18 +458,23 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	g.text.WriteString(ev.text)
 	g.reasoning.WriteString(ev.reasoning)
 	g.tools.merge(ev.toolCalls)
-	if g.native {
+	switch {
+	case g.native:
 		g.unhandledTools.merge(ev.toolCalls)
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
+	case g.chatTools():
+		g.trackChatTool(ev)
 	}
 	// The prelude fast-path: an opaque event that opens a block carries no
 	// inspectable text, so counting it as cleared lets evaluate skip the guard
 	// call entirely when the whole head is opaque. It is not an early release —
 	// nothing reaches the client before replay, which runs strictly after the
 	// verdict. Once the block carries anything else the event rides with it, or
-	// the wire order changes.
-	if ev.unit == unitOpaque && g.clearedIdx == len(g.produced)-1 {
+	// the wire order changes. A chunk whose choices cannot be read is not
+	// opaque in that sense: its raw bytes can carry a tool call the decoder
+	// never parsed, and clearing it would let replay release them.
+	if ev.unit == unitOpaque && !ev.choiceMany && !ev.choiceBad && g.clearedIdx == len(g.produced)-1 {
 		g.clearedIdx = len(g.produced)
 	}
 	if ev.unit == unitTerminal {
@@ -456,8 +494,18 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 }
 
 func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
+	// Before the opaque short-circuit. A chunk the decoder could not read is
+	// opaque, and clearing it would skip this check and release its bytes.
+	if msg, ok := g.refusedChatTool(); ok {
+		g.markCut()
+		return streamError(g.source, streamUnverifiableType, msg)
+	}
 	if g.clearedIdx == len(g.produced) {
 		return nil
+	}
+	if g.chatToolCapped() {
+		g.markCut()
+		return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
 	}
 	if v := g.inspectTools(ctx); v.stop {
 		if v.failed {
@@ -643,6 +691,12 @@ func (g *streamGuard) blockLoop(ctx context.Context, yield func([]byte, error) b
 // stops the stream where it stands and the loop cuts it with the terminator
 // the caller's dialect carries for a content filter.
 func (g *streamGuard) inspect(ctx context.Context) {
+	if msg, ok := g.refusedChatTool(); ok {
+		g.stopStream(&appplugins.SegmentOutcome{
+			Block: true, Type: streamUnverifiableType, Message: msg,
+		})
+		return
+	}
 	if g.clearedIdx == len(g.produced) {
 		return
 	}
@@ -656,6 +710,10 @@ func (g *streamGuard) inspect(ctx context.Context) {
 	}
 	if ctx.Err() != nil {
 		g.retire(fallbackClientDisconnected)
+		return
+	}
+	if g.chatToolCapped() {
+		g.stopStream(nil)
 		return
 	}
 	v := g.inspectTools(ctx)
@@ -1603,6 +1661,9 @@ func (a *cutAnchor) observe(chunk *adapter.CanonicalStreamChunk) {
 
 // toolCallDigest folds tool-call deltas into whole calls by index, so a segment
 // carries arguments a guard can read rather than the fragments they arrived in.
+// The key is the tool index alone. Two chat choices that both use index 0 fold
+// into one call, which is why a stream with more than one choice is refused
+// (noteChatChoice) instead of being inspected through this digest.
 type toolCallDigest struct {
 	order []int
 	byIdx map[int]*adapter.CanonicalToolCall

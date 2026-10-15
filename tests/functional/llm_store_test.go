@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -432,7 +433,15 @@ func TestLLMStore_FilesAreNotAStoreRoute(t *testing.T) {
 	} {
 		status, raw := gatewayCall(t, ProxyURL, gatewayID, key, call.method, call.path, nil)
 		assert.Equal(t, unknownStatus, status, "%s %s", call.method, call.path)
-		assert.Equal(t, string(unknown), string(raw), "%s %s answers as an unknown store route", call.method, call.path)
+		var envelope struct {
+			Error struct {
+				Type string `json:"type"`
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &envelope), "%s %s body: %s", call.method, call.path, raw)
+		assert.Equal(t, "not_found_error", envelope.Error.Type, "%s %s", call.method, call.path)
+		assert.Equal(t, "not_found", envelope.Error.Code, "%s %s", call.method, call.path)
 		status, raw = gatewayCall(t, ProxyURL, gatewayID, "", call.method, call.path, nil)
 		assert.Equal(t, unauthenticatedStatus, status, "%s %s without a key", call.method, call.path)
 		assert.Equal(t, string(unauthenticated), string(raw), "%s %s without a key answers as any store route", call.method, call.path)

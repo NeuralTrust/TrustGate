@@ -43,7 +43,7 @@ func (g *streamGuard) trackTool(ev *streamEvent) {
 }
 
 func (g *streamGuard) holdsTool() bool {
-	return g.native && g.toolOpen && g.now().Sub(g.toolSince) < g.cfg.nativeToolHold
+	return (g.native || g.chatTools()) && g.toolOpen && g.now().Sub(g.toolSince) < g.cfg.nativeToolHold
 }
 
 func (g *streamGuard) toolBlocks() []nativeToolBlock {

@@ -285,8 +285,9 @@ func hasLlamaStyleFunctionContent(m map[string]json.RawMessage) bool {
 
 // NormalizeRequestForProvider applies provider-specific request fixes before an
 // upstream call. Groq uses NormalizeGroqRequest; other OpenAI-wire targets use
-// NormalizeOpenAIRequest when applicable, and providers that prefer
-// max_completion_tokens get max_tokens renamed to it.
+// NormalizeOpenAIRequest when applicable, and OpenAI or Azure OpenAI models
+// get max_tokens renamed to max_completion_tokens. Non-OpenAI models on Azure
+// Foundry keep max_tokens.
 func NormalizeRequestForProvider(providerName string, targetFormat Format, body []byte) []byte {
 	if providerName == provider.Groq {
 		return NormalizeGroqRequest(body)
@@ -295,10 +296,18 @@ func NormalizeRequestForProvider(providerName string, targetFormat Format, body 
 		return body
 	}
 	body = NormalizeOpenAIRequest(body)
-	if prefersMaxCompletionTokens(providerName) {
+	if prefersMaxCompletionTokens(providerName, requestModel(body)) {
 		body = normalizeMaxCompletionTokens(body)
 	}
 	return body
+}
+
+func requestModel(body []byte) string {
+	model, err := ExtractModel(body)
+	if err != nil {
+		return ""
+	}
+	return model
 }
 
 // isEmptyOrNull returns true for nil, empty, `null`, or `""` JSON values.

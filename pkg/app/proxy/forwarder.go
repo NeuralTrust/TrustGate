@@ -810,6 +810,7 @@ func (f *forwarder) newStreamGuard(
 			maxAccumBytes: opts.MaxAccumulatedBytes,
 
 			nativeToolHold: f.nativeToolHold,
+			holdChatTools:  opts.ReadsToolCalls,
 		},
 		f.logger,
 	)
