@@ -179,8 +179,9 @@ func TestInvokeStream_ToolInjectionDoesNotSendReasoningEffortNone(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, 400, resp.StatusCode)
-	assert.Contains(t, string(resp.Body), "Function tools with reasoning_effort")
-	assert.NotContains(t, string(resp.Body), "does not support 'none'")
+	assert.Contains(t, string(resp.Body), "Responses API")
+	assert.Contains(t, string(resp.Body), "gpt-6.1-sol")
+	assert.NotContains(t, string(resp.Body), "set reasoning_effort to 'none'")
 }
 
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
