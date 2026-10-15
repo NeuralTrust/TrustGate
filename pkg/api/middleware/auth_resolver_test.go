@@ -147,6 +147,23 @@ func TestAuthMiddleware_APIKeyCompatHeaderInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
+// A Basic Authorization beside a valid x-api-key must not steal the request.
+// The key header still wins, the same precedence as before non-Bearer schemes
+// became authentication failures.
+func TestAuthMiddleware_BasicAuthorizationKeepsAPIKeyPrecedence(t *testing.T) {
+	t.Parallel()
+	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Basic Zm9vOmJhcg==")
+	req.Header.Set(resolver.HeaderAPIKeyCompat, rawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
 func TestAuthMiddleware_APIKeyGoogleHeaderInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
