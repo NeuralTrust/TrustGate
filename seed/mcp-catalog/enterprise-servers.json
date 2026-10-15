@@ -377,7 +377,7 @@
       "relevance": 70,
       "tools": [
         {
-          "name": "get_amplitude_context",
+          "name": "get_context",
           "description": "Confirm organization and project access"
         },
         {
@@ -393,19 +393,19 @@
           "description": "Get the latest schema/parameters for a tool"
         },
         {
-          "name": "query_amplitude_data",
+          "name": "query_chart",
           "description": "Query data from a chart"
         },
         {
-          "name": "get_amp_taxonomy",
+          "name": "get_events",
           "description": "Read project event definitions"
         },
         {
-          "name": "use_amp_dashboards",
+          "name": "edit_dashboard",
           "description": "Add/remove charts, reorder, update dashboard metadata"
         },
         {
-          "name": "use_amp_notebooks",
+          "name": "edit_notebook",
           "description": "Add/remove charts and update notebook content"
         }
       ]
@@ -452,7 +452,7 @@
           "description": "Call an Actor and get its run results"
         },
         {
-          "name": "apify--rag-web-browser",
+          "name": "apify/rag-web-browser",
           "description": "Browse and extract web data"
         },
         {
@@ -472,7 +472,7 @@
           "description": "Get a list of an Actor's runs, filterable by status"
         },
         {
-          "name": "get-actor-run-log",
+          "name": "get-actor-log",
           "description": "Retrieve logs for a specific Actor run"
         },
         {
@@ -486,6 +486,10 @@
         {
           "name": "get-dataset-schema",
           "description": "Generate a JSON schema from dataset items"
+        },
+        {
+          "name": "get-actor-output",
+          "description": "Retrieve output not in the Actor tool's preview"
         },
         {
           "name": "get-key-value-store",
@@ -510,6 +514,10 @@
         {
           "name": "abort-actor-run",
           "description": "Abort an Actor run, optionally gracefully"
+        },
+        {
+          "name": "add-actor",
+          "description": "Add an Actor as a new callable tool (experimental)"
         }
       ]
     },
@@ -1239,7 +1247,7 @@
       },
       "tools": [
         {
-          "name": "queryDataset",
+          "name": "queryApl",
           "description": "Execute APL queries against Axiom datasets"
         },
         {
@@ -1251,7 +1259,7 @@
           "description": "List available Axiom datasets"
         },
         {
-          "name": "getDatasetFields",
+          "name": "getDatasetSchema",
           "description": "Get a dataset's schema"
         },
         {
@@ -1275,11 +1283,11 @@
           "description": "Search for metrics matching a known tag value"
         },
         {
-          "name": "checkMonitors",
+          "name": "getMonitors",
           "description": "List monitoring configurations"
         },
         {
-          "name": "getMonitorHistory",
+          "name": "getMonitorsHistory",
           "description": "Get monitor execution history"
         },
         {
@@ -1835,22 +1843,60 @@
       "relevance": 55,
       "tools": [
         {
-          "name": "start"
+          "name": "browserbase_stagehand_navigate",
+          "description": "Navigate to a URL"
         },
         {
-          "name": "end"
+          "name": "browserbase_stagehand_act",
+          "description": "Perform an action via natural language"
         },
         {
-          "name": "navigate"
+          "name": "browserbase_stagehand_extract",
+          "description": "Extract data from the current page"
         },
         {
-          "name": "act"
+          "name": "browserbase_stagehand_observe",
+          "description": "Find actionable elements on the page"
         },
         {
-          "name": "observe"
+          "name": "browserbase_screenshot",
+          "description": "Capture a screenshot"
         },
         {
-          "name": "extract"
+          "name": "browserbase_session_create",
+          "description": "Create a single cloud browser session"
+        },
+        {
+          "name": "browserbase_session_close",
+          "description": "Close the active browser session"
+        },
+        {
+          "name": "multi_browserbase_stagehand_session_create",
+          "description": "Create a parallel browser session"
+        },
+        {
+          "name": "multi_browserbase_stagehand_session_list",
+          "description": "List active parallel sessions"
+        },
+        {
+          "name": "multi_browserbase_stagehand_session_close",
+          "description": "Close a specific parallel session"
+        },
+        {
+          "name": "multi_browserbase_stagehand_navigate_session",
+          "description": "Navigate within a given session"
+        },
+        {
+          "name": "multi_browserbase_stagehand_act_session",
+          "description": "Act within a given session"
+        },
+        {
+          "name": "multi_browserbase_stagehand_extract_session",
+          "description": "Extract within a given session"
+        },
+        {
+          "name": "multi_browserbase_stagehand_observe_session",
+          "description": "Observe within a given session"
         }
       ]
     },
@@ -1964,7 +2010,7 @@
           "description": "Trigger a new build"
         },
         {
-          "name": "list_jobs",
+          "name": "get_jobs",
           "description": "Get jobs for a build"
         },
         {
@@ -1996,7 +2042,11 @@
           "description": "Read job logs"
         },
         {
-          "name": "list_artifacts_for_build",
+          "name": "get_logs_info",
+          "description": "Get metadata about job logs"
+        },
+        {
+          "name": "list_artifacts",
           "description": "List artifacts"
         },
         {
@@ -2236,7 +2286,7 @@
           "description": "List available time slots"
         },
         {
-          "name": "event_types-list_event_type_availability_schedules",
+          "name": "event_types-list_event_type_availability_schedule",
           "description": "List availability schedules"
         },
         {
@@ -2450,7 +2500,7 @@
           "description": "Get presenter notes"
         },
         {
-          "name": "get-export-formats",
+          "name": "get-design-export-formats",
           "description": "Get available export formats"
         },
         {
@@ -2460,6 +2510,14 @@
         {
           "name": "create-design-from-candidate",
           "description": "Create a design from a candidate"
+        },
+        {
+          "name": "request-outline-review",
+          "description": "Request an outline review"
+        },
+        {
+          "name": "generate-design-structured",
+          "description": "Generate a structured design"
         },
         {
           "name": "import-design-from-url",
@@ -2542,7 +2600,16 @@
         "resource_metadata": true
       },
       "relevance": 55,
-      "tools": []
+      "tools": [
+        {
+          "name": "chargebee_documentation_search",
+          "description": "Search Chargebee docs for detailed information and usage guides"
+        },
+        {
+          "name": "chargebee_code_planner",
+          "description": "Generate code outlines/samples for integrating Chargebee APIs"
+        }
+      ]
     },
     {
       "name": "com.checkr/mcp",
@@ -2849,6 +2916,10 @@
         {
           "name": "find_pipelines_and_opportunity_statuses",
           "description": "List pipelines and statuses"
+        },
+        {
+          "name": "find_reporting_metrics",
+          "description": "Find predefined reporting metrics"
         },
         {
           "name": "find_scheduling_links",
@@ -4193,6 +4264,10 @@
           "description": "Get monitor coverage"
         },
         {
+          "name": "apm_search_spans",
+          "description": "Search APM spans"
+        },
+        {
           "name": "apm_query_trace",
           "description": "Query an APM trace"
         },
@@ -4205,16 +4280,24 @@
           "description": "Get primary tag keys"
         },
         {
-          "name": "search_watchdog_stories",
+          "name": "apm_search_watchdog_stories",
           "description": "Search Watchdog stories"
         },
         {
-          "name": "get_watchdog_story",
+          "name": "apm_get_watchdog_story",
           "description": "Get a Watchdog story"
         },
         {
           "name": "apm_latency_bottleneck_summary",
           "description": "Summarize latency bottlenecks"
+        },
+        {
+          "name": "get_change_stories",
+          "description": "Get change stories"
+        },
+        {
+          "name": "semantic_search_change_stories",
+          "description": "Semantic search of change stories"
         },
         {
           "name": "apm_search_recommendations",
@@ -5174,16 +5257,28 @@
       ],
       "tools": [
         {
-          "name": "get-events-for-kubernetes-cluster",
+          "name": "get_kubernetes_events",
           "description": "K8s cluster events"
         },
         {
-          "name": "get-entity-id",
+          "name": "find_entity_by_name",
           "description": "Resolve entityId/type by name"
         },
         {
-          "name": "ask-dynatrace-docs",
+          "name": "chat_with_davis_copilot",
           "description": "Ask Dynatrace questions"
+        },
+        {
+          "name": "create_workflow_for_notification",
+          "description": "Create notification workflow"
+        },
+        {
+          "name": "create_dynatrace_notebook",
+          "description": "Share analysis"
+        },
+        {
+          "name": "get_environment_info",
+          "description": "Verify tenant connection"
         }
       ]
     },
@@ -5434,23 +5529,32 @@
       },
       "tools": [
         {
-          "name": "schema",
+          "name": "list_databases",
           "description": "List all databases in the workspace"
         },
         {
-          "name": "schema_detailed",
+          "name": "describe_database",
           "description": "List fields/types for a database and related ones"
         },
         {
-          "name": "query",
+          "name": "query_database",
           "description": "Run any Fibery API command"
         },
         {
-          "name": "create_entities"
+          "name": "create_entity",
+          "description": "Create an entity with specified fields"
         },
         {
-          "name": "update_entities",
+          "name": "create_entities_batch",
+          "description": "Create multiple entities at once"
+        },
+        {
+          "name": "update_entity",
           "description": "Update an entity's fields"
+        },
+        {
+          "name": "current_date",
+          "description": "Get today's date (ISO 8601)"
         }
       ]
     },
@@ -5502,6 +5606,10 @@
         {
           "description": "Discover all indexed URLs on a site",
           "name": "firecrawl_map"
+        },
+        {
+          "name": "firecrawl_extract",
+          "description": "Schema-based structured data extraction"
         }
       ]
     },
@@ -5617,7 +5725,12 @@
           "description": "Create a draft reply (no send)"
         },
         {
-          "name": "send_message"
+          "name": "send_reply",
+          "description": "Send reply on native channel (destructive)"
+        },
+        {
+          "name": "send_new_message",
+          "description": "Start a new outbound message"
         },
         {
           "name": "update_conversation_status",
@@ -5747,7 +5860,7 @@
           "description": "List/create/update/retry/cancel/delete pipelines"
         },
         {
-          "name": "semantic_search",
+          "name": "semantic_code_search",
           "description": "Semantic code search in a project"
         }
       ]
@@ -5785,11 +5898,11 @@
       "relevance": 65,
       "tools": [
         {
-          "name": "search",
+          "name": "company_search",
           "description": "Search Glean's content index"
         },
         {
-          "name": "employee_search",
+          "name": "people_profile_search",
           "description": "Search the people directory"
         },
         {
@@ -5797,7 +5910,7 @@
           "description": "Interact with Glean's AI assistant"
         },
         {
-          "name": "read_document",
+          "name": "read_documents",
           "description": "Retrieve documents by ID or URL"
         }
       ]
@@ -7944,7 +8057,20 @@
           "description": "Find record owners by name/email/ID"
         },
         {
-          "name": "read_campaign_data"
+          "name": "get_campaign_contacts_by_type",
+          "description": "Campaign contact IDs by attribution type"
+        },
+        {
+          "name": "get_campaign_analytics",
+          "description": "Campaign metrics and revenue attribution"
+        },
+        {
+          "name": "get_campaign_asset_types",
+          "description": "List campaign asset type names"
+        },
+        {
+          "name": "get_campaign_asset_metrics",
+          "description": "Metrics for objects associated with a campaign"
         },
         {
           "name": "submit_feedback",
@@ -8324,7 +8450,7 @@
           "description": "List network requests as JSON (filters)"
         },
         {
-          "name": "getScreenshots",
+          "name": "getScreenshot",
           "description": "Get screenshots from a screenshot Jam"
         },
         {
@@ -8344,7 +8470,7 @@
           "description": "Analyze a Jam video for issues/insights"
         },
         {
-          "name": "searchJams",
+          "name": "listJams",
           "description": "Search/filter Jams by text/type/folder/author/date"
         },
         {
@@ -8401,6 +8527,10 @@
           "description": "List access tokens"
         },
         {
+          "name": "access_tokens_revoke",
+          "description": "Revoke access token"
+        },
+        {
           "name": "access_oidc_create_configuration",
           "description": "Create OIDC configuration"
         },
@@ -8417,7 +8547,7 @@
           "description": "Update a project"
         },
         {
-          "name": "access_projects_list",
+          "name": "access_projects_list_projects",
           "description": "List projects"
         },
         {
@@ -8525,7 +8655,7 @@
           "description": "List package versions"
         },
         {
-          "name": "catalog_packages_versions_vulnerabilities",
+          "name": "catalog_packages_versions_list_vulnerabilities",
           "description": "Version vulnerabilities"
         },
         {
@@ -8707,7 +8837,7 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "search",
+          "name": "form_list",
           "description": "List forms"
         },
         {
@@ -8717,6 +8847,10 @@
         {
           "name": "edit_form",
           "description": "Edit an existing form"
+        },
+        {
+          "name": "create_submission",
+          "description": "Create a submission for an existing form"
         },
         {
           "name": "get_submissions",
@@ -8749,7 +8883,7 @@
       ],
       "tools": [
         {
-          "name": "admin_list",
+          "name": "admins_list",
           "description": "List administrators"
         },
         {
@@ -8825,11 +8959,11 @@
           "description": "Remove MFA requirement"
         },
         {
-          "name": "user_reset_mfa",
+          "name": "user_resetmfa",
           "description": "Reset user MFA"
         },
         {
-          "name": "user_send_activation_email",
+          "name": "user_send_invitation_email",
           "description": "Send invitation email"
         },
         {
@@ -8849,7 +8983,7 @@
           "description": "List users"
         },
         {
-          "name": "search_api_execute",
+          "name": "search_api",
           "description": "Search JumpCloud API"
         }
       ]
@@ -8909,6 +9043,10 @@
           "description": "List events"
         },
         {
+          "name": "create_event",
+          "description": "Create an event for a profile"
+        },
+        {
           "name": "get_metrics",
           "description": "List event metrics"
         },
@@ -8943,6 +9081,10 @@
         {
           "name": "get_segment",
           "description": "Get a segment"
+        },
+        {
+          "name": "upload_image_from_file",
+          "description": "Upload image from file"
         },
         {
           "name": "upload_image_from_url",
@@ -10040,10 +10182,16 @@
           "description": "Search/list accessible boards"
         },
         {
-          "name": "canvas_search"
+          "name": "board_list_items",
+          "description": "List items on a board (paginated, filterable)"
         },
         {
-          "name": "canvas_read_as_svg"
+          "name": "context_get",
+          "description": "Get text context from a board/item"
+        },
+        {
+          "name": "context_explore",
+          "description": "Explore high-level board items/frames"
         },
         {
           "name": "image_create",
@@ -10058,10 +10206,15 @@
           "description": "Get image metadata/base64 data"
         },
         {
-          "name": "canvas_create_from_svg"
+          "name": "diagram_create",
+          "description": "Create a diagram from DSL text"
         },
         {
-          "name": "canvas_update_from_svg",
+          "name": "doc_create",
+          "description": "Create a structured document item"
+        },
+        {
+          "name": "doc_update",
           "description": "Edit a document via find-and-replace"
         },
         {
@@ -10077,6 +10230,10 @@
           "description": "Get rows with column metadata/filtering"
         },
         {
+          "name": "code_widget_create",
+          "description": "Create a code widget"
+        },
+        {
           "name": "comment_list_comments",
           "description": "List comments on a board/item"
         },
@@ -10085,8 +10242,12 @@
           "description": "Resolve/unresolve a comment thread"
         },
         {
-          "name": "canvas_get_canvas_composer_skill",
+          "name": "layout_get_dsl",
           "description": "Get DSL spec for board layouts"
+        },
+        {
+          "name": "layout_read",
+          "description": "Read board items as DSL text"
         },
         {
           "name": "prototype_read",
@@ -10780,23 +10941,23 @@
           "description": "List notification audiences"
         },
         {
-          "name": "create_or_update_validation_monitor",
+          "name": "create_validation_monitor_mac",
           "description": "Create a validation monitor as code"
         },
         {
-          "name": "create_or_update_metric_monitor",
+          "name": "create_metric_monitor_mac",
           "description": "Create a metric monitor as code"
         },
         {
-          "name": "create_or_update_comparison_monitor",
+          "name": "create_comparison_monitor_mac",
           "description": "Create a comparison monitor as code"
         },
         {
-          "name": "create_or_update_sql_monitor",
+          "name": "create_custom_sql_monitor_mac",
           "description": "Create a custom SQL monitor as code"
         },
         {
-          "name": "create_or_update_table_monitor",
+          "name": "create_table_monitor_mac",
           "description": "Create a table monitor as code"
         },
         {
@@ -10984,10 +11145,92 @@
       "relevance": 55,
       "tools": [
         {
-          "name": "search_docs"
+          "name": "list_api_endpoints",
+          "description": "(dynamic mode) discover available API endpoints"
         },
         {
-          "name": "execute"
+          "name": "get_api_endpoint_schema",
+          "description": "(dynamic mode) get schema for an endpoint"
+        },
+        {
+          "name": "invoke_api_endpoint",
+          "description": "(dynamic mode) execute any endpoint"
+        },
+        {
+          "name": "create_video_assets",
+          "description": "Create a new Mux Video asset"
+        },
+        {
+          "name": "retrieve_video_assets",
+          "description": "Retrieve details of an asset"
+        },
+        {
+          "name": "update_video_assets",
+          "description": "Update an asset's details"
+        },
+        {
+          "name": "list_video_assets",
+          "description": "List all Mux assets"
+        },
+        {
+          "name": "create_playback_id_video_assets",
+          "description": "Create a playback ID for an asset"
+        },
+        {
+          "name": "create_static_rendition_video_assets",
+          "description": "Create an MP4 static rendition"
+        },
+        {
+          "name": "create_track_video_assets",
+          "description": "Add subtitle/audio track to an asset"
+        },
+        {
+          "name": "generate_subtitles_video_assets",
+          "description": "Generate subtitles for an audio track"
+        },
+        {
+          "name": "create_video_live_streams",
+          "description": "Create a new live stream"
+        },
+        {
+          "name": "retrieve_video_live_streams",
+          "description": "Retrieve a live stream's details"
+        },
+        {
+          "name": "update_video_live_streams",
+          "description": "Update live stream parameters"
+        },
+        {
+          "name": "list_video_live_streams",
+          "description": "List live streams in the environment"
+        },
+        {
+          "name": "complete_video_live_streams",
+          "description": "End a live stream recording"
+        },
+        {
+          "name": "create_video_uploads",
+          "description": "Create a new direct upload"
+        },
+        {
+          "name": "list_video_uploads",
+          "description": "List direct uploads"
+        },
+        {
+          "name": "create_video_playback_restrictions",
+          "description": "Create a playback restriction"
+        },
+        {
+          "name": "list_data_dimensions",
+          "description": "List all available Data dimensions"
+        },
+        {
+          "name": "list_monitoring_data_metrics",
+          "description": "List available monitoring metrics"
+        },
+        {
+          "name": "get_timeseries_monitoring_data_metrics",
+          "description": "Get timeseries for a metric"
         }
       ]
     },
@@ -11024,6 +11267,10 @@
         {
           "name": "list_projects",
           "description": "List Neon projects"
+        },
+        {
+          "name": "list_shared_projects",
+          "description": "List projects shared with you"
         },
         {
           "name": "describe_project",
@@ -11210,6 +11457,10 @@
           "description": "List accessible account IDs"
         },
         {
+          "name": "list_entity_types",
+          "description": "List the catalog of entity types"
+        },
+        {
           "name": "search_entity_with_tag",
           "description": "Search entities by tag key/value"
         },
@@ -11236,6 +11487,10 @@
         {
           "name": "analyze_entity_logs",
           "description": "Analyze an entity's logs for error patterns"
+        },
+        {
+          "name": "query_logs",
+          "description": "Search logs by field/value pairs"
         },
         {
           "name": "list_alert_conditions",
@@ -11348,7 +11603,7 @@
           "description": "Send an invoice to recipients"
         },
         {
-          "name": "send_invoice_overdue_reminder",
+          "name": "send_invoice_reminder",
           "description": "Send an invoice payment reminder"
         },
         {
@@ -11504,6 +11759,10 @@
           "description": "Query across multiple data sources"
         },
         {
+          "name": "notion-query-database-view",
+          "description": "Query a database via a view's filters/sorts"
+        },
+        {
           "name": "notion-create-comment",
           "description": "Add a comment to a page"
         },
@@ -11518,6 +11777,10 @@
         {
           "name": "notion-get-users",
           "description": "List workspace users"
+        },
+        {
+          "name": "notion-get-user",
+          "description": "Get a user by ID"
         },
         {
           "name": "notion-get-self",
@@ -11926,11 +12189,11 @@
       },
       "tools": [
         {
-          "name": "listAllApplications",
+          "name": "list_all_applications",
           "description": "List applications in the subscription"
         },
         {
-          "name": "aggregateEntityUsage",
+          "name": "activityQuery",
           "description": "Query usage metrics (events, visitors, accounts)"
         },
         {
@@ -11946,7 +12209,7 @@
           "description": "Locate Pages, Features, and events"
         },
         {
-          "name": "listVisitors",
+          "name": "visitorQuery",
           "description": "Query visitor metadata and counts"
         },
         {
@@ -11954,7 +12217,7 @@
           "description": "Get visitor metadata schema"
         },
         {
-          "name": "listAccounts",
+          "name": "accountQuery",
           "description": "Query account metadata and counts"
         },
         {
@@ -11970,7 +12233,7 @@
           "description": "Get product engagement score"
         },
         {
-          "name": "aggregateGuideMetrics",
+          "name": "guideMetrics",
           "description": "Guide-level metrics (views, completions, etc.)"
         },
         {
@@ -11978,7 +12241,7 @@
           "description": "List guides"
         },
         {
-          "name": "surveyScores",
+          "name": "npsScore",
           "description": "NPS/poll metrics"
         },
         {
@@ -11990,39 +12253,39 @@
           "description": "Developer console / network events for replays"
         },
         {
-          "name": "listAiAgents",
+          "name": "list_ai_agents",
           "description": "List AI agents you can access"
         },
         {
-          "name": "agentAnalyticsKeyMetrics",
+          "name": "agent_analytics_key_metrics",
           "description": "Key Agent Analytics metrics"
         },
         {
-          "name": "listUseCases",
+          "name": "list_use_cases",
           "description": "List agent use cases"
         },
         {
-          "name": "listAiAgentIssues",
+          "name": "list_ai_agent_issues",
           "description": "List AI agent issues"
         },
         {
-          "name": "agentAnalyticsIssueAnalysis",
+          "name": "ai_agent_issue_analysis",
           "description": "Diagnose an AI agent issue"
         },
         {
-          "name": "getFeedbackItems",
+          "name": "get_feedback_items",
           "description": "Retrieve feedback items"
         },
         {
-          "name": "getFeedbackInsights",
+          "name": "get_feedback_insights",
           "description": "Retrieve feedback insights"
         },
         {
-          "name": "getIdeas",
+          "name": "get_ideas",
           "description": "Retrieve ideas"
         },
         {
-          "name": "generateFeedbackTopics",
+          "name": "generate_feedback_topics",
           "description": "Generate feedback topics"
         }
       ]
@@ -12308,7 +12571,7 @@
           "description": "List entities for a blueprint"
         },
         {
-          "name": "simulate_blueprint_permissions",
+          "name": "get_blueprint_permissions",
           "description": "Get a blueprint's permissions"
         },
         {
@@ -12336,7 +12599,7 @@
           "description": "Track an action run"
         },
         {
-          "name": "trigger_run",
+          "name": "trigger_workflow_run",
           "description": "Trigger a workflow run"
         },
         {
@@ -12412,6 +12675,10 @@
         {
           "name": "docs-search",
           "description": "Search PostHog documentation"
+        },
+        {
+          "name": "search",
+          "description": "Entity search across the project"
         },
         {
           "name": "dashboards-get-all",
@@ -12546,39 +12813,43 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "create_prisma_postgres_connection_string",
+          "name": "CreateBackupTool",
+          "description": "Create a managed Prisma Postgres backup"
+        },
+        {
+          "name": "CreateConnectionStringTool",
           "description": "Create a connection string for a database"
         },
         {
-          "name": "create_prisma_postgres_recovery",
+          "name": "CreateRecoveryTool",
           "description": "Restore a database from a backup ID"
         },
         {
-          "name": "delete_prisma_postgres_connection_string",
+          "name": "DeleteConnectionStringTool",
           "description": "Delete a connection string"
         },
         {
-          "name": "delete_prisma_postgres_database",
+          "name": "DeleteDatabaseTool",
           "description": "Delete a Prisma Postgres database"
         },
         {
-          "name": "list_prisma_postgres_backups",
+          "name": "ListBackupsTool",
           "description": "List backups for a database/environment"
         },
         {
-          "name": "list_prisma_postgres_connection_strings",
+          "name": "ListConnectionStringsTool",
           "description": "List connection strings"
         },
         {
-          "name": "list_prisma_postgres_databases",
+          "name": "ListDatabasesTool",
           "description": "List databases in the workspace"
         },
         {
-          "name": "execute_sql_query",
+          "name": "ExecuteSqlQueryTool",
           "description": "Execute a SQL query on a database"
         },
         {
-          "name": "introspect_database_schema",
+          "name": "IntrospectSchemaTool",
           "description": "Introspect a database's schema"
         }
       ]
@@ -12770,39 +13041,71 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "ramp_execute_analyst_query",
+          "name": "process_data",
+          "description": "Transform fetched data into in-memory SQLite table"
+        },
+        {
+          "name": "execute_query",
           "description": "Run SQL queries on the in-memory database"
         },
         {
-          "name": "ramp_get_tracking_categories",
+          "name": "clear_table",
+          "description": "Delete the ephemeral in-memory table"
+        },
+        {
+          "name": "get_ramp_categories",
           "description": "Fetch Ramp accounting categories"
         },
         {
-          "name": "ramp_get_transactions",
+          "name": "get_currencies",
+          "description": "Fetch supported currencies"
+        },
+        {
+          "name": "load_transactions",
           "description": "Load transactions data"
         },
         {
-          "name": "ramp_get_reimbursements",
+          "name": "load_reimbursements",
           "description": "Load reimbursements data"
         },
         {
-          "name": "ramp_list_bills",
+          "name": "load_bills",
           "description": "Load bills data"
         },
         {
-          "name": "ramp_get_office_locations",
+          "name": "load_locations",
           "description": "Load locations data"
         },
         {
-          "name": "ramp_departments",
+          "name": "load_departments",
           "description": "Load departments data"
         },
         {
-          "name": "ramp_search_vendors",
+          "name": "load_bank_accounts",
+          "description": "Load bank accounts data"
+        },
+        {
+          "name": "load_vendors",
           "description": "Load vendors data"
         },
         {
-          "name": "ramp_list_users",
+          "name": "load_vendor_bank_accounts",
+          "description": "Load vendor bank accounts data"
+        },
+        {
+          "name": "load_entities",
+          "description": "Load entities data"
+        },
+        {
+          "name": "load_spend_limits",
+          "description": "Load spend limits data"
+        },
+        {
+          "name": "load_spend_programs",
+          "description": "Load spend programs data"
+        },
+        {
+          "name": "load_users",
           "description": "Load users data"
         }
       ]
@@ -13102,6 +13405,10 @@
       "relevance": 50,
       "tools": [
         {
+          "name": "check_oncall_health_risk",
+          "description": "Detect workload health risk in schedules"
+        },
+        {
           "name": "check_responder_availability",
           "description": "Check responder availability"
         },
@@ -13260,8 +13567,16 @@
           "description": "AI-transform an existing image"
         },
         {
-          "name": "patch_documents",
+          "name": "patch_document",
           "description": "Field-level document patch"
+        },
+        {
+          "name": "create_document_from_json",
+          "description": "Create a draft from JSON"
+        },
+        {
+          "name": "create_document_from_markdown",
+          "description": "Create a draft from Markdown"
         },
         {
           "name": "deploy_schema",
@@ -13396,7 +13711,11 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "semgrep_scan_remote",
+          "name": "security_check",
+          "description": "Scan code for security vulnerabilities"
+        },
+        {
+          "name": "semgrep_scan",
           "description": "Scan code files with a given config string"
         },
         {
@@ -13461,11 +13780,11 @@
           "description": "Discover keyword research reports"
         },
         {
-          "name": "backlinks_research",
+          "name": "backlink_research",
           "description": "Discover backlink research reports"
         },
         {
-          "name": "traffic_overview",
+          "name": "trends_research",
           "description": "Discover trends/market intelligence reports"
         },
         {
@@ -13545,11 +13864,32 @@
           "description": "Search grouped issues/problems"
         },
         {
-          "name": "search_errors"
+          "name": "search_events",
+          "description": "Search events and perform counts/aggregations"
         },
         {
-          "name": "search_issue_events",
+          "name": "list_issues",
+          "description": "List issues via Sentry query syntax"
+        },
+        {
+          "name": "list_issue_events",
           "description": "List events within a specific issue"
+        },
+        {
+          "name": "list_events",
+          "description": "Search events via Sentry query syntax"
+        },
+        {
+          "name": "get_issue_details",
+          "description": "Get details of a specific issue by ID"
+        },
+        {
+          "name": "get_trace_details",
+          "description": "Get details of a specific trace by ID"
+        },
+        {
+          "name": "get_profile",
+          "description": "Analyze CPU profiling data"
         },
         {
           "name": "analyze_issue_with_seer",
@@ -13564,7 +13904,39 @@
           "description": "Find projects"
         },
         {
-          "name": "execute_sentry_tool",
+          "name": "find_teams",
+          "description": "Find teams"
+        },
+        {
+          "name": "find_releases",
+          "description": "Find releases"
+        },
+        {
+          "name": "find_dsns",
+          "description": "List DSNs for a project"
+        },
+        {
+          "name": "create_project",
+          "description": "Create a project (includes DSN)"
+        },
+        {
+          "name": "create_team",
+          "description": "Create a team"
+        },
+        {
+          "name": "create_dsn",
+          "description": "Create an additional DSN"
+        },
+        {
+          "name": "get_doc",
+          "description": "Fetch a Sentry docs page"
+        },
+        {
+          "name": "search_docs",
+          "description": "Search Sentry documentation"
+        },
+        {
+          "name": "use_sentry",
           "description": "Single agent-mode tool (when ?agent=1)"
         }
       ]
@@ -14020,17 +14392,32 @@
           "description": "Create a workspace"
         },
         {
-          "name": "create_folder"
+          "name": "create_folder_in_workspace",
+          "description": "Create a folder in a workspace"
         },
         {
-          "name": "list_discussions"
+          "name": "create_folder_in_folder",
+          "description": "Create a nested folder"
+        },
+        {
+          "name": "list_sheet_discussions",
+          "description": "List sheet discussions"
+        },
+        {
+          "name": "list_row_discussions",
+          "description": "List row discussions"
         },
         {
           "name": "get_discussion",
           "description": "Get a discussion"
         },
         {
-          "name": "create_discussion"
+          "name": "create_discussion_on_row",
+          "description": "Create a row discussion"
+        },
+        {
+          "name": "create_discussion_on_sheet",
+          "description": "Create a sheet discussion"
         },
         {
           "name": "delete_discussion",
@@ -14051,6 +14438,14 @@
         {
           "name": "list_attachments",
           "description": "List sheet attachments"
+        },
+        {
+          "name": "list_row_attachments",
+          "description": "List row attachments"
+        },
+        {
+          "name": "list_discussion_attachments",
+          "description": "List discussion attachments"
         },
         {
           "name": "get_attachment",
@@ -14512,14 +14907,96 @@
           "description": "Retrieve account"
         },
         {
-          "name": "stripe_api_read"
+          "name": "retrieve_balance",
+          "description": "Retrieve balance"
         },
         {
-          "name": "stripe_api_write"
+          "name": "create_coupon",
+          "description": "Create a coupon"
         },
         {
-          "name": "stripe_api_search",
+          "name": "list_coupons",
+          "description": "List coupons"
+        },
+        {
+          "name": "create_customer",
+          "description": "Create a customer"
+        },
+        {
+          "name": "list_customers",
+          "description": "List customers"
+        },
+        {
+          "name": "list_disputes",
+          "description": "List disputes"
+        },
+        {
+          "name": "update_dispute",
+          "description": "Update a dispute"
+        },
+        {
+          "name": "create_invoice",
+          "description": "Create an invoice"
+        },
+        {
+          "name": "create_invoice_item",
+          "description": "Create an invoice item"
+        },
+        {
+          "name": "finalize_invoice",
+          "description": "Finalize an invoice"
+        },
+        {
+          "name": "list_invoices",
+          "description": "List invoices"
+        },
+        {
+          "name": "create_payment_link",
+          "description": "Create a payment link"
+        },
+        {
+          "name": "list_payment_intents",
+          "description": "List PaymentIntents"
+        },
+        {
+          "name": "create_price",
+          "description": "Create a price"
+        },
+        {
+          "name": "list_prices",
+          "description": "List prices"
+        },
+        {
+          "name": "create_product",
+          "description": "Create a product"
+        },
+        {
+          "name": "list_products",
+          "description": "List products"
+        },
+        {
+          "name": "create_refund",
+          "description": "Create a refund"
+        },
+        {
+          "name": "cancel_subscription",
+          "description": "Cancel a subscription"
+        },
+        {
+          "name": "list_subscriptions",
+          "description": "List subscriptions"
+        },
+        {
+          "name": "update_subscription",
+          "description": "Update a subscription"
+        },
+        {
+          "name": "search_stripe_resources",
           "description": "Search Stripe resources"
+        },
+        {
+          "name": "fetch_stripe_resources",
+          "description": "Fetch a Stripe object"
         },
         {
           "name": "search_stripe_documentation",
@@ -14574,7 +15051,7 @@
           "description": "Retrieve a project's registered redirect URLs"
         },
         {
-          "name": "createRedirectURL",
+          "name": "createRedirectURLs",
           "description": "Register redirect URLs as login/signup callbacks"
         },
         {
@@ -15645,15 +16122,23 @@
       },
       "tools": [
         {
-          "name": "check_connectivity",
+          "name": "ping",
           "description": "Test connectivity and authentication"
         },
         {
-          "name": "create_dashboard",
+          "name": "getRelevantQuestions",
+          "description": "Get relevant analytics questions for a query"
+        },
+        {
+          "name": "getAnswer",
+          "description": "Get the answer to a specific question"
+        },
+        {
+          "name": "createLiveboard",
           "description": "Create a liveboard from answers"
         },
         {
-          "name": "search_objects",
+          "name": "getDataSourceSuggestions",
           "description": "Suggest data sources for a query"
         },
         {
@@ -15875,6 +16360,26 @@
           "description": "Update reminders"
         },
         {
+          "name": "add-goals",
+          "description": "Create goals"
+        },
+        {
+          "name": "find-goals",
+          "description": "Find goals"
+        },
+        {
+          "name": "update-goals",
+          "description": "Update goals"
+        },
+        {
+          "name": "complete-goals",
+          "description": "Complete goals"
+        },
+        {
+          "name": "link-goal-tasks",
+          "description": "Link tasks to goals"
+        },
+        {
           "name": "analyze-project-health",
           "description": "Analyze project health"
         },
@@ -16009,7 +16514,64 @@
         ]
       },
       "relevance": 65,
-      "tools": []
+      "tools": [
+        {
+          "name": "tests",
+          "description": "Retrieve automated security/compliance tests"
+        },
+        {
+          "name": "list_test_entities",
+          "description": "Get resources monitored by a test"
+        },
+        {
+          "name": "controls",
+          "description": "List/get security controls"
+        },
+        {
+          "name": "list_control_tests",
+          "description": "List tests validating a control"
+        },
+        {
+          "name": "list_control_documents",
+          "description": "List documents mapped to a control"
+        },
+        {
+          "name": "documents",
+          "description": "List/get compliance documents"
+        },
+        {
+          "name": "document_resources",
+          "description": "Get resources linked to a document"
+        },
+        {
+          "name": "frameworks",
+          "description": "List compliance frameworks with progress"
+        },
+        {
+          "name": "list_framework_controls",
+          "description": "List controls for a framework"
+        },
+        {
+          "name": "integrations",
+          "description": "List/get connected integrations"
+        },
+        {
+          "name": "integration_resources",
+          "description": "Inspect integration resource kinds/resources"
+        },
+        {
+          "name": "people",
+          "description": "List/get people in the account"
+        },
+        {
+          "name": "risks",
+          "description": "List/get risk scenarios"
+        },
+        {
+          "name": "vulnerabilities",
+          "description": "List/get detected vulnerabilities"
+        }
+      ]
     },
     {
       "name": "com.vercel/mcp",
@@ -16044,7 +16606,7 @@
       "relevance": 85,
       "tools": [
         {
-          "name": "search_vercel_documentation",
+          "name": "search_documentation",
           "description": "Search Vercel documentation"
         },
         {
@@ -16707,11 +17269,11 @@
           "description": "List accessible whiteboards"
         },
         {
-          "name": "add_collaborators_for_a_whiteboard",
+          "name": "add_a_whiteboard_collaborator",
           "description": "Add a collaborator"
         },
         {
-          "name": "get_collaborators_of_a_whiteboard",
+          "name": "get_a_whiteboard_collaborator",
           "description": "Get a collaborator"
         },
         {
@@ -16763,7 +17325,7 @@
           "description": "Semantic meeting search"
         },
         {
-          "name": "search",
+          "name": "search_zoom",
           "description": "Search across Zoom Meeting/Chat/Docs"
         },
         {
