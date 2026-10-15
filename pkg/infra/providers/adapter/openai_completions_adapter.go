@@ -239,6 +239,13 @@ type openaiUsage struct {
 	PromptCacheMissTokens   int                            `json:"prompt_cache_miss_tokens,omitempty"`
 	// CachedTokens is Moonshot's top-level cache read count.
 	CachedTokens int `json:"cached_tokens,omitempty"`
+	// CacheReadInputTokens, CacheCreatedInputTokens and CacheCreation are the
+	// Anthropic-style cache counts DigitalOcean adds to Chat Completions usage.
+	// CacheCreatedInputTokens is a pointer because its presence is what tells
+	// DigitalOcean's shape apart from proxies that only mirror the read count.
+	CacheReadInputTokens    int                     `json:"cache_read_input_tokens,omitempty"`
+	CacheCreatedInputTokens *int                    `json:"cache_created_input_tokens,omitempty"`
+	CacheCreation           *anthropicCacheCreation `json:"cache_creation,omitempty"`
 }
 
 type openaiPromptTokensDetails struct {
@@ -252,17 +259,32 @@ type openaiCompletionTokensDetails struct {
 
 func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
 	in := max(u.PromptTokens, u.PromptCacheHitTokens+u.PromptCacheMissTokens)
+	var created int
+	if u.CacheCreatedInputTokens != nil {
+		created = *u.CacheCreatedInputTokens
+	}
+	// DigitalOcean reports Claude's cache counts beside prompt_tokens, as
+	// Anthropic does, and sends no prompt_tokens_details. The models it hosts
+	// send prompt_tokens_details and count the cache inside prompt_tokens.
+	if u.CacheCreatedInputTokens != nil && u.PromptTokensDetails == nil {
+		in += u.CacheReadInputTokens + created
+	}
 	cu := newCanonicalUsage(in, u.CompletionTokens, u.TotalTokens)
 	if cu == nil {
 		return nil
 	}
 	cu.TotalTokens = max(cu.TotalTokens, cu.InputTokens+cu.OutputTokens)
-	read, write := max(u.PromptCacheHitTokens, u.CachedTokens), 0
+	read, write := max(u.PromptCacheHitTokens, u.CachedTokens, u.CacheReadInputTokens), created
 	if d := u.PromptTokensDetails; d != nil {
-		read, write = max(read, d.CachedTokens), d.CacheWriteTokens
+		read, write = max(read, d.CachedTokens), max(write, d.CacheWriteTokens)
+	}
+	var write1h int
+	if u.CacheCreation != nil {
+		write1h = u.CacheCreation.Ephemeral1hInputTokens
+		cu.cacheTTLKnown = true
 	}
 	if read+write > 0 {
-		cu.setCache(read, write, 0)
+		cu.setCache(read, write, write1h)
 	}
 	if u.CompletionTokensDetails != nil {
 		cu.ReasoningOutputTokens = u.CompletionTokensDetails.ReasoningTokens
