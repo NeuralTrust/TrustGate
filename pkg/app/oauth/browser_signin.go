@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -121,6 +122,7 @@ func (p *authProxy) BeginBrowserSignIn(ctx context.Context, baseURL, returnTo st
 		// client to approve.
 		Approved:      true,
 		BrowserSignIn: true,
+		Tenant:        gw.TenantID(),
 	}
 	if err := p.store.SavePending(ctx, state, pending); err != nil {
 		return "", fmt.Errorf("oauth: park browser sign-in: %w", err)
@@ -157,6 +159,13 @@ func (p *authProxy) finishBrowserSignIn(
 	}
 	if grant.Subject == "" {
 		return "", oauthErr("access_denied", "could not determine subject from identity provider")
+	}
+	// The org hint is only a hint: the identity provider answers with the
+	// organization it resolved. The MCP plane refuses a session of another
+	// tenant (enforceDefaultIdPTenant), and a page proof must not vouch for one.
+	if pending.Tenant != "" && grant.Org != pending.Tenant {
+		slog.WarnContext(ctx, "oauth: browser sign-in for another tenant refused", slog.String("gateway_id", gatewayID))
+		return "", oauthErr("access_denied", "identity does not belong to this gateway's tenant")
 	}
 	proof, err := randomToken()
 	if err != nil {
