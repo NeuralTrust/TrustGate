@@ -48,6 +48,10 @@ const (
 	reasoningToolsError   = `{"error":{"message":"Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."}}`
 )
 
+func anthropicRequestWithModel(model string) string {
+	return `{"model":"` + model + `","max_tokens":10,"system":"be nice","messages":[{"role":"user","content":"hi"}]}`
+}
+
 func apiKeyTarget(provider string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:   ids.New[ids.RegistryKind](),
@@ -586,7 +590,8 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 		absentKey    string
 	}{
 		{name: "anthropic ingress to openai", provider: "openai", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
-		{name: "anthropic ingress to azure", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure openai", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("gpt-4o"), wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure mistral keeps max_tokens", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("probe-mistral"), wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "anthropic ingress to cerebras keeps max_tokens", provider: "cerebras", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "openai passthrough to openai", provider: "openai", body: openaiPassthroughBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
 		{name: "openai passthrough to openai_compatible keeps max_tokens", provider: "openai_compatible", body: openaiPassthroughBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
