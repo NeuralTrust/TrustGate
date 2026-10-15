@@ -377,7 +377,7 @@
       "relevance": 70,
       "tools": [
         {
-          "name": "get_context",
+          "name": "get_amplitude_context",
           "description": "Confirm organization and project access"
         },
         {
@@ -393,19 +393,19 @@
           "description": "Get the latest schema/parameters for a tool"
         },
         {
-          "name": "query_chart",
+          "name": "query_amplitude_data",
           "description": "Query data from a chart"
         },
         {
-          "name": "get_events",
+          "name": "get_amp_taxonomy",
           "description": "Read project event definitions"
         },
         {
-          "name": "edit_dashboard",
+          "name": "use_amp_dashboards",
           "description": "Add/remove charts, reorder, update dashboard metadata"
         },
         {
-          "name": "edit_notebook",
+          "name": "use_amp_notebooks",
           "description": "Add/remove charts and update notebook content"
         }
       ]
@@ -452,7 +452,7 @@
           "description": "Call an Actor and get its run results"
         },
         {
-          "name": "apify/rag-web-browser",
+          "name": "apify--rag-web-browser",
           "description": "Browse and extract web data"
         },
         {
@@ -472,7 +472,7 @@
           "description": "Get a list of an Actor's runs, filterable by status"
         },
         {
-          "name": "get-actor-log",
+          "name": "get-actor-run-log",
           "description": "Retrieve logs for a specific Actor run"
         },
         {
@@ -486,10 +486,6 @@
         {
           "name": "get-dataset-schema",
           "description": "Generate a JSON schema from dataset items"
-        },
-        {
-          "name": "get-actor-output",
-          "description": "Retrieve output not in the Actor tool's preview"
         },
         {
           "name": "get-key-value-store",
@@ -514,10 +510,6 @@
         {
           "name": "abort-actor-run",
           "description": "Abort an Actor run, optionally gracefully"
-        },
-        {
-          "name": "add-actor",
-          "description": "Add an Actor as a new callable tool (experimental)"
         }
       ]
     },
@@ -1247,7 +1239,7 @@
       },
       "tools": [
         {
-          "name": "queryApl",
+          "name": "queryDataset",
           "description": "Execute APL queries against Axiom datasets"
         },
         {
@@ -1259,7 +1251,7 @@
           "description": "List available Axiom datasets"
         },
         {
-          "name": "getDatasetSchema",
+          "name": "getDatasetFields",
           "description": "Get a dataset's schema"
         },
         {
@@ -1283,11 +1275,11 @@
           "description": "Search for metrics matching a known tag value"
         },
         {
-          "name": "getMonitors",
+          "name": "checkMonitors",
           "description": "List monitoring configurations"
         },
         {
-          "name": "getMonitorsHistory",
+          "name": "getMonitorHistory",
           "description": "Get monitor execution history"
         },
         {
@@ -1843,60 +1835,22 @@
       "relevance": 55,
       "tools": [
         {
-          "name": "browserbase_stagehand_navigate",
-          "description": "Navigate to a URL"
+          "name": "start"
         },
         {
-          "name": "browserbase_stagehand_act",
-          "description": "Perform an action via natural language"
+          "name": "end"
         },
         {
-          "name": "browserbase_stagehand_extract",
-          "description": "Extract data from the current page"
+          "name": "navigate"
         },
         {
-          "name": "browserbase_stagehand_observe",
-          "description": "Find actionable elements on the page"
+          "name": "act"
         },
         {
-          "name": "browserbase_screenshot",
-          "description": "Capture a screenshot"
+          "name": "observe"
         },
         {
-          "name": "browserbase_session_create",
-          "description": "Create a single cloud browser session"
-        },
-        {
-          "name": "browserbase_session_close",
-          "description": "Close the active browser session"
-        },
-        {
-          "name": "multi_browserbase_stagehand_session_create",
-          "description": "Create a parallel browser session"
-        },
-        {
-          "name": "multi_browserbase_stagehand_session_list",
-          "description": "List active parallel sessions"
-        },
-        {
-          "name": "multi_browserbase_stagehand_session_close",
-          "description": "Close a specific parallel session"
-        },
-        {
-          "name": "multi_browserbase_stagehand_navigate_session",
-          "description": "Navigate within a given session"
-        },
-        {
-          "name": "multi_browserbase_stagehand_act_session",
-          "description": "Act within a given session"
-        },
-        {
-          "name": "multi_browserbase_stagehand_extract_session",
-          "description": "Extract within a given session"
-        },
-        {
-          "name": "multi_browserbase_stagehand_observe_session",
-          "description": "Observe within a given session"
+          "name": "extract"
         }
       ]
     },
@@ -2010,7 +1964,7 @@
           "description": "Trigger a new build"
         },
         {
-          "name": "get_jobs",
+          "name": "list_jobs",
           "description": "Get jobs for a build"
         },
         {
@@ -2042,11 +1996,7 @@
           "description": "Read job logs"
         },
         {
-          "name": "get_logs_info",
-          "description": "Get metadata about job logs"
-        },
-        {
-          "name": "list_artifacts",
+          "name": "list_artifacts_for_build",
           "description": "List artifacts"
         },
         {
@@ -2286,7 +2236,7 @@
           "description": "List available time slots"
         },
         {
-          "name": "event_types-list_event_type_availability_schedule",
+          "name": "event_types-list_event_type_availability_schedules",
           "description": "List availability schedules"
         },
         {
@@ -2500,7 +2450,7 @@
           "description": "Get presenter notes"
         },
         {
-          "name": "get-design-export-formats",
+          "name": "get-export-formats",
           "description": "Get available export formats"
         },
         {
@@ -2510,14 +2460,6 @@
         {
           "name": "create-design-from-candidate",
           "description": "Create a design from a candidate"
-        },
-        {
-          "name": "request-outline-review",
-          "description": "Request an outline review"
-        },
-        {
-          "name": "generate-design-structured",
-          "description": "Generate a structured design"
         },
         {
           "name": "import-design-from-url",
@@ -2600,16 +2542,7 @@
         "resource_metadata": true
       },
       "relevance": 55,
-      "tools": [
-        {
-          "name": "chargebee_documentation_search",
-          "description": "Search Chargebee docs for detailed information and usage guides"
-        },
-        {
-          "name": "chargebee_code_planner",
-          "description": "Generate code outlines/samples for integrating Chargebee APIs"
-        }
-      ]
+      "tools": []
     },
     {
       "name": "com.checkr/mcp",
@@ -2916,10 +2849,6 @@
         {
           "name": "find_pipelines_and_opportunity_statuses",
           "description": "List pipelines and statuses"
-        },
-        {
-          "name": "find_reporting_metrics",
-          "description": "Find predefined reporting metrics"
         },
         {
           "name": "find_scheduling_links",
@@ -3741,12 +3670,16 @@
       "relevance": 70,
       "tools": [
         {
-          "name": "proxy_tool_call",
-          "description": "STEP 2: Execute a tool discovered via search_resources. This is the ONLY way to call tools returned by search_resources — they cannot be called directly. Requires: toolName (from search_resources output), parameters (matching tool's inputSchema), and payment metadata in _meta.x402/payment. Return..."
+          "description": "STEP 2: Execute a tool discovered via search_resources. This is the ONLY way to call tools returned by search_resources — they cannot be called directly. Requires: toolName (from search_resources output), parameters (matching tool's inputSchema), and payment metadata in _meta.x402/payment. Return...",
+          "name": "proxy_tool_call"
         },
         {
-          "name": "search_resources",
-          "description": "STEP 1: Search for available x402-payable tools. Returns a list of tool DESCRIPTIONS (not callable tools). IMPORTANT: The returned tools are NOT directly callable — you MUST use proxy_tool_call to execute any discovered tool. Pass the returned tool.name as proxy_tool_call's toolName parameter. Re..."
+          "description": "STEP 1: Search for available x402-payable tools. Returns a list of tool DESCRIPTIONS (not callable tools). IMPORTANT: The returned tools are NOT directly callable — you MUST use proxy_tool_call to execute any discovered tool. Pass the returned tool.name as proxy_tool_call's toolName parameter. Re...",
+          "name": "search_resources"
+        },
+        {
+          "description": "Run diagnostics on an x402 endpoint to check whether it is correctly configured for bazaar discovery.",
+          "name": "validate_endpoint"
         }
       ]
     },
@@ -4260,10 +4193,6 @@
           "description": "Get monitor coverage"
         },
         {
-          "name": "apm_search_spans",
-          "description": "Search APM spans"
-        },
-        {
           "name": "apm_query_trace",
           "description": "Query an APM trace"
         },
@@ -4276,24 +4205,16 @@
           "description": "Get primary tag keys"
         },
         {
-          "name": "apm_search_watchdog_stories",
+          "name": "search_watchdog_stories",
           "description": "Search Watchdog stories"
         },
         {
-          "name": "apm_get_watchdog_story",
+          "name": "get_watchdog_story",
           "description": "Get a Watchdog story"
         },
         {
           "name": "apm_latency_bottleneck_summary",
           "description": "Summarize latency bottlenecks"
-        },
-        {
-          "name": "get_change_stories",
-          "description": "Get change stories"
-        },
-        {
-          "name": "semantic_search_change_stories",
-          "description": "Semantic search of change stories"
         },
         {
           "name": "apm_search_recommendations",
@@ -4486,16 +4407,16 @@
       "self_service": true,
       "tools": [
         {
-          "name": "read_wiki_structure",
-          "description": "Get a list of documentation topics for a GitHub repository. Args: repoName: GitHub repository in owner/repo format (e.g. \"facebook/react\")"
+          "description": "Ask any question about a GitHub repository's codebase and get an AI-powered answer grounded in its DeepWiki.",
+          "name": "ask_wiki_question"
         },
         {
-          "name": "read_wiki_contents",
-          "description": "View documentation about a GitHub repository. Args: repoName: GitHub repository in owner/repo format (e.g. \"facebook/react\")"
+          "description": "View documentation about a GitHub repository. Args: repoName: GitHub repository in owner/repo format (e.g. \"facebook/react\")",
+          "name": "read_wiki_contents"
         },
         {
-          "name": "ask_question",
-          "description": "Ask any question about a GitHub repository and get an AI-powered, context-grounded response. Args: repoName: GitHub repository or list of repositories (max 10) in owner/repo format question: The question to ask about the repository"
+          "description": "Get a list of documentation topics for a GitHub repository. Args: repoName: GitHub repository in owner/repo format (e.g. \"facebook/react\")",
+          "name": "read_wiki_structure"
         }
       ]
     },
@@ -5253,28 +5174,16 @@
       ],
       "tools": [
         {
-          "name": "get_kubernetes_events",
+          "name": "get-events-for-kubernetes-cluster",
           "description": "K8s cluster events"
         },
         {
-          "name": "find_entity_by_name",
+          "name": "get-entity-id",
           "description": "Resolve entityId/type by name"
         },
         {
-          "name": "chat_with_davis_copilot",
+          "name": "ask-dynatrace-docs",
           "description": "Ask Dynatrace questions"
-        },
-        {
-          "name": "create_workflow_for_notification",
-          "description": "Create notification workflow"
-        },
-        {
-          "name": "create_dynatrace_notebook",
-          "description": "Share analysis"
-        },
-        {
-          "name": "get_environment_info",
-          "description": "Verify tenant connection"
         }
       ]
     },
@@ -5351,12 +5260,16 @@
       "self_service": true,
       "tools": [
         {
-          "name": "search_endor_labs_documentation",
-          "description": "Search across the Endor Labs Documentation knowledge base to find relevant information, code examples, API references, and guides. Use this tool when you need to answer questions about Endor Labs Documentation, find specific documentation, understand how features work, or locate implementation de..."
+          "description": "Search across the Endor Labs Documentation knowledge base to find relevant information, code examples, API references, and guides. Use this tool when you need to answer questions about Endor Labs Documentation, find specific documentation, understand how features work, or locate implementation de...",
+          "name": "search_endor_labs_documentation"
         },
         {
-          "name": "query_docs_filesystem_endor_labs_documentation",
-          "description": "Run a read-only shell-like query against a virtualized, in-memory filesystem rooted at `/` that contains ONLY the Endor Labs Documentation documentation pages and OpenAPI specs. This is NOT a shell on any real machine — nothing runs on the user's computer, the server host, or any network. The fil..."
+          "description": "Run a read-only shell-like query against a virtualized, in-memory filesystem rooted at `/` that contains ONLY the Endor Labs Documentation documentation pages and OpenAPI specs. This is NOT a shell on any real machine — nothing runs on the user's computer, the server host, or any network. The fil...",
+          "name": "query_docs_filesystem_endor_labs_documentation"
+        },
+        {
+          "description": "Report a problem with this documentation site so the docs team can fix it.",
+          "name": "submit_feedback"
         }
       ]
     },
@@ -5521,32 +5434,23 @@
       },
       "tools": [
         {
-          "name": "list_databases",
+          "name": "schema",
           "description": "List all databases in the workspace"
         },
         {
-          "name": "describe_database",
+          "name": "schema_detailed",
           "description": "List fields/types for a database and related ones"
         },
         {
-          "name": "query_database",
+          "name": "query",
           "description": "Run any Fibery API command"
         },
         {
-          "name": "create_entity",
-          "description": "Create an entity with specified fields"
+          "name": "create_entities"
         },
         {
-          "name": "create_entities_batch",
-          "description": "Create multiple entities at once"
-        },
-        {
-          "name": "update_entity",
+          "name": "update_entities",
           "description": "Update an entity's fields"
-        },
-        {
-          "name": "current_date",
-          "description": "Get today's date (ISO 8601)"
         }
       ]
     },
@@ -5580,24 +5484,24 @@
       "relevance": 65,
       "tools": [
         {
-          "name": "firecrawl_scrape",
-          "description": "Extract content/structured data from a single URL"
+          "description": "Extract content/structured data from a single URL",
+          "name": "firecrawl_scrape"
         },
         {
-          "name": "firecrawl_search",
-          "description": "Web search with optional content extraction"
+          "description": "Web search with optional content extraction",
+          "name": "firecrawl_search"
         },
         {
-          "name": "firecrawl_crawl",
-          "description": "Crawl a site section and extract every page"
+          "description": "Parse one supported document into markdown, HTML, links, summary, targeted answers, or JSON matching a schema.",
+          "name": "firecrawl_parse"
         },
         {
-          "name": "firecrawl_map",
-          "description": "Discover all indexed URLs on a site"
+          "description": "Crawl a site section and extract every page",
+          "name": "firecrawl_crawl"
         },
         {
-          "name": "firecrawl_extract",
-          "description": "Schema-based structured data extraction"
+          "description": "Discover all indexed URLs on a site",
+          "name": "firecrawl_map"
         }
       ]
     },
@@ -5713,12 +5617,7 @@
           "description": "Create a draft reply (no send)"
         },
         {
-          "name": "send_reply",
-          "description": "Send reply on native channel (destructive)"
-        },
-        {
-          "name": "send_new_message",
-          "description": "Start a new outbound message"
+          "name": "send_message"
         },
         {
           "name": "update_conversation_status",
@@ -5848,7 +5747,7 @@
           "description": "List/create/update/retry/cancel/delete pipelines"
         },
         {
-          "name": "semantic_code_search",
+          "name": "semantic_search",
           "description": "Semantic code search in a project"
         }
       ]
@@ -5886,11 +5785,11 @@
       "relevance": 65,
       "tools": [
         {
-          "name": "company_search",
+          "name": "search",
           "description": "Search Glean's content index"
         },
         {
-          "name": "people_profile_search",
+          "name": "employee_search",
           "description": "Search the people directory"
         },
         {
@@ -5898,7 +5797,7 @@
           "description": "Interact with Glean's AI assistant"
         },
         {
-          "name": "read_documents",
+          "name": "read_document",
           "description": "Retrieve documents by ID or URL"
         }
       ]
@@ -6108,44 +6007,96 @@
       "relevance": 92,
       "tools": [
         {
-          "name": "search_threads",
-          "description": "Search Gmail threads matching a query."
+          "description": "Create a draft email for review before sending.",
+          "name": "create_draft"
         },
         {
-          "name": "get_thread",
-          "description": "Retrieve the messages of a Gmail thread."
+          "description": "List draft emails in the mailbox.",
+          "name": "list_drafts"
         },
         {
-          "name": "list_labels",
-          "description": "List the labels in the mailbox."
+          "description": "Retrieves a specific draft email from the authenticated user's Gmail account by ID, including its `viewUrl` for viewing and editing in the Gmail Web UI.",
+          "name": "get_draft"
         },
         {
-          "name": "label_message",
-          "description": "Apply a label to a message."
+          "description": "Retrieve the messages of a Gmail thread.",
+          "name": "get_thread"
         },
         {
-          "name": "unlabel_message",
-          "description": "Remove a label from a message."
+          "description": "Retrieves a specific email message from the authenticated user's Gmail account by its unique message ID, including its `viewUrl`.",
+          "name": "get_message"
         },
         {
-          "name": "label_thread",
-          "description": "Apply a label to a thread."
+          "description": "Search Gmail threads matching a query.",
+          "name": "search_threads"
         },
         {
-          "name": "unlabel_thread",
-          "description": "Remove a label from a thread."
+          "description": "Apply a label to a thread.",
+          "name": "label_thread"
         },
         {
-          "name": "create_label",
-          "description": "Create a new Gmail label."
+          "description": "Remove a label from a thread.",
+          "name": "unlabel_thread"
         },
         {
-          "name": "create_draft",
-          "description": "Create a draft email for review before sending."
+          "description": "Prefer `trash_thread` or `mark_thread_spam` instead.",
+          "name": "apply_sensitive_thread_label"
         },
         {
-          "name": "list_drafts",
-          "description": "List draft emails in the mailbox."
+          "description": "Moves an entire thread to the Trash in the authenticated user's Gmail account.",
+          "name": "trash_thread"
+        },
+        {
+          "description": "Removes an entire thread from the Trash in the authenticated user's Gmail account.",
+          "name": "untrash_thread"
+        },
+        {
+          "description": "Marks an entire thread as Spam in the authenticated user's Gmail account.",
+          "name": "mark_thread_spam"
+        },
+        {
+          "description": "Unmarks an entire thread as Spam in the authenticated user's Gmail account.",
+          "name": "unmark_thread_spam"
+        },
+        {
+          "description": "List the labels in the mailbox.",
+          "name": "list_labels"
+        },
+        {
+          "description": "Apply a label to a message.",
+          "name": "label_message"
+        },
+        {
+          "description": "Atomically adds and/or removes labels from a specific message in the authenticated user's Gmail account.",
+          "name": "update_message_labels"
+        },
+        {
+          "description": "Remove a label from a message.",
+          "name": "unlabel_message"
+        },
+        {
+          "description": "Prefer `trash_message` or `mark_message_spam` instead.",
+          "name": "apply_sensitive_message_label"
+        },
+        {
+          "description": "Moves a specific message to the Trash in the authenticated user's Gmail account.",
+          "name": "trash_message"
+        },
+        {
+          "description": "Removes a specific message from the Trash in the authenticated user's Gmail account.",
+          "name": "untrash_message"
+        },
+        {
+          "description": "Marks a specific message as Spam in the authenticated user's Gmail account.",
+          "name": "mark_message_spam"
+        },
+        {
+          "description": "Unmarks a specific message as Spam in the authenticated user's Gmail account.",
+          "name": "unmark_message_spam"
+        },
+        {
+          "description": "Create a new Gmail label.",
+          "name": "create_label"
         }
       ]
     },
@@ -6253,12 +6204,36 @@
       "relevance": 91,
       "tools": [
         {
-          "name": "search_files",
-          "description": "Search Drive files matching a query."
+          "description": "Call this tool to copy an existing File in Google Drive.",
+          "name": "copy_file"
         },
         {
-          "name": "read_file_content",
-          "description": "Read the content of a Drive file."
+          "description": "Call this tool to create or upload a File to Google Drive.",
+          "name": "create_file"
+        },
+        {
+          "description": "Call this tool to download the content of a Drive file as a base64 encoded string.",
+          "name": "download_file_content"
+        },
+        {
+          "description": "Call this tool to find general metadata about a user's Drive file.",
+          "name": "get_file_metadata"
+        },
+        {
+          "description": "Call this tool to list the permissions of a Drive File.",
+          "name": "get_file_permissions"
+        },
+        {
+          "description": "Call this tool to find recent files for a user specified a sort order.",
+          "name": "list_recent_files"
+        },
+        {
+          "description": "Read the content of a Drive file.",
+          "name": "read_file_content"
+        },
+        {
+          "description": "Search Drive files matching a query.",
+          "name": "search_files"
         }
       ]
     },
@@ -6359,56 +6334,60 @@
       "relevance": 90,
       "tools": [
         {
-          "name": "create_instance",
-          "description": "Create a new instance in the specified project. The request requires project_id, instance_id, display_name, and at least one cluster. The instance_id must be RFC 1035 compliant. Each cluster must specify its zone (e.g. us-central1-a). Example: { \"project_id\": \"my-project\", \"instance_id\": \"my-inst..."
+          "description": "Create a new instance in the specified project. The request requires project_id, instance_id, display_name, and at least one cluster. The instance_id must be RFC 1035 compliant. Each cluster must specify its zone (e.g. us-central1-a). Example: { \"project_id\": \"my-project\", \"instance_id\": \"my-inst...",
+          "name": "create_instance"
         },
         {
-          "name": "get_instance",
-          "description": "Get information about an instance. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"name\": \"projects/my-project/instances/my-instance\" }"
+          "description": "Get information about an instance. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"name\": \"projects/my-project/instances/my-instance\" }",
+          "name": "get_instance"
         },
         {
-          "name": "list_instances",
-          "description": "List information about instances in a project. The request requires the 'parent' field to be set in the format 'projects/{project}'. Example: { \"parent\": \"projects/my-project\" }"
+          "description": "List information about instances in a project. The request requires the 'parent' field to be set in the format 'projects/{project}'. Example: { \"parent\": \"projects/my-project\" }",
+          "name": "list_instances"
         },
         {
-          "name": "delete_instance",
-          "description": "Delete an instance from a project. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"name\": \"projects/my-project/instances/my-instance\" } Before executing the deletion, you MUST confirm the action with the user by stating the full..."
+          "description": "Delete an instance from a project. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"name\": \"projects/my-project/instances/my-instance\" } Before executing the deletion, you MUST confirm the action with the user by stating the full...",
+          "name": "delete_instance"
         },
         {
-          "name": "create_table",
-          "description": "Create a new table in the specified instance."
+          "description": "Create a new table in the specified instance.",
+          "name": "create_table"
         },
         {
-          "name": "get_table",
-          "description": "Get metadata information about the specified table. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}/tables/{table}'. Example: { \"name\": \"projects/my-project/instances/my-instance/tables/my-table\" }"
+          "description": "Get metadata information about the specified table. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}/tables/{table}'. Example: { \"name\": \"projects/my-project/instances/my-instance/tables/my-table\" }",
+          "name": "get_table"
         },
         {
-          "name": "list_tables",
-          "description": "List all tables in a specified instance. The request requires the 'parent' field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"parent\": \"projects/my-project/instances/my-instance\" }"
+          "description": "List all tables in a specified instance. The request requires the 'parent' field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"parent\": \"projects/my-project/instances/my-instance\" }",
+          "name": "list_tables"
         },
         {
-          "name": "delete_table",
-          "description": "Delete a table. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}/tables/{table}'. Example: { \"name\": \"projects/my-project/instances/my-instance/tables/my-table\" } The table must exist. You can use `list_tables` to verify. Before executing the ..."
+          "description": "Delete a table. The request requires the 'name' field to be set in the format 'projects/{project}/instances/{instance}/tables/{table}'. Example: { \"name\": \"projects/my-project/instances/my-instance/tables/my-table\" } The table must exist. You can use `list_tables` to verify. Before executing the ...",
+          "name": "delete_table"
         },
         {
-          "name": "create_logical_view",
-          "description": "Create a new Bigtable logical view within a specified instance. The request requires project_id, instance_id, logical_view_id, and logical_view. The logical_view_id can be any name up to 128 characters. Example: { \"project_id\": \"my-project\", \"instance_id\": \"my-instance\", \"logical_view_id\": \"my-lo..."
+          "description": "Create a new Bigtable logical view within a specified instance. The request requires project_id, instance_id, logical_view_id, and logical_view. The logical_view_id can be any name up to 128 characters. Example: { \"project_id\": \"my-project\", \"instance_id\": \"my-instance\", \"logical_view_id\": \"my-lo...",
+          "name": "create_logical_view"
         },
         {
-          "name": "get_logical_view",
-          "description": "Get information about the specified logical view. The request requires the `name` field to be set in the format 'projects/{project}/instances/{instance}/logicalViews/{logical_view}'. Example: { \"name\": \"projects/my-project/instances/my-instance/logicalViews/my-logical-view\" }"
+          "description": "Get information about the specified logical view. The request requires the `name` field to be set in the format 'projects/{project}/instances/{instance}/logicalViews/{logical_view}'. Example: { \"name\": \"projects/my-project/instances/my-instance/logicalViews/my-logical-view\" }",
+          "name": "get_logical_view"
         },
         {
-          "name": "list_logical_views",
-          "description": "List information about all logical views within a specified instance. The request requires the `parent` field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"parent\": \"projects/my-project/instances/my-instance\" }"
+          "description": "List information about all logical views within a specified instance. The request requires the `parent` field to be set in the format 'projects/{project}/instances/{instance}'. Example: { \"parent\": \"projects/my-project/instances/my-instance\" }",
+          "name": "list_logical_views"
         },
         {
-          "name": "update_logical_view",
-          "description": "Updates a Bigtable logical view within a specified instance. You can update the GoogleSQL query and/or the deletion protection setting. At least one field to update (e.g., `query` or `deletion_protection`) must be provided in logical_view field. Update query example: { \"project_id\": \"my-project\",..."
+          "description": "Updates a Bigtable logical view within a specified instance. You can update the GoogleSQL query and/or the deletion protection setting. At least one field to update (e.g., `query` or `deletion_protection`) must be provided in logical_view field. Update query example: { \"project_id\": \"my-project\",...",
+          "name": "update_logical_view"
         },
         {
-          "name": "delete_logical_view",
-          "description": "Deletes a Bigtable logical view within a specified instance. The request requires the `name` field to be set in the format 'projects/{project}/instances/{instance}/logicalViews/{logical_view}'. Example: { \"name\": \"projects/my-project/instances/my-instance/logicalViews/my-logical-view\" } Before ex..."
+          "description": "Deletes a Bigtable logical view within a specified instance. The request requires the `name` field to be set in the format 'projects/{project}/instances/{instance}/logicalViews/{logical_view}'. Example: { \"name\": \"projects/my-project/instances/my-instance/logicalViews/my-logical-view\" } Before ex...",
+          "name": "delete_logical_view"
+        },
+        {
+          "description": "Lists hot tablets in a Cloud Bigtable cluster.",
+          "name": "list_hot_tablets"
         }
       ]
     },
@@ -6858,28 +6837,24 @@
       "relevance": 90,
       "tools": [
         {
-          "name": "generate_color_scheme",
-          "description": "Generates a Material Design color scheme from one or more key colors. Always use this when you need to create a color scheme for an application. The input is one or more named colors in hex format, and the output is a color scheme with a map of color role names to colors in hex format."
+          "description": "Generates a Material Design color scheme from one or more key colors. Always use this when you need to create a color scheme for an application. The input is one or more named colors in hex format, and the output is a color scheme with a map of color role names to colors in hex format.",
+          "name": "generate_color_scheme"
         },
         {
-          "name": "search_icons",
-          "description": "Finds appropriate Material Design icons matching keywords that describe their usage, style, or shape."
+          "description": "Finds appropriate Material Design icons matching keywords that describe their usage, style, or shape.",
+          "name": "search_icons"
         },
         {
-          "name": "icons_instructions",
-          "description": "Provides essential and critical instructions on how to use Material Icons and Material Symbols efficiently on Web."
+          "description": "Provides essential and critical instructions on how to use Material Icons and Material Symbols efficiently on Web.",
+          "name": "icons_instructions"
         },
         {
-          "name": "search_fonts",
-          "description": "Finds appropriate fonts matching categories and/or languages."
+          "description": "Finds appropriate fonts matching categories and/or languages.",
+          "name": "search_fonts"
         },
         {
-          "name": "describe_font",
-          "description": "Describes a font family in detail, including its look and feel, supported styles, weights and how to use it."
-        },
-        {
-          "name": "typeset",
-          "description": "CRITICAL: You MUST call this tool on every UI design or HTML/CSS code generation task to obtain the mandatory layout, modular scale, multi-vibe font selection, and proximity grouping blueprints required to pass design system evaluations."
+          "description": "Describes a font family in detail, including its look and feel, supported styles, weights and how to use it.",
+          "name": "describe_font"
         }
       ]
     },
@@ -6956,64 +6931,96 @@
       "relevance": 90,
       "tools": [
         {
-          "name": "get_document",
-          "description": "Get a document from a Firestore database."
+          "description": "Get a document from a Firestore database.",
+          "name": "get_document"
         },
         {
-          "name": "add_document",
-          "description": "Create a document from a Firestore database."
+          "description": "Create a document from a Firestore database.",
+          "name": "add_document"
         },
         {
-          "name": "update_document",
-          "description": "Update a document from a Firestore database."
+          "description": "Update a document from a Firestore database.",
+          "name": "update_document"
         },
         {
-          "name": "delete_document",
-          "description": "Delete a document from a Firestore database."
+          "description": "Delete a document from a Firestore database.",
+          "name": "delete_document"
         },
         {
-          "name": "list_documents",
-          "description": "List documents from a Firestore database."
+          "description": "List documents from a Firestore database.",
+          "name": "list_documents"
         },
         {
-          "name": "list_collections",
-          "description": "List all the collection IDs underneath a document."
+          "description": "List all the collection IDs underneath a document.",
+          "name": "list_collections"
         },
         {
-          "name": "create_database",
-          "description": "Create a Firestore database."
+          "description": "Create a Firestore database.",
+          "name": "create_database"
         },
         {
-          "name": "get_database",
-          "description": "Get a Firestore database."
+          "description": "Get a Firestore database.",
+          "name": "get_database"
         },
         {
-          "name": "list_databases",
-          "description": "List Firestore databases."
+          "description": "List Firestore databases.",
+          "name": "list_databases"
         },
         {
-          "name": "update_database",
-          "description": "Update a Firestore database."
+          "description": "Update a Firestore database.",
+          "name": "update_database"
         },
         {
-          "name": "delete_database",
-          "description": "Delete a Firestore database."
+          "description": "Delete a Firestore database.",
+          "name": "delete_database"
         },
         {
-          "name": "create_index",
-          "description": "Create a composite index."
+          "description": "Create a composite index.",
+          "name": "create_index"
         },
         {
-          "name": "get_index",
-          "description": "Get a Firestore index."
+          "description": "Get a Firestore index.",
+          "name": "get_index"
         },
         {
-          "name": "list_indexes",
-          "description": "List Firestore indexes."
+          "description": "List Firestore indexes.",
+          "name": "list_indexes"
         },
         {
-          "name": "delete_index",
-          "description": "Delete a Firestore index."
+          "description": "Delete a Firestore index.",
+          "name": "delete_index"
+        },
+        {
+          "description": "Get a Firestore backup.",
+          "name": "get_backup"
+        },
+        {
+          "description": "List Firestore backups.",
+          "name": "list_backups"
+        },
+        {
+          "description": "Delete a Firestore backup.",
+          "name": "delete_backup"
+        },
+        {
+          "description": "Create a Firestore backup schedule.",
+          "name": "create_backup_schedule"
+        },
+        {
+          "description": "Get a Firestore backup schedule.",
+          "name": "get_backup_schedule"
+        },
+        {
+          "description": "List Firestore backup schedules.",
+          "name": "list_backup_schedules"
+        },
+        {
+          "description": "Update a Firestore backup schedule.",
+          "name": "update_backup_schedule"
+        },
+        {
+          "description": "Delete a Firestore backup schedule.",
+          "name": "delete_backup_schedule"
         }
       ]
     },
@@ -7395,60 +7402,64 @@
       "relevance": 90,
       "tools": [
         {
-          "name": "create_project",
-          "description": "Creates a new Stitch project. A project is a container for UI designs and frontend code."
+          "description": "Creates a new Stitch project. A project is a container for UI designs and frontend code.",
+          "name": "create_project"
         },
         {
-          "name": "get_project",
-          "description": "Retrieves the details of a specific Stitch project using its project name."
+          "description": "Retrieves the details of a specific Stitch project using its project name.",
+          "name": "get_project"
         },
         {
-          "name": "list_projects",
-          "description": "Lists all Stitch projects accessible to the user. By default, it lists projects owned by the user."
+          "description": "Deletes a specific Stitch project using its project name.",
+          "name": "delete_project"
         },
         {
-          "name": "list_screens",
-          "description": "Lists all screens within a given Stitch project."
+          "description": "Lists all Stitch projects accessible to the user. By default, it lists projects owned by the user.",
+          "name": "list_projects"
         },
         {
-          "name": "get_screen",
-          "description": "Retrieves the details of a specific screen within a project."
+          "description": "Lists all screens within a given Stitch project.",
+          "name": "list_screens"
         },
         {
-          "name": "generate_screen_from_text",
-          "description": "Generates a new screen within a project from a text prompt. **Instructions for Tool Call:** * This action can take a few minutes to complete. Please be patient. DO NOT RETRY. * If the tool fails with a timeout, don't retry. Instead, try to get the screen with `get_screen` method every 30 seconds ..."
+          "description": "Retrieves the details of a specific screen within a project.",
+          "name": "get_screen"
         },
         {
-          "name": "edit_screens",
-          "description": "Edits existing screens within a project using a text prompt. **Instructions for Tool Call:** * This action can take a few minutes to complete. Please be patient. DO NOT RETRY. * If the tool call fails due to connection error, the process may still succeed."
+          "description": "Generates a new screen within a project from a text prompt. **Instructions for Tool Call:** * This action can take a few minutes to complete. Please be patient. DO NOT RETRY. * If the tool fails with a timeout, don't retry. Instead, try to get the screen with `get_screen` method every 30 seconds ...",
+          "name": "generate_screen_from_text"
         },
         {
-          "name": "generate_variants",
-          "description": "Generates variants of existing screens within a project using a text prompt. **Instructions for Tool Call:** * If the tool fails with a timeout, don't retry. Instead, try to get the screen with `get_screen` method every 30 seconds for up to 10 times before giving up."
+          "description": "Edits existing screens within a project using a text prompt. **Instructions for Tool Call:** * This action can take a few minutes to complete. Please be patient. DO NOT RETRY. * If the tool call fails due to connection error, the process may still succeed.",
+          "name": "edit_screens"
         },
         {
-          "name": "upload_design_md",
-          "description": "Uploads DESIGN.md to a Stitch project. Use this tool when the user wants to create a design system from a DESIGN.md file. **Instructions for Tool Call:** * Call `create_design_system_from_design_md` tool immediately after this tool to create the design system from the uploaded DESIGN.md, and disp..."
+          "description": "Generates variants of existing screens within a project using a text prompt. **Instructions for Tool Call:** * If the tool fails with a timeout, don't retry. Instead, try to get the screen with `get_screen` method every 30 seconds for up to 10 times before giving up.",
+          "name": "generate_variants"
         },
         {
-          "name": "create_design_system",
-          "description": "Creates a new design system for a project. Use this tool when the user wants to set or update the overall visual theme, style, or branding of the application. This includes configuring: - Color Palette: Presets, custom primary colors, and saturation levels. - Typography: Font families (e.g., Inte..."
+          "description": "Uploads DESIGN.md to a Stitch project. Use this tool when the user wants to create a design system from a DESIGN.md file. **Instructions for Tool Call:** * Call `create_design_system_from_design_md` tool immediately after this tool to create the design system from the uploaded DESIGN.md, and disp...",
+          "name": "upload_design_md"
         },
         {
-          "name": "create_design_system_from_design_md",
-          "description": "Creates a design system for a project, with user uploaded DESIGN.md file, and displays the design system in the UI. **Instructions for Tool Call:** * Should call `upload_design_md` tool first to upload DESIGN.md to a Stitch project."
+          "description": "Creates a new design system for a project. Use this tool when the user wants to set or update the overall visual theme, style, or branding of the application. This includes configuring: - Color Palette: Presets, custom primary colors, and saturation levels. - Typography: Font families (e.g., Inte...",
+          "name": "create_design_system"
         },
         {
-          "name": "update_design_system",
-          "description": "Updates a design system for a project. Use this tool when the user wants to change the overall visual theme, style, or branding of the application. This includes configuring: - Color Palette: Presets, custom primary colors, and saturation levels. - Typography: Font families (e.g., Inter, Roboto, ..."
+          "description": "Creates a design system for a project, with user uploaded DESIGN.md file, and displays the design system in the UI. **Instructions for Tool Call:** * Should call `upload_design_md` tool first to upload DESIGN.md to a Stitch project.",
+          "name": "create_design_system_from_design_md"
         },
         {
-          "name": "list_design_systems",
-          "description": "Lists all design systems for a given project."
+          "description": "Updates a design system for a project. Use this tool when the user wants to change the overall visual theme, style, or branding of the application. This includes configuring: - Color Palette: Presets, custom primary colors, and saturation levels. - Typography: Font families (e.g., Inter, Roboto, ...",
+          "name": "update_design_system"
         },
         {
-          "name": "apply_design_system",
-          "description": "Applies a design system to a list of screens. Use this tool when the user wants to update one or more screens to match the style of a design system. This tool applies the selected design system's foundational design tokens (colors, fonts, shapes, etc.) to the chosen screens, modifying their appea..."
+          "description": "Lists all design systems for a given project.",
+          "name": "list_design_systems"
+        },
+        {
+          "description": "Applies a design system to a list of screens. Use this tool when the user wants to update one or more screens to match the style of a design system. This tool applies the selected design system's foundational design tokens (colors, fonts, shapes, etc.) to the chosen screens, modifying their appea...",
+          "name": "apply_design_system"
         }
       ]
     },
@@ -7933,20 +7944,7 @@
           "description": "Find record owners by name/email/ID"
         },
         {
-          "name": "get_campaign_contacts_by_type",
-          "description": "Campaign contact IDs by attribution type"
-        },
-        {
-          "name": "get_campaign_analytics",
-          "description": "Campaign metrics and revenue attribution"
-        },
-        {
-          "name": "get_campaign_asset_types",
-          "description": "List campaign asset type names"
-        },
-        {
-          "name": "get_campaign_asset_metrics",
-          "description": "Metrics for objects associated with a campaign"
+          "name": "read_campaign_data"
         },
         {
           "name": "submit_feedback",
@@ -8326,7 +8324,7 @@
           "description": "List network requests as JSON (filters)"
         },
         {
-          "name": "getScreenshot",
+          "name": "getScreenshots",
           "description": "Get screenshots from a screenshot Jam"
         },
         {
@@ -8346,7 +8344,7 @@
           "description": "Analyze a Jam video for issues/insights"
         },
         {
-          "name": "listJams",
+          "name": "searchJams",
           "description": "Search/filter Jams by text/type/folder/author/date"
         },
         {
@@ -8403,10 +8401,6 @@
           "description": "List access tokens"
         },
         {
-          "name": "access_tokens_revoke",
-          "description": "Revoke access token"
-        },
-        {
           "name": "access_oidc_create_configuration",
           "description": "Create OIDC configuration"
         },
@@ -8423,7 +8417,7 @@
           "description": "Update a project"
         },
         {
-          "name": "access_projects_list_projects",
+          "name": "access_projects_list",
           "description": "List projects"
         },
         {
@@ -8531,7 +8525,7 @@
           "description": "List package versions"
         },
         {
-          "name": "catalog_packages_versions_list_vulnerabilities",
+          "name": "catalog_packages_versions_vulnerabilities",
           "description": "Version vulnerabilities"
         },
         {
@@ -8713,7 +8707,7 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "form_list",
+          "name": "search",
           "description": "List forms"
         },
         {
@@ -8723,10 +8717,6 @@
         {
           "name": "edit_form",
           "description": "Edit an existing form"
-        },
-        {
-          "name": "create_submission",
-          "description": "Create a submission for an existing form"
         },
         {
           "name": "get_submissions",
@@ -8759,7 +8749,7 @@
       ],
       "tools": [
         {
-          "name": "admins_list",
+          "name": "admin_list",
           "description": "List administrators"
         },
         {
@@ -8835,11 +8825,11 @@
           "description": "Remove MFA requirement"
         },
         {
-          "name": "user_resetmfa",
+          "name": "user_reset_mfa",
           "description": "Reset user MFA"
         },
         {
-          "name": "user_send_invitation_email",
+          "name": "user_send_activation_email",
           "description": "Send invitation email"
         },
         {
@@ -8859,7 +8849,7 @@
           "description": "List users"
         },
         {
-          "name": "search_api",
+          "name": "search_api_execute",
           "description": "Search JumpCloud API"
         }
       ]
@@ -8919,10 +8909,6 @@
           "description": "List events"
         },
         {
-          "name": "create_event",
-          "description": "Create an event for a profile"
-        },
-        {
           "name": "get_metrics",
           "description": "List event metrics"
         },
@@ -8957,10 +8943,6 @@
         {
           "name": "get_segment",
           "description": "Get a segment"
-        },
-        {
-          "name": "upload_image_from_file",
-          "description": "Upload image from file"
         },
         {
           "name": "upload_image_from_url",
@@ -9556,28 +9538,44 @@
       "self_service": true,
       "tools": [
         {
-          "name": "list-endpoints",
-          "description": "Lists all API paths and their HTTP methods with summaries, organized by path. Results can be passed directly into 'get-endpoint'."
+          "description": "Lists all API paths and their HTTP methods with summaries, organized by path. Results can be passed directly into 'get-endpoint'.",
+          "name": "list-endpoints"
         },
         {
-          "name": "get-endpoint",
-          "description": "Gets detailed information about a specific API endpoint, including security schemes and servers"
+          "description": "Gets detailed information about a specific API endpoint, including security schemes and servers",
+          "name": "get-endpoint"
         },
         {
-          "name": "search-endpoints",
-          "description": "Performs a deep search through paths, operations, and parameters to discover relevant API endpoints. Use this tool to find specific API capabilities, required parameters, or data models based on search keywords. Results can be passed directly into 'get-endpoint'."
+          "description": "Performs a deep search through paths, operations, and parameters to discover relevant API endpoints. Use this tool to find specific API capabilities, required parameters, or data models based on search keywords. Results can be passed directly into 'get-endpoint'.",
+          "name": "search-endpoints"
         },
         {
-          "name": "execute-request",
-          "description": "Executes an API request with a given HAR request object."
+          "description": "Executes an API request with a given HAR request object.",
+          "name": "execute-request"
         },
         {
-          "name": "search",
-          "description": "Searches through guide pages with the given search query, returning a list of results with ID, title, and URL."
+          "description": "Searches through guide pages with the given search query, returning a list of results with ID, title, and URL.",
+          "name": "search"
         },
         {
-          "name": "fetch",
-          "description": "Gets detailed information about a guide page by ID."
+          "description": "Gets detailed information about a guide page by ID.",
+          "name": "fetch"
+        },
+        {
+          "description": "Call once at the start of any Lithic sandbox task, before making API requests.",
+          "name": "lithic-sandbox-setup"
+        },
+        {
+          "description": "Use whenever simulating card transactions in sandbox (authorize, clearing, void, return, advice).",
+          "name": "lithic-simulate-transaction"
+        },
+        {
+          "description": "Use when creating, editing, or testing Authorization Rules in sandbox.",
+          "name": "lithic-auth-rule-lifecycle"
+        },
+        {
+          "description": "Use when listing or searching sandbox data (transactions, cards, accounts, rule results).",
+          "name": "lithic-query-data"
         }
       ]
     },
@@ -10042,16 +10040,10 @@
           "description": "Search/list accessible boards"
         },
         {
-          "name": "board_list_items",
-          "description": "List items on a board (paginated, filterable)"
+          "name": "canvas_search"
         },
         {
-          "name": "context_get",
-          "description": "Get text context from a board/item"
-        },
-        {
-          "name": "context_explore",
-          "description": "Explore high-level board items/frames"
+          "name": "canvas_read_as_svg"
         },
         {
           "name": "image_create",
@@ -10066,15 +10058,10 @@
           "description": "Get image metadata/base64 data"
         },
         {
-          "name": "diagram_create",
-          "description": "Create a diagram from DSL text"
+          "name": "canvas_create_from_svg"
         },
         {
-          "name": "doc_create",
-          "description": "Create a structured document item"
-        },
-        {
-          "name": "doc_update",
+          "name": "canvas_update_from_svg",
           "description": "Edit a document via find-and-replace"
         },
         {
@@ -10090,10 +10077,6 @@
           "description": "Get rows with column metadata/filtering"
         },
         {
-          "name": "code_widget_create",
-          "description": "Create a code widget"
-        },
-        {
           "name": "comment_list_comments",
           "description": "List comments on a board/item"
         },
@@ -10102,12 +10085,8 @@
           "description": "Resolve/unresolve a comment thread"
         },
         {
-          "name": "layout_get_dsl",
+          "name": "canvas_get_canvas_composer_skill",
           "description": "Get DSL spec for board layouts"
-        },
-        {
-          "name": "layout_read",
-          "description": "Read board items as DSL text"
         },
         {
           "name": "prototype_read",
@@ -10277,20 +10256,24 @@
       "self_service": true,
       "tools": [
         {
-          "name": "list-endpoints",
-          "description": "Lists all API paths and their HTTP methods with summaries, organized by path. Results can be passed directly into 'get-endpoint'."
+          "description": "Lists all API paths and their HTTP methods with summaries, organized by path. Results can be passed directly into 'get-endpoint'.",
+          "name": "list-endpoints"
         },
         {
-          "name": "get-endpoint",
-          "description": "Gets detailed information about a specific API endpoint, including security schemes and servers"
+          "description": "Gets detailed information about a specific API endpoint, including security schemes and servers",
+          "name": "get-endpoint"
         },
         {
-          "name": "search-endpoints",
-          "description": "Performs a deep search through paths, operations, and parameters to discover relevant API endpoints. Use this tool to find specific API capabilities, required parameters, or data models based on search keywords. Results can be passed directly into 'get-endpoint'."
+          "description": "Performs a deep search through paths, operations, and parameters to discover relevant API endpoints. Use this tool to find specific API capabilities, required parameters, or data models based on search keywords. Results can be passed directly into 'get-endpoint'.",
+          "name": "search-endpoints"
         },
         {
-          "name": "execute-request",
-          "description": "Executes an API request with a given HAR request object."
+          "description": "Lists all available OpenAPI specs.",
+          "name": "list-specs"
+        },
+        {
+          "description": "Executes an API request with a given HAR request object.",
+          "name": "execute-request"
         }
       ]
     },
@@ -10797,23 +10780,23 @@
           "description": "List notification audiences"
         },
         {
-          "name": "create_validation_monitor_mac",
+          "name": "create_or_update_validation_monitor",
           "description": "Create a validation monitor as code"
         },
         {
-          "name": "create_metric_monitor_mac",
+          "name": "create_or_update_metric_monitor",
           "description": "Create a metric monitor as code"
         },
         {
-          "name": "create_comparison_monitor_mac",
+          "name": "create_or_update_comparison_monitor",
           "description": "Create a comparison monitor as code"
         },
         {
-          "name": "create_custom_sql_monitor_mac",
+          "name": "create_or_update_sql_monitor",
           "description": "Create a custom SQL monitor as code"
         },
         {
-          "name": "create_table_monitor_mac",
+          "name": "create_or_update_table_monitor",
           "description": "Create a table monitor as code"
         },
         {
@@ -11001,92 +10984,10 @@
       "relevance": 55,
       "tools": [
         {
-          "name": "list_api_endpoints",
-          "description": "(dynamic mode) discover available API endpoints"
+          "name": "search_docs"
         },
         {
-          "name": "get_api_endpoint_schema",
-          "description": "(dynamic mode) get schema for an endpoint"
-        },
-        {
-          "name": "invoke_api_endpoint",
-          "description": "(dynamic mode) execute any endpoint"
-        },
-        {
-          "name": "create_video_assets",
-          "description": "Create a new Mux Video asset"
-        },
-        {
-          "name": "retrieve_video_assets",
-          "description": "Retrieve details of an asset"
-        },
-        {
-          "name": "update_video_assets",
-          "description": "Update an asset's details"
-        },
-        {
-          "name": "list_video_assets",
-          "description": "List all Mux assets"
-        },
-        {
-          "name": "create_playback_id_video_assets",
-          "description": "Create a playback ID for an asset"
-        },
-        {
-          "name": "create_static_rendition_video_assets",
-          "description": "Create an MP4 static rendition"
-        },
-        {
-          "name": "create_track_video_assets",
-          "description": "Add subtitle/audio track to an asset"
-        },
-        {
-          "name": "generate_subtitles_video_assets",
-          "description": "Generate subtitles for an audio track"
-        },
-        {
-          "name": "create_video_live_streams",
-          "description": "Create a new live stream"
-        },
-        {
-          "name": "retrieve_video_live_streams",
-          "description": "Retrieve a live stream's details"
-        },
-        {
-          "name": "update_video_live_streams",
-          "description": "Update live stream parameters"
-        },
-        {
-          "name": "list_video_live_streams",
-          "description": "List live streams in the environment"
-        },
-        {
-          "name": "complete_video_live_streams",
-          "description": "End a live stream recording"
-        },
-        {
-          "name": "create_video_uploads",
-          "description": "Create a new direct upload"
-        },
-        {
-          "name": "list_video_uploads",
-          "description": "List direct uploads"
-        },
-        {
-          "name": "create_video_playback_restrictions",
-          "description": "Create a playback restriction"
-        },
-        {
-          "name": "list_data_dimensions",
-          "description": "List all available Data dimensions"
-        },
-        {
-          "name": "list_monitoring_data_metrics",
-          "description": "List available monitoring metrics"
-        },
-        {
-          "name": "get_timeseries_monitoring_data_metrics",
-          "description": "Get timeseries for a metric"
+          "name": "execute"
         }
       ]
     },
@@ -11123,10 +11024,6 @@
         {
           "name": "list_projects",
           "description": "List Neon projects"
-        },
-        {
-          "name": "list_shared_projects",
-          "description": "List projects shared with you"
         },
         {
           "name": "describe_project",
@@ -11313,10 +11210,6 @@
           "description": "List accessible account IDs"
         },
         {
-          "name": "list_entity_types",
-          "description": "List the catalog of entity types"
-        },
-        {
           "name": "search_entity_with_tag",
           "description": "Search entities by tag key/value"
         },
@@ -11343,10 +11236,6 @@
         {
           "name": "analyze_entity_logs",
           "description": "Analyze an entity's logs for error patterns"
-        },
-        {
-          "name": "query_logs",
-          "description": "Search logs by field/value pairs"
         },
         {
           "name": "list_alert_conditions",
@@ -11459,7 +11348,7 @@
           "description": "Send an invoice to recipients"
         },
         {
-          "name": "send_invoice_reminder",
+          "name": "send_invoice_overdue_reminder",
           "description": "Send an invoice payment reminder"
         },
         {
@@ -11615,10 +11504,6 @@
           "description": "Query across multiple data sources"
         },
         {
-          "name": "notion-query-database-view",
-          "description": "Query a database via a view's filters/sorts"
-        },
-        {
           "name": "notion-create-comment",
           "description": "Add a comment to a page"
         },
@@ -11633,10 +11518,6 @@
         {
           "name": "notion-get-users",
           "description": "List workspace users"
-        },
-        {
-          "name": "notion-get-user",
-          "description": "Get a user by ID"
         },
         {
           "name": "notion-get-self",
@@ -12045,11 +11926,11 @@
       },
       "tools": [
         {
-          "name": "list_all_applications",
+          "name": "listAllApplications",
           "description": "List applications in the subscription"
         },
         {
-          "name": "activityQuery",
+          "name": "aggregateEntityUsage",
           "description": "Query usage metrics (events, visitors, accounts)"
         },
         {
@@ -12065,7 +11946,7 @@
           "description": "Locate Pages, Features, and events"
         },
         {
-          "name": "visitorQuery",
+          "name": "listVisitors",
           "description": "Query visitor metadata and counts"
         },
         {
@@ -12073,7 +11954,7 @@
           "description": "Get visitor metadata schema"
         },
         {
-          "name": "accountQuery",
+          "name": "listAccounts",
           "description": "Query account metadata and counts"
         },
         {
@@ -12089,7 +11970,7 @@
           "description": "Get product engagement score"
         },
         {
-          "name": "guideMetrics",
+          "name": "aggregateGuideMetrics",
           "description": "Guide-level metrics (views, completions, etc.)"
         },
         {
@@ -12097,7 +11978,7 @@
           "description": "List guides"
         },
         {
-          "name": "npsScore",
+          "name": "surveyScores",
           "description": "NPS/poll metrics"
         },
         {
@@ -12109,39 +11990,39 @@
           "description": "Developer console / network events for replays"
         },
         {
-          "name": "list_ai_agents",
+          "name": "listAiAgents",
           "description": "List AI agents you can access"
         },
         {
-          "name": "agent_analytics_key_metrics",
+          "name": "agentAnalyticsKeyMetrics",
           "description": "Key Agent Analytics metrics"
         },
         {
-          "name": "list_use_cases",
+          "name": "listUseCases",
           "description": "List agent use cases"
         },
         {
-          "name": "list_ai_agent_issues",
+          "name": "listAiAgentIssues",
           "description": "List AI agent issues"
         },
         {
-          "name": "ai_agent_issue_analysis",
+          "name": "agentAnalyticsIssueAnalysis",
           "description": "Diagnose an AI agent issue"
         },
         {
-          "name": "get_feedback_items",
+          "name": "getFeedbackItems",
           "description": "Retrieve feedback items"
         },
         {
-          "name": "get_feedback_insights",
+          "name": "getFeedbackInsights",
           "description": "Retrieve feedback insights"
         },
         {
-          "name": "get_ideas",
+          "name": "getIdeas",
           "description": "Retrieve ideas"
         },
         {
-          "name": "generate_feedback_topics",
+          "name": "generateFeedbackTopics",
           "description": "Generate feedback topics"
         }
       ]
@@ -12427,7 +12308,7 @@
           "description": "List entities for a blueprint"
         },
         {
-          "name": "get_blueprint_permissions",
+          "name": "simulate_blueprint_permissions",
           "description": "Get a blueprint's permissions"
         },
         {
@@ -12455,7 +12336,7 @@
           "description": "Track an action run"
         },
         {
-          "name": "trigger_workflow_run",
+          "name": "trigger_run",
           "description": "Trigger a workflow run"
         },
         {
@@ -12531,10 +12412,6 @@
         {
           "name": "docs-search",
           "description": "Search PostHog documentation"
-        },
-        {
-          "name": "search",
-          "description": "Entity search across the project"
         },
         {
           "name": "dashboards-get-all",
@@ -12669,43 +12546,39 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "CreateBackupTool",
-          "description": "Create a managed Prisma Postgres backup"
-        },
-        {
-          "name": "CreateConnectionStringTool",
+          "name": "create_prisma_postgres_connection_string",
           "description": "Create a connection string for a database"
         },
         {
-          "name": "CreateRecoveryTool",
+          "name": "create_prisma_postgres_recovery",
           "description": "Restore a database from a backup ID"
         },
         {
-          "name": "DeleteConnectionStringTool",
+          "name": "delete_prisma_postgres_connection_string",
           "description": "Delete a connection string"
         },
         {
-          "name": "DeleteDatabaseTool",
+          "name": "delete_prisma_postgres_database",
           "description": "Delete a Prisma Postgres database"
         },
         {
-          "name": "ListBackupsTool",
+          "name": "list_prisma_postgres_backups",
           "description": "List backups for a database/environment"
         },
         {
-          "name": "ListConnectionStringsTool",
+          "name": "list_prisma_postgres_connection_strings",
           "description": "List connection strings"
         },
         {
-          "name": "ListDatabasesTool",
+          "name": "list_prisma_postgres_databases",
           "description": "List databases in the workspace"
         },
         {
-          "name": "ExecuteSqlQueryTool",
+          "name": "execute_sql_query",
           "description": "Execute a SQL query on a database"
         },
         {
-          "name": "IntrospectSchemaTool",
+          "name": "introspect_database_schema",
           "description": "Introspect a database's schema"
         }
       ]
@@ -12897,71 +12770,39 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "process_data",
-          "description": "Transform fetched data into in-memory SQLite table"
-        },
-        {
-          "name": "execute_query",
+          "name": "ramp_execute_analyst_query",
           "description": "Run SQL queries on the in-memory database"
         },
         {
-          "name": "clear_table",
-          "description": "Delete the ephemeral in-memory table"
-        },
-        {
-          "name": "get_ramp_categories",
+          "name": "ramp_get_tracking_categories",
           "description": "Fetch Ramp accounting categories"
         },
         {
-          "name": "get_currencies",
-          "description": "Fetch supported currencies"
-        },
-        {
-          "name": "load_transactions",
+          "name": "ramp_get_transactions",
           "description": "Load transactions data"
         },
         {
-          "name": "load_reimbursements",
+          "name": "ramp_get_reimbursements",
           "description": "Load reimbursements data"
         },
         {
-          "name": "load_bills",
+          "name": "ramp_list_bills",
           "description": "Load bills data"
         },
         {
-          "name": "load_locations",
+          "name": "ramp_get_office_locations",
           "description": "Load locations data"
         },
         {
-          "name": "load_departments",
+          "name": "ramp_departments",
           "description": "Load departments data"
         },
         {
-          "name": "load_bank_accounts",
-          "description": "Load bank accounts data"
-        },
-        {
-          "name": "load_vendors",
+          "name": "ramp_search_vendors",
           "description": "Load vendors data"
         },
         {
-          "name": "load_vendor_bank_accounts",
-          "description": "Load vendor bank accounts data"
-        },
-        {
-          "name": "load_entities",
-          "description": "Load entities data"
-        },
-        {
-          "name": "load_spend_limits",
-          "description": "Load spend limits data"
-        },
-        {
-          "name": "load_spend_programs",
-          "description": "Load spend programs data"
-        },
-        {
-          "name": "load_users",
+          "name": "ramp_list_users",
           "description": "Load users data"
         }
       ]
@@ -13261,10 +13102,6 @@
       "relevance": 50,
       "tools": [
         {
-          "name": "check_oncall_health_risk",
-          "description": "Detect workload health risk in schedules"
-        },
-        {
           "name": "check_responder_availability",
           "description": "Check responder availability"
         },
@@ -13423,16 +13260,8 @@
           "description": "AI-transform an existing image"
         },
         {
-          "name": "patch_document",
+          "name": "patch_documents",
           "description": "Field-level document patch"
-        },
-        {
-          "name": "create_document_from_json",
-          "description": "Create a draft from JSON"
-        },
-        {
-          "name": "create_document_from_markdown",
-          "description": "Create a draft from Markdown"
         },
         {
           "name": "deploy_schema",
@@ -13567,11 +13396,7 @@
       "relevance": 60,
       "tools": [
         {
-          "name": "security_check",
-          "description": "Scan code for security vulnerabilities"
-        },
-        {
-          "name": "semgrep_scan",
+          "name": "semgrep_scan_remote",
           "description": "Scan code files with a given config string"
         },
         {
@@ -13636,11 +13461,11 @@
           "description": "Discover keyword research reports"
         },
         {
-          "name": "backlink_research",
+          "name": "backlinks_research",
           "description": "Discover backlink research reports"
         },
         {
-          "name": "trends_research",
+          "name": "traffic_overview",
           "description": "Discover trends/market intelligence reports"
         },
         {
@@ -13720,32 +13545,11 @@
           "description": "Search grouped issues/problems"
         },
         {
-          "name": "search_events",
-          "description": "Search events and perform counts/aggregations"
+          "name": "search_errors"
         },
         {
-          "name": "list_issues",
-          "description": "List issues via Sentry query syntax"
-        },
-        {
-          "name": "list_issue_events",
+          "name": "search_issue_events",
           "description": "List events within a specific issue"
-        },
-        {
-          "name": "list_events",
-          "description": "Search events via Sentry query syntax"
-        },
-        {
-          "name": "get_issue_details",
-          "description": "Get details of a specific issue by ID"
-        },
-        {
-          "name": "get_trace_details",
-          "description": "Get details of a specific trace by ID"
-        },
-        {
-          "name": "get_profile",
-          "description": "Analyze CPU profiling data"
         },
         {
           "name": "analyze_issue_with_seer",
@@ -13760,39 +13564,7 @@
           "description": "Find projects"
         },
         {
-          "name": "find_teams",
-          "description": "Find teams"
-        },
-        {
-          "name": "find_releases",
-          "description": "Find releases"
-        },
-        {
-          "name": "find_dsns",
-          "description": "List DSNs for a project"
-        },
-        {
-          "name": "create_project",
-          "description": "Create a project (includes DSN)"
-        },
-        {
-          "name": "create_team",
-          "description": "Create a team"
-        },
-        {
-          "name": "create_dsn",
-          "description": "Create an additional DSN"
-        },
-        {
-          "name": "get_doc",
-          "description": "Fetch a Sentry docs page"
-        },
-        {
-          "name": "search_docs",
-          "description": "Search Sentry documentation"
-        },
-        {
-          "name": "use_sentry",
+          "name": "execute_sentry_tool",
           "description": "Single agent-mode tool (when ?agent=1)"
         }
       ]
@@ -13822,8 +13594,16 @@
       ],
       "tools": [
         {
-          "name": "search",
-          "description": "Unified search across all SerpApi engines (Google, Bing, Yahoo, DuckDuckGo, YouTube, eBay, etc.)"
+          "description": "Interactive dashboard variant of `search`: returns summary metrics, a source breakdown chart, and a results table with a click-to-expand detail panel, all rendered in the conversation.",
+          "name": "search_dashboard"
+        },
+        {
+          "description": "Interactive UI variant of `search`: returns organic results as a sortable, searchable table rendered in the conversation.",
+          "name": "search_table"
+        },
+        {
+          "description": "Unified search across all SerpApi engines (Google, Bing, Yahoo, DuckDuckGo, YouTube, eBay, etc.)",
+          "name": "search"
         }
       ]
     },
@@ -14240,32 +14020,17 @@
           "description": "Create a workspace"
         },
         {
-          "name": "create_folder_in_workspace",
-          "description": "Create a folder in a workspace"
+          "name": "create_folder"
         },
         {
-          "name": "create_folder_in_folder",
-          "description": "Create a nested folder"
-        },
-        {
-          "name": "list_sheet_discussions",
-          "description": "List sheet discussions"
-        },
-        {
-          "name": "list_row_discussions",
-          "description": "List row discussions"
+          "name": "list_discussions"
         },
         {
           "name": "get_discussion",
           "description": "Get a discussion"
         },
         {
-          "name": "create_discussion_on_row",
-          "description": "Create a row discussion"
-        },
-        {
-          "name": "create_discussion_on_sheet",
-          "description": "Create a sheet discussion"
+          "name": "create_discussion"
         },
         {
           "name": "delete_discussion",
@@ -14286,14 +14051,6 @@
         {
           "name": "list_attachments",
           "description": "List sheet attachments"
-        },
-        {
-          "name": "list_row_attachments",
-          "description": "List row attachments"
-        },
-        {
-          "name": "list_discussion_attachments",
-          "description": "List discussion attachments"
         },
         {
           "name": "get_attachment",
@@ -14755,96 +14512,14 @@
           "description": "Retrieve account"
         },
         {
-          "name": "retrieve_balance",
-          "description": "Retrieve balance"
+          "name": "stripe_api_read"
         },
         {
-          "name": "create_coupon",
-          "description": "Create a coupon"
+          "name": "stripe_api_write"
         },
         {
-          "name": "list_coupons",
-          "description": "List coupons"
-        },
-        {
-          "name": "create_customer",
-          "description": "Create a customer"
-        },
-        {
-          "name": "list_customers",
-          "description": "List customers"
-        },
-        {
-          "name": "list_disputes",
-          "description": "List disputes"
-        },
-        {
-          "name": "update_dispute",
-          "description": "Update a dispute"
-        },
-        {
-          "name": "create_invoice",
-          "description": "Create an invoice"
-        },
-        {
-          "name": "create_invoice_item",
-          "description": "Create an invoice item"
-        },
-        {
-          "name": "finalize_invoice",
-          "description": "Finalize an invoice"
-        },
-        {
-          "name": "list_invoices",
-          "description": "List invoices"
-        },
-        {
-          "name": "create_payment_link",
-          "description": "Create a payment link"
-        },
-        {
-          "name": "list_payment_intents",
-          "description": "List PaymentIntents"
-        },
-        {
-          "name": "create_price",
-          "description": "Create a price"
-        },
-        {
-          "name": "list_prices",
-          "description": "List prices"
-        },
-        {
-          "name": "create_product",
-          "description": "Create a product"
-        },
-        {
-          "name": "list_products",
-          "description": "List products"
-        },
-        {
-          "name": "create_refund",
-          "description": "Create a refund"
-        },
-        {
-          "name": "cancel_subscription",
-          "description": "Cancel a subscription"
-        },
-        {
-          "name": "list_subscriptions",
-          "description": "List subscriptions"
-        },
-        {
-          "name": "update_subscription",
-          "description": "Update a subscription"
-        },
-        {
-          "name": "search_stripe_resources",
+          "name": "stripe_api_search",
           "description": "Search Stripe resources"
-        },
-        {
-          "name": "fetch_stripe_resources",
-          "description": "Fetch a Stripe object"
         },
         {
           "name": "search_stripe_documentation",
@@ -14899,7 +14574,7 @@
           "description": "Retrieve a project's registered redirect URLs"
         },
         {
-          "name": "createRedirectURLs",
+          "name": "createRedirectURL",
           "description": "Register redirect URLs as login/signup callbacks"
         },
         {
@@ -15970,23 +15645,15 @@
       },
       "tools": [
         {
-          "name": "ping",
+          "name": "check_connectivity",
           "description": "Test connectivity and authentication"
         },
         {
-          "name": "getRelevantQuestions",
-          "description": "Get relevant analytics questions for a query"
-        },
-        {
-          "name": "getAnswer",
-          "description": "Get the answer to a specific question"
-        },
-        {
-          "name": "createLiveboard",
+          "name": "create_dashboard",
           "description": "Create a liveboard from answers"
         },
         {
-          "name": "getDataSourceSuggestions",
+          "name": "search_objects",
           "description": "Suggest data sources for a query"
         },
         {
@@ -16208,26 +15875,6 @@
           "description": "Update reminders"
         },
         {
-          "name": "add-goals",
-          "description": "Create goals"
-        },
-        {
-          "name": "find-goals",
-          "description": "Find goals"
-        },
-        {
-          "name": "update-goals",
-          "description": "Update goals"
-        },
-        {
-          "name": "complete-goals",
-          "description": "Complete goals"
-        },
-        {
-          "name": "link-goal-tasks",
-          "description": "Link tasks to goals"
-        },
-        {
           "name": "analyze-project-health",
           "description": "Analyze project health"
         },
@@ -16362,64 +16009,7 @@
         ]
       },
       "relevance": 65,
-      "tools": [
-        {
-          "name": "tests",
-          "description": "Retrieve automated security/compliance tests"
-        },
-        {
-          "name": "list_test_entities",
-          "description": "Get resources monitored by a test"
-        },
-        {
-          "name": "controls",
-          "description": "List/get security controls"
-        },
-        {
-          "name": "list_control_tests",
-          "description": "List tests validating a control"
-        },
-        {
-          "name": "list_control_documents",
-          "description": "List documents mapped to a control"
-        },
-        {
-          "name": "documents",
-          "description": "List/get compliance documents"
-        },
-        {
-          "name": "document_resources",
-          "description": "Get resources linked to a document"
-        },
-        {
-          "name": "frameworks",
-          "description": "List compliance frameworks with progress"
-        },
-        {
-          "name": "list_framework_controls",
-          "description": "List controls for a framework"
-        },
-        {
-          "name": "integrations",
-          "description": "List/get connected integrations"
-        },
-        {
-          "name": "integration_resources",
-          "description": "Inspect integration resource kinds/resources"
-        },
-        {
-          "name": "people",
-          "description": "List/get people in the account"
-        },
-        {
-          "name": "risks",
-          "description": "List/get risk scenarios"
-        },
-        {
-          "name": "vulnerabilities",
-          "description": "List/get detected vulnerabilities"
-        }
-      ]
+      "tools": []
     },
     {
       "name": "com.vercel/mcp",
@@ -16454,7 +16044,7 @@
       "relevance": 85,
       "tools": [
         {
-          "name": "search_documentation",
+          "name": "search_vercel_documentation",
           "description": "Search Vercel documentation"
         },
         {
@@ -17117,11 +16707,11 @@
           "description": "List accessible whiteboards"
         },
         {
-          "name": "add_a_whiteboard_collaborator",
+          "name": "add_collaborators_for_a_whiteboard",
           "description": "Add a collaborator"
         },
         {
-          "name": "get_a_whiteboard_collaborator",
+          "name": "get_collaborators_of_a_whiteboard",
           "description": "Get a collaborator"
         },
         {
@@ -17173,7 +16763,7 @@
           "description": "Semantic meeting search"
         },
         {
-          "name": "search_zoom",
+          "name": "search",
           "description": "Search across Zoom Meeting/Chat/Docs"
         },
         {

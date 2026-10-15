@@ -15,7 +15,9 @@
 // Command mcp-catalog-probe probes curated MCP server URLs and optionally marks
 // broken entries as hidden in seed/mcp-catalog/enterprise-servers.json. With
 // -check-docs it instead verifies that every config_guide documentation link
-// still resolves.
+// still resolves. With -check-tools it compares each entry's tools with what
+// the server's tools/list returns, exits non-zero on drift, and with
+// -apply-tools writes the upstream list into the catalog.
 package main
 
 import (
@@ -71,6 +73,8 @@ func main() {
 	includeHidden := flag.Bool("include-hidden", false, "also probe entries that are already hidden")
 	only := flag.String("only", "", "comma-separated server names to probe")
 	checkDocs := flag.Bool("check-docs", false, "verify config_guide.docs_url links instead of probing MCP endpoints")
+	checkToolNames := flag.Bool("check-tools", false, "compare catalog tools with each server's anonymous tools/list; exit 1 on drift")
+	applyTools := flag.Bool("apply-tools", false, "with -check-tools, write the upstream tools into the catalog for drifted entries")
 	flag.Parse()
 
 	raw, err := os.ReadFile(*catalogPath)
@@ -110,6 +114,16 @@ func main() {
 		jobs = append(jobs, i)
 	}
 
+	if *checkToolNames {
+		out, closeOut := reportWriter(*outPath)
+		ok := checkTools(cat, *catalogPath, jobs, *timeout, max(1, *concurrency), *applyTools, out)
+		closeOut()
+		if !ok {
+			os.Exit(1)
+		}
+		return
+	}
+
 	results := make([]probeResult, len(jobs))
 	sem := make(chan struct{}, max(1, *concurrency))
 	var wg sync.WaitGroup
@@ -126,16 +140,8 @@ func main() {
 	}
 	wg.Wait()
 
-	out := io.Writer(os.Stdout)
-	var outFile *os.File
-	if *outPath != "" {
-		outFile, err = os.Create(*outPath)
-		if err != nil {
-			fatalf("create out: %v", err)
-		}
-		defer func() { _ = outFile.Close() }()
-		out = outFile
-	}
+	out, closeOut := reportWriter(*outPath)
+	defer closeOut()
 
 	counts := map[string]int{}
 	for _, r := range results {
@@ -163,35 +169,38 @@ func main() {
 	for _, r := range results {
 		byName[r.Name] = r
 	}
-	changed := 0
-	for _, s := range cat.Servers {
-		name, _ := s["name"].(string)
+	changed := rewriteCatalog(*catalogPath, func(i int, s *orderedObject) bool {
+		name, _ := cat.Servers[i]["name"].(string)
 		r, ok := byName[name]
 		if !ok {
-			continue
+			return false
 		}
 		switch {
 		case strings.HasPrefix(r.Status, "broken_"):
-			s["hidden"] = true
-			s["hidden_reason"] = hideReason(r)
-			changed++
+			s.set("hidden", true)
+			s.set("hidden_reason", hideReason(r))
+			return true
 		case r.Status == statusOK:
-			if hidden, _ := s["hidden"].(bool); hidden {
-				delete(s, "hidden")
-				delete(s, "hidden_reason")
-				changed++
+			if hidden, _ := cat.Servers[i]["hidden"].(bool); hidden {
+				s.del("hidden")
+				s.del("hidden_reason")
+				return true
 			}
 		}
-	}
-	encoded, err := json.MarshalIndent(cat, "", "  ")
-	if err != nil {
-		fatalf("encode catalog: %v", err)
-	}
-	encoded = append(encoded, '\n')
-	if err := os.WriteFile(*catalogPath, encoded, 0o644); err != nil {
-		fatalf("write catalog: %v", err)
-	}
+		return false
+	})
 	fmt.Fprintf(os.Stderr, "applied hidden updates to %d entries in %s\n", changed, *catalogPath)
+}
+
+func reportWriter(path string) (io.Writer, func()) {
+	if path == "" {
+		return os.Stdout, func() {}
+	}
+	f, err := os.Create(path) // #nosec G304 -- operator-supplied report path
+	if err != nil {
+		fatalf("create out: %v", err)
+	}
+	return f, func() { _ = f.Close() }
 }
 
 type docsLink struct {
