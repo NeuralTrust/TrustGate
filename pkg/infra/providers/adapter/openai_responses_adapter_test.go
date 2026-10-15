@@ -1737,7 +1737,7 @@ func TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen(t *testing.T) {
 				"",
 				"event: response.content_part.done",
 				`data: {"type":"response.content_part.done","output_index":2,"content_index":0,` +
-					`"part":{"type":"output_text","text":""}}`,
+					`"part":{"type":"output_text","text":"","annotations":[]}}`,
 				"",
 				"event: response.output_item.done",
 				`data: {"type":"response.output_item.done","output_index":2,` +
@@ -1785,7 +1785,7 @@ func TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen(t *testing.T) {
 				"",
 				"event: response.content_part.done",
 				`data: {"type":"response.content_part.done","output_index":0,"content_index":0,` +
-					`"part":{"type":"output_text","text":""}}`,
+					`"part":{"type":"output_text","text":"","annotations":[]}}`,
 				"",
 				"event: response.output_item.done",
 				`data: {"type":"response.output_item.done","output_index":0,` +
@@ -1806,4 +1806,118 @@ func TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen(t *testing.T) {
 			assert.Equal(t, tc.want, bytesLinesToStrings(got))
 		})
 	}
+}
+
+// A Chat Completions body translated back onto the Responses API has to be a
+// Response a client can parse: resp_ id, created_at, an id on every output
+// item, and annotations on every content part.
+func TestAdaptResponse_TranslatedResponsesIsConformant(t *testing.T) {
+	t.Parallel()
+
+	const created = int64(1710000000)
+	message := `{
+		"id": "chatcmpl-abc",
+		"object": "chat.completion",
+		"created": 1710000000,
+		"model": "gpt-5.4-mini-std",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": "OK"},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+	}`
+	out, err := testRegistry().AdaptResponse([]byte(message), FormatOpenAIResponses, FormatAzure)
+	require.NoError(t, err)
+
+	var resp openaiResponsesResponse
+	require.NoError(t, json.Unmarshal(out, &resp))
+	assert.Equal(t, "resp_abc", resp.ID)
+	assert.Equal(t, "response", resp.Object)
+	assert.Equal(t, created, resp.CreatedAt)
+	assert.Equal(t, "gpt-5.4-mini-std", resp.Model)
+	assert.Equal(t, "completed", resp.Status)
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, "msg_abc", resp.Output[0].ID)
+	assert.Equal(t, "message", resp.Output[0].Type)
+	require.Len(t, resp.Output[0].Content, 1)
+	assert.Equal(t, "OK", resp.Output[0].Content[0].Text)
+	assert.NotNil(t, resp.Output[0].Content[0].Annotations)
+	assert.Empty(t, resp.Output[0].Content[0].Annotations)
+	assert.NotContains(t, string(out), `"annotations":null`)
+
+	calls := `{
+		"id": "chatcmpl-abc",
+		"object": "chat.completion",
+		"created": 1710000000,
+		"model": "gpt-5.4-mini-std",
+		"choices": [{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"content": null,
+				"tool_calls": [{
+					"id": "call_abc",
+					"type": "function",
+					"function": {"name": "lookup", "arguments": "{}"}
+				}]
+			},
+			"finish_reason": "tool_calls"
+		}]
+	}`
+	out, err = testRegistry().AdaptResponse([]byte(calls), FormatOpenAIResponses, FormatAzure)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(out, &resp))
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, "function_call", resp.Output[0].Type)
+	assert.Equal(t, "fc_abc", resp.Output[0].ID)
+	assert.Equal(t, "call_abc", resp.Output[0].CallID)
+	assert.Equal(t, "lookup", resp.Output[0].Name)
+
+	missingID := `{
+		"object": "chat.completion",
+		"model": "gpt-5.4-mini-std",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": "OK"},
+			"finish_reason": "stop"
+		}]
+	}`
+	out, err = testRegistry().AdaptResponse([]byte(missingID), FormatOpenAIResponses, FormatAzure)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(out, &resp))
+	assert.True(t, strings.HasPrefix(resp.ID, "resp_"), resp.ID)
+	assert.NotEqual(t, "resp_", resp.ID)
+	assert.Positive(t, resp.CreatedAt)
+	require.Len(t, resp.Output, 1)
+	assert.True(t, strings.HasPrefix(resp.Output[0].ID, "msg_"), resp.Output[0].ID)
+}
+
+func TestAdaptStreamChunk_TranslatedResponsesRewritesTerminatorIdentity(t *testing.T) {
+	t.Parallel()
+
+	chunk := `{"id":"chatcmpl-abc","object":"chat.completion.chunk","created":1710000000,"model":"gpt-5.4-mini-std","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	lines, err := testRegistry().AdaptStreamChunk([]byte(chunk), FormatOpenAIResponses, FormatAzure)
+	require.NoError(t, err)
+
+	var payload string
+	for _, line := range lines {
+		if rest, ok := strings.CutPrefix(string(line), "data: "); ok {
+			payload = rest
+		}
+	}
+	require.NotEmpty(t, payload)
+	var event struct {
+		Type     string `json:"type"`
+		Response struct {
+			ID        string `json:"id"`
+			CreatedAt int64  `json:"created_at"`
+			Model     string `json:"model"`
+		} `json:"response"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(payload), &event))
+	assert.Equal(t, "response.completed", event.Type)
+	assert.Equal(t, "resp_abc", event.Response.ID)
+	assert.Equal(t, int64(1710000000), event.Response.CreatedAt)
+	assert.Equal(t, "gpt-5.4-mini-std", event.Response.Model)
 }
