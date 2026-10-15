@@ -167,7 +167,8 @@ type singleConnectView struct {
 	// AutoClose closes the tab on its own when there is nowhere to send the
 	// user: a link handed out in a tool result, where the assistant they came
 	// from is the tab or app underneath. A browser that refuses (a tab it did
-	// not open by script) leaves the page as it is, saying to go back.
+	// not open by script) refuses the button too, so the page says to go back
+	// and the button turns into how to close the tab by hand.
 	AutoClose bool
 	// Description is the catalog one-liner for the server, shown under the
 	// headline so the card says what the user is connecting to.
