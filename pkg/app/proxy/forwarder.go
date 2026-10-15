@@ -709,11 +709,11 @@ func (f *forwarder) finalizeStream(
 	outcome, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	if pe != nil {
 		f.drainAsync(providerResp.Stream)
-		return pluginErrorResult(pe)
+		return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe))
 	}
 	if outcome != nil && outcome.ShortCircuit {
 		f.drainAsync(providerResp.Stream)
-		return nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome), policydomain.StagePreResponse)
+		return applyPlanRateLimitDialect(dto.request, nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome), policydomain.StagePreResponse))
 	}
 	stream := providerResp.Stream
 	var cutBarrier func() <-chan struct{}
@@ -723,7 +723,7 @@ func (f *forwarder) finalizeStream(
 		remaining, pe := guard.Run(ctx, stream)
 		if pe != nil {
 			f.drainAsync(remaining)
-			return pluginErrorResult(pe)
+			return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe))
 		}
 		stream = remaining
 		cutBarrier = guard.cutBarrier
@@ -924,7 +924,7 @@ func (f *forwarder) finalizeBodyGated(
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeBufferedResponse(pluginResp, providerResp)
 	if _, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
-		return pluginErrorResult(pe), pe
+		return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe)), pe
 	}
 	native := dto.request.IsBedrockNative()
 	if native && nativeResponseChanged(providerResp, pluginResp) {
@@ -949,10 +949,10 @@ func (f *forwarder) finalizeBodyGated(
 	}
 	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
-	return &ForwardResult{
+	return applyPlanRateLimitDialect(dto.request, &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
 		Body:       pluginResp.Body,
 		Upstream:   native,
-	}, nil
+	}), nil
 }
