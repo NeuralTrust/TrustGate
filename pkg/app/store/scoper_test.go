@@ -205,6 +205,31 @@ func TestScoperExposesTwoInstallsOfOneServerOnce(t *testing.T) {
 	}
 }
 
+// An install bound to a registry that was deleted serves nothing. It must not
+// make its live sibling a per-install clone, or that sibling's tools would carry
+// a per-instance name until the dead row is cleaned up.
+func TestScoperExposesTheLiveInstallOfAServerAsTheShelf(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := githubRegistry()
+	dead := mustInstall(t, gw, "ana", "github")
+	dead.RegistryID = ids.New[ids.RegistryKind]()
+	live := mustInstall(t, gw, "ana", "github")
+	live.CreatedAt = dead.CreatedAt.Add(time.Minute)
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{dead, live}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 1 || scoped.Registries[0] != shelf {
+		t.Fatalf("the live install must surface as the shelf registry, got %+v", scoped.Registries)
+	}
+}
+
 func TestScoperIgnoresRevokedInstalls(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	revoked := mustInstall(t, gw, "ana", "github")
