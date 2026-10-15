@@ -1695,6 +1695,57 @@ func TestPlugin_MCP_PreResponse_CounterStoreRecordFailureFailsOpen(t *testing.T)
 	assertCounterFailedOpen(t, res, err, span, "record")
 }
 
+// TestPlugin_LLM_CounterStoreErrorFailsOpen pins the LLM leg: a Redis error
+// lets the call through with HTTP 200 and decision failed_open. The tool is
+// already over its window, so a successful read would refuse or rewrite it.
+// ENG-1943. A change that refuses this leg has to break this test on purpose.
+func TestPlugin_LLM_CounterStoreErrorFailsOpen(t *testing.T) {
+	storeErr := errors.New("dial tcp: connection refused")
+
+	t.Run("pre_request", func(t *testing.T) {
+		p, rdb := newPluginRedis(t)
+		settings := ruleSettings("send_email", "reject_response", "1m", 1)
+		seed(t, rdb, consumerKey("send_email", 0), 1)
+		rdb.AddHook(breakReads(storeErr))
+
+		rt := trace.New("t", trace.Metadata{})
+		span := rt.StartSpan(trace.SpanPlugin, PluginName)
+		in := input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email")), nil)
+		in.Event = metrics.NewEventContext(span)
+
+		res, err := p.Execute(context.Background(), in)
+		assertLLMCounterFailedOpen(t, res, err, span)
+		assert.Nil(t, res.RequestBody)
+	})
+
+	t.Run("pre_response", func(t *testing.T) {
+		p, rdb := newPluginRedis(t)
+		settings := ruleSettings("send_email", "inject_error_result", "1m", 1)
+		seed(t, rdb, consumerKey("send_email", 0), 1)
+		rdb.AddHook(breakReads(storeErr))
+
+		original := openAIRespBody(t, tcSpec{"call_1", "send_email"})
+		resp := &infracontext.ResponseContext{Body: append([]byte(nil), original...)}
+		rt := trace.New("t", trace.Metadata{})
+		span := rt.StartSpan(trace.SpanPlugin, PluginName)
+		in := input(policy.StagePreResponse, settings, openAIReq(nil), resp)
+		in.Event = metrics.NewEventContext(span)
+
+		res, err := p.Execute(context.Background(), in)
+		assertLLMCounterFailedOpen(t, res, err, span)
+		assert.False(t, res.StopUpstream)
+		assert.Nil(t, res.Body)
+		assert.Equal(t, original, resp.Body)
+	})
+}
+
+func assertLLMCounterFailedOpen(t *testing.T, res *appplugins.Result, err error, span *trace.Span) {
+	t.Helper()
+	var refused *appplugins.PluginError
+	require.False(t, errors.As(err, &refused), "a counter-store error must not refuse the request")
+	assertCounterFailedOpen(t, res, err, span, "read")
+}
+
 func geminiReqBody(t *testing.T, tools ...string) []byte {
 	t.Helper()
 	decls := make([]map[string]any, 0, len(tools))
