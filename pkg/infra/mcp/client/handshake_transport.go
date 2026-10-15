@@ -16,6 +16,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,12 @@ type handshakeRoundTripper struct {
 }
 
 func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodDelete {
+		ctx, cancel := context.WithTimeout(req.Context(), sessionCloseTimeout)
+		defer cancel()
+		req = req.Clone(ctx)
+	}
+
 	for key, value := range t.headers {
 		req.Header.Set(key, value)
 	}
@@ -70,6 +77,9 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	}
 
 	resp, err := t.transport.RoundTrip(req)
+	if err == nil {
+		boundResponse(resp, req)
+	}
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
 		t.unauthorizedResponses.Add(1)
 		if tracker, ok := req.Context().Value(unauthorizedTrackerKey{}).(*atomic.Bool); ok {

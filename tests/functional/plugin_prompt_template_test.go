@@ -180,6 +180,48 @@ func TestPluginE2E_PromptTemplate_ModeBRenderReplacesMessages(t *testing.T) {
 	assert.NotContains(t, forwarded, "properties", "the gateway-only properties field must be stripped")
 }
 
+// TestPluginE2E_PromptTemplate_ContextVariableBeatsCollidingClientProperty
+// proves the RUN-1676 fix end to end at the proxy boundary: a context
+// variable resolved from a trusted header must win when the caller sends a
+// `properties` entry of the same name, not the other way around.
+func TestPluginE2E_PromptTemplate_ContextVariableBeatsCollidingClientProperty(t *testing.T) {
+	defer Track(t, "PromptTemplate")()
+
+	up := newJSONUpstream(t, "prompt-modeb-collision")
+	apiKey, path := setupPolicyRoute(t, up, promptTemplatePolicy(map[string]any{
+		"context_variables": map[string]any{
+			"persona": map[string]any{"source": "header", "name": "X-Persona"},
+		},
+		"named_templates": []map[string]any{
+			{
+				"name": "support-bot",
+				"versions": []map[string]any{
+					{
+						"labels":  []string{"stable"},
+						"content": `[{"role":"system","content":"You are {{persona}} support."}]`,
+					},
+				},
+			},
+		},
+		"default_label":              "stable",
+		"allow_untemplated_requests": false,
+	}))
+
+	body := mustJSON(t, chatBody([]map[string]any{
+		{"role": "user", "content": "{template://support-bot@stable}"},
+	}, map[string]any{
+		"properties": map[string]any{"persona": "formal"},
+	}))
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path,
+		map[string]string{"X-Persona": "friendly"}, body)
+
+	require.Equal(t, http.StatusOK, status, "body: %s", raw)
+	forwarded := string(up.LastBody())
+	assert.Contains(t, forwarded, "You are friendly support.",
+		"the gateway-resolved header value must win over the caller-supplied properties value")
+	assert.NotContains(t, forwarded, "formal", "the overridden client value must not reach the upstream")
+}
+
 func TestPluginE2E_PromptTemplate_ErrorCodes(t *testing.T) {
 	defer Track(t, "PromptTemplate")()
 

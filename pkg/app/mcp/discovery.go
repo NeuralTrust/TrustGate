@@ -30,16 +30,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// discoveryFanOut bounds how many upstreams are discovered at once. A consumer
-// federating many registries should not open a connection to all of them in one
-// burst, and past a handful the wall time is dominated by the slowest anyway.
 const discoveryFanOut = 8
 
-// negativeTTL is how long a failed discovery is remembered. It is deliberately
-// far shorter than the success TTL: an upstream that comes back should be
-// served again quickly, and all this needs to buy is that a dead one is dialled
-// once per window instead of once per request.
-const negativeTTL = 10 * time.Second
+const (
+	negativeTTL      = 10 * time.Second
+	discoveryTimeout = 15 * time.Second
+)
 
 // discoveryFreshFor is how long a discovery is served as is. Past it the result
 // is still served, but a refresh starts behind it (RUN-1633): every tools/call
@@ -52,10 +48,6 @@ const discoveryFreshFor = 5 * time.Minute
 // that stopped answering is eventually reported instead of hidden behind its
 // last tool list.
 const discoveryMaxAge = time.Hour
-
-// discoveryTimeout bounds a single upstream discovery. Without it a hung
-// upstream held every composition until the transport's 30 s header timeout.
-const discoveryTimeout = 15 * time.Second
 
 type DiscoveryCache interface {
 	Get(key string) (any, bool)
@@ -72,26 +64,17 @@ type discoverySnapshot[T any] struct {
 	staleAfter time.Time
 }
 
-// discoveryFailure is a remembered failure, sharing the cache with the results
-// it stands in for. The entry carries its own deadline because the cache has a
-// single TTL sized for successful discoveries.
 type discoveryFailure struct {
 	err   error
 	until time.Time
 }
 
-// discovered is one registry's outcome, kept alongside the registry so a
-// concurrent fan-out can be read back in the order the consumer declared.
 type discovered[T any] struct {
 	registry *registrydomain.Registry
 	items    []T
 	err      error
 }
 
-// discoverAll discovers every registry at once and returns the outcomes in
-// registry order. Order is what decides which upstream wins a name clash and
-// which pending consent is reported, so it must not depend on who answers
-// first.
 func discoverAll[T any](
 	c *composer,
 	ctx context.Context,
@@ -116,7 +99,6 @@ func discoverAll[T any](
 			return nil
 		})
 	}
-	// Every goroutine reports its own outcome, so the group never carries one.
 	_ = group.Wait()
 	return out
 }
@@ -138,6 +120,7 @@ func federate[T any](
 	var out []T
 	reachable := 0
 	var firstConsent *ConsentRequiredError
+	var firstNotConnected *ApplicationNotConnectedError
 	for _, found := range discoverAll(c, ctx, rc, registries, kind, list) {
 		reg := found.registry
 		if found.err != nil {
@@ -153,6 +136,18 @@ func federate[T any](
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
 			}
+			// Skipped like a pending consent, as compose does for tools: an
+			// account is what is missing, so it is not an unreachable upstream,
+			// and a consumer that fails closed must not refuse the rest over it.
+			var notConnected *ApplicationNotConnectedError
+			if errors.As(found.err, &notConnected) {
+				if firstNotConnected == nil {
+					firstNotConnected = notConnected
+				}
+				c.logger.Info("mcp composer: skipping upstream with no account for this caller",
+					"registry", reg.Name, "provider", notConnected.Provider, "shared", notConnected.Shared)
+				continue
+			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, found.err)
 			}
@@ -166,6 +161,9 @@ func federate[T any](
 	if reachable == 0 {
 		if firstConsent != nil {
 			return nil, firstConsent
+		}
+		if firstNotConnected != nil {
+			return nil, firstNotConnected
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
@@ -200,10 +198,25 @@ func discoverCached[T any](
 	kind string,
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
-	ask := func(ctx context.Context) ([]T, error) {
-		return askUpstream(c, ctx, rc, reg, list)
-	}
 	key, cacheable := discoveryKey(ctx, reg, kind)
+	ask := func(ctx context.Context) ([]T, error) { return askUpstream(c, ctx, rc, reg, list) }
+	if reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
+		target := targetFor(ctx, rc, reg)
+		if err := c.resolveURLVariables(ctx, rc, reg, &target); err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256([]byte(target.URL))
+		key += ":url:" + hex.EncodeToString(sum[:])
+		ask = func(ctx context.Context) ([]T, error) {
+			if c.creds != nil {
+				if err := c.creds.Apply(ctx, rc, reg, &target); err != nil {
+					return nil, err
+				}
+			}
+			return invokeResolvedUpstream(c, ctx, rc, reg, target, func(up Upstream) ([]T, error) { return list(ctx, up) })
+		}
+	}
+
 	if !cacheable {
 		askCtx, cancel := context.WithTimeout(ctx, discoveryTimeout)
 		defer cancel()
@@ -234,6 +247,9 @@ func discoverCached[T any](
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case completed := <-result:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if completed.Err != nil {
 			return nil, completed.Err
 		}
@@ -263,9 +279,10 @@ func refreshDiscovery[T any](c *composer, ctx context.Context, key string, ask f
 	items, err := ask(askCtx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) && askCtx.Err() != nil {
-			err = fmt.Errorf("%w: discovery timed out after %s", ErrUpstreamUnavailable, discoveryTimeout)
+			rememberFailure[T](c, key, fmt.Errorf("%w: discovery timed out", ErrUnreachable))
+		} else {
+			rememberFailure[T](c, key, err)
 		}
-		rememberFailure[T](c, key, err)
 		return nil, err
 	}
 	now := time.Now()
@@ -319,12 +336,14 @@ func cachedDiscovery[T any](c *composer, key string, now time.Time) (items []T, 
 // rememberFailure holds on to an unreachable upstream for a few seconds so it
 // is dialled once per window rather than once per request. A snapshot still
 // within its max age is kept and retried after the same window, since its tools
-// are a better answer than an error for an upstream that blipped. Consent drops
-// the entry instead: it is the user's to resolve, and resolving it should take
-// effect at once.
+// are a better answer than an error for an upstream that blipped. A refusal
+// fixable by connecting an account drops the entry instead: connecting it
+// should take effect at once.
 func rememberFailure[T any](c *composer, key string, err error) {
-	var consentErr *ConsentRequiredError
-	if errors.As(err, &consentErr) {
+	if isContextError(err) {
+		return
+	}
+	if fixableByConnecting(err) {
 		c.discovery.Delete(key)
 		return
 	}
@@ -340,9 +359,64 @@ func rememberFailure[T any](c *composer, key string, err error) {
 	c.discovery.Set(key, discoveryFailure{err: err, until: until})
 }
 
+// discoveryEvictor is the part of a DiscoveryCache that can drop entries; the
+// TTL map the gateway wires has it.
+type discoveryEvictor interface {
+	DeleteByPrefix(prefix string)
+}
+
+// discoveryKinds are the lists discovery caches per server.
+var discoveryKinds = []string{"tools", "prompts", "resources"}
+
+// forgetDiscovery drops what discovery cached about reg for this caller. A
+// call that finds the caller's account gone — revoked from the Portal or the
+// connect page, or no longer usable — would otherwise leave their tool list
+// showing the server as ready, every tool in it refused, until the entry
+// expired minutes later.
+func (c *composer) forgetDiscovery(ctx context.Context, reg *registrydomain.Registry) {
+	evictor, ok := c.discovery.(discoveryEvictor)
+	if !ok || reg == nil {
+		return
+	}
+	for _, kind := range discoveryKinds {
+		// The prefix covers the per-URL keys a server with URL variables adds.
+		if key, cacheable := discoveryKey(ctx, reg, kind); cacheable {
+			evictor.DeleteByPrefix(key)
+		}
+	}
+}
+
+// fixableByConnecting reports a refusal somebody can clear from outside, by
+// connecting an account.
+//
+// The negative cache exists to stop a broken upstream being hammered for ten
+// seconds. A missing account is not a broken upstream: the moment it is
+// connected the next call would work, and remembering the refusal would keep
+// failing for ten seconds after the person did exactly what they were told —
+// with nothing in the answer to say that waiting is what is left.
+//
+// Both shapes count. A ConsentRequiredError names a page the caller walks
+// themselves; an ApplicationNotConnectedError names one they cannot, because
+// the account belongs to the server's instance or to an end user they have not
+// named. Which of the two it is changes who acts, not how soon it takes effect.
+func fixableByConnecting(err error) bool {
+	var consentErr *ConsentRequiredError
+	if errors.As(err, &consentErr) {
+		return true
+	}
+	var notConnected *ApplicationNotConnectedError
+	return errors.As(err, &notConnected)
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	if !perPrincipalAuth(reg) {
+	perPrincipal := perPrincipalAuth(reg) ||
+		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())
+	if !perPrincipal {
 		return key, true
 	}
 	p := identity.PrincipalFromContext(ctx)

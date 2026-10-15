@@ -22,10 +22,12 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/redis/go-redis/v9"
 )
@@ -95,7 +97,7 @@ func (l *connectAttemptLimiter) Check(
 	if l == nil || l.redis == nil {
 		return wrapConnectRateLimitError(appoauth.ErrConnectRateLimitUnavailable)
 	}
-	domain, limit, ok := l.scopeConfig(scope)
+	domain, limit, window, ok := l.scopeConfig(scope)
 	if !ok || subject == "" {
 		return fmt.Errorf("check connect rate limit: %w", errInvalidConnectRateLimitInput)
 	}
@@ -104,7 +106,7 @@ func (l *connectAttemptLimiter) Check(
 	if err != nil {
 		return err
 	}
-	windowMilliseconds := l.window.Milliseconds()
+	windowMilliseconds := window.Milliseconds()
 	if windowMilliseconds < 1 {
 		windowMilliseconds = 1
 	}
@@ -142,14 +144,25 @@ func wrapConnectRateLimitError(cause error) error {
 	return fmt.Errorf("check connect rate limit: %w", &opaqueConnectRateLimitError{cause: cause})
 }
 
-func (l *connectAttemptLimiter) scopeConfig(scope appoauth.ConnectAttemptScope) (string, int, bool) {
+// Personal key changes are bounded as the Portal bounds them: ten an hour for
+// one person on one gateway, whatever the connect window is.
+const (
+	personalKeyChangeLimit  = 10
+	personalKeyChangeWindow = time.Hour
+)
+
+func (l *connectAttemptLimiter) scopeConfig(scope appoauth.ConnectAttemptScope) (string, int, time.Duration, bool) {
 	switch scope {
 	case appoauth.ConnectAttemptScopeSource:
-		return "source", l.sourceLimit, true
+		return "source", l.sourceLimit, l.window, true
 	case appoauth.ConnectAttemptScopeConsumer:
-		return "consumer", l.consumerLimit, true
+		return "consumer", l.consumerLimit, l.window, true
+	case appoauth.ConnectAttemptScopeRegistration:
+		return "register", l.sourceLimit, l.window, true
+	case appoauth.ConnectAttemptScopePersonalKey:
+		return "personal_key", personalKeyChangeLimit, personalKeyChangeWindow, true
 	default:
-		return "", 0, false
+		return "", 0, 0, false
 	}
 }
 
@@ -165,6 +178,26 @@ func (l *connectAttemptLimiter) bucketKey(domain, subject string) (string, error
 		return "", fmt.Errorf("build connect rate limit key: %w", appoauth.ErrConnectRateLimitUnavailable)
 	}
 	return connectBucketPrefix + ":" + domain + ":" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+// NewConnectSourceResolver returns how connect requests are told apart by
+// source. MCP_CONNECT_TRUSTED_PROXY_CIDRS, when set, keeps its own reading of
+// the forwarding chain; otherwise the plane's client IP setting decides. Behind
+// a GCP load balancer the socket peer is one of several managed proxies that
+// take turns, so counting by peer spreads one caller over several buckets, and
+// walking the chain from the right stops at the forwarding rule's address,
+// which every caller shares.
+func NewConnectSourceResolver(
+	connectProxyCIDRs []netip.Prefix,
+	clientIP config.ClientIPConfig,
+) func(peer, forwardedFor string) string {
+	if len(connectProxyCIDRs) > 0 {
+		trusted := slices.Clone(connectProxyCIDRs)
+		return func(peer, forwardedFor string) string {
+			return ResolveConnectSource(peer, forwardedFor, trusted)
+		}
+	}
+	return requestmeta.NewIPResolver(clientIP.Mode, clientIP.TrustedProxyCIDRs)
 }
 
 func ResolveConnectSource(peer, forwardedFor string, trustedProxyCIDRs []netip.Prefix) string {

@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 // DefaultHTTPTimeout is the timeout used by all provider HTTP clients.
@@ -44,6 +46,16 @@ func SetDefaultHTTPTimeout(d time.Duration) {
 	}
 }
 
+// SetAllowPrivateNetworks lets provider clients reach private, loopback and
+// link-local addresses. It drives the shared netguard escape hatch
+// (OUTBOUND_ALLOW_PRIVATE_NETWORKS, config default true), which every
+// tenant-steerable outbound client reads. Single-operator (hybrid, self-hosted)
+// gateways leave it on; multi-tenant gateways must turn it off. Call it during
+// initialization.
+func SetAllowPrivateNetworks(allow bool) {
+	netguard.SetAllowPrivate(allow)
+}
+
 func SetDefaultResponseHeaderTimeout(d time.Duration) {
 	if d > 0 {
 		DefaultResponseHeaderTimeout = d
@@ -62,12 +74,29 @@ func SetDefaultResponseHeaderTimeout(d time.Duration) {
 type HTTPClientPool struct {
 	pool *sync.Map
 	sf   singleflight.Group
+	// trusted pools dial operator-configured destinations and skip the
+	// private-network guard. Never use one for a URL a tenant can set.
+	trusted bool
 }
 
-// NewHTTPClientPool returns a ready-to-use pool.
+// NewHTTPClientPool returns a ready-to-use pool whose connections refuse
+// private, loopback and link-local destinations (see SetAllowPrivateNetworks).
+// Use it for any URL a tenant can influence, provider base_url included.
 func NewHTTPClientPool() *HTTPClientPool {
 	return &HTTPClientPool{
 		pool: &sync.Map{},
+	}
+}
+
+// NewTrustedHTTPClientPool returns a pool for destinations the operator fixed
+// through gateway configuration (for example OPENAI_MODERATION_BASE_URL), which
+// may legitimately be in-cluster. It applies the same transport tuning as
+// NewHTTPClientPool without the private-network guard. Never use it for a URL a
+// tenant can set.
+func NewTrustedHTTPClientPool() *HTTPClientPool {
+	return &HTTPClientPool{
+		pool:    &sync.Map{},
+		trusted: true,
 	}
 }
 
@@ -86,18 +115,18 @@ func (p *HTTPClientPool) Get(key string, timeout time.Duration) *http.Client {
 		}
 		cl := &http.Client{
 			Timeout:   timeout,
-			Transport: newTransport(),
+			Transport: newTransport(p.trusted),
 		}
 		p.pool.Store(key, cl)
 		return cl, nil
 	})
 	if err != nil {
-		return &http.Client{Timeout: timeout, Transport: newTransport()}
+		return &http.Client{Timeout: timeout, Transport: newTransport(p.trusted)}
 	}
 	if cl, ok := v.(*http.Client); ok {
 		return cl
 	}
-	return &http.Client{Timeout: timeout, Transport: newTransport()}
+	return &http.Client{Timeout: timeout, Transport: newTransport(p.trusted)}
 }
 
 // GetStream returns an *http.Client suitable for SSE streaming. Unlike Get, it
@@ -122,12 +151,13 @@ func DrainBody(r io.ReadCloser) {
 // newTransport returns an *http.Transport with explicit settings tuned for
 // high-concurrency provider calls. Each provider key gets its own Transport
 // so connection pools are isolated between providers.
-func newTransport() *http.Transport {
+func newTransport(trusted bool) *http.Transport {
+	dial := netguard.Shared().DialContext
+	if trusted {
+		dial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
 	return &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext: dial,
 
 		TLSHandshakeTimeout: 10 * time.Second,
 

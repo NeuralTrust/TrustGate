@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,4 +160,458 @@ func TestStagePlan_GroupBatchesNonParallelIsSingleton(t *testing.T) {
 
 	batches := plan.batchesFor(policy.StagePreRequest)
 	assert.Equal(t, [][]string{{"a"}, {"b"}}, batchSlugs(batches))
+}
+
+func scoped(p *policy.Policy, scope *policy.MCPScope) *policy.Policy {
+	p.MCPScope = scope
+	return p
+}
+
+func preRequestPlugins(t *testing.T, names ...string) Registry {
+	t.Helper()
+	ps := make([]Plugin, 0, len(names))
+	for _, name := range names {
+		ps = append(ps, &fakePlugin{name: name, stages: []policy.Stage{policy.StagePreRequest}, result: &Result{}})
+	}
+	return newRegistry(t, ps...)
+}
+
+func entrySlugs(entries []chainEntry) []string {
+	out := make([]string, len(entries))
+	for i, entry := range entries {
+		out[i] = entry.config.Slug
+	}
+	return out
+}
+
+func TestStagePlan_EqualPriorityOrdersBySpecificityDesc(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "a_consumer", "b_registry", "c_tool", "d_tool_principal")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	pols := policies(t,
+		polSpec{slug: "a_consumer", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "b_registry", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "c_tool", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "d_tool_principal", enabled: true, priority: 10, stages: pre},
+	)
+	scoped(pols[1], &policy.MCPScope{RegistryIDs: []ids.RegistryID{registryID}})
+	scoped(pols[2], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+	scoped(pols[3], &policy.MCPScope{
+		Tools:  []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}},
+		Groups: []string{"Finanzas"},
+	})
+
+	plan := NewStagePlan(reg, pols, nil)
+
+	want := []string{"d_tool_principal", "c_tool", "b_registry", "a_consumer"}
+	assert.Equal(t, want, entrySlugs(plan.entriesFor(policy.StagePreRequest)),
+		"at equal priority the most specific scope must run first, ahead of slug order")
+	assert.Equal(t, [][]string{{"d_tool_principal"}, {"c_tool"}, {"b_registry"}, {"a_consumer"}},
+		batchSlugs(plan.batchesFor(policy.StagePreRequest)))
+	assert.Equal(t, want, entrySlugs(buildStageChain(reg, pols, policy.StagePreRequest, false)),
+		"the executor's ad-hoc chain must apply the same order as the precompiled plan")
+}
+
+func TestStagePlan_PriorityStillBeatsSpecificity(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "consumer_wide", "tool_scoped")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	pols := policies(t,
+		polSpec{slug: "tool_scoped", enabled: true, priority: 20, stages: pre},
+		polSpec{slug: "consumer_wide", enabled: true, priority: 10, stages: pre},
+	)
+	scoped(pols[0], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+
+	plan := NewStagePlan(reg, pols, nil)
+	assert.Equal(t, []string{"consumer_wide", "tool_scoped"}, entrySlugs(plan.entriesFor(policy.StagePreRequest)))
+}
+
+func TestStagePlan_ParallelBatchGroupsByPriorityOnly(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "a_consumer", "b_tool", "c_later")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	pols := policies(t,
+		polSpec{slug: "a_consumer", enabled: true, priority: 10, parallel: true, stages: pre},
+		polSpec{slug: "b_tool", enabled: true, priority: 10, parallel: true, stages: pre},
+		polSpec{slug: "c_later", enabled: true, priority: 20, parallel: true, stages: pre},
+	)
+	scoped(pols[1], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+
+	plan := NewStagePlan(reg, pols, nil)
+	assert.Equal(t, [][]string{{"b_tool", "a_consumer"}, {"c_later"}}, batchSlugs(plan.batchesFor(policy.StagePreRequest)),
+		"specificity orders inside a parallel batch but never splits it")
+}
+
+func TestStagePlan_EqualSpecificityFallsBackToSlugThenID(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "x", "y")
+	pre := []policy.Stage{policy.StagePreRequest}
+	scope := func() *policy.MCPScope {
+		return &policy.MCPScope{RegistryIDs: []ids.RegistryID{registryID}}
+	}
+
+	pols := policies(t,
+		polSpec{slug: "y", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "x", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "x", enabled: true, priority: 10, stages: pre},
+	)
+	for _, p := range pols {
+		scoped(p, scope())
+	}
+	firstX, secondX := pols[1], pols[2]
+	if secondX.ID.String() < firstX.ID.String() {
+		firstX, secondX = secondX, firstX
+	}
+
+	plan := NewStagePlan(reg, pols, nil)
+	entries := plan.entriesFor(policy.StagePreRequest)
+	require.Len(t, entries, 3)
+	assert.Equal(t, []string{"x", "x", "y"}, entrySlugs(entries))
+	assert.Equal(t, firstX.ID.String(), entries[0].config.ID)
+	assert.Equal(t, secondX.ID.String(), entries[1].config.ID)
+}
+
+func TestStagePlan_UnionRegroupsAcrossPlans(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "a_scoped", "b_base", "c_first")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	base := NewStagePlan(reg, policies(t,
+		polSpec{slug: "b_base", enabled: true, priority: 10, parallel: true, stages: pre},
+	), nil)
+	scopedPols := policies(t,
+		polSpec{slug: "a_scoped", enabled: true, priority: 10, parallel: true, stages: pre},
+	)
+	scoped(scopedPols[0], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+	scopedPlan := NewStagePlan(reg, scopedPols, nil)
+	first := NewStagePlan(reg, policies(t,
+		polSpec{slug: "c_first", enabled: true, priority: 5, stages: pre},
+	), nil)
+
+	union := base.Union(scopedPlan, first)
+
+	assert.Equal(t, []string{"c_first", "a_scoped", "b_base"}, entrySlugs(union.entriesFor(policy.StagePreRequest)))
+	assert.Equal(t, [][]string{{"c_first"}, {"a_scoped", "b_base"}}, batchSlugs(union.batchesFor(policy.StagePreRequest)),
+		"entries from different plans must share a parallel batch when priority matches")
+	assert.False(t, union.Has(policy.StagePostResponse))
+
+	assert.Equal(t, []string{"b_base"}, entrySlugs(base.entriesFor(policy.StagePreRequest)), "Union must not mutate its receiver")
+	assert.Equal(t, []string{"a_scoped"}, entrySlugs(scopedPlan.entriesFor(policy.StagePreRequest)), "Union must not mutate its inputs")
+}
+
+func TestStagePlan_UnionDedupsAndHandlesNil(t *testing.T) {
+	reg := preRequestPlugins(t, "only")
+	pre := []policy.Stage{policy.StagePreRequest}
+	plan := NewStagePlan(reg, policies(t,
+		polSpec{slug: "only", enabled: true, priority: 1, stages: pre},
+	), nil)
+
+	assert.Same(t, plan, plan.Union(), "without extras Union returns the receiver")
+	assert.Equal(t, []string{"only"}, entrySlugs(plan.Union(plan).entriesFor(policy.StagePreRequest)),
+		"the same policy present in several plans enters once")
+
+	var nilPlan *StagePlan
+	fromNil := nilPlan.Union(plan)
+	assert.Equal(t, []string{"only"}, entrySlugs(fromNil.entriesFor(policy.StagePreRequest)))
+	assert.Equal(t, [][]string{{"only"}}, batchSlugs(fromNil.batchesFor(policy.StagePreRequest)))
+
+	empty := plan.Union(nilPlan, NewStagePlan(nil, nil, nil))
+	assert.Equal(t, []string{"only"}, entrySlugs(empty.entriesFor(policy.StagePreRequest)))
+}
+
+// inertSafePlugin is a fakePlugin that implements ScopeInertSafe, so the tests
+// can cover both sides of the opt-in without touching a real plugin.
+type inertSafePlugin struct {
+	fakePlugin
+	safe bool
+}
+
+func (p *inertSafePlugin) ScopeInertSafe() bool { return p.safe }
+
+func TestInertSafe_DefaultsToDenyWithoutTheInterface(t *testing.T) {
+	plain := &fakePlugin{name: "plain", stages: []policy.Stage{policy.StagePreRequest}, result: &Result{}}
+	assert.False(t, inertSafe(plain), "a descriptor that does not implement ScopeInertSafe must be denied")
+
+	optedOut := &inertSafePlugin{fakePlugin: fakePlugin{name: "opted_out"}, safe: false}
+	assert.False(t, inertSafe(optedOut))
+
+	optedIn := &inertSafePlugin{fakePlugin: fakePlugin{name: "opted_in"}, safe: true}
+	assert.True(t, inertSafe(optedIn))
+}
+
+func TestEntrySpecificity_FlattensGroupOnlyScopeToZero(t *testing.T) {
+	groupOnly := &policy.MCPScope{Groups: []string{"Finanzas"}}
+	assert.Equal(t, uint8(1), entrySpecificity(groupOnly, false), "a group-only scope scores 1 on the MCP plane")
+	assert.Equal(t, uint8(0), entrySpecificity(groupOnly, true), "the same scope scores 0 on an inert plane")
+	assert.Equal(t, uint8(0), entrySpecificity(nil, false))
+	assert.Equal(t, uint8(0), entrySpecificity(nil, true))
+}
+
+func TestInertStagePlan_GroupScopeNeverReordersTheChain(t *testing.T) {
+	reg := preRequestPlugins(t, "a_plain", "z_grouped")
+	pre := []policy.Stage{policy.StagePreRequest}
+	newPolicies := func() []*policy.Policy {
+		return policies(t,
+			polSpec{slug: "a_plain", enabled: true, priority: 10, stages: pre},
+			polSpec{slug: "z_grouped", enabled: true, priority: 10, stages: pre},
+		)
+	}
+
+	unflattened := newPolicies()
+	scoped(unflattened[1], &policy.MCPScope{Groups: []string{"Finanzas"}})
+	assert.Equal(t,
+		[]string{"z_grouped", "a_plain"},
+		entrySlugs(NewStagePlan(reg, unflattened, nil).entriesFor(policy.StagePreRequest)),
+		"without flattening the group-only scope jumps ahead of the unscoped policy of its priority")
+
+	inert := newPolicies()
+	scoped(inert[1], &policy.MCPScope{Groups: []string{"Finanzas"}})
+	inertSlugs := entrySlugs(NewInertStagePlan(reg, inert, nil).entriesFor(policy.StagePreRequest))
+
+	unscopedSlugs := entrySlugs(NewInertStagePlan(reg, newPolicies(), nil).entriesFor(policy.StagePreRequest))
+	assert.Equal(t, []string{"a_plain", "z_grouped"}, inertSlugs,
+		"an inert plan orders by priority, slug and id alone")
+	assert.Equal(t, unscopedSlugs, inertSlugs,
+		"the inert plan must order the scoped policies exactly as if their mcp_scope were nil")
+
+	for _, entry := range NewInertStagePlan(reg, inert, nil).entriesFor(policy.StagePreRequest) {
+		assert.Equal(t, uint8(0), entry.specificity, "every entry of an inert plan scores zero specificity")
+	}
+}
+
+func streamPolicies(t *testing.T, settings map[string]any, specs ...polSpec) []*policy.Policy {
+	t.Helper()
+	pols := policies(t, specs...)
+	pols[0].Settings = settings
+	return pols
+}
+
+func TestStagePlan_StreamPlan(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	inspector := newStreamPlugin("guard", nil)
+	plain := &fakePlugin{name: "plain", stages: pre, result: &Result{}}
+	reg := newRegistry(t, inspector, plain)
+
+	guardSpec := polSpec{slug: "guard", enabled: true, priority: 10, stages: pre}
+	plainSpec := polSpec{slug: "plain", enabled: true, priority: 20, stages: pre}
+
+	enabled := NewStagePlan(reg, streamPolicies(t,
+		map[string]any{"enabled": true, "head_chars": 32},
+		guardSpec, plainSpec,
+	), nil)
+	disabled := NewStagePlan(reg, streamPolicies(t,
+		map[string]any{"enabled": false, "head_chars": 32},
+		guardSpec, plainSpec,
+	), nil)
+	withoutInspector := NewStagePlan(reg, policies(t,
+		polSpec{slug: "plain", enabled: true, priority: 10, stages: pre},
+	), nil)
+
+	ok, opts := enabled.StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.Equal(t, StreamOptions{HeadChars: 32, OnError: "fail_open"}, opts,
+		"the opt-in carries the settings the plugin parsed, so the caller never re-reads them")
+
+	ok, opts = enabled.StreamPlan(policy.StagePostResponse)
+	assert.False(t, ok, "the predicate answers per stage, and the policies only selected pre_response")
+	assert.Zero(t, opts)
+
+	ok, opts = disabled.StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok,
+		"a policy its plugin keeps off the response leg must not yield a guard, however the plugin is typed")
+	assert.Zero(t, opts)
+
+	ok, _ = withoutInspector.StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok, "a stage whose entries do not implement StreamInspector does not participate")
+
+	var nilPlan *StagePlan
+	ok, _ = nilPlan.StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok)
+	ok, _ = NewStagePlan(reg, nil, nil).StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok)
+}
+
+// toolReaderStreamPlugin is an inspector that reads the tool calls of a
+// segment, as TrustGuard does.
+type toolReaderStreamPlugin struct{ *streamPlugin }
+
+func (toolReaderStreamPlugin) ReadsStreamToolCalls() bool { return true }
+func (toolReaderStreamPlugin) OwnsStreamOptions() bool    { return false }
+
+func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	reader := toolReaderStreamPlugin{newStreamPlugin("reader", nil)}
+	owner := newStreamPlugin("guard", nil)
+	reg := newRegistry(t, reader, owner)
+	on := map[string]any{"enabled": true}
+
+	both := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
+	)
+	both[0].Settings, both[1].Settings = on, on
+	ok, opts := NewStagePlan(reg, both, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.True(t, opts.ReadsToolCalls,
+		"a passive participant that reads tool calls still asks the guard to hold them whole")
+
+	readerOff := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
+	)
+	readerOff[0].Settings, readerOff[1].Settings = on, map[string]any{"enabled": false}
+	ok, opts = NewStagePlan(reg, readerOff, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.False(t, opts.ReadsToolCalls, "a reader that does not take part in the stream holds nothing")
+
+	ownerOnly := streamPolicies(t, on, polSpec{slug: "guard", enabled: true, priority: 1, stages: pre})
+	ok, opts = NewStagePlan(reg, ownerOnly, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.False(t, opts.ReadsToolCalls, "a chain that reads text alone streams tool deltas as they arrive")
+}
+
+// passiveStreamPlugin is a local rewriter: a participant that must not decide
+// the stream-wide options, as regex_replace does not.
+type passiveStreamPlugin struct{ *streamPlugin }
+
+func (passiveStreamPlugin) OwnsStreamOptions() bool { return false }
+
+// One stream carries one set of options, so a passive participant that sorts
+// first must not decide them over the guard that has an opinion (ENG-1735: a
+// default-on regex_replace flipped a fail_open trustguard stream to
+// fail_closed just by having the lower priority).
+func TestStagePlan_StreamPlan_PassiveParticipantYieldsOptionsToOwners(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
+	owner := newStreamPlugin("guard", nil)
+	otherOwner := newStreamPlugin("guard2", nil)
+	reg := newRegistry(t, passive, owner, otherOwner)
+
+	passiveSet := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_closed"}
+	ownerSet := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_open"}
+	otherSet := map[string]any{"enabled": true, "head_chars": 128, "on_error": "fail_closed"}
+
+	plan := func(t *testing.T, specs ...polSpec) *StagePlan {
+		t.Helper()
+		pols := policies(t, specs...)
+		for i, spec := range specs {
+			switch spec.slug {
+			case "rewriter":
+				pols[i].Settings = passiveSet
+			case "guard":
+				pols[i].Settings = ownerSet
+			case "guard2":
+				pols[i].Settings = otherSet
+			}
+		}
+		return NewStagePlan(reg, pols, nil)
+	}
+
+	t.Run("passive first, owner second: the owner's options win", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("passive alone: its own options", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
+	})
+
+	t.Run("passive first, two owners: the first owner wins", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard2", enabled: true, priority: 2, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 3, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 128, OnError: "fail_open"}, opts,
+			"an owner's own on_error is not read: owners are guardrails and always fail open")
+	})
+
+	t.Run("owner first, passive second: unchanged", func(t *testing.T) {
+		ok, opts := plan(t,
+			polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "rewriter", enabled: true, priority: 2, stages: pre},
+		).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 64, OnError: "fail_open"}, opts)
+	})
+
+	t.Run("a non-participating owner does not count", func(t *testing.T) {
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre},
+			polSpec{slug: "guard", enabled: true, priority: 2, stages: pre},
+		)
+		pols[0].Settings = passiveSet
+		pols[1].Settings = map[string]any{"enabled": false}
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		assert.True(t, ok)
+		assert.Equal(t, StreamOptions{HeadChars: 400, OnError: "fail_closed"}, opts)
+	})
+}
+
+// A policy with no streaming block is a participant now, so which entry sorts
+// first must not decide the payload cap for the whole stream, and no owner can
+// turn the stream's failure direction to fail_closed.
+func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	a := newStreamPlugin("guard_a", nil)
+	b := newStreamPlugin("guard_b", nil)
+	reg := newRegistry(t, a, b)
+
+	plan := func(t *testing.T, first, second map[string]any, firstMode, secondMode policy.Mode) StreamOptions {
+		t.Helper()
+		pols := policies(t,
+			polSpec{slug: "guard_a", enabled: true, priority: 1, stages: pre, mode: firstMode},
+			polSpec{slug: "guard_b", enabled: true, priority: 2, stages: pre, mode: secondMode},
+		)
+		pols[0].Settings, pols[1].Settings = first, second
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		return opts
+	}
+	defaults := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open", "max_accumulated_bytes": 262144}
+	closed := map[string]any{"enabled": true, "head_chars": 64, "on_error": "fail_closed", "max_accumulated_bytes": 24576}
+
+	t.Run("a stored fail_closed on an owner never makes the stream fail closed", func(t *testing.T) {
+		opts := plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce)
+		assert.Equal(t, "fail_open", opts.OnError)
+		assert.Equal(t, 400, opts.HeadChars, "the first owner still supplies the head gate")
+		assert.Equal(t, "fail_open", plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
+		assert.Equal(t, "fail_open", plan(t, closed, defaults, policy.ModeObserve, policy.ModeEnforce).OnError)
+	})
+	t.Run("both fail_open stays fail_open", func(t *testing.T) {
+		assert.Equal(t, "fail_open", plan(t, defaults, defaults, policy.ModeEnforce, policy.ModeEnforce).OnError)
+	})
+	t.Run("the stream keeps the largest window, each entry is narrowed to its own", func(t *testing.T) {
+		assert.Equal(t, 262144, plan(t, defaults, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+		assert.Equal(t, 262144, plan(t, closed, defaults, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	})
+	t.Run("an unset cap does not zero the merge", func(t *testing.T) {
+		unset := map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_open"}
+		assert.Equal(t, 24576, plan(t, unset, closed, policy.ModeEnforce, policy.ModeEnforce).MaxAccumulatedBytes)
+	})
+	t.Run("a passive rewriter's fail_closed does not flip an owner", func(t *testing.T) {
+		passive := passiveStreamPlugin{newStreamPlugin("rewriter", nil)}
+		regP := newRegistry(t, passive, a)
+		pols := policies(t,
+			polSpec{slug: "rewriter", enabled: true, priority: 1, stages: pre, mode: policy.ModeEnforce},
+			polSpec{slug: "guard_a", enabled: true, priority: 2, stages: pre, mode: policy.ModeEnforce},
+		)
+		pols[0].Settings = map[string]any{"enabled": true, "head_chars": 400, "on_error": "fail_closed", "max_accumulated_bytes": 262144}
+		pols[1].Settings = defaults
+		ok, opts := NewStagePlan(regP, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		assert.Equal(t, "fail_open", opts.OnError)
+	})
 }

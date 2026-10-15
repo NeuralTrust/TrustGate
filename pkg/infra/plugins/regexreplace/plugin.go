@@ -22,14 +22,19 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
+// Plugin masks text with regular-expression rules. On the tool calls of a
+// request or response the rules see the decoded string values, and the numbers,
+// of the call's arguments, never the raw JSON; object keys are not rewritten.
 type Plugin struct {
 	registry *adapter.Registry
 	logger   *slog.Logger
+	cfgCache configCache
 }
 
 func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
@@ -60,6 +65,17 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// BedrockNative declares what the plugin does on a native Amazon Bedrock Runtime
+// call (see appplugins.BedrockNativeAware).
+func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeMasks
+}
+
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	if _, err := parseConfig(settings); err != nil {
 		return fmt.Errorf("regex_replace: %w", err)
@@ -67,8 +83,17 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return nil
 }
 
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects a new streaming.final_pass: false or
+// streaming.enabled: false, which the block loop cannot honour
+// (pluginutil.ValidateStreamingWrite).
+func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
+	return pluginutil.ValidateStreamingWrite(PluginName, settings, previous)
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	cfg, err := parseConfig(in.Config.Settings)
+	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("regex_replace: %w", err)
 	}
@@ -111,13 +136,15 @@ func (p *Plugin) executeRequest(ctx context.Context, in appplugins.ExecInput, cf
 }
 
 func (p *Plugin) executeResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
-	if in.Request == nil || in.Response == nil || p.registry == nil {
+	if in.Request == nil || in.Response == nil {
 		return passThrough(), nil
 	}
-	if in.Request.Provider == "" || len(in.Response.Body) == 0 {
-		return passThrough(), nil
-	}
+	// A streamed response is rewritten block by block by the stream guard, so
+	// this buffered run has nothing to do with it.
 	if in.Response.Streaming {
+		return passThrough(), nil
+	}
+	if p.registry == nil || in.Request.Provider == "" || len(in.Response.Body) == 0 {
 		return passThrough(), nil
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
@@ -153,6 +180,7 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 	if !appplugins.Blocks(in.Mode) {
 		data.Decision = decisionObserved
 		setExtras(in.Event, data)
+		appplugins.SetDecisionFromOutcome(in.Event, appplugins.DecisionForMode(in.Mode))
 		return passThrough()
 	}
 	data.Decision = decisionRewritten

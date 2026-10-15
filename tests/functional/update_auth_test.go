@@ -80,6 +80,43 @@ func TestUpdateAuth_OAuth2MaskedSecretKeepsStoredValue(t *testing.T) {
 				"issuer":        "https://issuer.example.com",
 				"audiences":     []string{"gateway"},
 				"jwks_url":      "https://issuer.example.com/.well-known/jwks.json",
+				"client_id":     "client-123",
+				"client_secret": "topsecretclientvalue",
+			},
+		},
+	})
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, id)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{
+		"config": map[string]any{
+			"oauth2": map[string]any{
+				"issuer":        "https://issuer.example.com",
+				"audiences":     []string{"gateway"},
+				"jwks_url":      "https://issuer.example.com/.well-known/jwks.json",
+				"client_id":     "client-123",
+				"client_secret": "***alue",
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	cfg, _ := body["config"].(map[string]any)
+	oauth2, ok := cfg["oauth2"].(map[string]any)
+	require.True(t, ok, "oauth2 config missing: %v", cfg)
+	assert.Equal(t, "***alue", oauth2["client_secret"], "stored secret must be kept and masked")
+}
+
+func TestUpdateAuth_OAuth2ClearedClientIDDropsSecret(t *testing.T) {
+	defer Track(t, "UpdateAuth")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-upd-oauth-clear")})
+	id := CreateAuth(t, gwID, map[string]any{
+		"name": uniqueName("oauth-cred"),
+		"type": "oauth2",
+		"config": map[string]any{
+			"oauth2": map[string]any{
+				"issuer":        "https://issuer.example.com",
+				"audiences":     []string{"gateway"},
+				"jwks_url":      "https://issuer.example.com/.well-known/jwks.json",
+				"client_id":     "client-123",
 				"client_secret": "topsecretclientvalue",
 			},
 		},
@@ -100,7 +137,8 @@ func TestUpdateAuth_OAuth2MaskedSecretKeepsStoredValue(t *testing.T) {
 	cfg, _ := body["config"].(map[string]any)
 	oauth2, ok := cfg["oauth2"].(map[string]any)
 	require.True(t, ok, "oauth2 config missing: %v", cfg)
-	assert.Equal(t, "***alue", oauth2["client_secret"], "stored secret must be kept and masked")
+	assert.NotContains(t, oauth2, "client_id")
+	assert.NotContains(t, oauth2, "client_secret", "a cleared client must not keep its secret")
 }
 
 func TestUpdateAuth_Validation(t *testing.T) {

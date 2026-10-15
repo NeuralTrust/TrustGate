@@ -19,6 +19,7 @@ import "sort"
 type modeAOutcome struct {
 	changed    bool
 	injected   []string
+	unapplied  []unappliedInjection
 	skipped    []string
 	unresolved []string
 }
@@ -44,7 +45,11 @@ func applyModeA(cfg *config, rb *requestBody, ctxVars map[string]string) modeAOu
 		if escape {
 			rendered = escapeControlChars(rendered)
 		}
-		rb.injectSystem(it.OnExistingSystem, it.Role, rendered)
+		applied, reason := rb.injectSystem(it.OnExistingSystem, it.Role, rendered)
+		if !applied {
+			out.unapplied = append(out.unapplied, unappliedInjection{ID: it.ID, Reason: reason})
+			continue
+		}
 		out.changed = true
 		out.injected = append(out.injected, it.ID)
 	}

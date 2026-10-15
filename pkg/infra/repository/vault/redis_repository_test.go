@@ -397,3 +397,78 @@ func TestRedisRepository_FindMissingReturnsNotFound(t *testing.T) {
 		t.Fatalf("find missing err = %v, want ErrNotFound", err)
 	}
 }
+
+type reconnectRequirer interface {
+	RequireReconnect(context.Context, *vaultdomain.Credential) error
+}
+
+func TestRedisRepository_RequireReconnect(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("drops the refresh token and expires the credential, keeping the account", func(t *testing.T) {
+		repo, _, _ := newRedisVaultRepo(t)
+		gw := ids.New[ids.GatewayKind]()
+		if err := repo.Upsert(ctx, newTestCredential(t, gw, "user-1", "linear", "access", "dead-refresh")); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		read, err := repo.Find(ctx, gw, "user-1", "linear")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if err := repo.(reconnectRequirer).RequireReconnect(ctx, read); err != nil {
+			t.Fatalf("require reconnect: %v", err)
+		}
+		got, err := repo.Find(ctx, gw, "user-1", "linear")
+		if err != nil {
+			t.Fatalf("find after mark: %v", err)
+		}
+		if got.RefreshToken != "" {
+			t.Fatalf("the refresh token survived the mark: %+v", got)
+		}
+		if !got.Expired(0) {
+			t.Fatalf("marked credential is not expired: expires_at=%v", got.ExpiresAt)
+		}
+		if got.AccountRef != "acct-linear" || len(got.Scopes) != 1 {
+			t.Fatalf("the mark lost the account: %+v", got)
+		}
+	})
+
+	t.Run("a credential rewritten since it was read is left alone", func(t *testing.T) {
+		repo, _, _ := newRedisVaultRepo(t)
+		gw := ids.New[ids.GatewayKind]()
+		if err := repo.Upsert(ctx, newTestCredential(t, gw, "user-1", "linear", "access", "dead-refresh")); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		stale, err := repo.Find(ctx, gw, "user-1", "linear")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if err := repo.Upsert(ctx, newTestCredential(t, gw, "user-1", "linear", "reconnected", "fresh-refresh")); err != nil {
+			t.Fatalf("reconnect upsert: %v", err)
+		}
+		err = repo.(reconnectRequirer).RequireReconnect(ctx, stale)
+		if !errors.Is(err, vaultdomain.ErrCredentialChanged) {
+			t.Fatalf("error = %v, want ErrCredentialChanged", err)
+		}
+		got, err := repo.Find(ctx, gw, "user-1", "linear")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if got.RefreshToken != "fresh-refresh" || got.AccessToken != "reconnected" {
+			t.Fatalf("a reconnect was wiped by a stale mark: %+v", got)
+		}
+	})
+
+	t.Run("a credential deleted since it was read is not recreated", func(t *testing.T) {
+		repo, mr, _ := newRedisVaultRepo(t)
+		gw := ids.New[ids.GatewayKind]()
+		cred := newTestCredential(t, gw, "user-1", "linear", "access", "dead-refresh")
+		err := repo.(reconnectRequirer).RequireReconnect(ctx, cred)
+		if !errors.Is(err, vaultdomain.ErrCredentialChanged) {
+			t.Fatalf("error = %v, want ErrCredentialChanged", err)
+		}
+		if keys := mr.Keys(); len(keys) != 0 {
+			t.Fatalf("the mark created keys: %v", keys)
+		}
+	})
+}

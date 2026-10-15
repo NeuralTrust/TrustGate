@@ -28,4 +28,7 @@ var (
 	ErrAlreadyExists = fmt.Errorf("gateway: %w", commonerrors.ErrAlreadyExists)
 	ErrHasDependents = fmt.Errorf("gateway: %w", commonerrors.ErrHasDependents)
 	ErrInvalidDomain = fmt.Errorf("gateway: invalid domain: %w", commonerrors.ErrValidation)
+	// ErrReservedDomain is a domain the platform itself serves gateways on,
+	// which a tenant cannot claim for one gateway.
+	ErrReservedDomain = fmt.Errorf("gateway: reserved domain: %w", commonerrors.ErrValidation)
 )

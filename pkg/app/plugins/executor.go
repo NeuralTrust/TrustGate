@@ -15,10 +15,15 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
+	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -44,7 +49,7 @@ func (e *executor) batchesFor(in StageInput) [][]chainEntry {
 	if in.Plan != nil {
 		return in.Plan.batchesFor(in.Stage)
 	}
-	return groupBatches(buildStageChain(e.registry, in.Policies, in.Stage), in.Stage, e.logger)
+	return groupBatches(buildStageChain(e.registry, in.Policies, in.Stage, false), in.Stage, e.logger)
 }
 
 type StageOutcome struct {
@@ -59,10 +64,18 @@ var _ Executor = (*executor)(nil)
 type executor struct {
 	registry Registry
 	logger   *slog.Logger
+	now      func() time.Time
 }
 
 func NewExecutor(registry Registry, logger *slog.Logger) Executor {
-	return &executor{registry: registry, logger: logger}
+	return &executor{registry: registry, logger: logger, now: time.Now}
+}
+
+func (e *executor) clock() time.Time {
+	if e.now == nil {
+		return time.Now()
+	}
+	return e.now()
 }
 
 func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, error) {
@@ -75,13 +88,347 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 	for _, batch := range batches {
 		results, err := e.runBatch(ctx, in.Stage, in.Request, in.Response, batch)
 		if err != nil {
-			return nil, err
+			// The one place a plugin's denial learns which leg it ended, so no
+			// plugin has to say so itself.
+			return nil, stampBlockDirection(err, BlockDirectionForStage(in.Stage))
 		}
-		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) {
+		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) && !handsOnResponse(in, outcome) {
 			return outcome, nil
 		}
 	}
 	return outcome, nil
+}
+
+// handsOnResponse reports whether a short-circuit at this stage is a response
+// rewrite the rest of the chain must still judge. At pre_response a plugin
+// rewrites the upstream body by short-circuiting with the new one and a 2xx
+// status (a mask, a de-identification, an injected tool error), and
+// applyResults has already written it to the response. Stopping there would
+// skip every later guard, across priorities, whenever an earlier plugin masked
+// something, and would drop the masks of every later rewriter. So the chain
+// goes on over the rewritten body, the way a streamed segment hands its
+// transform on; the outcome still ends the response, with the last body
+// written (RUN-1745).
+//
+// A non-2xx short-circuit is a denial, as the MCP runner reads it
+// (replacesPayload), and still ends the stage: nothing after it may overwrite
+// a block.
+func handsOnResponse(in StageInput, outcome *StageOutcome) bool {
+	if in.Stage != policy.StagePreResponse || in.Response == nil {
+		return false
+	}
+	return outcome.StatusCode == 0 || (outcome.StatusCode >= 200 && outcome.StatusCode < 300)
+}
+
+// RunStreamSegment runs the pre_response entries that implement StreamInspector
+// against one block of a streaming response and consolidates their verdicts. It
+// stays off the Executor interface on purpose: the stream guard consumes it
+// through a narrow interface of its own, so RunStage, the MCP callers and the
+// generated mocks keep a contract that has no notion of streaming.
+//
+// The chain stops at the first blocking verdict — with a single call in flight
+// there is nothing left to cancel, and every later call would rediscover the
+// same finding over the same cumulative text.
+//
+// A closing segment is the exception: it asks for no verdict, so every entry is
+// visited whatever the ones before it answered, and an error from one is
+// recorded on its own span rather than denying the rest of the chain the only
+// point at which it can publish.
+//
+// StageInput.Stage is ignored: a stream is a pre_response concern, so the chain
+// is always the pre_response one and ExecInput.Stage is always
+// policy.StagePreResponse whatever the caller passed.
+func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg StreamSegment) (*SegmentOutcome, error) {
+	outcome := &SegmentOutcome{}
+	entries := e.streamEntries(in)
+	if len(entries) == 0 {
+		return outcome, nil
+	}
+
+	spans := streamSpansFrom(ctx)
+	var reporters map[string]bool
+	if seg.Closing {
+		// Finality and closure are mutually exclusive, and only one caller
+		// builds both flags: a segment that carries no text cannot also be the
+		// block that covered the end of the response.
+		seg.Final = false
+		reporters = spans.reporters(seg, entries)
+		defer spans.publish()
+	}
+
+	// current is the segment the next entry is handed. It starts as the raw
+	// segment and, after an enforcing entry rewrites it, carries the masked
+	// text, so a later entry (a reader above all) never sends the unmasked
+	// text to its third party (RUN-1744).
+	current := seg
+	// cutKeys names the entries that would author a cut on THIS segment. The
+	// stored list is replaced at the end of every evaluated segment, because a
+	// cut can only happen on the last one: a mask an earlier block landed is not
+	// to be blamed for a later block's failure.
+	var cutKeys []string
+	var failedKey string
+	var inputCut bool
+	if !seg.Closing {
+		defer func() { spans.setCut(seg, cutKeys, failedKey, !outcome.Block, inputCut) }()
+	}
+	for _, entry := range entries {
+		inspector, ok := streamInspector(entry.plugin)
+		if !ok {
+			continue
+		}
+		event := spans.eventFor(ctx, current, entry)
+		// A retired entry is not called again on this stream: its provider
+		// failed streamEntryRetireAfter blocks in a row. It still gets the
+		// closing segment, which makes no call, so its span is published.
+		if !seg.Closing && spans.isRetired(spanKey(seg, entry)) {
+			outcome.FailedEntries++
+			continue
+		}
+		call := current
+		var head string
+		if seg.Closing {
+			call.Report = spans.entryReport(seg, entry)
+			call.Findings = entryFindings(seg.Findings, entry)
+			call.ReportsStream = reporters[spanKey(seg, entry)]
+		} else {
+			call, head = segmentWithin(call, entry.streamWindow)
+			if head != "" {
+				outcome.WindowedEntries++
+			}
+		}
+		started := e.clock()
+		execIn := ExecInput{
+			Stage:    policy.StagePreResponse,
+			Mode:     entry.mode,
+			Config:   entry.config,
+			Scope:    scopeFromRequest(in.Request, entry.global),
+			Request:  in.Request,
+			Response: in.Response,
+			Event:    event,
+		}
+		var verdict *SegmentVerdict
+		var err error
+		if !seg.Closing && entry.streamWindow > 0 && len(call.Accumulated) > entry.streamWindow && !boundsOwnPayload(inspector) {
+			verdict, err = e.inspectChunked(ctx, inspector, execIn, call, entry, func() { spans.chunked(spanKey(seg, entry)) })
+		} else {
+			verdict, err = inspector.InspectSegment(ctx, execIn, call)
+		}
+		if !seg.Closing {
+			spans.charge(seg, entry, e.clock().Sub(started))
+		}
+		if err != nil {
+			event.SetError(err)
+			// The caller's own cancellation (a client that left, a deadline
+			// unwinding the stream) is not this entry failing, as on the
+			// buffered path: it is neither counted nor labelled failed_open.
+			cancelled := ctx.Err() != nil
+			if seg.Closing {
+				if !cancelled {
+					spans.closingFailure(event, spanKey(seg, entry), err, call.Report, !Blocks(entry.mode) || entryFailsOpen(inspector, entry))
+				}
+				continue
+			}
+			if !cancelled {
+				spans.noteFailure(spanKey(seg, entry), err)
+			}
+			// Observe never blocks, and the stream's on_error is the answer
+			// for entries that can: an observe entry that could not
+			// inspect a segment records that it failed open and lets the
+			// rest of the chain carry on, as its buffered leg does.
+			//
+			// An enforcing entry whose own stream options say fail_open
+			// (every guardrail) is handled the same way. The stream carries ONE on_error
+			// for the whole chain, so returning its error to the guard would
+			// apply another policy's fail_closed to it (and blame it for the
+			// cut), and would end the walk, blinding every entry behind it on
+			// the block, which matters most on the final one. Only an entry that
+			// asked for fail_closed (or states nothing) hands its error back.
+			if !Blocks(entry.mode) || entryFailsOpen(inspector, entry) {
+				if !cancelled {
+					first, retiredNow := spans.fail(spanKey(seg, entry), err)
+					SetDecisionFromOutcome(event, DecisionFailedOpen)
+					outcome.FailedEntries++
+					e.warnAbsorbedStreamFailure(entry, seg, err, first, retiredNow)
+				}
+				continue
+			}
+			failedKey = spanKey(seg, entry)
+			if !cancelled {
+				spans.handedBack(failedKey)
+			}
+			failure := fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			// An earlier enforcing entry may already have masked this segment.
+			// Hand that mask back with the error: a caller that resolves the
+			// failure as fail_open releases the held text, and it must release
+			// the masked text, never the raw text a mask already covered.
+			if outcome.HasTransform {
+				return outcome, failure
+			}
+			return nil, failure
+		}
+		if !seg.Closing {
+			spans.recovered(spanKey(seg, entry))
+		}
+		if seg.Closing || verdict == nil {
+			continue
+		}
+		if verdict.Incomplete != nil && ctx.Err() == nil {
+			spans.noteFailure(spanKey(seg, entry), verdict.Incomplete)
+		}
+		if verdict.Failure != nil && ctx.Err() == nil {
+			spans.noteCutFailure(spanKey(seg, entry), verdict.Failure)
+		}
+		if verdict.HasTransform && head != "" {
+			whole := *verdict
+			whole.Transformed = head + verdict.Transformed
+			verdict = &whole
+		}
+		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && BedrockNativeOf(entry.plugin) != BedrockNativeMasks {
+			// A transform that is not a mask cannot be carried out on a relayed
+			// call: it ends the stream like a block, never fails open.
+			verdict = &SegmentVerdict{Block: true, Type: BedrockNativePassthrough, Message: NativeRewriteRefusal(entry.plugin.Name(), policy.StagePreResponse).Message}
+		}
+		stop := e.mergeVerdict(outcome, verdict, entry)
+		// Hand-off mirrors mergeVerdict: only a transform from an entry that
+		// blocks is applied to what the client receives, so only that one
+		// changes what the entries behind it see. An observe transform is
+		// never applied, and the entries behind must judge what is released.
+		if !stop && verdict.HasTransform && Blocks(entry.mode) {
+			current = segmentAfterTransform(current, verdict.Transformed)
+		}
+		switch {
+		case stop:
+			// A block is the cut's one author: the transforms of the same
+			// segment are discarded with it, so their entries do not share it.
+			cutKeys = []string{spanKey(seg, entry)}
+			inputCut = verdict.Failure != nil
+		case verdict.HasTransform && Blocks(entry.mode):
+			// Every entry whose transform ends up in the final mask is a
+			// candidate for the rewrite that could not be applied.
+			if key := spanKey(seg, entry); !slices.Contains(cutKeys, key) {
+				cutKeys = append(cutKeys, key)
+			}
+		}
+		if stop {
+			break
+		}
+	}
+	return outcome, nil
+}
+
+// entryFailsOpen reports whether the entry's own stream options say
+// fail_open. An empty or unparseable answer is not an
+// opt-in to swallowing: the error then goes to the guard, which resolves it with
+// the stream's on_error as it always did.
+func entryFailsOpen(inspector StreamInspector, entry chainEntry) bool {
+	_, opts := inspector.StreamSettings(entry.config.Settings)
+	return opts.OnError == streamOnErrorFailOpen
+}
+
+func (e *executor) streamEntries(in StageInput) []chainEntry {
+	if in.Plan != nil {
+		return in.Plan.streamEntriesFor()
+	}
+	return streamParticipants(OrderStreamEntries(buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false)))
+}
+
+// segmentWithin narrows a segment to the tail of Accumulated that an entry's
+// own window allows, advanced to a rune boundary, and returns the head it cut
+// off. The stream-wide window is the owner's, and a provider can refuse or skip
+// a payload far below it: Bedrock bounds each ApplyGuardrail request by a
+// regional text-unit quota, and Model Armor skips its filters above 65,536
+// tokens. A transform covers only the tail, so the caller puts the head back
+// in front of it before anything else reads it (RUN-1745 F10).
+//
+// The block's own text is never cut: it is about to be released, and text this
+// entry never saw would reach the client uninspected. A block larger than the
+// window therefore stays whole here, and the caller screens it in chunks of the
+// window (inspectChunked).
+func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
+	if window <= 0 {
+		return seg, ""
+	}
+	window = max(window, len(seg.Text))
+	if len(seg.Accumulated) <= window {
+		return seg, ""
+	}
+	cut := len(seg.Accumulated) - window
+	for cut < len(seg.Accumulated) && !utf8.RuneStart(seg.Accumulated[cut]) {
+		cut++
+	}
+	head := seg.Accumulated[:cut]
+	seg.Accumulated = seg.Accumulated[cut:]
+	seg.Truncated = true
+	return seg, head
+}
+
+// segmentAfterTransform is the segment the entries behind a rewriter receive.
+// Transformed replaces the whole of Accumulated (SegmentVerdict), so it becomes
+// the new Accumulated. Text is the delta of the block: the tail of the masked
+// text from where the block began, or from where the mask first diverged from
+// the raw text when that is earlier, so masked text is never left out of it.
+// Reasoning and ToolCalls are unchanged: the guard refuses a transform over a
+// block that carries either.
+func segmentAfterTransform(seg StreamSegment, transformed string) StreamSegment {
+	start := len(seg.Accumulated) - len(seg.Text)
+	if start < 0 {
+		start = 0
+	}
+	common := 0
+	for common < len(seg.Accumulated) && common < len(transformed) && seg.Accumulated[common] == transformed[common] {
+		common++
+	}
+	from := min(start, common)
+	for from > 0 && from < len(transformed) && !utf8.RuneStart(transformed[from]) {
+		from--
+	}
+	seg.Accumulated = transformed
+	seg.Text = transformed[from:]
+	return seg
+}
+
+// mergeVerdict folds one verdict into the consolidated outcome and reports
+// whether the chain must stop. Both the cut and the rewrite are gated on
+// Blocks(entry.mode): an observe-mode entry contributes its findings and its
+// fingerprints, but never cuts the stream and never rewrites text the client is
+// about to read.
+//
+// Fingerprints are tagged with the entry here because here is where the entry
+// is known. The guard holds one set for the whole stream and a plugin answers
+// only for itself, so the tag is what lets the set be narrowed back to the
+// entry that reported each key.
+func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict, entry chainEntry) bool {
+	for _, fp := range verdict.Fingerprints {
+		outcome.Fingerprints = append(outcome.Fingerprints, StreamFinding{Entry: entry.config.ID, Fingerprint: fp})
+	}
+	if outcome.Type == "" && verdict.Type != "" {
+		outcome.Type = verdict.Type
+		outcome.Message = verdict.Message
+	}
+	if !Blocks(entry.mode) {
+		return false
+	}
+	if verdict.Block {
+		outcome.Block = true
+		outcome.Type = verdict.Type
+		outcome.Message = verdict.Message
+		outcome.HasTransform = false
+		outcome.Transformed = ""
+		return true
+	}
+	if verdict.HasTransform {
+		// The last transform wins: each entry is handed the text the previous
+		// rewriter produced (segmentAfterTransform), so the last one already
+		// carries every earlier mask.
+		outcome.HasTransform = true
+		outcome.Transformed = verdict.Transformed
+		// Type and Message describe the entry whose transform is kept.
+		if verdict.Type != "" {
+			outcome.Type = verdict.Type
+			outcome.Message = verdict.Message
+		}
+	}
+	return false
 }
 
 func (e *executor) runBatch(
@@ -144,6 +491,14 @@ func (e *executor) runOne(
 		event.SetMode(string(entry.mode))
 	}
 
+	if skipsNative(req, entry) {
+		recordNativeSkip(event, entry, stage)
+		if event != nil {
+			event.SetStatusCode(http.StatusOK)
+		}
+		return &Result{StatusCode: http.StatusOK}, nil
+	}
+
 	start := time.Now()
 	res, err := entry.plugin.Execute(ctx, ExecInput{
 		Stage:    stage,
@@ -154,6 +509,41 @@ func (e *executor) runOne(
 		Response: resp,
 		Event:    event,
 	})
+
+	if err == nil && req.IsBedrockNative() && !Blocks(entry.mode) {
+		res = withoutRewrites(res)
+	}
+	if err == nil {
+		err = nativeRewriteVerdict(stage, req, resp, entry, res)
+		if err != nil {
+			res = nil
+		}
+	}
+
+	if err != nil {
+		if _, ok := AsPluginError(err); !ok && !Blocks(entry.mode) && ctx.Err() == nil {
+			// Observe never blocks, and a plugin that could not run at all —
+			// a counter-store outage that slipped past its own fail-open
+			// handling, a transport error, anything that is not a deliberate
+			// PluginError verdict — must not stop the chain or bubble up as a
+			// 502 either. This mirrors what RunStreamSegment already does for
+			// observe-mode stream entries: fail open, record it, move on.
+			//
+			// ctx.Err() != nil is excluded on purpose: the caller's own
+			// cancellation (a client disconnect, an upstream deadline
+			// unwinding the whole chain, a sibling in the same parallel
+			// batch blocking and canceling gctx) is not this plugin failing
+			// on its own, and treating it as failed_open would misreport
+			// every abandoned request as an infrastructure incident.
+			origErr := err
+			if event != nil {
+				event.SetError(origErr)
+				SetDecisionFromOutcome(event, DecisionFailedOpen)
+			}
+			e.warnFailedOpen(entry, stage, origErr)
+			res, err = &Result{StatusCode: http.StatusOK}, nil
+		}
+	}
 
 	if event != nil {
 		event.SetSLatency(time.Since(start))
@@ -177,11 +567,68 @@ func (e *executor) runOne(
 	return res, err
 }
 
+func skipsNative(req *infracontext.RequestContext, entry chainEntry) bool {
+	return req.IsBedrockNative() && BedrockNativeOf(entry.plugin) == BedrockNativeSkips
+}
+
+// nativeRewriteVerdict is the one place a native call's rewrites are classified.
+func nativeRewriteVerdict(
+	stage policy.Stage,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	entry chainEntry,
+	res *Result,
+) error {
+	if !req.IsBedrockNative() || res == nil || !Blocks(entry.mode) || !rewritesNativeBytes(stage, req, resp, res) {
+		return nil
+	}
+	if BedrockNativeOf(entry.plugin) != BedrockNativeMasks {
+		return NativeRewriteRefusal(entry.plugin.Name(), stage)
+	}
+	req.NativeMask.Add(infracontext.NativeMaskSource{
+		Plugin: entry.plugin.Name(),
+		Stage:  stage,
+	})
+	return nil
+}
+
+// withoutRewrites is the result of an entry that does not enforce, on a native
+// call: observe reports what it would do and never does it, so its rewrite of the
+// body and its short circuit are dropped here, where the mode is known, before the
+// results are applied. Translated calls are left to their plugins, which already
+// gate observe themselves; the result is copied, never edited in place.
+func withoutRewrites(res *Result) *Result {
+	if res == nil || (res.RequestBody == nil && !res.StopUpstream && res.Body == nil) {
+		return res
+	}
+	clone := *res
+	clone.RequestBody, clone.StopUpstream, clone.Body = nil, false, nil
+	return &clone
+}
+
+func rewritesNativeBytes(stage policy.Stage, req *infracontext.RequestContext, resp *infracontext.ResponseContext, res *Result) bool {
+	switch stage {
+	case policy.StagePreRequest:
+		return res.RequestBody != nil && !bytes.Equal(res.RequestBody, req.Body)
+	case policy.StagePreResponse:
+		// A rewrite keeps the status of what it rewrites (a mask of an AWS error
+		// answers with that error's status), or is a 2xx short circuit. Any other
+		// status is a policy answering for the upstream, which the forwarder refuses.
+		ok := res.StatusCode == 0 || (res.StatusCode >= http.StatusOK && res.StatusCode < http.StatusMultipleChoices) ||
+			(resp != nil && res.StatusCode == resp.StatusCode)
+		return res.StopUpstream && ok && res.Body != nil && (resp == nil || !bytes.Equal(res.Body, resp.Body))
+	}
+	return false
+}
+
 func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScope {
 	scope := RuntimeScope{Global: global}
 	if req != nil {
 		scope.GatewayID = req.GatewayID
 		scope.ConsumerID = req.ConsumerID
+		scope.AuthID = req.AuthID
+		scope.OwnerID = req.OwnerID
+		scope.KeyBudget = req.KeyBudget
 	}
 	return scope
 }
@@ -292,8 +739,61 @@ func (e *executor) applyResults(
 		} else {
 			outcome.Headers = cloneHeaders(res.Headers)
 		}
+		if res.StatusCode == http.StatusForbidden {
+			// A denial returned as a result rather than as an error (the
+			// allowlists do): same header, on both the outcome and, for the
+			// buffered leg that renders from it, the response.
+			direction := BlockDirectionForStage(stage)
+			if outcome.Headers == nil {
+				outcome.Headers = map[string][]string{}
+			}
+			outcome.Headers[BlockDirectionHeader] = []string{direction}
+			if resp != nil {
+				if resp.Headers == nil {
+					resp.Headers = map[string][]string{}
+				}
+				resp.Headers[BlockDirectionHeader] = []string{direction}
+			}
+		}
 	}
 	return stopApplied
+}
+
+// warnFailedOpen logs the one Warn line a buffered-path entry gets when it
+// failed open in a non-blocking mode: same shape as warnExcessWriter, kept
+// next to it since both are runOne/runBatch's own diagnostics rather than
+// something the plugin logged itself.
+func (e *executor) warnFailedOpen(entry chainEntry, stage policy.Stage, err error) {
+	if e.logger == nil {
+		return
+	}
+	e.logger.Warn("plugin failed open on a non-blocking mode",
+		slog.String("plugin", entry.plugin.Name()),
+		slog.String("stage", string(stage)),
+		slog.String("mode", string(entry.mode)),
+		slog.String("decision", DecisionFailedOpen),
+		slog.Any("error", err))
+}
+
+// warnAbsorbedStreamFailure logs an entry's failure that RunStreamSegment
+// absorbed per entry. The guard logs the failures it resolves itself and never
+// sees these, so without this an outage of a default-on guardrail would leave
+// nothing in the logs: once per stream for the first failure, and once more when
+// the entry is retired.
+func (e *executor) warnAbsorbedStreamFailure(entry chainEntry, seg StreamSegment, err error, first, retired bool) {
+	if e.logger == nil || (!first && !retired) {
+		return
+	}
+	msg := "stream block inspection failed; releasing the block"
+	if retired {
+		msg = "stream block inspection failed repeatedly; retiring this policy for the rest of the stream"
+	}
+	e.logger.Warn(msg,
+		slog.String("plugin", entry.plugin.Name()),
+		slog.String("mode", string(entry.mode)),
+		slog.Int("seq", seg.Seq),
+		slog.String("decision", DecisionFailedOpen),
+		slog.String("error", err.Error()))
 }
 
 func (e *executor) warnExcessWriter(stage policy.Stage, capability string) {

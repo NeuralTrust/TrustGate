@@ -42,23 +42,45 @@ func NewExporterCache(factory ExporterFactory, logger *slog.Logger) *ExporterCac
 	}
 }
 
+// SourcedExporter is an exporter config together with who wrote it. A tenant's
+// config must never reuse, or be built with the trust of, an identical operator
+// one, so the two live under different cache keys.
+type SourcedExporter struct {
+	Config telemetrydomain.ExporterConfig
+	Tenant bool
+}
+
+// Resolve builds the exporters for operator-written configs.
 func (c *ExporterCache) Resolve(cfgs []telemetrydomain.ExporterConfig) []Exporter {
-	out := make([]Exporter, 0, len(cfgs))
-	seen := make(map[string]struct{}, len(cfgs))
-	for _, cfg := range cfgs {
-		key := exporterCacheKey(cfg)
+	items := make([]SourcedExporter, len(cfgs))
+	for i, cfg := range cfgs {
+		items[i] = SourcedExporter{Config: cfg}
+	}
+	return c.ResolveSourced(items)
+}
+
+// ResolveSourced builds the exporters for configs of mixed origin.
+func (c *ExporterCache) ResolveSourced(items []SourcedExporter) []Exporter {
+	out := make([]Exporter, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		key := exporterCacheKey(item.Config)
+		if item.Tenant {
+			key = "tenant\x00" + key
+		}
 		if _, dup := seen[key]; dup {
 			continue
 		}
 		seen[key] = struct{}{}
-		if exporter := c.get(key, cfg); exporter != nil {
+		if exporter := c.get(key, item); exporter != nil {
 			out = append(out, exporter)
 		}
 	}
 	return out
 }
 
-func (c *ExporterCache) get(key string, cfg telemetrydomain.ExporterConfig) Exporter {
+func (c *ExporterCache) get(key string, item SourcedExporter) Exporter {
+	cfg := item.Config
 	c.mu.Lock()
 	entry, ok := c.entries[key]
 	if !ok {
@@ -68,7 +90,11 @@ func (c *ExporterCache) get(key string, cfg telemetrydomain.ExporterConfig) Expo
 	c.mu.Unlock()
 
 	entry.once.Do(func() {
-		exporter, err := c.factory.Build(cfg)
+		build := c.factory.Build
+		if item.Tenant {
+			build = c.factory.BuildTenant
+		}
+		exporter, err := build(cfg)
 		if err != nil {
 			c.logger.Warn("failed to build gateway exporter, skipping",
 				slog.String("exporter", cfg.Name),

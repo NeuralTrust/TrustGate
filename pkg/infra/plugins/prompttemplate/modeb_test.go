@@ -108,17 +108,23 @@ func TestApplyModeBRenderReplaces(t *testing.T) {
 	assert.JSONEq(t, `{"model":"gpt-4","messages":[{"role":"system","content":"You are a friendly bot for acme."}]}`, string(out))
 }
 
-func TestApplyModeBClientBeatsContext(t *testing.T) {
+// TestApplyModeBContextBeatsClient inverts the previously pinned (and
+// insecure) TestApplyModeBClientBeatsContext: a gateway-resolved context
+// variable — sourced from a JWT claim or a trusted header — must win over a
+// caller-supplied variable of the same name, not the other way around. See
+// RUN-1676.
+func TestApplyModeBContextBeatsClient(t *testing.T) {
 	cfg := modeBConfig(false, "stable", onMissingClientError)
 	rb, err := decodeBody([]byte(`{"properties":{"persona":"friendly"},"messages":[{"role":"user","content":"{template://support-bot}"}]}`))
 	require.NoError(t, err)
 	props, ok := rb.takeProperties()
 	require.True(t, ok)
-	_, err = applyModeB(cfg, rb, props, map[string]string{"tenant": "acme", "persona": "formal"})
+	outcome, err := applyModeB(cfg, rb, props, map[string]string{"tenant": "acme", "persona": "formal"})
 	require.NoError(t, err)
 	out, err := rb.marshal()
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"messages":[{"role":"system","content":"You are a friendly bot for acme."}]}`, string(out))
+	assert.JSONEq(t, `{"messages":[{"role":"system","content":"You are a formal bot for acme."}]}`, string(out))
+	assert.Equal(t, []string{"persona"}, outcome.droppedClientVars, "the discarded client value is reported")
 }
 
 func TestApplyModeBUnknownTemplate(t *testing.T) {
@@ -194,8 +200,9 @@ func TestApplyModeBNonRequiredMissing(t *testing.T) {
 
 func TestRenderTemplateContentEscapesControlChars(t *testing.T) {
 	version := &templateVersion{Content: `[{"role":"system","content":"value: {{v}}"}]`}
-	rendered, err := renderTemplateContent(version, map[string]any{"v": "line1\nwith \"quote\""}, nil, true, onMissingClientEmptyString)
+	rendered, dropped, err := renderTemplateContent(version, map[string]any{"v": "line1\nwith \"quote\""}, nil, true, onMissingClientEmptyString)
 	require.NoError(t, err)
+	assert.Empty(t, dropped)
 	rb, err := decodeBody([]byte(`{"messages":[]}`))
 	require.NoError(t, err)
 	require.NoError(t, rb.replaceMessages(rendered))

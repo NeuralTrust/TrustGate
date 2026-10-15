@@ -1,0 +1,303 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package googlemodelarmor
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+)
+
+const streamIDSeparator = ":"
+
+const streamLegResponse = "response"
+
+// The buffered leg refuses the call when SDP asks to anonymise and returns
+// nothing to anonymise with, so the stream leg cuts for the same reason rather
+// than releasing text the policy ruled out.
+const anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
+
+var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+
+// StreamGuardTimeout is the time one piece's call may take: the guard timeout the
+// call itself runs under, so the block's deadline and the slow-call threshold are
+// made of the same time.
+func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.GuardTimeout }
+
+// StreamSettings reports whether a policy with these settings sanitizes a
+// streamed response block by block, and the options the block loop must run
+// under. Every policy that parses does: the template applies to the response
+// leg whatever the policy says about streaming (RUN-1661).
+func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return false, appplugins.StreamOptions{}
+	}
+	return true, cfg.Streaming.OptionsWithin(maxSanitizeBytes)
+}
+
+// InspectSegment sanitizes one closed block of a streamed response.
+//
+// Model Armor's REST v1 API has no streaming sanitize method, which is why the
+// plugin used to sit out streamed responses entirely. It does not need one: the
+// block loop hands over a growing prefix and each block is an ordinary
+// SanitizeModelResponse call over that prefix, the same call the buffered leg
+// makes over the whole completion.
+//
+// The prefix rather than the delta is what goes over, because every filter in a
+// template decides over a whole turn; and the original user message goes with
+// it, because SanitizeModelResponse correlates the response against the prompt
+// that asked for it, and dropping that would change what the filters conclude.
+func (p *Plugin) InspectSegment(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentVerdict, error) {
+	cfg, err := parseConfig(in.Config.Settings)
+	if err != nil {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
+	}
+	if err := p.checkIdentity(cfg); err != nil {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
+	}
+	if seg.Closing {
+		p.recordStreamOutcome(ctx, in, cfg, seg)
+		return segmentAllow(), nil
+	}
+	if strings.TrimSpace(seg.Accumulated) == "" {
+		return segmentAllow(), nil
+	}
+	cl, err := p.clientFor(cfg)
+	if err != nil {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "",
+			fmt.Errorf("resolving client for stream block %d: %w", seg.Seq, err))
+	}
+
+	// The deadline is enforced here because the caller is holding a client's
+	// bytes for the length of this call, and the knob is in this plugin's
+	// schema.
+	callCtx, cancel := context.WithTimeout(ctx, streamingDefaults.GuardTimeout)
+	defer cancel()
+
+	result, err := cl.SanitizeModelResponse(
+		callCtx, cfg.Project, cfg.Location, cfg.Template,
+		seg.Accumulated, p.streamCorrelationPrompt(in),
+	)
+	if err != nil {
+		// Resolved by the guard, not here: only it knows whether the status is
+		// still uncommitted, which decides whether the held text is
+		// released; a guardrail that fails is always released.
+		reason, detail := pluginutil.FailureOfError(err)
+		return appplugins.ExternalStreamOutcome(PluginName, in.Mode, reason, detail, nil,
+			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
+	}
+
+	if result.InvocationResult == invocationResultFailure {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+			fmt.Errorf("stream block %d: invocationResult FAILURE", seg.Seq))
+	}
+
+	res := inspect(result, cfg)
+	// Same rule as the buffered leg: a block_on filter that produced no
+	// verdict is not a clean one, and a real match on another filter still
+	// wins because it is a verdict. A filter that was skipped is the content's, so
+	// a mode that blocks cuts; an invocation that came back PARTIAL with every
+	// block_on filter run is recorded and released. A
+	// filter the template never enabled is the customer's configuration: it is
+	// released as a failed inspection, except for a usable mask in a blocking
+	// mode, where the de-identified text is already in hand and releasing the
+	// original would send the raw PII, so the mask is applied and the incomplete
+	// verdict rides along on it.
+	var incomplete error
+	if res.block == nil {
+		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
+			cause := fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason)
+			_, usable := maskedText(result)
+			if usable && keepsMaskDespiteGap(res, in.Mode, reason) {
+				incomplete = appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, reason, cause)
+			} else {
+				return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reason, nil, cause)
+			}
+		} else if result.InvocationResult == invocationResultPartial {
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, appplugins.DetailInvocationPartial, nil,
+				fmt.Errorf("stream block %d: invocationResult PARTIAL", seg.Seq))
+		}
+	}
+	switch {
+	case res.block != nil:
+		return &appplugins.SegmentVerdict{
+			Block:        true,
+			Type:         typeModelArmorBlocked,
+			Message:      blockMessage(cfg),
+			Fingerprints: findingFingerprints(in.Mode, res.block),
+		}, nil
+	case res.anonymize != nil:
+		masked, ok := maskedText(result)
+		if !ok {
+			// A backstop rather than a live path: inspectSDP only reports an
+			// anonymise once de-identified text came back. If that
+			// classification ever loosens, releasing the unmasked prefix is the
+			// one outcome the policy ruled out, so a mode that blocks cuts.
+			return appplugins.ExternalStreamOutcome(PluginName, in.Mode, appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
+				&appplugins.SegmentVerdict{
+					Type:         typeModelArmorBlocked,
+					Message:      anonymizeDegradedMessage,
+					Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+				},
+				fmt.Errorf("stream block %d: guardrail asked to anonymise and returned no masked text", seg.Seq))
+		}
+		return &appplugins.SegmentVerdict{
+			HasTransform: true,
+			Transformed:  masked,
+			Fingerprints: findingFingerprints(in.Mode, res.anonymize),
+			Incomplete:   incomplete,
+		}, nil
+	default:
+		return segmentAllow(), nil
+	}
+}
+
+// streamCorrelationPrompt is the user message the streamed response is
+// answering. It is best effort: without it the filters still run, they just
+// lose the correlation, which is the same trade the buffered leg makes.
+func (p *Plugin) streamCorrelationPrompt(in appplugins.ExecInput) string {
+	if in.Request == nil || in.Request.Provider == "" {
+		return ""
+	}
+	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
+	if err != nil {
+		return ""
+	}
+	return correlationPrompt(p.registry, format, in.Request.Body)
+}
+
+// recordStreamOutcome publishes this entry's account of the stream, once, on
+// the closing segment. Span.SetExtras overwrites rather than merges, so a
+// per-block write would leave the span carrying only the last block's account
+// of a response that took several.
+func (p *Plugin) recordStreamOutcome(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	seg appplugins.StreamSegment,
+) {
+	if in.Event == nil {
+		return
+	}
+	stream := pluginutil.NewStreamData(streamID(ctx, seg), seg.Report)
+	stream.Findings = pluginutil.StreamFingerprints(seg.Findings)
+
+	data := &Data{
+		Project:   cfg.Project,
+		Location:  cfg.Location,
+		Template:  cfg.Template,
+		Mode:      string(in.Mode),
+		Streaming: stream,
+	}
+	switch {
+	case seg.Report.CutAtEval > 0:
+		data.Decision = pluginutil.StreamCutDecision(seg.Report, decisionBlocked)
+	case seg.Report.MaskedEvals > 0:
+		// With no cut the guard applied every mask, as the buffered leg does.
+		data.Decision = decisionAnonymized
+	case len(stream.Findings) > 0:
+		data.Decision = decisionReported
+	// A positive finding outranks a missing inspection, so a failure only labels
+	// a stream that reported nothing.
+	case pluginutil.StreamFailedOpen(seg.Report):
+		data.Decision = appplugins.DecisionFailedOpen
+	default:
+		data.Decision = decisionAllowed
+	}
+
+	// The first failed block's reason travels whatever the decision above
+	// settled on: a later finding, mask or cut does not erase that an earlier
+	// block went uninspected. Extras are replaced, so this one write is the
+	// only place it can land.
+	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
+	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
+	if appplugins.IsMaskOverFinding(data.FailureDetail) {
+		data.Degraded = true
+		data.DegradedReason = data.FailureDetail
+	}
+
+	// A stream span's wall clock is the whole drain, provider generation
+	// included, and the fold in pkg/app/metrics counts a pre_response span as
+	// blocking. The guard latency is what the client actually waited for this
+	// plugin.
+	in.Event.SetSLatency(seg.Report.GuardLatency)
+	setExtras(in.Event, data)
+	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
+}
+
+// findingFingerprints identifies what matched, so that alert-only reports one
+// incident per stream instead of one per block.
+//
+// One key per info type rather than one for the set: SDP reports the types it
+// found in the text it was given, so the set grows as the prefix does. Keyed as
+// a set, "EMAIL" and then "EMAIL, PHONE" would be two incidents for what is one
+// email and one phone number; keyed per type, each appears once however many
+// blocks carry it.
+//
+// confidence is out of the key. It is Model Armor's degree of belief over the
+// text the call carried, so a match can move from one bucket to another as the
+// prefix grows and would split a single incident in two.
+func findingFingerprints(mode policy.Mode, f *finding) []string {
+	if f == nil || appplugins.Blocks(mode) {
+		return nil
+	}
+	if len(f.infoTypes) == 0 {
+		return pluginutil.DedupeFingerprints([]string{
+			pluginutil.StreamFingerprint(PluginName, f.filter, f.category),
+		})
+	}
+	types := append([]string(nil), f.infoTypes...)
+	sort.Strings(types)
+	prints := make([]string, 0, len(types))
+	for _, infoType := range types {
+		prints = append(prints, pluginutil.StreamFingerprint(PluginName, f.filter, f.category, infoType))
+	}
+	return pluginutil.DedupeFingerprints(prints)
+}
+
+func blockMessage(cfg Settings) string {
+	if msg := strings.TrimSpace(cfg.Message); msg != "" {
+		return msg
+	}
+	return appplugins.DefaultBlockMessage
+}
+
+// streamID correlates every block of one response. An empty id is not a missing
+// one but a shared one, so the trace id is preferred and the guard's own id is
+// the fallback.
+func streamID(ctx context.Context, seg appplugins.StreamSegment) string {
+	if rt := trace.FromContext(ctx); rt != nil && rt.TraceID() != "" {
+		return rt.TraceID() + streamIDSeparator + streamLegResponse
+	}
+	return strings.TrimSpace(seg.StreamID)
+}
+
+func segmentAllow() *appplugins.SegmentVerdict {
+	return &appplugins.SegmentVerdict{}
+}

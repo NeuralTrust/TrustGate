@@ -40,7 +40,7 @@ func startServer(t *testing.T, token string, src SnapshotSource) *Server {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
 	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger())
-	srv, err := NewServer(cfg, svc, auth, discardLogger())
+	srv, err := NewServer(cfg, svc, nil, auth, discardLogger())
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -91,5 +91,49 @@ func TestServer_RejectsMissingToken(t *testing.T) {
 	_, err = stream.Recv()
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("code = %s, want Unauthenticated", status.Code(err))
+	}
+}
+
+func TestServer_ShutdownBoundsLongLivedStreams(t *testing.T) {
+	cfg := config.ConfigSyncConfig{
+		GRPCListenAddr:       "127.0.0.1:0",
+		Token:                "tok",
+		GRPCKeepaliveTime:    30 * time.Second,
+		GRPCKeepaliveTimeout: 10 * time.Second,
+	}
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger())
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor: %v", err)
+	}
+	service := &blockingSyncServer{started: make(chan struct{})}
+	srv, err := NewServer(cfg, service, nil, auth, discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	go func() { _ = srv.Run() }()
+	srv.gracefulStopTimeout = 20 * time.Millisecond
+	client := dialAddr(t, srv.lis.Addr().String(), "tok")
+	stream, err := client.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1"}}}); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+	select {
+	case <-service.started:
+	case <-time.After(time.Second):
+		t.Fatal("sync stream did not start")
+	}
+
+	started := time.Now()
+	if err := srv.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Shutdown took %v, want bounded stop", elapsed)
+	}
+	if _, err := stream.Recv(); err == nil {
+		t.Fatal("active stream remained open after shutdown")
 	}
 }

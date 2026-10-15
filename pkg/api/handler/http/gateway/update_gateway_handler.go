@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -64,12 +65,13 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
+	req.DetectClears(c.Body())
 	if err := req.Validate(); err != nil {
 		return httpio.WriteError(c, err)
 	}
 
-	caller := tenantIDFromContext(c)
-	if caller != "" {
+	caller := middleware.AdminIdentityFromContext(c)
+	if !isPlatform(caller) {
 		existing, err := h.finder.FindByID(c.UserContext(), id)
 		if err != nil {
 			return httpio.WriteError(c, err)
@@ -80,17 +82,20 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	g, err := h.updater.Update(c.UserContext(), appgateway.UpdateInput{
-		ID:              id,
-		Slug:            req.Slug,
-		Status:          req.Status,
-		Domain:          req.Domain,
-		TenantID:        caller,
-		PlatformAdmin:   caller == "",
-		Metadata:        req.Metadata,
-		Telemetry:       req.Telemetry,
-		ClientTLSConfig: req.ClientTLSConfig,
-		SessionConfig:   req.SessionConfig,
-		Entitlements:    req.Entitlements,
+		ID:                   id,
+		Slug:                 req.Slug,
+		Status:               req.Status,
+		Domain:               req.Domain,
+		TenantID:             caller.TenantID,
+		PlatformAdmin:        isPlatform(caller),
+		Metadata:             req.Metadata,
+		Telemetry:            req.Telemetry,
+		ClientTLSConfig:      req.ClientTLSConfig,
+		SessionConfig:        req.SessionConfig,
+		TrafficLabeling:      req.TrafficLabeling,
+		ClearTrafficLabeling: req.ClearTrafficLabeling,
+		Entitlements:         req.Entitlements,
+		StoreMode:            req.StoreMode,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

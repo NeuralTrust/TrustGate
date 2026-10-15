@@ -78,7 +78,7 @@ function ModelPolicyRow({
   value: ModelPolicyState;
   onChange: (value: ModelPolicyState) => void;
 }) {
-  const { data: models } = useModelsCatalog(registry.provider, {
+  const { data: models, error: catalogError } = useModelsCatalog(registry.provider, {
     gatewayId: registry.gateway_id,
     registryId: registry.id,
   });
@@ -136,7 +136,11 @@ function ModelPolicyRow({
             })}
           </div>
         ) : (
-          <p className="text-[12px] text-faint">No catalog models for this provider — add them manually below.</p>
+          <p className={cn("text-[12px]", catalogError ? "text-danger" : "text-faint")}>
+            {catalogError
+              ? `Couldn't list this registry's models: ${catalogError.message}. Add them manually below.`
+              : "No catalog models for this provider — add them manually below."}
+          </p>
         )}
       </Field>
 

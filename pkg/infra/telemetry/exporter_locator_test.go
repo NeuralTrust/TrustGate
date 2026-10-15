@@ -25,7 +25,7 @@ import (
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/postgres"
 	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
@@ -60,7 +60,7 @@ func testLogger() *slog.Logger {
 
 func newLocator() *infratelemetry.ExporterLocator {
 	return infratelemetry.NewExporterLocator(
-		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(testLogger(), config.KafkaConfig{Brokers: []string{"localhost:9092"}})),
+		infratelemetry.WithExporter(otlp.ExporterName, otlp.NewTemplate(testLogger(), config.OTLPConfig{})),
 		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(testLogger(), &config.DatabaseConfig{
 			Host: "localhost", Port: 5432, User: "test", Name: "test", SSLMode: "disable",
 		})),
@@ -77,14 +77,14 @@ func TestExporterLocator_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "unknown exporter")
 	})
 
-	t.Run("missing topic", func(t *testing.T) {
-		err := locator.Validate(telemetrydomain.ExporterConfig{Name: kafka.ExporterName, Settings: map[string]interface{}{}})
+	t.Run("missing endpoint", func(t *testing.T) {
+		err := locator.Validate(telemetrydomain.ExporterConfig{Name: otlp.ExporterName, Settings: map[string]interface{}{}})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "topic")
+		assert.Contains(t, err.Error(), "endpoint")
 	})
 
-	t.Run("valid kafka config", func(t *testing.T) {
-		err := locator.Validate(telemetrydomain.ExporterConfig{Name: kafka.ExporterName, Settings: map[string]interface{}{"topic": "events"}})
+	t.Run("valid otlp config", func(t *testing.T) {
+		err := locator.Validate(telemetrydomain.ExporterConfig{Name: otlp.ExporterName, Settings: map[string]interface{}{"endpoint": "otel.invalid:4317"}})
 		require.NoError(t, err)
 	})
 

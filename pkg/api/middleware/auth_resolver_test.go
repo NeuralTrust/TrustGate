@@ -17,12 +17,13 @@ package middleware_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,8 +37,8 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
 	golangjwt "github.com/golang-jwt/jwt/v5"
@@ -81,15 +82,6 @@ func (f fakeDataFinder) FindByGateway(_ context.Context, _ ids.GatewayID) (*appc
 	return f.data, f.err
 }
 
-type fakeRoleResolver struct {
-	roleIDs []ids.RoleID
-	err     error
-}
-
-func (r fakeRoleResolver) ResolveOIDCRoles(_ context.Context, _ []*roledomain.Role, _ map[string]any) ([]ids.RoleID, error) {
-	return r.roleIDs, r.err
-}
-
 type fakeOAuth2Verifier struct {
 	claims *appauth.VerifiedClaims
 	err    error
@@ -109,7 +101,7 @@ func (v fakeOIDCVerifier) Peek(_ string) (appauth.TokenHints, error) {
 	return v.hints, nil
 }
 
-func (v fakeOIDCVerifier) Verify(_ context.Context, _ string, _ authdomain.OIDCConfig) (*appauth.VerifiedClaims, error) {
+func (v fakeOIDCVerifier) Verify(_ context.Context, _ string, _ authdomain.OAuth2Config) (*appauth.VerifiedClaims, error) {
 	if v.err != nil {
 		return nil, v.err
 	}
@@ -119,7 +111,7 @@ func (v fakeOIDCVerifier) Verify(_ context.Context, _ string, _ authdomain.OIDCC
 func TestAuthMiddleware_APIKeyInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -132,7 +124,7 @@ func TestAuthMiddleware_APIKeyInlineSuccess(t *testing.T) {
 func TestAuthMiddleware_APIKeyBearerInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -145,7 +137,7 @@ func TestAuthMiddleware_APIKeyBearerInlineSuccess(t *testing.T) {
 func TestAuthMiddleware_APIKeyCompatHeaderInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -155,10 +147,27 @@ func TestAuthMiddleware_APIKeyCompatHeaderInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
+// A Basic Authorization beside a valid x-api-key must not steal the request.
+// The key header still wins, the same precedence as before non-Bearer schemes
+// became authentication failures.
+func TestAuthMiddleware_BasicAuthorizationKeepsAPIKeyPrecedence(t *testing.T) {
+	t.Parallel()
+	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Basic Zm9vOmJhcg==")
+	req.Header.Set(resolver.HeaderAPIKeyCompat, rawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
 func TestAuthMiddleware_APIKeyGoogleHeaderInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1beta/models/gemini-2.5-pro:generateContent", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -171,7 +180,7 @@ func TestAuthMiddleware_APIKeyGoogleHeaderInlineSuccess(t *testing.T) {
 func TestAuthMiddleware_APIKeyBearerUnknownUnauthorized(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -181,6 +190,86 @@ func TestAuthMiddleware_APIKeyBearerUnknownUnauthorized(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }
 
+func TestAuthMiddleware_LLMProxyAuthUsesDialectEnvelope(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	const (
+		openai    = `{"error":{"message":"unauthenticated","type":"authentication_error","code":"unauthenticated"}}`
+		anthropic = `{"type":"error","error":{"type":"authentication_error","message":"unauthenticated"}}`
+	)
+	tests := []struct {
+		name   string
+		path   string
+		header string
+		value  string
+		want   string
+	}{
+		{name: "no key on chat completions", path: "/cons1234/v1/chat/completions", want: openai},
+		{name: "no key on messages", path: "/cons1234/v1/messages", want: anthropic},
+		{name: "unknown ag key", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Bearer ag_unknown", want: openai},
+		{name: "unknown ag key on messages", path: "/cons1234/v1/messages", header: resolver.HeaderAPIKey, value: "ag_unknown", want: anthropic},
+		{name: "provider key in x-api-key", path: "/cons1234/v1/chat/completions", header: resolver.HeaderAPIKeyCompat, value: "sk-proj-abc", want: openai},
+		{name: "provider key as bearer", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Bearer sk-proj-abc", want: openai},
+		{name: "provider key as bearer on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Bearer sk-proj-abc", want: anthropic},
+		{name: "basic scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Basic Zm9vOmJhcg==", want: openai},
+		{name: "token scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Token abc", want: openai},
+		{name: "basic scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Basic Zm9vOmJhcg==", want: anthropic},
+		{name: "token scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Token abc", want: anthropic},
+		{name: "digest scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: `Digest username="Mufasa", realm="testrealm@host.com", nonce="abc", uri="/", response="def"`, want: openai},
+		{name: "empty basic on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Basic", want: openai},
+		{name: "digest scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: `Digest username="Mufasa", realm="testrealm@host.com", nonce="abc", uri="/", response="def"`, want: anthropic},
+		{name: "empty basic on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Basic", want: anthropic},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(fiber.MethodPost, tt.path, nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			if tt.header != "" {
+				req.Header.Set(tt.header, tt.value)
+			}
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+			raw, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.JSONEq(t, tt.want, string(raw))
+		})
+	}
+}
+
+func TestAuthMiddleware_MalformedBearerNamesBearer(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "malformed bearer authorization header")
+}
+
+func TestAuthMiddleware_UnknownProxyPathStaysFlat(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/not-a-proxy-route", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"error":"not_found"}`, string(raw))
+}
+
 func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
@@ -188,12 +277,11 @@ func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
 	otherAuthID := ids.New[ids.AuthKind]()
 	otherRC := appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "other123",
-			RoutingMode: consumerdomain.RoutingModeInline,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{otherAuthID},
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "other123",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{otherAuthID},
 		},
 		Auths: []*authdomain.Auth{{
 			ID:        otherAuthID,
@@ -204,7 +292,7 @@ func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
 		}},
 	}
 	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherRC})
-	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -212,19 +300,9 @@ func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-}
-
-func TestAuthMiddleware_APIKeyBearerRoleBasedForbidden(t *testing.T) {
-	t.Parallel()
-	gw, rc, rawKey := roleBasedConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer "+rawKey)
-	resp, err := app.Test(req)
+	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	require.JSONEq(t, `{"error":{"message":"forbidden","type":"permission_error","code":"forbidden"}}`, string(raw))
 }
 
 func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
@@ -234,12 +312,11 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 	otherAuthID := ids.New[ids.AuthKind]()
 	otherRC := appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "other123",
-			RoutingMode: consumerdomain.RoutingModeInline,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{otherAuthID},
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "other123",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{otherAuthID},
 		},
 		Auths: []*authdomain.Auth{{
 			ID:        otherAuthID,
@@ -250,7 +327,7 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 		}},
 	}
 	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherRC})
-	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -260,10 +337,143 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+var authTestNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
+func otherConsumerWithKey(gw *gatewaydomain.Gateway, rawKey string, expiresAt *time.Time) appconsumer.RoutableConsumer {
+	authID := ids.New[ids.AuthKind]()
+	return appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gw.ID, Slug: "other123", Active: true, AuthIDs: []ids.AuthID{authID}},
+		Auths: []*authdomain.Auth{{
+			ID: authID, GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true,
+			KeyHash: authdomain.HashAPIKey(rawKey), ExpiresAt: expiresAt,
+		}},
+	}
+}
+
+func authTestClock() time.Time { return authTestNow }
+
+func TestAuthMiddleware_APIKeyExpiryDecidesBetween401And403(t *testing.T) {
+	t.Parallel()
+	past := authTestNow.Add(-time.Second)
+	future := authTestNow.Add(time.Hour)
+	cases := map[string]struct {
+		ownExpiry   *time.Time
+		otherExpiry *time.Time
+		presentOwn  bool
+		want        int
+	}{
+		"expired key on its own consumer":        {ownExpiry: &past, presentOwn: true, want: fiber.StatusUnauthorized},
+		"key expiring now on its own consumer":   {ownExpiry: &authTestNow, presentOwn: true, want: fiber.StatusUnauthorized},
+		"future expiry on its own consumer":      {ownExpiry: &future, presentOwn: true, want: fiber.StatusOK},
+		"expired key of another consumer":        {otherExpiry: &past, want: fiber.StatusUnauthorized},
+		"key of another consumer expiring now":   {otherExpiry: &authTestNow, want: fiber.StatusUnauthorized},
+		"valid key of another consumer":          {otherExpiry: &future, want: fiber.StatusForbidden},
+		"never-expiring key of another consumer": {want: fiber.StatusForbidden},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gw, rc, ownKey := inlineConsumerWithAPIKey(t)
+			rc.Auths[0].ExpiresAt = tc.ownExpiry
+			otherKey := "ag_other"
+			data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherConsumerWithKey(gw, otherKey, tc.otherExpiry)})
+			app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+			key := otherKey
+			if tc.presentOwn {
+				key = ownKey
+			}
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(resolver.HeaderAPIKey, key)
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, resp.StatusCode)
+		})
+	}
+}
+
+func personalConsumerWithKey(gw *gatewaydomain.Gateway, rawKey string) appconsumer.RoutableConsumer {
+	ownedID := ids.New[ids.AuthKind]()
+	return appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw.ID, Slug: "pslug001", Active: true,
+			Type: consumerdomain.TypeLLM, Audience: consumerdomain.AudiencePersonal, AuthIDs: []ids.AuthID{ownedID},
+			AuthLinks: map[ids.AuthID]consumerdomain.AuthLink{ownedID: {Level: consumerdomain.GrantLevelUser, Priority: 1, GrantedAt: authTestNow}},
+		},
+		Auths: []*authdomain.Auth{{
+			ID: ownedID, GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true,
+			KeyHash: authdomain.HashAPIKey(rawKey), OwnerID: "alice",
+		}},
+	}
+}
+
+func callAuthApp(t *testing.T, app *fiber.App, path, key string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(fiber.MethodPost, path, nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderAPIKey, key)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, body
+}
+
+func TestAuthMiddleware_PersonalKeysStayOffSlugRoutes(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	ownedKey, otherKey := "ag_alice", "ag_other"
+	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, personalConsumerWithKey(gw, ownedKey), otherConsumerWithKey(gw, otherKey, nil)})
+	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	status, ownedBody := callAuthApp(t, app, "/cons1234/v1/chat/completions", ownedKey)
+	require.Equal(t, fiber.StatusUnauthorized, status, "a personal key on an application slug")
+	_, unknownKeyBody := callAuthApp(t, app, "/cons1234/v1/chat/completions", "ag_random")
+	require.Equal(t, unknownKeyBody, ownedBody)
+	status, _ = callAuthApp(t, app, "/cons1234/v1/chat/completions", otherKey)
+	require.Equal(t, fiber.StatusForbidden, status, "an application key of another application consumer")
+	status, personalBody := callAuthApp(t, app, "/pslug001/v1/chat/completions", ownedKey)
+	require.Equal(t, fiber.StatusNotFound, status, "a personal consumer by slug")
+	_, unknownSlugBody := callAuthApp(t, app, "/zzzzzzzz/v1/chat/completions", ownedKey)
+	require.Equal(t, unknownSlugBody, personalBody)
+
+	oauthGW, oauthRC := inlineConsumerWithOAuth(t)
+	oauthData := appconsumer.NewData(oauthGW.ID, []appconsumer.RoutableConsumer{oauthRC, personalConsumerWithKey(oauthGW, ownedKey)})
+	oauthApp := newAuthTestApp(t, oauthGW, oauthData, fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+	ownedStatus, ownedOnOAuth := callAuthApp(t, oauthApp, "/cons1234/v1/chat/completions", ownedKey)
+	unknownStatus, unknownOnOAuth := callAuthApp(t, oauthApp, "/cons1234/v1/chat/completions", "ag_random")
+	require.Equal(t, unknownStatus, ownedStatus, "a personal key on an OAuth-only application consumer")
+	require.Equal(t, unknownOnOAuth, ownedOnOAuth)
+}
+
+func TestAuthMiddleware_NilClockFallsBackToTheWallClock(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	otherKey := "ag_other"
+	expired := time.Now().UTC().Add(-time.Hour)
+	authMiddleware := middleware.NewAuthMiddleware(
+		resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(nil), nil, nil),
+		fakeDataFinder{data: appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherConsumerWithKey(gw, otherKey, &expired)})},
+		fakeGatewayResolver{gateway: gw},
+		nil,
+		slog.Default(),
+		nil,
+	)
+	app := fiber.New()
+	app.Post("/*", authMiddleware.Middleware(), func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Header.Set(resolver.HeaderAPIKey, otherKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
 func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -276,21 +486,7 @@ func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 func TestAuthMiddleware_PlaygroundTokenInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(resolver.HeaderPlaygroundToken, mintPlaygroundToken(t, rc.Consumer.Slug))
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
-}
-
-func TestAuthMiddleware_PlaygroundTokenRoleBasedSuccess(t *testing.T) {
-	t.Parallel()
-	gw, rc, _ := roleBasedConsumerWithIDP(t)
-	failingRoles := fakeRoleResolver{err: fmt.Errorf("idp roles must not be resolved for playground tokens")}
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, failingRoles)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -303,7 +499,7 @@ func TestAuthMiddleware_PlaygroundTokenRoleBasedSuccess(t *testing.T) {
 func TestAuthMiddleware_PlaygroundTokenWrongConsumerForbidden(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -318,10 +514,12 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 	gw, rc := inlineConsumerWithOAuth(t)
 	oauthVerifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{
 		Subject: "user-1",
-		Claims:  map[string]any{"sub": "user-1"},
+		Method:  identity.MethodJWT,
+		Issuer:  "https://issuer.example.com",
+		Claims:  map[string]any{"sub": "user-1", "email": "user@example.com"},
 		Scopes:  []string{"chat"},
 	}}
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeOIDCVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeOIDCVerifier{})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -331,11 +529,15 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
-func TestAuthMiddleware_IDPRoleBasedSuccess(t *testing.T) {
+// A consumer whose provider is still typed with the deprecated alias
+// authenticates through the one bearer path: the finder matches it on the
+// token's hints and the verifier is the same one every provider now uses.
+func TestAuthMiddleware_AliasedIdPInlineSuccess(t *testing.T) {
 	t.Parallel()
-	gw, rc, roleID := roleBasedConsumerWithIDP(t)
-	oidcVerifier := matchingOIDCVerifier()
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, oidcVerifier, fakeRoleResolver{roleIDs: []ids.RoleID{roleID}})
+	gw, rc := inlineConsumerWithOIDC(t)
+	hints := matchingOIDCVerifier()
+	verifier := fakeOAuth2Verifier{claims: hints.claims}
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), verifier, hints)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -343,33 +545,6 @@ func TestAuthMiddleware_IDPRoleBasedSuccess(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
-}
-
-func TestAuthMiddleware_OAuthCannotAuthorizeRoleBasedConsumer(t *testing.T) {
-	t.Parallel()
-	gw, rc := roleBasedConsumerWithOAuth(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-}
-
-func TestAuthMiddleware_IDPRoleBasedNoRoleForbidden(t *testing.T) {
-	t.Parallel()
-	gw, rc, _ := roleBasedConsumerWithIDP(t)
-	oidcVerifier := matchingOIDCVerifier()
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, oidcVerifier, fakeRoleResolver{roleIDs: nil})
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
 func TestAuthMiddleware_ErrorMatrix(t *testing.T) {
@@ -429,7 +604,6 @@ func TestAuthMiddleware_ErrorMatrix(t *testing.T) {
 				tt.data,
 				fakeOAuth2Verifier{},
 				fakeOIDCVerifier{},
-				nil,
 			)
 			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 			req.Host = "acme.gw.neuraltrust.ai"
@@ -452,7 +626,6 @@ func TestAuthMiddleware_RejectsHeaderOnlyGatewayIdentity(t *testing.T) {
 		nil,
 		fakeOAuth2Verifier{},
 		fakeOIDCVerifier{},
-		nil,
 	)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
@@ -470,14 +643,9 @@ func newAuthTestApp(
 	data *appconsumer.Data,
 	oauthVerifier fakeOAuth2Verifier,
 	oidcVerifier fakeOIDCVerifier,
-	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
-	return newAuthTestAppWithResolver(t, fakeGatewayResolver{gateway: gw}, data, oauthVerifier, oidcVerifier, roleResolver)
-}
-
-type middlewareRoleResolver interface {
-	ResolveOIDCRoles(context.Context, []*roledomain.Role, map[string]any) ([]ids.RoleID, error)
+	return newAuthTestAppWithResolver(t, fakeGatewayResolver{gateway: gw}, data, oauthVerifier, oidcVerifier)
 }
 
 func newAuthTestAppWithResolver(
@@ -486,30 +654,48 @@ func newAuthTestAppWithResolver(
 	data *appconsumer.Data,
 	oauthVerifier fakeOAuth2Verifier,
 	oidcVerifier fakeOIDCVerifier,
-	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
-	if roleResolver == nil {
-		roleResolver = fakeRoleResolver{}
-	}
 	playground := resolver.NewPlaygroundIdentityResolver(
 		jwt.NewPlaygroundVerifier(&config.ServerConfig{SecretKey: playgroundMiddlewareSecret}, nil),
 	)
-	apiKey := resolver.NewAPIKeyIdentityResolver()
-	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
-	idp := resolver.NewOIDCIdentityResolver(appauth.NewOIDCFinder(oidcVerifier), oidcVerifier)
+	apiKey := resolver.NewAPIKeyIdentityResolver(authTestClock)
+	oauth2 := resolver.NewOAuth2IdentityResolver(
+		appauth.NewIdentityProviderFinder(oidcVerifier),
+		oauthVerifier,
+		slog.Default(),
+	)
 	authMiddleware := middleware.NewAuthMiddleware(
-		resolver.NewIdentityResolver(playground, apiKey, oauth2, idp),
+		resolver.NewIdentityResolver(playground, apiKey, oauth2, nil),
 		fakeDataFinder{data: data},
 		gatewayResolver,
-		roleResolver,
+		nil,
 		slog.Default(),
+		authTestClock,
 	)
 	app := fiber.New()
 	app.Post("/*", authMiddleware.Middleware(), func(c *fiber.Ctx) error {
 		authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
 		require.True(t, ok)
 		require.Equal(t, data.GatewayID, authCtx.GatewayID)
+		switch authCtx.Method {
+		case appauth.MethodOAuth2:
+			p := identity.PrincipalFromContext(c.UserContext())
+			require.NotNil(t, p)
+			require.Equal(t, authCtx.Subject, p.Subject)
+			require.Same(t, oauthVerifier.claims, p)
+			require.Equal(t, oauthVerifier.claims.Method, p.Method)
+			require.Equal(t, oauthVerifier.claims.Email(), p.Email())
+		case appauth.MethodAPIKey:
+			// An API key's name is the identity it carries; the telemetry
+			// contract publishes it as principal.subject/api_key.
+			p := identity.PrincipalFromContext(c.UserContext())
+			require.NotNil(t, p)
+			require.Equal(t, "batch-runner", p.Subject)
+			require.Equal(t, identity.MethodAPIKey, p.Method)
+		default:
+			require.Nil(t, identity.PrincipalFromContext(c.UserContext()))
+		}
 		_, ok = appconsumer.ConsumerFromContext(c.UserContext())
 		require.True(t, ok)
 		return c.SendStatus(fiber.StatusOK)
@@ -524,41 +710,16 @@ func inlineConsumerWithAPIKey(t *testing.T) (*gatewaydomain.Gateway, appconsumer
 	rawKey := "ag_secret"
 	rc := appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeInline,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{authID},
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "cons1234",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{authID},
 		},
 		Auths: []*authdomain.Auth{{
 			ID:        authID,
 			GatewayID: gw.ID,
-			Type:      authdomain.TypeAPIKey,
-			Enabled:   true,
-			KeyHash:   authdomain.HashAPIKey(rawKey),
-		}},
-	}
-	return gw, rc, rawKey
-}
-
-func roleBasedConsumerWithAPIKey(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer, string) {
-	t.Helper()
-	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
-	authID := ids.New[ids.AuthKind]()
-	rawKey := "ag_secret"
-	rc := appconsumer.RoutableConsumer{
-		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeRoleBased,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{authID},
-		},
-		Auths: []*authdomain.Auth{{
-			ID:        authID,
-			GatewayID: gw.ID,
+			Name:      "batch-runner",
 			Type:      authdomain.TypeAPIKey,
 			Enabled:   true,
 			KeyHash:   authdomain.HashAPIKey(rawKey),
@@ -573,12 +734,11 @@ func inlineConsumerWithOAuth(t *testing.T) (*gatewaydomain.Gateway, appconsumer.
 	authID := ids.New[ids.AuthKind]()
 	rc := appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeInline,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{authID},
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "cons1234",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{authID},
 		},
 		Auths: []*authdomain.Auth{{
 			ID:        authID,
@@ -595,55 +755,22 @@ func inlineConsumerWithOAuth(t *testing.T) (*gatewaydomain.Gateway, appconsumer.
 	return gw, rc
 }
 
-func roleBasedConsumerWithIDP(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer, ids.RoleID) {
+func inlineConsumerWithOIDC(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer) {
 	t.Helper()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	authID := ids.New[ids.AuthKind]()
-	roleID := ids.New[ids.RoleKind]()
 	rc := appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeRoleBased,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{authID},
-			RoleIDs:     []ids.RoleID{roleID},
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "cons1234",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{authID},
 		},
 		Auths: []*authdomain.Auth{{
 			ID:        authID,
 			GatewayID: gw.ID,
 			Type:      authdomain.TypeOIDC,
-			Enabled:   true,
-			Config: authdomain.Config{OIDC: &authdomain.OIDCConfig{
-				Issuer:    "https://issuer.example.com",
-				Audiences: []string{"gateway"},
-				JWKSURL:   "https://issuer.example.com/jwks",
-			}},
-		}},
-	}
-	return gw, rc, roleID
-}
-
-func roleBasedConsumerWithOAuth(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer) {
-	t.Helper()
-	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
-	authID := ids.New[ids.AuthKind]()
-	roleID := ids.New[ids.RoleKind]()
-	rc := appconsumer.RoutableConsumer{
-		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeRoleBased,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{authID},
-			RoleIDs:     []ids.RoleID{roleID},
-		},
-		Auths: []*authdomain.Auth{{
-			ID:        authID,
-			GatewayID: gw.ID,
-			Type:      authdomain.TypeOAuth2,
 			Enabled:   true,
 			Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
 				Issuer:    "https://issuer.example.com",
@@ -675,7 +802,336 @@ func decodeAuthErrorBody(t *testing.T, resp *http.Response) httpio.ErrorBody {
 
 func decodeErrorBytes(t *testing.T, body []byte) httpio.ErrorBody {
 	t.Helper()
-	var eb httpio.ErrorBody
-	require.NoError(t, json.NewDecoder(strings.NewReader(string(body))).Decode(&eb))
-	return eb
+	var flat httpio.ErrorBody
+	if err := json.Unmarshal(body, &flat); err == nil && flat.Error != "" {
+		return flat
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Error.Code == "" {
+		t.Fatalf("decode error body %s: %v", body, err)
+	}
+	return httpio.ErrorBody{Error: envelope.Error.Code, Message: envelope.Error.Message}
+}
+
+// TestAuthMiddleware_AuthBindingRestrictsClients: a consumer bound to specific
+// client ids admits a bearer token only when the shared IdP issued it to one of
+// them; a token for another application of the same tenant is forbidden even
+// though it verifies against the same auth.
+func TestAuthMiddleware_AuthBindingRestrictsClients(t *testing.T) {
+	t.Parallel()
+	gw, rc := inlineConsumerWithOAuth(t)
+	rc.Consumer.AuthBinding = consumerdomain.AuthBinding{AllowedClientIDs: []string{"app-a"}}
+	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc})
+
+	cases := map[string]struct {
+		claims map[string]any
+		want   int
+	}{
+		"token issued to an allowed client":  {map[string]any{"sub": "user-1", "azp": "app-a"}, fiber.StatusOK},
+		"token issued to another client":     {map[string]any{"sub": "user-1", "azp": "app-b"}, fiber.StatusForbidden},
+		"token without a client claim":       {map[string]any{"sub": "user-1"}, fiber.StatusForbidden},
+		"client_id claim names the consumer": {map[string]any{"sub": "user-1", "client_id": "app-a"}, fiber.StatusOK},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			verifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{Subject: "user-1", Claims: tc.claims}}
+			app := newAuthTestApp(t, gw, data, verifier, fakeOIDCVerifier{})
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, resp.StatusCode)
+		})
+	}
+}
+
+// Before the two identity-provider types were unified, a consumer carrying
+// both shapes had its aliased provider silently ignored: bearer resolution
+// branched on the auth type, took the oauth2 branch whenever an oauth2 auth
+// was attached, and that branch skipped every auth whose type was not exactly
+// oauth2. A token issued by the aliased provider got a 401 from a consumer it
+// was legitimately attached to. Selection now comes from the token's own
+// issuer and audience, so both providers stay reachable.
+func TestAuthMiddleware_AliasedAndNativeIdPsBothResolve(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	aliasedID := ids.New[ids.AuthKind]()
+	nativeID := ids.New[ids.AuthKind]()
+	rc := appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "cons1234",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{aliasedID, nativeID},
+		},
+		Auths: []*authdomain.Auth{
+			{
+				ID: aliasedID, GatewayID: gw.ID, Type: authdomain.TypeOIDC, Enabled: true,
+				Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+					Issuer:    "https://aliased.example.com",
+					Audiences: []string{"gateway"},
+					JWKSURL:   "https://aliased.example.com/jwks",
+				}},
+			},
+			{
+				ID: nativeID, GatewayID: gw.ID, Type: authdomain.TypeOAuth2, Enabled: true,
+				Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+					Issuer:    "https://native.example.com",
+					Audiences: []string{"gateway"},
+					JWKSURL:   "https://native.example.com/jwks",
+				}},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name   string
+		issuer string
+	}{
+		{"token from the aliased provider", "https://aliased.example.com"},
+		{"token from the native provider", "https://native.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hints := fakeOIDCVerifier{hints: appauth.TokenHints{Issuer: tc.issuer, Audiences: []string{"gateway"}}}
+			verifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{
+				Subject: "user-1",
+				Claims:  map[string]any{"sub": "user-1"},
+			}}
+			app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), verifier, hints)
+
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		})
+	}
+}
+
+const storeChatPath = "/store/v1/chat/completions"
+
+type countingKeyFinder struct {
+	keys  map[string]*authdomain.Auth
+	err   error
+	calls atomic.Int32
+}
+
+func (f *countingKeyFinder) FindByAPIKey(_ context.Context, rawKey string) (*authdomain.Auth, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if a, ok := f.keys[rawKey]; ok {
+		return a, nil
+	}
+	return nil, authdomain.ErrNotFound
+}
+
+type storeFixture struct {
+	gw        *gatewaydomain.Gateway
+	consumers []appconsumer.RoutableConsumer
+	data      *appconsumer.Data
+	dataErr   error
+	finder    *countingKeyFinder
+	storeKeys appconsumer.StoreKeyResolver
+	appKey    string
+	ownedID   ids.AuthID
+}
+
+func newStoreFixture(t *testing.T) *storeFixture {
+	t.Helper()
+	gw, rc, appKey := inlineConsumerWithAPIKey(t)
+	personal := personalConsumerWithKey(gw, "ag_alice")
+	finder := &countingKeyFinder{keys: map[string]*authdomain.Auth{"ag_alice": personal.Auths[0], appKey: rc.Auths[0]}}
+	return &storeFixture{
+		gw: gw, consumers: []appconsumer.RoutableConsumer{rc, personal}, appKey: appKey, ownedID: personal.Auths[0].ID,
+		finder: finder, storeKeys: appconsumer.NewStoreKeyResolver(finder, authTestClock),
+	}
+}
+
+func (f *storeFixture) app(next fiber.Handler) *fiber.App {
+	f.data = appconsumer.NewData(f.gw.ID, f.consumers)
+	if next == nil {
+		next = func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) }
+	}
+	authMiddleware := middleware.NewAuthMiddleware(
+		resolver.NewIdentityResolver(nil, resolver.NewAPIKeyIdentityResolver(authTestClock), nil, nil),
+		fakeDataFinder{data: f.data, err: f.dataErr},
+		fakeGatewayResolver{gateway: f.gw},
+		f.storeKeys,
+		slog.Default(),
+		authTestClock,
+	)
+	app := fiber.New()
+	app.Post("/*", authMiddleware.Middleware(), next)
+	return app
+}
+
+func callStore(t *testing.T, app *fiber.App, path, header, value string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(fiber.MethodPost, path, nil)
+	if header != "" {
+		req.Header.Set(header, value)
+	}
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, body
+}
+
+func TestAuthMiddleware_StoreAnswersNotFoundBeforeAnyKeyLookup(t *testing.T) {
+	t.Parallel()
+	cases := map[string]func(f *storeFixture){
+		"hybrid gateway": func(f *storeFixture) { f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid },
+		"hybrid gateway with a data load error": func(f *storeFixture) {
+			f.gw.Entitlements.DataPlane, f.dataErr = gatewaydomain.DataPlaneHybrid, errors.New("down")
+		},
+		"store not wired": func(f *storeFixture) { f.storeKeys = nil },
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, unknownSlug := callStore(t, newStoreFixture(t).app(nil), "/zzzzzzzz/v1/chat/completions", "", "")
+			f := newStoreFixture(t)
+			arrange(f)
+			app := f.app(nil)
+			for _, key := range []string{"", f.appKey, "ag_alice"} {
+				status, body := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, key)
+				require.Equal(t, fiber.StatusNotFound, status)
+				require.Equal(t, unknownSlug, body)
+				status, _ = callStore(t, app, "/store/v1/models", resolver.HeaderAPIKey, key)
+				require.Equal(t, fiber.StatusNotFound, status)
+			}
+			require.Zero(t, f.finder.calls.Load())
+		})
+	}
+}
+
+// A gateway with no active personal consumer still answers like an unknown
+// slug to every caller but one: a personal key of the gateway, whose owner lost
+// every model, reaches the store handler to be told so.
+func TestAuthMiddleware_StoreWithoutPersonalConsumersOnlyLetsPersonalKeysThrough(t *testing.T) {
+	t.Parallel()
+	cases := map[string]func(f *storeFixture){
+		"no personal consumers":            func(f *storeFixture) { f.consumers = f.consumers[:1] },
+		"only inactive personal consumers": func(f *storeFixture) { f.consumers[1].Consumer.Active = false },
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, unknownSlug := callStore(t, newStoreFixture(t).app(nil), "/zzzzzzzz/v1/chat/completions", "", "")
+			f := newStoreFixture(t)
+			arrange(f)
+			app := f.app(nil)
+			for _, key := range []string{"", f.appKey, "ag_unknown"} {
+				status, body := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, key)
+				require.Equal(t, fiber.StatusNotFound, status, key)
+				require.Equal(t, unknownSlug, body, key)
+			}
+			status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+			require.Equal(t, fiber.StatusOK, status)
+			status, _ = callStore(t, app, "/store/v1/models", resolver.HeaderAPIKey, "ag_alice")
+			require.Equal(t, fiber.StatusOK, status)
+		})
+	}
+}
+
+func TestAuthMiddleware_StoreRejectsKeysItDoesNotAcceptAndLeavesOtherSlugsUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.finder.keys["ag_expired"] = &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gw.ID, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: authdomain.HashAPIKey("ag_expired"), OwnerID: "alice", ExpiresAt: &authTestNow}
+	f.finder.keys["ag_disabled"] = &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: f.gw.ID, Type: authdomain.TypeAPIKey, KeyHash: authdomain.HashAPIKey("ag_disabled"), OwnerID: "alice"}
+	f.finder.keys["ag_other_gw"] = &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: ids.New[ids.GatewayKind](), Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: authdomain.HashAPIKey("ag_other_gw"), OwnerID: "alice"}
+	app := f.app(nil)
+	status, noKey := callStore(t, app, storeChatPath, "", "")
+	require.Equal(t, fiber.StatusUnauthorized, status)
+	require.Equal(t, "unauthenticated", decodeErrorBytes(t, noKey).Error)
+	for _, key := range []string{"ag_unknown", "ag_expired", "ag_disabled", "ag_other_gw", f.appKey} {
+		status, body := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, key)
+		require.Equal(t, fiber.StatusUnauthorized, status, key)
+		require.Equal(t, noKey, body, key)
+	}
+	lookups := f.finder.calls.Load()
+	status, _ = callStore(t, app, "/cons1234/v1/chat/completions", resolver.HeaderAPIKey, f.appKey)
+	require.Equal(t, fiber.StatusOK, status)
+	status, _ = callStore(t, app, "/cons1234/v1/chat/completions", resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusUnauthorized, status)
+	require.Equal(t, lookups, f.finder.calls.Load())
+}
+
+func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	app := f.app(func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		principal := &identity.Principal{Subject: "alice", Method: identity.MethodAPIKey}
+		authCtx, _ := appauth.AuthContextFromContext(ctx)
+		require.Equal(t, &appauth.AuthContext{Principal: principal, Method: appauth.MethodAPIKey, GatewayID: f.gw.ID, GatewaySlug: f.gw.Slug, AuthID: f.ownedID, OwnerID: "alice", Subject: "alice"}, authCtx)
+		require.Nil(t, authCtx.KeyBudget, "a key without a budget carries none")
+		require.Equal(t, principal, identity.PrincipalFromContext(ctx))
+		require.True(t, ctx.Value(appconsumer.ConsumerKey) == nil && c.Locals(string(appconsumer.ConsumerKey)) == nil)
+		data, _ := appconsumer.DataFromContext(ctx)
+		require.Same(t, f.data, data)
+		route, _ := c.Locals(resolver.ProxyRouteLocalsKey).(resolver.ProxyRoute)
+		require.Equal(t, consumerdomain.StoreSlug, route.ConsumerSlug)
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	for _, h := range [][2]string{{resolver.HeaderAPIKey, "ag_alice"}, {resolver.HeaderAPIKeyCompat, "ag_alice"}, {resolver.HeaderAPIKeyGoogle, "ag_alice"}, {fiber.HeaderAuthorization, "Bearer ag_alice"}} {
+		status, _ := callStore(t, app, storeChatPath, h[0], h[1])
+		require.Equal(t, fiber.StatusNoContent, status, h[0])
+	}
+}
+
+// A model call made with a personal key is shown under its owner's email, as
+// a Store session is.
+func TestAuthMiddleware_StoreCarriesTheOwnersEmail(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.finder.keys["ag_alice"].OwnerEmail = "alice@acme.test"
+	app := f.app(func(c *fiber.Ctx) error {
+		p := identity.PrincipalFromContext(c.UserContext())
+		require.Equal(t, "alice", p.Subject)
+		require.Equal(t, "alice@acme.test", p.Email())
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusNoContent, status)
+}
+
+func TestAuthMiddleware_StoreCarriesACopyOfTheKeyBudget(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	budget := &authdomain.KeyBudget{Max: 50, Unit: authdomain.BudgetUnitDollars, TimeWindow: authdomain.BudgetWindowCalendarMonth}
+	f.finder.keys["ag_alice"].Budget = budget
+	app := f.app(func(c *fiber.Ctx) error {
+		authCtx, _ := appauth.AuthContextFromContext(c.UserContext())
+		require.Equal(t, budget, authCtx.KeyBudget)
+		require.NotSame(t, budget, authCtx.KeyBudget, "a request never shares the cached key's budget")
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusNoContent, status)
+}
+
+func TestAuthMiddleware_StoreAnswersInternalErrorWhenALookupFails(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.dataErr = errors.New("down")
+	status, _ := callStore(t, f.app(nil), storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusInternalServerError, status)
+	require.Zero(t, f.finder.calls.Load())
+	f.dataErr, f.finder.err = nil, errors.New("database unavailable")
+	status, _ = callStore(t, f.app(nil), storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusInternalServerError, status)
 }

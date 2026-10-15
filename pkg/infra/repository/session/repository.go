@@ -27,6 +27,7 @@ import (
 
 const (
 	sessionKeyPattern = "session:%s:%s"
+	turnKeyPattern    = "session_turn:%s:%s"
 	fallbackTTL       = time.Hour
 )
 
@@ -53,7 +54,26 @@ func (r *repository) Save(ctx context.Context, s *domain.Session) error {
 	if ttl <= 0 {
 		ttl = fallbackTTL
 	}
-	return r.rdb.Set(ctx, key(s.GatewayID, s.ID), payload, ttl).Err()
+	if s.LastTurnID == "" {
+		return r.rdb.Set(ctx, key(s.GatewayID, s.ID), payload, ttl).Err()
+	}
+	_, err = r.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, key(s.GatewayID, s.ID), payload, ttl)
+		pipe.Set(ctx, turnKey(s.GatewayID, s.LastTurnID), s.ID, ttl)
+		return nil
+	})
+	return err
+}
+
+func (r *repository) FindSessionIDByTurn(ctx context.Context, gatewayID, turnID string) (string, error) {
+	sessionID, err := r.rdb.Get(ctx, turnKey(gatewayID, turnID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", nil
+		}
+		return "", err
+	}
+	return sessionID, nil
 }
 
 func (r *repository) Get(ctx context.Context, gatewayID, sessionID string) (*domain.Session, error) {
@@ -73,4 +93,8 @@ func (r *repository) Get(ctx context.Context, gatewayID, sessionID string) (*dom
 
 func key(gatewayID, sessionID string) string {
 	return fmt.Sprintf(sessionKeyPattern, gatewayID, sessionID)
+}
+
+func turnKey(gatewayID, turnID string) string {
+	return fmt.Sprintf(turnKeyPattern, gatewayID, turnID)
 }

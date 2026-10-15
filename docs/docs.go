@@ -102,7 +102,7 @@ const docTemplate = `{
         },
         "/__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models": {
             "get": {
-                "description": "Returns the model catalog narrowed to what this registry's credentials can actually invoke, resolved from this data plane's own network: AWS Bedrock registries are checked against the AWS control plane, every other provider against its authenticated models listing. It answers the same shape as the admin catalog endpoint, and exists because on a hybrid deployment only this plane can reach a provider endpoint that lives inside the customer's network. Authorized by a control-plane-minted diagnostics token bound to the gateway. A registry that has not reached this plane's config snapshot yet answers 404, so the caller can fall back to the unnarrowed catalog.",
+                "description": "Returns the model catalog narrowed to what this registry's credentials can actually invoke, resolved from this data plane's own network: AWS Bedrock registries are checked against the AWS control plane, every other provider against its authenticated models listing; an Azure registry lists its resource's deployments and answers 422 when Azure rejects its endpoint or credentials, 502 when Azure does not answer. It answers the same shape as the admin catalog endpoint, and exists because on a hybrid deployment only this plane can reach a provider endpoint that lives inside the customer's network. Authorized by a control-plane-minted diagnostics token bound to the gateway. A registry that has not reached this plane's config snapshot yet answers 404, so the caller can fall back to the unnarrowed catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -156,6 +156,18 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -243,7 +255,7 @@ const docTemplate = `{
         },
         "/v1/config-sync/connections": {
             "get": {
-                "description": "Returns the observed data-plane Sync connections, optionally filtered by opaque scope. Answers \"is this data plane online?\".",
+                "description": "Returns the observed data-plane Sync connections of one gateway. Answers \"is this data plane online?\". A tenant caller must pass the id of one of its gateways as scope; only a platform caller may omit it to list every data plane. Pass page and size to paginate.",
                 "produces": [
                     "application/json"
                 ],
@@ -254,8 +266,20 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by opaque scope (exact match); omit for all",
+                        "description": "Gateway id whose data planes to list (exact match). Required for tenant callers.",
                         "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (1-based); omit page and size for every match",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (max 200)",
+                        "name": "size",
                         "in": "query"
                     }
                 ],
@@ -266,8 +290,26 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -406,7 +448,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/auths": {
             "get": {
-                "description": "Returns a paginated list of auths in a gateway.",
+                "description": "Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.",
                 "produces": [
                     "application/json"
                 ],
@@ -445,6 +487,18 @@ const docTemplate = `{
                         "type": "boolean",
                         "description": "Filter by enabled flag",
                         "name": "enabled",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "List only the personal key of this owner. Without it, personal keys are excluded",
+                        "name": "owner_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true lists only personal keys, of every owner; false lists only application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)",
+                        "name": "owned",
                         "in": "query"
                     },
                     {
@@ -635,7 +689,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing auth.",
+                "description": "Updates an existing auth. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -700,6 +754,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -774,9 +834,242 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/auths/{id}/budget": {
+            "put": {
+                "description": "Sets or clears the spending limit of a personal (owned) key. The body is {\"max\": \u003cnumber\u003e, \"unit\": \"tokens\" or \"dollars\", \"time_window\": \"calendar_month\" or \"calendar_day\"}, or null to clear the budget. max must be a finite number above zero, and a whole number of tokens when unit is tokens. Every token_rate_limiter policy with key_budgets that counts in that unit holds the key to this budget in place of its aggregate; a policy counting in the other unit keeps its own limit. The secret, the expiry and the consumers of the key do not change, and a rotation keeps the budget. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Set the budget of a personal key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The budget, or null to clear it",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "An application key (application_key), or an invalid budget (validation_failed)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/auths/{id}/groups": {
+            "put": {
+                "description": "Records the directory groups of a personal (owned) key's owner. The body is {\"groups\": [\"\u003cgroup\u003e\", ...], \"email\": \"\u003cowner email\u003e\"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Set the owner groups of a personal key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The owner's groups",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "An application key (application_key), or invalid groups (validation_failed)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/auths/{id}/rotate": {
+            "post": {
+                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards. A personal (owned) key answers 422 owned_key; only its owner can change it, the admin can only delete it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Rotate an api key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry for the new secret",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.RotateAuthRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers": {
             "get": {
-                "description": "Returns a paginated list of consumers in a gateway.",
+                "description": "Returns a paginated list of consumers in a gateway. Stored consumers only, unless include_synthetic asks for the ones the gateway serves without storing.",
                 "produces": [
                     "application/json"
                 ],
@@ -822,6 +1115,12 @@ const docTemplate = `{
                         "format": "uuid",
                         "description": "Filter consumers linked to this auth id",
                         "name": "auth_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Also list the consumers the gateway serves without storing (the MCP Store). They carry synthetic=true, appear on the first page only, and cannot be edited, deleted or given a key",
+                        "name": "include_synthetic",
                         "in": "query"
                     },
                     {
@@ -942,6 +1241,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -1012,7 +1317,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` field replaces the whole registry association set, so switching a role_based consumer to inline routing and attaching its registries happens in a single atomic request.",
+                "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` and ` + "`" + `auths` + "`" + ` fields each replace the whole association set of that kind in the same atomic request, so an identity change and the auths it needs travel together.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1077,6 +1382,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1153,7 +1464,10 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}": {
             "post": {
-                "description": "Associates an auth credential with a consumer (idempotent).",
+                "description": "Associates an auth credential with a consumer (idempotent). An application consumer takes only unowned auths and no link attributes (an empty body or {}). A personal consumer takes only owned keys, and the body is required: level and granted_at must be present, and priority defaults to 1. Re-attaching a key to a personal consumer replaces that one link's attributes.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1185,6 +1499,14 @@ const docTemplate = `{
                         "name": "auth_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Link attributes, for an owned key on a personal consumer",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -1205,6 +1527,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The auth does not match the consumer audience, or the link attributes are missing, invalid or not allowed",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1281,9 +1609,88 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/consumers/{id}/label-sets": {
+            "put": {
+                "description": "Replaces all the traffic label sets a consumer's chat requests are classified against; each set yields at most one of its labels per request. Label sets are projected from the app's catalog: ids are opaque and must be unique, set names are unique ignoring case. At most 10 label sets; set name 1-64 characters, instructions 0-2000; 2 to 20 labels per set, label name 1-64 characters and unique in its set ignoring case, description 0-500. Send ` + "`" + `{\"label_sets\": []}` + "`" + ` to clear; the field is required. Only LLM consumers can hold label sets. Returns the full consumer.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Replace a consumer's traffic label sets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The consumer's label sets",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelSetsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
             "post": {
-                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to.",
+                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. An MCP-wide policy already runs on every MCP consumer and holds no links, so attaching one answers 422: demote it first. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -1318,6 +1725,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Attached with non-blocking warnings",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse"
+                        }
+                    },
                     "204": {
                         "description": "No Content"
                     },
@@ -1335,6 +1748,18 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at one of the levels the attach would take",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The policy is MCP-wide, or its mcp_scope or plugin does not fit the consumer",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1543,139 +1968,15 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id}": {
-            "post": {
-                "description": "Associates a role with a role_based consumer (idempotent). Returns 409 for inline consumers.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "consumers"
-                ],
-                "summary": "Attach a role to a consumer",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Gateway id",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Consumer id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Role id",
-                        "name": "role_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            },
-            "delete": {
-                "description": "Removes the association between a role and a consumer (idempotent).",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "consumers"
-                ],
-                "summary": "Detach a role from a consumer",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Gateway id",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
                     },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Consumer id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Role id",
-                        "name": "role_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1727,7 +2028,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "boolean",
-                        "description": "Filter by global flag",
+                        "description": "Filter by global flag; global=false also lists MCP-wide policies",
                         "name": "global",
                         "in": "query"
                     },
@@ -1747,6 +2048,13 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Plugin slug (FE type filter); comma-separated multi",
                         "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only policies whose mcp_scope names this registry (in registry_ids or tools)",
+                        "name": "registry_id",
                         "in": "query"
                     },
                     {
@@ -1807,7 +2115,7 @@ const docTemplate = `{
                 ]
             },
             "post": {
-                "description": "Creates a new policy in a gateway.",
+                "description": "Creates a new policy in a gateway. An optional mcp_scope narrows it to MCP registries, tools and principals; the response echoes the stored scope and may carry non-blocking warnings. The policy starts attached to no consumer and not global, so it runs nowhere and holds no level until it is attached or promoted.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1863,7 +2171,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "A policy of this name already exists in the gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1937,7 +2245,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing policy.",
+                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. An update racing a promotion or demotion of the same policy is refused with 409: reload it and retry. Changing the slug of an MCP-wide policy to a plugin without MCP support is refused with 422. The response may carry non-blocking warnings.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2001,7 +2309,13 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "A policy of this name already exists, the gateway already runs this plugin at one of the levels the update would take, or the policy's placement changed while it was being updated",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The request fails validation, such as an MCP-wide policy moved to a plugin without MCP support",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2078,7 +2392,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
             "post": {
-                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.",
+                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is neither global nor MCP-wide.",
                 "produces": [
                     "application/json"
                 ],
@@ -2145,7 +2459,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
-                "description": "Promotes a policy to gateway-wide scope (applies to every consumer).",
+                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it; a policy that changed while it was being promoted also answers 409: reload it and retry, unless it is already global by then, which answers 200 with the policy as stored. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -2195,6 +2509,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at the all-traffic level, or the policy changed while it was being promoted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -2204,7 +2524,7 @@ const docTemplate = `{
                 ]
             },
             "delete": {
-                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers).",
+                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers). Clears only global: a policy that is not global is returned unchanged with 200, an MCP-wide one included.",
                 "produces": [
                     "application/json"
                 ],
@@ -2212,6 +2532,138 @@ const docTemplate = `{
                     "policies"
                 ],
                 "summary": "Clear a policy's global scope",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}/mcp-wide": {
+            "post": {
+                "description": "Promotes a policy to run on every MCP consumer of the gateway and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries, tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A consumers. Promoting clears global and removes the policy's consumer links in the same write; while the flag is set a consumer cannot be attached (422). The policy takes the all-consumers levels of its scope, the ones a global policy of that scope takes, so it answers 409 when another policy of the same plugin already holds one of them, global ones included. A policy that changed while it was being promoted also answers 409: reload it and retry. A retry that finds the policy already MCP-wide answers 200 with the policy as stored. A plugin without MCP support answers 422. Plugin state such as rate-limit counters is shared gateway-wide, as for a global policy. The response may carry non-blocking warnings.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Mark a policy as MCP-wide",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at one of the levels the policy would take on every MCP consumer, or the policy changed while it was being promoted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The plugin does not support MCP",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Demotes an MCP-wide policy to a draft: it holds no consumer links, so it runs nowhere until a consumer is attached or it is promoted again. Clears only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200, a global one included.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Clear a policy's MCP-wide placement",
                 "parameters": [
                     {
                         "type": "string",
@@ -2397,6 +2849,71 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/from-catalog": {
+            "post": {
+                "description": "Creates the shared registry for a self-service catalog server (idempotent: an existing registry for the code is returned). Servers that need admin credentials answer 409; connect them from the registry panel instead.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Materialise a catalog MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Catalog code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_store.materializeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2742,6 +3259,189 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "The registry carries the last primary default model of a personal consumer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/shared-account": {
+            "get": {
+                "description": "Reports whether the account this MCP instance holds for every caller is connected.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Read an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Forgets the stored account. Nothing is revoked upstream, but calls through this instance stop until it is connected again.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Drop an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/shared-account/connect-link": {
+            "post": {
+                "description": "Mints the connect page an administrator walks to authorize the account every caller of this instance uses. The body is optional: resume_url is where the page sends the administrator back to once the account is connected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Start connecting an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Where to come back to",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.SharedAccountConnectLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountLinkResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -2753,7 +3453,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/registries/{id}/tools": {
             "get": {
-                "description": "Introspects the MCP server behind the registry and returns its advertised tools. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 502 when the upstream MCP server is unreachable.",
+                "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
                 "produces": [
                     "application/json"
                 ],
@@ -2804,6 +3504,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "502": {
                         "description": "Bad Gateway",
                         "schema": {
@@ -2818,188 +3524,22 @@ const docTemplate = `{
                 ]
             }
         },
-        "/v1/gateways/{gateway_id}/roles": {
+        "/v1/gateways/{gateway_id}/store/access-policies": {
             "get": {
-                "description": "Returns a paginated list of roles in a gateway.",
+                "description": "Returns every per-principal Store access level (open | curated | none) set on the gateway, for users and groups.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "roles"
+                    "store"
                 ],
-                "summary": "List roles",
+                "summary": "List MCP Store access policies",
                 "parameters": [
                     {
                         "type": "string",
                         "format": "uuid",
                         "description": "Gateway id",
                         "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Substring match on name (alias: name)",
-                        "name": "search",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Alias of search",
-                        "name": "name",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort field (name, created_at, updated_at)",
-                        "name": "sort",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort order (asc, desc)",
-                        "name": "order",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Page number (1-based)",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Page size",
-                        "name": "size",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ListRoleResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            },
-            "post": {
-                "description": "Creates a new role in a gateway. model_policies cannot be set on create; bind registries first, then update the role.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "roles"
-                ],
-                "summary": "Create a role",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Gateway id",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Role to create",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.CreateRoleRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            }
-        },
-        "/v1/gateways/{gateway_id}/roles/{id}": {
-            "get": {
-                "description": "Returns a role by id within a gateway.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "roles"
-                ],
-                "summary": "Get a role",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Gateway id",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Role id",
-                        "name": "id",
                         "in": "path",
                         "required": true
                     }
@@ -3008,13 +3548,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Policies"
                         }
                     },
                     "401": {
@@ -3037,7 +3571,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates a role. model_policies may only reference registries already attached to the role.",
+                "description": "Sets a user's or group's Store access level on the gateway (open | curated | none); an empty mode clears it so the gateway default applies.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3045,9 +3579,9 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "roles"
+                    "store"
                 ],
-                "summary": "Update a role",
+                "summary": "Set an MCP Store access policy",
                 "parameters": [
                     {
                         "type": "string",
@@ -3058,20 +3592,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Role id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Role fields to update",
+                        "description": "The policy",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.UpdateRoleRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetPolicy"
                         }
                     }
                 ],
@@ -3079,70 +3605,11 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Policy"
                         }
                     },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            },
-            "delete": {
-                "description": "Deletes a role from a gateway.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "roles"
-                ],
-                "summary": "Delete a role",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Gateway id",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Role id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
                     "204": {
-                        "description": "No Content"
+                        "description": "Policy cleared"
                     },
                     "400": {
                         "description": "Bad Request",
@@ -3150,20 +3617,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
                     "404": {
                         "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3176,16 +3631,16 @@ const docTemplate = `{
                 ]
             }
         },
-        "/v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id}": {
-            "post": {
-                "description": "Associates a registry with a role (idempotent).",
+        "/v1/gateways/{gateway_id}/store/grants": {
+            "get": {
+                "description": "Returns every access grant on the gateway: per catalog code, optionally narrowed to one configured instance (registry).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "roles"
+                    "store"
                 ],
-                "summary": "Attach a registry to a role",
+                "summary": "List MCP Store access grants",
                 "parameters": [
                     {
                         "type": "string",
@@ -3194,32 +3649,13 @@ const docTemplate = `{
                         "name": "gateway_id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Role id",
-                        "name": "role_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Registry id",
-                        "name": "registry_id",
-                        "in": "path",
-                        "required": true
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Grants"
                         }
                     },
                     "401": {
@@ -3241,15 +3677,273 @@ const docTemplate = `{
                     }
                 ]
             },
-            "delete": {
-                "description": "Removes the association between a registry and a role (idempotent).",
+            "put": {
+                "description": "Replaces the grant for a catalog code (or one configured instance of it) with the given groups and users; empty members clear it.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "roles"
+                    "store"
                 ],
-                "summary": "Detach a registry from a role",
+                "summary": "Set an MCP Store access grant",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The grant",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetGrant"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Grant"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal": {
+            "get": {
+                "description": "Returns what one user holds on the gateway's Store: installed and pending instances, plus per forwarded-auth source whether they linked their own account. Credential material is never returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Preview a principal's MCP Store state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Principal subject (the user id the gateway sees)",
+                        "name": "sub",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Principal"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/configure-link": {
+            "post": {
+                "description": "Mints the hosted form where one user enters a server's per-user values (an account URL, a database, a personal token), and returns where it is redeemed. Only for the caller themselves: the form writes that principal's own configuration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Get the form a user finishes a server's setup on",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which server, for whom",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "principal_sub is not the caller",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/connect-link": {
+            "post": {
+                "description": "Mints the connect ticket the user opens to sign in to one Store server with their own account, and returns where it is redeemed. Only for the caller themselves: the ticket completes OAuth as that principal, so asking for another user's is refused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Link a user's own account to a Store server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which server, for whom",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "principal_sub is not the caller",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/connections/{registry_id}": {
+            "delete": {
+                "description": "Revokes the account the caller linked to one Store server: the instance's registry_id, as the principal preview lists it under connections. The credential is deleted from the gateway vault, and the next call to that server asks the caller to connect again; the install stays. Acts on the signed-in user only; a service credential or a platform token answers 403. An instance that reads one account shared by everyone answers 409: an administrator disconnects it in Registry. An account that is not linked answers 204, as one just revoked does.",
+                "tags": [
+                    "store"
+                ],
+                "summary": "Disconnect your account from a Store server",
                 "parameters": [
                     {
                         "type": "string",
@@ -3262,15 +3956,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "uuid",
-                        "description": "Role id",
-                        "name": "role_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Registry id",
+                        "description": "Instance (registry) id",
                         "name": "registry_id",
                         "in": "path",
                         "required": true
@@ -3292,6 +3978,83 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
+                    "403": {
+                        "description": "Not a signed-in tenant user",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such instance on the gateway, or one that needs no account",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The instance uses one shared account",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/installs": {
+            "post": {
+                "description": "Runs the Store installer as the given user (their live access level applies): installs at once when allowed, records an approval request otherwise. Same outcome the user's own client would get.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Install or request a Store server for a principal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Who and what",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Install"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Install"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -3299,7 +4062,582 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "The principal's access level is None",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-key": {
+            "get": {
+                "description": "Returns the caller's own personal key on the gateway: its id, recognition prefix and suffix, the consumers it is linked to, its expiry and timestamps. The secret is never returned. Acts on the signed-in tenant user only; a service credential or a platform token answers 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Read your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No key for the caller, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "description": "Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored. The key records the email the caller's token carries, which every call it makes is shown under.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Create your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry of the key",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The caller already holds a key on this gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Missing or out-of-range expires_at, or a hybrid gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Deletes the caller's personal key and every consumer link it holds. The caller may create a new one afterwards.",
+                "tags": [
+                    "store"
+                ],
+                "summary": "Revoke your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No key for the caller, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-key/rotate": {
+            "post": {
+                "description": "Replaces the secret of the caller's personal key and returns the new one once. The key keeps its id and every consumer link. Without expires_at the current expiry stays, unless it has passed; with it, it must fall within the next 90 days.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Rotate your personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry of the new secret",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No key for the caller, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Out-of-range expires_at, or an expired key rotated without one",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/requests": {
+            "get": {
+                "description": "Returns the gateway's pending MCP Store install requests (oldest first) for admin approval.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "List pending Store install requests",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequests"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/requests/approve": {
+            "post": {
+                "description": "Shelves the server available (if needed), grants it to the requester (or to one of their groups via grant_to_group) and marks the request installed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Approve a Store install request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which install request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Approved"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Server is not on the shelf, or needs admin setup; connect it first. stale_request: the server the request names was deleted; deny it",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/requests/deny": {
+            "post": {
+                "description": "Marks the request revoked (kept for audit).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Deny a Store install request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which install request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Denied"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/requests/history": {
+            "get": {
+                "description": "Returns the gateway's approved and denied MCP Store install requests, newest decision first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "List decided Store install requests",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.History"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/users/{user_id}/llm-key": {
+            "post": {
+                "description": "Issues the personal key of the user named in the path, on the gateway, linked to no consumer, and returns its secret once, for the admin to hand over. It is the key the user would create themselves: one per user per gateway, expires_at required and within the next 90 days, and the user rotates or revokes it afterwards as their own. owner_email is the email every call the key makes is shown under; absent, it is recorded when the console next reconciles the key. Which users an admin may issue keys for is the console's call; TrustGate checks only that the gateway is the caller's tenant's. Needs a signed-in tenant user: a service credential or a platform token answers 403.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Create a user's personal LLM key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Platform user id of the key's owner",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry of the key and the owner's email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateUserLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The user already holds a key on this gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Missing or out-of-range expires_at, an owner_email that is not an address, or a hybrid gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3440,7 +4778,7 @@ const docTemplate = `{
                 ]
             },
             "delete": {
-                "description": "Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, roles, policies, auths, registries and vault credentials).",
+                "description": "Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, policies, auths, registries and vault credentials).",
                 "produces": [
                     "application/json"
                 ],
@@ -3521,7 +4859,7 @@ const docTemplate = `{
         },
         "/v1/models-catalog": {
             "get": {
-                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys are respected). An Azure registry lists its resource's deployments: the slug is the deployment name a request must send, and the call fails instead of offering catalog names that would answer DeploymentNotFound — 404 when the registry does not exist, 422 when it is not an Azure registry or Azure rejects its endpoint or credentials, 502 when Azure does not answer. A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. For every other provider, malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -3566,6 +4904,24 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3758,6 +5114,456 @@ const docTemplate = `{
                 ]
             }
         },
+        "/whoami": {
+            "get": {
+                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A personal key (key.personal) is a person's own: it lists the Store, slug \"store\", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Describe what an API key reaches",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "421": {
+                        "description": "The key's gateway is Hybrid and this plane does not serve it (gateway_served_by_external_data_plane)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many key lookups from this source (only on a host that names no gateway)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/{consumer_slug}/model/{model_id}/converse": {
+            "post": {
+                "description": "Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never rewrite it: a mask that cannot be carried onto the original body refuses the call with a 403 AccessDeniedException, and the policy chain records blocked with the cause. Every error the gateway makes uses the AWS envelope ({\"__type\": \"...\", \"message\": \"...\"}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "proxy"
+                ],
+                "summary": "Proxy a native Amazon Bedrock Runtime call",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "consumer_slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model ID, inference profile ID or URL-encoded ARN",
+                        "name": "model_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "An AWS SigV4 Authorization header is accepted and ignored; authenticate with X-AG-API-Key",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "API key for inline consumers",
+                        "name": "X-AG-API-Key",
+                        "in": "header"
+                    },
+                    {
+                        "description": "The Bedrock Runtime request body for the operation",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/{consumer_slug}/model/{model_id}/converse-stream": {
+            "post": {
+                "description": "Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never rewrite it: a mask that cannot be carried onto the original body refuses the call with a 403 AccessDeniedException, and the policy chain records blocked with the cause. Every error the gateway makes uses the AWS envelope ({\"__type\": \"...\", \"message\": \"...\"}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "proxy"
+                ],
+                "summary": "Proxy a native Amazon Bedrock Runtime call",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "consumer_slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model ID, inference profile ID or URL-encoded ARN",
+                        "name": "model_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "An AWS SigV4 Authorization header is accepted and ignored; authenticate with X-AG-API-Key",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "API key for inline consumers",
+                        "name": "X-AG-API-Key",
+                        "in": "header"
+                    },
+                    {
+                        "description": "The Bedrock Runtime request body for the operation",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/{consumer_slug}/model/{model_id}/invoke": {
+            "post": {
+                "description": "Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never rewrite it: a mask that cannot be carried onto the original body refuses the call with a 403 AccessDeniedException, and the policy chain records blocked with the cause. Every error the gateway makes uses the AWS envelope ({\"__type\": \"...\", \"message\": \"...\"}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "proxy"
+                ],
+                "summary": "Proxy a native Amazon Bedrock Runtime call",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "consumer_slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model ID, inference profile ID or URL-encoded ARN",
+                        "name": "model_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "An AWS SigV4 Authorization header is accepted and ignored; authenticate with X-AG-API-Key",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "API key for inline consumers",
+                        "name": "X-AG-API-Key",
+                        "in": "header"
+                    },
+                    {
+                        "description": "The Bedrock Runtime request body for the operation",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/{consumer_slug}/model/{model_id}/invoke-with-response-stream": {
+            "post": {
+                "description": "Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never rewrite it: a mask that cannot be carried onto the original body refuses the call with a 403 AccessDeniedException, and the policy chain records blocked with the cause. Every error the gateway makes uses the AWS envelope ({\"__type\": \"...\", \"message\": \"...\"}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "proxy"
+                ],
+                "summary": "Proxy a native Amazon Bedrock Runtime call",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "consumer_slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model ID, inference profile ID or URL-encoded ARN",
+                        "name": "model_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "An AWS SigV4 Authorization header is accepted and ignored; authenticate with X-AG-API-Key",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "API key for inline consumers",
+                        "name": "X-AG-API-Key",
+                        "in": "header"
+                    },
+                    {
+                        "description": "The Bedrock Runtime request body for the operation",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/{consumer_slug}/v1/chat/completions": {
             "post": {
                 "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….",
@@ -3853,6 +5659,112 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/{slug}/connections": {
+            "get": {
+                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that person, under this application. Omitting it asks about the application acting as itself (app:\u003cconsumer_id\u003e) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Both actors belong to every MCP consumer, so neither form is ever refused for being the wrong one. Authenticated with the consumer's API key.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "Read connection states for an end user or for the application itself",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End-user id the application uses; omit to ask about the application itself",
+                        "name": "end_user",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_oauth.EndUserConnectionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/{slug}/connections/links": {
+            "post": {
+                "description": "Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted; instance narrows it to one instance of that server). A server whose instance holds one shared account for every caller is refused with 400: no end user can connect it, and an administrator does in the console. Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "Mint a connect link for an application's end user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "End user to link",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_oauth.EndUserLinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_oauth.EndUserLinkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -3878,6 +5790,10 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "expires_at": {
+                    "description": "ExpiresAt retires an api key on its own, as an RFC 3339 instant. Omitted\nor empty is no expiry, which is what every key was before the field\nexisted.",
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -3937,6 +5853,14 @@ const docTemplate = `{
                 "client_secret": {
                     "type": "string"
                 },
+                "exchange_client_id": {
+                    "description": "ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token\nexchanges without enabling brokered login. Omit the secret on update to\nkeep the stored one.",
+                    "type": "string"
+                },
+                "exchange_client_secret": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
                 "introspection_url": {
                     "type": "string"
                 },
@@ -3945,6 +5869,18 @@ const docTemplate = `{
                 },
                 "jwks_url": {
                     "type": "string"
+                },
+                "login_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "required_scopes": {
                     "type": "array",
@@ -4004,6 +5940,58 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.RotateAuthRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthBudgetRequest": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number",
+                    "example": 50
+                },
+                "time_window": {
+                    "type": "string",
+                    "enum": [
+                        "calendar_month",
+                        "calendar_day"
+                    ],
+                    "example": "calendar_month"
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "tokens",
+                        "dollars"
+                    ],
+                    "example": "dollars"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthOwnerGroupsRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "alice@example.com"
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "engineering",
+                        "sre"
+                    ]
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -4013,7 +6001,28 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt is left alone when absent, cleared by an empty string, and set\nby an RFC 3339 instant.",
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
                     "type": "string"
                 },
                 "type": {
@@ -4028,14 +6037,33 @@ const docTemplate = `{
                     "description": "#nosec G101",
                     "type": "string"
                 },
+                "budget": {
+                    "description": "Budget is the spending limit of a personal key. Absent means it has none.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse"
+                        }
+                    ]
+                },
                 "config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse"
+                },
+                "consumers": {
+                    "description": "Consumers are the consumers this auth reaches, which is what a caller\nneeds before revoking one: a key can be attached to several, so\ndisabling it stops more than the endpoint the reader was looking at.\nEmpty means it reaches none, which is an answer rather than a gap.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse"
+                    }
                 },
                 "created_at": {
                     "type": "string"
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "expires_at": {
+                    "description": "When the key retires itself. Absent means it never does.",
+                    "type": "string"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -4051,6 +6079,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "owner_email": {
+                    "description": "OwnerEmail is the email of a personal key's owner, which the key's calls\nare shown under. Absent means none was recorded.",
+                    "type": "string"
+                },
+                "owner_groups": {
+                    "description": "OwnerGroups are the directory groups of a personal key's owner, as the\nplatform last reported them. Absent means none were reported.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "owner_id": {
                     "type": "string"
                 },
                 "type": {
@@ -4069,9 +6111,28 @@ const docTemplate = `{
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.KeyBudgetResponse": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number"
                 },
-                "oidc": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse"
+                "time_window": {
+                    "type": "string",
+                    "enum": [
+                        "calendar_month",
+                        "calendar_day"
+                    ]
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "tokens",
+                        "dollars"
+                    ]
                 }
             }
         },
@@ -4145,6 +6206,14 @@ const docTemplate = `{
                 "client_secret": {
                     "type": "string"
                 },
+                "exchange_client_id": {
+                    "description": "ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token\nexchanges; the secret is masked.",
+                    "type": "string"
+                },
+                "exchange_client_secret": {
+                    "description": "#nosec G117 -- masked before serialization",
+                    "type": "string"
+                },
                 "introspection_url": {
                     "type": "string"
                 },
@@ -4153,6 +6222,18 @@ const docTemplate = `{
                 },
                 "jwks_url": {
                     "type": "string"
+                },
+                "login_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "required_scopes": {
                     "type": "array",
@@ -4170,44 +6251,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "userinfo_url": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
                     "type": "string"
                 }
             }
@@ -4371,6 +6414,31 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachAuthRequest": {
+            "type": "object",
+            "properties": {
+                "granted_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-10-01T09:00:00Z"
+                },
+                "level": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "group",
+                        "all"
+                    ],
+                    "example": "group"
+                },
+                "priority": {
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "example": 1
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
             "type": "object",
             "properties": {
@@ -4383,11 +6451,84 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_certificate_subjects": {
+                    "description": "AllowedCertificateSubjects are the client-certificate common names or SAN\nDNS names accepted over mTLS.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_client_ids": {
+                    "description": "AllowedClientIDs are the azp / client_id values accepted on a bearer JWT.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "The user is satisfied or happy"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "positive"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelSetRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "ID is the label set's id in the app's catalog, opaque to TrustGate.",
+                    "type": "string",
+                    "example": "0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b"
+                },
+                "instructions": {
+                    "type": "string",
+                    "example": "Classify the overall sentiment of the user's message"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Sentiment analysis"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "audience": {
+                    "description": "Audience is application (the default) or personal. It is set at create\nand cannot change afterwards.",
+                    "type": "string",
+                    "default": "application",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
+                },
+                "auth_binding": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
+                },
+                "description": {
+                    "description": "Description is free text for the people managing the consumer. It plays\nno part in routing, policy evaluation or matching.",
+                    "type": "string",
+                    "maxLength": 500
                 },
                 "fail_mode": {
                     "type": "string"
@@ -4400,6 +6541,9 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "identity": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest"
                 },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest"
@@ -4418,15 +6562,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
                     }
-                },
-                "roles": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "routing_mode": {
-                    "type": "string"
                 },
                 "toolkit": {
                     "type": "array",
@@ -4484,6 +6619,20 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest": {
+            "type": "object",
+            "properties": {
+                "acts_for_users": {
+                    "type": "boolean"
+                },
+                "end_user_header": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "type": "string"
                 }
             }
         },
@@ -4587,9 +6736,25 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SR1ConfigRequest": {
+            "type": "object",
+            "properties": {
+                "cache_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "escape_hatch_enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest": {
             "type": "object",
             "properties": {
+                "sr1": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SR1ConfigRequest"
+                },
                 "tiers": {
                     "type": "array",
                     "items": {
@@ -4633,11 +6798,50 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelSetsRequest": {
+            "type": "object",
+            "properties": {
+                "label_sets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelSetRequest"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "audience": {
+                    "description": "Audience is set at create and cannot change: a value other than the stored\none answers 422.",
+                    "type": "string",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
+                },
+                "auth_binding": {
+                    "description": "AuthBinding replaces the whole binding. Omit to keep it; send empty lists\nto clear it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
+                        }
+                    ]
+                },
+                "auths": {
+                    "description": "Auths replaces the whole auth association set with the listed auth ids:\nauths absent from the list are detached. Omit the field to leave the\nassociations as they are; send an empty list to detach every auth.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "description": "Description replaces the free-text description. Omit it to keep the\ncurrent one; send an empty string to clear it.",
+                    "type": "string",
+                    "maxLength": 500
                 },
                 "fail_mode": {
                     "type": "string"
@@ -4650,6 +6854,14 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "identity": {
+                    "description": "Identity replaces who the consumer acts for. Omit to keep it as it is.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest"
+                        }
+                    ]
                 },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest"
@@ -4670,9 +6882,6 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
                     }
                 },
-                "routing_mode": {
-                    "type": "string"
-                },
                 "toolkit": {
                     "type": "array",
                     "items": {
@@ -4684,11 +6893,80 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse": {
+            "type": "object",
+            "properties": {
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse": {
+            "type": "object",
+            "properties": {
+                "allowed_certificate_subjects": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_client_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelSetResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "audience": {
+                    "type": "string",
+                    "enum": [
+                        "application",
+                        "personal"
+                    ]
+                },
+                "auth_binding": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse"
                 },
                 "auth_ids": {
                     "type": "array",
@@ -4697,6 +6975,9 @@ const docTemplate = `{
                     }
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "description": {
                     "type": "string"
                 },
                 "fail_mode": {
@@ -4716,6 +6997,16 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "identity": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse"
+                },
+                "label_sets": {
+                    "description": "LabelSets are the traffic label sets the consumer's chat requests are\nclassified against; empty when it has none.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelSetResponse"
+                    }
                 },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse"
@@ -4741,17 +7032,12 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.RegistryWeightResponse"
                     }
                 },
-                "role_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "routing_mode": {
-                    "type": "string"
-                },
                 "slug": {
                     "type": "string"
+                },
+                "synthetic": {
+                    "description": "Synthetic marks a consumer the gateway serves without storing: today the\nMCP Store. It has no row, so it cannot be edited, deleted or given a key,\nand it is only listed when a caller asks for it.",
+                    "type": "boolean"
                 },
                 "toolkit": {
                     "type": "array",
@@ -4838,6 +7124,9 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse": {
+            "type": "object"
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse": {
             "type": "object",
@@ -4933,9 +7222,23 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SR1ConfigResponse": {
+            "type": "object",
+            "properties": {
+                "cache_ttl_seconds": {
+                    "type": "integer"
+                },
+                "escape_hatch_enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse": {
             "type": "object",
             "properties": {
+                "sr1": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SR1ConfigResponse"
+                },
                 "tiers": {
                     "type": "array",
                     "items": {
@@ -5015,6 +7318,9 @@ const docTemplate = `{
                 "tenant_id": {
                     "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
                     "type": "string"
+                },
+                "traffic_labeling": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
                 }
             }
         },
@@ -5050,8 +7356,20 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "store_mode": {
+                    "description": "StoreMode curates the MCP Store: \"open\" (whole catalog browsable),\n\"curated\" (only shelf servers) or \"none\" (self-install disabled). Omitted\nleaves the current mode unchanged.",
+                    "type": "string"
+                },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "traffic_labeling": {
+                    "description": "TrafficLabeling replaces the traffic labeling config. Omitted leaves it\nunchanged and an explicit null clears it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
+                        }
+                    ]
                 }
             }
         },
@@ -5102,8 +7420,15 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "store_mode": {
+                    "description": "StoreMode is the gateway's MCP Store curation mode, the same value\nUpdateGatewayRequest writes. It is derived (never blank) rather than left\nfor readers to dig out of metadata: a reader that missed it there read a\ngateway as open — the domain default — and showed a curated Store as\nwide open.",
+                    "type": "string"
+                },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "traffic_labeling": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
                 },
                 "updated_at": {
                     "type": "string"
@@ -5133,6 +7458,18 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.BedrockErrorBody": {
+            "type": "object",
+            "properties": {
+                "__type": {
+                    "type": "string",
+                    "example": "AccessDeniedException"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody": {
             "type": "object",
             "properties": {
@@ -5152,6 +7489,14 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mcp_scope": {
+                    "description": "MCPScope narrows the policy to MCP destinations and principals. Omitted\n(or null) keeps the policy consumer-wide; {} is rejected as it would\nnever match.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest"
+                        }
+                    ]
                 },
                 "mode": {
                     "type": "string"
@@ -5180,6 +7525,47 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest": {
+            "type": "object",
+            "properties": {
+                "except_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
@@ -5188,6 +7574,10 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mcp_scope": {
+                    "description": "MCPScope is tri-state: omitted leaves the stored scope untouched, null\nclears it and an object replaces it. A pointer field could not tell\nomitted from null, so the raw JSON is kept until ToMCPScope reads it.",
+                    "type": "object"
                 },
                 "mode": {
                     "type": "string"
@@ -5236,6 +7626,46 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse": {
+            "type": "object",
+            "properties": {
+                "except_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse": {
             "type": "object",
             "properties": {
@@ -5263,6 +7693,18 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "mcp_scope": {
+                    "description": "MCPScope is echoed as stored: absent when the policy is consumer-wide,\n{} when a registry delete pruned every destination.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse"
+                        }
+                    ]
+                },
+                "mcp_wide": {
+                    "description": "MCPWide marks a policy that runs on every MCP consumer of the gateway and\non the MCP Store, narrowed by its mcp_scope. It is never true together\nwith Global, and an MCP-wide policy has no consumer_ids.",
+                    "type": "boolean"
+                },
                 "mode": {
                     "type": "string"
                 },
@@ -5288,8 +7730,28 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "status": {
+                    "description": "Status is \"active\" (enabled and running), \"paused\" (disabled) or \"error\"\n(enabled but the gateway cannot run it; see status_message).",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "paused",
+                        "error"
+                    ]
+                },
+                "status_message": {
+                    "description": "StatusMessage is the reason the gateway cannot run the policy. It is\npresent only when status is \"error\".",
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings are non-blocking notes about the write that just succeeded,\nsuch as a consumer that already runs the same plugin without scope.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -5432,6 +7894,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest": {
             "type": "object",
             "properties": {
+                "account": {
+                    "description": "Account is whose account a forwarded credential is: the caller's own\n(empty, or \"user\") or the one the instance holds for everyone (\"shared\").",
+                    "type": "string"
+                },
                 "actor": {
                     "type": "string"
                 },
@@ -5452,6 +7918,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "header": {
+                    "type": "string"
+                },
+                "identity_id": {
+                    "description": "IdentityID is the gateway oauth2 auth that signs an obo or\ntoken_exchange call.",
                     "type": "string"
                 },
                 "mode": {
@@ -5558,6 +8028,15 @@ const docTemplate = `{
                     "additionalProperties": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.SharedAccountConnectLink": {
+            "type": "object",
+            "properties": {
+                "resume_url": {
+                    "description": "ResumeURL is where the connect page sends the admin once the account is\nconnected: the console screen they started from. An absolute https URL;\nempty leaves them on the page.",
+                    "type": "string"
                 }
             }
         },
@@ -5829,6 +8308,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse": {
             "type": "object",
             "properties": {
+                "account": {
+                    "description": "Account is whose account a forwarded credential is; empty means the\ncaller's own.",
+                    "type": "string"
+                },
                 "actor": {
                     "type": "string"
                 },
@@ -5849,6 +8332,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "header": {
+                    "type": "string"
+                },
+                "identity_id": {
+                    "description": "IdentityID is the gateway oauth2 auth that signs an obo or\ntoken_exchange call.",
                     "type": "string"
                 },
                 "mode": {
@@ -5904,6 +8391,10 @@ const docTemplate = `{
                 },
                 "openapi": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.OpenAPITargetResponse"
+                },
+                "origin": {
+                    "description": "Origin is \"store\" when the gateway materialised this registry from the\ncatalog itself (self-service install, approval, consumer binding).",
+                    "type": "string"
                 },
                 "source": {
                     "type": "string"
@@ -6026,6 +8517,43 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountLinkResponse": {
+            "type": "object",
+            "properties": {
+                "consumer_path": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountResponse": {
+            "type": "object",
+            "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "needs_reconnect": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetAuthResponse": {
             "type": "object",
             "properties": {
@@ -6112,133 +8640,293 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.CreateRoleRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink": {
             "type": "object",
             "properties": {
-                "mcp_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest"
-                },
-                "model_policies": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest"
-                    }
-                },
-                "name": {
+                "code": {
                     "type": "string"
                 },
-                "oidc_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest": {
-            "type": "object",
-            "properties": {
-                "fail_mode": {
-                    "type": "string"
-                },
-                "toolkit": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ToolkitEntryRequest"
-                    }
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest": {
-            "type": "object",
-            "properties": {
-                "allowed": {
+                "groups": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
-                "default": {
+                "instance_id": {
                     "type": "string"
                 },
-                "registry_id": {
+                "principal_sub": {
                     "type": "string"
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ToolkitEntryRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink": {
             "type": "object",
             "properties": {
-                "expose_as": {
+                "code": {
                     "type": "string"
                 },
-                "prompt": {
+                "instance_id": {
+                    "description": "InstanceID pins the link to one installed instance of Code, for a server\nthe gateway holds more than once. Empty opens the code's own card.",
                     "type": "string"
                 },
-                "registry_id": {
+                "principal_sub": {
                     "type": "string"
                 },
-                "resource": {
-                    "type": "string"
-                },
-                "tool": {
+                "resume_url": {
+                    "description": "ResumeURL is where the connect page sends the user once their account is\nconnected — the Portal screen they came from. An absolute https URL;\nempty leaves them on the page.",
                     "type": "string"
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.UpdateRoleRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest": {
             "type": "object",
             "properties": {
-                "mcp_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest"
+                "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-12-31T12:00:00Z"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateUserLLMKeyRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-12-31T12:00:00Z"
                 },
-                "model_policies": {
+                "owner_email": {
+                    "type": "string",
+                    "example": "alice@example.com"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "grant_to_group": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "principal_sub": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Install": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "groups": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest"
+                        "type": "string"
                     }
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "principal_sub": {
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason is why the user wants the server, in their own words. Kept only on\na request an approver has to decide, and shown to them there.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-12-31T12:00:00Z"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetGrant": {
+            "type": "object",
+            "properties": {
+                "catalog_code": {
+                    "type": "string"
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetPolicy": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.DecidedRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "decided_at": {
+                    "type": "string"
+                },
+                "decided_by": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
                 },
-                "oidc_mapping": {
+                "principal_sub": {
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason is what the requester wrote when they asked, kept with the verdict.",
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Grant": {
+            "type": "object",
+            "properties": {
+                "catalog_code": {
+                    "type": "string"
+                },
+                "groups": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "string"
+                    }
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
                     }
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ListRoleResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Grants": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Grant"
                     }
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "size": {
-                    "type": "integer"
                 },
                 "total": {
                     "type": "integer"
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ModelPolicyResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.History": {
             "type": "object",
             "properties": {
-                "allowed": {
+                "items": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.DecidedRequest"
                     }
                 },
-                "default": {
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Install": {
+            "type": "object",
+            "properties": {
+                "already_installed": {
+                    "type": "boolean"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "instance_choices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.InstanceChoice"
+                    }
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pending": {
+                    "type": "boolean"
+                },
+                "requires_admin_setup": {
+                    "type": "boolean"
+                },
+                "requires_auth": {
+                    "type": "boolean"
+                },
+                "requires_config": {
+                    "type": "boolean"
+                },
+                "requires_instance_choice": {
+                    "type": "boolean"
+                },
+                "requires_reason": {
+                    "description": "RequiresReason is an install the caller must ask about first: it is outside\nthe user's access, so it files a request an approver decides on, and the\nrequester's words are what they read. A caller whose view of the access\nlevel was stale asked for an install and gets this instead of a refusal.",
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.InstanceChoice": {
+            "type": "object",
+            "properties": {
+                "name": {
                     "type": "string"
                 },
                 "registry_id": {
@@ -6246,41 +8934,273 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "consumer_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
-                "gateway_id": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "expires_at": {
                     "type": "string"
                 },
                 "id": {
                     "type": "string"
                 },
-                "mcp_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_role.MCPPolicies"
+                "key_prefix": {
+                    "type": "string"
                 },
-                "model_policies": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ModelPolicyResponse"
-                    }
+                "key_suffix": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "installed_by": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
                 },
-                "oidc_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                "principal_sub": {
+                    "type": "string"
                 },
-                "registry_ids": {
+                "reason": {
+                    "description": "Reason is why the requester asked for the server, in their own words.\nOmitted when they gave none.",
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "requester_groups": {
+                    "description": "RequesterGroups are the groups the requester carried when they filed, and\nthe only ones an approval may grant instead of the person.",
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
+                },
+                "server_deleted": {
+                    "description": "ServerDeleted marks a request whose server was deleted: approving it fails\nwith stale_request, so the only decision left is to deny it.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequests": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse": {
+            "type": "object",
+            "properties": {
+                "consumer_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key_prefix": {
+                    "type": "string"
+                },
+                "key_suffix": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Policies": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Policy"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Policy": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Principal": {
+            "type": "object",
+            "properties": {
+                "connections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnection"
+                    }
+                },
+                "installs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalInstall"
+                    }
+                },
+                "principal_sub": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink": {
+            "type": "object",
+            "properties": {
+                "configure_path": {
+                    "type": "string"
+                },
+                "consumer_path": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink": {
+            "type": "object",
+            "properties": {
+                "connect_path": {
+                    "type": "string"
+                },
+                "consumer_path": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnection": {
+            "type": "object",
+            "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "linked": {
+                    "type": "boolean"
+                },
+                "needs_reconnect": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registry": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "shared": {
+                    "description": "Shared is an instance with one account for everyone, which only an\nadministrator connects and disconnects.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalInstall": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "installed_by": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "needs_config": {
+                    "description": "NeedsConfig names the per-user values this installation is still missing.\nAn approved request is recorded the moment the approver says yes, before\nanyone has asked the requester for their own account URL — the row reads\nas installed while its first tool call cannot resolve the server's URL.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
@@ -6693,6 +9613,20 @@ const docTemplate = `{
                     "description": "none | static | oauth",
                     "type": "string"
                 },
+                "auth_methods": {
+                    "description": "AuthMethods lists every auth method an operator may pick when installing\nthis server: \"static\" (API key / header) and/or \"oauth\". It is the\nauthoritative declaration the UI uses to decide whether to offer a choice\nof auth (both present) or a single fixed method. AuthHint stays the coarse\ndefault/prefill; AuthMethods is the full menu. Empty ⇒ derive from AuthHint.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "capabilities": {
+                    "description": "Capabilities are the three “What you can do” lines the Employee Portal\nshows. Seeded when curated; otherwise derived from Tools at catalog load.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "category": {
                     "type": "string"
                 },
@@ -6734,6 +9668,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "self_service": {
+                    "description": "SelfService reports whether a user can install this server from the Store\nwith nothing configured by an admin: OAuth with dynamic client registration\nor a platform-held client, a public server, or a static server whose only\ncredential is a per-user secret URL variable. False means an admin must\nconnect an instance first (a shared API key, a manual OAuth client, or a\nclient_credentials grant).\n\nDeclared per entry in the catalog seed as self_service, not derived: the\nanswer is a property of the server, and reading it off the entry is how it\nstays legible. The one thing that moves it is a platform-held OAuth\nclient, which the seed cannot know (see applyPlatformOAuth). The zero\nvalue is the conservative answer.",
+                    "type": "boolean"
                 },
                 "source": {
                     "type": "string"
@@ -6786,6 +9724,13 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "options": {
+                    "description": "Options closes the value to a fixed set the vendor publishes — a region,\nan edition. One entry then covers what would otherwise be a near-duplicate\nentry per value. Empty means free text.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption"
+                    }
+                },
                 "required": {
                     "type": "boolean"
                 },
@@ -6795,33 +9740,15 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_domain_consumer.FailMode": {
-            "type": "string",
-            "enum": [
-                "closed",
-                "open"
-            ],
-            "x-enum-varnames": [
-                "FailModeClosed",
-                "FailModeOpen"
-            ]
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_domain_consumer.ToolkitEntry": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption": {
             "type": "object",
             "properties": {
-                "expose_as": {
+                "label": {
+                    "description": "Label is what the operator picks by — \"Europe\", not \"mcp.eu.vanta.com\".",
                     "type": "string"
                 },
-                "prompt": {
-                    "type": "string"
-                },
-                "registry_id": {
-                    "type": "string"
-                },
-                "resource": {
-                    "type": "string"
-                },
-                "tool": {
+                "value": {
+                    "description": "Value is substituted into the template.",
                     "type": "string"
                 }
             }
@@ -6831,7 +9758,8 @@ const docTemplate = `{
             "additionalProperties": {
                 "type": "array",
                 "items": {
-                    "type": "integer"
+                    "type": "integer",
+                    "format": "int32"
                 }
             }
         },
@@ -6903,20 +9831,6 @@ const docTemplate = `{
                 "StagePostResponse"
             ]
         },
-        "github_com_NeuralTrust_TrustGate_pkg_domain_role.MCPPolicies": {
-            "type": "object",
-            "properties": {
-                "fail_mode": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_consumer.FailMode"
-                },
-                "toolkit": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_consumer.ToolkitEntry"
-                    }
-                }
-            }
-        },
         "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig": {
             "type": "object",
             "properties": {
@@ -6966,6 +9880,26 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "message_window": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "sampling_rate": {
+                    "type": "number"
                 }
             }
         },
@@ -7036,6 +9970,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.EndUser": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event": {
             "type": "object",
             "properties": {
@@ -7045,6 +9999,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt"
                     }
                 },
+                "auth_id": {
+                    "type": "string"
+                },
                 "consumer": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer"
                 },
@@ -7053,6 +10010,9 @@ const docTemplate = `{
                 },
                 "end_timestamp": {
                     "type": "integer"
+                },
+                "end_user": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.EndUser"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -7157,6 +10117,10 @@ const docTemplate = `{
                 "catalog_code": {
                     "type": "string"
                 },
+                "decision": {
+                    "description": "Decision is the tools/call-level outcome PluginRunner recorded directly\non the MCP span — currently only \"failed_open\", when a plugin stage\nfailed on a non-block error and the call proceeded uninspected. Empty\nwhen nothing at that level failed; a per-plugin decision still lives on\nits own PolicyChain entry.",
+                    "type": "string"
+                },
                 "host": {
                     "type": "string"
                 },
@@ -7165,6 +10129,9 @@ const docTemplate = `{
                 },
                 "operation": {
                     "type": "string"
+                },
+                "policy_scope": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope"
                 },
                 "prompt": {
                     "type": "string"
@@ -7187,6 +10154,13 @@ const docTemplate = `{
                 "tool": {
                     "type": "string"
                 },
+                "tool_open_world": {
+                    "type": "boolean"
+                },
+                "tool_risk": {
+                    "description": "ToolRisk is the called tool's declared risk class (read_only, additive\nor destructive) and ToolOpenWorld its open-world hint, both from the MCP\nannotations its server publishes. Empty and nil when the tool declares\nno hint: the server's claim, advisory only.",
+                    "type": "string"
+                },
                 "transport": {
                     "type": "string"
                 },
@@ -7197,6 +10171,40 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "upstream_tool": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope": {
+            "type": "object",
+            "properties": {
+                "evaluated": {
+                    "type": "integer"
+                },
+                "matched": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reason": {
                     "type": "string"
                 }
             }
@@ -7418,6 +10426,180 @@ const docTemplate = `{
                 }
             }
         },
+        "pkg_api_handler_http_mcp.WhoAmIConsumer": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "Type is the plane this consumer belongs to: MCP, LLM or A2A.",
+                    "type": "string"
+                },
+                "upstreams": {
+                    "description": "Upstreams are the MCP servers behind this consumer that read a stored\naccount, and what each is still waiting for. Absent when none of them\ndoes — and also absent on a plane that cannot read the accounts at all,\nwhich is why a client reads \"blocked\" rather than counting a length.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIUpstream"
+                    }
+                },
+                "url": {
+                    "description": "URL is where this consumer is served — the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_mcp.WhoAmIKey": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "description": "ExpiresAt is RFC3339, absent when the key never expires.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "personal": {
+                    "description": "Personal is set for a person's own key (a personal key): it runs as its\nowner, and its consumers are the Store on each plane.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "pkg_api_handler_http_mcp.WhoAmIResponse": {
+            "type": "object",
+            "properties": {
+                "consumers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer"
+                    }
+                },
+                "gateway": {
+                    "type": "string"
+                },
+                "key": {
+                    "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIKey"
+                }
+            }
+        },
+        "pkg_api_handler_http_mcp.WhoAmIUpstream": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "description": "Account is whose account the server reads: \"shared\", the one the\ninstance holds for every caller, or \"user\", one per caller.",
+                    "type": "string"
+                },
+                "blocked": {
+                    "description": "Blocked names who has to act before this server answers a call that runs\nas the application: \"administrator\" or \"end_user\". Absent when ready.",
+                    "type": "string"
+                },
+                "connected": {
+                    "description": "Connected answers for this caller. A \"user\" instance never has an\naccount for an application, so it reads false and blocked says end_user.",
+                    "type": "boolean"
+                },
+                "needs_reconnect": {
+                    "description": "NeedsReconnect: there is an account and it has gone stale.",
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "server": {
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_oauth.EndUserConnectionResponse": {
+            "type": "object",
+            "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "instance": {
+                    "description": "Instance is the registry id of the server's instance, which tells two\ninstances of one provider apart.",
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registry": {
+                    "type": "string"
+                },
+                "shared": {
+                    "description": "Shared is true for an instance that holds one account for every caller:\nits status is that account's, and only an administrator can connect it,\nso a connect link is never the remedy for this row.",
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_oauth.EndUserConnectionsResponse": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "description": "Actor names whose connections these are: \"end_user\" or \"application\".\nWithout it an empty end_user would read as an unnamed user.",
+                    "type": "string"
+                },
+                "connections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_oauth.EndUserConnectionResponse"
+                    }
+                },
+                "end_user": {
+                    "description": "EndUser is empty when the states are the application's own.",
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_oauth.EndUserLinkRequest": {
+            "type": "object",
+            "properties": {
+                "end_user": {
+                    "type": "string"
+                },
+                "instance": {
+                    "description": "Instance narrows the link to one instance of the server, by registry id,\nas /connections reports it. Two instances of one provider are two\nservers with two accounts, and the provider alone cannot say which.",
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_oauth.EndUserLinkResponse": {
+            "type": "object",
+            "properties": {
+                "connect_url": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "instance": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
         "pkg_api_handler_http_registry.ListRegistryToolsResponse": {
             "type": "object",
             "properties": {
@@ -7495,6 +10677,14 @@ const docTemplate = `{
                 }
             }
         },
+        "pkg_api_handler_http_store.materializeRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                }
+            }
+        },
         "pkg_api_handler_http_tenant.RestampEntitlementsRequest": {
             "type": "object",
             "properties": {
@@ -7537,7 +10727,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "TrustGate Admin API",
-	Description:      "Administrative API for managing gateways and their registries, policies, consumers, roles and auth credentials.",
+	Description:      "Administrative API for managing gateways and their registries, policies, consumers and auth credentials.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

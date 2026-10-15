@@ -133,6 +133,8 @@ func classifyOutcome(resp *ProviderResponse, err error, triggers fallbackTrigger
 		if errors.Is(err, ErrModelNotAllowed) ||
 			errors.Is(err, ErrInvalidRequestPayload) ||
 			errors.Is(err, ErrCapabilityNotSupported) ||
+			errors.Is(err, ErrModelNotChatCapable) ||
+			errors.Is(err, ErrContextWindowExceeded) ||
 			errors.Is(err, registrydomain.ErrCredentialAcquisition) {
 			return OutcomeTerminal
 		}

@@ -18,16 +18,20 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type GetAuthHandler struct {
 	finder appauth.Finder
+	// reach answers which consumers hold this auth. Optional: a deployment
+	// without it still describes the key, it just cannot say what it reaches.
+	reach appconsumer.AuthConsumers
 }
 
-func NewGetAuthHandler(finder appauth.Finder) *GetAuthHandler {
-	return &GetAuthHandler{finder: finder}
+func NewGetAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) *GetAuthHandler {
+	return &GetAuthHandler{finder: finder, reach: reach}
 }
 
 // Handle godoc
@@ -52,5 +56,12 @@ func (h *GetAuthHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromAuth(a))
+	if h.reach == nil {
+		return httpio.WriteOK(c, response.FromAuth(a))
+	}
+	held, err := h.reach.ForAuths(c.UserContext(), gatewayID, []ids.AuthID{a.ID})
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	return httpio.WriteOK(c, response.FromAuthWithConsumers(a, held[a.ID]))
 }

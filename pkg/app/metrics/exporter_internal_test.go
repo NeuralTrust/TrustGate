@@ -73,6 +73,7 @@ func (f *fakeExporter) publishedCount() int {
 type fakeFactory struct {
 	mu               sync.Mutex
 	builds           int
+	tenantBuilds     int
 	buildErr         error
 	built            []telemetrydomain.ExporterConfig
 	publishErrByName map[string]error
@@ -99,6 +100,15 @@ func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error
 }
 
 func (f *fakeFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *fakeFactory) ValidateTenant(_ telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *fakeFactory) BuildTenant(cfg telemetrydomain.ExporterConfig) (Exporter, error) {
+	f.mu.Lock()
+	f.tenantBuilds++
+	f.mu.Unlock()
+	return f.Build(cfg)
+}
 
 func (f *fakeFactory) builtConfigs() []telemetrydomain.ExporterConfig {
 	f.mu.Lock()
@@ -137,7 +147,7 @@ func TestExporterCache_DedupesIdenticalConfigs(t *testing.T) {
 	factory := &fakeFactory{}
 	cache := NewExporterCache(factory, internalTestLogger())
 
-	cfg := telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}}
+	cfg := telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "a"}}
 	out := cache.Resolve([]telemetrydomain.ExporterConfig{cfg, cfg})
 
 	require.Len(t, out, 1)
@@ -151,7 +161,7 @@ func TestExporterCache_CachesBuildFailures(t *testing.T) {
 	factory := &fakeFactory{buildErr: errors.New("boom")}
 	cache := NewExporterCache(factory, internalTestLogger())
 
-	cfg := telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}}
+	cfg := telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "a"}}
 	out := cache.Resolve([]telemetrydomain.ExporterConfig{cfg})
 	require.Empty(t, out)
 
@@ -163,7 +173,7 @@ func TestExporterCache_CloseAllClosesInstances(t *testing.T) {
 	factory := &fakeFactory{}
 	cache := NewExporterCache(factory, internalTestLogger())
 
-	out := cache.Resolve([]telemetrydomain.ExporterConfig{{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}}})
+	out := cache.Resolve([]telemetrydomain.ExporterConfig{{Name: "primary", Settings: map[string]interface{}{"topic": "a"}}})
 	require.Len(t, out, 1)
 	exporter := out[0].(*fakeExporter)
 
@@ -175,17 +185,17 @@ func TestPipeline_ResolveTargetsOverrideByName(t *testing.T) {
 	factory := &fakeFactory{}
 	cache := NewExporterCache(factory, internalTestLogger())
 	p := NewPipeline(nil, cache, nil, internalTestLogger(),
-		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": "default"}})
+		telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "default"}})
 
 	overridden := p.resolveTargets([]telemetrydomain.ExporterConfig{
-		{Name: "kafka", Settings: map[string]interface{}{"topic": "other"}},
+		{Name: "primary", Settings: map[string]interface{}{"topic": "other"}},
 	})
 	require.Len(t, overridden, 1)
-	assert.Equal(t, "kafka", overridden[0].Name())
+	assert.Equal(t, "primary", overridden[0].Name())
 
 	built := factory.builtConfigs()
 	require.Len(t, built, 1)
-	assert.Equal(t, "other", built[0].Settings["topic"], "kafka must be built from the gateway config, not the default")
+	assert.Equal(t, "other", built[0].Settings["topic"], "primary must be built from the gateway config, not the default")
 
 	added := p.resolveTargets([]telemetrydomain.ExporterConfig{
 		{Name: "other", Settings: map[string]interface{}{"topic": "x"}},
@@ -197,14 +207,14 @@ func TestPipeline_OverrideFailureSkipsTarget(t *testing.T) {
 	factory := &fakeFactory{buildErr: errors.New("boom")}
 	cache := NewExporterCache(factory, internalTestLogger())
 	p := NewPipeline(nil, cache, nil, internalTestLogger(),
-		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": "default"}})
+		telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "default"}})
 
 	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
-		{Name: "kafka", Settings: map[string]interface{}{"topic": "bad"}},
+		{Name: "primary", Settings: map[string]interface{}{"topic": "bad"}},
 	})
 
 	require.Empty(t, targets, "a failed override is skipped with no default fallback")
-	assert.Equal(t, 1, factory.buildCount(), "only the single merged kafka config is attempted")
+	assert.Equal(t, 1, factory.buildCount(), "only the single merged primary config is attempted")
 }
 
 func TestPipeline_MergeMatrix(t *testing.T) {
@@ -223,7 +233,7 @@ func TestPipeline_MergeMatrix(t *testing.T) {
 		{name: "gateway only", defaults: nil, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a"}},
 		{name: "override same name gateway wins", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a"}},
 		{name: "same type different name both run in file-then-gateway order", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-b")}, want: []string{"otlp-a", "otlp-b"}},
-		{name: "override by name keeps other defaults", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a"), cfg("kafka-x")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a", "kafka-x"}},
+		{name: "override by name keeps other defaults", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a"), cfg("primary-x")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a", "primary-x"}},
 		{
 			name: "same name different data class both run",
 			defaults: []telemetrydomain.ExporterConfig{
@@ -383,7 +393,7 @@ func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {
 	cache := NewExporterCache(factory, internalTestLogger())
 	store := &fakePlaygroundStore{}
 	p := NewPipeline(builder, cache, store, internalTestLogger(),
-		telemetrydomain.ExporterConfig{Name: "kafka"})
+		telemetrydomain.ExporterConfig{Name: "primary"})
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
@@ -405,7 +415,7 @@ func TestPipeline_PlaygroundPublishesExportersAndStore(t *testing.T) {
 	cache := NewExporterCache(factory, internalTestLogger())
 	store := &fakePlaygroundStore{}
 	p := NewPipeline(builder, cache, store, internalTestLogger(),
-		telemetrydomain.ExporterConfig{Name: "kafka"})
+		telemetrydomain.ExporterConfig{Name: "primary"})
 
 	req := &infracontext.RequestContext{
 		GatewayID: "gw-1",
@@ -424,4 +434,42 @@ func TestPipeline_PlaygroundPublishesExportersAndStore(t *testing.T) {
 	assert.Equal(t, 1, exporter.publishedCount(), "playground must publish to Activity exporters")
 	saved := store.saved()
 	require.Len(t, saved, 1, "playground store must still receive the event for the panel")
+}
+
+// An identical config written by an operator and by a tenant must not share a
+// cache entry: the tenant one is built with the tenant policy, and a refusal of
+// it must not take the operator's exporter down with it.
+func TestExporterCache_TenantAndOperatorConfigsAreBuiltSeparately(t *testing.T) {
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	cfg := telemetrydomain.ExporterConfig{Name: "otlp", Settings: map[string]interface{}{"endpoint": "x"}}
+
+	got := cache.ResolveSourced([]SourcedExporter{{Config: cfg}, {Config: cfg, Tenant: true}})
+
+	if len(got) != 2 {
+		t.Fatalf("resolved %d exporters, want 2 (one per origin)", len(got))
+	}
+	if factory.buildCount() != 2 || factory.tenantBuilds != 1 {
+		t.Fatalf("builds = %d, tenant builds = %d, want 2 and 1", factory.buildCount(), factory.tenantBuilds)
+	}
+}
+
+// Gateway-written exporters, overrides of an operator default included, are
+// tenant input; only the defaults file is the operator's.
+func TestPipeline_GatewayExportersAreBuiltWithTheTenantPolicy(t *testing.T) {
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(nil, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "metadata-otlp", Type: "otlp"},
+		telemetrydomain.ExporterConfig{Name: "raw-postgres", Type: "postgres"})
+
+	p.resolveTargets([]telemetrydomain.ExporterConfig{
+		{Name: "raw-postgres", Type: "postgres", Settings: map[string]interface{}{"dsn_env": "DATABASE_URL"}},
+		{Name: "extra", Type: "otlp"},
+	})
+
+	if factory.buildCount() != 3 || factory.tenantBuilds != 2 {
+		t.Fatalf("builds = %d, tenant builds = %d, want 3 and 2 (the default is operator-built, the override and the addition are tenant-built)",
+			factory.buildCount(), factory.tenantBuilds)
+	}
 }

@@ -5,6 +5,9 @@ name: agentgateway
 #   docker compose -f docker-compose.yaml -f docker-compose.api.yaml -f docker-compose.frontend.yaml up -d --build
 # The dashboard talks to the admin service over the shared compose network and
 # signs admin JWTs with SERVER_SECRET_KEY (loaded from .env, same as the servers).
+# The dashboard has no login of its own, so its port is published on the
+# loopback interface only. Change the host side of the mapping (for example
+# "0.0.0.0:3000:3000") only behind an authenticating reverse proxy.
 
 services:
   frontend:
@@ -17,7 +20,7 @@ services:
       ADMIN_API_URL: http://admin:8080
       PROXY_API_URL: http://proxy:8081
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - admin
       - proxy

@@ -23,26 +23,32 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type CreateInput struct {
 	GatewayID       ids.GatewayID
 	Name            string
+	Description     string
 	Type            domain.Type
-	RoutingMode     domain.RoutingMode
+	Audience        domain.Audience
 	LBConfig        *domain.LBConfig
 	Headers         map[string]string
 	Active          *bool
 	Fallback        *domain.Fallback
 	RegistryIDs     []ids.RegistryID
 	RegistryWeights map[ids.RegistryID]int
-	RoleIDs         []ids.RoleID
 	ModelPolicies   domain.ModelPolicies
 	MCP             *domain.MCPPolicy
+	Identity        *domain.Identity
+	AuthBinding     *domain.AuthBinding
+}
+
+type gatewayFinder interface {
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -55,7 +61,7 @@ var _ Creator = (*creator)(nil)
 type creator struct {
 	repo         domain.Writer
 	registryRepo registrydomain.Repository
-	roleRepo     roledomain.Repository
+	gateways     gatewayFinder
 	memoryCache  *cache.TTLMap
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
@@ -65,7 +71,7 @@ type creator struct {
 func NewCreator(
 	repo domain.Writer,
 	registryRepo registrydomain.Repository,
-	roleRepo roledomain.Repository,
+	gateways gatewayFinder,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -74,7 +80,7 @@ func NewCreator(
 	return &creator{
 		repo:         repo,
 		registryRepo: registryRepo,
-		roleRepo:     roleRepo,
+		gateways:     gateways,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
 		publisher:    publisher,
 		logger:       logger,
@@ -85,20 +91,25 @@ func NewCreator(
 const maxSlugCollisionRetries = 3
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
+	if err := validateLegacyRoutingWrite(in.LBConfig, nil); err != nil {
+		return nil, err
+	}
 	cons, err := domain.New(domain.CreateParams{
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,
+		Description:     in.Description,
 		Type:            in.Type,
-		RoutingMode:     in.RoutingMode,
+		Audience:        in.Audience,
 		LBConfig:        in.LBConfig,
 		Headers:         in.Headers,
 		Active:          in.Active,
 		Fallback:        in.Fallback,
 		RegistryIDs:     in.RegistryIDs,
 		RegistryWeights: in.RegistryWeights,
-		RoleIDs:         in.RoleIDs,
 		ModelPolicies:   in.ModelPolicies,
 		MCP:             in.MCP,
+		Identity:        in.Identity,
+		AuthBinding:     in.AuthBinding,
 	})
 	if err != nil {
 		return nil, err
@@ -106,10 +117,13 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
-	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
+	if err := c.refusePersonalCreate(ctx, cons); err != nil {
 		return nil, err
 	}
-	if err := c.ensureRolesInGateway(ctx, in.GatewayID, in.RoleIDs); err != nil {
+	if err := validateSmartRoutingWrite(cons); err != nil {
+		return nil, err
+	}
+	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
 		return nil, err
 	}
 	if err := c.saveWithSlugRetry(ctx, cons); err != nil {
@@ -121,6 +135,20 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		c.signaler.Signal(ctx)
 	}
 	return cons, nil
+}
+
+func (c *creator) refusePersonalCreate(ctx context.Context, cons *domain.Consumer) error {
+	if !cons.IsPersonal() {
+		return nil
+	}
+	gw, err := c.gateways.FindByID(ctx, cons.GatewayID)
+	if err != nil {
+		return err
+	}
+	if !gw.AllowsPersonal() {
+		return domain.ErrHybridPersonal
+	}
+	return nil
 }
 
 func (c *creator) saveWithSlugRetry(ctx context.Context, cons *domain.Consumer) error {
@@ -152,20 +180,6 @@ func ensureRegistriesInGateway(
 	}
 	if len(found) != len(registryIDs) {
 		return fmt.Errorf("%w: one or more registries do not belong to the gateway", registrydomain.ErrInvalidRegistryID)
-	}
-	return nil
-}
-
-func (c *creator) ensureRolesInGateway(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) error {
-	if len(roleIDs) == 0 {
-		return nil
-	}
-	found, err := c.roleRepo.FindByIDs(ctx, gatewayID, roleIDs)
-	if err != nil {
-		return err
-	}
-	if len(found) != len(roleIDs) {
-		return fmt.Errorf("%w: one or more roles do not belong to the gateway", roledomain.ErrInvalidRoleID)
 	}
 	return nil
 }

@@ -27,8 +27,6 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -118,43 +116,6 @@ func TestListModels_PoolMemberModelsAreIncluded(t *testing.T) {
 
 	list := listModels(t, rc, catalogmocks.NewService(t))
 	assertModelIDs(t, list, "gpt-4o-mini", "o1-mini")
-}
-
-func TestListModels_RoleBasedAllowList(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	role := &roledomain.Role{
-		ID:          ids.New[ids.RoleKind](),
-		GatewayID:   gatewayID,
-		Name:        "analyst",
-		RegistryIDs: []ids.RegistryID{openai.ID},
-		ModelPolicies: roledomain.ModelPolicies{
-			openai.ID: {Allowed: []string{"gpt-5"}},
-		},
-	}
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Name:        "rb",
-			Slug:        "cons1234",
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{role.ID},
-		},
-	}
-	data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-	data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{openai.ID: openai})
-
-	lister := appproxy.NewModelsLister(approuting.NewResolver(), catalogmocks.NewService(t))
-	list, err := lister.List(context.Background(), appproxy.ListModelsInput{
-		Consumer: rc,
-		Data:     data,
-		RoleIDs:  []ids.RoleID{role.ID},
-	})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	assertModelIDs(t, list, "gpt-5")
 }
 
 func TestListModels_GetFoundAndMissing(t *testing.T) {

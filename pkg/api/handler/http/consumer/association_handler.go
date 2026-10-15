@@ -15,11 +15,15 @@
 package consumer
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -28,10 +32,11 @@ import (
 
 type AssociationHandler struct {
 	associator appconsumer.Associator
+	warner     apppolicy.Warner
 }
 
-func NewAssociationHandler(associator appconsumer.Associator) *AssociationHandler {
-	return &AssociationHandler{associator: associator}
+func NewAssociationHandler(associator appconsumer.Associator, warner apppolicy.Warner) *AssociationHandler {
+	return &AssociationHandler{associator: associator, warner: warner}
 }
 
 // AttachRegistry godoc
@@ -98,6 +103,8 @@ func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
 // @Failure      400          {object}  httpio.ErrorBody
 // @Failure      401          {object}  httpio.ErrorBody
 // @Failure      404          {object}  httpio.ErrorBody
+// @Failure      409          {object}  httpio.ErrorBody
+// @Failure      422          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id} [delete]
 func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	gatewayID, consumerID, registryID, err := httpio.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")
@@ -110,80 +117,47 @@ func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	return httpio.WriteNoContent(c)
 }
 
-// AttachRole godoc
-// @Summary      Attach a role to a consumer
-// @Description  Associates a role with a role_based consumer (idempotent). Returns 409 for inline consumers.
-// @Tags         consumers
-// @Produce      json
-// @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
-// @Param        role_id     path  string  true  "Role id"      format(uuid)
-// @Success      204         "No Content"
-// @Failure      400         {object}  httpio.ErrorBody
-// @Failure      401         {object}  httpio.ErrorBody
-// @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [post]
-func (h *AssociationHandler) AttachRole(c *fiber.Ctx) error {
-	gatewayID, consumerID, roleID, err := httpio.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
-	if err != nil {
-		return httpio.WriteError(c, err)
-	}
-	if err := h.associator.AttachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
-		return httpio.WriteError(c, err)
-	}
-	return httpio.WriteNoContent(c)
-}
-
-// DetachRole godoc
-// @Summary      Detach a role from a consumer
-// @Description  Removes the association between a role and a consumer (idempotent).
-// @Tags         consumers
-// @Produce      json
-// @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
-// @Param        role_id     path  string  true  "Role id"      format(uuid)
-// @Success      204         "No Content"
-// @Failure      400         {object}  httpio.ErrorBody
-// @Failure      401         {object}  httpio.ErrorBody
-// @Failure      404         {object}  httpio.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [delete]
-func (h *AssociationHandler) DetachRole(c *fiber.Ctx) error {
-	gatewayID, consumerID, roleID, err := httpio.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
-	if err != nil {
-		return httpio.WriteError(c, err)
-	}
-	if err := h.associator.DetachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
-		return httpio.WriteError(c, err)
-	}
-	return httpio.WriteNoContent(c)
-}
-
 // AttachAuth godoc
 // @Summary      Attach an auth to a consumer
-// @Description  Associates an auth credential with a consumer (idempotent).
+// @Description  Associates an auth credential with a consumer (idempotent). An application consumer takes only unowned auths and no link attributes (an empty body or {}). A personal consumer takes only owned keys, and the body is required: level and granted_at must be present, and priority defaults to 1. Re-attaching a key to a personal consumer replaces that one link's attributes.
 // @Tags         consumers
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
-// @Param        auth_id     path  string  true  "Auth id"      format(uuid)
+// @Param        gateway_id  path  string                     true   "Gateway id"   format(uuid)
+// @Param        id          path  string                     true   "Consumer id"  format(uuid)
+// @Param        auth_id     path  string                     true   "Auth id"      format(uuid)
+// @Param        body        body  request.AttachAuthRequest  false  "Link attributes, for an owned key on a personal consumer"
 // @Success      204         "No Content"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody  "The auth does not match the consumer audience, or the link attributes are missing, invalid or not allowed"
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id} [post]
 func (h *AssociationHandler) AttachAuth(c *fiber.Ctx) error {
 	gatewayID, consumerID, authID, err := httpio.ParseConsumerAssociationID[ids.AuthKind](c, "auth_id")
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	if err := h.associator.AttachAuth(c.UserContext(), gatewayID, consumerID, authID); err != nil {
+	link, err := parseAttachAuthLink(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	if err := h.associator.AttachAuth(c.UserContext(), gatewayID, consumerID, authID, link); err != nil {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteNoContent(c)
+}
+
+func parseAttachAuthLink(c *fiber.Ctx) (*consumerdomain.AuthLink, error) {
+	if len(bytes.TrimSpace(c.Body())) == 0 {
+		return nil, nil
+	}
+	var req request.AttachAuthRequest
+	if err := c.BodyParser(&req); err != nil {
+		return nil, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation)
+	}
+	return req.ToLink()
 }
 
 // DetachAuth godoc
@@ -213,17 +187,20 @@ func (h *AssociationHandler) DetachAuth(c *fiber.Ctx) error {
 
 // AttachPolicy godoc
 // @Summary      Attach a policy to a consumer
-// @Description  Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to.
+// @Description  Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. An MCP-wide policy already runs on every MCP consumer and holds no links, so attaching one answers 422: demote it first. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.
 // @Tags         consumers
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        policy_id   path  string  true  "Policy id"    format(uuid)
+// @Success      200         {object}  response.AttachPolicyResponse  "Attached with non-blocking warnings"
 // @Success      204         "No Content"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "The gateway already runs this plugin at one of the levels the attach would take"
+// @Failure      422         {object}  httpio.ErrorBody  "The policy is MCP-wide, or its mcp_scope or plugin does not fit the consumer"
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id} [post]
 func (h *AssociationHandler) AttachPolicy(c *fiber.Ctx) error {
 	gatewayID, consumerID, policyID, err := httpio.ParseConsumerAssociationID[ids.PolicyKind](c, "policy_id")
@@ -233,7 +210,28 @@ func (h *AssociationHandler) AttachPolicy(c *fiber.Ctx) error {
 	if err := h.associator.AttachPolicy(c.UserContext(), gatewayID, consumerID, policyID); err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteNoContent(c)
+	warnings := h.attachWarnings(c, gatewayID, consumerID, policyID)
+	if len(warnings) == 0 {
+		return httpio.WriteNoContent(c)
+	}
+	return httpio.WriteOK(c, response.AttachPolicyResponse{Warnings: warnings})
+}
+
+// attachWarnings resolves the non-blocking warnings of an attach that already
+// succeeded. A failure computing them is logged and yields none, so the
+// association is still reported as done.
+func (h *AssociationHandler) attachWarnings(c *fiber.Ctx, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) []string {
+	warnings, err := h.warner.OverlapsOnAttach(c.UserContext(), gatewayID, consumerID, policyID)
+	if err != nil {
+		slog.Default().LogAttrs(c.UserContext(), slog.LevelWarn, "policy attach warnings unavailable",
+			slog.String("error", err.Error()),
+			slog.String("consumer_id", consumerID.String()),
+			slog.String("policy_id", policyID.String()),
+			slog.String("path", c.Path()),
+		)
+		return nil
+	}
+	return warnings
 }
 
 // DetachPolicy godoc

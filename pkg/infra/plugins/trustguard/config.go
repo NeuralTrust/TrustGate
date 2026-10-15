@@ -17,6 +17,7 @@ package trustguard
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -29,10 +30,19 @@ const (
 	legResponse        = "response"
 	legRequestResponse = "request_response"
 	defaultLegs        = legRequestResponse
+)
 
-	onErrorFailOpen   = "fail_open"
-	onErrorFailClosed = "fail_closed"
-	defaultOnError    = onErrorFailOpen
+const (
+	defaultStreamingHeadChars            = 400
+	defaultStreamingMinCharsBetweenEvals = 2048
+	defaultStreamingMaxHoldMS            = 800
+	// maxStreamWindowBytes is the most of the accumulated text one evaluate call
+	// carries. The block waits at most defaultStreamingGuardTimeout for the token
+	// and the call together, so the window is fitted to that deadline and not to
+	// what the detectors accept.
+	maxStreamWindowBytes                = 65536
+	defaultStreamingMaxAccumulatedBytes = maxStreamWindowBytes
+	defaultStreamingGuardTimeout        = 2 * time.Second
 )
 
 type Settings struct {
@@ -44,11 +54,21 @@ type Settings struct {
 	//
 	// The key name is fixed by the policy catalog. Its values are legs, not the
 	// input/output direction reported to TrustGuard per evaluate call.
-	Direction   string `mapstructure:"direction"`
-	CollectorID string `mapstructure:"collector_id"`
-	// OnError controls transport / 5xx failure behaviour. Auth/config
-	// rejections (401/403) always fail closed regardless of this setting.
-	OnError string `mapstructure:"on_error"`
+	Direction   string                       `mapstructure:"direction"`
+	CollectorID string                       `mapstructure:"collector_id"`
+	Streaming   pluginutil.StreamingSettings `mapstructure:"streaming"`
+}
+
+// streamingDefaults is the cadence of a policy that does not set its own. A
+// policy whose direction includes the response inspects a streamed response
+// block by block whatever its streaming block says (RUN-1661), or "Request &
+// Response" would silently mean "request only" on the traffic that streams.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            defaultStreamingHeadChars,
+	MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
+	MaxHoldMS:            defaultStreamingMaxHoldMS,
+	MaxAccumulatedBytes:  defaultStreamingMaxAccumulatedBytes,
+	GuardTimeout:         defaultStreamingGuardTimeout,
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -67,9 +87,7 @@ func (s *Settings) applyDefaults() {
 	if s.Direction == "" {
 		s.Direction = defaultLegs
 	}
-	if s.OnError == "" {
-		s.OnError = defaultOnError
-	}
+	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
 func (s *Settings) validate() error {
@@ -78,22 +96,13 @@ func (s *Settings) validate() error {
 	default:
 		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
 	}
-	switch s.OnError {
-	case onErrorFailOpen, onErrorFailClosed:
-	default:
-		return fmt.Errorf("trustguard: on_error must be one of fail_open, fail_closed")
-	}
 	if strings.TrimSpace(s.CollectorID) == "" {
 		return fmt.Errorf("trustguard: collector_id is required")
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(s.CollectorID)); err != nil {
 		return fmt.Errorf("trustguard: collector_id must be a valid UUID")
 	}
-	return nil
-}
-
-func (s Settings) failClosedOnTransport() bool {
-	return s.OnError == onErrorFailClosed
+	return s.Streaming.Validate(PluginName)
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {
@@ -108,5 +117,16 @@ func (s Settings) selectsStage(stage policy.Stage) bool {
 			stage == policy.StagePostResponse
 	default:
 		return false
+	}
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+// on_timeout and timeout are the TrustGuard-specific failure and deadline keys: a failed call fails open and the deadline is the deployment-wide TRUSTGUARD_TIMEOUT.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnError, "on_timeout", "timeout", pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
 	}
 }

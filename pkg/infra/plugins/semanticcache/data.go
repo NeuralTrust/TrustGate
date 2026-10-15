@@ -32,4 +32,8 @@ type SemanticCacheData struct {
 	MatchType   string `json:"match_type,omitempty"`
 	Bypassed    bool   `json:"bypassed,omitempty"`
 	SkipReason  string `json:"skip_reason,omitempty"`
+	// Skipped and Stage mark an entry the plugin did not run for, with the keys the
+	// console reads on every skipped entry.
+	Skipped bool   `json:"skipped,omitempty"`
+	Stage   string `json:"stage,omitempty"`
 }

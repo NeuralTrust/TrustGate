@@ -55,28 +55,41 @@ func WithResolvedGateway(c *fiber.Ctx, r GatewayResolver) context.Context {
 // a request. The X-AG-Gateway-Slug header always takes precedence; when it is
 // absent the resolver falls back to the {slug}.{baseDomain} subdomain host, and it
 // only fails when neither identifies a gateway.
-func NewGatewayResolver(finder appgateway.Finder, baseDomain string) GatewayResolver {
+//
+// alsoAccept lists further suffixes the same deployment answers on. baseDomain
+// stays the one the gateway publishes in its URLs; the extras only widen what
+// the resolver recognises.
+func NewGatewayResolver(finder appgateway.Finder, baseDomain string, alsoAccept ...string) GatewayResolver {
 	return &HeaderGatewayResolver{
 		finder:       finder,
-		hostFallback: NewSubdomainGatewayResolver(finder, baseDomain),
+		hostFallback: NewSubdomainGatewayResolver(finder, baseDomain, alsoAccept...),
 	}
 }
 
 type SubdomainGatewayResolver struct {
-	finder     appgateway.Finder
-	baseDomain string
+	finder appgateway.Finder
+	// Every suffix this deployment answers on, canonical first. A gateway is
+	// often published under more than one: a second domain put in front of the
+	// same cluster to make it reachable from outside, for instance. Recognising
+	// only the canonical one does not merely fail to route — the OAuth authorize
+	// path treats a missing gateway as "none addressed" and mints a session
+	// stamped with the zero gateway id, which the MCP plane then refuses with an
+	// opaque 401 the client retries forever.
+	baseDomains []string
 }
 
-func NewSubdomainGatewayResolver(finder appgateway.Finder, baseDomain string) GatewayResolver {
-	baseDomain = strings.Trim(strings.ToLower(strings.TrimSpace(baseDomain)), ".")
-	return &SubdomainGatewayResolver{
-		finder:     finder,
-		baseDomain: baseDomain,
+func NewSubdomainGatewayResolver(finder appgateway.Finder, baseDomain string, alsoAccept ...string) GatewayResolver {
+	domains := make([]string, 0, 1+len(alsoAccept))
+	for _, d := range append([]string{baseDomain}, alsoAccept...) {
+		if d = strings.Trim(strings.ToLower(strings.TrimSpace(d)), "."); d != "" {
+			domains = append(domains, d)
+		}
 	}
+	return &SubdomainGatewayResolver{finder: finder, baseDomains: domains}
 }
 
 func (r *SubdomainGatewayResolver) Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error) {
-	slug, err := parseGatewaySlugFromHost(string(c.Request().Host()), r.baseDomain)
+	slug, err := parseGatewaySlugFromHosts(string(c.Request().Host()), r.baseDomains)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +125,27 @@ func resolveGatewayBySlug(c *fiber.Ctx, finder appgateway.Finder, slug string) (
 		return nil, fmt.Errorf("resolve gateway by slug: %w", err)
 	}
 	return gw, nil
+}
+
+// parseGatewaySlugFromHosts takes the slug under the first suffix the host
+// matches. The error names only the canonical domain: the extras exist so an
+// operator can reach a deployment by another route, and an operator reading
+// this error wants to be told the address the gateway publishes.
+func parseGatewaySlugFromHosts(rawHost string, baseDomains []string) (string, error) {
+	if len(baseDomains) == 0 {
+		return "", fmt.Errorf("%w: no MCP base domain is configured", appauth.ErrInvalidAuthRequest)
+	}
+	var firstErr error
+	for _, d := range baseDomains {
+		slug, err := parseGatewaySlugFromHost(rawHost, d)
+		if err == nil {
+			return slug, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return "", firstErr
 }
 
 func parseGatewaySlugFromHost(rawHost, baseDomain string) (string, error) {

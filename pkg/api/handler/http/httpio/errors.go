@@ -15,6 +15,7 @@
 package httpio
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,9 @@ import (
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -32,20 +36,51 @@ type ErrorBody struct {
 	Message string `json:"message,omitempty"`
 }
 
+// BedrockErrorBody is the error body of a native Amazon Bedrock Runtime route.
+// The gateway merges __type and message into its own error object, so the
+// fields of ErrorBody stay readable beside them, and the x-amzn-ErrorType header
+// carries the same exception name for an AWS SDK.
+type BedrockErrorBody struct {
+	Type    string `json:"__type" example:"AccessDeniedException"`
+	Message string `json:"message"`
+}
+
+// WriteBedrockError answers a native Amazon Bedrock Runtime route with the AWS
+// envelope: the gateway's error body with __type and message merged in, and the
+// x-amzn-ErrorType header an AWS SDK classifies the exception by.
+func WriteBedrockError(c *fiber.Ctx, status int, body any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		raw = nil
+	}
+	headers, out := adapter.BedrockErrorEnvelope(status, raw)
+	for name, values := range headers {
+		for _, v := range values {
+			c.Set(name, v)
+		}
+	}
+	return c.Status(status).Send(out)
+}
+
 // NotFoundBody returns the canonical client-safe not-found response body.
 func NotFoundBody() ErrorBody {
 	return ErrorBody{Error: "not_found", Message: msgNotFound}
 }
 
 const (
-	msgNotFound           = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
-	msgInternal           = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
-	msgValidationHint     = "Check the request body fields against the Admin API schema and retry."
-	msgConflictHint       = "Fetch the current resource, resolve the conflict, and retry."
-	msgAlreadyExistsHint  = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
-	msgHasDependentsHint  = "Remove or reassign dependent resources first, then retry the delete."
-	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
-	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
+	msgNotFound                = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
+	msgInternal                = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
+	msgValidationHint          = "Check the request body fields against the Admin API schema and retry."
+	msgConflictHint            = "Fetch the current resource, resolve the conflict, and retry."
+	msgAlreadyExistsHint       = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
+	msgHasDependentsHint       = "Remove or reassign dependent resources first, then retry the delete."
+	msgInvalidConfigHint       = "Check the configuration fields and types against the Admin API docs and retry."
+	msgResultTooLargeHint      = "Narrow the query with filters or pagination (smaller page size) and retry."
+	msgStaleStoreRequest       = "This request is for an MCP server that was deleted. Deny it and ask the requester to request access again."
+	msgOwnedKeyHint            = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
+	msgApplicationKeyHint      = "Budgets and owner groups apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
+	msgPersonalKeyHint         = "You already hold a key on this gateway. Rotate or revoke it instead."
+	msgUpstreamUnavailableHint = "Check the registry's endpoint and credentials, then retry."
 )
 
 // MapDomainError translates an application/domain error into the matching
@@ -68,22 +103,34 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_sort", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidFilter):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: publicMessage(err, "")}
+	case errors.Is(err, commonerrors.ErrForbidden):
+		return fiber.StatusForbidden, ErrorBody{Error: "forbidden", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrNotFound):
 		body := NotFoundBody()
 		body.Message = notFoundMessage(err)
 		return fiber.StatusNotFound, body
+	case errors.Is(err, authdomain.ErrOwnedKeyExists):
+		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgPersonalKeyHint)}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
 	case errors.Is(err, commonerrors.ErrHasDependents):
 		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: publicMessage(err, msgHasDependentsHint)}
+	case errors.Is(err, installationdomain.ErrStaleRequest):
+		return fiber.StatusConflict, ErrorBody{Error: "stale_request", Message: msgStaleStoreRequest}
 	case errors.Is(err, commonerrors.ErrConflict):
 		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: publicMessage(err, msgConflictHint)}
+	case errors.Is(err, authdomain.ErrOwnedKey):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "owned_key", Message: publicMessage(err, msgOwnedKeyHint)}
+	case errors.Is(err, authdomain.ErrApplicationKey):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "application_key", Message: publicMessage(err, msgApplicationKeyHint)}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_config", Message: publicMessage(err, msgInvalidConfigHint)}
 	case errors.Is(err, commonerrors.ErrResultTooLarge):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: publicMessage(err, msgResultTooLargeHint)}
+	case errors.Is(err, commonerrors.ErrUpstreamUnavailable):
+		return fiber.StatusBadGateway, ErrorBody{Error: "upstream_unavailable", Message: publicMessage(err, msgUpstreamUnavailableHint)}
 	default:
 		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error", Message: msgInternal}
 	}
@@ -115,7 +162,8 @@ func isBareSentinel(msg string) bool {
 		commonerrors.ErrHasDependents.Error(),
 		commonerrors.ErrValidation.Error(),
 		commonerrors.ErrInvalidConfig.Error(),
-		commonerrors.ErrResultTooLarge.Error():
+		commonerrors.ErrResultTooLarge.Error(),
+		commonerrors.ErrUpstreamUnavailable.Error():
 		return true
 	default:
 		return false

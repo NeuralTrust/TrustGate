@@ -1,0 +1,1 @@
+{"model":"openai/gpt-oss-120b","messages":[{"role":"system","content":"Be terse."},{"role":"user","content":"Say hi"}],"max_tokens":5}

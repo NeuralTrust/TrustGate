@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -27,14 +29,40 @@ import (
 
 type Config struct {
 	OAuth2 *OAuth2Config `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfig   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfig   `json:"mtls,omitempty"`
+}
+
+// UnmarshalJSON accepts the deprecated "oidc" payload as an alias of "oauth2".
+// Both shapes share their JSON keys, so a stored row or snapshot written before
+// the types were unified decodes straight into OAuth2Config. Dropping the
+// payload instead would strip an identity provider of its key material at
+// runtime rather than failing loudly.
+func (c *Config) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		OAuth2 *OAuth2Config   `json:"oauth2"`
+		OIDC   json.RawMessage `json:"oidc"`
+		MTLS   *MTLSConfig     `json:"mtls"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return fmt.Errorf("auth config: unmarshal: %w", err)
+	}
+	*c = Config{OAuth2: aux.OAuth2, MTLS: aux.MTLS}
+	if c.OAuth2 != nil || len(aux.OIDC) == 0 || string(aux.OIDC) == "null" {
+		return nil
+	}
+	legacy := &OAuth2Config{}
+	if err := json.Unmarshal(aux.OIDC, legacy); err != nil {
+		return fmt.Errorf("auth config: unmarshal oidc payload: %w", err)
+	}
+	c.OAuth2 = legacy
+	return nil
 }
 
 type OAuth2Config struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -45,16 +73,55 @@ type OAuth2Config struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
+	// LoginScopes are requested from the identity provider when the gateway signs
+	// someone in and when it refreshes that login. They are never checked on
+	// inbound tokens (RequiredScopes is) nor advertised to MCP clients.
+	LoginScopes []string `json:"login_scopes,omitempty"`
+	// ExchangeClientID and ExchangeClientSecret are the client the gateway
+	// presents when it exchanges a caller's token (on-behalf-of, token
+	// exchange). Unlike ClientID they never make the provider interactive,
+	// so setting them does not turn on brokered login.
+	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
+	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117 -- stored credential, masked in responses
+	// ExchangeSecretUnreadable marks a config read from storage whose exchange
+	// client secret could not be decrypted and was returned empty. Validate
+	// does not require that secret, so unrelated edits still save; the
+	// repository keeps the stored value when it comes back empty. Never
+	// serialised.
+	ExchangeSecretUnreadable bool `json:"-"`
+	// ClientSecretUnreadable is ExchangeSecretUnreadable for the login client
+	// secret. Validate never requires that secret; the mark only tells the
+	// repository to keep the stored value. Never serialised.
+	ClientSecretUnreadable bool `json:"-"`
+
+	// Trusted marks an identity provider the operator configured through the
+	// environment (the built-in default IdP): its endpoints may be on a private
+	// address, so its outbound calls skip the network guard. It is never
+	// serialised, so a stored or API-supplied config cannot carry it; the only
+	// place that sets it is the in-process builder of the default IdP.
+	Trusted bool `json:"-"`
 }
 
-type OIDCConfig struct {
-	Issuer            string   `json:"issuer"`
-	Audiences         []string `json:"audiences"`
-	JWKSURL           string   `json:"jwks_url,omitempty"`
-	PublicKeys        []string `json:"public_keys,omitempty"`
-	RequiredScopes    []string `json:"required_scopes,omitempty"`
-	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
-	SubjectClaim      string   `json:"subject_claim,omitempty"`
+// ExchangeCredentials returns the client token exchanges are signed with: the
+// dedicated exchange client, or the login client of a provider configured
+// before the exchange client existed. A configured exchange client without a
+// usable secret (missing, or stored but unreadable) yields ok=false rather than
+// the login client, so an exchange is never signed by a client the operator
+// did not choose for it.
+func (c *OAuth2Config) ExchangeCredentials() (clientID, clientSecret string, ok bool) {
+	if c == nil {
+		return "", "", false
+	}
+	if strings.TrimSpace(c.ExchangeClientID) != "" {
+		if c.ExchangeClientSecret == "" || c.ExchangeSecretUnreadable {
+			return "", "", false
+		}
+		return c.ExchangeClientID, c.ExchangeClientSecret, true
+	}
+	if c.ClientID != "" && c.ClientSecret != "" {
+		return c.ClientID, c.ClientSecret, true
+	}
+	return "", "", false
 }
 
 type MTLSConfig struct {
@@ -65,9 +132,57 @@ type MTLSConfig struct {
 }
 
 func (c *Config) ResolveSecretsFrom(prev Config) {
-	if c.OAuth2 != nil && prev.OAuth2 != nil {
-		c.OAuth2.ClientSecret = secret.Resolve(c.OAuth2.ClientSecret, prev.OAuth2.ClientSecret)
+	if c.OAuth2 == nil || prev.OAuth2 == nil {
+		return
 	}
+	login := storedClient{id: prev.OAuth2.ClientID, secret: prev.OAuth2.ClientSecret}
+	exchange := storedClient{id: prev.OAuth2.ExchangeClientID, secret: prev.OAuth2.ExchangeClientSecret}
+	c.OAuth2.ClientSecret = carrySecret(c.OAuth2.ClientID, c.OAuth2.ClientSecret, login, exchange)
+	c.OAuth2.ExchangeClientSecret = carrySecret(c.OAuth2.ExchangeClientID, c.OAuth2.ExchangeClientSecret, exchange, login)
+	c.OAuth2.ClientSecret, c.OAuth2.ClientSecretUnreadable = carryUnreadable(
+		c.OAuth2.ClientID, c.OAuth2.ClientSecret, prev.OAuth2.ClientID, prev.OAuth2.ClientSecretUnreadable)
+	c.OAuth2.ExchangeClientSecret, c.OAuth2.ExchangeSecretUnreadable = carryUnreadable(
+		c.OAuth2.ExchangeClientID, c.OAuth2.ExchangeClientSecret, prev.OAuth2.ExchangeClientID, prev.OAuth2.ExchangeSecretUnreadable)
+}
+
+// carryUnreadable keeps the mark of a stored secret that could not be
+// decrypted while the same client sends it back empty or masked; the secret
+// then stays empty, so the repository keeps the stored value.
+func carryUnreadable(id, incoming, prevID string, prevUnreadable bool) (string, bool) {
+	id = strings.TrimSpace(id)
+	if prevUnreadable && id != "" && id == strings.TrimSpace(prevID) && (incoming == "" || secret.IsMasked(incoming)) {
+		return "", true
+	}
+	return incoming, false
+}
+
+type storedClient struct{ id, secret string }
+
+// carrySecret fills a blank or masked secret from the stored client with the
+// same id: the same pair first, then the other pair only when the same pair
+// held a different id, so moving a client between the login and exchange pairs
+// keeps its secret. A stored secret belongs to its client: clearing the id
+// clears the secret, even one echoed masked. A new id with a blank secret is
+// public; with a masked one it stays masked so validation refuses it. A
+// same-pair public client is never filled from the other pair.
+func carrySecret(id, incoming string, same, other storedClient) string {
+	if incoming != "" && !secret.IsMasked(incoming) {
+		return incoming
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if id == strings.TrimSpace(same.id) {
+		if same.secret != "" {
+			return same.secret
+		}
+		return incoming
+	}
+	if other.secret != "" && id == strings.TrimSpace(other.id) {
+		return other.secret
+	}
+	return incoming
 }
 
 func (c Config) Validate(t Type) error {
@@ -77,16 +192,11 @@ func (c Config) Validate(t Type) error {
 			return fmt.Errorf("%w: api_key auth does not accept a config payload", ErrInvalidConfig)
 		}
 		return nil
-	case TypeOAuth2:
+	case TypeOAuth2, TypeOIDC:
 		if c.OAuth2 == nil || c.populatedCount() != 1 {
 			return fmt.Errorf("%w: exactly the oauth2 config payload must be set for type %q", ErrInvalidConfig, t)
 		}
 		return c.OAuth2.validate()
-	case TypeOIDC:
-		if c.OIDC == nil || c.populatedCount() != 1 {
-			return fmt.Errorf("%w: exactly the oidc config payload must be set for type %q", ErrInvalidConfig, t)
-		}
-		return c.OIDC.validate()
 	case TypeMTLS:
 		if c.MTLS == nil || c.populatedCount() != 1 {
 			return fmt.Errorf("%w: exactly the mtls config payload must be set for type %q", ErrInvalidConfig, t)
@@ -99,7 +209,7 @@ func (c Config) Validate(t Type) error {
 
 func (c Config) populatedCount() int {
 	count := 0
-	for _, set := range []bool{c.OAuth2 != nil, c.OIDC != nil, c.MTLS != nil} {
+	for _, set := range []bool{c.OAuth2 != nil, c.MTLS != nil} {
 		if set {
 			count++
 		}
@@ -110,6 +220,12 @@ func (c Config) populatedCount() int {
 func (c *OAuth2Config) validate() error {
 	if secret.IsMasked(c.ClientSecret) {
 		return fmt.Errorf("%w: oauth2.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
+	}
+	if err := c.validateExchangeClient(); err != nil {
+		return err
+	}
+	if err := c.validateLoginScopes(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
@@ -144,15 +260,93 @@ func (c *OAuth2Config) validate() error {
 	if err := c.validateAuthorizationEndpoints(); err != nil {
 		return err
 	}
-	if !c.SessionMode && strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
-		// Without an explicit endpoint the JWKS is resolved via OIDC
-		// discovery, which needs the issuer to be a resolvable http(s) URL.
-		u, err := url.Parse(strings.TrimSpace(c.Issuer))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
+	for _, alg := range c.Algorithms {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(alg)), "HS") {
+			return fmt.Errorf("%w: oauth2.allowed_algorithms must not include HMAC algorithms", ErrInvalidConfig)
+		}
+	}
+	if !c.SessionMode &&
+		strings.TrimSpace(c.JWKSURL) == "" &&
+		strings.TrimSpace(c.IntrospectionURL) == "" &&
+		!c.HasInlineKeys() {
+		// Without an explicit endpoint or inline keys the JWKS is resolved via
+		// OIDC discovery, which needs the issuer to be a resolvable http(s) URL.
+		if !isHTTPURL(c.Issuer) {
+			return fmt.Errorf("%w: oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
 	}
 	return nil
+}
+
+func (c *OAuth2Config) validateExchangeClient() error {
+	if secret.IsMasked(c.ExchangeClientSecret) {
+		return fmt.Errorf("%w: oauth2.exchange_client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
+	}
+	hasSecret := strings.TrimSpace(c.ExchangeClientSecret) != "" || c.ExchangeSecretUnreadable
+	if (strings.TrimSpace(c.ExchangeClientID) == "") == hasSecret {
+		return fmt.Errorf("%w: oauth2.exchange_client_id and oauth2.exchange_client_secret must be set together", ErrInvalidConfig)
+	}
+	return nil
+}
+
+func (c *OAuth2Config) validateLoginScopes() error {
+	if len(c.LoginScopes) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("%w: oauth2.login_scopes requires oauth2.client_id (they are only sent when the gateway signs people in)", ErrInvalidConfig)
+	}
+	// In session mode the provider returns the granted scopes in URI form
+	// (api://app/scope), which RequiredScopes then fails to match.
+	if c.SessionMode {
+		return fmt.Errorf("%w: oauth2.login_scopes are for pass-through sign-in; turn oauth2.session_mode off to use them", ErrInvalidConfig)
+	}
+	scopes := make([]string, 0, len(c.LoginScopes))
+	for _, scope := range c.LoginScopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return fmt.Errorf("%w: oauth2.login_scopes cannot contain empty entries", ErrInvalidConfig)
+		}
+		if strings.ContainsFunc(scope, unicode.IsSpace) {
+			return fmt.Errorf("%w: oauth2.login_scopes entry %q cannot contain whitespace; send one scope per entry", ErrInvalidConfig, scope)
+		}
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	c.LoginScopes = scopes
+	return nil
+}
+
+// HasInlineKeys reports whether inline verification keys are configured. It is
+// the single predicate for that question so runtime discovery-skip cannot drift
+// from admin-time validation, whitespace-only entries included.
+func (c *OAuth2Config) HasInlineKeys() bool {
+	return c != nil && len(trimmedNonEmpty(c.PublicKeys)) > 0
+}
+
+// Interactive reports whether this identity provider can broker a user login:
+// the gateway needs a client registered at the provider (client_id) to run the
+// authorization-code flow. A validation-only config (issuer + JWKS, no client)
+// can verify tokens an application obtained by itself, but nobody can sign in
+// through it.
+func (c *OAuth2Config) Interactive() bool {
+	if c == nil || strings.TrimSpace(c.ClientID) == "" {
+		return false
+	}
+	// A registered client is not enough on its own: the flow also needs a way
+	// to reach the authorization and token endpoints, either explicitly or
+	// through discovery on an http(s) issuer. Without one, /authorize fails
+	// against the provider after the client has already been sent there.
+	if strings.TrimSpace(c.AuthorizeURL) != "" && strings.TrimSpace(c.TokenURL) != "" {
+		return true
+	}
+	return isHTTPURL(c.Issuer)
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // validateAuthorizationEndpoints enforces the manual brokering endpoints used
@@ -179,24 +373,6 @@ func (c *OAuth2Config) validateAuthorizationEndpoints() error {
 	}
 	c.AuthorizeURL = authorizeURL
 	c.TokenURL = tokenURL
-	return nil
-}
-
-func (c *OIDCConfig) validate() error {
-	if strings.TrimSpace(c.Issuer) == "" {
-		return fmt.Errorf("%w: oidc.issuer is required", ErrInvalidConfig)
-	}
-	if len(trimmedNonEmpty(c.Audiences)) == 0 {
-		return fmt.Errorf("%w: oidc.audiences is required", ErrInvalidConfig)
-	}
-	if strings.TrimSpace(c.JWKSURL) == "" && len(trimmedNonEmpty(c.PublicKeys)) == 0 {
-		return fmt.Errorf("%w: oidc requires jwks_url or public_keys", ErrInvalidConfig)
-	}
-	for _, alg := range c.AllowedAlgorithms {
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(alg)), "HS") {
-			return fmt.Errorf("%w: oidc.allowed_algorithms must not include HMAC algorithms", ErrInvalidConfig)
-		}
-	}
 	return nil
 }
 

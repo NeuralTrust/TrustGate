@@ -15,6 +15,7 @@
 package trace
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ type Metadata struct {
 	TenantID     string
 	ConsumerID   string
 	ConsumerName string
+	AuthID       string
 	Path         string
 	Method       string
 	IP           string
@@ -54,10 +56,10 @@ type Metadata struct {
 // EndUser is a client-declared end user. Every field is optional — front-ends
 // forward different subsets — and none of them is verified.
 type EndUser struct {
-	ID     string
-	Email  string
-	Name   string
-	Role   string
+	ID    string
+	Email string
+	Name  string
+	Role  string
 	// Source names the convention the values were read from (e.g. "open_webui").
 	Source string
 }
@@ -142,6 +144,16 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 	t.mu.Unlock()
 }
 
+// SetAuthID records the auth that authenticated the request.
+func (t *RequestTrace) SetAuthID(id string) {
+	if id == "" {
+		return
+	}
+	t.mu.Lock()
+	t.meta.AuthID = id
+	t.mu.Unlock()
+}
+
 func (t *RequestTrace) SetPrincipal(subject string) {
 	t.SetPrincipalIdentity(subject, "", "")
 }
@@ -161,6 +173,25 @@ func (t *RequestTrace) SetPrincipalIdentity(subject, method, email string) {
 	if email != "" {
 		t.meta.PrincipalEmail = email
 	}
+}
+
+// EndUserSourceNeuralTrust marks an end user taken from the
+// X-NeuralTrust-End-User header (see SetEndUser). It matches
+// events.EndUserSourceNeuralTrust; events imports this package, not the reverse.
+const EndUserSourceNeuralTrust = "neuraltrust"
+
+// SetEndUser records the end-user id the application forwarded in
+// X-NeuralTrust-End-User. The handler validates that value and uses it to pick
+// the end user's own MCP connections, so it replaces whatever the metrics
+// middleware detected from a front-end's headers: attribution must name the
+// same person the request was served for.
+func (t *RequestTrace) SetEndUser(id string) {
+	if id == "" {
+		return
+	}
+	t.mu.Lock()
+	t.meta.EndUser = &EndUser{ID: strings.Clone(id), Source: EndUserSourceNeuralTrust}
+	t.mu.Unlock()
 }
 
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }

@@ -21,6 +21,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -32,9 +34,13 @@ import (
 
 type fakeLister struct {
 	byScope map[string][]configsyncconn.Connection
+	pages   *[]*listing.Page
 }
 
-func (f fakeLister) List(_ context.Context, scope string) ([]configsyncconn.Connection, error) {
+func (f fakeLister) List(_ context.Context, scope string, page *listing.Page) ([]configsyncconn.Connection, error) {
+	if f.pages != nil {
+		*f.pages = append(*f.pages, page)
+	}
 	return f.byScope[scope], nil
 }
 
@@ -94,4 +100,28 @@ func TestListConnectionsHandler_AdminAuthEnforced(t *testing.T) {
 	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/config-sync/connections", nil))
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestListConnectionsHandler_PaginatesOnlyWhenAsked(t *testing.T) {
+	var pages []*listing.Page
+	app := newApp(fakeLister{byScope: map[string][]configsyncconn.Connection{}, pages: &pages})
+
+	for _, target := range []string{
+		"/v1/config-sync/connections?scope=gw",
+		"/v1/config-sync/connections?scope=gw&page=3&size=10",
+	} {
+		resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, target, nil))
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	}
+
+	assert.Equal(t, []*listing.Page{nil, {Number: 3, Size: 10}}, pages)
+}
+
+func TestListConnectionsHandler_RejectsBadPagination(t *testing.T) {
+	app := newApp(fakeLister{})
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/config-sync/connections?page=0", nil))
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 }

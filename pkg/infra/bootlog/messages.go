@@ -24,9 +24,12 @@ const (
 	RedisPubSubShuttingDown    = "📴 redis pubsub listener shutting down"
 	CatalogSyncCompleted       = "📚 catalog sync completed"
 	ConfigSyncWorkerStarted    = "🔄 config sync worker started"
+	RateLimitSyncStarted       = "⏱️  rate limit sync started"
 	MetricsWorkerStarted       = "📊 metrics worker started"
 	MetricsWorkersShuttingDown = "📉 shutting down metrics workers"
 	MetricsWorkersStopped      = "✅ metrics workers stopped"
+	TrafficLabelsStarted       = "🏷️  traffic labels started"
+	TrafficLabelsStopped       = "✅ traffic labels stopped"
 )
 
 func rolePrefix(name string) string {

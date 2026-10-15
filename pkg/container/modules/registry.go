@@ -21,13 +21,22 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"go.uber.org/dig"
 )
 
 func Registry(c *container.Container) error {
@@ -37,25 +46,95 @@ func Registry(c *container.Container) error {
 	return provideRegistryServices(c)
 }
 
+// registryRepositoryDeps carries the consumer and policy repositories so a
+// registry delete can prune the routing JSONB and the policy mcp_scope that
+// reference it in the delete's own transaction, which no foreign key can
+// cascade.
+//
+// RUN-1501: Consumers is deliberately not `optional`. Only Registry and
+// Consumer together (modules.All) provide this repository, so an unsatisfied
+// field is never legitimate - it would just trade a boot failure for a
+// DELETE /registries/{id} that answers 204 while leaving the dangling
+// references this ticket removes, with no error and no log.
+// RUN-1597: Policies follows the same rule for the mcp_scope prune.
+type registryRepositoryDeps struct {
+	dig.In
+	Conn      *database.Connection
+	Encrypter vaultdomain.Encrypter
+	Sealer    *crypto.FieldSealer
+	Config    *config.Config
+	Appender  outboxrepo.Appender
+	Consumers *consumerrepo.Repository
+	Policies  *policyrepo.Repository
+}
+
 func provideRegistryRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter, appender outboxrepo.Appender) domain.Repository {
-		return registryrepo.NewRepository(conn, enc, appender)
+	if err := c.Provide(func(deps registryRepositoryDeps) *registryrepo.Repository {
+		return registryrepo.NewRepository(
+			deps.Conn,
+			deps.Encrypter,
+			deps.Appender,
+			registryrepo.WithFieldSealer(deps.Sealer, deps.Config.Server.StoredSecretsEncryptionEnabled),
+			registryrepo.WithDeleteHook(deps.Consumers.PruneRegistryReferencesTx),
+			registryrepo.WithDeleteHook(deps.Policies.PruneRegistryReferencesTx),
+		)
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(r *registryrepo.Repository) domain.Repository {
+		return r
 	})
 }
 
+// registryDeleterCleaners carries the optional Store repositories (full plane
+// only) so a registry delete can clean its instance-level grants and deny the
+// pending requests for a deleted custom server.
+type registryDeleterCleaners struct {
+	dig.In
+	Grants   storeaccessdomain.Repository  `optional:"true"`
+	Installs installationdomain.Repository `optional:"true"`
+}
+
+func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.DeleterOption {
+	var opts []appregistry.DeleterOption
+	if p.Grants != nil {
+		opts = append(opts, appregistry.WithDependentCleaner(p.Grants))
+	}
+	if denier, ok := p.Installs.(installationdomain.PendingDenier); ok {
+		opts = append(opts, appregistry.WithDependentCleaner(appstore.NewDeletedServerRequests(denier, logger)))
+	}
+	return opts
+}
+
+// registryAuthParams carries the auth repository a save uses to check
+// mcp_target.auth.identity_id. Optional so a container without auths still
+// boots; such a container refuses targets that set it.
+type registryAuthParams struct {
+	dig.In
+	Auths authdomain.Repository `optional:"true"`
+}
+
+func (l registryAuthParams) options(compiler appopenapi.Compiler) []appregistry.Option {
+	opts := []appregistry.Option{appregistry.WithOpenAPICompiler(compiler)}
+	if l.Auths != nil {
+		opts = append(opts, appregistry.WithAuthLookup(l.Auths))
+	}
+	return opts
+}
+
 func provideRegistryServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, compiler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, auths registryAuthParams) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, auths.options(compiler)...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Updater {
-		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog, compiler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, auths registryAuthParams) appregistry.Updater {
+		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog, auths.options(compiler)...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.Deleter {
-		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, cleaners registryDeleterCleaners) appregistry.Deleter {
+		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler, cleaners.options(logger)...)
 	}); err != nil {
 		return err
 	}

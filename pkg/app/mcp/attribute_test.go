@@ -145,11 +145,11 @@ func TestComposer_ListTools_AttributesEachUpstream(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("tools = %v, want 2", toolNames(got))
 	}
-	if got[0].Name != "list_meetings" || mustToolFields(t, got[0])["title"] != "Granola: List Meetings" {
+	if got[0].Name != namedFor(granola, "list_meetings") || mustToolFields(t, got[0])["title"] != "Granola: List Meetings" {
 		t.Fatalf("granola tool = name %q title %#v", got[0].Name, mustToolFields(t, got[0])["title"])
 	}
 	gmailFields := mustToolFields(t, got[1])
-	if got[1].Name != "get_draft" || gmailFields["title"] != "Gmail: get_draft" {
+	if got[1].Name != namedFor(gmail, "get_draft") || gmailFields["title"] != "Gmail: get_draft" {
 		t.Fatalf("gmail tool = name %q title %#v", got[1].Name, gmailFields["title"])
 	}
 }

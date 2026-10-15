@@ -26,6 +26,8 @@ import (
 
 func strptr(s string) *string { return &s }
 
+func i64ptr(v int64) *int64 { return &v }
+
 func attrsOf(rec otellog.Record) map[string]attribute.Value {
 	m := make(map[string]attribute.Value, rec.AttributesLen())
 	rec.WalkAttributes(func(kv attribute.KeyValue) bool {
@@ -76,7 +78,7 @@ func fullEvent() *events.Event {
 			ReasoningOutputTokens:   1,
 		},
 		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), SavingsUsd: &savingsUsd, Currency: "USD"},
-		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
+		Latency: events.Latency{TotalMs: 120, ProviderMs: i64ptr(100), PoliciesMs: 14, GatewayMs: 6},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
 		},
@@ -128,10 +130,38 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
 	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
 	assert.Equal(t, int64(6), attrs["trustgate.latency.gateway_ms"].AsInt64())
+	assert.Equal(t,
+		attrs["trustgate.latency.total_ms"].AsInt64(),
+		attrs["trustgate.latency.provider_ms"].AsInt64()+
+			attrs["trustgate.latency.policies_ms"].AsInt64()+
+			attrs["trustgate.latency.gateway_ms"].AsInt64(),
+		"the three buckets reconcile against total_ms; the exporter must not break the split the builder made")
 
 	assert.Contains(t, attrs["trustgate.policy_chain"].AsString(), "rate-limit")
 	assert.Equal(t, int64(1), attrs["trustgate.attempts.count"].AsInt64())
 	assert.Contains(t, attrs["trustgate.attempts"].AsString(), "openai")
+}
+
+func TestEventToRecord_EmitsTheAuthIDOnlyWhenPresent(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"application key on a consumer": "auth-1",
+		"no auth id":                    "",
+	}
+	for name, authID := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			evt := fullEvent()
+			evt.AuthID = authID
+
+			got, present := attrsOf(eventToRecord(evt))["trustgate.auth.id"]
+
+			assert.Equal(t, authID != "", present)
+			if present {
+				assert.Equal(t, authID, got.AsString())
+			}
+		})
+	}
 }
 
 func TestEventToRecord_OmitsBodies(t *testing.T) {
@@ -146,6 +176,18 @@ func TestEventToRecord_OmitsBodies(t *testing.T) {
 	assert.Empty(t, rec.Body().AsString())
 	_, hasRequestBody := attrs["trustgate.request.body"]
 	assert.False(t, hasRequestBody)
+}
+
+func TestEventToRecord_SecurityUsesJSONString(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Security = []string{"code_injection", "prompt_injection"}
+	security := attrsOf(eventToRecord(evt))[attrSecurity]
+	assert.Equal(t, attribute.STRING, security.Type())
+	assert.JSONEq(t, `["code_injection","prompt_injection"]`, security.AsString())
+	evt.Security = nil
+	_, exists := attrsOf(eventToRecord(evt))[attrSecurity]
+	assert.False(t, exists)
 }
 
 func TestEventToRecord_Severity(t *testing.T) {
@@ -233,6 +275,31 @@ func TestEventToRecord_Nil(t *testing.T) {
 	assert.Equal(t, "", rec.EventName())
 }
 
+func TestEventToRecord_OmitsProviderMsWhenNoAttempt(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Latency.ProviderMs = nil
+	evt.Attempts = nil
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	_, ok := attrs["trustgate.latency.provider_ms"]
+	assert.False(t, ok, "a request that never called the provider must not emit provider_ms")
+	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
+	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
+}
+
+func TestEventToRecord_EmitsZeroProviderMsForFastAttempt(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	zero := int64(0)
+	evt.Latency.ProviderMs = &zero
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	assert.Equal(t, int64(0), attrs["trustgate.latency.provider_ms"].AsInt64())
+}
+
 func TestEventToRecord_OmitsSavingsWhenAbsent(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()
@@ -298,4 +365,57 @@ func TestSensibleView_CarriesRetention(t *testing.T) {
 	evt.Retention = &events.Retention{Plan: "enterprise", ExpiresAt: 1_731_536_000_000}
 
 	assert.Equal(t, evt.Retention, evt.SensibleView().Retention)
+}
+
+// TestEventToRecord_PrincipalMethodPassesThroughVerbatim pins the RUN-1501
+// principal-method values on the wire. The attribute is a low-cardinality
+// string with no mapping table on either side, so whatever the gateway stamps
+// is exactly what an operator reads.
+func TestEventToRecord_PrincipalMethodPassesThroughVerbatim(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{"oauth", "external_jwt", "api_key", "mtls", "introspection", "jwt"} {
+		t.Run(method, func(t *testing.T) {
+			rec := eventToRecord(&events.Event{
+				SchemaVersion:   events.SchemaVersion,
+				Kind:            events.KindLLM,
+				TraceID:         "trace-1",
+				GatewayID:       "gw-1",
+				PrincipalMethod: method,
+			})
+			assert.Equal(t, method, attrsOf(rec)[attrPrincipalMethod].AsString())
+		})
+	}
+}
+
+// RUN-1710: a streamed external guardrail entry carries failure_reason and
+// failure_detail inside the policy-chain JSON, next to a failed_closed or
+// failed_open decision. The keys are not new attributes: they ride in the
+// existing trustgate.policy_chain string, so the mapping must pass them through
+// untouched (and the extras sanitizer must not mistake them for credentials).
+func TestEventToRecord_StreamedFailureReasonTravelsInThePolicyChain(t *testing.T) {
+	t.Parallel()
+	for _, decision := range []string{"failed_closed", "failed_open"} {
+		t.Run(decision, func(t *testing.T) {
+			t.Parallel()
+			ev := fullEvent()
+			ev.PolicyChain = []events.PolicyEntry{{
+				Name:     "bedrock_guardrail",
+				Stage:    "pre_response",
+				Decision: decision,
+				Extras: events.SanitizeExtras(map[string]any{
+					"decision":       decision,
+					"failure_reason": "transport",
+					"failure_detail": "throttled",
+					"streaming":      map[string]any{"enabled": true, "evals_total": 3},
+				}),
+			}}
+
+			attrs := attrsOf(eventToRecord(ev))
+
+			chain := attrs["trustgate.policy_chain"].AsString()
+			assert.Contains(t, chain, `"decision":"`+decision+`"`)
+			assert.Contains(t, chain, `"failure_reason":"transport"`)
+			assert.Contains(t, chain, `"failure_detail":"throttled"`)
+		})
+	}
 }

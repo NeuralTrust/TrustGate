@@ -33,6 +33,8 @@ type UpdateInput struct {
 	Type      *domain.Type
 	Enabled   *bool
 	Config    *domain.Config
+	// Expiry is left alone when nil; see ExpiryChange.
+	Expiry *ExpiryChange
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=auth_updater_mock.go --case=underscore --with-expecter
@@ -50,6 +52,7 @@ type updater struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	now          func() time.Time
 }
 
 func NewUpdater(
@@ -59,6 +62,7 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	now func() time.Time,
 ) Updater {
 	return &updater{
 		repo:         repo,
@@ -68,6 +72,7 @@ func NewUpdater(
 		publisher:    publisher,
 		logger:       logger,
 		signaler:     signaler,
+		now:          utcClock(now),
 	}
 }
 
@@ -79,13 +84,18 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	if err := existing.ManagedBy(""); err != nil {
+		return nil, err
+	}
 	previousType := existing.Type
 	previousEnabled := existing.Enabled
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
 	if in.Type != nil {
-		existing.Type = *in.Type
+		// Canonicalized on the way in, like create: a caller may still send the
+		// deprecated alias, but no row is written under it.
+		existing.Type = domain.NormalizeType(*in.Type)
 	}
 	if in.Enabled != nil {
 		existing.Enabled = *in.Enabled
@@ -94,7 +104,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 		in.Config.ResolveSecretsFrom(existing.Config)
 		existing.Config = *in.Config
 	}
-	existing.UpdatedAt = time.Now().UTC()
+	now := u.now()
+	if in.Expiry != nil {
+		if err := existing.SetExpiry(in.Expiry.At, now); err != nil {
+			return nil, err
+		}
+	}
+	existing.UpdatedAt = now
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}

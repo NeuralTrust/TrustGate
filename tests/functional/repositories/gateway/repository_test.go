@@ -19,6 +19,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
@@ -29,7 +30,7 @@ import (
 // setupRepo opens a pgx pool against PG_TEST_URL, applies all
 // registered migrations, and registers a cleanup that truncates the
 // gateways table between tests. When PG_TEST_URL is not set the test
-// is skipped — see AGENT.md §9.
+// is skipped — see AGENTS.md (Testing).
 func setupRepo(t *testing.T) (*repo.Repository, *database.Connection) {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
@@ -132,6 +133,75 @@ func TestRepository_SaveAndFindByID_NullableJSONB(t *testing.T) {
 	}
 	if got.ClientTLSConfig != nil {
 		t.Fatalf("ClientTLSConfig should be nil for NULL column, got %+v", got.ClientTLSConfig)
+	}
+	if got.TrafficLabeling != nil {
+		t.Fatalf("TrafficLabeling should be nil for NULL column, got %+v", got.TrafficLabeling)
+	}
+}
+
+func TestRepository_TrafficLabeling_RoundTrip(t *testing.T) {
+	r, conn := setupRepo(t)
+	ctx := context.Background()
+
+	isNull := func(id ids.GatewayID) bool {
+		t.Helper()
+		var null bool
+		if err := conn.Pool.QueryRow(ctx, `SELECT traffic_labeling IS NULL FROM gateways WHERE id = $1`, id).Scan(&null); err != nil {
+			t.Fatalf("read traffic_labeling: %v", err)
+		}
+		return null
+	}
+
+	unset, _ := domain.New("unset")
+	if err := r.Save(ctx, unset); err != nil {
+		t.Fatalf("Save unset: %v", err)
+	}
+	if !isNull(unset.ID) {
+		t.Fatal("a gateway without traffic labeling must store SQL NULL, not JSON null")
+	}
+
+	rate := 0.25
+	registryID := ids.New[ids.RegistryKind]().String()
+	g, _ := domain.New("labeled")
+	g.TrafficLabeling = &trafficlabel.Config{
+		Enabled:       true,
+		RegistryID:    registryID,
+		Model:         "gpt-4o-mini",
+		MessageWindow: 5,
+		SamplingRate:  &rate,
+	}
+	if err := r.Save(ctx, g); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := r.FindByID(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	tl := got.TrafficLabeling
+	if tl == nil || !tl.Enabled || tl.RegistryID != registryID || tl.Model != "gpt-4o-mini" ||
+		tl.MessageWindow != 5 || tl.SamplingRate == nil || *tl.SamplingRate != 0.25 {
+		t.Fatalf("TrafficLabeling round-trip lost data: %+v", tl)
+	}
+
+	got.TrafficLabeling = &trafficlabel.Config{Enabled: false, RegistryID: tl.RegistryID, Model: tl.Model}
+	got.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	updated, err := r.FindByID(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
+	if updated.TrafficLabeling == nil || updated.TrafficLabeling.Enabled || updated.TrafficLabeling.RegistryID != registryID {
+		t.Fatalf("Update did not persist the disabled config: %+v", updated.TrafficLabeling)
+	}
+
+	updated.TrafficLabeling = nil
+	if err := r.Update(ctx, updated); err != nil {
+		t.Fatalf("Update clearing: %v", err)
+	}
+	if !isNull(g.ID) {
+		t.Fatal("clearing traffic labeling must store SQL NULL")
 	}
 }
 

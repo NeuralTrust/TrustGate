@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
@@ -44,11 +46,57 @@ type Rule struct {
 	Multiline       bool   `mapstructure:"multiline"`
 }
 
+// Streaming defaults. The rules run locally, but they run over the whole
+// prefix on every block — a pattern can straddle a block boundary, so the
+// delta alone is not safe to match against — which makes the work quadratic in
+// the length of the response. The cadence is what bounds it, so blocks are
+// deliberately larger here than the cost of one pass would suggest.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            400,
+	MinCharsBetweenEvals: 2048,
+	MaxHoldMS:            500,
+	MaxAccumulatedBytes:  262144,
+	GuardTimeout:         time.Second,
+}
+
 type Settings struct {
 	Target string `mapstructure:"target"`
 	Rules  []Rule `mapstructure:"rules"`
+	// Streaming configures per-block rewriting of the pre_response leg.
+	Streaming streamingSettings `mapstructure:"streaming"`
 
 	compiled []compiledRule
+}
+
+// streamingSettings is the shared streaming block plus the one key regex_replace
+// keeps beside it. The rewrite is a mask, not a guardrail: when a block cannot
+// be rewritten the held text is unmasked, so the stream leg fails closed unless
+// the policy says otherwise.
+type streamingSettings struct {
+	pluginutil.StreamingSettings `mapstructure:",squash"`
+	OnError                      string `mapstructure:"on_error"`
+}
+
+func (s *streamingSettings) applyDefaults() {
+	s.ApplyDefaults(streamingDefaults)
+	if s.OnError == "" {
+		s.OnError = pluginutil.StreamOnErrorFailClosed
+	}
+}
+
+func (s streamingSettings) validate() error {
+	switch s.OnError {
+	case pluginutil.StreamOnErrorFailOpen, pluginutil.StreamOnErrorFailClosed:
+	default:
+		return fmt.Errorf("%s: streaming.on_error must be one of fail_open, fail_closed", PluginName)
+	}
+	return s.Validate(PluginName)
+}
+
+func (s streamingSettings) Options() appplugins.StreamOptions {
+	opts := s.StreamingSettings.Options()
+	opts.OnError = s.OnError
+	return opts
 }
 
 type compiledRule struct {
@@ -61,6 +109,12 @@ func parseConfig(settings map[string]any) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
+	// The buffered leg cannot fail: the rules are local and a rewrite that does
+	// not apply leaves the text alone. The stream leg defaults to fail_closed all
+	// the same, because there its one failure mode is a rewrite that cannot
+	// reach text already released, and releasing unmasked text is what the
+	// rules exist to prevent.
+	cfg.Streaming.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return Settings{}, err
 	}
@@ -84,7 +138,7 @@ func (s *Settings) validate() error {
 			return fmt.Errorf("%w: rule %d", ErrEmptyPattern, i)
 		}
 	}
-	return nil
+	return s.Streaming.validate()
 }
 
 func (s *Settings) compile() error {
@@ -118,4 +172,17 @@ func (s Settings) isRequestLeg() bool {
 
 func (s Settings) isResponseLeg() bool {
 	return s.Target == targetResponse
+}
+
+// RetiredSettings lists the settings keys this policy never stores: the plugin
+// ignores them, so a stored value would read as behaviour the policy does not
+// have.
+// streaming.on_error is not among them: regex_replace is a rewriter and its
+// stream leg fails closed on it. streaming.guard_timeout is: the stream leg runs
+// under the plugin's default guard timeout.
+func (p *Plugin) RetiredSettings() []string {
+	return []string{
+		pluginutil.SettingOnMaskFailure,
+		pluginutil.SettingStreamingGuardTimeout,
+	}
 }

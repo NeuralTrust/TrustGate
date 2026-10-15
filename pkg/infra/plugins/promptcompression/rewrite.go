@@ -16,15 +16,17 @@ package promptcompression
 
 import "github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 
-// rewriteRequest compresses the canonical request in place and re-encodes it.
+// rewriteRequest compresses the canonical request in place and grafts the
+// change onto the original body.
 // Because every transform is deterministic and applied uniformly to the whole
 // conversation, a message compresses to the same bytes on every turn, so
 // provider prompt-cache prefixes stay stable across requests.
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, cfg Settings) ([]byte, bool, error) {
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, cfg Settings) ([]byte, bool, error) {
 	adp, err := reg.GetAdapter(format)
 	if err != nil {
 		return nil, false, err
 	}
+	baseline := creq.Clone()
 	changed := false
 	if creq.System != "" && cfg.appliesToRole("system") {
 		if out, did := compressContent(creq.System, cfg); did {
@@ -59,7 +61,7 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 	if !changed {
 		return nil, false, nil
 	}
-	body, err := adp.EncodeRequest(creq)
+	body, err := adapter.GraftChangedFields(adp, original, baseline, creq)
 	if err != nil {
 		return nil, false, err
 	}

@@ -83,7 +83,9 @@ func (a *connectAuditor) log(
 }
 
 func connectAuditIdentity(ticket *ConnectTicket) (ConnectAuditIdentity, bool) {
-	if ticket == nil || ticket.ConsumerID == "" || ticket.AuthID == "" {
+	// AuthID is empty on a ticket an admin minted through the admin API, which
+	// is exactly a path worth auditing: only the consumer is required.
+	if ticket == nil || ticket.ConsumerID == "" {
 		return ConnectAuditIdentity{}, false
 	}
 	return ConnectAuditIdentity{

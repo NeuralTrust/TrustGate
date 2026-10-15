@@ -16,6 +16,7 @@ package trustguard
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -41,7 +42,7 @@ func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 		RequestID: "req-1",
 	}
 	wantMessage := "Request blocked by security policy: jailbreak (Jailbreak detector)."
-	raw := blockBody(resp, clientBlockMessage(resp))
+	raw := blockBody(resp, clientBlockMessage(resp), directionInput)
 
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &body); err != nil {
@@ -113,7 +114,7 @@ func TestBlockBodyIncludesGateName(t *testing.T) {
 			Outcome: &GuardFindingOutcome{Action: "block"},
 		}},
 	}
-	raw := blockBody(resp, clientBlockMessage(resp))
+	raw := blockBody(resp, clientBlockMessage(resp), directionInput)
 
 	var body struct {
 		Type     string `json:"type"`
@@ -178,5 +179,60 @@ func TestRateLimitErrorEmptyBodyFallback(t *testing.T) {
 	want := `{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded."}`
 	if string(pe.Body) != want {
 		t.Fatalf("body = %s, want %s", pe.Body, want)
+	}
+}
+
+func blockDirectionOf(t *testing.T, raw []byte) string {
+	t.Helper()
+	var body struct {
+		Direction string `json:"direction"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal block body: %v", err)
+	}
+	return body.Direction
+}
+
+func TestBlockBodyCarriesDirection(t *testing.T) {
+	t.Parallel()
+
+	resp := &GuardResponse{Status: statusBlock}
+	tests := []struct {
+		name      string
+		direction string
+		want      string
+	}{
+		{name: "input", direction: directionInput, want: "input"},
+		{name: "output", direction: directionOutput, want: "output"},
+		{name: "unknown stays out of the body", direction: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw := blockBody(resp, clientBlockMessage(resp), tt.direction)
+			if got := blockDirectionOf(t, raw); got != tt.want {
+				t.Fatalf("direction = %q, want %q in %s", got, tt.want, raw)
+			}
+			if tt.want == "" && strings.Contains(string(raw), `"direction"`) {
+				t.Fatalf("empty direction must be omitted, got %s", raw)
+			}
+		})
+	}
+}
+
+// The human message is the same on both legs: the direction is a field, not a
+// rewording.
+func TestBlockErrorKeepsMessageAcrossDirections(t *testing.T) {
+	t.Parallel()
+
+	resp := &GuardResponse{Status: statusBlock}
+	in := blockError(resp, directionInput)
+	out := blockError(resp, directionOutput)
+	if in.Message != out.Message || in.Message != blockMessage {
+		t.Fatalf("messages differ: %q vs %q", in.Message, out.Message)
+	}
+	if blockDirectionOf(t, in.Body) != "input" || blockDirectionOf(t, out.Body) != "output" {
+		t.Fatalf("bodies = %s / %s", in.Body, out.Body)
 	}
 }

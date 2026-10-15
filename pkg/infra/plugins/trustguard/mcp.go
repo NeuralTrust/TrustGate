@@ -34,6 +34,22 @@ type mcpToolResult struct {
 type mcpContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	// Resource is held raw and decoded per block rather than typed here. A
+	// server that sends a resource field of the wrong shape would otherwise
+	// fail the whole mcpToolResult decode, and every sibling block — including
+	// well-formed text — would escape inspection with it. That would hand any
+	// MCP server a one-field switch for turning the guard off.
+	Resource json.RawMessage `json:"resource"`
+}
+
+// mcpResourceContents is the payload of an embedded resource content block. The
+// MCP spec gives it either text or a base64 blob; only the text half can be
+// inspected or masked, so a binary resource is treated as having nothing to
+// inspect rather than being decoded.
+type mcpResourceContents struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType"`
+	Text     string `json:"text"`
 }
 
 // mcpInputText returns the tool name plus every string value flattened from the
@@ -53,10 +69,10 @@ func mcpInputText(body []byte) string {
 }
 
 // mcpOutputText concatenates the inspectable text of a CallToolResult: the text
-// of every text content block (ignoring image/audio/resource blocks) followed by
-// every string leaf of structuredContent, in the order rewriteMCPResponse writes
-// them back. The isError flag does not change extraction. It returns "" when
-// there is nothing to inspect.
+// of every text content block and of every embedded resource (image and audio
+// blocks carry no text), followed by every string leaf of structuredContent, in
+// the order rewriteMCPResponse writes them back. The isError flag does not
+// change extraction. It returns "" when there is nothing to inspect.
 //
 // structuredContent is included because a tool may return its payload there
 // instead of, or in addition to, text blocks — it reaches the agent all the
@@ -70,10 +86,11 @@ func mcpOutputText(body []byte) string {
 	}
 	parts := make([]string, 0, len(result.Content))
 	for _, block := range result.Content {
-		if !blockIsText(block) || strings.TrimSpace(block.Text) == "" {
+		text := blockInspectableText(block)
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		parts = append(parts, block.Text)
+		parts = append(parts, text)
 	}
 	parts = append(parts, flattenArgumentStrings(result.StructuredContent)...)
 	return strings.Join(parts, "\n")
@@ -141,6 +158,33 @@ func blockIsText(block mcpContentBlock) bool {
 		return block.Text != ""
 	}
 	return block.Type == "text"
+}
+
+// blockInspectableText returns the text a content block contributes to
+// inspection, or "" when it contributes none.
+//
+// An embedded resource is included because it is a payload, not a pointer: a
+// server is free to answer with {"type":"resource","resource":{"text":"…"}}
+// instead of a text block, and the bytes reach the agent either way. Leaving it
+// out meant mcpOutputInspectable reported such a result as having nothing to
+// inspect, so the guard was never called — no detection, no event, no log.
+//
+// blockTextHolder in mcp_rewrite.go is the write-side mirror of this function.
+// The two must select the same blocks in the same order or redistribute will
+// misalign the masked halves, so they are changed together.
+func blockInspectableText(block mcpContentBlock) string {
+	if blockIsText(block) {
+		return block.Text
+	}
+	if block.Type == "resource" && len(block.Resource) > 0 {
+		var resource mcpResourceContents
+		if err := json.Unmarshal(block.Resource, &resource); err != nil {
+			// Malformed for this block only; siblings stay inspectable.
+			return ""
+		}
+		return resource.Text
+	}
+	return ""
 }
 
 // mcpToolsCallPayload wraps Gate's {name,arguments} tools/call params in the

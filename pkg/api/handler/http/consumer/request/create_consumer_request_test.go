@@ -16,6 +16,7 @@ package request
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -78,9 +79,10 @@ func TestLBConfigRequest_ToDomain_RoutesPerModel(t *testing.T) {
 			{RegistryID: registryID.String(), Model: "gpt-5"},
 		},
 		SmartRouting: &SmartRoutingConfigRequest{
+			SR1: &SR1ConfigRequest{CacheTTLSeconds: 300},
 			Tiers: []SmartRoutingTierRequest{
 				{MinScore: 0, RegistryID: registryID.String(), Model: "gpt-5-mini"},
-				{MinScore: 0.5, RegistryID: registryID.String(), Model: "gpt-5"},
+				{MinScore: 0.45, RegistryID: registryID.String(), Model: "gpt-5"},
 			},
 		},
 	}
@@ -118,5 +120,72 @@ func TestCreateConsumerRequest_ToRegistryBindings_RejectsWeightAboveMax(t *testi
 	_, _, _, err := req.ToRegistryBindings()
 	if !errors.Is(err, commonerrors.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+func TestIdentityRequest_ToDomain(t *testing.T) {
+	t.Parallel()
+	var none *IdentityRequest
+	if none.ToDomain() != nil {
+		t.Fatal("an omitted identity maps to nil so the consumer keeps its default")
+	}
+	// The old fields are still accepted so a client written against them is not
+	// refused, and they no longer decide anything: who a request runs as is read
+	// from the request.
+	got := (&IdentityRequest{ActsForUsers: true, Source: " Platform ", EndUserHeader: true}).ToDomain()
+	if got == nil || *got != (domain.Identity{}) {
+		t.Fatalf("ToDomain() = %+v, want an empty identity", got)
+	}
+}
+
+func TestAuthBindingRequest_ToDomain(t *testing.T) {
+	t.Parallel()
+	var none *AuthBindingRequest
+	if none.ToDomain() != nil {
+		t.Fatal("an omitted binding maps to nil so the consumer keeps its current one")
+	}
+	src := &AuthBindingRequest{AllowedClientIDs: []string{"app-a"}, AllowedCertificateSubjects: []string{"svc"}}
+	got := src.ToDomain()
+	if got == nil || len(got.AllowedClientIDs) != 1 || got.AllowedClientIDs[0] != "app-a" || got.AllowedCertificateSubjects[0] != "svc" {
+		t.Fatalf("ToDomain() = %+v", got)
+	}
+	src.AllowedClientIDs[0] = "changed"
+	if got.AllowedClientIDs[0] != "app-a" {
+		t.Fatal("ToDomain must copy the lists, not alias the request")
+	}
+	if empty := (&AuthBindingRequest{}).ToDomain(); empty == nil || !empty.IsZero() {
+		t.Fatalf("an empty binding clears the lists, got %+v", empty)
+	}
+}
+
+func TestConsumerRequests_ValidateDescription(t *testing.T) {
+	t.Parallel()
+	atLimit := strings.Repeat("ñ", domain.MaxDescriptionLen)
+	overLimit := strings.Repeat("a", domain.MaxDescriptionLen+1)
+	cases := []struct {
+		name        string
+		description string
+		wantErr     bool
+	}{
+		{"empty", "", false},
+		{"short", "Billing team, fronts the invoicing assistant (SR-4211)", false},
+		{"multibyte at the limit counts characters, not bytes", atLimit, false},
+		{"over the limit", overLimit, true},
+		{"a NUL character Postgres cannot store", "billing\x00team", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			create := CreateConsumerRequest{Name: "c", Description: tc.description}.Validate()
+			update := UpdateConsumerRequest{Description: strPtr(tc.description)}.Validate()
+			for label, err := range map[string]error{"create": create, "update": update} {
+				if tc.wantErr && !errors.Is(err, commonerrors.ErrValidation) {
+					t.Fatalf("%s Validate() = %v, want ErrValidation", label, err)
+				}
+				if !tc.wantErr && err != nil {
+					t.Fatalf("%s Validate() = %v, want nil", label, err)
+				}
+			}
+		})
 	}
 }

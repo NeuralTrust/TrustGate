@@ -17,6 +17,7 @@ package policy
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -24,15 +25,17 @@ import (
 
 type DuplicatePolicyHandler struct {
 	duplicator apppolicy.Duplicator
+	status     apppolicy.StatusEvaluator
+	registry   appplugins.Registry
 }
 
-func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator) *DuplicatePolicyHandler {
-	return &DuplicatePolicyHandler{duplicator: duplicator}
+func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator, status apppolicy.StatusEvaluator, registry appplugins.Registry) *DuplicatePolicyHandler {
+	return &DuplicatePolicyHandler{duplicator: duplicator, status: status, registry: registry}
 }
 
 // Handle godoc
 // @Summary      Duplicate a policy
-// @Description  Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.
+// @Description  Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is neither global nor MCP-wide.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
@@ -53,5 +56,6 @@ func (h *DuplicatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteCreated(c, response.FromPolicy(p))
+	status, message := h.status.Evaluate(p)
+	return httpio.WriteCreated(c, response.FromPolicy(p, h.registry).WithStatus(string(status), message))
 }

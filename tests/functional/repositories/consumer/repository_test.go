@@ -5,26 +5,28 @@ package consumer_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
-	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 )
 
 func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
@@ -36,14 +38,18 @@ func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
 }
 
 type fixture struct {
-	repo  *repo.Repository
-	gw    *gatewayrepo.Repository
-	be    *registryrepo.Repository
-	roles *rolerepo.Repository
-	conn  *database.Connection
+	repo *repo.Repository
+	gw   *gatewayrepo.Repository
+	be   *registryrepo.Repository
+	conn *database.Connection
 }
 
 func setupRepo(t *testing.T) fixture {
+	t.Helper()
+	return setupRepoInTimeZone(t, "")
+}
+
+func setupRepoInTimeZone(t *testing.T, timeZone string) fixture {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
 	if dsn == "" {
@@ -56,6 +62,9 @@ func setupRepo(t *testing.T) fixture {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse PG_TEST_URL: %v", err)
+	}
+	if timeZone != "" {
+		cfg.ConnConfig.RuntimeParams["timezone"] = timeZone
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -75,17 +84,16 @@ func setupRepo(t *testing.T) fixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			"TRUNCATE TABLE consumer_role, consumer_registry, consumers, roles, registries, gateways CASCADE")
+			"TRUNCATE TABLE consumer_registry, consumers, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	appender := outboxrepo.NewRepository(conn)
 	return fixture{
-		repo:  repo.NewRepository(conn, appender),
-		gw:    gatewayrepo.NewRepository(conn, appender),
-		be:    newRegistryRepo(conn),
-		roles: rolerepo.NewRepository(conn, appender),
-		conn:  conn,
+		repo: repo.NewRepository(conn, appender),
+		gw:   gatewayrepo.NewRepository(conn, appender),
+		be:   newRegistryRepo(conn),
+		conn: conn,
 	}
 }
 
@@ -114,21 +122,6 @@ func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID,
 		t.Fatalf("backend Save: %v", err)
 	}
 	return b.ID
-}
-
-func seedRole(t *testing.T, roles *rolerepo.Repository, gwID ids.GatewayID, name string) ids.RoleID {
-	t.Helper()
-	role, err := roledomain.New(roledomain.CreateParams{
-		GatewayID: gwID,
-		Name:      name,
-	})
-	if err != nil {
-		t.Fatalf("role domain.New: %v", err)
-	}
-	if err := roles.Save(context.Background(), role); err != nil {
-		t.Fatalf("role Save: %v", err)
-	}
-	return role.ID
 }
 
 func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.RegistryID) *domain.Consumer {
@@ -191,8 +184,36 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Slug != c.Slug {
 		t.Fatalf("Slug = %q, want %q", got.Slug, c.Slug)
 	}
-	if got.RoutingMode != domain.RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
+}
+
+func TestRepository_PersistsDescription(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "described")
+	beID := seedRegistry(t, f.be, gwID, "be-described")
+
+	c := validConsumer(t, gwID, "described-consumer", beID)
+	c.Description = "Owned by the billing team, fronts the invoicing assistant"
+	saveWithRegistries(t, f, c)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Description != c.Description {
+		t.Fatalf("Description after Save = %q, want %q", got.Description, c.Description)
+	}
+
+	got.Description = "Owned by the support team"
+	if err := f.repo.Update(ctx, got, nil, nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	updated, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID after Update: %v", err)
+	}
+	if updated.Description != "Owned by the support team" {
+		t.Fatalf("Description after Update = %q, want %q", updated.Description, "Owned by the support team")
 	}
 }
 
@@ -224,57 +245,6 @@ func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
 	}
 }
 
-// TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries pins the write
-// order the routing-mode DB guard imposes: the consumers row has to leave
-// role_based before any registry link can be inserted.
-func TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries(t *testing.T) {
-	f := setupRepo(t)
-	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "rb-to-inline")
-	beID := seedRegistry(t, f.be, gwID, "rb-to-inline-be")
-	roleID := seedRole(t, f.roles, gwID, "rb-to-inline-role")
-
-	c, err := domain.New(domain.CreateParams{
-		GatewayID:   gwID,
-		Name:        "rb-consumer",
-		Type:        domain.TypeLLM,
-		RoutingMode: domain.RoutingModeRoleBased,
-		RoleIDs:     []ids.RoleID{roleID},
-	})
-	if err != nil {
-		t.Fatalf("consumer domain.New: %v", err)
-	}
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	c.RoutingMode = domain.RoutingModeInline
-	c.RoleIDs = nil
-	c.RegistryIDs = []ids.RegistryID{beID}
-	c.RegistryWeights = map[ids.RegistryID]int{beID: 40}
-	bindings := &domain.RegistryBindings{IDs: c.RegistryIDs, Weights: c.RegistryWeights}
-	if err := f.repo.Update(ctx, c, bindings); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-
-	got, err := f.repo.FindByID(ctx, c.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if got.RoutingMode != domain.RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
-	}
-	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
-		t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
-	}
-	if got.WeightFor(beID) != 40 {
-		t.Fatalf("WeightFor(%s) = %d, want 40", beID, got.WeightFor(beID))
-	}
-	if len(got.RoleIDs) != 0 {
-		t.Fatalf("RoleIDs = %v, want none", got.RoleIDs)
-	}
-}
-
 // TestRepository_UpdateReplacesRegistryLinks asserts Update persists the whole
 // association set: dropped registries are detached and order is rewritten.
 func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
@@ -289,7 +259,7 @@ func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
 	saveWithRegistries(t, f, c)
 
 	c.RegistryIDs = []ids.RegistryID{third, second}
-	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}); err != nil {
+	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}, nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -688,7 +658,7 @@ func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
 
 	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
 	c.UpdatedAt = time.Now().UTC()
-	err := f.repo.Update(ctx, c, nil)
+	err := f.repo.Update(ctx, c, nil, nil)
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -699,7 +669,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	gwID := seedGateway(t, f.gw, "pool-u2")
 	beID := seedRegistry(t, f.be, gwID, "be-u2")
 	c := validConsumer(t, gwID, "ghost", beID)
-	err := f.repo.Update(context.Background(), c, nil)
+	err := f.repo.Update(context.Background(), c, nil, nil)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -764,35 +734,6 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 }
 
-func TestRepository_Save_PersistsRoleBindings(t *testing.T) {
-	f := setupRepo(t)
-	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "pool-roles")
-	roleID := seedRole(t, f.roles, gwID, "role-bind")
-
-	c, err := domain.New(domain.CreateParams{
-		GatewayID:   gwID,
-		Name:        "role-based-consumer",
-		Type:        domain.TypeLLM,
-		RoutingMode: domain.RoutingModeRoleBased,
-		RoleIDs:     []ids.RoleID{roleID},
-	})
-	if err != nil {
-		t.Fatalf("consumer domain.New: %v", err)
-	}
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := f.repo.FindByID(ctx, c.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if len(got.RoleIDs) != 1 || got.RoleIDs[0] != roleID {
-		t.Fatalf("RoleIDs = %v, want [%s]", got.RoleIDs, roleID)
-	}
-}
-
 func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
@@ -802,7 +743,7 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	c := validConsumer(t, gwID, "uses-be", beID)
 	saveWithRegistries(t, f, c)
 
-	if err := f.be.Delete(ctx, gwID, beID); err != nil {
+	if _, err := f.be.Delete(ctx, gwID, beID); err != nil {
 		t.Fatalf("Delete: %v, want cascade to consumer_registry", err)
 	}
 
@@ -815,7 +756,10 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	}
 }
 
-func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.T) {
+// RUN-1501 replaced the ErrHasDependents guard on an active consumer's fallback
+// chain: a registry delete now prunes every routing reference instead of
+// refusing the ones that sit in a fallback chain.
+func TestRepository_DeleteRegistry_PrunesActiveConsumerFallbackChain(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-fbd")
@@ -827,15 +771,28 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    registrydomain.Registries{fbBE},
+		Chain:    registrydomain.Registries{fbBE, poolBE},
 	}
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, gwID, fbBE)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	report, err := registries.Delete(ctx, gwID, fbBE)
+	if err != nil {
+		t.Fatalf("Delete: %v, want the active consumer's chain pruned", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, []string{registrydomain.PrunedFallback}, nil)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback == nil {
+		t.Fatal("Fallback was dropped even though the pool step remains")
+	}
+	if len(got.Fallback.Chain) != 1 || got.Fallback.Chain[0] != poolBE {
+		t.Fatalf("Chain = %v, want [%s]", got.Fallback.Chain, poolBE)
 	}
 }
 
@@ -858,7 +815,7 @@ func TestRepository_DeleteRegistry_IgnoresCrossGatewayFallbackConsumer(t *testin
 		t.Fatalf("Save: %v", err)
 	}
 
-	if err := f.be.Delete(ctx, gwReg, regID); err != nil {
+	if _, err := f.be.Delete(ctx, gwReg, regID); err != nil {
 		t.Fatalf("Delete: %v, want success (cross-gateway consumer must not block)", err)
 	}
 }
@@ -884,12 +841,12 @@ func TestRepository_DeleteRegistry_IgnoresInactiveConsumer(t *testing.T) {
 		t.Fatalf("deactivate consumer: %v", err)
 	}
 
-	if err := f.be.Delete(ctx, gwID, regID); err != nil {
+	if _, err := f.be.Delete(ctx, gwID, regID); err != nil {
 		t.Fatalf("Delete: %v, want success (inactive consumer must not block)", err)
 	}
 }
 
-func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing.T) {
+func TestRepository_DeleteRegistry_NullsActiveConsumerFallbackLosingItsLastStep(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "gw-block")
@@ -907,8 +864,282 @@ func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, gwID, regID)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	report, err := registries.Delete(ctx, gwID, regID)
+	if err != nil {
+		t.Fatalf("Delete: %v, want the active consumer's fallback nulled", err)
 	}
+	assertPrunedConsumer(t, report, c.ID, nil, []string{registrydomain.PrunedFallback})
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback != nil {
+		t.Fatalf("Fallback = %+v, want nil once its only step is gone", got.Fallback)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("pruned consumer no longer validates: %v", err)
+	}
+}
+
+func TestRepository_AudienceRoundTripAndUpdateKeepsIt(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "audience-gw")
+	regID := seedRegistry(t, f.be, gwID, "audience-reg")
+
+	for audience, overwrite := range map[domain.Audience]domain.Audience{"": domain.AudiencePersonal, domain.AudiencePersonal: ""} {
+		c, err := domain.New(domain.CreateParams{
+			GatewayID: gwID, Name: "chat-" + string(audience), Type: domain.TypeLLM, Audience: audience,
+			RegistryIDs: []ids.RegistryID{regID}, ModelPolicies: domain.ModelPolicies{regID: {Default: "gpt-4o"}},
+		})
+		require.NoError(t, err)
+		require.NoError(t, f.repo.Save(ctx, c))
+		var stored string
+		require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT audience FROM consumers WHERE id = $1`, c.ID).Scan(&stored))
+		require.Equal(t, string(c.AudienceName()), stored)
+
+		got, err := f.repo.FindByID(ctx, c.ID)
+		require.NoError(t, err)
+		require.Equal(t, audience, got.Audience)
+		got.Name, got.Audience, got.UpdatedAt = "renamed-"+string(audience), overwrite, time.Now().UTC()
+		require.NoError(t, f.repo.Update(ctx, got, nil, nil))
+		after, err := f.repo.FindByID(ctx, c.ID)
+		require.NoError(t, err)
+		require.Equal(t, "renamed-"+string(audience), after.Name)
+		require.Equal(t, audience, after.Audience)
+	}
+}
+
+func TestRepository_AttachAuthUpsertsOnlyThatPersonalLink(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "links-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	seedKey := func(name string) ids.AuthID {
+		a, err := authdomain.NewAPIKeyAuth(gwID, name, true, nil)
+		require.NoError(t, err)
+		require.NoError(t, auths.Save(ctx, a))
+		return a.ID
+	}
+	linksOf := func(id ids.ConsumerID) (map[ids.AuthID]domain.AuthLink, []ids.AuthID) {
+		c, err := f.repo.FindByID(ctx, id)
+		require.NoError(t, err)
+		return c.AuthLinks, c.AuthIDs
+	}
+	owned, app := seedKey("alice-key"), seedKey("app-key")
+	p1, p2 := seedLLMConsumer(t, f, gwID, "p1", domain.AudiencePersonal), seedLLMConsumer(t, f, gwID, "p2", domain.AudiencePersonal)
+	x := seedLLMConsumer(t, f, gwID, "x", "")
+	grantedAt := time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)
+	p2Link := domain.AuthLink{Level: domain.GrantLevelUser, Priority: 1, GrantedAt: grantedAt.Add(time.Hour)}
+
+	require.NoError(t, f.repo.AttachAuth(ctx, p1, owned, &domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 3, GrantedAt: grantedAt}))
+	require.NoError(t, f.repo.AttachAuth(ctx, p2, owned, &p2Link))
+	updated := domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 0, GrantedAt: grantedAt}
+	for range 2 {
+		require.NoError(t, f.repo.AttachAuth(ctx, p1, owned, &updated))
+		require.NoError(t, f.repo.AttachAuth(ctx, x, app, nil))
+	}
+	require.NoError(t, f.repo.AttachAuth(ctx, p2, owned, nil))
+	require.ErrorIs(t, f.repo.AttachAuth(ctx, p2, owned, &domain.AuthLink{Level: "team", GrantedAt: grantedAt}), domain.ErrInvalidAuthLink)
+
+	p1Links, p1Auths := linksOf(p1)
+	require.Equal(t, map[ids.AuthID]domain.AuthLink{owned: updated}, p1Links)
+	require.Equal(t, []ids.AuthID{owned}, p1Auths)
+	p2Links, _ := linksOf(p2)
+	require.Equal(t, map[ids.AuthID]domain.AuthLink{owned: p2Link}, p2Links)
+	xLinks, xAuths := linksOf(x)
+	require.Nil(t, xLinks)
+	require.Equal(t, []ids.AuthID{app}, xAuths)
+
+	require.NoError(t, f.repo.Delete(ctx, gwID, p1))
+	_, err := auths.FindByID(ctx, owned)
+	require.NoError(t, err)
+	p2Links, _ = linksOf(p2)
+	require.Equal(t, map[ids.AuthID]domain.AuthLink{owned: p2Link}, p2Links)
+	var remaining int
+	require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, owned).Scan(&remaining))
+	require.Equal(t, 1, remaining)
+}
+
+func seedLLMConsumer(t *testing.T, f fixture, gwID ids.GatewayID, name string, audience domain.Audience) ids.ConsumerID {
+	t.Helper()
+	regID := seedRegistry(t, f.be, gwID, name+"-reg")
+	c, err := domain.New(domain.CreateParams{
+		GatewayID: gwID, Name: name, Type: domain.TypeLLM, Audience: audience,
+		RegistryIDs: []ids.RegistryID{regID}, ModelPolicies: domain.ModelPolicies{regID: {Default: "gpt-4o"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.repo.Save(context.Background(), c))
+	return c.ID
+}
+
+func TestRepository_LargePersonalConsumerReadsEveryLink(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "large-personal-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	personal := seedLLMConsumer(t, f, gwID, "large-personal", domain.AudiencePersonal)
+	grantedAt := time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)
+	wantIDs := make([]ids.AuthID, 0, 500)
+	wantLinks := make(map[ids.AuthID]domain.AuthLink, 500)
+	for i := range 500 {
+		key, err := authdomain.NewAPIKeyAuth(gwID, fmt.Sprintf("owned-%d", i), true, nil)
+		require.NoError(t, err)
+		key.OwnerID = fmt.Sprintf("user-%d", i)
+		require.NoError(t, auths.Save(ctx, key))
+		link := domain.AuthLink{Level: domain.GrantLevelAll, Priority: i % 3, GrantedAt: grantedAt.Add(time.Duration(i) * time.Minute)}
+		require.NoError(t, f.repo.AttachAuth(ctx, personal, key.ID, &link))
+		wantIDs = append(wantIDs, key.ID)
+		wantLinks[key.ID] = link
+	}
+
+	got, err := f.repo.FindByID(ctx, personal)
+	require.NoError(t, err)
+	require.ElementsMatch(t, wantIDs, got.AuthIDs)
+	require.Equal(t, wantLinks, got.AuthLinks)
+}
+
+func TestRepository_PersonalLinksRoundTripUnderANonUTCSession(t *testing.T) {
+	for _, timeZone := range []string{"Asia/Kolkata", "America/Bogota"} {
+		t.Run(timeZone, func(t *testing.T) {
+			f := setupRepoInTimeZone(t, timeZone)
+			ctx := context.Background()
+			var session string
+			require.NoError(t, f.conn.Pool.QueryRow(ctx, `SHOW TimeZone`).Scan(&session))
+			require.Equal(t, timeZone, session)
+
+			gwID := seedGateway(t, f.gw, "tz-links-gw")
+			auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+			personal := seedLLMConsumer(t, f, gwID, "tz-personal", domain.AudiencePersonal)
+			want := make(map[ids.AuthID]domain.AuthLink, 3)
+			for i, grantedAt := range []time.Time{
+				time.Unix(0, 0).UTC(),
+				time.Date(2026, time.October, 1, 4, 0, 0, 123456000, time.FixedZone("-05:00", -5*60*60)),
+				time.Date(9999, time.December, 31, 23, 59, 59, 999999000, time.UTC),
+			} {
+				key, err := authdomain.NewAPIKeyAuth(gwID, fmt.Sprintf("tz-owned-%d", i), true, nil)
+				require.NoError(t, err)
+				key.OwnerID = fmt.Sprintf("tz-user-%d", i)
+				require.NoError(t, auths.Save(ctx, key))
+				link := domain.AuthLink{Level: domain.GrantLevelUser, Priority: i, GrantedAt: grantedAt}
+				require.NoError(t, f.repo.AttachAuth(ctx, personal, key.ID, &link))
+				link.GrantedAt = grantedAt.UTC()
+				want[key.ID] = link
+			}
+
+			got, err := f.repo.FindByID(ctx, personal)
+			require.NoError(t, err)
+			require.Equal(t, want, got.AuthLinks)
+			for _, link := range got.AuthLinks {
+				require.Equal(t, time.UTC, link.GrantedAt.Location())
+			}
+		})
+	}
+}
+
+func TestRepository_AttachAuthRefusesAGrantTimeOutOfRange(t *testing.T) {
+	f := setupRepoInTimeZone(t, "Asia/Kolkata")
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "tz-range-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	personal := seedLLMConsumer(t, f, gwID, "tz-range", domain.AudiencePersonal)
+	key, err := authdomain.NewAPIKeyAuth(gwID, "tz-range-key", true, nil)
+	require.NoError(t, err)
+	key.OwnerID = "tz-range-user"
+	require.NoError(t, auths.Save(ctx, key))
+
+	for name, grantedAt := range map[string]time.Time{
+		"year 0000":           time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC),
+		"near 9999 at -05:00": time.Date(9999, time.December, 31, 23, 0, 0, 0, time.FixedZone("-05:00", -5*60*60)),
+	} {
+		link := domain.AuthLink{Level: domain.GrantLevelUser, GrantedAt: grantedAt}
+		require.ErrorIs(t, f.repo.AttachAuth(ctx, personal, key.ID, &link), domain.ErrInvalidAuthLink, name)
+	}
+	const insert = `INSERT INTO consumer_auth (consumer_id, auth_id, level, priority, granted_at) VALUES ($1, $2, 'user', 0, $3::timestamptz)`
+	_, err = f.conn.Pool.Exec(ctx, insert, personal, key.ID, "9999-12-31 23:00:00-05")
+	require.Error(t, err)
+	var remaining int
+	require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, key.ID).Scan(&remaining))
+	require.Zero(t, remaining)
+}
+
+func TestRepository_LinkReaderReadsOnlyWhatALinkChangeNeeds(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "light-read-gw")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	owned, err := authdomain.NewAPIKeyAuth(gwID, "light-owned", true, nil)
+	require.NoError(t, err)
+	owned.OwnerID = "light-user"
+	require.NoError(t, auths.Save(ctx, owned))
+	unlinked, err := authdomain.NewAPIKeyAuth(gwID, "light-unlinked", true, nil)
+	require.NoError(t, err)
+	require.NoError(t, auths.Save(ctx, unlinked))
+
+	p1 := seedLLMConsumer(t, f, gwID, "light-p1", domain.AudiencePersonal)
+	p2 := seedLLMConsumer(t, f, gwID, "light-p2", domain.AudiencePersonal)
+	link := domain.AuthLink{Level: domain.GrantLevelGroup, Priority: 1, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)}
+	for _, consumerID := range []ids.ConsumerID{p1, p2} {
+		require.NoError(t, f.repo.AttachAuth(ctx, consumerID, owned.ID, &link))
+	}
+	_, err = f.conn.Pool.Exec(ctx, `UPDATE consumers SET active = FALSE WHERE id = $1`, p2)
+	require.NoError(t, err)
+
+	summary, err := f.repo.FindSummaryByID(ctx, p2)
+	require.NoError(t, err)
+	require.Equal(t, &domain.Consumer{ID: p2, GatewayID: gwID, Type: domain.TypeLLM, Audience: domain.AudiencePersonal}, summary)
+	_, err = f.repo.FindSummaryByID(ctx, ids.New[ids.ConsumerKind]())
+	require.ErrorIs(t, err, domain.ErrNotFound)
+
+	linked, err := f.repo.ListIDsByAuthID(ctx, owned.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []ids.ConsumerID{p1, p2}, linked)
+	none, err := f.repo.ListIDsByAuthID(ctx, unlinked.ID)
+	require.NoError(t, err)
+	require.NotNil(t, none)
+	require.Empty(t, none)
+}
+
+func TestRepository_DeleteOwnedRemovesThePersonalKeyWithItsLinks(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID, otherGW := seedGateway(t, f.gw, "delete-owned-gw"), seedGateway(t, f.gw, "delete-owned-other")
+	auths := authrepo.NewRepository(f.conn, outboxrepo.NewRepository(f.conn))
+	alice, err := authdomain.NewAPIKeyAuth(gwID, "delete-owned-alice", true, nil)
+	require.NoError(t, err)
+	alice.OwnerID = "alice"
+	require.NoError(t, auths.Save(ctx, alice))
+	bob, err := authdomain.NewAPIKeyAuth(gwID, "delete-owned-bob", true, nil)
+	require.NoError(t, err)
+	bob.OwnerID = "bob"
+	require.NoError(t, auths.Save(ctx, bob))
+	application, err := authdomain.NewAPIKeyAuth(gwID, "delete-owned-app", true, nil)
+	require.NoError(t, err)
+	require.NoError(t, auths.Save(ctx, application))
+
+	p1 := seedLLMConsumer(t, f, gwID, "delete-owned-p1", domain.AudiencePersonal)
+	p2 := seedLLMConsumer(t, f, gwID, "delete-owned-p2", domain.AudiencePersonal)
+	link := domain.AuthLink{Level: domain.GrantLevelAll, Priority: 1, GrantedAt: time.Date(2026, time.October, 1, 9, 0, 0, 0, time.UTC)}
+	for _, consumerID := range []ids.ConsumerID{p1, p2} {
+		require.NoError(t, f.repo.AttachAuth(ctx, consumerID, alice.ID, &link))
+		require.NoError(t, f.repo.AttachAuth(ctx, consumerID, bob.ID, &link))
+	}
+
+	require.ErrorIs(t, auths.DeleteOwned(ctx, otherGW, alice.ID), authdomain.ErrNotFound, "another gateway's revoke")
+	require.ErrorIs(t, auths.DeleteOwned(ctx, gwID, application.ID), authdomain.ErrNotFound, "an application key is not revoked this way")
+	require.NoError(t, auths.DeleteOwned(ctx, gwID, alice.ID))
+
+	_, err = auths.FindByID(ctx, alice.ID)
+	require.ErrorIs(t, err, authdomain.ErrNotFound)
+	links := func(authID ids.AuthID) int {
+		var n int
+		require.NoError(t, f.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM consumer_auth WHERE auth_id = $1`, authID).Scan(&n))
+		return n
+	}
+	require.Zero(t, links(alice.ID))
+	require.Equal(t, 2, links(bob.ID), "another owner's links stay")
+	_, err = auths.FindByID(ctx, application.ID)
+	require.NoError(t, err)
 }

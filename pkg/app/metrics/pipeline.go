@@ -33,6 +33,10 @@ type Exporter interface {
 	Close()
 }
 
+type LabelExporter interface {
+	PublishTrafficLabels(ctx context.Context, evt *events.TrafficLabels) error
+}
+
 // PlaygroundTraceStore persists the metrics Event of playground requests so the
 // dashboard can fetch it by TraceID. It runs after the exporters as a
 // best-effort side channel and must never block or fail the pipeline.
@@ -71,6 +75,17 @@ func (p *Pipeline) publish(
 	startTime, endTime time.Time,
 	explicit []telemetrydomain.ExporterConfig,
 ) {
+	p.publishContext(context.Background(), requestTrace, req, resp, startTime, endTime, explicit)
+}
+
+func (p *Pipeline) publishContext(
+	ctx context.Context,
+	requestTrace *trace.RequestTrace,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	startTime, endTime time.Time,
+	explicit []telemetrydomain.ExporterConfig,
+) {
 	if p == nil || p.builder == nil || req == nil || resp == nil {
 		return
 	}
@@ -78,7 +93,6 @@ func (p *Pipeline) publish(
 	if len(targets) == 0 && p.playgroundStore == nil {
 		return
 	}
-	ctx := context.Background()
 	evt := p.builder.Build(ctx, requestTrace, req, resp, startTime, endTime)
 	for _, exporter := range targets {
 		if err := exporter.Publish(ctx, viewForClass(evt, exporter.DataClass())); err != nil {
@@ -90,6 +104,24 @@ func (p *Pipeline) publish(
 	}
 	if p.playgroundStore != nil {
 		p.playgroundStore.Save(ctx, req, evt)
+	}
+}
+
+func (p *Pipeline) PublishTrafficLabels(ctx context.Context, evt *events.TrafficLabels, explicit []telemetrydomain.ExporterConfig) {
+	if p == nil || evt == nil {
+		return
+	}
+	for _, exporter := range p.resolveTargets(explicit) {
+		labeler, ok := exporter.(LabelExporter)
+		if !ok {
+			continue
+		}
+		if err := labeler.PublishTrafficLabels(ctx, evt); err != nil {
+			p.logger.Error("failed to publish traffic labels event",
+				slog.String("gateway_id", evt.GatewayID),
+				slog.String("exporter", exporter.Name()),
+				slog.String("error", err.Error()))
+		}
 	}
 }
 
@@ -120,9 +152,9 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 	for _, e := range explicit {
 		overrides[e.Name] = e
 	}
-	merged := make([]telemetrydomain.ExporterConfig, 0, len(p.defaultConfigs)+len(explicit))
-	seenIdentity := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
-	seenName := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
+	merged := make([]SourcedExporter, 0)
+	seenIdentity := make(map[string]struct{})
+	seenName := make(map[string]struct{})
 	for _, d := range p.defaultConfigs {
 		identity := exporterIdentity(d)
 		if _, dup := seenIdentity[identity]; dup {
@@ -131,23 +163,23 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 		seenIdentity[identity] = struct{}{}
 		seenName[d.Name] = struct{}{}
 		if override, ok := overrides[d.Name]; ok {
-			merged = append(merged, override)
+			merged = append(merged, SourcedExporter{Config: override, Tenant: true})
 			delete(overrides, d.Name)
 			continue
 		}
-		merged = append(merged, d)
+		merged = append(merged, SourcedExporter{Config: d})
 	}
 	for _, e := range explicit {
 		if _, dup := seenName[e.Name]; dup {
 			continue
 		}
 		seenName[e.Name] = struct{}{}
-		merged = append(merged, overrides[e.Name])
+		merged = append(merged, SourcedExporter{Config: overrides[e.Name], Tenant: true})
 	}
 	if len(merged) == 0 {
 		return nil
 	}
-	return p.cache.Resolve(merged)
+	return p.cache.ResolveSourced(merged)
 }
 
 func (p *Pipeline) close() {

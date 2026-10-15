@@ -238,3 +238,182 @@ func TestPolicyGlobalScope_CrossGatewayRejected(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
 	assert.Equal(t, "not_found", body["error"])
 }
+
+// A scope naming a registry stays refused on an LLM consumer: the destination
+// dimension has no meaning outside MCP, so the policy would be attached and
+// never run.
+func TestAttachPolicy_ScopedPolicyOnLLMConsumerRejected(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-scope-llm-gw")})
+	registryID := createMCPRegistry(t, gwID)
+	policyID := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("assoc-scope-pol"), map[string]any{
+		"registry_ids": []string{registryID},
+	}))
+	llmConsumer := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-scope-llm-co")))
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, llmConsumer, policyID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+	assert.Empty(t, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"), "rejected attach leaves no link")
+}
+
+// The second reason for the 422 is the plugin, not the dimension: a group-only
+// scope would cross, but rate_limiter never opted into running where the scope
+// does not gate, so it is refused as well. Every production plugin looks like
+// this today (RUN-1621, open question 2).
+func TestAttachPolicy_GroupScopedPolicyOnLLMConsumerRejectedForTheNonInertPlugin(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-grp-llm-gw")})
+	policyID := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("assoc-grp-pol"), map[string]any{
+		"groups": []string{"finance"},
+	}))
+	llmConsumer := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-grp-llm-co")))
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, llmConsumer, policyID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+	assert.Empty(t, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"), "rejected attach leaves no link")
+}
+
+// The combination the guard allows: a scope that narrows by group alone over a
+// plugin that does not resolve tool or registry names. It is a 204, and the
+// policy then runs on the consumer's LLM traffic with the group inert.
+func TestAttachPolicy_GroupScopedPolicyOnLLMConsumerAccepted(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	t.Skip("no production plugin returns ScopeInertSafe() == true yet: which ones may is the open product decision RUN-1621 Q2. Unskip once one does, using its slug here.")
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-inert-llm-gw")})
+	payload := scopedPolicyPayload(uniqueName("assoc-inert-pol"), map[string]any{
+		"groups": []string{"finance"},
+	})
+	policyID := CreatePolicy(t, gwID, payload)
+	llmConsumer := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-inert-llm-co")))
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, llmConsumer, policyID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusNoContent, status, "body=%v", body)
+	assert.Equal(t, map[string]struct{}{llmConsumer: {}}, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"))
+}
+
+// Attaching a scoped policy answers 204 unless the consumer already runs the
+// same plugin without scope, in which case the link is still made and the
+// overlap is reported as a 200 with warnings.
+func TestAttachPolicy_ScopedPolicyWarnsOnUnscopedOverlap(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-scope-warn-gw")})
+	registryID := createMCPRegistry(t, gwID)
+	withUnscoped, _ := createMCPConsumer(t, gwID, []string{registryID}, nil, "")
+	clean, _ := createMCPConsumer(t, gwID, []string{registryID}, nil, "")
+	unscopedID := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-scope-unscoped")))
+	AttachPolicy(t, gwID, withUnscoped, unscopedID)
+	scopedID := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("assoc-scope-scoped"), map[string]any{
+		"registry_ids": []string{registryID},
+	}))
+
+	AttachPolicy(t, gwID, clean, scopedID)
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, withUnscoped, scopedID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	warnings, _ := body["warnings"].([]any)
+	require.Len(t, warnings, 1, "body=%v", body)
+	assert.Contains(t, warnings[0], withUnscoped)
+	assert.Contains(t, warnings[0], "rate_limiter")
+
+	got := idSet(t, getPolicy(t, gwID, scopedID), "consumer_ids")
+	assert.Contains(t, got, withUnscoped, "the warned attach is still made")
+	assert.Contains(t, got, clean)
+}
+
+// The level rule over HTTP (RUN-1621, rule 3): the gateway runs a plugin once
+// per level, so the second unscoped policy of the same plugin on the same
+// consumer is refused. It is a 409 and not a 422 because the request is well
+// formed — it is the gateway's state that has no room for it.
+func TestAttachPolicy_SecondPolicyOnTheSameLevelRejected(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-level-gw")})
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-level-co")))
+	first := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-level-first")))
+	second := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-level-second")))
+	AttachPolicy(t, gwID, coID, first)
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, coID, second),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusConflict, status, "body=%v", body)
+	assert.Equal(t, "conflict", body["error"])
+	assert.Contains(t, body["message"], first, "the message names the policy already on the level")
+	assert.Empty(t, idSet(t, getPolicy(t, gwID, second), "consumer_ids"), "refused attach leaves no link")
+}
+
+// The same two policies coexist as soon as they sit on different levels: the
+// rule is about a level, not about a plugin appearing twice in a gateway.
+func TestAttachPolicy_SamePluginOnDifferentConsumersCoexists(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-level-ok-gw")})
+	coA := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-level-ok-a")))
+	coB := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-level-ok-b")))
+	first := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-level-ok-first")))
+	second := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-level-ok-second")))
+
+	AttachPolicy(t, gwID, coA, first)
+	AttachPolicy(t, gwID, coB, second)
+
+	assert.Equal(t, map[string]struct{}{coA: {}}, idSet(t, getPolicy(t, gwID, first), "consumer_ids"))
+	assert.Equal(t, map[string]struct{}{coB: {}}, idSet(t, getPolicy(t, gwID, second), "consumer_ids"))
+}
+
+// Promotion takes the all-traffic level, which one policy of a plugin holds at
+// a time. Demotion releases it, so the refused promotion becomes possible
+// again without the operator having to delete anything.
+func TestPolicyGlobalScope_SecondPromotionOfTheSamePluginRejected(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-global-level-gw")})
+	first := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-global-level-first")))
+	second := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-global-level-second")))
+	SetPolicyGlobal(t, gwID, first)
+
+	globalURL := func(policyID string) string {
+		return fmt.Sprintf("%s/v1/gateways/%s/policies/%s/global", AdminURL, gwID, policyID)
+	}
+	status, body := sendRequest(t, http.MethodPost, globalURL(second), nil, nil)
+	require.Equal(t, http.StatusConflict, status, "body=%v", body)
+	assert.Equal(t, "conflict", body["error"])
+	assert.Contains(t, body["message"], first)
+	assert.Equal(t, false, getPolicy(t, gwID, second)["global"], "refused promotion is not stored")
+
+	status, body = sendRequest(t, http.MethodDelete, globalURL(first), nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	status, body = sendRequest(t, http.MethodPost, globalURL(second), nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, true, body["global"], "demoting the first frees the level")
+}
+
+// Creating is the write path the rule cannot reach: a new policy is attached
+// to no consumer and not global, so it holds no level however many policies of
+// the plugin the gateway already runs. The conflict waits for the attach.
+func TestCreatePolicy_DuplicateOfARunningPluginIsCreatedAsADraft(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-draft-gw")})
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-draft-co")))
+	running := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-draft-running")))
+	AttachPolicy(t, gwID, coID, running)
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, validPolicyPayload(uniqueName("assoc-draft-copy")))
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	assert.Equal(t, false, body["global"])
+	assert.ElementsMatch(t, []any{
+		"policy has no consumers and is not global: it runs nowhere",
+	}, body["warnings"], "the draft is warned about, not refused")
+}

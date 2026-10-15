@@ -27,6 +27,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -36,13 +37,21 @@ type UpdateInput struct {
 	Status   *string
 	Domain   *string
 	TenantID string
-	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements).
+	// PlatformAdmin is true only for the platform identity, which may set
+	// entitlements and reserved domains. An empty TenantID never implies it.
 	PlatformAdmin   bool
 	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
-	Entitlements    *domain.Entitlements
+	// TrafficLabeling replaces the traffic labeling config when set. A nil
+	// value keeps it unless ClearTrafficLabeling is true.
+	TrafficLabeling      *trafficlabel.Config
+	ClearTrafficLabeling bool
+	Entitlements         *domain.Entitlements
+	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
+	// a reserved metadata key server-side, so it survives client metadata replacement.
+	StoreMode *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -54,25 +63,31 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo             domain.Repository
+	registries       RegistryFinder
 	memoryCache      *cache.TTLMap
 	publisher        cache.EventPublisher
 	exporterFactory  appmetrics.ExporterFactory
 	logger           *slog.Logger
 	signaler         configsyncport.SnapshotSignaler
 	rateLimitEnabled bool
+	reservedDomains  []string
 }
 
 func NewUpdater(
 	repo domain.Repository,
+	registries RegistryFinder,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
+	reservedDomains []string,
 ) Updater {
 	return &updater{
+		reservedDomains:  reservedDomains,
 		repo:             repo,
+		registries:       registries,
 		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
 		publisher:        publisher,
 		exporterFactory:  exporterFactory,
@@ -98,6 +113,17 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		g.Status = *in.Status
 	}
 	if in.Domain != nil {
+		// Checked only when the domain changes: a row stored before the rule
+		// must still take unrelated updates.
+		changed, err := domainChanged(old.Domain, *in.Domain)
+		if err != nil {
+			return nil, err
+		}
+		if changed && !in.PlatformAdmin {
+			if err := domain.CheckDomainNotReserved(*in.Domain, u.reservedDomains); err != nil {
+				return nil, err
+			}
+		}
 		g.Domain = *in.Domain
 	}
 	tenantID := old.TenantID()
@@ -109,6 +135,19 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	} else if old.TenantID() == "" {
 		g.Metadata = domain.WithTenantID(g.Metadata, tenantID)
 	}
+	// store_mode is a reserved key stripped from client metadata, so re-stamp it
+	// after the metadata block. Preserve the existing mode unless it is being
+	// set. curated is the default, so it is represented by the absence of the
+	// key — a gateway nobody has governed grants nobody anything.
+	storeMode := old.StoreMode()
+	if in.StoreMode != nil {
+		storeMode = *in.StoreMode
+	}
+	if storeMode == domain.StoreModeOpen || storeMode == domain.StoreModeNone {
+		g.Metadata = domain.WithStoreMode(g.Metadata, storeMode)
+	} else if g.Metadata != nil {
+		delete(g.Metadata, domain.MetadataStoreModeKey)
+	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
 	}
@@ -118,15 +157,26 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.SessionConfig != nil {
 		g.SessionConfig = in.SessionConfig
 	}
-	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
-		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
+	switch {
+	case in.TrafficLabeling != nil:
+		g.TrafficLabeling = in.TrafficLabeling.Normalized()
+	case in.ClearTrafficLabeling:
+		g.TrafficLabeling = nil
 	}
-	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
+	if in.Entitlements != nil {
+		if !in.PlatformAdmin {
+			return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
+		}
 		g.Entitlements = *in.Entitlements
 	}
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
 		return nil, err
+	}
+	if in.TrafficLabeling != nil {
+		if err := validateTrafficLabelingRegistry(ctx, u.registries, g.ID, g.TrafficLabeling); err != nil {
+			return nil, err
+		}
 	}
 	maxInstances := 0
 	if u.rateLimitEnabled && tenantID != "" && in.Entitlements != nil {
@@ -150,4 +200,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		u.signaler.Signal(ctx)
 	}
 	return g, nil
+}
+
+func domainChanged(stored, requested string) (bool, error) {
+	normalized, err := domain.NormalizeDomain(requested)
+	if err != nil {
+		return false, err
+	}
+	return normalized != stored, nil
 }

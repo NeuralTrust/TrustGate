@@ -102,3 +102,36 @@ func TestRepository_SaveValidatesRequiredFields(t *testing.T) {
 	assert.Error(t, repo.Save(ctx, &domain.Session{ID: "", GatewayID: "gw-1"}))
 	assert.Error(t, repo.Save(ctx, &domain.Session{ID: "sess-1", GatewayID: ""}))
 }
+
+func TestRepository_SaveIndexesTurnWithSessionTTL(t *testing.T) {
+	repo, mr, _ := newRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Save(ctx, &domain.Session{ID: "sess-1", GatewayID: "gw-1", LastTurnID: "resp_1", ExpiresAt: time.Now().Add(30 * time.Minute)}))
+
+	sessionID, err := repo.FindSessionIDByTurn(ctx, "gw-1", "resp_1")
+	require.NoError(t, err)
+	assert.Equal(t, "sess-1", sessionID)
+	assert.Greater(t, mr.TTL("session_turn:gw-1:resp_1"), time.Duration(0))
+
+	missing, err := repo.FindSessionIDByTurn(ctx, "gw-2", "resp_1")
+	require.NoError(t, err)
+	assert.Empty(t, missing, "the turn index is scoped by gateway")
+
+	mr.FastForward(31 * time.Minute)
+	expired, err := repo.FindSessionIDByTurn(ctx, "gw-1", "resp_1")
+	require.NoError(t, err)
+	assert.Empty(t, expired, "an expired index starts a new session")
+}
+
+func TestRepository_EveryTurnOfASessionIsIndexed(t *testing.T) {
+	repo, _, _ := newRepo(t)
+	ctx := context.Background()
+	for _, turn := range []string{"resp_1", "resp_2"} {
+		require.NoError(t, repo.Save(ctx, &domain.Session{ID: "sess-1", GatewayID: "gw-1", LastTurnID: turn, ExpiresAt: time.Now().Add(time.Hour)}))
+	}
+	for _, turn := range []string{"resp_1", "resp_2"} {
+		sessionID, err := repo.FindSessionIDByTurn(ctx, "gw-1", turn)
+		require.NoError(t, err)
+		assert.Equal(t, "sess-1", sessionID, "a branch from an earlier turn keeps the session")
+	}
+}

@@ -22,22 +22,17 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
-const (
-	sourceConsumer = "consumer"
-	sourceFallback = "fallback"
-)
+const sourceConsumer = "consumer"
 
 type RegistryLookup func(ids.RegistryID) (*registrydomain.Registry, bool)
 
 type ResolveInput struct {
 	Intent     routingdomain.Intent
 	Consumer   *appconsumer.RoutableConsumer
-	Roles      []*roledomain.Role
 	Registries RegistryLookup
 }
 
@@ -58,9 +53,6 @@ func (r *resolver) Resolve(in ResolveInput) (*routingdomain.CandidateSet, error)
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return routingdomain.NewCandidateSet(), nil
 	}
-	if in.Consumer.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased {
-		return r.resolveRoleBased(in)
-	}
 	return r.resolveInline(in)
 }
 
@@ -75,7 +67,7 @@ func (r *resolver) resolveInline(in ResolveInput) (*routingdomain.CandidateSet, 
 		base.Add(inlineCandidate(reg, policies, pinned, sourceConsumer))
 	}
 	for _, reg := range in.Consumer.FallbackBackends {
-		base.Add(inlineCandidate(reg, policies, pinned, sourceFallback))
+		base.Add(inlineCandidate(reg, policies, pinned, routingdomain.SourceFallback))
 	}
 	return base.ResolveIntent(in.Intent)
 }
@@ -110,7 +102,7 @@ func (r *resolver) resolveInlinePool(in ResolveInput) (*routingdomain.CandidateS
 	alias := in.Intent.PoolAlias
 	lbCfg := in.Consumer.Consumer.LBConfig
 	if lbCfg == nil || !lbCfg.Enabled || lbCfg.PoolAlias == "" || !strings.EqualFold(lbCfg.PoolAlias, alias) {
-		return nil, fmt.Errorf("%w: pool %q is not configured for this consumer", routingdomain.ErrUnknownPoolAlias, alias)
+		return nil, fmt.Errorf("%w: pool %q is not configured for this application", routingdomain.ErrUnknownPoolAlias, alias)
 	}
 	byID := registriesByID(in.Consumer)
 	policies := in.Consumer.Consumer.ModelPolicies
@@ -129,7 +121,7 @@ func (r *resolver) resolveInlinePool(in ResolveInput) (*routingdomain.CandidateS
 		})
 	}
 	if out.Len() == 0 {
-		return nil, fmt.Errorf("%w: pool %q has no resolvable members", routingdomain.ErrModelDenied, alias)
+		return nil, routingdomain.DenyModel("pool %q has no resolvable members", alias)
 	}
 	return out, nil
 }
@@ -174,43 +166,4 @@ func concreteModel(model string) string {
 		return ""
 	}
 	return model
-}
-
-func (r *resolver) resolveRoleBased(in ResolveInput) (*routingdomain.CandidateSet, error) {
-	if in.Intent.IsPool() {
-		return nil, fmt.Errorf(
-			"%w: pool %q (pool aliases are not available for role-based consumers)",
-			routingdomain.ErrUnknownPoolAlias, in.Intent.PoolAlias,
-		)
-	}
-	base := routingdomain.NewCandidateSet()
-	for _, role := range in.Roles {
-		if role == nil {
-			continue
-		}
-		for _, registryID := range role.RegistryIDs {
-			reg, ok := lookupRegistry(in.Registries, registryID)
-			if !ok {
-				continue
-			}
-			policy := role.ModelPolicies[registryID]
-			base.Add(routingdomain.Candidate{
-				Registry: reg,
-				Allowed:  policy.Allowed,
-				Default:  concreteModel(policy.Default),
-				Sources:  []string{"role:" + role.Name},
-			})
-		}
-	}
-	if base.Len() == 0 {
-		return base, nil
-	}
-	return base.ResolveIntent(in.Intent)
-}
-
-func lookupRegistry(lookup RegistryLookup, id ids.RegistryID) (*registrydomain.Registry, bool) {
-	if lookup == nil {
-		return nil, false
-	}
-	return lookup(id)
 }

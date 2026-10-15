@@ -336,3 +336,52 @@ func TestConfigEscapeControlCharsExplicitFalse(t *testing.T) {
 	require.NotNil(t, cfg.EscapeJSONControlChars)
 	assert.False(t, *cfg.EscapeJSONControlChars)
 }
+
+func namedTemplateSettings(name, label string) map[string]any {
+	return map[string]any{
+		"name":     name,
+		"versions": []any{map[string]any{"labels": []any{label}, "content": "body"}},
+	}
+}
+
+// Resolution finds the template by name first, so the same label on two templates is
+// never ambiguous. Refusing it only blocked the obvious shape: one prompt per template,
+// each carrying a "latest".
+func TestConfigAllowsTheSameLabelOnDifferentTemplates(t *testing.T) {
+	_, err := parseConfig(map[string]any{
+		"named_templates": []any{
+			namedTemplateSettings("greeting", "latest"),
+			namedTemplateSettings("farewell", "latest"),
+		},
+	})
+	require.NoError(t, err)
+}
+
+func TestConfigStillRefusesADuplicateLabelWithinOneTemplate(t *testing.T) {
+	_, err := parseConfig(map[string]any{
+		"named_templates": []any{map[string]any{
+			"name": "greeting",
+			"versions": []any{
+				map[string]any{"labels": []any{"latest"}, "content": "a"},
+				map[string]any{"labels": []any{"latest"}, "content": "b"},
+			},
+		}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "points to more than one version")
+}
+
+func TestConfigChecksDefaultLabelAgainstEveryTemplate(t *testing.T) {
+	_, err := parseConfig(map[string]any{
+		"named_templates": []any{namedTemplateSettings("greeting", "latest"), namedTemplateSettings("farewell", "stable")},
+		"default_label":   "stable",
+	})
+	require.NoError(t, err)
+
+	_, err = parseConfig(map[string]any{
+		"named_templates": []any{namedTemplateSettings("greeting", "latest")},
+		"default_label":   "nope",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match any version label")
+}

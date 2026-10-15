@@ -59,7 +59,7 @@ func createInputMatcher(want apppolicy.CreateInput) interface{} {
 }
 
 func createFromInput(_ context.Context, in apppolicy.CreateInput) (*domain.Policy, error) {
-	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode)
+	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode, in.MCPScope)
 }
 
 func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {
@@ -318,5 +318,132 @@ func TestDuplicator_PropagatesNonConflictCreateError(t *testing.T) {
 	_, err := dup.Duplicate(context.Background(), gwID, src.ID)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want sentinel", err)
+	}
+}
+
+func TestDuplicator_CopiesMCPScope(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	snowflake := ids.New[ids.RegistryKind]()
+	src := sourcePolicy(gwID, "Foo")
+	src.MCPScope = &domain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{snowflake},
+		Tools:        []domain.MCPToolRef{{RegistryID: ids.New[ids.RegistryKind](), Tool: "run_query"}},
+		Groups:       []string{"Finanzas"},
+		ExceptGroups: []string{"Becarios"},
+	}
+
+	finder := policymocks.NewFinder(t)
+	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
+	finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
+
+	var captured *domain.MCPScope
+	creator := policymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in apppolicy.CreateInput) bool {
+			captured = in.MCPScope
+			return reflect.DeepEqual(in.MCPScope, src.MCPScope)
+		})).
+		RunAndReturn(createFromInput).
+		Once()
+
+	dup := apppolicy.NewDuplicator(finder, creator, newTestLogger())
+	got, err := dup.Duplicate(context.Background(), gwID, src.ID)
+	if err != nil {
+		t.Fatalf("Duplicate error: %v", err)
+	}
+	if !reflect.DeepEqual(got.MCPScope, src.MCPScope) {
+		t.Fatalf("scope = %+v, want %+v", got.MCPScope, src.MCPScope)
+	}
+	if captured == src.MCPScope {
+		t.Fatal("duplicate must not share the source's scope pointer")
+	}
+	captured.Groups[0] = "Marketing"
+	if src.MCPScope.Groups[0] != "Finanzas" {
+		t.Fatal("mutating the duplicate's scope leaked into the source")
+	}
+}
+
+func TestDuplicator_LeavesMCPScopeNilWhenSourceHasNone(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	src := sourcePolicy(gwID, "Foo")
+
+	finder := policymocks.NewFinder(t)
+	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
+	finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
+
+	creator := policymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in apppolicy.CreateInput) bool { return in.MCPScope == nil })).
+		RunAndReturn(createFromInput).
+		Once()
+
+	dup := apppolicy.NewDuplicator(finder, creator, newTestLogger())
+	if _, err := dup.Duplicate(context.Background(), gwID, src.ID); err != nil {
+		t.Fatalf("Duplicate error: %v", err)
+	}
+}
+
+func TestDuplicator_DropsInertStreamingOptOuts(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		source func() map[string]any
+		want   map[string]any
+	}{
+		"enabled false": {
+			source: func() map[string]any {
+				return map[string]any{"limit": 100, "streaming": map[string]any{"enabled": false, "head_chars": 200}}
+			},
+			want: map[string]any{"limit": 100, "streaming": map[string]any{"head_chars": 200}},
+		},
+		"final_pass false as a string": {
+			source: func() map[string]any {
+				return map[string]any{"limit": 100, "streaming": map[string]any{"final_pass": "false", "on_error": "fail_closed"}}
+			},
+			want: map[string]any{"limit": 100, "streaming": map[string]any{"on_error": "fail_closed"}},
+		},
+		"both false, zero form": {
+			source: func() map[string]any {
+				return map[string]any{"streaming": map[string]any{"enabled": float64(0), "final_pass": false}}
+			},
+			want: map[string]any{"streaming": map[string]any{}},
+		},
+		"true values are kept": {
+			source: func() map[string]any {
+				return map[string]any{"streaming": map[string]any{"enabled": true, "final_pass": true}}
+			},
+			want: map[string]any{"streaming": map[string]any{"enabled": true, "final_pass": true}},
+		},
+		"no streaming block": {
+			source: func() map[string]any { return map[string]any{"limit": 100, "window": "1m"} },
+			want:   map[string]any{"limit": 100, "window": "1m"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			src := sourcePolicy(gwID, "Foo")
+			src.Settings = tc.source()
+
+			finder := policymocks.NewFinder(t)
+			finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
+			finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
+
+			creator := policymocks.NewCreator(t)
+			creator.EXPECT().Create(mock.Anything, mock.Anything).RunAndReturn(createFromInput).Once()
+
+			got, err := apppolicy.NewDuplicator(finder, creator, newTestLogger()).Duplicate(context.Background(), gwID, src.ID)
+			if err != nil {
+				t.Fatalf("Duplicate error: %v", err)
+			}
+			if !reflect.DeepEqual(got.Settings, tc.want) {
+				t.Fatalf("copy settings = %v, want %v", got.Settings, tc.want)
+			}
+			if !reflect.DeepEqual(src.Settings, tc.source()) {
+				t.Fatalf("the source settings changed: %v", src.Settings)
+			}
+		})
 	}
 }

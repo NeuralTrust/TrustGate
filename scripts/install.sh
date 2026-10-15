@@ -3,9 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/NeuralTrust/TrustGate/main/scripts/install.sh | bash
 #
-# It clones the repository, seeds the .env file, and brings up the full stack
-# (Postgres, Redis, Kafka + admin, proxy & MCP planes) in Docker. Re-running is
-# safe: it updates an existing checkout and never clobbers your .env.
+# It clones the repository, seeds the .env file (including SERVER_SECRET_KEY),
+# and brings up Postgres, Redis and all three TrustGate planes in Docker.
+# Re-running is safe: existing .env values are preserved.
 #
 # When Go is installed it also compiles the `trustgate` binary and installs it
 # on your PATH so you can run `trustgate <subcommand>` from anywhere.
@@ -110,13 +110,9 @@ fi
 
 cd "$AG_DIR"
 
-if [[ -f .env ]]; then
-  ok ".env already present, keeping it"
-else
-  [[ -f .env.example ]] || die ".env.example not found in the repository."
-  cp .env.example .env
-  ok "Created .env from .env.example"
-fi
+[[ -x scripts/seed-env.sh ]] || die "scripts/seed-env.sh is missing or not executable"
+./scripts/seed-env.sh || die "could not seed .env"
+ok ".env is ready"
 
 if [[ "${AG_INSTALL_CLI:-1}" != "0" ]]; then
   install_cli
@@ -126,8 +122,10 @@ if [[ "${AG_NO_START:-}" == "1" ]]; then
   warn "AG_NO_START=1 set, skipping Docker startup."
   echo "Start the stack later with: ${BOLD}cd $AG_DIR && make up${RESET}"
 else
-  info "Bringing up the TrustGate stack (this builds images on first run) ..."
-  "${COMPOSE[@]}" -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+  info "Building the TrustGate image (emulated, and slower, on Apple Silicon) ..."
+  "${COMPOSE[@]}" -f docker-compose.yaml -f docker-compose.api.yaml build admin
+  info "Bringing up the TrustGate stack ..."
+  "${COMPOSE[@]}" -f docker-compose.yaml -f docker-compose.api.yaml up -d
 
   cat <<EOF
 
@@ -151,7 +149,7 @@ if [[ -n "$CLI_BIN" ]]; then
 
 ${GREEN}${BOLD}trustgate CLI installed${RESET} -> $CLI_BIN
   Subcommands: ${BOLD}trustgate admin|proxy|mcp|run${RESET}
-  Running natively needs an .env plus Postgres/Redis/Kafka (the Docker stack provides them).
+  Running natively needs an .env plus Postgres/Redis (the Docker stack provides them).
   Note: the dockerized planes already bind :8080/:8081/:8082, so 'make down' those first to run the CLI on the same ports.
 EOF
 fi

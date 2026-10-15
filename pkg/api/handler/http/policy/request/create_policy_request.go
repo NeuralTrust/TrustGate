@@ -22,8 +22,6 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-const maxPolicyDescriptionLen = 1000
-
 type CreatePolicyRequest struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
@@ -34,6 +32,10 @@ type CreatePolicyRequest struct {
 	Settings    map[string]any `json:"settings,omitempty"`
 	Stages      []string       `json:"stages,omitempty"`
 	Mode        string         `json:"mode,omitempty"`
+	// MCPScope narrows the policy to MCP destinations and principals. Omitted
+	// (or null) keeps the policy consumer-wide; {} is rejected as it would
+	// never match.
+	MCPScope *MCPScopeRequest `json:"mcp_scope,omitempty"`
 }
 
 func (r CreatePolicyRequest) Validate() error {
@@ -43,8 +45,8 @@ func (r CreatePolicyRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	if len(r.Description) > maxPolicyDescriptionLen {
-		return fmt.Errorf("description too long (max %d): %w", maxPolicyDescriptionLen, commonerrors.ErrValidation)
+	if len(r.Description) > domain.MaxDescriptionLen {
+		return fmt.Errorf("description too long (max %d): %w", domain.MaxDescriptionLen, commonerrors.ErrValidation)
 	}
 	if strings.TrimSpace(r.Slug) == "" {
 		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
@@ -58,6 +60,11 @@ func (r CreatePolicyRequest) ToStages() []domain.Stage {
 
 func (r CreatePolicyRequest) ToMode() domain.Mode {
 	return domain.Mode(r.Mode)
+}
+
+// ToMCPScope converts the optional mcp_scope into its domain form.
+func (r CreatePolicyRequest) ToMCPScope() (*domain.MCPScope, error) {
+	return r.MCPScope.ToDomain()
 }
 
 func (r CreatePolicyRequest) ParallelOrDefault() bool {

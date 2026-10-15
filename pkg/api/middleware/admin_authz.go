@@ -16,9 +16,12 @@ package middleware
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -101,9 +104,12 @@ func (m *AdminAuthzMiddleware) RequireGatewayCollectionAccess() fiber.Handler {
 }
 
 // RequireInteractiveIdentity rejects service credentials on routes that are not
-// gateway-scoped (catalogs, playground traces, config-sync). A machine
-// credential is deliberately narrow: anything it cannot be bound to a gateway
-// for is out of its reach.
+// gateway-scoped (catalogs, playground traces, config-sync) and on
+// gateway-scoped routes that act only on the calling user (the caller's
+// personal LLM key) or that a person runs for another user (an admin creating
+// a user's personal key). A machine credential is deliberately narrow: anything
+// it cannot be bound to a gateway for is out of its reach, and it is no user,
+// so it holds nothing of its own and issues nothing in anyone's name.
 func (m *AdminAuthzMiddleware) RequireInteractiveIdentity() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		identity := AdminIdentityFromContext(c)
@@ -112,6 +118,53 @@ func (m *AdminAuthzMiddleware) RequireInteractiveIdentity() fiber.Handler {
 		}
 		return c.Next()
 	}
+}
+
+// RequireConfigSyncScopeAccess guards the config-sync connection listing. A
+// data plane's scope is the gateway it serves, so a tenant caller has to name
+// one of its own gateways in ?scope=; only the platform lists every data plane.
+// A foreign or unknown gateway answers 404, like any other gateway lookup.
+func (m *AdminAuthzMiddleware) RequireConfigSyncScopeAccess() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		identity := AdminIdentityFromContext(c)
+		if identity.Kind == AdminIdentityPlatform {
+			return c.Next()
+		}
+		raw := strings.TrimSpace(c.Query("scope"))
+		if raw == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(httpio.ErrorBody{
+				Error:   "invalid_query",
+				Message: "Query parameter 'scope' is required: pass the id of the gateway whose data planes to list.",
+			})
+		}
+		gatewayID, err := ids.Parse[ids.GatewayKind](raw)
+		if err != nil {
+			return m.notFound(c, identity)
+		}
+		g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
+		if err != nil {
+			return httpio.WriteError(c, err)
+		}
+		if g.TenantID() != identity.TenantID {
+			return m.notFound(c, identity)
+		}
+		c.Locals(configSyncScopeKey, gatewayID.String())
+		return c.Next()
+	}
+}
+
+type configSyncScopeLocal struct{}
+
+var configSyncScopeKey = configSyncScopeLocal{}
+
+// ConfigSyncScope is the scope the config-sync listing should read: the
+// canonical form of the gateway RequireConfigSyncScopeAccess authorized for a
+// tenant caller, or the raw ?scope= of a platform caller.
+func ConfigSyncScope(c *fiber.Ctx) string {
+	if scope, ok := c.Locals(configSyncScopeKey).(string); ok {
+		return scope
+	}
+	return c.Query("scope")
 }
 
 func (m *AdminAuthzMiddleware) forbidden(c *fiber.Ctx, identity AdminIdentity, reason string) error {
@@ -136,7 +189,8 @@ func (m *AdminAuthzMiddleware) logDenial(c *fiber.Ctx, identity AdminIdentity, r
 	m.logger.LogAttrs(c.UserContext(), slog.LevelWarn, "admin authorization denied",
 		slog.String("reason", reason),
 		slog.String("identity_kind", string(identity.Kind)),
-		slog.String("subject", identity.Subject),
+		slog.String("token_issuer", identity.Issuer),
+		slog.String("principal_ref", logref.Opaque(identity.Subject)),
 		slog.String("tenant_id", identity.TenantID),
 		slog.String("gateway_id", c.Params("gateway_id")),
 		slog.String("method", c.Method()),

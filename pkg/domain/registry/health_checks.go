@@ -35,7 +35,20 @@ func (h *HealthChecks) Validate() error {
 	if h.Threshold <= 0 {
 		return fmt.Errorf("%w: health_checks.threshold must be positive", ErrInvalidHealthChecks)
 	}
+	if name, masked := maskedHeader(h.Headers); masked {
+		return fmt.Errorf("%w: health_checks header %q looks masked; send the full value or the masked value unchanged",
+			ErrInvalidHealthChecks, name)
+	}
 	return nil
+}
+
+// ResolveSecretsFrom keeps each stored header value an update sent back
+// exactly as it was read (see ResolveHeaders).
+func (h *HealthChecks) ResolveSecretsFrom(prev *HealthChecks) {
+	if h == nil || prev == nil {
+		return
+	}
+	h.Headers = ResolveHeaders(h.Headers, prev.Headers)
 }
 
 func (h HealthChecks) Value() (driver.Value, error) {

@@ -67,6 +67,17 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// BedrockNative declares what the plugin does on a native Amazon Bedrock Runtime
+// call (see appplugins.BedrockNativeAware).
+func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
+	return appplugins.BedrockNativeSkips
+}
+
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	if _, err := parseConfig(settings); err != nil {
 		return fmt.Errorf("prompt_compression: %w", err)
@@ -122,7 +133,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		p.debug(ctx, "decode request failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
-	body, changed, err := rewriteRequest(p.registry, format, creq, cfg)
+	body, changed, err := rewriteRequest(p.registry, format, in.Request.Body, creq, cfg)
 	if err != nil {
 		p.debug(ctx, "rewrite request failed", slog.Any("error", err))
 		return passThrough(), nil

@@ -17,6 +17,8 @@ package auth
 import (
 	"context"
 
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -27,18 +29,21 @@ const (
 	MethodOAuth2     Method = "oauth2"
 	MethodOIDC       Method = "oidc"
 	MethodPlayground Method = "playground"
+	MethodMTLS       Method = "mtls"
 )
 
 type AuthContext struct {
+	Principal   *identity.Principal
 	Method      Method
 	GatewayID   ids.GatewayID
 	GatewaySlug string
 	ConsumerID  ids.ConsumerID
 	AuthID      ids.AuthID
+	OwnerID     string
+	KeyBudget   *domain.KeyBudget
 	Subject     string
 	Claims      map[string]any
 	Scopes      []string
-	RoleIDs     []ids.RoleID
 }
 
 type authContextKey struct{}

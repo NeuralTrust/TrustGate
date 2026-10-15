@@ -17,6 +17,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -434,4 +435,152 @@ func TestCredentialsCacheKey_OmitsSecret(t *testing.T) {
 	other := creds
 	other.Region = "us-east-1"
 	assert.NotEqual(t, key, other.CacheKey())
+}
+
+const (
+	appProfileARN  = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123xyz"
+	provisionedARN = "arn:aws:bedrock:us-east-1:123456789012:provisioned-model/pt1234"
+	modelARN       = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+)
+
+func TestResolveModelARN(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var paths []string
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/inference-profiles/abc123xyz":
+			_, _ = w.Write([]byte(`{"models":[{"modelArn":"` + modelARN + `"}],"type":"APPLICATION"}`))
+		case "/provisioned-model-throughput/pt1234":
+			_, _ = w.Write([]byte(`{"modelArn":"arn:aws:bedrock:us-east-1:123456789012:provisioned-model/pt1234","foundationModelArn":"` + modelARN + `"}`))
+		case "/inference-profiles/denied":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"not authorized to perform: bedrock:GetInferenceProfile"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	ctx := context.Background()
+
+	got, err := c.ResolveModelARN(ctx, Credentials{Region: "us-east-1"}, appProfileARN)
+	require.NoError(t, err)
+	assert.Equal(t, modelARN, got)
+
+	got, err = c.ResolveModelARN(ctx, Credentials{Region: "us-east-1"}, provisionedARN)
+	require.NoError(t, err)
+	assert.Equal(t, modelARN, got, "the foundation model, not the provisioned model's own ARN")
+
+	_, err = c.ResolveModelARN(ctx, Credentials{Region: "us-east-1"}, "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/denied")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "403")
+
+	_, err = c.ResolveModelARN(ctx, Credentials{Region: "us-east-1"}, "arn:aws:bedrock:us-east-1::foundation-model/m")
+	assert.ErrorIs(t, err, ErrUnsupportedARN)
+	_, err = c.ResolveModelARN(ctx, Credentials{Region: "us-east-1"}, "not an arn")
+	assert.ErrorIs(t, err, ErrUnsupportedARN)
+	_, err = c.ResolveModelARN(ctx, Credentials{Region: "us-east-1"}, "arn:aws:bedrock:us-east-1:12345:application-inference-profile/abc123xyz")
+	assert.ErrorIs(t, err, ErrUnsupportedARN, "an account is 12 digits")
+	_, err = c.ResolveModelARN(ctx, Credentials{Region: "eu-west-1"}, appProfileARN)
+	assert.ErrorIs(t, err, ErrARNRegionMismatch)
+}
+
+// recordingTransport answers every call with an empty profile and remembers where
+// it was sent, so a test sees the host a signed request goes to.
+type recordingTransport struct {
+	mu    sync.Mutex
+	hosts []string
+	auth  []string
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.hosts = append(r.hosts, req.URL.Host)
+	r.auth = append(r.auth, req.Header.Get("Authorization"))
+	r.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"models":[{"modelArn":"` + modelARN + `"}]}`)),
+		Request:    req,
+	}, nil
+}
+
+func newRealHostClient(t *testing.T) (Client, *recordingTransport) {
+	t.Helper()
+	rt := &recordingTransport{}
+	return &client{
+		httpClient: &http.Client{Transport: rt},
+		signer:     v4.NewSigner(),
+		loadConfig: func(_ context.Context, creds Credentials) (aws.Config, error) {
+			return aws.Config{Region: creds.Region, Credentials: awscredentials.NewStaticCredentialsProvider("AKIAEXAMPLE", "secret", "token")}, nil
+		},
+	}, rt
+}
+
+// The region of an ARN is client-supplied. It must never choose the host a signed
+// request, with its Authorization and security token, is sent to.
+func TestResolveModelARN_NeverSendsSignedCredentialsToAHostTheClientChose(t *testing.T) {
+	t.Parallel()
+	for name, arn := range map[string]string{
+		"reviewer payload":   "arn:aws:bedrock:evil.example/:123456789012:application-inference-profile/abc123xyz",
+		"dotted region":      "arn:aws:bedrock:attacker.example.com:123456789012:application-inference-profile/abc",
+		"userinfo":           "arn:aws:bedrock:us-east-1@evil.example:123456789012:application-inference-profile/abc",
+		"port":               "arn:aws:bedrock:evil.example%3a8443:123456789012:application-inference-profile/abc",
+		"another registry's": "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c, rt := newRealHostClient(t)
+			_, err := c.ResolveModelARN(context.Background(), Credentials{Region: "us-east-1"}, arn)
+			assert.Error(t, err)
+			rt.mu.Lock()
+			defer rt.mu.Unlock()
+			assert.Empty(t, rt.hosts, "no request leaves the gateway for an ARN the registry's region does not own")
+		})
+	}
+}
+
+// The call always goes to the registry's own region, built as a URL, and only to
+// an AWS host.
+func TestResolveModelARN_QueriesTheRegistrysRegionOnAnAWSHost(t *testing.T) {
+	t.Parallel()
+	c, rt := newRealHostClient(t)
+	got, err := c.ResolveModelARN(context.Background(), Credentials{Region: "us-east-1"}, appProfileARN)
+	require.NoError(t, err)
+	assert.Equal(t, modelARN, got)
+	require.Equal(t, []string{"bedrock.us-east-1.amazonaws.com"}, rt.hosts)
+
+	for _, region := range []string{"evil.example/", "us-east-1.evil.example", "", "US-EAST-1", "us-east-1/../x", "a b-1"} {
+		c, rt := newRealHostClient(t)
+		_, err := c.ResolveModelARN(context.Background(), Credentials{Region: region}, appProfileARN)
+		assert.Error(t, err, region)
+		assert.Empty(t, rt.hosts, "a registry region that is not an AWS region sends nothing: %q", region)
+	}
+}
+
+// The resource of an ARN becomes a path segment, so the client refuses the ones that
+// would change the path, on its own, whatever the ARN parser upstream let through.
+func TestResolveModelARN_RefusesAResourceThatIsNotOneSegment(t *testing.T) {
+	t.Parallel()
+	for name, arn := range map[string]string{
+		"empty":                 "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/",
+		"dot":                   "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/.",
+		"dot dot":               "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/..",
+		"slash after the first": "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a/b",
+		"encoded slash":         "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a%2Fb",
+		"encoded dot dot":       "arn:aws:bedrock:us-east-1:123456789012:provisioned-model/%2e%2e",
+		"query":                 "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a?x=1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c, rt := newRealHostClient(t)
+			_, err := c.ResolveModelARN(context.Background(), Credentials{Region: "us-east-1"}, arn)
+			assert.Error(t, err)
+			assert.Empty(t, rt.hosts, "no request is made for it")
+		})
+	}
 }

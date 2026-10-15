@@ -1,0 +1,46 @@
+# GCPBackendPolicy for the PSC-only Services on psc-gateway (regional RILB).
+#
+# Separate from cloudflare-backendpolicy.yaml on purpose: that one targets the
+# public Services and carries (commented) Cloud Armor, which is global and must
+# never attach to a regional backend — see the header of psc-services.yaml.
+# timeoutSec has no such constraint, so the PSC backends can and must set it.
+#
+# Without a policy the backend service takes the GCP default of 30s. The proxy
+# and MCP backends carry LLM completions and MCP tool calls that routinely run
+# longer; at 30s the RILB answers 502 (statusDetails=backend_timeout) while the
+# pod is still streaming, and nothing is logged in the namespace, so it reads
+# as a gateway fault. 300s mirrors the public backends in
+# cloudflare-backendpolicy.yaml and the gateway's own UPSTREAM_*_TIMEOUT.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: agentgateway-proxy-psc-timeout
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: proxy
+    neuraltrust.ai/exposure: psc
+spec:
+  default:
+    timeoutSec: 300
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-proxy-psc
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: agentgateway-mcp-psc-timeout
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: mcp
+    neuraltrust.ai/exposure: psc
+spec:
+  default:
+    timeoutSec: 300
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-mcp-psc

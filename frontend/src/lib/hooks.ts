@@ -142,6 +142,9 @@ export function useModelsCatalog(
     queryFn: () => api.get<ListResponse<Model>>(`/v1/models-catalog${query ? `?${query}` : ""}`),
     select: (data): Model[] => data.items ?? [],
     enabled: providerCode !== "",
+    // A registry-scoped listing asks the provider live; a failure there is the
+    // provider's answer, and retrying it only repeats the wait.
+    retry: scope?.registryId ? false : 3,
     staleTime: 5 * 60 * 1000,
   });
 }

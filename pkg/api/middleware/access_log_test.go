@@ -76,3 +76,28 @@ func TestAccessLogConnectOutcomesDoNotLeakRequestSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestAccessLogAttributesAdminCalls(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	app := fiber.New()
+	app.Use(NewAccessLogMiddleware(slog.New(slog.NewJSONHandler(&output, nil))).Middleware())
+	app.Get("/admin", func(c *fiber.Ctx) error {
+		StoreAdminIdentity(c, AdminIdentity{Kind: AdminIdentityHuman, TenantID: "t1", Issuer: "neuraltrust-app"})
+		return c.SendStatus(fiber.StatusOK)
+	})
+	app.Get("/public", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	for _, path := range []string{"/admin", "/public"} {
+		resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, path, nil))
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	require.Len(t, lines, 2)
+	require.Contains(t, lines[0], `"identity_kind":"human"`)
+	require.Contains(t, lines[0], `"token_issuer":"neuraltrust-app"`)
+	require.NotContains(t, lines[1], "identity_kind")
+}

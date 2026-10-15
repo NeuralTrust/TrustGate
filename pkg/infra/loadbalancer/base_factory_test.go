@@ -22,11 +22,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
-	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil)
 	routes := []routingdomain.Route{
 		routingdomain.RouteForRegistry(&registry.Registry{
 			ID:        ids.New[ids.RegistryKind](),
@@ -45,7 +49,6 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 		{name: "weighted", alg: loadbalancer.AlgorithmWeightedRoundRobin, wantName: "weighted-round-robin"},
 		{name: "least-conn", alg: loadbalancer.AlgorithmLeastConnections, wantName: "least-connections"},
 		{name: "semantic", alg: loadbalancer.AlgorithmSemantic, wantName: "semantic"},
-		{name: "smart-routing", alg: loadbalancer.AlgorithmSmartRouting, wantName: "smart-routing"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -67,7 +70,7 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 
 func TestBaseFactory_CreateStrategy_UnknownAlgorithm(t *testing.T) {
 	t.Parallel()
-	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil)
 	_, err := factory.CreateStrategy(loadbalancer.StrategyInput{Algorithm: "bogus"})
 	if err == nil {
 		t.Fatal("expected error for unknown algorithm")
@@ -88,4 +91,23 @@ func TestExportedConstantsMatchAlgorithmPackage(t *testing.T) {
 			t.Fatalf("IsValidAlgorithm(%q) returned false but value is in Algorithms()", a)
 		}
 	}
+}
+
+func TestBaseFactorySmartRoutingRequiresStateAndCanonicalPolicy(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	routes := []routingdomain.Route{{Registry: &registry.Registry{ID: ids.New[ids.RegistryKind]()}, Model: "low"}, {Registry: &registry.Registry{ID: ids.New[ids.RegistryKind]()}, Model: "high"}}
+	cfg := &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{{RegistryID: routes[0].Registry.ID, Model: "low", MinScore: 0}, {RegistryID: routes[1].Registry.ID, Model: "high", MinScore: .45}}}
+	input := loadbalancer.StrategyInput{Algorithm: loadbalancer.AlgorithmSmartRouting, Routes: routes, SmartRoutingConfig: cfg}
+	_, err := loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil).CreateStrategy(input)
+	require.ErrorContains(t, err, "shared conversation store")
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, strategies.NewRedisSR1Store(client), nil)
+	strategy, err := factory.CreateStrategy(input)
+	require.NoError(t, err)
+	require.Equal(t, "smart-routing", strategy.Name())
+	input.SmartRoutingConfig = nil
+	_, err = factory.CreateStrategy(input)
+	require.ErrorContains(t, err, "invalid smart routing configuration")
 }

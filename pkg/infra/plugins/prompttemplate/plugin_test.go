@@ -23,6 +23,8 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -238,4 +240,138 @@ func TestExecuteModeAAndModeB(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res.RequestBody)
 	assert.JSONEq(t, `{"messages":[{"role":"system","content":"You are a friendly bot.\n\ntenant acme"}]}`, string(res.RequestBody))
+}
+
+func newPluginSpan() (*metrics.EventContext, *trace.Span) {
+	tr := trace.New("t", trace.Metadata{})
+	span := tr.StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
+}
+
+func TestExecuteRecordsSpanDecision(t *testing.T) {
+	t.Parallel()
+
+	t.Run("injected", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		req := &infracontext.RequestContext{
+			Headers: map[string][]string{"X-Tenant-Id": {"acme"}},
+			Body:    []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		}
+		_, err := New().Execute(context.Background(), appplugins.ExecInput{
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{Settings: execSettings()},
+			Request: req,
+			Event:   event,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, decisionInjected, span.PluginAttrsCopy().Decision)
+		data, ok := span.PluginAttrsCopy().Extras.(PromptTemplateData)
+		require.True(t, ok)
+		assert.Equal(t, decisionInjected, data.Decision)
+	})
+
+	t.Run("skipped", func(t *testing.T) {
+		t.Parallel()
+		settings := execSettings()
+		settings["on_missing_context_variable"] = "skip_injection"
+		event, span := newPluginSpan()
+		req := &infracontext.RequestContext{
+			Body: []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		}
+		res, err := New().Execute(context.Background(), appplugins.ExecInput{
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{Settings: settings},
+			Request: req,
+			Event:   event,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		assert.Equal(t, decisionSkipped, span.PluginAttrsCopy().Decision)
+		data, ok := span.PluginAttrsCopy().Extras.(PromptTemplateData)
+		require.True(t, ok)
+		assert.Equal(t, decisionSkipped, data.Decision)
+		assert.Equal(t, []string{"a"}, data.SkippedIDs)
+	})
+
+	t.Run("rendered", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		req := &infracontext.RequestContext{
+			Body: []byte(`{"model":"gpt-4","properties":{"persona":"friendly"},"messages":[{"role":"user","content":"{template://support-bot@stable}"}]}`),
+		}
+		_, err := New().Execute(context.Background(), appplugins.ExecInput{
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{Settings: modeBSettings(false)},
+			Request: req,
+			Event:   event,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, decisionRendered, span.PluginAttrsCopy().Decision)
+		data, ok := span.PluginAttrsCopy().Extras.(PromptTemplateData)
+		require.True(t, ok)
+		assert.Equal(t, decisionRendered, data.Decision)
+	})
+
+	t.Run("observed", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		req := &infracontext.RequestContext{
+			Headers: map[string][]string{"X-Tenant-Id": {"acme"}},
+			Body:    []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		}
+		_, err := New().Execute(context.Background(), appplugins.ExecInput{
+			Mode:    policy.ModeObserve,
+			Config:  policy.PluginConfig{Settings: execSettings()},
+			Request: req,
+			Event:   event,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, decisionObserved, span.PluginAttrsCopy().Decision)
+		data, ok := span.PluginAttrsCopy().Extras.(PromptTemplateData)
+		require.True(t, ok)
+		assert.Equal(t, decisionObserved, data.Decision)
+	})
+
+	t.Run("unresolved refusal records block", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		req := &infracontext.RequestContext{
+			Body: []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		}
+		_, err := New().Execute(context.Background(), appplugins.ExecInput{
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{Settings: execSettings()},
+			Request: req,
+			Event:   event,
+		})
+		pe := requirePluginError(t, err)
+		assert.Equal(t, http.StatusBadRequest, pe.StatusCode)
+		assert.Equal(t, typeVariableUnresolved, pe.Type)
+		assert.Equal(t, decisionBlock, span.PluginAttrsCopy().Decision)
+		data, ok := span.PluginAttrsCopy().Extras.(PromptTemplateData)
+		require.True(t, ok)
+		assert.Equal(t, decisionBlock, data.Decision)
+		assert.NotEmpty(t, data.UnresolvedIDs)
+	})
+
+	t.Run("pass-through leaves the span decision empty", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		req := &infracontext.RequestContext{
+			Body: []byte(`{"messages":[{"role":"user","content":"plain"}]}`),
+		}
+		res, err := New().Execute(context.Background(), appplugins.ExecInput{
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{Settings: modeBSettings(true)},
+			Request: req,
+			Event:   event,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		assert.Empty(t, span.PluginAttrsCopy().Decision)
+		data, ok := span.PluginAttrsCopy().Extras.(PromptTemplateData)
+		require.True(t, ok)
+		assert.Equal(t, decisionNoOp, data.Decision)
+	})
 }

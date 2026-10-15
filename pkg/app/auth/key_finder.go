@@ -16,7 +16,9 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -30,16 +32,18 @@ type APIKeyFinder interface {
 var _ APIKeyFinder = (*apiKeyFinder)(nil)
 
 type apiKeyFinder struct {
-	repo     domain.Repository
-	keyCache *cache.TTLMap
-	logger   *slog.Logger
+	repo      domain.Repository
+	keyCache  *cache.TTLMap
+	missCache *cache.TTLMap
+	logger    *slog.Logger
 }
 
 func NewAPIKeyFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) APIKeyFinder {
 	return &apiKeyFinder{
-		repo:     repo,
-		keyCache: manager.GetTTLMap(cache.AuthKeyTTLName),
-		logger:   logger,
+		repo:      repo,
+		keyCache:  manager.GetTTLMap(cache.AuthKeyTTLName),
+		missCache: manager.GetTTLMap(cache.AuthKeyMissTTLName),
+		logger:    logger,
 	}
 }
 
@@ -47,15 +51,52 @@ func (f *apiKeyFinder) FindByAPIKey(ctx context.Context, rawKey string) (*domain
 	hash := domain.HashAPIKey(rawKey)
 	if cached, ok := f.keyCache.Get(hash); ok {
 		if a, ok := cached.(*domain.Auth); ok {
-			return a, nil
+			return f.live(a)
 		}
 		f.logger.Warn("auth-key cache entry failed type assertion; falling back to database")
 		f.keyCache.Delete(hash)
 	}
+	if _, missed := f.missCache.Get(hash); missed {
+		return nil, domain.ErrNotFound
+	}
+	// The generations are read before the store: a rotation, revocation or
+	// snapshot swap that clears the caches while the read is in flight makes
+	// the fill below a no-op instead of putting back what it replaced.
+	keyGen, missGen := f.keyCache.Generation(), f.missCache.Generation()
 	a, err := f.repo.FindByAPIKeyHash(ctx, hash)
+	if errors.Is(err, domain.ErrNotFound) {
+		f.rememberMiss(hash, missGen)
+	}
 	if err != nil {
 		return nil, err
 	}
-	f.keyCache.Set(hash, a)
+	f.keyCache.SetIfGeneration(hash, a, keyGen)
+	return f.live(a)
+}
+
+// rememberMiss keeps an unknown digest for a short while, so the same random
+// key presented again does not reach the database every time. Any change to a
+// gateway's credentials clears the map with InvalidateGatewayDataEvent.
+func (f *apiKeyFinder) rememberMiss(hash string, generation uint64) {
+	if f.missCache.Len() < cache.AuthKeyMissCacheMaxEntries {
+		f.missCache.SetIfGeneration(hash, struct{}{}, generation)
+	}
+}
+
+// live refuses a key that has passed its expiry.
+//
+// Here rather than at each call site: a key is presented to the proxy, to the
+// connect pages and to the consumer lookup, and an expiry enforced in only some
+// of those places is not an expiry. The cache is left alone — the entry carries
+// the expiry with it, so it answers the same way until it falls out on its own,
+// and evicting it here would only send the next request to the database to be
+// told the same thing.
+func (f *apiKeyFinder) live(a *domain.Auth) (*domain.Auth, error) {
+	if a == nil {
+		return nil, domain.ErrNotFound
+	}
+	if a.IsExpired(time.Now().UTC()) {
+		return nil, domain.ErrExpired
+	}
 	return a, nil
 }

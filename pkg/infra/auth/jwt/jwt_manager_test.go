@@ -15,6 +15,10 @@
 package jwt
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"strconv"
 	"testing"
 	"time"
 
@@ -52,8 +56,7 @@ func TestValidateToken_InvalidSignature(t *testing.T) {
 
 	mgr := newManagerWithSecret("test-secret")
 	err = mgr.ValidateToken(signed)
-	assert.Error(t, err)
-	assert.Equal(t, ErrInvalidToken, err)
+	assert.ErrorIs(t, err, ErrInvalidToken)
 }
 
 func TestValidateToken_Expired(t *testing.T) {
@@ -67,21 +70,69 @@ func TestValidateToken_Expired(t *testing.T) {
 
 	mgr := newManagerWithSecret(secret)
 	err = mgr.ValidateToken(signed)
-	assert.Error(t, err)
-	assert.Equal(t, ErrExpiredToken, err)
+	assert.ErrorIs(t, err, ErrExpiredToken)
 }
 
-func TestValidateToken_NoExpClaim(t *testing.T) {
-	secret := "no-exp-secret"
+func signRawPayload(secret, header, payload string) string {
+	enc := base64.RawURLEncoding
+	input := enc.EncodeToString([]byte(header)) + "." + enc.EncodeToString([]byte(payload))
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(input))
+	return input + "." + enc.EncodeToString(h.Sum(nil))
+}
+
+func TestParse_ExpiryHandling(t *testing.T) {
+	t.Parallel()
+	const secret = "exp-secret"
+	const hs256 = `{"alg":"HS256","typ":"JWT"}`
+	soon := strconv.FormatInt(time.Now().Add(5*time.Minute).Unix(), 10)
+
+	tests := []struct {
+		name    string
+		token   string
+		wantErr error
+	}{
+		{name: "missing", token: signRawPayload(secret, hs256, `{"tenant_id":"t1"}`), wantErr: ErrInvalidToken},
+		{name: "null", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":null}`), wantErr: ErrInvalidToken},
+		{name: "non-numeric", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":"tomorrow"}`), wantErr: ErrInvalidToken},
+		{name: "fractional", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":1.0}`), wantErr: ErrExpiredToken},
+		{name: "exponent", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":1e3}`), wantErr: ErrExpiredToken},
+		{name: "beyond max ttl", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":`+strconv.FormatInt(time.Now().Add(2*time.Hour).Unix(), 10)+`}`), wantErr: ErrInvalidToken},
+		{name: "alg none", token: signRawPayload(secret, `{"alg":"none","typ":"JWT"}`, `{"tenant_id":"t1","exp":`+soon+`}`), wantErr: ErrInvalidToken},
+		{name: "alg HS512 header", token: signRawPayload(secret, `{"alg":"HS512","typ":"JWT"}`, `{"tenant_id":"t1","exp":`+soon+`}`), wantErr: ErrInvalidToken},
+		{name: "not yet valid", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":`+soon+`,"nbf":`+soon+`}`), wantErr: ErrInvalidToken},
+		{name: "issued in the future", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":`+soon+`,"iat":`+soon+`}`), wantErr: ErrInvalidToken},
+		{name: "within max ttl", token: signRawPayload(secret, hs256, `{"tenant_id":"t1","exp":`+soon+`}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mgr := newManagerWithSecret(secret)
+			claims, err := mgr.DecodeToken(tt.token)
+			if tt.wantErr == nil {
+				assert.NoError(t, err)
+				assert.NoError(t, mgr.ValidateToken(tt.token))
+				assert.Equal(t, "t1", claims.TenantID)
+				return
+			}
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.ErrorIs(t, mgr.ValidateToken(tt.token), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateToken_ConfiguredMaxTTL(t *testing.T) {
+	t.Parallel()
 	claims := &Claims{RegisteredClaims: jwtlib.RegisteredClaims{
-		IssuedAt: jwtlib.NewNumericDate(time.Now()),
+		ExpiresAt: jwtlib.NewNumericDate(time.Now().Add(3 * time.Hour)),
 	}}
-	signed, err := signTokenWithSecret(secret, claims)
+	signed, err := signTokenWithSecret("ttl-secret", claims)
 	assert.NoError(t, err)
 
-	mgr := newManagerWithSecret(secret)
-	err = mgr.ValidateToken(signed)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, newManagerWithSecret("ttl-secret").ValidateToken(signed), ErrInvalidToken)
+
+	longer := NewJwtManager(&config.ServerConfig{SecretKey: "ttl-secret", AdminTokenMaxTTL: 4 * time.Hour})
+	assert.NoError(t, longer.ValidateToken(signed))
 }
 
 func TestDecodeToken_Success(t *testing.T) {

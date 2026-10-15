@@ -17,6 +17,8 @@ package logredact
 import (
 	"strings"
 	"testing"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
 func TestRedactLogString_BearerAndHeaders(t *testing.T) {
@@ -42,5 +44,75 @@ func TestRedactLogString_PreservesSafeText(t *testing.T) {
 	in := "collector not found for gateway_id=abc"
 	if got := RedactLogString(in); got != in {
 		t.Fatalf("safe text altered: %q", got)
+	}
+}
+
+func TestRedactLogString_ConsumerAPIKey(t *testing.T) {
+	key, err := auth.GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cases := map[string]string{
+		"plain":       "consumer lookup failed for " + key + " on gateway gw-1",
+		"query":       "GET /v1/models?key=" + key + "&limit=5",
+		"quoted":      `rejected credential "` + key + `"`,
+		"end of line": "key " + key,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := RedactLogString(in)
+			if strings.Contains(got, key) || strings.Contains(got, key[3:]) {
+				t.Fatalf("consumer key leaked: %q", got)
+			}
+			if !strings.Contains(got, placeholder) {
+				t.Fatalf("expected placeholder in %q", got)
+			}
+		})
+	}
+}
+
+func TestRedactLogString_ConsumerAPIKeyPrefixAloneIsKept(t *testing.T) {
+	in := "flag_enabled=true ag_short tag_value=ok"
+	if got := RedactLogString(in); got != in {
+		t.Fatalf("non-key text altered: %q", got)
+	}
+}
+
+func TestRedactLogString_OAuthJSONFields(t *testing.T) {
+	fields := []string{
+		"refresh_token", "id_token", "code_verifier", "subject_token",
+		"actor_token", "client_assertion", "password",
+	}
+	for _, field := range fields {
+		t.Run(field, func(t *testing.T) {
+			in := `token exchange failed body={"` + field + `":"sensitive-value-123","grant_type":"x"}`
+			got := RedactLogString(in)
+			if strings.Contains(got, "sensitive-value-123") {
+				t.Fatalf("%s leaked: %q", field, got)
+			}
+			if !strings.Contains(got, `"`+field+`": "`+placeholder+`"`) {
+				t.Fatalf("expected %s to be redacted in place, got %q", field, got)
+			}
+			if !strings.Contains(got, `"grant_type":"x"`) {
+				t.Fatalf("non-sensitive field altered: %q", got)
+			}
+		})
+	}
+}
+
+func TestRedactLogString_FormEncodedFields(t *testing.T) {
+	in := "token request failed: grant_type=refresh_token&refresh_token=rt-value&client_id=agw-1" +
+		"&client_assertion=eyJ.assertion.sig&code_verifier=cv-value&subject_token=st-value" +
+		"&actor_token=at-value&id_token=idt-value&password=pw-value&client_secret=cs-value"
+	got := RedactLogString(in)
+	for _, secret := range []string{"rt-value", "eyJ.assertion.sig", "cv-value", "st-value", "at-value", "idt-value", "pw-value", "cs-value"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("form value %q leaked: %q", secret, got)
+		}
+	}
+	for _, kept := range []string{"grant_type=refresh_token", "client_id=agw-1", "refresh_token=" + placeholder} {
+		if !strings.Contains(got, kept) {
+			t.Fatalf("expected %q in %q", kept, got)
+		}
 	}
 }

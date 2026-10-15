@@ -22,6 +22,8 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,6 +120,53 @@ func TestPlugin_Execute_ObserveDoesNotBlock(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, 200, res.StatusCode)
+}
+
+func TestPlugin_Execute_EnforceBlockSetsDecision(t *testing.T) {
+	p := New()
+	cases := []struct {
+		name     string
+		settings map[string]any
+		req      *infracontext.RequestContext
+		status   int
+	}{
+		{
+			name:     "byte limit",
+			settings: map[string]any{"allowed_payload_size": 10, "size_unit": "bytes"},
+			req:      &infracontext.RequestContext{Body: []byte("this body is definitely longer than ten bytes")},
+			status:   413,
+		},
+		{
+			name:     "character limit",
+			settings: map[string]any{"allowed_payload_size": 1, "size_unit": "megabytes", "max_chars_per_request": 5},
+			req:      &infracontext.RequestContext{Body: []byte(strings.Repeat("x", 6))},
+			status:   413,
+		},
+		{
+			name:     "missing content length",
+			settings: map[string]any{"allowed_payload_size": 1, "size_unit": "megabytes", "require_content_length": true},
+			req:      &infracontext.RequestContext{Body: []byte("hi"), Headers: map[string][]string{}},
+			status:   411,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			in := input(tc.settings, tc.req)
+			in.Mode = policy.ModeEnforce
+			in.Event = metrics.NewEventContext(span)
+
+			_, err := p.Execute(context.Background(), in)
+			require.Error(t, err)
+			pe, ok := appplugins.AsPluginError(err)
+			require.True(t, ok)
+			assert.Equal(t, tc.status, pe.StatusCode)
+
+			require.NotNil(t, span.Plugin)
+			assert.Equal(t, "block", span.Plugin.Decision)
+		})
+	}
 }
 
 func TestPlugin_Execute_RequiresContentLength(t *testing.T) {

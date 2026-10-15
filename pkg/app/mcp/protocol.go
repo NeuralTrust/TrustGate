@@ -149,6 +149,35 @@ type Target struct {
 	PinKey   string
 	Revision string
 	OpenAPI  *appopenapi.Source
+	// RestrictPrivateNetwork is set when URL was produced by per-user variable
+	// substitution. The dialer then refuses to connect to loopback, private
+	// (RFC 1918), link-local, CGNAT, unspecified or multicast addresses — at
+	// connect time, on the resolved address — so a user-controlled host can not
+	// reach the gateway's own network, even through DNS rebinding. Admin-fixed
+	// URLs leave it false.
+	RestrictPrivateNetwork bool
+}
+
+// CodeUpstreamError is the code an upstream server's error is relayed under
+// when the code it sent is one the gateway answers with itself.
+const CodeUpstreamError int64 = -32000
+
+// CodeConsentRequired is the gateway's consent prompt: the call needs an
+// upstream account the caller has not connected, and the error carries the
+// page to connect it.
+const CodeConsentRequired int64 = -32003
+
+// IsGatewaySignalCode reports whether code is one the gateway uses for its own
+// answers: a policy refusal, a consent prompt, a rate limit or an unavailable
+// limiter. Clients act on these codes — retry, show a connect link, stop — so
+// an upstream server's error is never relayed under one of them. -32002 is
+// left alone: MCP itself uses it for an unknown resource.
+func IsGatewaySignalCode(code int64) bool {
+	switch code {
+	case CodePolicyBlocked, CodeConsentRequired, CodeRateLimited, CodeUnavailable:
+		return true
+	}
+	return false
 }
 
 type RPCError struct {
@@ -172,7 +201,7 @@ func (e *RPCError) ResolvedHTTPStatus() int {
 		return e.HTTPStatus
 	}
 	switch e.Code {
-	case codePolicyBlocked:
+	case CodePolicyBlocked:
 		return http.StatusForbidden
 	case CodeRateLimited:
 		return http.StatusTooManyRequests

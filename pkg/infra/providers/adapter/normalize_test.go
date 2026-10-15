@@ -23,10 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// NormalizeOpenAIRequest
-// ---------------------------------------------------------------------------
-
 func TestNormalizeOpenAIRequest_InjectsTypeFunctionWhenMissing(t *testing.T) {
 	// Simulates what the Mistral SDK sends: tool_calls without "type"
 	input := `{
@@ -357,10 +353,6 @@ func TestNormalizeRequestForProvider_Cerebras_InjectsToolParameters(t *testing.T
 	assert.Equal(t, "object", params["type"])
 }
 
-// ---------------------------------------------------------------------------
-// isEmptyOrNull
-// ---------------------------------------------------------------------------
-
 func TestIsEmptyOrNull(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -386,7 +378,64 @@ func TestIsEmptyOrNull(t *testing.T) {
 func TestPrefersMaxCompletionTokens_ClassifiesEverySupportedProvider(t *testing.T) {
 	for _, p := range provider.Supported() {
 		want := p == provider.OpenAI || p == provider.Azure
-		assert.Equal(t, want, prefersMaxCompletionTokens(p), p)
+		assert.Equal(t, want, prefersMaxCompletionTokens(p, "gpt-5"), p)
+	}
+}
+
+func TestPrefersMaxCompletionTokens_DependsOnModelFamily(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		want     bool
+	}{
+		{provider: provider.OpenAI, model: "gpt-5", want: true},
+		{provider: provider.OpenAI, model: "gpt-4o-mini", want: true},
+		{provider: provider.OpenAI, model: "o3-mini", want: true},
+		{provider: provider.OpenAI, model: "mistral-small-2503", want: true},
+		{provider: provider.Azure, model: "gpt-5", want: true},
+		{provider: provider.Azure, model: "gpt-4o", want: true},
+		{provider: provider.Azure, model: "gpt-4o-mini", want: true},
+		{provider: provider.Azure, model: "o3-mini", want: true},
+		{provider: provider.Azure, model: "chatgpt-4o-latest", want: true},
+		{provider: provider.Azure, model: "", want: true},
+		{provider: provider.Azure, model: "mistral-small-2503", want: false},
+		{provider: provider.Azure, model: "probe-mistral", want: false},
+		{provider: provider.Azure, model: "Ministral-3B", want: false},
+		{provider: provider.Azure, model: "probe-llama33", want: false},
+		{provider: provider.Azure, model: "Meta-Llama-3.3-70B-Instruct", want: false},
+		{provider: provider.Azure, model: "Phi-4", want: false},
+		{provider: provider.Azure, model: "DeepSeek-V3", want: false},
+		{provider: provider.Azure, model: "gpt-oss-120b", want: false},
+		{provider: provider.Mistral, model: "mistral-large-latest", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) {
+			assert.Equal(t, tc.want, prefersMaxCompletionTokens(tc.provider, tc.model))
+		})
+	}
+}
+
+func TestAcceptsStreamIncludeUsage_FoundryFamilyGating(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		want     bool
+	}{
+		{provider: provider.OpenAI, model: "gpt-4o-mini", want: true},
+		{provider: provider.OpenAI, model: "mistral-small-2503", want: true},
+		{provider: provider.Azure, model: "gpt-4o", want: true},
+		{provider: provider.Azure, model: "gpt-4o-mini", want: true},
+		{provider: provider.Azure, model: "", want: true},
+		{provider: provider.Azure, model: "probe-mistral", want: false},
+		{provider: provider.Azure, model: "mistral-small-2503", want: false},
+		{provider: provider.Azure, model: "probe-llama33", want: false},
+		{provider: provider.Groq, model: "openai/gpt-oss-120b", want: true},
+		{provider: provider.Mistral, model: "mistral-large-latest", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) {
+			assert.Equal(t, tc.want, AcceptsStreamIncludeUsage(tc.provider, tc.model))
+		})
 	}
 }
 
@@ -404,6 +453,11 @@ func TestNormalizeRequestForProvider_TokenParamKey(t *testing.T) {
 		byteIdentical     bool
 	}{
 		{name: "max_tokens moves to max_completion_tokens", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":10,"messages":[]}`, wantMaxCompletion: 10},
+		{name: "openai non-reasoning model moves to max_completion_tokens", providers: []string{provider.OpenAI}, in: `{"model":"gpt-4o-mini","max_tokens":10,"messages":[]}`, wantMaxCompletion: 10},
+		{name: "azure openai model moves to max_completion_tokens", providers: []string{provider.Azure}, in: `{"model":"gpt-4o","max_tokens":10,"messages":[]}`, wantMaxCompletion: 10},
+		{name: "azure mistral keeps max_tokens", providers: []string{provider.Azure}, in: `{"model":"mistral-small-2503","max_tokens":10,"messages":[]}`, wantMaxTokens: 10},
+		{name: "azure probe-mistral keeps max_tokens", providers: []string{provider.Azure}, in: `{"model":"probe-mistral","max_tokens":50,"messages":[]}`, wantMaxTokens: 50},
+		{name: "azure llama keeps max_tokens", providers: []string{provider.Azure}, in: `{"model":"probe-llama33","max_tokens":10,"messages":[]}`, wantMaxTokens: 10},
 		{name: "client max_completion_tokens wins over max_tokens", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":10,"max_completion_tokens":20,"messages":[]}`, wantMaxCompletion: 20},
 		{name: "null max_tokens is left alone", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":null,"messages":[]}`, byteIdentical: true},
 		{name: "zero max_tokens is left alone", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":0,"messages":[]}`, byteIdentical: true},

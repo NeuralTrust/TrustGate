@@ -318,7 +318,7 @@ function DeleteGatewayDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Delete gateway"
-      description={`"${gateway.slug}" and all of its registries, consumers, roles, policies and auths will be permanently removed.`}
+      description={`"${gateway.slug}" and all of its registries, consumers, policies and auths will be permanently removed.`}
       onConfirm={confirm}
       loading={loading}
     />

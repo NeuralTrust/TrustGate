@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 const discoveryTTL = time.Hour
@@ -43,20 +45,30 @@ type discoveryEntry struct {
 
 func newDiscovery(client *http.Client) *discovery {
 	if client == nil {
-		client = &http.Client{Timeout: defaultFetchTimeout}
+		client = netguard.NewHTTPClient(defaultFetchTimeout)
 	}
 	return &discovery{client: client, entries: map[string]discoveryEntry{}}
 }
 
+func cacheKeyFor(ctx context.Context, issuer string) string {
+	if netguard.IsTrusted(ctx) {
+		return "trusted\x00" + issuer
+	}
+	return issuer
+}
+
 func (d *discovery) jwksURI(ctx context.Context, issuer string) (string, error) {
+	// Keyed by trust: an operator fetch and a tenant fetch of the same issuer
+	// string are different requests under different network rules.
+	key := cacheKeyFor(ctx, issuer)
 	d.mu.Lock()
-	if e, ok := d.entries[issuer]; ok && time.Since(e.fetchedAt) < discoveryTTL {
+	if e, ok := d.entries[key]; ok && time.Since(e.fetchedAt) < discoveryTTL {
 		d.mu.Unlock()
 		return e.jwksURI, nil
 	}
 	d.mu.Unlock()
 
-	v, err, _ := d.sf.Do(issuer, func() (any, error) {
+	v, err, _ := d.sf.Do(key, func() (any, error) {
 		return d.fetch(ctx, issuer)
 	})
 	if err != nil {
@@ -93,7 +105,7 @@ func (d *discovery) fetch(ctx context.Context, issuer string) (string, error) {
 		return "", fmt.Errorf("oidc discovery %s: no jwks_uri", url)
 	}
 	d.mu.Lock()
-	d.entries[issuer] = discoveryEntry{jwksURI: doc.JWKSURI, fetchedAt: time.Now()}
+	d.entries[cacheKeyFor(ctx, issuer)] = discoveryEntry{jwksURI: doc.JWKSURI, fetchedAt: time.Now()}
 	d.mu.Unlock()
 	return doc.JWKSURI, nil
 }

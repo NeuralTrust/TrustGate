@@ -16,7 +16,9 @@ package strategies
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"sort"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -25,38 +27,52 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
-// ComplexityScorer scores the complexity of a user message in [0,1].
+// ComplexityScorer returns raw difficulty from the immutable routing artifact.
 type ComplexityScorer interface {
-	Score(ctx context.Context, input, conversationID, tenantID string) (float64, error)
+	ScoreSR1(ctx context.Context, input, tenantID string) (float64, error)
 	Configured() bool
 }
 
-// SmartRouting routes by the complexity of the incoming message: it asks the
-// Firewall Complexity API for a score and maps that score to a route via the
-// configured tiers. It fails open to round-robin whenever the scorer is not
-// configured, the score is unavailable, or no candidate matches the score.
+// SmartRouting implements the frozen cold-point policy with an optional escape.
 type SmartRouting struct {
-	routes   []routingdomain.Route
-	config   *registry.SmartRoutingConfig
-	scorer   ComplexityScorer
-	fallback *RoundRobin
-	logger   *slog.Logger
-	warnOnce sync.Once
+	routes      []routingdomain.Route
+	config      *registry.SmartRoutingConfig
+	scorer      ComplexityScorer
+	logger      *slog.Logger
+	warnOnce    sync.Once
+	sr1State    SR1Store
+	scopeSuffix []byte
 }
 
+// NewSmartRouting creates the frozen policy with its shared conversation store.
 func NewSmartRouting(
 	routes []routingdomain.Route,
 	config *registry.SmartRoutingConfig,
 	scorer ComplexityScorer,
+	state SR1Store,
 	logger *slog.Logger,
 ) *SmartRouting {
-	return &SmartRouting{
-		routes:   routes,
-		config:   config,
+	strategy := &SmartRouting{
+		routes:   append([]routingdomain.Route(nil), routes...),
 		scorer:   scorer,
-		fallback: NewRoundRobin(routes),
 		logger:   logger,
+		sr1State: state,
 	}
+	if config == nil || config.Validate() != nil {
+		return strategy
+	}
+	policy := *config
+	policy.Tiers = append([]registry.SmartRoutingTier(nil), config.Tiers...)
+	setting := *config.SR1
+	policy.SR1 = &setting
+	sort.SliceStable(policy.Tiers, func(i, j int) bool { return policy.Tiers[i].MinScore < policy.Tiers[j].MinScore })
+	scope, err := json.Marshal(policy)
+	if err != nil {
+		return strategy
+	}
+	strategy.config = &policy
+	strategy.scopeSuffix = append(append([]byte{','}, scope...), ']')
+	return strategy
 }
 
 func (s *SmartRouting) Name() string { return algorithm.SmartRouting }
@@ -70,34 +86,7 @@ func (s *SmartRouting) Next(
 	if len(candidates) == 0 {
 		return nil
 	}
-	if len(candidates) == 1 {
-		s.record(req, false)
-		return pick(candidates[0])
-	}
-	if s.config == nil || s.scorer == nil || !s.scorer.Configured() || req == nil {
-		return s.fallbackNext(ctx, req, exclude, "smart routing not configured")
-	}
-	input, err := extractPromptFromRequest(req.Body)
-	if err != nil {
-		return s.fallbackNext(ctx, req, exclude, "could not extract input from request")
-	}
-	score, err := s.scorer.Score(ctx, input, req.SessionID, req.GatewayID)
-	if err != nil {
-		return s.fallbackNext(ctx, req, exclude, "complexity score unavailable")
-	}
-	target := s.routeForScore(score, candidates)
-	if target == nil {
-		return s.fallbackNext(ctx, req, exclude, "no candidate matched complexity score")
-	}
-	s.record(req, true)
-	if s.logger != nil {
-		s.logger.Debug("smart routing selected route",
-			slog.String("registry_id", target.Registry.ID.String()),
-			slog.String("model", target.Model),
-			slog.Float64("score", score),
-		)
-	}
-	return target
+	return s.nextSR1(ctx, req, candidates)
 }
 
 func (s *SmartRouting) record(req *infracontext.RequestContext, tierApplied bool) {
@@ -105,37 +94,4 @@ func (s *SmartRouting) record(req *infracontext.RequestContext, tierApplied bool
 		return
 	}
 	req.RoutingDecision = &infracontext.RoutingDecision{TierApplied: tierApplied}
-}
-
-func (s *SmartRouting) routeForScore(score float64, candidates []routingdomain.Route) *routingdomain.Route {
-	tier, ok := s.config.TierForScore(score)
-	if !ok {
-		return nil
-	}
-	model := tier.RouteModel()
-	for _, route := range candidates {
-		if route.Registry == nil || route.Registry.ID != tier.RegistryID {
-			continue
-		}
-		if model != "" && route.Model != model {
-			continue
-		}
-		return pick(route)
-	}
-	return nil
-}
-
-func (s *SmartRouting) fallbackNext(
-	ctx context.Context,
-	req *infracontext.RequestContext,
-	exclude map[routingdomain.RouteKey]struct{},
-	reason string,
-) *routingdomain.Route {
-	s.record(req, false)
-	if s.logger != nil {
-		s.warnOnce.Do(func() {
-			s.logger.Warn("smart routing falling back to round-robin", slog.String("reason", reason))
-		})
-	}
-	return s.fallback.Next(ctx, req, exclude)
 }

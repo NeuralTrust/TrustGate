@@ -67,7 +67,7 @@ guess the architecture.
    its axis, not a single file or diff, unless the user explicitly scopes it.
 4. **Inject context into every sub-agent** — pass (a) the selected architecture
    profile from this file, (b) the category brief for that agent, (c) the report
-   contract, and (d) any repo `AGENT.md` / `.cursor/rules` conventions you found.
+   contract, and (d) any repo `AGENTS.md` / `.cursor/rules` conventions you found.
    Sub-agents cannot see this conversation; the prompt must be self-contained.
 5. **Aggregate, don't editorialize** — after all six return, merge their
    findings into one report using the template below. Do not drop or soften
@@ -90,7 +90,7 @@ Copy this checklist and track progress:
 
 ```
 - [ ] 1. Resolve architecture profile (arg → profile). Ask if missing/invalid.
-- [ ] 2. Detect repo conventions (AGENT.md, .cursor/rules, Makefile, go.mod).
+- [ ] 2. Detect repo conventions (AGENTS.md, .cursor/rules, Makefile, go.mod).
 - [ ] 3. Comment-cleanup WRITE sub-agent (own phase, first). Skip if read-only asked.
 - [ ] 4. Launch 6 read-only sub-agents in parallel (one per category).
 - [ ] 5. Collect the 6 category reports.
@@ -103,10 +103,10 @@ Copy this checklist and track progress:
 will paste it into each sub-agent prompt.
 
 **Step 2 — Conventions.** Quickly locate `go.mod` (module path, Go version),
-`Makefile` / `Taskfile` (lint/test/vet targets), and any `AGENT.md`,
-`AGENTS.md`, or `.cursor/rules/*.mdc`. Repo rules OVERRIDE generic advice — e.g.
-if `AGENT.md` forbids code comments, the GO CONVENTIONS agent must NOT flag
-"missing doc comments" as an issue. Note the override in each prompt.
+`Makefile` / `Taskfile` (lint/test/vet targets), and any `AGENTS.md` or
+`.cursor/rules/*.mdc`. Repo rules OVERRIDE generic advice — e.g. TrustGate
+`.agents/AGENTS.md` allows exported Go doc comments, so the GO CONVENTIONS agent
+must NOT flag them as missing or as noise. Note the override in each prompt.
 
 **Step 3 — Comment cleanup (WRITE, alone).** Launch the cleanup sub-agent (see
 [Comment Cleanup](#comment-cleanup-write-phase)) and wait for it to finish before
@@ -229,10 +229,12 @@ model (`Task` call with `model: "composer-2.5-fast"`). Give it this brief:
 > you remove or trim. Preserve blank-line/structure so diffs stay minimal.
 
 **Follow the repo comment policy first (it wins):**
-- If the repo policy forbids ALL comments (e.g. TrustGate `AGENT.md`: "DO NOT PUT
-  CODE COMMENTS"), remove **every** comment except the tooling/compiler
-  directives listed below. Do not keep doc comments even on exported symbols.
-- Otherwise, keep only comments that carry information the code cannot: a
+- Canonical file: `AGENTS.md` (`.agents/AGENTS.md` in this repo). TrustGate
+  allows exported Go doc comments, one package comment per package, swagger
+  annotations, license headers, and rare why comments — **do not strip those**.
+- If a different repo's policy forbids ALL comments, remove every comment except
+  the tooling/compiler directives listed below.
+- Otherwise keep only comments that carry information the code cannot: a
   non-obvious **why**, a trade-off/workaround with a ticket ref, a genuine gotcha,
   or a required license header.
 
@@ -498,5 +500,5 @@ Report to the user:
 
 - `~/.cursor/skills/trustgate-hexagonal/SKILL.md` — canonical hexagonal layout
   and SOLID mapping (use as the reference for the `hexagonal` profile).
-- Repo `AGENT.md` / `AGENTS.md` / `.cursor/rules/*.mdc` — binding conventions
+- Repo `AGENTS.md` / `.cursor/rules/*.mdc` — binding conventions
   that override generic advice (comment policy, lint config, layout).

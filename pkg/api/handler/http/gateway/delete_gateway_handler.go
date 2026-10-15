@@ -16,6 +16,7 @@ package gateway
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -33,7 +34,7 @@ func NewDeleteGatewayHandler(deleter appgateway.Deleter, finder appgateway.Finde
 
 // Handle godoc
 // @Summary      Delete a gateway
-// @Description  Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, roles, policies, auths, registries and vault credentials).
+// @Description  Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, policies, auths, registries and vault credentials).
 // @Tags         gateways
 // @Produce      json
 // @Security     BearerAuth
@@ -48,8 +49,8 @@ func (h *DeleteGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	caller := tenantIDFromContext(c)
-	if caller != "" {
+	caller := middleware.AdminIdentityFromContext(c)
+	if !isPlatform(caller) {
 		existing, err := h.finder.FindByID(c.UserContext(), id)
 		if err != nil {
 			return httpio.WriteError(c, err)

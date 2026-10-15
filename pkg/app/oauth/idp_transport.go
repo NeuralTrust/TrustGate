@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
@@ -89,7 +90,8 @@ func (t *idpTransport) tokenCall(ctx context.Context, endpoint string, form url.
 	// cause (e.g. redirect_uri_mismatch, bad_verification_code).
 	if code, _ := doc["error"].(string); code != "" {
 		desc, _ := doc["error_description"].(string)
-		return nil, oauthErr(code, desc)
+		return nil, oauthErr(strutil.SanitizeUpstream(code, maxUpstreamErrorCodeLen),
+			strutil.SanitizeUpstream(desc, maxUpstreamErrorDescLen))
 	}
 	if res.StatusCode != http.StatusOK {
 		return nil, oauthErr("server_error",

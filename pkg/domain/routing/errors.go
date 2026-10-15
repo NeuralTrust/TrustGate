@@ -24,6 +24,22 @@ import (
 var (
 	ErrInvalidModelRef       = fmt.Errorf("routing: invalid model reference: %w", commonerrors.ErrValidation)
 	ErrUnknownPoolAlias      = fmt.Errorf("routing: unknown pool alias: %w", commonerrors.ErrValidation)
+	ErrSR1PolicyExhausted    = errors.New("routing: no available smart-routing route at or above the committed rung")
 	ErrModelDenied           = errors.New("routing: model denied")
 	ErrNoRegistryServesModel = errors.New("routing: no registry serves the requested model")
 )
+
+// ModelDeniedError is an ErrModelDenied whose Reason is safe to return to the
+// API client; Error keeps the routing prefix for logs.
+type ModelDeniedError struct {
+	Reason string
+}
+
+func (e *ModelDeniedError) Error() string { return ErrModelDenied.Error() + ": " + e.Reason }
+
+func (e *ModelDeniedError) Unwrap() error { return ErrModelDenied }
+
+// DenyModel builds a ModelDeniedError from a formatted reason.
+func DenyModel(format string, args ...any) error {
+	return &ModelDeniedError{Reason: fmt.Sprintf(format, args...)}
+}

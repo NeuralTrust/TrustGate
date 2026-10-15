@@ -227,6 +227,36 @@ func TestAdminAuth_PlatformTokenRequiresExplicitClaimWhenEnforced(t *testing.T) 
 	})
 }
 
+func TestAdminAuth_ConsoleTokenIssuerIsCarriedButNotRequired(t *testing.T) {
+	mgr := jwt.NewJwtManager(&config.ServerConfig{SecretKey: "secret"})
+	mw := middleware.NewAdminAuthMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), mgr, nil, false)
+	app := fiber.New()
+	app.Get("/protected", mw.Middleware(), func(c *fiber.Ctx) error {
+		return c.JSON(middleware.AdminIdentityFromContext(c))
+	})
+
+	for name, claims := range map[string]*jwt.Claims{
+		"with iss and aud": {TenantID: "t1", RegisteredClaims: golangjwt.RegisteredClaims{Issuer: "neuraltrust-app", Audience: golangjwt.ClaimStrings{"trustgate-console"}}},
+		"without them":     {TenantID: "t1"},
+		"unknown values":   {TenantID: "t1", RegisteredClaims: golangjwt.RegisteredClaims{Issuer: "someone-else", Audience: golangjwt.ClaimStrings{"other"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claims.ExpiresAt = golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute))
+			token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).SignedString([]byte("secret"))
+			require.NoError(t, err)
+			req := httptest.NewRequest(fiber.MethodGet, "/protected", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+			var identity middleware.AdminIdentity
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&identity))
+			require.Equal(t, claims.Issuer, identity.Issuer)
+		})
+	}
+}
+
 func TestAdminAuth_AuthFailureLoggedAtDebug(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))

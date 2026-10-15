@@ -1,0 +1,45 @@
+# PSC-only Services — same pod selectors as the public Services, but WITHOUT
+# a Cloud Armor GCPBackendPolicy. Sharing a Service between external-gateway
+# (global Armor policy) and psc-gateway (regional RILB) makes GKE try to attach
+# the global policy to the regional backend and breaks reconciliation.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-proxy-psc
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: proxy
+    component: proxy
+    neuraltrust.ai/exposure: psc
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: proxy
+    component: proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-mcp-psc
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: mcp
+    component: mcp
+    neuraltrust.ai/exposure: psc
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8082
+    targetPort: 8082
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: mcp
+    component: mcp

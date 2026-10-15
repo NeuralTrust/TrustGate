@@ -23,7 +23,7 @@ import (
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
-func ConnectedAccountEmail(ctx context.Context, vault vaultdomain.Repository, gatewayID ids.GatewayID, principalSub string) string {
+func ConnectedAccountEmail(ctx context.Context, vault CredentialLister, gatewayID ids.GatewayID, principalSub string) string {
 	if vault == nil || principalSub == "" || gatewayID.IsNil() {
 		return ""
 	}

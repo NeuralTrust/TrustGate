@@ -18,26 +18,78 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 )
 
 type CreateConsumerRequest struct {
 	Name          string                   `json:"name"`
 	Type          string                   `json:"type,omitempty"`
-	RoutingMode   string                   `json:"routing_mode,omitempty"`
 	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
 	Headers       map[string]string        `json:"headers,omitempty"`
 	Active        *bool                    `json:"active,omitempty"`
 	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
 	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
-	Roles         []string                 `json:"roles,omitempty"`
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      string                   `json:"fail_mode,omitempty"`
+	Identity      *IdentityRequest         `json:"identity,omitempty"`
+	AuthBinding   *AuthBindingRequest      `json:"auth_binding,omitempty"`
+	// Audience is application (the default) or personal. It is set at create
+	// and cannot change afterwards.
+	Audience string `json:"audience,omitempty" enums:"application,personal" default:"application"`
+	// Description is free text for the people managing the consumer. It plays
+	// no part in routing, policy evaluation or matching.
+	Description string `json:"description,omitempty" maxLength:"500"`
+}
+
+// AuthBindingRequest narrows which callers of a shared auth (external IdP,
+// mTLS CA) may enter the consumer. Omitted or empty lists accept every caller
+// the auth verifies.
+type AuthBindingRequest struct {
+	// AllowedClientIDs are the azp / client_id values accepted on a bearer JWT.
+	AllowedClientIDs []string `json:"allowed_client_ids,omitempty"`
+	// AllowedCertificateSubjects are the client-certificate common names or SAN
+	// DNS names accepted over mTLS.
+	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects,omitempty"`
+}
+
+// ToDomain maps the request onto the domain binding; nil when omitted.
+func (r *AuthBindingRequest) ToDomain() *domain.AuthBinding {
+	if r == nil {
+		return nil
+	}
+	return &domain.AuthBinding{
+		AllowedClientIDs:           append([]string(nil), r.AllowedClientIDs...),
+		AllowedCertificateSubjects: append([]string(nil), r.AllowedCertificateSubjects...),
+	}
+}
+
+// IdentityRequest is accepted and ignored.
+//
+// It used to declare who a consumer acts for. Nothing declares that any more:
+// who a request runs as is read from the request — a verified person is their
+// token's subject, a machine credential naming an end user acts for that
+// person, one naming nobody acts as the application. The fields stay on the
+// wire so a client written against the old shape is not refused; what it asks for
+// is what it now gets by sending (or not sending) the end-user header.
+type IdentityRequest struct {
+	ActsForUsers  bool   `json:"acts_for_users"`
+	Source        string `json:"source,omitempty"`
+	EndUserHeader bool   `json:"end_user_header,omitempty"`
+}
+
+// ToDomain maps the request onto the domain identity; nil when omitted.
+func (r *IdentityRequest) ToDomain() *domain.Identity {
+	if r == nil {
+		return nil
+	}
+	return &domain.Identity{}
 }
 
 type RegistryBindingRequest struct {
@@ -109,6 +161,7 @@ type LBConfigRequest struct {
 }
 
 type SmartRoutingConfigRequest struct {
+	SR1   *SR1ConfigRequest         `json:"sr1,omitempty"`
 	Tiers []SmartRoutingTierRequest `json:"tiers"`
 }
 
@@ -187,7 +240,12 @@ func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConf
 			Model:      tier.Model,
 		})
 	}
-	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil
+	sr1 := &registrydomain.SR1Config{CacheTTLSeconds: 300}
+	if s.SR1 != nil {
+		sr1.CacheTTLSeconds = s.SR1.CacheTTLSeconds
+		sr1.EscapeHatchEnabled = s.SR1.EscapeHatchEnabled
+	}
+	return &registrydomain.SmartRoutingConfig{Tiers: tiers, SR1: sr1}, nil
 }
 
 func (e *EmbeddingConfigRequest) ToDomain() *registrydomain.EmbeddingConfig {
@@ -218,6 +276,20 @@ func (r CreateConsumerRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
+	if err := validateDescription(r.Description); err != nil {
+		return err
+	}
+	_, err := domain.ParseAudience(r.Audience)
+	return err
+}
+
+func validateDescription(description string) error {
+	if strings.ContainsRune(description, 0) {
+		return fmt.Errorf("description must not contain NUL characters: %w", commonerrors.ErrValidation)
+	}
+	if utf8.RuneCountInString(description) > domain.MaxDescriptionLen {
+		return fmt.Errorf("description too long (max %d characters): %w", domain.MaxDescriptionLen, commonerrors.ErrValidation)
+	}
 	return nil
 }
 
@@ -225,8 +297,9 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
-func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
-	return domain.NewRoutingMode(r.RoutingMode)
+// ToAudience returns the requested audience, empty when the body sets none.
+func (r CreateConsumerRequest) ToAudience() domain.Audience {
+	return domain.Audience(r.Audience)
 }
 
 func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
@@ -327,13 +400,6 @@ func normalizeBindingWeight(weight *int) (int, error) {
 	return *weight, nil
 }
 
-func (r CreateConsumerRequest) ToRoleIDs() ([]ids.RoleID, error) {
-	if len(r.Roles) == 0 {
-		return nil, nil
-	}
-	return parseUUIDList[ids.RoleKind](r.Roles, "roles")
-}
-
 func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 	if r == nil {
 		return nil, nil
@@ -355,14 +421,44 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &domain.LBConfig{
+	config := &domain.LBConfig{
 		Enabled:         r.Enabled,
 		Algorithm:       r.Algorithm,
 		PoolAlias:       r.PoolAlias,
 		Members:         members,
 		EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
 		SmartRouting:    smartRouting,
-	}, nil
+	}
+	if config.Enabled && config.Algorithm == "" {
+		config.Algorithm = algorithm.RoundRobin
+	}
+	if smartRouting != nil || r.Algorithm == algorithm.SmartRouting {
+		policies := make(domain.ModelPolicies, len(members))
+		known := make(map[ids.RegistryID]struct{}, len(members))
+		for _, member := range members {
+			known[member.RegistryID] = struct{}{}
+			policy := policies[member.RegistryID]
+			policy.Allowed = append(policy.Allowed, member.Models...)
+			if model := member.RouteModel(); model != "" {
+				policy.Allowed = append(policy.Allowed, model)
+			}
+			policies[member.RegistryID] = policy
+		}
+		validation := *config
+		if smartRouting != nil {
+			shape := *smartRouting
+			shape.LegacyThresholds = true
+			validation.SmartRouting = &shape
+		}
+		validation.Enabled = true
+		if err := validation.ValidateTierRegistries(known); err != nil {
+			return nil, fmt.Errorf("lb_config: %w: %w", commonerrors.ErrValidation, err)
+		}
+		if err := validation.Validate(policies); err != nil {
+			return nil, fmt.Errorf("lb_config: %w: %w", commonerrors.ErrValidation, err)
+		}
+	}
+	return config, nil
 }
 
 func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {

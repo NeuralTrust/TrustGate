@@ -15,6 +15,7 @@
 package auth_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -75,4 +76,18 @@ func TestIsDefaultIdP_FalseForNilAndOthers(t *testing.T) {
 	other, err := authdomain.NewAuth(ids.New[ids.GatewayKind](), "custom", authdomain.TypeAPIKey, true, authdomain.Config{})
 	require.NoError(t, err)
 	require.False(t, appauth.IsDefaultIdP(other))
+}
+
+func TestBuildDefaultIdP_IsTheOnlyTrustedConfigAndTrustIsNeverSerialised(t *testing.T) {
+	auth := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{Issuer: "https://app.example/api/mcp/oauth"})
+	require.NotNil(t, auth)
+	require.True(t, auth.Config.OAuth2.Trusted)
+
+	raw, err := json.Marshal(auth.Config.OAuth2)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "rusted")
+
+	var decoded authdomain.OAuth2Config
+	require.NoError(t, json.Unmarshal([]byte(`{"issuer":"https://x","Trusted":true,"trusted":true}`), &decoded))
+	require.False(t, decoded.Trusted, "a stored or API-supplied config cannot claim trust")
 }

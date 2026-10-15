@@ -17,14 +17,19 @@ package middleware
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -44,6 +49,7 @@ type chainIdentityResolver struct {
 	session           appauth.SessionTokenVerifier
 	xfccPeers         []*net.IPNet
 	defaultIdPEnabled bool
+	now               func() time.Time
 }
 
 func NewChainIdentityResolver(
@@ -69,6 +75,7 @@ func NewChainIdentityResolver(
 		session:           sessionVerifier,
 		xfccPeers:         parseTrustedPeers(trustXFCCFrom),
 		defaultIdPEnabled: defaultIdPEnabled,
+		now:               time.Now,
 	}
 }
 
@@ -115,15 +122,58 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if cert := r.clientCertificate(c); cert != nil {
-		return r.resolveMTLS(c.UserContext(), cert, scope)
+		id, err := r.resolveMTLS(c.UserContext(), cert, scope)
+		return ownSubjectsOnly(c.UserContext(), id, err)
 	}
-	if token := bearerToken(c); token != "" {
-		return r.resolveBearer(c.UserContext(), token, scope)
+	// An api key presented as a bearer token is an api key, not a token to hand
+	// to the IdP validators: most MCP clients can only send Authorization, and
+	// the proxy plane has always accepted that form. A bearer without the api-key
+	// marker keeps its precedence over the key headers.
+	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
+		id, err := r.resolveBearer(c.UserContext(), token, scope)
+		return ownSubjectsOnly(c.UserContext(), id, err)
 	}
-	if rawKey := c.Get(resolver.HeaderAPIKey); rawKey != "" {
-		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
+	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
+		// Not guarded: an api key's subject is the name an admin gave the key,
+		// a row in this gateway's own database, and the MCP plane replaces it
+		// with the application's subject anyway. Refusing it would only lock
+		// out a key somebody happened to call "app:something". A personal
+		// key's subject is its owner, and is guarded where it is admitted.
+		return r.resolveAPIKey(c.UserContext(), rawKey, scope, isStorePath(c.Path()))
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	// Info, not Warn: an MCP client's first call carries no credential by
+	// design, to be challenged into OAuth discovery.
+	return credentialRejected(c.UserContext(), slog.LevelInfo, "no credential presented", slog.String("path", c.Path()))
+}
+
+// ownSubjectsOnly refuses a credential whose subject claims a namespace only
+// the gateway mints.
+//
+// A subject is what an upstream account hangs off, so two callers with the same
+// subject are the same account. The gateway mints app:<consumer_id> for an
+// application, app:<consumer_id>:<end_user> for someone it names, and
+// instance:<registry_id> for the account a server's instance holds for
+// everyone. Everything else here is whatever an identity provider put in a
+// token — and which claim that is read from is configurable per credential, so
+// it can be one a person edits about themselves.
+//
+// A token saying "app:<the other team's consumer>" would otherwise be that
+// application, and would read the upstream accounts it had linked. Nothing
+// legitimate arrives here wearing these prefixes: the gateway builds them after
+// this point, from the consumer it just resolved, never from the wire.
+//
+// It guards the credentials whose subject comes from outside — a token an
+// identity provider signed, a certificate a CA issued. An api key's subject is
+// this gateway's own label for it and is left alone (see Resolve).
+func ownSubjectsOnly(ctx context.Context, id Identity, err error) (Identity, error) {
+	if err != nil {
+		return id, err
+	}
+	if id.Principal != nil && identity.ReservedSubject(id.Principal.Subject) {
+		return credentialRejected(ctx, slog.LevelWarn, "subject is in a namespace only the gateway mints",
+			slog.String("auth_id", id.AuthID.String()))
+	}
+	return id, nil
 }
 
 func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
@@ -140,28 +190,16 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 		return nil, nil
 	}
 	scope := authScope{}
-	hasOAuth2 := false
 	hasEnabledOAuth2 := false
-	hasEnabledAuth := false
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
-			if a.Enabled {
-				hasEnabledAuth = true
-			}
-			if a.Type == authdomain.TypeOAuth2 {
-				hasOAuth2 = true
-				if a.Enabled {
-					hasEnabledOAuth2 = true
-				}
+			if a.Type == authdomain.TypeOAuth2 && a.Enabled {
+				hasEnabledOAuth2 = true
 			}
 		}
 	}
-	// The built-in provider bootstraps consumers that carry no credential of
-	// their own. Once a path has an enabled one — an api key, mTLS, or its own
-	// oauth2 IdP — that credential is the only way in: falling back here would
-	// let any platform login reach the consumer without it.
-	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth
+	defaultIdPUsable := r.defaultIdPEnabled && appconsumer.DefaultIdPAdmitted(matches)
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}
@@ -172,7 +210,7 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Certificate, scope authScope) (Identity, error) {
 	candidates, err := r.credentials.MTLSAuths(ctx)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "mtls auth lookup failed", slog.String("error", err.Error()))
 	}
 	for _, a := range candidates {
 		if !scope.allows(a.ID) {
@@ -184,13 +222,13 @@ func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Cert
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	return credentialRejected(ctx, slog.LevelWarn, "client certificate matches no mtls auth")
 }
 
 func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string, scope authScope) (Identity, error) {
 	candidates, err := r.credentials.OAuth2Auths(ctx)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "oauth2 auth lookup failed", slog.String("error", err.Error()))
 	}
 	if isJWT(token) {
 		if r.session != nil && unverifiedIssuer(token) == r.session.Issuer() {
@@ -201,49 +239,81 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 	return r.resolveOpaque(ctx, token, candidates, scope)
 }
 
+// sessionRejected turns a refusal into the one opaque error the caller gets,
+// and writes down which check failed.
+//
+// Every exit below returns the same 401 — right for a client, useless for the
+// operator reading a pod log, where a brokered login that dies here leaves
+// nothing but `"error":"unauthenticated"` and no way to tell an expired token
+// from an audience mismatch from a session minted for another gateway. The
+// reason is a fixed string and the attrs are claims, never the token.
+func sessionRejected(ctx context.Context, reason string, attrs ...slog.Attr) (Identity, error) {
+	slog.LogAttrs(ctx, slog.LevelWarn, "mcp auth: session token rejected",
+		append([]slog.Attr{slog.String("reason", reason)}, attrs...)...)
+	return Identity{}, resolver.ErrUnauthenticated
+}
+
+// credentialRejected is sessionRejected for every other credential the chain
+// refuses: an IdP token, an opaque token, an api key, a client certificate, or
+// none at all.
+func credentialRejected(ctx context.Context, level slog.Level, reason string, attrs ...slog.Attr) (Identity, error) {
+	slog.LogAttrs(ctx, level, "mcp auth: credential rejected",
+		append([]slog.Attr{slog.String("reason", reason)}, attrs...)...)
+	return Identity{}, resolver.ErrUnauthenticated
+}
+
 func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "path matches no consumer")
 	}
 	principal, err := r.session.Verify(ctx, token)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token does not verify", slog.String("error", err.Error()))
 	}
 	if principal.Subject == "" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token has no subject")
 	}
 	if use, _ := principal.Claims["token_use"].(string); use != "mcp_session" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token is not an mcp session", slog.String("token_use", use))
 	}
 	authID, _ := principal.Claims["authid"].(string)
 	if authID == "" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token carries no authid")
 	}
 	for _, a := range candidates {
-		if a.ID.String() != authID || !scope.allows(a.ID) {
+		if a.ID.String() != authID {
 			continue
+		}
+		if !scope.allows(a.ID) {
+			return sessionRejected(ctx, "authid is not in the path's scope", slog.String("authid", authID))
 		}
 		cfg := a.Config.OAuth2
 		if cfg == nil {
-			return Identity{}, resolver.ErrUnauthenticated
+			return sessionRejected(ctx, "matched auth has no oauth2 config", slog.String("authid", authID))
 		}
-		if !identity.AudienceMatches(identity.AudiencesFromClaim(principal.Claims["aud"]), cfg.Audiences) {
-			return Identity{}, resolver.ErrUnauthenticated
+		have := identity.AudiencesFromClaim(principal.Claims["aud"])
+		if !identity.AudienceMatches(have, cfg.Audiences) {
+			return sessionRejected(ctx, "audience mismatch",
+				slog.String("authid", authID),
+				slog.String("token_aud", strings.Join(have, ",")),
+				slog.String("want_aud", strings.Join(cfg.Audiences, ",")))
 		}
 		if !principal.HasScopes(cfg.RequiredScopes) {
-			return Identity{}, resolver.ErrUnauthenticated
+			return sessionRejected(ctx, "token is missing a required scope",
+				slog.String("authid", authID),
+				slog.String("want_scopes", strings.Join(cfg.RequiredScopes, " ")))
 		}
 		gatewayID := a.GatewayID
 		if appauth.IsDefaultIdP(a) {
 			gw, err := gatewayFromClaim(principal.Claims["gwid"])
 			if err != nil {
-				return Identity{}, resolver.ErrUnauthenticated
+				return sessionRejected(ctx, "default-idp session carries no usable gwid")
 			}
 			gatewayID = gw
 		}
 		return Identity{GatewayID: gatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	return sessionRejected(ctx, "authid matches no enabled oauth2 auth", slog.String("authid", authID))
 }
 
 func gatewayFromClaim(v any) (ids.GatewayID, error) {
@@ -256,9 +326,10 @@ func gatewayFromClaim(v any) (ids.GatewayID, error) {
 
 func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "path matches no consumer")
 	}
 	issuer := unverifiedIssuer(token)
+	var lastErr error
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2
 		if cfg == nil || cfg.Issuer != issuer || !scope.allows(a.ID) {
@@ -272,17 +343,23 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 			principal, err = r.intro.Validate(ctx, token, cfg)
 		}
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	if lastErr != nil {
+		return credentialRejected(ctx, slog.LevelWarn, "token does not validate",
+			slog.String("issuer", issuer), slog.String("error", lastErr.Error()))
+	}
+	return credentialRejected(ctx, slog.LevelWarn, "token issuer matches no oauth2 auth on the path", slog.String("issuer", issuer))
 }
 
 func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "path matches no consumer")
 	}
+	var lastErr error
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2
 		if cfg == nil || cfg.IntrospectionURL == "" || !scope.allows(a.ID) {
@@ -290,26 +367,90 @@ func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string,
 		}
 		principal, err := r.intro.Validate(ctx, token, cfg)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	if lastErr != nil {
+		return credentialRejected(ctx, slog.LevelWarn, "opaque token does not introspect", slog.String("error", lastErr.Error()))
+	}
+	return credentialRejected(ctx, slog.LevelWarn, "no oauth2 auth on the path introspects opaque tokens")
 }
 
-func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope) (Identity, error) {
+func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope, store bool) (Identity, error) {
 	a, err := r.apiKeys.FindByAPIKey(ctx, rawKey)
-	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
-		return Identity{}, resolver.ErrUnauthenticated
+	switch {
+	case errors.Is(err, authdomain.ErrNotFound):
+		return credentialRejected(ctx, slog.LevelWarn, "api key is unknown")
+	case errors.Is(err, authdomain.ErrExpired):
+		return credentialRejected(ctx, slog.LevelWarn, "api key has expired")
+	case err != nil:
+		return credentialRejected(ctx, slog.LevelWarn, "api key lookup failed", slog.String("error", err.Error()))
+	}
+	if a.IsOwned() {
+		return personalKeyIdentity(ctx, a, store, r.now().UTC())
+	}
+	if !a.IsApplicationKey(r.now().UTC()) {
+		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled or expired", slog.String("auth_id", a.ID.String()))
 	}
 	if !scope.allows(a.ID) {
-		return Identity{}, resolver.ErrUnauthenticated
+		return credentialRejected(ctx, slog.LevelWarn, "api key is not attached to the path", slog.String("auth_id", a.ID.String()))
 	}
 	principal := &identity.Principal{
 		Subject: a.Name,
 		Method:  identity.MethodAPIKey,
 	}
 	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+}
+
+// personalKeyIdentity admits a person's own key on the MCP Store, and nowhere
+// else on this plane.
+//
+// The Store is the one MCP surface that is a person's: what they installed,
+// narrowed by what Access grants them. A signed-in session reaches it as its
+// subject with the groups the platform put in the token; the key reaches it as
+// its owner with the groups the platform recorded on the key, which is the
+// same principal by another credential. Every other MCP path is an
+// application's, and a personal key there would be a person posing as one.
+func personalKeyIdentity(ctx context.Context, a *authdomain.Auth, store bool, now time.Time) (Identity, error) {
+	attrs := slog.String("auth_id", a.ID.String())
+	if !store {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key used outside the MCP Store", attrs)
+	}
+	if !a.IsPersonalKey(now) {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key is disabled or expired", attrs)
+	}
+	// The owner is a platform user id, but nothing at creation stops it
+	// spelling a subject only the gateway mints.
+	if identity.ReservedSubject(a.OwnerID) {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key owner is in a namespace only the gateway mints", attrs)
+	}
+	// The Store is served on every gateway's host; the key reaches only its
+	// own, the way a session reaches only the gateway it was minted for.
+	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil && gw.ID != a.GatewayID {
+		return credentialRejected(ctx, slog.LevelWarn, "personal key belongs to another gateway", attrs)
+	}
+	principal := &identity.Principal{Subject: a.OwnerID, Method: identity.MethodPersonalKey}
+	claims := map[string]any{}
+	if len(a.OwnerGroups) > 0 {
+		claims[identity.ClaimGroups] = slices.Clone(a.OwnerGroups)
+	}
+	// The owner's email, so the key's calls are shown under the person who
+	// made them, as a session's are, and not under their user id.
+	if a.OwnerEmail != "" {
+		claims[identity.ClaimEmail] = a.OwnerEmail
+	}
+	if len(claims) > 0 {
+		principal.Claims = claims
+	}
+	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+}
+
+// isStorePath reports whether path addresses the MCP Store, as the path
+// resolver reads it.
+func isStorePath(path string) bool {
+	return consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(path))
 }
 
 func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificate {

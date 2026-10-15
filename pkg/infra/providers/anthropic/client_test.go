@@ -47,6 +47,17 @@ func TestSetHeaders(t *testing.T) {
 	assert.Equal(t, anthropicVersion, req.Header.Get("anthropic-version"))
 }
 
+func TestSetBetas(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, messagesURL, nil)
+	require.NoError(t, err)
+
+	setBetas(req, "")
+	assert.Empty(t, req.Header.Values("anthropic-beta"))
+
+	setBetas(req, "context-management-2025-06-27,claude-code-20250219")
+	assert.Equal(t, "context-management-2025-06-27,claude-code-20250219", req.Header.Get("anthropic-beta"))
+}
+
 func TestFilesURL(t *testing.T) {
 	got, err := filesURL(nil, "/v1/files", nil)
 	require.NoError(t, err)

@@ -106,7 +106,7 @@ func TestCreator_Create_ValidatesOpenAPIAndPersistsResolvedBaseURL(t *testing.T)
 			}},
 		}, nil
 	})
-	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil, compiler)
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil, appregistry.WithOpenAPICompiler(compiler))
 
 	registry, err := creator.Create(context.Background(), appregistry.CreateInput{
 		GatewayID: gatewayID,

@@ -60,6 +60,9 @@ const (
 	attrMCPUpstreamLatencyMs = "trustgate.mcp.upstream_latency_ms"
 	attrMCPRPCErrorCode      = "trustgate.mcp.rpc_error_code"
 	attrMCPAccountRef        = "trustgate.mcp.account_ref"
+	attrMCPDecision          = "trustgate.mcp.decision"
+	attrMCPToolRisk          = "trustgate.mcp.tool_risk"
+	attrMCPToolOpenWorld     = "trustgate.mcp.tool_open_world"
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
@@ -68,6 +71,7 @@ const (
 	attrTenantID             = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
+	attrAuthID               = "trustgate.auth.id"
 	attrPrincipalSubject     = "trustgate.principal.subject"
 	attrPrincipalMethod      = "trustgate.principal.method"
 	attrPrincipalEmail       = "trustgate.principal.email"
@@ -193,12 +197,18 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attrs = append(attrs, attribute.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
 		}
 		appendStr(attrMCPAccountRef, evt.MCP.AccountRef)
+		appendStr(attrMCPDecision, evt.MCP.Decision)
+		appendStr(attrMCPToolRisk, evt.MCP.ToolRisk)
+		if evt.MCP.ToolOpenWorld != nil {
+			attrs = append(attrs, attribute.Bool(attrMCPToolOpenWorld, *evt.MCP.ToolOpenWorld))
+		}
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
 	appendStr(attrTenantID, evt.TenantID)
 	appendStr(attrConsumerID, evt.Consumer.ID)
 	appendStr(attrConsumerName, evt.Consumer.Name)
+	appendStr(attrAuthID, evt.AuthID)
 	appendStr(attrPrincipalSubject, evt.PrincipalSubject)
 	appendStr(attrPrincipalMethod, evt.PrincipalMethod)
 	appendStr(attrPrincipalEmail, evt.PrincipalEmail)
@@ -234,15 +244,20 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attrs = append(attrs, attribute.Float64(attrCostSavingsUsd, float64(*evt.Cost.SavingsUsd)))
 		}
 	}
+	attrs = append(attrs, attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs))
+	// Absent and zero are different answers. A pre-request refusal has no
+	// provider attempt, so the attribute is omitted. A real attempt that
+	// finished in under a millisecond still emits 0.
+	if evt.Latency.ProviderMs != nil {
+		attrs = append(attrs, attribute.Int64(attrLatencyProviderMs, *evt.Latency.ProviderMs))
+	}
 	attrs = append(attrs,
-		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
-		attribute.Int64(attrLatencyProviderMs, evt.Latency.ProviderMs),
 		attribute.Int64(attrLatencyPoliciesMs, evt.Latency.PoliciesMs),
 		attribute.Int64(attrLatencyGatewayMs, evt.Latency.GatewayMs),
 		attribute.Bool(attrIsFlagged, evt.IsFlagged),
 	)
 	if len(evt.Security) > 0 {
-		attrs = append(attrs, attribute.StringSlice(attrSecurity, evt.Security))
+		attrs = append(attrs, attribute.String(attrSecurity, jsonString(evt.Security)))
 	}
 	if len(evt.PolicyChain) > 0 {
 		if encoded := jsonString(evt.PolicyChain); encoded != "" {

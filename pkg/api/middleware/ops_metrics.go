@@ -70,7 +70,13 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 			Duration:    time.Since(start),
 		}
 		m.recorder.RecordRequest(c.UserContext(), request)
-		span.Finish(o11y.SpanOutcome{Request: request, TraceID: c.GetRespHeader(HeaderTraceID)})
+		// Cloned for the same reason boundedMethod returns a constant: the header
+		// value is a view of the response buffer, which is reused by the next
+		// request, while the span holds the attribute until the batch exporter
+		// ships it. Uncloned, one exported span carried a trace id whose first
+		// seven bytes had become the string "nosniff" from a later response's
+		// X-Content-Type-Options header.
+		span.Finish(o11y.SpanOutcome{Request: request, TraceID: strings.Clone(c.GetRespHeader(HeaderTraceID))})
 		return err
 	}
 }
@@ -124,11 +130,37 @@ func isSelfServiceConnectPath(path string) bool {
 	return slug != ""
 }
 
+// boundedMethod maps a request method onto a fixed set, and returns the package
+// CONSTANT rather than echoing its argument.
+//
+// That is the whole point of the rewrite. c.Method() is a zero-copy view of
+// fasthttp's request buffer, which is reused by the next request on the same
+// connection. Returning it here handed that view to the metric attribute set and
+// the span name, where the OTel SDK retains it for the lifetime of the process:
+// the bytes then changed underneath, producing methods that were never sent
+// ("GETT", "POS", "GETETE") and stranding the accumulating series behind a key
+// that no longer matches itself, so a second one started beside it.
+//
+// A constant cannot be mutated by anyone, and unlike strings.Clone it allocates
+// nothing on a per-request path. Elsewhere in this package the same hazard is
+// handled with strings.Clone, which is the right tool when the value is not from
+// a fixed set.
 func boundedMethod(method string) string {
 	switch method {
-	case fiber.MethodGet, fiber.MethodPost, fiber.MethodPut, fiber.MethodPatch,
-		fiber.MethodDelete, fiber.MethodOptions, fiber.MethodHead:
-		return method
+	case fiber.MethodGet:
+		return fiber.MethodGet
+	case fiber.MethodPost:
+		return fiber.MethodPost
+	case fiber.MethodPut:
+		return fiber.MethodPut
+	case fiber.MethodPatch:
+		return fiber.MethodPatch
+	case fiber.MethodDelete:
+		return fiber.MethodDelete
+	case fiber.MethodOptions:
+		return fiber.MethodOptions
+	case fiber.MethodHead:
+		return fiber.MethodHead
 	default:
 		return "OTHER"
 	}

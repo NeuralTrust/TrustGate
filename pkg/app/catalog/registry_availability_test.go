@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/assert"
@@ -43,6 +44,20 @@ func (f *recordingFilter) Filter(
 	return f.answer
 }
 
+// recordingLiveFilter is a recordingFilter in the live listing's place, which
+// may also fail.
+type recordingLiveFilter struct {
+	*recordingFilter
+	err error
+}
+
+func (f recordingLiveFilter) Filter(
+	ctx context.Context,
+	in appcatalog.ServerlessFilterInput,
+) ([]catalogdomain.Model, error) {
+	return f.recordingFilter.Filter(ctx, in), f.err
+}
+
 func scopedInput(models []catalogdomain.Model) appcatalog.ServerlessFilterInput {
 	return appcatalog.ServerlessFilterInput{
 		ProviderCode: "openai",
@@ -57,8 +72,9 @@ func TestRegistryAvailability_FeedsEachFilterThePreviousResult(t *testing.T) {
 	serverless := &recordingFilter{name: "serverless", order: &order, answer: catalogModels("gpt-4o", "o3")}
 	live := &recordingFilter{name: "live", order: &order, answer: catalogModels("gpt-4o")}
 
-	kept := appcatalog.NewRegistryAvailability(serverless, live).
+	kept, err := appcatalog.NewRegistryAvailability(serverless, recordingLiveFilter{recordingFilter: live}).
 		Narrow(context.Background(), scopedInput(catalogModels("gpt-4o", "o3", "gpt-4o-mini")))
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"gpt-4o"}, slugsOf(kept))
 	assert.Equal(t, []string{"serverless", "live"}, order, "bedrock check runs before the live listing")
@@ -73,7 +89,8 @@ func TestRegistryAvailability_PassesScopeThroughToBothFilters(t *testing.T) {
 	serverless := &recordingFilter{name: "serverless", order: &order, answer: in.Models}
 	live := &recordingFilter{name: "live", order: &order, answer: in.Models}
 
-	appcatalog.NewRegistryAvailability(serverless, live).Narrow(context.Background(), in)
+	_, err := appcatalog.NewRegistryAvailability(serverless, recordingLiveFilter{recordingFilter: live}).Narrow(context.Background(), in)
+	require.NoError(t, err)
 
 	for _, f := range []*recordingFilter{serverless, live} {
 		assert.Equal(t, in.ProviderCode, f.got.ProviderCode, f.name)
@@ -97,7 +114,8 @@ func TestRegistryAvailability_SkipsFiltersWithoutARegistryScope(t *testing.T) {
 			live := &recordingFilter{name: "live", order: &order}
 			in.Models = catalogModels("gpt-4o", "o3")
 
-			kept := appcatalog.NewRegistryAvailability(serverless, live).Narrow(context.Background(), in)
+			kept, err := appcatalog.NewRegistryAvailability(serverless, recordingLiveFilter{recordingFilter: live}).Narrow(context.Background(), in)
+			require.NoError(t, err)
 
 			require.Empty(t, order, "no filter may run without a registry to scope to")
 			assert.Equal(t, []string{"gpt-4o", "o3"}, slugsOf(kept))
@@ -110,8 +128,23 @@ func TestRegistryAvailability_ReportsAVerifiedEmptyResult(t *testing.T) {
 	serverless := &recordingFilter{name: "serverless", order: &order, answer: catalogModels("gpt-4o")}
 	live := &recordingFilter{name: "live", order: &order, answer: nil}
 
-	kept := appcatalog.NewRegistryAvailability(serverless, live).
+	kept, err := appcatalog.NewRegistryAvailability(serverless, recordingLiveFilter{recordingFilter: live}).
 		Narrow(context.Background(), scopedInput(catalogModels("gpt-4o")))
 
+	require.NoError(t, err)
 	assert.Empty(t, kept, "the filters own the fallback decision, the composition must not second-guess it")
+}
+
+func TestRegistryAvailability_ReturnsTheLiveListingError(t *testing.T) {
+	var order []string
+	serverless := &recordingFilter{name: "serverless", order: &order, answer: catalogModels("gpt-4o")}
+	live := &recordingFilter{name: "live", order: &order}
+
+	kept, err := appcatalog.NewRegistryAvailability(serverless, recordingLiveFilter{
+		recordingFilter: live,
+		err:             commonerrors.ErrUpstreamUnavailable,
+	}).Narrow(context.Background(), scopedInput(catalogModels("gpt-4o")))
+
+	require.ErrorIs(t, err, commonerrors.ErrUpstreamUnavailable)
+	assert.Empty(t, kept)
 }

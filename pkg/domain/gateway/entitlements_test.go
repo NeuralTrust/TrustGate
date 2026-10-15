@@ -107,6 +107,27 @@ func TestNormalizeEntitlements_FullStampOK(t *testing.T) {
 	}
 }
 
+func TestNormalizeEntitlements_RejectsCapsBeyondInt32(t *testing.T) {
+	t.Parallel()
+	over := 1 << 31
+	for name, e := range map[string]Entitlements{
+		"burst": {Tier: "free", BurstPerMin: intPtr(over), QuotaPerMonth: intPtr(1), MaxInstances: intPtr(1)},
+		"quota": {Tier: "free", BurstPerMin: intPtr(1), QuotaPerMonth: intPtr(over), MaxInstances: intPtr(1)},
+		"inst":  {Tier: "free", BurstPerMin: intPtr(1), QuotaPerMonth: intPtr(1), MaxInstances: intPtr(over)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := NormalizeEntitlements(e); !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation", err)
+			}
+		})
+	}
+	max := 1<<31 - 1
+	if _, err := NormalizeEntitlements(Entitlements{Tier: "free", BurstPerMin: intPtr(max), QuotaPerMonth: intPtr(max), MaxInstances: intPtr(max)}); err != nil {
+		t.Fatalf("the largest int32 must be accepted: %v", err)
+	}
+}
+
 func TestResolveRetention_UnstampedReportsNoWindow(t *testing.T) {
 	t.Parallel()
 	for name, e := range map[string]Entitlements{

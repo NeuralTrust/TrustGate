@@ -40,7 +40,7 @@ cd TrustGate
 # Copy the env template
 cp .env.example .env
 
-# Boot the local dev infra (Postgres, Redis, Kafka, Zookeeper)
+# Boot the local dev infra (Postgres, Redis)
 make compose-up
 
 # Run the admin and proxy in two separate terminals

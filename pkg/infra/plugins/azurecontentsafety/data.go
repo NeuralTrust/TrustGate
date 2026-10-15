@@ -24,7 +24,19 @@ type Data struct {
 	Decision   string         `json:"decision,omitempty"`
 	Mode       string         `json:"mode,omitempty"`
 	LatencyMS  int64          `json:"latency_ms,omitempty"`
-	FailedOpen bool           `json:"failed_open,omitempty"`
+	// ChunkCount is how many text:analyze calls the conversation was split
+	// into; it is set only when that is more than one.
+	ChunkCount int `json:"chunk_count,omitempty"`
+	// FailureReason and FailureDetail are set only on a failed_open
+	// decision: FailureReason is one of appplugins.FailureReason (transport,
+	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
+	// what within that reason, e.g. the category missing from Azure's response
+	// on a verdict_incomplete.
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {

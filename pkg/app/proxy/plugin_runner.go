@@ -18,11 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
 	"net/http"
 	"net/textproto"
+	"strconv"
+	"strings"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -30,6 +33,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -56,26 +60,59 @@ func (f *forwarder) runPreRequest(
 	})
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return pluginErrorResult(pe), nil
+			return applyPlanRateLimitDialect(req, pluginErrorResult(pe)), nil
 		}
 		return nil, err
 	}
 	if outcome.ShortCircuit {
-		return &ForwardResult{
+		return applyPlanRateLimitDialect(req, &ForwardResult{
 			StatusCode: outcome.StatusCode,
 			Headers:    outcome.Headers,
 			Body:       outcome.Body,
-		}, nil
+		}), nil
 	}
 	return nil, nil
 }
 
+// Precheck runs what a request answers before anything routes it: a chat body
+// the decoder may read otherwise than the upstream is refused with
+// ErrAmbiguousRequestBody, and a messages field that is not an array is
+// refused with ErrInvalidRequestPayload. A malformed body never consumes a
+// rate-limit token and never reaches a guardrail. Then the gateway plan
+// limit is charged.
+func (f *forwarder) Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error) {
+	if ambiguousChatBody(req) {
+		return nil, ErrAmbiguousRequestBody
+	}
+	if malformedChatMessages(req) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidMessagesMessage)
+	}
+	if req.IsBedrockNative() && adapter.HasInvalidText(req.Body) {
+		// The view decodes to U+FFFD what a tokenizer given the raw bytes would
+		// read as other text, so a body whose text is not valid is refused.
+		return nil, fmt.Errorf("%w: request body is not valid UTF-8 text", ErrInvalidRequestPayload)
+	}
+	if req.IsBedrockNative() && adapter.HasUninspectableDocument(req.Body) {
+		// A text document the view cannot read would be read by the model and by no
+		// policy: it is refused, not left out.
+		return nil, fmt.Errorf("%w: document could not be inspected", ErrInvalidRequestPayload)
+	}
+	if req.IsBedrockNative() && adapter.HasS3Source(req.Body) {
+		return nil, fmt.Errorf("%w: content referenced from S3 cannot be inspected", ErrInvalidRequestPayload)
+	}
+	return f.checkRateLimit(ctx, gatewayID, req)
+}
+
+// rateLimitExceededCode is the OpenAI error code of a plan limit. SDKs retry
+// on rate_limit_error / rate_limit_exceeded.
+const rateLimitExceededCode = "rate_limit_exceeded"
+
 // checkRateLimit enforces the gateway plan burst/quota before the request
-// reaches the upstream. An exceeded limit renders a 429 ForwardResult with the
-// standard rate-limit headers; an unavailable plan (unknown/missing tier)
-// propagates as an error so mapProxyError maps it to HTTP 503, matching how an
-// unusable guard is treated.
-func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
+// reaches the upstream. An exceeded limit renders a 429 ForwardResult in the
+// ingress dialect, with Retry-After when the limiter knows the reset; an
+// unavailable plan (unknown/missing tier) propagates as an error so
+// mapProxyError maps it to HTTP 503, matching how an unusable guard is treated.
+func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error) {
 	err := f.limiter.Check(ctx, gatewayID)
 	if err == nil {
 		return nil, nil
@@ -85,41 +122,173 @@ func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID)
 		return &ForwardResult{
 			StatusCode: http.StatusTooManyRequests,
 			Headers:    exceeded.Headers(),
-			Body:       exceeded.Body(),
+			Body:       planRateLimitBody(req, exceeded),
 		}, nil
 	}
 	return nil, err
 }
 
+// planRateLimitBody is the 429 a caller of this ingress reads. OpenAI-family
+// routes get OpenAI's envelope and the other dialects get theirs. A native
+// Bedrock body stays flat: the handler wraps that shape in the AWS envelope.
+func planRateLimitBody(req *infracontext.RequestContext, exceeded *ratelimitapp.Exceeded) []byte {
+	if req != nil && req.IsBedrockNative() {
+		return exceeded.Body()
+	}
+	format := adapter.FormatOpenAI
+	if req != nil {
+		format = sourceFormatFromRequest(req)
+	}
+	message := exceeded.ClientMessage()
+	if adapter.OpenAIErrorDialect(format) {
+		return adapter.EncodeOpenAIGatewayError(http.StatusTooManyRequests, rateLimitExceededCode, message)
+	}
+	return adapter.EncodeErrorBody(format, http.StatusTooManyRequests, message)
+}
+
+// RewritePlanRateLimitBody is the body a client reads for a plan burst or quota
+// 429. checkRateLimit already renders that body in the ingress dialect. A
+// policy can answer the same limit first: TrustGuard evaluate returns the flat
+// plan body, and pluginErrorResult copies it onto the response the handler
+// sends. This turns that flat body into the dialect envelope. A body that is
+// not the flat plan shape, including one already enveloped and a policy limit
+// whose reason is a dimension such as consumer, is returned unchanged. Native
+// Bedrock stays flat so the handler can wrap the AWS envelope. Retry-After and
+// the other rate-limit headers stay with the caller.
+func RewritePlanRateLimitBody(req *infracontext.RequestContext, status int, headers map[string][]string, body []byte) []byte {
+	if status != http.StatusTooManyRequests || (req != nil && req.IsBedrockNative()) {
+		return body
+	}
+	exceeded, ok := flatPlanExceeded(headers, body)
+	if !ok {
+		return body
+	}
+	return planRateLimitBody(req, exceeded)
+}
+
+func applyPlanRateLimitDialect(req *infracontext.RequestContext, result *ForwardResult) *ForwardResult {
+	if result == nil {
+		return nil
+	}
+	result.Body = RewritePlanRateLimitBody(req, result.StatusCode, result.Headers, result.Body)
+	return result
+}
+
+// flatPlanExceeded reports a body (*Exceeded).Body writes: error is the string
+// "rate limit exceeded" and the reason is the plan's burst or quota. An OpenAI
+// envelope has error as an object, so it does not match and is not wrapped again.
+func flatPlanExceeded(headers map[string][]string, body []byte) (*ratelimitapp.Exceeded, bool) {
+	if len(body) == 0 {
+		return nil, false
+	}
+	var payload struct {
+		Error             string `json:"error"`
+		Reason            string `json:"reason"`
+		Limit             int    `json:"limit"`
+		RetryAfterSeconds int    `json:"retry_after_seconds"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Error != "rate limit exceeded" {
+		return nil, false
+	}
+	reason := payload.Reason
+	if reason == "" {
+		reason = firstHeader(headers, "X-RateLimit-Reason")
+	}
+	if reason != ratelimitapp.ReasonBurst && reason != ratelimitapp.ReasonQuota {
+		return nil, false
+	}
+	limit := payload.Limit
+	if limit == 0 {
+		if n, err := strconv.Atoi(firstHeader(headers, "X-RateLimit-Limit")); err == nil {
+			limit = n
+		}
+	}
+	retrySeconds := payload.RetryAfterSeconds
+	if retrySeconds <= 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(firstHeader(headers, "Retry-After"))); err == nil && n > 0 {
+			retrySeconds = n
+		}
+	}
+	var retry time.Duration
+	if retrySeconds > 0 {
+		retry = time.Duration(retrySeconds) * time.Second
+	}
+	return &ratelimitapp.Exceeded{
+		Reason:     reason,
+		Limit:      limit,
+		RetryAfter: retry,
+	}, true
+}
+
+func firstHeader(headers map[string][]string, name string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	canonical := textproto.CanonicalMIMEHeaderKey(name)
+	if values := headers[canonical]; len(values) > 0 {
+		return values[0]
+	}
+	if values := headers[name]; len(values) > 0 {
+		return values[0]
+	}
+	for key, values := range headers {
+		if textproto.CanonicalMIMEHeaderKey(key) == canonical && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
+}
+
+// runPreResponseGated runs the pre_response stage and hands back both ways it
+// can end the response: a PluginError, and the stage outcome a plugin's own
+// StopUpstream result produces.
+//
+// The outcome has to be returned because only one of the two callers can read
+// it off anything else. applyResults writes StatusCode, Body and Headers onto
+// the ResponseContext, and finalizeBodyGated renders its ForwardResult from
+// exactly that, so on the buffered leg a short circuit is already applied by
+// the time this returns. finalizeStream renders from the provider response and
+// forwards the upstream iterator, so there the same result reaches nothing:
+// without this the stream would be sent unmodified under the provider's own
+// status, and only a PluginError would ever stop it.
+//
+// No plugin in this repository produces that result on a stream today. Every
+// output-inspecting plugin skips a streaming pre_response leg outright, and the
+// ones that rewrite a body — regexreplace, googlemodelarmor, bedrockguardrail —
+// have nothing to rewrite there, because mergeStreamingResponse copies status
+// and headers and leaves the body empty. This is therefore a defensive fix with
+// no live producer: the stage contract says a pre_response result can end the
+// response, and one of the two legs was not honouring it.
 func (f *forwarder) runPreResponseGated(
 	ctx context.Context,
 	policies []*policy.Policy,
 	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
-) *appplugins.PluginError {
+) (*appplugins.StageOutcome, *appplugins.PluginError) {
 	if f.executor == nil {
-		return nil
+		return nil, nil
 	}
-	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
+	outcome, err := f.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreResponse,
 		Policies: policies,
 		Plan:     plan,
 		Request:  req,
 		Response: resp,
-	}); err != nil {
+	})
+	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return pe
+			return nil, pe
 		}
 		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
 		if preResponseBlocks(policies, plan) {
-			return &appplugins.PluginError{
+			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusBadGateway,
 				Message:    "pre_response plugin stage failed",
 			}
 		}
 	}
-	return nil
+	return outcome, nil
 }
 
 func preResponseBlocks(policies []*policy.Policy, plan *appplugins.StagePlan) bool {
@@ -156,22 +325,63 @@ func (f *forwarder) firePostResponse(
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 ) {
+	f.firePostResponseAfter(ctx, nil, policies, plan, req, resp)
+}
+
+// firePostResponseAfter runs the post_response stage once gate is closed, or
+// immediately when there is no gate. The only gate there is today is the
+// background drain a mid-stream cut leaves behind, and two things ride on it.
+//
+// The drain writes req.Metadata["usage"] from its own goroutine, so cloning the
+// map before it has finished is a concurrent map read and write, not a stale
+// number. And usage rides the last chunk, which on a cut is still upstream when
+// the terminator reaches the client, so a token_rate_limiter reading the map
+// before the drain ends charges a blocked stream nothing — the outcome the
+// drain exists to prevent.
+//
+// The client never waits for any of this: the terminator was yielded before the
+// drain started, and this stage has always been detached with a timeout of its
+// own.
+func (f *forwarder) firePostResponseAfter(
+	ctx context.Context,
+	gate <-chan struct{},
+	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+) {
 	if f.executor == nil || !hasPostResponse(plan) {
 		return
 	}
 	rt := trace.FromContext(ctx)
-	reqCopy := snapshotRequest(req)
 	respCopy := snapshotResponse(resp)
+	var reqCopy *infracontext.RequestContext
+	if gate == nil {
+		reqCopy = snapshotRequest(req)
+	}
+	timeout := postResponseTimeout
+	if gate != nil {
+		timeout += cutDrainDeadline
+	}
 
 	if rt != nil {
 		rt.AddAsync()
 	}
 	go func() { // #nosec G118 -- post-response must outlive the request context, which is cancelled once the response is sent; the goroutine owns its own timeout
-		ctx, cancel := context.WithTimeout(context.Background(), postResponseTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 		defer cancel()
 		if rt != nil {
 			defer rt.Done()
 			ctx = trace.NewContext(ctx, rt)
+		}
+		if gate != nil {
+			select {
+			case <-gate:
+			case <-ctx.Done():
+				f.logger.Warn("post_response skipped: the cut drain outlived its deadline")
+				return
+			}
+			reqCopy = snapshotRequest(req)
 		}
 		if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
 			Stage:    policy.StagePostResponse,
@@ -192,6 +402,10 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 	stream iter.Seq2[[]byte, error],
+	gate func() <-chan struct{},
+	cut func() bool,
+	finalInspected func() bool,
+	view func(frame []byte) [][]byte,
 ) iter.Seq2[[]byte, error] {
 	if f.executor == nil || !hasPostResponse(plan) {
 		return stream
@@ -201,12 +415,20 @@ func (f *forwarder) wrapStreamWithPostResponse(
 		completed := true
 		truncated := false
 		for line, err := range stream {
-
-			if err == nil && len(line) > 0 && !truncated {
-				if len(body)+len(line)+1 > maxPostResponseBufferBytes {
+			// view is set when the items are raw eventstream frames: what
+			// post_response reads is their decoded lines, not the frame bytes.
+			lines := [][]byte{line}
+			if view != nil && err == nil {
+				lines = view(line)
+			}
+			for _, l := range lines {
+				if err != nil || len(l) == 0 || truncated {
+					continue
+				}
+				if len(body)+len(l)+1 > maxPostResponseBufferBytes {
 					truncated = true
 				} else {
-					body = append(body, line...)
+					body = append(body, l...)
 					body = append(body, '\n')
 				}
 			}
@@ -225,7 +447,22 @@ func (f *forwarder) wrapStreamWithPostResponse(
 			return
 		}
 		resp.Body = body
-		f.firePostResponse(ctx, policies, plan, req, resp)
+		// Set here, from the guard's own state, and nowhere else: post_response
+		// reads it to skip the truncated body of a stream the guard cut.
+		resp.StreamCut = cut != nil && cut()
+		// Same source and same rule: set from the guard's own state so
+		// post_response can skip a second full-text pass over a stream whose
+		// final block was already evaluated in full.
+		resp.StreamFinalInspected = finalInspected != nil && finalInspected()
+		// gate is consulted here rather than captured above because a cut
+		// decides mid-stream: the guard installs the barrier on the goroutine
+		// this loop has just finished draining, so it is readable now and was
+		// not when the wrapper was built.
+		var drained <-chan struct{}
+		if gate != nil {
+			drained = gate()
+		}
+		f.firePostResponseAfter(ctx, drained, policies, plan, req, resp)
 	}
 }
 
@@ -273,6 +510,22 @@ func hasResponseHeader(headers map[string][]string, name string) bool {
 		}
 	}
 	return false
+}
+
+// setResponseHeader replaces name whatever case it was spelled in, so a value
+// the gateway is correcting cannot end up beside the one it corrected.
+func setResponseHeader(headers map[string][]string, name, value string) {
+	deleteResponseHeader(headers, name)
+	headers[textproto.CanonicalMIMEHeaderKey(name)] = []string{value}
+}
+
+func deleteResponseHeader(headers map[string][]string, name string) {
+	want := textproto.CanonicalMIMEHeaderKey(name)
+	for k := range headers {
+		if textproto.CanonicalMIMEHeaderKey(k) == want {
+			delete(headers, k)
+		}
+	}
 }
 
 func cloneResponseHeaders(headers map[string][]string) map[string][]string {

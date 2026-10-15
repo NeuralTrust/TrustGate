@@ -29,6 +29,9 @@ const (
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
+// ErrModelMustBeString means the body is a JSON object and its model field is not a string.
+var ErrModelMustBeString = errors.New("model must be a string")
+
 func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]byte, string, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -63,6 +66,12 @@ func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]b
 		return body, "", nil
 	}
 
+	// Null, numbers, and objects are not model names. Returning a plain error
+	// (not ErrModelNotAllowed) lets callers use the invalid-request path
+	// without echoing the JSON decoder.
+	if !isJSONString(modelRaw) {
+		return body, "", ErrModelMustBeString
+	}
 	var model string
 	if err := json.Unmarshal(modelRaw, &model); err != nil {
 		return body, "", err

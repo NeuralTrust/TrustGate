@@ -298,7 +298,7 @@ func TestSessionFlowGitHubExplicitEndpointsNoDiscovery(t *testing.T) {
 	proxy := NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), &fakeChainer{url: ""}, signer, httpUserInfo{http.DefaultClient})
 	ctx := context.Background()
 
-	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "gw-client-id",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",

@@ -38,7 +38,7 @@ design, tasks, apply). Record the issue id so it lands in the PR body and any
 
 - A Linear issue is mandatory. No issue → STOP and ask. Read it FIRST and feed its
   content into every phase.
-- The repo conventions in `.agents/AGENT.md` and the `golang-pro` skill are binding
+- The repo conventions in `.agents/AGENTS.md` and the `golang-pro` skill are binding
   for every phase that touches Go code (design, apply, review). Inject both as
   explicit context into those sub-agents; do NOT let a phase freelance against them.
 - Keep the Linear issue status in sync as the run progresses: `In Progress` when
@@ -52,7 +52,7 @@ design, tasks, apply). Record the issue id so it lands in the PR body and any
   user to answer them. The ONLY blocking user gates are task approval (step 6)
   and final archive/worktree cleanup confirmation (step 10).
 - All work happens inside the worktree. Never touch the user's current checkout.
-- Honor the repo's no-comments policy (`/.agents/AGENT.md` or `.cursor/rules/go-comments.mdc`): after every apply phase delegate `clean-comments` on touched Go files (keeps `//go:*`, `//nolint`, Swagger `// @`, licenses). **Never inline** — use a WRITE subagent on **`composer-2.5-fast`** (see [Comment cleanup](#comment-cleanup-delegate)).
+- Honor the repo comment policy (`.agents/AGENTS.md` / `go-comments.mdc`): after every apply phase delegate `clean-comments` on touched Go files (keeps exported docs, `//go:*`, `//nolint`, Swagger `// @`, licenses). **Never inline** — use a WRITE subagent on **`composer-2.5-fast`** (see [Comment cleanup](#comment-cleanup-delegate)).
 - One `change-name` (kebab-case, derived from the request) is used for every phase
   and the branch.
 - Pick the artifact mode once: `openspec` if `openspec/config.yaml` exists, else
@@ -85,7 +85,7 @@ After each apply-phase review (step 7) and again before ship (step 8), launch a
 | Mode | WRITE — edits comments only; zero logic/behavior change |
 
 Prompt must include: worktree path, file list or diff scope, and repo comment policy
-from `AGENT.md` when present. Wait for the subagent to finish before commit (per
+from `AGENTS.md` when present. Wait for the subagent to finish before commit (per
 phase) or before push (final pass).
 
 If the repo ships `scripts/clean-comments/main.go`, the subagent may run it when
@@ -117,16 +117,16 @@ scope is broad; otherwise edit files per the skill.
    `In Progress` via `linear.update_issue`.
 7. **Autonomous per-phase loop.** For each phase in order:
    - Delegate the phase's tasks to `sdd-apply`, instructing it to follow
-     `.agents/AGENT.md` (layout, DI, DTO placement, no-comments) and `golang-pro`
+     `.agents/AGENTS.md` (layout, DI, DTO placement, comments policy) and `golang-pro`
      (idiomatic Go, error wrapping, context, `go vet`/`golangci-lint`, `-race` tests).
    - Run a code review of that phase's diff (Task `bugbot`, or the `code-review`
-     skill) that also checks compliance with `.agents/AGENT.md` and `golang-pro`,
+     skill) that also checks compliance with `.agents/AGENTS.md` and `golang-pro`,
      and apply all CRITICAL + WARNING(real) fixes; re-review until clean.
    - Delegate `clean-comments` via `Task` with `model: "composer-2.5-fast"` on the phase diff; wait, then commit.
    - Commit the phase as one work unit, then continue to the next phase.
 8. **Feature-wide review.** After every phase is applied, run a code review over
    the whole feature diff (`git diff origin/develop...HEAD`) — including
-   `.agents/AGENT.md` + `golang-pro` compliance — apply the fixes, then delegate
+   `.agents/AGENTS.md` + `golang-pro` compliance — apply the fixes, then delegate
    `clean-comments` via `Task` with `model: "composer-2.5-fast"` on the full diff before ship.
 9. **Ship.** Push the branch (`git push -u origin <branch>`) and open the PR
    targeting `develop` (`gh pr create`), with the Linear issue id in the body.
@@ -158,7 +158,7 @@ Report to the user:
 
 ## References
 
-- `.agents/AGENT.md` — repo conventions, no-comments policy, branch/PR rules.
+- `.agents/AGENTS.md` — repo conventions, comments policy, branch/PR rules.
   Binding for every Go-touching phase.
 - `~/.cursor/skills/clean-comments/SKILL.md` — strip comments after each apply phase; **always delegate on `composer-2.5-fast`**.
 - `~/.agents/skills/golang-pro/SKILL.md` — idiomatic Go standards (concurrency,

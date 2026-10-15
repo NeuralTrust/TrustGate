@@ -57,10 +57,10 @@ func (c *client) Completions(
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-	return c.rawPost(ctx, config.Credentials.ApiKey, reqBody)
+	return c.rawPost(ctx, config.Credentials.ApiKey, config.AnthropicBeta, reqBody)
 }
 
-func (c *client) rawPost(ctx context.Context, apiKey string, reqBody []byte) ([]byte, error) {
+func (c *client) rawPost(ctx context.Context, apiKey, betas string, reqBody []byte) ([]byte, error) {
 	httpClient := c.pool.Get(providers.ProviderAnthropic, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messagesURL, bytes.NewReader(reqBody))
@@ -68,6 +68,7 @@ func (c *client) rawPost(ctx context.Context, apiKey string, reqBody []byte) ([]
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	c.setHeaders(httpReq, apiKey)
+	setBetas(httpReq, betas)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (messagesURL), not user-controlled
 	if err != nil {
@@ -133,6 +134,7 @@ func (c *client) CompletionsStream(
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	c.setHeaders(httpReq, config.Credentials.ApiKey)
+	setBetas(httpReq, config.AnthropicBeta)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (messagesURL), not user-controlled
 	if err != nil {
@@ -152,4 +154,12 @@ func (c *client) setHeaders(req *http.Request, apiKey string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", anthropicVersion)
+}
+
+// setBetas carries the caller's beta opt-in on a Messages call whose body is
+// theirs (see providers.Config.AnthropicBeta); nothing when there is none.
+func setBetas(req *http.Request, betas string) {
+	if betas != "" {
+		req.Header.Set("anthropic-beta", betas)
+	}
 }

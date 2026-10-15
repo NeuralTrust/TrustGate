@@ -1,0 +1,447 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package adapter
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestClientErrorBody(t *testing.T) {
+	t.Parallel()
+	openai := []byte(`{"error":{"message":"bad","type":"invalid_request_error","param":"max_tokens"}}`)
+	anthropic := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`)
+	tests := []struct {
+		name   string
+		status int
+		source Format
+		target Format
+		body   []byte
+		want   string
+	}{
+		{name: "openai passthrough", status: 400, source: FormatOpenAI, target: FormatOpenAI, body: openai, want: string(openai)},
+		{name: "openai-compatible upstream keeps the body", status: 400, source: FormatOpenAI, target: FormatGroq, body: openai, want: string(openai)},
+		{name: "responses client keeps an openai body", status: 400, source: FormatOpenAIResponses, target: FormatOpenAI, body: openai, want: string(openai)},
+		{name: "anthropic passthrough", status: 400, source: FormatAnthropic, target: FormatAnthropic, body: anthropic, want: string(anthropic)},
+		{name: "anthropic 400", status: 400, source: FormatAnthropic, target: FormatOpenAI, body: openai, want: `{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`},
+		{name: "anthropic 429", status: 429, source: FormatAnthropic, target: FormatOpenAI, body: openai, want: `{"type":"error","error":{"type":"rate_limit_error","message":"bad"}}`},
+		{name: "gemini 400", status: 400, source: FormatGemini, target: FormatOpenAI, body: openai, want: `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`},
+		{name: "cohere", status: 400, source: FormatCohere, target: FormatOpenAI, body: openai, want: `{"message":"bad"}`},
+		{name: "empty body uses status text", status: 400, source: FormatAnthropic, target: FormatOpenAI, body: nil, want: `{"type":"error","error":{"type":"invalid_request_error","message":"Bad Request"}}`},
+		{name: "bedrock type extracted", status: 400, source: FormatAnthropic, target: FormatBedrock, body: []byte(`{"__type":"ValidationException","message":"nope"}`), want: `{"type":"error","error":{"type":"invalid_request_error","message":"nope"}}`},
+		{
+			// ENG-1899: an OpenAI client routed to Anthropic got Anthropic's envelope.
+			name:   "openai client gets an openai envelope from anthropic",
+			status: 400, source: FormatOpenAI, target: FormatAnthropic, body: anthropic,
+			want: `{"error":{"type":"invalid_request_error","message":"bad"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClientErrorBody(tc.body, tc.status, tc.source, tc.target)
+			assert.JSONEq(t, tc.want, string(got))
+		})
+	}
+}
+
+// ENG-1899: OpenAI's 401 echoes the stored key's prefix and last characters,
+// and that body reached the caller and Activity.
+func TestClientErrorBody_UpstreamAuthFailureDropsProviderText(t *testing.T) {
+	t.Parallel()
+	openaiKey := []byte(`{"error":{"message":"Incorrect API key provided: sk-proj-********************abcd. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`)
+	anthropicKey := []byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`)
+	tests := []struct {
+		name   string
+		source Format
+		target Format
+		body   []byte
+		want   string
+	}{
+		{name: "openai to openai", source: FormatOpenAI, target: FormatOpenAI, body: openaiKey, want: `{"error":{"type":"invalid_request_error","message":"upstream provider authentication failed"}}`},
+		{name: "openai to anthropic", source: FormatOpenAI, target: FormatAnthropic, body: anthropicKey, want: `{"error":{"type":"invalid_request_error","message":"upstream provider authentication failed"}}`},
+		{name: "anthropic to anthropic", source: FormatAnthropic, target: FormatAnthropic, body: anthropicKey, want: `{"type":"error","error":{"type":"authentication_error","message":"upstream provider authentication failed"}}`},
+		{name: "gemini to openai", source: FormatGemini, target: FormatOpenAI, body: openaiKey, want: `{"error":{"code":401,"message":"upstream provider authentication failed","status":"UNAUTHENTICATED"}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClientErrorBody(tc.body, http.StatusUnauthorized, tc.source, tc.target)
+			assert.JSONEq(t, tc.want, string(got))
+			assert.NotContains(t, string(got), "abcd")
+		})
+	}
+}
+
+// A provider can refuse a key with another status (OpenAI sometimes answers a
+// bad key with a 400), so key-shaped strings are masked on every error.
+func TestClientErrorBody_MasksKeysOnOtherStatuses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		source Format
+		target Format
+		body   string
+	}{
+		{name: "same dialect", source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"Incorrect API key provided: sk-proj-****abcd.","code":"invalid_api_key"}}`},
+		{name: "rewritten dialect", source: FormatAnthropic, target: FormatOpenAI, body: `{"error":{"message":"Incorrect API key provided: sk-proj-****abcd."}}`},
+		{name: "anthropic key", source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"key sk-ant-api03-abcdefgh rejected"}}`},
+		{name: "google key", source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"key AIzaSyA1234567890abcdefghijk rejected"}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := string(ClientErrorBody([]byte(tc.body), http.StatusBadRequest, tc.source, tc.target))
+			assert.Contains(t, got, "[REDACTED]")
+			assert.NotContains(t, got, "abcd")
+			assert.NotContains(t, got, "1234567890")
+			assert.True(t, json.Valid([]byte(got)), got)
+		})
+	}
+}
+
+func TestClientErrorBody_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	t.Parallel()
+	const (
+		openaiWant    = `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`
+		anthropicWant = `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`
+	)
+	tests := []struct {
+		name   string
+		status int
+		source Format
+		target Format
+		body   string
+		want   string
+	}{
+		{name: "openai plain text", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatXAI, body: "stream timeout", want: openaiWant},
+		{name: "foundry request timeout", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatAzure, body: "upstream request timeout", want: openaiWant},
+		{name: "openai plain text with whitespace", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: "  Stream Timeout\n", want: openaiWant},
+		{name: "openai json still rewritten", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: `{"error":{"message":"stream timeout","type":"server_error"}}`, want: openaiWant},
+		{name: "empty 504", status: http.StatusGatewayTimeout, source: FormatOpenAI, target: FormatOpenAI, body: "", want: openaiWant},
+		{name: "anthropic messages", status: http.StatusGatewayTimeout, source: FormatAnthropic, target: FormatOpenAI, body: "stream timeout", want: anthropicWant},
+		{name: "anthropic to anthropic", status: http.StatusGatewayTimeout, source: FormatAnthropic, target: FormatAnthropic, body: "stream timeout", want: anthropicWant},
+		{name: "message names a stream on another status", status: http.StatusBadGateway, source: FormatOpenAI, target: FormatOpenAI, body: "stream timeout", want: openaiWant},
+		{name: "foundry text on another status", status: http.StatusBadGateway, source: FormatOpenAI, target: FormatAzure, body: "upstream request timeout", want: openaiWant},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClientErrorBody([]byte(tc.body), tc.status, tc.source, tc.target)
+			assert.JSONEq(t, tc.want, string(got))
+			assert.NotContains(t, string(got), "stream timeout")
+			assert.NotContains(t, string(got), "upstream request timeout")
+		})
+	}
+}
+
+func TestClientErrorBody_LeavesOrdinaryTextAlone(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"error":{"message":"task-runner-1234 hit the rate limit for gpt-4o; ask-ops if it persists"}}`)
+	assert.Equal(t, string(body), string(ClientErrorBody(body, http.StatusTooManyRequests, FormatOpenAI, FormatOpenAI)))
+}
+
+func TestOpenAIErrorDialect(t *testing.T) {
+	t.Parallel()
+	for _, format := range []Format{
+		FormatOpenAI, FormatOpenAIResponses, FormatOpenAIEmbeddings,
+		FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
+		FormatAzure, FormatGroq, Format(""),
+	} {
+		assert.True(t, OpenAIErrorDialect(format), format)
+	}
+	for _, format := range []Format{
+		FormatAnthropic, FormatGemini, FormatVertex, FormatCohere,
+		FormatCohereRerank, FormatBedrock, FormatBedrockTitanEmbed,
+	} {
+		assert.False(t, OpenAIErrorDialect(format), format)
+	}
+}
+
+func TestEncodeOpenAIGatewayError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		status  int
+		code    string
+		message string
+		want    string
+	}{
+		{
+			name:    "forbidden model carries the gateway code",
+			status:  http.StatusForbidden,
+			code:    "model_not_allowed",
+			message: `model "no-such-model-xyz" is not allowed for this application`,
+			want:    `{"error":{"message":"model \"no-such-model-xyz\" is not allowed for this application","type":"permission_error","code":"model_not_allowed"}}`,
+		},
+		{
+			name:    "bad request",
+			status:  http.StatusBadRequest,
+			code:    "invalid_request",
+			message: "invalid request payload",
+			want:    `{"error":{"message":"invalid request payload","type":"invalid_request_error","code":"invalid_request"}}`,
+		},
+		{
+			name:   "missing message uses the status text",
+			status: http.StatusNotFound,
+			code:   "not_found",
+			want:   `{"error":{"message":"Not Found","type":"not_found_error","code":"not_found"}}`,
+		},
+		{
+			name:    "server failure",
+			status:  http.StatusBadGateway,
+			code:    "backend_error",
+			message: "",
+			want:    `{"error":{"message":"Bad Gateway","type":"server_error","code":"backend_error"}}`,
+		},
+		{
+			name:    "unauthorized",
+			status:  http.StatusUnauthorized,
+			code:    "unauthenticated",
+			message: "request is not authenticated",
+			want:    `{"error":{"message":"request is not authenticated","type":"authentication_error","code":"unauthenticated"}}`,
+		},
+		{
+			name:    "rate limit",
+			status:  http.StatusTooManyRequests,
+			code:    "rate_limit_unavailable",
+			message: "rate limit unavailable",
+			want:    `{"error":{"message":"rate limit unavailable","type":"rate_limit_error","code":"rate_limit_unavailable"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := EncodeOpenAIGatewayError(tc.status, tc.code, tc.message)
+			assert.JSONEq(t, tc.want, string(got))
+		})
+	}
+}
+
+func TestEncodeErrorBody_AnthropicTypes(t *testing.T) {
+	t.Parallel()
+	raw := EncodeErrorBody(FormatAnthropic, http.StatusNotFound, "missing")
+	var env map[string]any
+	require.NoError(t, json.Unmarshal(raw, &env))
+	errObj := env["error"].(map[string]any)
+	assert.Equal(t, "not_found_error", errObj["type"])
+}
+
+func TestStreamErrorEvent_UpstreamTerminatedGolden(t *testing.T) {
+	t.Parallel()
+	const (
+		openaiGolden    = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
+		anthropicGolden = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"upstream stream terminated unexpectedly\"}}\n"
+		geminiGolden    = "data: {\"error\":{\"code\":500,\"message\":\"upstream stream terminated unexpectedly\",\"status\":\"INTERNAL\"}}\n"
+	)
+	tests := []struct {
+		name   string
+		source Format
+		want   string
+	}{
+		{name: "openai", source: FormatOpenAI, want: openaiGolden},
+		{name: "azure", source: FormatAzure, want: openaiGolden},
+		{name: "groq", source: FormatGroq, want: openaiGolden},
+		{name: "deepseek", source: FormatDeepSeek, want: openaiGolden},
+		{name: "xai", source: FormatXAI, want: openaiGolden},
+		{name: "openrouter", source: FormatOpenRouter, want: openaiGolden},
+		{name: "mistral", source: FormatMistral, want: openaiGolden},
+		{name: "cohere falls through to openai", source: FormatCohere, want: openaiGolden},
+		{name: "responses falls through to openai", source: FormatOpenAIResponses, want: openaiGolden},
+		{name: "unknown falls through to openai", source: Format("something-else"), want: openaiGolden},
+		{name: "anthropic", source: FormatAnthropic, want: anthropicGolden},
+		{name: "gemini", source: FormatGemini, want: geminiGolden},
+		{name: "vertex", source: FormatVertex, want: geminiGolden},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := StreamErrorEvent(
+				tc.source,
+				http.StatusInternalServerError,
+				StreamErrorTypeUpstream,
+				StreamErrorMessageUpstreamTerminated,
+			)
+			assert.Equal(t, tc.want, string(got))
+			assert.Equal(t, tc.want, string(StreamErrorEvent(tc.source, 0, "", "")))
+		})
+	}
+}
+
+func TestStreamErrorEvent_HonoursArguments(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		source  Format
+		status  int
+		errType string
+		message string
+		want    string
+	}{
+		{
+			name:    "openai carries type and message",
+			source:  FormatOpenAI,
+			status:  http.StatusForbidden,
+			errType: "content_filter",
+			message: "blocked",
+			want:    `data: {"error":{"message":"blocked","type":"content_filter"}}`,
+		},
+		{
+			name:    "gemini carries status",
+			source:  FormatGemini,
+			status:  http.StatusForbidden,
+			errType: "content_filter",
+			message: "blocked",
+			want:    "data: {\"error\":{\"code\":403,\"message\":\"blocked\",\"status\":\"PERMISSION_DENIED\"}}\n",
+		},
+		{
+			name:    "anthropic carries status",
+			source:  FormatAnthropic,
+			status:  http.StatusForbidden,
+			errType: "content_filter",
+			message: "blocked",
+			want:    "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"blocked\"}}\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := StreamErrorEvent(tc.source, tc.status, tc.errType, tc.message)
+			assert.Equal(t, tc.want, string(got))
+		})
+	}
+}
+
+func TestStreamBlockedEvent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		source Format
+		want   []string
+	}{
+		{
+			name:   "openai",
+			source: FormatOpenAI,
+			want: []string{
+				`data: {"error":{"message":"blocked","type":"content_filter","direction":"output"}}`,
+				"",
+			},
+		},
+		{
+			name:   "azure normalizes to openai",
+			source: FormatAzure,
+			want: []string{
+				`data: {"error":{"message":"blocked","type":"content_filter","direction":"output"}}`,
+				"",
+			},
+		},
+		{
+			name:   "anthropic emits nothing: its SDKs raise on a trailing error event",
+			source: FormatAnthropic,
+			want:   nil,
+		},
+		{
+			name:   "gemini",
+			source: FormatGemini,
+			want: []string{
+				`data: {"error":{"code":403,"message":"blocked","status":"PERMISSION_DENIED"}}`,
+				"",
+			},
+		},
+		{
+			name:   "cohere falls through to openai: its union has no error member",
+			source: FormatCohere,
+			want: []string{
+				`data: {"error":{"message":"blocked","type":"content_filter","direction":"output"}}`,
+				"",
+			},
+		},
+		{
+			name:   "responses",
+			source: FormatOpenAIResponses,
+			want: []string{
+				"event: error",
+				`data: {"type":"error","code":"content_filter","message":"blocked","param":null,"direction":"output"}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := StreamBlockedEvent(tc.source, "content_filter", "blocked", "output")
+			var lines []string
+			for _, line := range got {
+				lines = append(lines, string(line))
+			}
+			assert.Equal(t, tc.want, lines)
+		})
+	}
+}
+
+// Anthropic is absent on purpose: it emits nothing at all, which
+// TestStreamBlockedEvent_AnthropicEmitsNothing covers instead.
+func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
+	t.Parallel()
+	sources := []Format{
+		FormatOpenAI, FormatAzure, FormatGroq, FormatGemini,
+		FormatVertex, FormatCohere, FormatOpenAIResponses, Format("something-else"),
+	}
+	for _, source := range sources {
+		t.Run(string(source), func(t *testing.T) {
+			t.Parallel()
+			got := StreamBlockedEvent(source, "", "", "")
+			require.NotEmpty(t, got)
+			assert.Empty(t, got[len(got)-1])
+			for _, line := range got {
+				assert.NotContains(t, string(line), "\n")
+			}
+			data := got[len(got)-2]
+			assert.Contains(t, string(data), "response blocked by content filter")
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(data, []byte("data: ")), &decoded))
+		})
+	}
+}
+
+// anthropic-sdk-python raises on any SSE whose event is "error", and
+// _make_status_error dispatches on response.status_code — 200 on our stream, so
+// it lands on the base APIStatusError that no dialect-specific except clause
+// catches. get_final_message() then raises on a message that is complete. The
+// message_delta terminator carries stop_reason "refusal" and the accumulator
+// puts it on the final Message, so nothing is lost by staying silent here.
+func TestStreamBlockedEvent_AnthropicEmitsNothing(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []string{"", "content_filter", "some_plugin_name"} {
+		assert.Empty(t, StreamBlockedEvent(FormatAnthropic, reason, "blocked", "output"))
+	}
+	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", "", "output"))
+}
+
+// An empty direction leaves the error object exactly as it was before the
+// field existed.
+func TestStreamBlockedEvent_NoDirectionLeavesTheEnvelopeUnchanged(t *testing.T) {
+	t.Parallel()
+	got := StreamBlockedEvent(FormatOpenAI, "content_filter", "blocked", "")
+	assert.Equal(t, [][]byte{
+		[]byte(`data: {"error":{"message":"blocked","type":"content_filter"}}`),
+		[]byte(""),
+	}, got)
+}

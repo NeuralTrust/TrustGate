@@ -51,7 +51,7 @@ func NewListRegistryModelsHandler(
 
 // Handle godoc
 // @Summary      List a registry's available models from the data plane
-// @Description  Returns the model catalog narrowed to what this registry's credentials can actually invoke, resolved from this data plane's own network: AWS Bedrock registries are checked against the AWS control plane, every other provider against its authenticated models listing. It answers the same shape as the admin catalog endpoint, and exists because on a hybrid deployment only this plane can reach a provider endpoint that lives inside the customer's network. Authorized by a control-plane-minted diagnostics token bound to the gateway. A registry that has not reached this plane's config snapshot yet answers 404, so the caller can fall back to the unnarrowed catalog.
+// @Description  Returns the model catalog narrowed to what this registry's credentials can actually invoke, resolved from this data plane's own network: AWS Bedrock registries are checked against the AWS control plane, every other provider against its authenticated models listing; an Azure registry lists its resource's deployments and answers 422 when Azure rejects its endpoint or credentials, 502 when Azure does not answer. It answers the same shape as the admin catalog endpoint, and exists because on a hybrid deployment only this plane can reach a provider endpoint that lives inside the customer's network. Authorized by a control-plane-minted diagnostics token bound to the gateway. A registry that has not reached this plane's config snapshot yet answers 404, so the caller can fall back to the unnarrowed catalog.
 // @Tags         diagnostics
 // @Produce      json
 // @Param        X-AG-Diagnostics-Token  header    string  true  "Control-plane-minted diagnostics JWT"
@@ -60,6 +60,8 @@ func NewListRegistryModelsHandler(
 // @Success      200                     {object}  map[string][]catalogresponse.ModelResponse
 // @Failure      401                     {object}  httpio.ErrorBody
 // @Failure      404                     {object}  httpio.ErrorBody
+// @Failure      422                     {object}  httpio.ErrorBody
+// @Failure      502                     {object}  httpio.ErrorBody
 // @Router       /__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models [get]
 func (h *ListRegistryModelsHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)
@@ -94,12 +96,15 @@ func (h *ListRegistryModelsHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	models = h.availability.Narrow(c.UserContext(), appcatalog.ServerlessFilterInput{
+	models, err = h.availability.Narrow(c.UserContext(), appcatalog.ServerlessFilterInput{
 		ProviderCode: reg.Provider(),
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
 		Models:       models,
 	})
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 
 	out := make([]catalogresponse.ModelResponse, 0, len(models))
 	for _, m := range models {

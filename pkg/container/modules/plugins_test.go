@@ -54,7 +54,7 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		"model_allowlist":       {appplugins.ProtocolLLM},
 		"prompt_template":       {appplugins.ProtocolLLM},
 		"tool_injection":        {appplugins.ProtocolLLM},
-		"tool_allowlist":        {appplugins.ProtocolLLM},
+		"tool_allowlist":        {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"openai_moderation":     {appplugins.ProtocolLLM},
 		"bedrock_guardrail":     {appplugins.ProtocolLLM},
 		"azure_content_safety":  {appplugins.ProtocolLLM},
@@ -108,4 +108,190 @@ func TestNewPluginRegistry_OpenAIModerationCatalogMetadata(t *testing.T) {
 		keys = append(keys, f.Key)
 	}
 	assert.ElementsMatch(t, []string{"api_key", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
+}
+
+// TestNewPluginRegistry_ContentReaderSet pins which plugins the planner
+// sequences after same-priority rewriters (RUN-1693). Opting a plugin in
+// changes where it runs relative to rewriters, so it must be a conscious edit
+// here as well as in the plugin.
+func TestNewPluginRegistry_ContentReaderSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	var got []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if appplugins.IsContentReader(p) {
+			got = append(got, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{"azure_content_safety", "openai_moderation", "semantic_cache"}, got)
+}
+
+// TestNewPluginRegistry_LocalRewriterSet pins which rewriters the planner runs
+// ahead of the same-priority rewriters that send content to a third party
+// (RUN-1745). A plugin listed here must never send the body it rewrites off the
+// box: opting in a remote guard would hand it the text a local mask hides.
+func TestNewPluginRegistry_LocalRewriterSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	var got []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if appplugins.RewritesLocally(p) {
+			got = append(got, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{
+		"model_allowlist",
+		"per_tool_rate_limiter",
+		"prompt_compression",
+		"prompt_template",
+		"regex_replace",
+		"token_rate_limiter",
+		"tool_allowlist",
+		"tool_injection",
+	}, got)
+}
+
+// TestNewPluginRegistry_NativeBedrockBehaviours pins what each plugin does on a
+// native Amazon Bedrock Runtime call. Every plugin not listed runs and is refused
+// if it changes the bytes of the call, so adding a plugin that masks or that
+// transforms the request must be a conscious edit here as well as in the plugin.
+func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	want := map[string]appplugins.BedrockNativeBehavior{
+		"prompt_template":    appplugins.BedrockNativeSkips,
+		"tool_injection":     appplugins.BedrockNativeSkips,
+		"prompt_compression": appplugins.BedrockNativeSkips,
+		"semantic_cache":     appplugins.BedrockNativeSkips,
+		"regex_replace":      appplugins.BedrockNativeMasks,
+		"trustguard":         appplugins.BedrockNativeMasks,
+		"bedrock_guardrail":  appplugins.BedrockNativeMasks,
+		"google_model_armor": appplugins.BedrockNativeMasks,
+	}
+	got := map[string]appplugins.BedrockNativeBehavior{}
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if behavior := appplugins.BedrockNativeOf(p); behavior != appplugins.BedrockNativeRuns {
+			got[name] = behavior
+		}
+	}
+	assert.Equal(t, want, got)
+
+	catalog := appplugins.NewCatalogService(reg).Catalog()
+	for _, group := range catalog.Groups {
+		for _, item := range group.Items {
+			for _, f := range item.SettingsSchema.Fields {
+				assert.NotEqual(t, "on_mask_failure", f.Key, "%s: a mask that cannot be applied always blocks in a mode that blocks", item.Slug)
+			}
+		}
+	}
+}
+
+// TestNewPluginRegistry_RetiredSettingsSet pins which plugins refuse to store
+// which keys, by running the registry's own strip over a settings object that
+// carries every key a guardrail ignores. A plugin missing from the table
+// stores them all.
+func TestNewPluginRegistry_RetiredSettingsSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	stale := func() map[string]any {
+		return map[string]any{
+			"on_error": "fail_closed", "on_timeout": "fail_closed", "timeout": "1ms",
+			"on_mask_failure": "block",
+			"streaming":       map[string]any{"enabled": true, "on_error": "fail_closed", "guard_timeout": "1s"},
+		}
+	}
+	kept := map[string][]string{
+		"trustguard":           {"streaming"},
+		"bedrock_guardrail":    {"timeout", "on_timeout", "streaming"},
+		"google_model_armor":   {"timeout", "on_timeout", "streaming"},
+		"openai_moderation":    {"timeout", "on_timeout", "on_mask_failure", "streaming"},
+		"azure_content_safety": {"timeout", "on_timeout", "on_mask_failure", "streaming"},
+		"regex_replace":        {"on_error", "on_timeout", "timeout", "streaming"},
+	}
+	for slug, want := range kept {
+		t.Run(slug, func(t *testing.T) {
+			got := appplugins.StripRetiredSettings(reg, slug, stale())
+			keys := make([]string, 0, len(got))
+			for k := range got {
+				keys = append(keys, k)
+			}
+			assert.ElementsMatch(t, want, keys)
+			streaming, _ := got["streaming"].(map[string]any)
+			switch slug {
+			case "regex_replace":
+				assert.Contains(t, streaming, "on_error", "a rewriter keeps its stream failure policy")
+				assert.NotContains(t, streaming, "guard_timeout", "a rewriter has no stream guard timeout")
+			case "azure_content_safety":
+				assert.Contains(t, streaming, "on_error", "azure has no stream leg and retires only its own keys")
+			default:
+				assert.NotContains(t, streaming, "on_error")
+				assert.NotContains(t, streaming, "guard_timeout")
+				assert.Contains(t, streaming, "enabled")
+			}
+		})
+	}
+}
+
+// TestNewPluginRegistry_StreamInspectorsRefuseANewStreamingOptOut pins that
+// every plugin inspecting streamed responses block by block refuses a new
+// streaming.enabled: false and keeps a policy stored with it editable
+// (RUN-1661). A new StreamInspector must be added to the fixtures here, which is
+// what makes the rule a conscious edit for it.
+func TestNewPluginRegistry_StreamInspectorsRefuseANewStreamingOptOut(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	fixtures := map[string]func() map[string]any{
+		"trustguard": func() map[string]any {
+			return map[string]any{"collector_id": "11111111-1111-4111-8111-111111111111"}
+		},
+		"openai_moderation": func() map[string]any {
+			return map[string]any{"api_key": "k", "thresholds": map[string]any{"hate": 0.7}}
+		},
+		"bedrock_guardrail": func() map[string]any {
+			return map[string]any{
+				"guardrail_id": "gr1abc",
+				"credentials":  map[string]any{"access_key_id": "AKIAEXAMPLE", "secret_access_key": "secret"},
+			}
+		},
+		"google_model_armor": func() map[string]any {
+			return map[string]any{"project": "proj", "location": "us-central1", "template": "tmpl-1"}
+		},
+		"regex_replace": func() map[string]any {
+			return map[string]any{
+				"target": "response",
+				"rules":  []map[string]any{{"pattern": "a", "replacement": "b"}},
+			}
+		},
+	}
+
+	var inspectors []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if _, ok := p.(appplugins.StreamInspector); ok {
+			inspectors = append(inspectors, name)
+		}
+	}
+	keys := make([]string, 0, len(fixtures))
+	for slug := range fixtures {
+		keys = append(keys, slug)
+	}
+	require.ElementsMatch(t, keys, inspectors, "every StreamInspector needs a fixture here")
+
+	withEnabled := func(set map[string]any, v any) map[string]any {
+		set["streaming"] = map[string]any{"enabled": v}
+		return set
+	}
+	for slug, base := range fixtures {
+		require.NoError(t, reg.ValidateSettingsWrite(slug, base(), nil), "%s: the fixture must be a valid write", slug)
+
+		err := reg.ValidateSettingsWrite(slug, withEnabled(base(), false), nil)
+		require.Error(t, err, "%s: a new streaming.enabled: false must be refused", slug)
+		assert.Contains(t, err.Error(), "streaming.enabled cannot turn it off", slug)
+
+		assert.NoError(t, reg.ValidateSettingsWrite(slug, withEnabled(base(), false), withEnabled(base(), false)),
+			"%s: a policy stored with streaming.enabled: false stays editable", slug)
+		assert.NoError(t, reg.ValidateSettingsWrite(slug, withEnabled(base(), true), nil), slug)
+	}
 }

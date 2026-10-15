@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
@@ -76,10 +77,26 @@ type Dispatcher struct {
 	retention   time.Duration
 	maxRows     int
 	trigger     chan struct{}
+	compiled    atomic.Bool
 
 	mu              sync.Mutex
 	publishedGlobal string
 	publishedScoped map[string]string
+
+	// lkg persists the compiled snapshots; nil when the feature is off.
+	lkg *lkgState
+}
+
+// Readiness reports whether the admin has a snapshot to serve: one compiled in
+// this process after startup migrations, or a restored last-good snapshot while
+// compiling fails. Gating on a fresh compile alone would take every admin out
+// of its Service whenever a restart meets a compile failure, which is exactly
+// the outage the persisted snapshot exists to ride out.
+func (d *Dispatcher) Readiness(context.Context) error {
+	if d.compiled.Load() || d.Source() == SourcePersisted {
+		return nil
+	}
+	return configsync.ErrNotReady
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
@@ -91,6 +108,7 @@ func NewDispatcher(
 	outbox configsyncport.OutboxRepository,
 	logger *slog.Logger,
 	cfg DispatcherConfig,
+	opts ...DispatcherOption,
 ) *Dispatcher {
 	if logger == nil {
 		logger = slog.Default()
@@ -111,20 +129,24 @@ func NewDispatcher(
 	if maxRows <= 0 {
 		maxRows = defaultMaxRows
 	}
-	return &Dispatcher{
-		compiler:    compiler,
-		codec:       codec,
-		holder:      holder,
-		broadcaster: broadcaster,
-		outbox:      outbox,
-		logger:      logger,
-		debounce:    debounce,
-		backstop:    backstop,
-		retention:   retention,
+	d := &Dispatcher{
+		compiler:        compiler,
+		codec:           codec,
+		holder:          holder,
+		broadcaster:     broadcaster,
+		outbox:          outbox,
+		logger:          logger,
+		debounce:        debounce,
+		backstop:        backstop,
+		retention:       retention,
 		maxRows:         maxRows,
 		trigger:         make(chan struct{}, 1),
 		publishedScoped: make(map[string]string),
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // Signal requests a dispatch after an admin write: immediate when the loop is
@@ -228,11 +250,14 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	}
 
 	compileStart := time.Now()
-	raw, version, scoped, err := d.compile(ctx)
+	compiledAt := d.compiledAt()
+	compiled, err := d.compile(ctx)
 	if err != nil {
+		d.warnServingPersisted(err)
 		return err
 	}
 	compileDuration := time.Since(compileStart)
+	raw, version, scoped := compiled.raw, compiled.version, compiled.scoped
 
 	// The global snapshot leaves out gateways served by a hybrid data plane, so it
 	// is not a safe outer gate on its own: a change to a hosted gateway bumps the
@@ -241,7 +266,8 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	// whose version moved are notified.
 	d.mu.Lock()
 	globalChanged := version != d.publishedGlobal
-	if globalChanged || d.scopesChanged(scoped) {
+	published := globalChanged || d.scopesChanged(scoped)
+	if published {
 		if scoped != nil {
 			d.holder.SetPartitioned(raw, version, scoped)
 		} else {
@@ -266,9 +292,21 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 			slog.String("component", component),
 			slog.String("version", version),
 			slog.Duration("compile", compileDuration),
-			slog.Int("bytes", len(raw)))
+			slog.Int("bytes", len(raw)),
+			slog.Int("scopes", compiled.scopes.count),
+			slog.String("largest_scope", compiled.scopes.largest),
+			slog.Int("largest_scope_bytes", compiled.scopes.largestBytes))
 	}
 	d.mu.Unlock()
+	if published {
+		recordSnapshotPublish(ctx, d.logger, compiled)
+	}
+
+	// A snapshot that compiled is the freshest truth: it replaces a restored one
+	// as the source, and is persisted. Persisting never fails the dispatch.
+	d.markCompiled(compiledAt)
+	d.compiled.Store(true)
+	d.persist(ctx, raw, version, scoped, compiledAt)
 
 	if len(pending) > 0 {
 		if _, err := d.outbox.DeleteSeqs(ctx, pending); err != nil && ctx.Err() == nil {
@@ -277,6 +315,15 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+type compiledSnapshot struct {
+	raw          []byte
+	version      string
+	scoped       map[string]ScopedSnapshot
+	catalogBytes int
+	scopes       scopeSizes
+	entities     snapshotEntities
 }
 
 func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
@@ -293,42 +340,46 @@ func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
 	return false
 }
 
-func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, scoped map[string]ScopedSnapshot, err error) {
+func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
 		global, scopedSnaps, catalog, cerr := partitioned.CompileAll(ctx)
 		if cerr != nil {
-			return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
+			return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 		}
 		// The catalog is usually the bulk of the encoded bytes and identical in
 		// every snapshot, so encode it once and append the bytes per snapshot.
 		catalogRaw, eerr := d.codec.Encode(catalog)
 		if eerr != nil {
-			return nil, "", nil, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
+			return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
 		}
-		raw, version, err = d.encodeWithCatalog(global, catalogRaw)
+		raw, version, err := d.encodeWithCatalog(global, catalogRaw)
 		if err != nil {
-			return nil, "", nil, err
+			return compiledSnapshot{}, err
 		}
-		scoped = make(map[string]ScopedSnapshot, len(scopedSnaps))
+		compiled := compiledSnapshot{raw: raw, version: version, scoped: make(map[string]ScopedSnapshot, len(scopedSnaps)), catalogBytes: len(catalogRaw)}
 		for scope, snap := range scopedSnaps {
 			scopedRaw, scopedVersion, serr := d.encodeWithCatalog(snap, catalogRaw)
 			if serr != nil {
-				return nil, "", nil, serr
+				return compiledSnapshot{}, serr
 			}
-			scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
+			compiled.scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
+			compiled.scopes.add(scope, len(scopedRaw))
+			compiled.entities.add(snap)
 		}
-		return raw, version, scoped, nil
+		return compiled, nil
 	}
 
 	snapshot, cerr := d.compiler.Compile(ctx)
 	if cerr != nil {
-		return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
+		return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 	}
-	raw, version, err = d.encode(snapshot)
+	raw, version, err := d.encode(snapshot)
 	if err != nil {
-		return nil, "", nil, err
+		return compiledSnapshot{}, err
 	}
-	return raw, version, nil, nil
+	compiled := compiledSnapshot{raw: raw, version: version}
+	compiled.entities.add(snapshot)
+	return compiled, nil
 }
 
 // encodeWithCatalog encodes a tenant-only snapshot and appends the

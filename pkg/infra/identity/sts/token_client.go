@@ -26,6 +26,8 @@ import (
 	"time"
 
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var _ appsts.IdPTokenClient = (*TokenClient)(nil)
@@ -44,9 +46,16 @@ type endpointEntry struct {
 
 const endpointTTL = time.Hour
 
+// The error code is kept; the free-text description is attacker controlled when
+// the IdP is tenant-chosen, so it is capped and stripped of control characters.
+const (
+	maxErrorCodeLen = 64
+	maxErrorDescLen = 200
+)
+
 func NewTokenClient(client *http.Client) *TokenClient {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	return &TokenClient{client: client, endpoints: map[string]endpointEntry{}}
 }
@@ -60,8 +69,14 @@ func (c *TokenClient) Call(ctx context.Context, issuer string, form url.Values) 
 }
 
 func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) (string, error) {
+	// Keyed by trust, so a tenant config naming the operator's issuer string
+	// cannot read an endpoint resolved under the operator's network rules.
+	key := issuer
+	if netguard.IsTrusted(ctx) {
+		key = "trusted\x00" + issuer
+	}
 	c.mu.Lock()
-	if ent, ok := c.endpoints[issuer]; ok && time.Since(ent.fetchedAt) < endpointTTL {
+	if ent, ok := c.endpoints[key]; ok && time.Since(ent.fetchedAt) < endpointTTL {
 		c.mu.Unlock()
 		return ent.tokenEndpoint, nil
 	}
@@ -75,7 +90,7 @@ func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) (stri
 		return "", fmt.Errorf("sts: OIDC discovery failed for issuer %s and no known token endpoint convention applies", issuer)
 	}
 	c.mu.Lock()
-	c.endpoints[issuer] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}
+	c.endpoints[key] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}
 	c.mu.Unlock()
 	return endpoint, nil
 }
@@ -139,9 +154,10 @@ func (c *TokenClient) tokenCall(ctx context.Context, endpoint string, form url.V
 	}
 	if res.StatusCode != http.StatusOK {
 		if doc.Error == "interaction_required" || doc.Error == "invalid_grant" {
-			return nil, fmt.Errorf("%w: %s", appsts.ErrInteractionRequired, doc.ErrorDesc)
+			return nil, fmt.Errorf("%w: %s", appsts.ErrInteractionRequired, strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
 		}
-		return nil, fmt.Errorf("sts: IdP exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
+		return nil, fmt.Errorf("sts: IdP exchange failed (%s): %s",
+			strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen), strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
 	}
 	if doc.AccessToken == "" {
 		return nil, fmt.Errorf("sts: IdP returned 200 with no access_token")

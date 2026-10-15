@@ -24,9 +24,11 @@ async function parseError(res: Response): Promise<AdminApiError> {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // Mutations always declare JSON, even without a body: the /api proxy rejects
+  // state-changing requests with any other content type.
   const res = await fetch(`/api/admin${path}`, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: method !== "GET" ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 

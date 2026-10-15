@@ -23,18 +23,22 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestMapPgError_RoutingConflict(t *testing.T) {
+func TestMapPgError_CrossGatewayLink(t *testing.T) {
 	t.Parallel()
-	err := mapPgError(&pgconn.PgError{Code: pgRoutingConflict, Message: "routing_mode_conflict"})
+	err := mapPgError(&pgconn.PgError{Code: pgCrossGatewayLink, Message: "cross_gateway_link"})
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
 }
 
-func TestMapPgError_RoutingModeCheck(t *testing.T) {
+func TestMapPgError_AuthGrantCheck(t *testing.T) {
 	t.Parallel()
-	err := mapPgError(&pgconn.PgError{Code: pgCheckViolation, ConstraintName: consumerRoutingModeCheck})
-	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
-		t.Fatalf("err = %v, want ErrInvalidRoutingMode", err)
+	err := mapPgError(&pgconn.PgError{Code: pgCheckViolation, ConstraintName: consumerAuthGrantCheck})
+	if !errors.Is(err, domain.ErrInvalidAuthLink) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrInvalidAuthLink", err)
+	}
+	other := &pgconn.PgError{Code: pgCheckViolation, ConstraintName: "consumers_audience_check"}
+	if err := mapPgError(other); !errors.Is(err, other) {
+		t.Fatalf("err = %v, want the unmapped check violation", err)
 	}
 }

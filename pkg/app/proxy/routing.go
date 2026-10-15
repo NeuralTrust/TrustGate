@@ -16,6 +16,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -24,10 +25,9 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
@@ -48,10 +48,43 @@ type routedBackend struct {
 	baseline     *trace.RouteBaseline
 }
 
+// CandidateFilter keeps the routing candidates a store link may use.
+type CandidateFilter func(routingdomain.Candidate) bool
+
+// ResolvedRouting is routing already resolved for a request, which the
+// forwarder uses as is instead of resolving it again.
+type ResolvedRouting struct {
+	Intent     routingdomain.Intent
+	Ref        string
+	Candidates *routingdomain.CandidateSet
+}
+
+var errNoKeptCandidate = fmt.Errorf("no candidate survives the store scope: %w", routingdomain.ErrModelDenied)
+
+type candidateQuery struct {
+	intent        routingdomain.Intent
+	needed        string
+	consumer      *appconsumer.RoutableConsumer
+	data          *appconsumer.Data
+	request       *infracontext.RequestContext
+	keep          CandidateFilter
+	strictListing bool
+}
+
+type candidatePipeline struct {
+	resolver approuting.Resolver
+	listing  appcatalog.ModelListing
+	logger   *slog.Logger
+}
+
 func (f *forwarder) resolveRouting(
 	ctx context.Context,
 	in ForwardInput,
 ) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
+	if in.Resolved != nil {
+		in.Request.RequestedModel = in.Resolved.Ref
+		return in.Resolved.Intent, in.Resolved.Candidates, nil
+	}
 	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
@@ -59,47 +92,148 @@ func (f *forwarder) resolveRouting(
 	}
 	in.Request.RequestedModel = ref
 	needed := capabilityRequiresProviderSupport(in.Request)
-	if intent.IsZero() && !isRoleBased(in.Consumer) && needed == "" {
+	if intent.IsZero() && needed == "" {
 		return intent, nil, nil
 	}
-	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
-		Intent:     intent,
-		Consumer:   in.Consumer,
-		Roles:      effectiveRoles(in.Data, in.RoleIDs),
-		Registries: registryLookup(in.Data),
+	candidates, err := f.pipeline.run(ctx, candidateQuery{
+		intent:   intent,
+		needed:   needed,
+		consumer: in.Consumer,
+		data:     in.Data,
+		request:  in.Request,
 	})
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
-	if needed != "" {
-		capable := filterCandidatesByCapability(candidates, needed)
-		if capable.Len() == 0 && candidates.Len() > 0 {
-			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
-			f.logRejectedIntent(in.Consumer, ref, err)
-			return intent, nil, err
-		}
-		candidates = capable
-	}
-	if needed == capabilityFiles {
-		candidates = filterCandidatesByFilesID(candidates, in.Request)
-	}
-	if candidates.Len() == 0 {
-		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
-		return intent, nil, ErrNoBackendsInPool
-	}
-	if intent.IsShortModel() {
-		candidates = f.filterCandidatesByProviderListing(ctx, candidates, intent.Model)
-	}
 	return intent, candidates, nil
 }
 
-func (f *forwarder) filterCandidatesByProviderListing(
+func (p candidatePipeline) run(ctx context.Context, q candidateQuery) (*routingdomain.CandidateSet, error) {
+	consumer := q.consumer
+	if q.request.IsBedrockNative() {
+		var err error
+		if consumer, err = bedrockOnlyConsumer(q.consumer); err != nil {
+			return nil, err
+		}
+	}
+	candidates, err := p.resolver.Resolve(approuting.ResolveInput{
+		Intent:     q.intent,
+		Consumer:   consumer,
+		Registries: registryLookup(q.data),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if candidates, err = keepCandidates(candidates, q.keep); err != nil {
+		return nil, err
+	}
+	if q.needed != "" {
+		capable := filterCandidatesByCapability(candidates, q.needed)
+		if capable.Len() == 0 && candidates.Len() > 0 {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, q.needed)
+		}
+		candidates = capable
+	}
+	if q.needed == capabilityFiles {
+		candidates = filterCandidatesByFilesID(candidates, q.request)
+	}
+	if candidates.Len() == 0 {
+		return nil, ErrNoBackendsInPool
+	}
+	if q.intent.IsShortModel() {
+		candidates = p.filterCandidatesByProviderListing(ctx, candidates, q.intent.Model, q.strictListing)
+	}
+	return p.rejectNonChatModels(ctx, candidates, q)
+}
+
+func isChatRequest(req *infracontext.RequestContext) bool {
+	if req == nil {
+		return false
+	}
+	return req.ProxyCapability == "" || req.ProxyCapability == capabilityChat
+}
+
+func (p candidatePipeline) rejectNonChatModels(
+	ctx context.Context,
+	candidates *routingdomain.CandidateSet,
+	q candidateQuery,
+) (*routingdomain.CandidateSet, error) {
+	if p.listing == nil || candidates == nil || !isChatRequest(q.request) {
+		return candidates, nil
+	}
+	if !q.intent.IsShortModel() && !q.intent.IsQualified() {
+		return candidates, nil
+	}
+	model := q.intent.Model
+	dropped := false
+	kept := candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		flags, known := p.listing.Capabilities(ctx, c.Registry.Provider(), model)
+		if !known || capabilityFlag(flags, "chat", "text") {
+			return true
+		}
+		dropped = true
+		return false
+	})
+	if kept.Len() > 0 {
+		return kept, nil
+	}
+	if !dropped {
+		return candidates, nil
+	}
+	if p.logger != nil {
+		p.logger.Debug("chat request rejected: model capabilities do not include chat",
+			slog.String("model", model),
+		)
+	}
+	return nil, fmt.Errorf("%w: %s", ErrModelNotChatCapable, model)
+}
+
+func keepCandidates(candidates *routingdomain.CandidateSet, keep CandidateFilter) (*routingdomain.CandidateSet, error) {
+	if keep == nil {
+		return candidates, nil
+	}
+	kept := candidates.Filter(keep)
+	if kept.Len() == 0 {
+		return nil, errNoKeptCandidate
+	}
+	return kept, nil
+}
+
+// bedrockOnlyConsumer returns a copy of rc that only holds its Bedrock
+// registries. A native Bedrock request is relayed, not translated, so a
+// registry of any other provider must never be a candidate, even one that
+// allows the model: the call would have nowhere valid to go, and the error for
+// an application with no Bedrock registry at all would be hidden behind it.
+func bedrockOnlyConsumer(rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
+	bedrock := func(regs []*domain.Registry) []*domain.Registry {
+		out := make([]*domain.Registry, 0, len(regs))
+		for _, reg := range regs {
+			if reg != nil && reg.Provider() == provider.Bedrock {
+				out = append(out, reg)
+			}
+		}
+		return out
+	}
+	only := *rc
+	only.Registries = bedrock(rc.Registries)
+	only.FallbackBackends = bedrock(rc.FallbackBackends)
+	if len(only.Registries)+len(only.FallbackBackends) == 0 {
+		return nil, fmt.Errorf("%w: application has no Amazon Bedrock registry", routingdomain.ErrNoRegistryServesModel)
+	}
+	return &only, nil
+}
+
+func (p candidatePipeline) filterCandidatesByProviderListing(
 	ctx context.Context,
 	candidates *routingdomain.CandidateSet,
 	model string,
+	strict bool,
 ) *routingdomain.CandidateSet {
-	if f.listing == nil {
+	if p.listing == nil {
 		return candidates
 	}
 	served := candidates.Filter(func(c routingdomain.Candidate) bool {
@@ -109,23 +243,23 @@ func (f *forwarder) filterCandidatesByProviderListing(
 		if !c.DefersModelChoice() {
 			return true
 		}
-		if f.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
+		if p.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
 			return true
 		}
-		f.logSkippedRegistry(c.Registry, model)
+		p.logSkippedRegistry(c.Registry, model)
 		return false
 	})
-	if served.Len() == 0 {
+	if served.Len() == 0 && !strict {
 		return candidates
 	}
 	return served
 }
 
-func (f *forwarder) logSkippedRegistry(reg *domain.Registry, model string) {
-	if f.logger == nil {
+func (p candidatePipeline) logSkippedRegistry(reg *domain.Registry, model string) {
+	if p.logger == nil {
 		return
 	}
-	f.logger.Debug("registry skipped: provider catalog does not list model",
+	p.logger.Debug("registry skipped: provider catalog does not list model",
 		slog.String("registry_id", reg.ID.String()),
 		slog.String("provider", reg.Provider()),
 		slog.String("model", model),
@@ -199,13 +333,15 @@ func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref stri
 	)
 }
 
-func isRoleBased(rc *appconsumer.RoutableConsumer) bool {
-	return rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased
-}
-
 func parseIntent(req *infracontext.RequestContext) (routingdomain.Intent, string, error) {
 	if req == nil {
 		return routingdomain.Intent{}, "", nil
+	}
+	if req.IsBedrockNative() {
+		// The identifier names a Bedrock model, ARN or inference profile; it is
+		// never routing syntax, so "auto" or "pool:x" are literal model IDs.
+		id := req.BedrockNative.ModelID
+		return routingdomain.Intent{Model: id}, id, nil
 	}
 	ref, err := modelRefFromRequest(req)
 	if err != nil {
@@ -216,6 +352,9 @@ func parseIntent(req *infracontext.RequestContext) (routingdomain.Intent, string
 }
 
 func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
+	if req.IsBedrockNative() {
+		return req.BedrockNative.ModelID, nil
+	}
 	if adapter.Format(req.SourceFormat) == adapter.FormatGemini {
 		return adapter.GeminiModelFromPath(req.Path), nil
 	}
@@ -243,6 +382,11 @@ func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.In
 	if req == nil {
 		return
 	}
+	// A native Bedrock body is relayed as received: the model rides in the
+	// path, and nothing may be stamped onto or stripped from the body.
+	if req.IsBedrockNative() {
+		return
+	}
 	if intent.IsAuto() {
 		req.Body = adapter.StripModel(req.Body)
 		return
@@ -265,26 +409,6 @@ func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.In
 	}
 }
 
-func effectiveRoles(data *appconsumer.Data, roleIDs []ids.RoleID) []*roledomain.Role {
-	if data == nil || len(roleIDs) == 0 {
-		return nil
-	}
-	want := make(map[ids.RoleID]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		want[id] = struct{}{}
-	}
-	out := make([]*roledomain.Role, 0, len(roleIDs))
-	for _, r := range data.Roles {
-		if r == nil {
-			continue
-		}
-		if _, ok := want[r.ID]; ok {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 func registryLookup(data *appconsumer.Data) approuting.RegistryLookup {
 	if data == nil {
 		return nil
@@ -299,12 +423,6 @@ func (f *forwarder) routeBackend(
 	intent routingdomain.Intent,
 	candidates *routingdomain.CandidateSet,
 ) (routedBackend, error) {
-	if isRoleBased(rc) {
-		return routedBackend{
-			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
-			excluded: make(map[routingdomain.RouteKey]struct{}),
-		}, nil
-	}
 	if intent.IsQualified() {
 		return routedBackend{
 			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
@@ -330,6 +448,9 @@ func (f *forwarder) routeBackend(
 	route, err := lb.NextRoute(ctx, req, excluded)
 	baseline := smartRoutingBaseline(lb, excluded)
 	if err != nil {
+		if errors.Is(err, routingdomain.ErrSR1PolicyExhausted) {
+			return routedBackend{}, fmt.Errorf("%w: %w", ErrNoBackendAvailable, err)
+		}
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{
 				lb:           lb,
@@ -363,6 +484,78 @@ func nextChainRoute(
 		return &chain[i]
 	}
 	return nil
+}
+
+const (
+	maxMissDetailRunes = 200
+	missWithoutDetail  = "no detail"
+)
+
+type modelMiss struct {
+	provider string
+	detail   string
+}
+
+func newModelMiss(bk *domain.Registry, resp *ProviderResponse) modelMiss {
+	return modelMiss{
+		provider: bk.Provider(),
+		detail:   truncateRunes(adapter.ProviderErrorMessage(resp.Body), maxMissDetailRunes),
+	}
+}
+
+// Every registry's answer is kept because after failover the last provider
+// is rarely the one the caller meant (ENG-1643).
+func noRegistryServesModelError(model, consumerSlug string, chain []routingdomain.Route, misses []modelMiss) error {
+	err := fmt.Errorf("%w: %q (tried %s)",
+		routingdomain.ErrNoRegistryServesModel, model, strings.Join(chainProviders(chain), ", "))
+	if len(misses) > 0 {
+		err = fmt.Errorf("%w: provider responses: %s", err, formatMisses(misses))
+	}
+	return fmt.Errorf("%w. List the models this application can use with GET %s", err, modelsPath(consumerSlug))
+}
+
+func modelsPath(consumerSlug string) string {
+	if consumerSlug == "" {
+		return "/v1/models"
+	}
+	return "/" + consumerSlug + "/v1/models"
+}
+
+func formatMisses(misses []modelMiss) string {
+	parts := make([]string, 0, len(misses))
+	for _, m := range misses {
+		detail := m.detail
+		if detail == "" {
+			detail = missWithoutDetail
+		}
+		parts = append(parts, "["+m.provider+": "+detail+"]")
+	}
+	return strings.Join(parts, " ")
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
+}
+
+func chainProviders(chain []routingdomain.Route) []string {
+	out := make([]string, 0, len(chain))
+	seen := make(map[string]struct{}, len(chain))
+	for _, route := range chain {
+		if route.Registry == nil {
+			continue
+		}
+		provider := route.Registry.Provider()
+		if _, dup := seen[provider]; dup {
+			continue
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	return out
 }
 
 func smartRoutingBaseline(
@@ -465,20 +658,26 @@ func (f *forwarder) stampRoutingPolicy(
 	rc *appconsumer.RoutableConsumer,
 	route routingdomain.Route,
 ) {
-	bk := route.Registry
-	dto.routeSource = routeSourceFor(dto.candidates, bk)
-	allowed, defaultModel := candidatePolicy(dto.candidates, rc, bk)
+	dto.routeSource = routeSourceFor(dto.candidates, route.Registry)
+	dto.request.AllowedModels, dto.request.DefaultModel = routePolicy(dto.candidates, rc, route)
+}
+
+func routePolicy(
+	candidates *routingdomain.CandidateSet,
+	rc *appconsumer.RoutableConsumer,
+	route routingdomain.Route,
+) ([]string, string) {
+	allowed, defaultModel := candidatePolicy(candidates, rc, route.Registry)
 	if route.Allowed != nil {
 		allowed = route.Allowed
 	}
 	if route.Default != "" {
 		defaultModel = route.Default
 	}
-	dto.request.AllowedModels = allowed
 	if modelmatch.IsPattern(defaultModel) {
 		defaultModel = ""
 	}
-	dto.request.DefaultModel = defaultModel
+	return allowed, defaultModel
 }
 
 func candidatePolicy(

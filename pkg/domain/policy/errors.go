@@ -31,4 +31,36 @@ var (
 	ErrInvalidStage      = fmt.Errorf("policy: invalid stage: %w", commonerrors.ErrValidation)
 	ErrInvalidMode       = fmt.Errorf("policy: invalid mode: %w", commonerrors.ErrValidation)
 	ErrInvalidPriority   = fmt.Errorf("policy: invalid priority: %w", commonerrors.ErrValidation)
+	ErrInvalidMCPScope   = fmt.Errorf("policy: invalid mcp_scope: %w", commonerrors.ErrValidation)
+	ErrInvalidPlacement  = fmt.Errorf("policy: invalid placement: %w", commonerrors.ErrValidation)
+
+	// ErrMCPWideUnsupported is a policy that cannot be MCP-wide because its
+	// plugin does not run on MCP: promoting it would place it nowhere it can
+	// run. It wraps ErrValidation, which the HTTP layer answers with 422.
+	ErrMCPWideUnsupported = fmt.Errorf("policy: mcp_wide needs a plugin that supports MCP: %w", commonerrors.ErrValidation)
+
+	// ErrPolicyLevelConflict is a write that would put a second policy of the
+	// same plugin on a level the gateway already runs that plugin at. It wraps
+	// ErrConflict, which the HTTP layer answers with 409: the request is well
+	// formed, it is the state that rejects it.
+	ErrPolicyLevelConflict = fmt.Errorf("policy: level already occupied: %w", commonerrors.ErrConflict)
+
+	// ErrPlacementChanged is a write refused because the row moved between the
+	// caller's read and its write, so the level check it ran no longer
+	// describes the row: an update whose global or mcp_wide changed, or a
+	// promotion whose policy was updated in between. It wraps ErrConflict: the
+	// caller should reload the policy and retry.
+	ErrPlacementChanged = fmt.Errorf("policy: placement changed while the policy was being updated: %w", commonerrors.ErrConflict)
 )
+
+// LevelConflict names the policy that already holds the level and wraps
+// ErrPolicyLevelConflict.
+func LevelConflict(occupant *Policy, level Level) error {
+	if occupant == nil {
+		return fmt.Errorf("level %s: %w", level, ErrPolicyLevelConflict)
+	}
+	return fmt.Errorf(
+		"policy %s (%q) already runs plugin %s at level %s: %w",
+		occupant.ID, occupant.Name, occupant.Slug, level, ErrPolicyLevelConflict,
+	)
+}

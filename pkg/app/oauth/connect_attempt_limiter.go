@@ -47,6 +47,10 @@ type ConnectAttemptScope uint8
 const (
 	ConnectAttemptScopeSource ConnectAttemptScope = iota + 1
 	ConnectAttemptScopeConsumer
+	ConnectAttemptScopeRegistration
+	// ConnectAttemptScopePersonalKey bounds one person's personal key changes
+	// on one gateway (create, rotate and revoke together), as the Portal does.
+	ConnectAttemptScopePersonalKey
 )
 
 type ConnectRateLimitExceeded struct {

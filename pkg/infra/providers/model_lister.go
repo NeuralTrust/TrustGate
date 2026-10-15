@@ -31,6 +31,9 @@ type LiveModel struct {
 	ID            string
 	DisplayName   string
 	ProviderModel string
+	// Pending marks a model the provider lists but does not serve yet, such as
+	// an Azure deployment that is still being created.
+	Pending bool
 }
 
 // ModelLister lists the models a provider's API reports as available to the
@@ -45,9 +48,24 @@ type ModelLister interface {
 // model listing so callers can degrade to the static catalog.
 var ErrModelListingFailed = errors.New("live model listing failed")
 
+// ErrModelListingMisconfigured marks a listing that failed because of the
+// registry's own configuration (a missing endpoint, unusable credentials)
+// rather than the provider being unreachable. It always wraps
+// ErrModelListingFailed.
+var ErrModelListingMisconfigured = errors.New("live model listing misconfigured")
+
+// ModelListingStatusError is the provider's non-2xx answer to a listing.
+type ModelListingStatusError struct {
+	StatusCode int
+}
+
+func (e *ModelListingStatusError) Error() string {
+	return fmt.Sprintf("provider returned status %d", e.StatusCode)
+}
+
 // maxModelListBody bounds how much of a models response is read; the largest
 // real listing (OpenRouter) is well under this.
-const maxModelListBody = 8 << 20 // 8 MiB
+const maxModelListBody = 8 << 20
 
 // FetchModelListBody executes an authenticated GET against a provider's models
 // endpoint and returns the raw body. Non-2xx statuses are errors: a live
@@ -56,15 +74,15 @@ func FetchModelListBody(providerKey string, req *http.Request) ([]byte, error) {
 	client := probePool.Get(providerKey+"-models", ProbeHTTPTimeout)
 	resp, err := client.Do(req) // #nosec G704 -- URL is built by the provider wrapper, not user input
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrModelListingFailed, err.Error())
+		return nil, fmt.Errorf("%w: request: %w", ErrModelListingFailed, err)
 	}
 	defer DrainBody(resp.Body)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("%w: provider returned status %d", ErrModelListingFailed, resp.StatusCode)
+		return nil, fmt.Errorf("%w: %w", ErrModelListingFailed, &ModelListingStatusError{StatusCode: resp.StatusCode})
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxModelListBody))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read body: %s", ErrModelListingFailed, err.Error())
+		return nil, fmt.Errorf("%w: read body: %w", ErrModelListingFailed, err)
 	}
 	return body, nil
 }
@@ -80,7 +98,7 @@ func ListModelsGET(
 ) ([]LiveModel, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrModelListingFailed, err.Error())
+		return nil, fmt.Errorf("%w: build request: %w", ErrModelListingFailed, err)
 	}
 	if applyHeaders != nil {
 		applyHeaders(req)
@@ -115,7 +133,7 @@ func ParseOpenAIModelList(body []byte) ([]LiveModel, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("%w: decode listing: %s", ErrModelListingFailed, err.Error())
+		return nil, fmt.Errorf("%w: decode listing: %w", ErrModelListingFailed, err)
 	}
 	models := make([]LiveModel, 0, len(payload.Data))
 	for _, item := range payload.Data {

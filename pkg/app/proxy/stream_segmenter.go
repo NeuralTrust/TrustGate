@@ -1,0 +1,621 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package proxy
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+)
+
+type streamUnit int
+
+const (
+	unitOpaque streamUnit = iota
+	unitText
+	unitUsage
+	unitTerminal
+)
+
+// streamCodec is the narrow slice of the adapter registry the segmenter needs.
+type streamCodec interface {
+	DecodeStreamChunkFor(chunk []byte, target adapter.Format) (*adapter.CanonicalStreamChunk, error)
+}
+
+// responsesEventPrefix is how an OpenAI Responses SSE event names itself.
+// OpenAIAdapter.DecodeStreamChunk sniffs this same prefix and hands the payload
+// to the Responses decoder whatever format it was asked for
+// (openai_adapter.go:56-64, :88-92), so a Responses event can reach
+// classification under a plain "openai" label. The payload, not the label, is
+// what decides how its finish reason must be read.
+const responsesEventPrefix = "response."
+
+// The Responses events that open and close an output item, and the Anthropic
+// events that open and close a content block. They are the only account of what
+// the wire has open: nothing about a block or an item survives the decode.
+const (
+	responsesOutputItemAdded   = "response.output_item.added"
+	responsesOutputItemDone    = "response.output_item.done"
+	anthropicContentBlockStart = "content_block_start"
+	anthropicContentBlockStop  = "content_block_stop"
+)
+
+// finishReasonToolCalls is the canonical finish reason for one completed tool
+// call. On Responses it rides response.function_call_arguments.done, which
+// fires once per function call well before the response ends.
+const finishReasonToolCalls = "tool_calls"
+
+// terminalPayloadTypes are the events that end a response in the dialects that
+// name their ending. They are matched before the decode so that the end of a
+// stream never depends on what the decoder happens to surface: message_stop,
+// response.incomplete and response.failed decode to nothing at all, and error
+// is how Anthropic and Responses end a stream abnormally — without it an
+// aborted stream looks opaque and the guard never learns the stream is over.
+// response.completed and cohere message-end do decode with a finish reason, but
+// in their dialects a finish reason is not an ending (see
+// dialectsWithExplicitEnd), so for those two the set is what makes them
+// terminal rather than a redundant shortcut.
+var terminalPayloadTypes = map[string]struct{}{
+	"message_stop":        {},
+	"message-end":         {},
+	"response.completed":  {},
+	"response.incomplete": {},
+	"response.failed":     {},
+	"error":               {},
+}
+
+// dialectsWithExplicitEnd are the wire formats that end a response with a named
+// event. There a finish reason describes content, not the ending: Responses
+// emits response.function_call_arguments.done — which decodes to FinishReason
+// "tool_calls" (openai_responses_adapter.go:338-341) — once per function call
+// before response.completed, and Anthropic puts the stop reason on
+// message_delta, two events before message_stop. Classifying those as terminal
+// would stamp a mid-stream segment final and stop every guard call after the
+// first tool call. Every other dialect — the chat-completions family,
+// Gemini/Vertex, Bedrock, Mistral — has no end event, so there the finish
+// reason is the only ending there is.
+var dialectsWithExplicitEnd = map[adapter.Format]struct{}{
+	adapter.FormatAnthropic:       {},
+	adapter.FormatCohere:          {},
+	adapter.FormatOpenAIResponses: {},
+}
+
+// endsOnFinishReason reports whether a finish reason on this event is the end
+// of the response rather than a property of what the event carries.
+func endsOnFinishReason(format adapter.Format, payloadType string) bool {
+	if strings.HasPrefix(payloadType, responsesEventPrefix) {
+		return false
+	}
+	_, explicit := dialectsWithExplicitEnd[format]
+	return !explicit
+}
+
+// streamEvent is one whole SSE event: its original lines in arrival order, plus
+// what the event contributes to the block being filled. Anthropic, Cohere and
+// Responses frame an event across several lines, so the event, not the line, is
+// the unit that can be held and released without corrupting the wire.
+type streamEvent struct {
+	lines     [][]byte
+	unit      streamUnit
+	mark      streamMark
+	text      string
+	reasoning string
+	toolCalls []adapter.StreamToolCallDelta
+	// beyondText is set when the event carries something a re-encode built from
+	// its text alone would drop: a finish reason, a usage report, or a
+	// structural mark. A text-carrying event is not a text-only event — Gemini
+	// decodes one data: line into a delta, a finishReason and usageMetadata at
+	// once, and the chat-completions family, Bedrock and Mistral all pack the
+	// finish reason onto a chunk that still carries content. Only the guard's
+	// mask path re-encodes an event, and this is what tells it which ones it
+	// must leave alone.
+	beyondText bool
+	// tool is what a native Bedrock frame does to a tool call, and toolIndex the
+	// content block it does it to (-1 when the frame does not say).
+	tool      toolPhase
+	toolIndex int
+	// choice is the chat-completions choice the event belongs to, and choiceSet
+	// says it was read. choiceMany and choiceBad are set only while the guard
+	// holds chat tool calls: more than one choice in the chunk, or an index
+	// that is not a JSON integer. The decoder reads choices[0] only, so either
+	// one would otherwise release tool calls it never parsed.
+	choice     int
+	choiceSet  bool
+	choiceMany bool
+	choiceBad  bool
+	// toolHandled is set once the guard has asked the chain about the tool call
+	// this frame belongs to and applied its verdict, so a mask on the text of the
+	// same window no longer has to treat the frame as tool input it cannot edit.
+	toolHandled bool
+}
+
+type toolPhase uint8
+
+const (
+	toolNone toolPhase = iota
+	toolStart
+	toolDelta
+	toolStop
+)
+
+// nativeToolPhase reads the tool phase off the view of a native frame. Only the
+// two formats whose tool call is understood are read: ConverseStream, and the
+// Anthropic events of an InvokeModel chunk. Any other family keeps no phase, so
+// its tool deltas are never held as a block.
+func nativeToolPhase(payload []byte) (toolPhase, int) {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(payload, &top) != nil {
+		return toolNone, -1
+	}
+	index := func(p *int) int {
+		if p == nil {
+			return -1
+		}
+		return *p
+	}
+	if raw, ok := top["contentBlockStart"]; ok {
+		var v struct {
+			Index *int `json:"contentBlockIndex"`
+			Start struct {
+				ToolUse json.RawMessage `json:"toolUse"`
+			} `json:"start"`
+		}
+		if json.Unmarshal(raw, &v) == nil && len(v.Start.ToolUse) > 0 {
+			return toolStart, index(v.Index)
+		}
+		return toolNone, -1
+	}
+	if raw, ok := top["contentBlockDelta"]; ok {
+		var v struct {
+			Index *int `json:"contentBlockIndex"`
+			Delta struct {
+				ToolUse json.RawMessage `json:"toolUse"`
+			} `json:"delta"`
+		}
+		if json.Unmarshal(raw, &v) == nil && len(v.Delta.ToolUse) > 0 {
+			return toolDelta, index(v.Index)
+		}
+		return toolNone, -1
+	}
+	if raw, ok := top["contentBlockStop"]; ok {
+		var v struct {
+			Index *int `json:"contentBlockIndex"`
+		}
+		if json.Unmarshal(raw, &v) == nil {
+			return toolStop, index(v.Index)
+		}
+		return toolStop, -1
+	}
+	var v struct {
+		Type         string `json:"type"`
+		Index        *int   `json:"index"`
+		ContentBlock struct {
+			Type string `json:"type"`
+		} `json:"content_block"`
+		Delta struct {
+			Type string `json:"type"`
+		} `json:"delta"`
+	}
+	if json.Unmarshal(payload, &v) != nil {
+		return toolNone, -1
+	}
+	switch v.Type {
+	case "content_block_start":
+		if v.ContentBlock.Type == "tool_use" || v.ContentBlock.Type == "server_tool_use" {
+			return toolStart, index(v.Index)
+		}
+	case "content_block_delta":
+		if v.Delta.Type == "input_json_delta" {
+			return toolDelta, index(v.Index)
+		}
+	case "content_block_stop":
+		return toolStop, index(v.Index)
+	}
+	return toolNone, -1
+}
+
+// streamMark is what one event does to the structure a client can see open: the
+// Anthropic content block it opens or closes, the Responses output item it adds
+// or completes.
+//
+// It is computed here, where the raw payload is, and applied where the event
+// actually reaches the client. Those are not the same moment. A cut drops
+// everything from the release pointer on, so a running total advanced as events
+// are admitted names blocks and items the client was never shown: a terminator
+// closing a block that was never announced while the one the client is looking
+// at stays open — the defect the terminators exist to remove, shifted by
+// however many events the guard was holding.
+type streamMark struct {
+	op    streamMarkOp
+	index int
+	item  adapter.StreamOpenItem
+}
+
+type streamMarkOp uint8
+
+const (
+	markNone streamMarkOp = iota
+	markOpenBlock
+	markCloseBlock
+	markOpenItem
+	markCloseItem
+)
+
+// streamMarkFor reads the structural change off the raw payload, before the
+// decode and independently of it: what an event does to the wire is stated in
+// the payload itself, and an event the codec rejects still opened the block the
+// client is looking at.
+func streamMarkFor(format adapter.Format, eventType string, payload []byte) streamMark {
+	switch {
+	case adapter.IsSameWireFormat(format, adapter.FormatAnthropic):
+		return anthropicBlockMark(eventType, payload)
+	case adapter.IsSameWireFormat(format, adapter.FormatOpenAIResponses):
+		return responsesItemMark(eventType, payload)
+	default:
+		return streamMark{}
+	}
+}
+
+func anthropicBlockMark(eventType string, payload []byte) streamMark {
+	var op streamMarkOp
+	switch eventType {
+	case anthropicContentBlockStart:
+		op = markOpenBlock
+	case anthropicContentBlockStop:
+		op = markCloseBlock
+	default:
+		return streamMark{}
+	}
+	var probe struct {
+		Index *int `json:"index"`
+	}
+	if json.Unmarshal(payload, &probe) != nil || probe.Index == nil {
+		return streamMark{}
+	}
+	return streamMark{op: op, index: *probe.Index}
+}
+
+func responsesItemMark(eventType string, payload []byte) streamMark {
+	var probe struct {
+		OutputIndex int `json:"output_index"`
+		Item        struct {
+			Type   string `json:"type"`
+			ID     string `json:"id"`
+			CallID string `json:"call_id"`
+			Name   string `json:"name"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(payload, &probe) != nil {
+		return streamMark{}
+	}
+	switch eventType {
+	case responsesOutputItemAdded:
+		if probe.Item.Type == "" {
+			return streamMark{}
+		}
+		return streamMark{op: markOpenItem, item: adapter.StreamOpenItem{
+			Index:  probe.OutputIndex,
+			Kind:   probe.Item.Type,
+			ID:     probe.Item.ID,
+			CallID: probe.Item.CallID,
+			Name:   probe.Item.Name,
+		}}
+	case responsesOutputItemDone:
+		return streamMark{op: markCloseItem, index: probe.OutputIndex}
+	default:
+		return streamMark{}
+	}
+}
+
+// chars counts only what a guard call would actually read, which is why a tool
+// call contributes its argument bytes and not its id or name.
+func (e *streamEvent) chars() int {
+	n := len(e.text) + len(e.reasoning)
+	for _, tc := range e.toolCalls {
+		n += len(tc.ArgumentsDelta)
+	}
+	return n
+}
+
+// segmenter assembles raw SSE lines into whole events and classifies what each
+// one contributes. It is pure: no I/O, no plugin calls, no timers. It never
+// re-encodes: an event carries the bytes it arrived as, because passthrough is
+// byte-exact by contract and a re-encode would reorder usage, provider
+// extensions and comments on the wire.
+//
+// Ownership: a line fed in is handed over, not copied, and comes back out in
+// streamEvent.lines unchanged. The caller must feed lines it will not mutate or
+// reuse afterwards, and must not mutate the lines it gets back. Every producer
+// in the chain allocates per line today (providers/stream.go:62 and the
+// cross-format path); a future one that
+// reuses a scratch buffer would silently corrupt held blocks, and no test can
+// catch it from the outside.
+type segmenter struct {
+	codec  streamCodec
+	format adapter.Format
+	buf    [][]byte
+	anchor cutAnchor
+	// frames marks a stream whose items are whole Bedrock eventstream frames,
+	// each one an event of its own. What the codec decodes is the frame's
+	// read-only view, while the event keeps the frame's own bytes, which is
+	// what the guard releases.
+	frames bool
+	// choices reads the choice index of each chat-completions event.
+	choices bool
+}
+
+// newSegmenter builds a segmenter for the source format. After adaptStream the
+// lines are already in the caller's dialect, so source is what decodes them.
+func newSegmenter(codec streamCodec, source adapter.Format) *segmenter {
+	return &segmenter{codec: codec, format: source}
+}
+
+// feed accumulates one raw SSE line and returns a whole event once the event is
+// complete, or nil while it is still open. A classification failure comes back
+// alongside the event, never instead of it: the caller must still be able to
+// release the original lines byte for byte. The line is handed over under the
+// ownership contract on segmenter.
+func (s *segmenter) feed(line []byte) (*streamEvent, error) {
+	if s.frames {
+		s.buf = append(s.buf, line)
+		return s.flush()
+	}
+	standalone := len(s.buf) == 0 && isSSEComment(line)
+	s.buf = append(s.buf, line)
+	if !standalone && len(bytes.TrimSpace(line)) != 0 {
+		return nil, nil
+	}
+	return s.flush()
+}
+
+// flush exists for the end of the stream and for providers that omit the last
+// separator.
+func (s *segmenter) flush() (*streamEvent, error) {
+	if len(s.buf) == 0 {
+		return nil, nil
+	}
+	ev := &streamEvent{lines: s.buf, choice: -1}
+	s.buf = nil
+	return ev, s.classify(ev)
+}
+
+func (s *segmenter) classify(ev *streamEvent) error {
+	var payload []byte
+	if s.frames {
+		for _, view := range adapter.BedrockFrameView(ev.lines[0]) {
+			if p, ok := dataPayload(view); ok && payload == nil {
+				payload = p
+			}
+		}
+	} else {
+		for _, line := range ev.lines {
+			if isSSEDone(line) {
+				ev.unit = unitTerminal
+				return nil
+			}
+			if p, ok := dataPayload(line); ok && payload == nil {
+				payload = p
+			}
+		}
+	}
+	// Only the first data: line of an event is accounted for. No registry
+	// adapter can emit a multi-data: event, so nothing is lost today — and the
+	// failure mode if one ever did is not the obvious one: the extra lines are
+	// still released byte for byte, they are simply never classified. That is
+	// text reaching the client without ever reaching the guard, an evasion
+	// vector, not a dropped line.
+	if payload == nil {
+		return nil
+	}
+	eventType := ssePayloadType(payload)
+	if isTerminalPayload(eventType) {
+		ev.unit = unitTerminal
+		return nil
+	}
+	if s.frames {
+		ev.tool, ev.toolIndex = nativeToolPhase(payload)
+	}
+	if s.choices {
+		s.readChoice(ev, payload)
+	}
+	ev.mark = streamMarkFor(s.format, eventType, payload)
+	ev.beyondText = ev.mark.op != markNone
+	chunk, err := s.codec.DecodeStreamChunkFor(payload, s.format)
+	if err != nil {
+		return fmt.Errorf("segmenting %s stream chunk: %w", s.format, err)
+	}
+	s.anchor.observe(chunk)
+	if chunk == nil {
+		return nil
+	}
+	ev.beyondText = ev.beyondText || chunk.FinishReason != "" || chunk.Usage != nil
+	ev.text, ev.reasoning, ev.toolCalls = chunk.Delta, chunk.ReasoningDelta, chunk.ToolCallDeltas
+	switch {
+	case chunk.FinishReason != "" && endsOnFinishReason(s.format, eventType):
+		ev.unit = unitTerminal
+	case ev.text != "" || ev.reasoning != "" || len(ev.toolCalls) > 0:
+		ev.unit = unitText
+	case chunk.Role != "":
+		ev.unit = unitOpaque
+	case chunk.Usage != nil:
+		ev.unit = unitUsage
+	case chunk.FinishReason == finishReasonToolCalls:
+		// response.function_call_arguments.done: the close of one tool call, a
+		// tool-call unit. Its arguments already rode the delta events, so it
+		// adds no chars, but it must not be opaque either — opaque events are
+		// releasable ahead of the block they sit in.
+		ev.unit = unitText
+	}
+	return nil
+}
+
+// ssePayloadType reads the "type" discriminator Anthropic, Cohere and Responses
+// put on every event. The chat-completions family, Gemini and Bedrock have no
+// such field and yield "".
+func ssePayloadType(payload []byte) string {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &probe) != nil {
+		return ""
+	}
+	return probe.Type
+}
+
+// readChoice records the choice a chat-completions chunk belongs to. More than
+// one choice, or an index that is not a JSON integer, is marked and not given
+// a choice: the decoder reads choices[0] only, and a string or fractional
+// index makes that decode fail, so the raw chunk would be released with tool
+// calls the guard never saw.
+func (s *segmenter) readChoice(ev *streamEvent, payload []byte) {
+	var probe struct {
+		Choices json.RawMessage `json:"choices"`
+	}
+	if json.Unmarshal(payload, &probe) != nil {
+		return
+	}
+	raw := bytes.TrimSpace(probe.Choices)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return
+	}
+	var choices []struct {
+		Index json.RawMessage `json:"index"`
+	}
+	if json.Unmarshal(raw, &choices) != nil {
+		ev.choiceBad = true
+		return
+	}
+	switch len(choices) {
+	case 0:
+		return
+	case 1:
+		idx, ok := jsonChoiceIndex(choices[0].Index)
+		if !ok {
+			ev.choiceBad = true
+			return
+		}
+		ev.choice, ev.choiceSet = idx, true
+	default:
+		ev.choiceMany = true
+	}
+}
+
+// jsonChoiceIndex reads a choice index. An absent index is 0, which is what
+// the decoder stores. A string, a fraction or an exponent is not an index the
+// guard can trust.
+func jsonChoiceIndex(raw json.RawMessage) (int, bool) {
+	s := bytes.TrimSpace(raw)
+	if len(s) == 0 || bytes.Equal(s, []byte("null")) {
+		return 0, true
+	}
+	body := s
+	if body[0] == '-' {
+		body = body[1:]
+	}
+	if len(body) == 0 || body[0] < '0' || body[0] > '9' {
+		return 0, false
+	}
+	if body[0] == '0' && len(body) > 1 {
+		return 0, false
+	}
+	for _, c := range body {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(string(s))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func isTerminalPayload(payloadType string) bool {
+	_, ok := terminalPayloadTypes[payloadType]
+	return ok
+}
+
+func isSSEComment(line []byte) bool {
+	return len(line) > 0 && line[0] == ':'
+}
+
+// blockClock is the segmenter's view of wall time and of the guard call in
+// flight. It is injected so the block loop that owns those calls drives block
+// closing, and so the segmenter keeps no timer of its own.
+type blockClock interface {
+	Now() time.Time
+	GuardIdle() bool
+}
+
+// blockGate decides when the block being filled closes: on the terminal event,
+// or once the previous guard call has returned and the block carries at least
+// minChars, or once maxHold has elapsed since the block opened.
+type blockGate struct {
+	clock    blockClock
+	minChars int
+	maxHold  time.Duration
+	chars    int
+	openedAt time.Time
+	open     bool
+}
+
+// minBlockMaxHold floors the ceiling. A maxHold of zero makes
+// Now().Sub(openedAt) >= maxHold true on the very first event, so every event
+// would close its own block and the guard-call multiplier of design §9 would
+// grow with the event count instead of the byte count. Configuration already
+// rejects anything below 50ms (§4.5); this is the same floor for a gate built
+// straight from code.
+const minBlockMaxHold = 50 * time.Millisecond
+
+func newBlockGate(clock blockClock, minChars int, maxHold time.Duration) *blockGate {
+	if maxHold < minBlockMaxHold {
+		maxHold = minBlockMaxHold
+	}
+	return &blockGate{clock: clock, minChars: minChars, maxHold: maxHold}
+}
+
+func (g *blockGate) admit(ev *streamEvent) {
+	if !g.open {
+		g.open = true
+		g.openedAt = g.clock.Now()
+	}
+	g.chars += ev.chars()
+}
+
+// shouldClose reports whether the block closes on ev, which must already have
+// been admitted.
+func (g *blockGate) shouldClose(ev *streamEvent) bool {
+	if ev.unit == unitTerminal {
+		return true
+	}
+	if !g.open {
+		return false
+	}
+	if g.clock.Now().Sub(g.openedAt) >= g.maxHold {
+		return true
+	}
+	return g.clock.GuardIdle() && g.chars >= g.minChars
+}
+
+// reset must run only once the closed block has been handed to the guard.
+func (g *blockGate) reset() {
+	g.open = false
+	g.chars = 0
+}

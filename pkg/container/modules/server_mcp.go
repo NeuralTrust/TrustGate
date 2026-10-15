@@ -76,9 +76,16 @@ type mcpRouterParams struct {
 	AuthorizeHandler           *oauthhttp.AuthorizeHandler
 	CallbackHandler            *oauthhttp.CallbackHandler
 	TokenHandler               *oauthhttp.TokenHandler
-	APIKeyConnectHandler       *oauthhttp.APIKeyConnectHandler
+	EndUserConnectionsHandler  *oauthhttp.EndUserConnectionsHandler
 	ConnectHandler             *oauthhttp.ConnectHandler
+	ConfigureHandler           *oauthhttp.ConfigureHandler
 	JWKSHandler                *oauthhttp.JWKSHandler
+	// WhoAmIHandler is absent on a plane without the consumer services.
+	WhoAmIHandler *mcphttp.WhoAmIHandler `optional:"true"`
+	// PersonalKeyHandler is nil on a plane that cannot issue personal keys.
+	PersonalKeyHandler *oauthhttp.PersonalKeyHandler `optional:"true"`
+	// ModelRequestHandler is nil where the console takes no model requests.
+	ModelRequestHandler *oauthhttp.ModelRequestHandler `optional:"true"`
 }
 
 type mcpServerParams struct {
@@ -109,10 +116,14 @@ func ServerMCP(c *container.Container) error {
 				p.AuthorizeHandler,
 				p.CallbackHandler,
 				p.TokenHandler,
-				p.APIKeyConnectHandler,
+				p.EndUserConnectionsHandler,
 				p.ConnectHandler,
+				p.ConfigureHandler,
 				p.JWKSHandler,
+				p.WhoAmIHandler,
 				ops,
+				router.WithPersonalKeyHandler(p.PersonalKeyHandler),
+				router.WithModelRequestHandler(p.ModelRequestHandler),
 			)
 		},
 		dig.Name("mcp"),

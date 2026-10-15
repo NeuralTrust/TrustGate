@@ -37,7 +37,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 		Status:           events.Status{Code: 200},
 		Request:          events.Request{Method: "POST", Path: "/mcp"},
 		Response:         events.Response{StatusCode: 200},
-		Latency:          events.Latency{TotalMs: 200, ProviderMs: 120, GatewayMs: 80},
+		Latency:          events.Latency{TotalMs: 200, ProviderMs: i64ptr(120), GatewayMs: 80},
 		MCP: &events.MCP{
 			Method:            "tools/call",
 			Operation:         "tool",
@@ -52,6 +52,9 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			UpstreamStatus:    http.StatusOK,
 			UpstreamLatencyMs: 120,
 			AccountRef:        "ada@asana.com",
+			Decision:          "failed_open",
+			ToolRisk:          "destructive",
+			ToolOpenWorld:     new(false),
 		},
 	}
 
@@ -73,6 +76,33 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, int64(3), attrs[attrMCPTargets].AsInt64())
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
 	assert.Equal(t, "ada@asana.com", attrs[attrMCPAccountRef].AsString())
+	assert.Equal(t, "failed_open", attrs[attrMCPDecision].AsString())
+	assert.Equal(t, "destructive", attrs[attrMCPToolRisk].AsString())
+	assert.False(t, attrs[attrMCPToolOpenWorld].AsBool())
+}
+
+// TestEventToRecord_MCPDecisionEmptyWhenNothingFailed proves the new
+// decision attribute is additive: a normal MCP call (nothing failed open)
+// never emits trustgate.mcp.decision at all, rather than an empty string.
+func TestEventToRecord_MCPDecisionEmptyWhenNothingFailed(t *testing.T) {
+	t.Parallel()
+	evt := &events.Event{
+		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindMCP,
+		Status:        events.Status{Code: 200},
+		Request:       events.Request{Method: "POST", Path: "/mcp"},
+		Response:      events.Response{StatusCode: 200},
+		MCP:           &events.MCP{Method: "tools/call"},
+	}
+
+	rec := eventToRecord(evt)
+	attrs := attrsOf(rec)
+
+	_, hasDecision := attrs[attrMCPDecision]
+	assert.False(t, hasDecision, "an unset decision must not appear as an empty attribute")
+	_, hasRisk := attrs[attrMCPToolRisk]
+	_, hasOpenWorld := attrs[attrMCPToolOpenWorld]
+	assert.False(t, hasRisk || hasOpenWorld, "an unannotated tool must emit neither risk attribute")
 }
 
 func TestEventToRecord_LLMKindNoMCP(t *testing.T) {

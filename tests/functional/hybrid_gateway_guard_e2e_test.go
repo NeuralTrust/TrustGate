@@ -15,15 +15,11 @@ import (
 // customer-run data plane.
 func setupHybridRoute(t *testing.T, up *fakeUpstream) (apiKey, path string) {
 	t.Helper()
+	plan := functionalSuitePlan()
+	plan["data_plane"] = "hybrid"
 	gatewayID := CreateGateway(t, map[string]any{
-		"slug": uniqueName("hybrid-gw"),
-		"entitlements": map[string]any{
-			"tier":            "free",
-			"burst_per_min":   60,
-			"quota_per_month": 10000,
-			"max_instances":   1000,
-			"data_plane":      "hybrid",
-		},
+		"slug":         uniqueName("hybrid-gw"),
+		"entitlements": plan,
 	})
 	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("hybrid-be"), up.URL()))
 	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("hybrid-co")})

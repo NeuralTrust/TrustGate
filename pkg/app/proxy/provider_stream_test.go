@@ -16,13 +16,16 @@ package proxy_test
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
+	"net/http"
 	"strings"
 	"testing"
 
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	factorymocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
 	providermocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/mocks"
@@ -128,6 +131,97 @@ func TestInvokeStream_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	assert.Contains(t, got, `"type":"message_stop"`)
 }
 
+func TestInvokeStream_RetriesMaxTokensOnce(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`data: {"id":"chatcmpl-test","choices":[{"index":0,"delta":{"content":"ok"}}]}`),
+		{},
+		[]byte("data: [DONE]"),
+	}
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":32000`)
+		})).
+		Return(nil, registrydomain.NewBackendError(400, []byte(maxTokensTooLarge))).
+		Once()
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":16384`)
+		})).
+		Return(seqOf(lines...), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(stubCatalog{}))
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"unknown-model","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`),
+		SourceFormat: string(adapter.FormatAnthropic),
+	}
+
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+	got := strings.Join(collectStream(t, resp.Stream), "\n")
+	assert.Contains(t, got, "ok")
+}
+
+func TestInvokeStream_ClientToolsOnModelsWithoutChatFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := `{"model":"` + model + `","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+					return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+						strings.Contains(string(sent), `"qa_escalate"`)
+				})).
+				Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
+				Once()
+
+			inv := newStreamInvoker(t, "openai", client)
+			resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+			require.NoError(t, err)
+			assert.Equal(t, 400, resp.StatusCode)
+			assert.JSONEq(t, `{
+				"error": {
+					"message": "function tools are not supported on Chat Completions for `+model+`. Use the Responses API for tool calling.",
+					"type": "invalid_request_error",
+					"param": "tools",
+					"code": "unsupported_value"
+				}
+			}`, string(resp.Body))
+		})
+	}
+}
+
+func TestInvokeStream_ClientToolsMentionsReasoningEffortWhenSent(t *testing.T) {
+	body := `{"model":"gpt-6-astra","stream":true,"reasoning_effort":"none","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+				strings.Contains(string(sent), `"qa_escalate"`)
+		})).
+		Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
+		Once()
+
+	inv := newStreamInvoker(t, "openai", client)
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
+	assert.JSONEq(t, `{
+		"error": {
+			"message": "function tools are not supported on Chat Completions for gpt-6-astra. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+			"type": "invalid_request_error",
+			"param": "tools",
+			"code": "unsupported_value"
+		}
+	}`, string(resp.Body))
+}
+
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
 	const defaultModel = "gpt-4o-mini"
 	client := providermocks.NewClient(t)
@@ -160,7 +254,9 @@ func TestInvokeStream_CrossFormatAdapt(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
 		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
-		Return(seqOf(anthropicChunk), nil).
+		Return(seqOf([]byte(`data: {"type":"message_start","message":{"id":"msg_cross","model":"claude-cross","role":"assistant"}}`), anthropicChunk,
+			[]byte(`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`),
+			[]byte(`data: {"type":"message_stop"}`)), nil).
 		Once()
 
 	inv := newStreamInvoker(t, "anthropic", client)
@@ -227,6 +323,49 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 		"a route that fails before streaming must still be identifiable")
 }
 
+func TestInvokeStream_PreStreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		format string
+		want   string
+	}{
+		{
+			name:   "openai chat",
+			body:   openaiRequestBody,
+			format: string(adapter.FormatOpenAI),
+			want:   `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:   "anthropic messages",
+			body:   anthropicRequestBody,
+			format: string(adapter.FormatAnthropic),
+			want:   `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte("stream timeout"))).
+				Once()
+			inv := newStreamInvoker(t, "openai", client)
+
+			resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:         []byte(tc.body),
+				SourceFormat: tc.format,
+			})
+
+			require.NoError(t, err)
+			assert.Nil(t, resp.Stream, "a timeout before headers must not open a stream")
+			assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+			assert.JSONEq(t, tc.want, string(resp.Body))
+			assert.NotContains(t, string(resp.Body), "stream timeout")
+		})
+	}
+}
+
 func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	lines := [][]byte{
 		[]byte(`data: {"id":"chatcmpl-stream","choices":[{"index":0,"delta":{"content":"hi"}}]}`),
@@ -263,4 +402,75 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	attrs, ok := span.LLMAttrsCopy()
 	require.True(t, ok)
 	assert.Equal(t, "chatcmpl-stream", attrs.TurnID, "streamed provider id captured as turn id")
+}
+
+func TestInvokeStream_OpenAIStillInjectsStreamIncludeUsage(t *testing.T) {
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) (iter.Seq2[[]byte, error], error) {
+			sent = body
+			return seqOf([]byte("data: [DONE]")), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openai", client)
+	req := &infracontext.RequestContext{Body: []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}`)}
+
+	_, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `{"include_usage":true}`, string(got["stream_options"]))
+}
+
+func TestInvokeStream_AzureMistralOmitsStreamOptionsAndRecordsFinishUsage(t *testing.T) {
+	const mistralFinish = `data: {"id":"chatcmpl-mistral","object":"chat.completion.chunk","model":"mistral-small-2503","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}`
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "client omits stream_options", body: `{"model":"probe-mistral","messages":[{"role":"user","content":"hi"}],"stream":true}`},
+		{name: "client sends stream_options", body: `{"model":"probe-mistral","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) (iter.Seq2[[]byte, error], error) {
+					sent = body
+					return seqOf(
+						[]byte(`data: {"id":"chatcmpl-mistral","choices":[{"index":0,"delta":{"content":"hi"}}]}`),
+						[]byte(mistralFinish),
+						[]byte("data: [DONE]"),
+					), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{Body: []byte(tc.body)}
+			rt := trace.New("trace-mistral", trace.Metadata{})
+			require.NotNil(t, rt.StartSpan(trace.SpanLLM, "azure"))
+			ctx := trace.NewContext(context.Background(), rt)
+
+			resp, err := inv.InvokeStream(ctx, apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+			collectStream(t, resp.Stream)
+
+			var got map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(sent, &got))
+			assert.NotContains(t, got, "stream_options", "Foundry Mistral must not be sent stream_options")
+
+			usage := rt.LLMUsage()
+			require.NotNil(t, usage, "Mistral streams usage on the finish chunk by default")
+			assert.Equal(t, 12, usage.InputTokens)
+			assert.Equal(t, 4, usage.OutputTokens)
+			assert.Equal(t, 16, usage.TotalTokens)
+			metadataUsage, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
+			require.True(t, ok)
+			assert.Equal(t, 16, metadataUsage.TotalTokens)
+		})
+	}
 }

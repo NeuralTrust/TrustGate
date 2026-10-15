@@ -30,6 +30,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -41,6 +42,16 @@ type memFlowStore struct {
 	clients  map[string]RegisteredGatewayClient
 	sessions map[string]SessionRecord
 	retired  []string
+}
+
+const testClientID = "agw-test"
+
+// storeWithClient returns a flow store where testClientID is registered for
+// the given redirect URIs, as /oauth/register would have left it.
+func storeWithClient(redirectURIs ...string) *memFlowStore {
+	s := newMemFlowStore()
+	s.clients[testClientID] = RegisteredGatewayClient{ClientID: testClientID, RedirectURIs: redirectURIs}
+	return s
 }
 
 func newMemFlowStore() *memFlowStore {
@@ -111,6 +122,13 @@ func (s *memFlowStore) GetGatewayClient(_ context.Context, clientID string) (*Re
 		return nil, nil
 	}
 	return &c, nil
+}
+
+func (s *memFlowStore) DeleteGatewayClient(_ context.Context, clientID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, clientID)
+	return nil
 }
 
 func (s *memFlowStore) SavePending(_ context.Context, state string, p PendingAuthorization) error {
@@ -203,7 +221,7 @@ func TestBrokeredFlowEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	// Leg 1: client authorize -> IdP redirect.
-	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "gw-client-id",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -340,7 +358,7 @@ func TestAuthorizeEnforcesRegisteredRedirectURIs(t *testing.T) {
 	})
 	proxy := newProxyUnderTest(t, idp.URL, store)
 
-	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	_, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "agw-abc",
 		RedirectURI:         "https://attacker.example.com/cb",
@@ -352,7 +370,7 @@ func TestAuthorizeEnforcesRegisteredRedirectURIs(t *testing.T) {
 		t.Fatalf("expected invalid_request for unregistered redirect_uri, got %v", err)
 	}
 
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "agw-abc",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -369,7 +387,7 @@ func TestAuthorizeRejectsUnsafeRedirectForUnregisteredClients(t *testing.T) {
 	idp, _ := fakeIdP(t)
 	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
 
-	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	_, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "gw-client-id",
 		RedirectURI:         "http://attacker.example.com/cb",
@@ -387,7 +405,7 @@ func TestAuthorizeRequiresPrivateUseRedirectRegistration(t *testing.T) {
 	idp, _ := fakeIdP(t)
 	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
 
-	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	_, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "gw-client-id",
 		RedirectURI:         "claude://oauth/callback",
@@ -405,7 +423,7 @@ func TestAuthorizeRequiresPKCE(t *testing.T) {
 	idp, _ := fakeIdP(t)
 	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
 
-	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	_, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType: "code",
 		RedirectURI:  "cursor://cb",
 	})
@@ -425,6 +443,7 @@ func TestCallbackRelaysIdPDenial(t *testing.T) {
 	_ = store.SavePending(ctx, "gw-state", PendingAuthorization{
 		RedirectURI: "cursor://cb",
 		State:       "client-state",
+		Approved:    true,
 	})
 
 	loc, err := proxy.Callback(ctx, "http://gw.example.com", "gw-state", "", "access_denied", "user cancelled")
@@ -457,12 +476,80 @@ func TestRefreshProxiesToIdP(t *testing.T) {
 	}
 }
 
+func newLoginScopesProxy(t *testing.T, idpURL string, store FlowStore) AuthProxy {
+	t.Helper()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:         idpURL,
+			ClientID:       "gw-client-id",
+			ClientSecret:   "gw-secret",
+			RequiredScopes: []string{"mcp.access"},
+			LoginScopes:    []string{"api://gw/mcp.access", "offline_access"},
+		}),
+	}}
+	return NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil)
+}
+
+func TestBrokeredFlowSendsLoginScopes(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	proxy := newLoginScopesProxy(t, idp.URL, newMemFlowStore())
+
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "gw-client-id",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		State:               "client-state",
+		Scope:               "mcp.access openid offline_access",
+		CodeChallenge:       s256("client-verifier"),
+		CodeChallengeMethod: "S256",
+	})
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse IdP redirect: %v", err)
+	}
+	if got, want := loc.Query().Get("scope"), "api://gw/mcp.access offline_access openid"; got != want {
+		t.Fatalf("upstream scope = %q, want %q", got, want)
+	}
+}
+
+func TestRefreshSendsLoginScopes(t *testing.T) {
+	t.Parallel()
+	idp, captured := fakeIdP(t)
+	proxy := newLoginScopesProxy(t, idp.URL, newMemFlowStore())
+
+	if _, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "old-refresh",
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if got, want := captured.Get("scope"), "api://gw/mcp.access offline_access"; got != want {
+		t.Fatalf("refresh scope = %q, want %q", got, want)
+	}
+}
+
 type fakePathResolver struct {
 	byPath map[string][]appconsumer.PathMatch
 }
 
 func (f *fakePathResolver) Match(_ context.Context, _, path string) ([]appconsumer.PathMatch, error) {
 	return f.byPath[path], nil
+}
+
+// mcpConsumer takes no identity: a consumer declares nothing about its callers
+// any more, and what a request runs as is read from the request. What decides
+// whether a login may be brokered here is what is attached to the consumer.
+func mcpConsumer(gatewayID ids.GatewayID) *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gatewayID,
+		Type:      consumerdomain.TypeMCP,
+		Active:    true,
+	}
 }
 
 // enabledOAuth2Auth builds an Auth entry that passes the Enabled/Type filters
@@ -494,7 +581,7 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil)
 	ctx := context.Background()
 
-	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, ctx, "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "client-b",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -529,45 +616,39 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	}
 }
 
-// When the resource pins a consumer that has no OAuth2 auth of its own, the
-// fallback is scoped to that consumer's gateway: a different tenant's IdP must
-// not turn the lookup ambiguous.
-func TestAuthorizeResourceFallsBackToGatewayScopedIdP(t *testing.T) {
+// A sign-in consumer with no identity provider of its own is admitted by the
+// auth chain only through the built-in default. Without one configured, the
+// gateway's operator IdP is not a fallback: its session would be refused on
+// every request and the client would loop on 401, so the refusal goes back to
+// the client and no IdP is contacted.
+func TestAuthorizeResourceRefusesUnattachedGatewayIdP(t *testing.T) {
 	t.Parallel()
-	idpGateway, _ := fakeIdP(t)
-	idpOtherTenant, capturedOther := fakeIdP(t)
+	idpGateway, capturedGateway := fakeIdP(t)
 	gatewayID := ids.New[ids.GatewayKind]()
 
 	gatewayAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpGateway.URL, ClientID: "client-gw"})
 	gatewayAuth.GatewayID = gatewayID
-	otherTenantAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOtherTenant.URL, ClientID: "client-other"})
 
-	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherTenantAuth}}
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth}}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
+		"/cons/mcp": {{GatewayID: gatewayID, Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}},
 	}}
 	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
 
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "client-gw",
-		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		RedirectURI:         "https://client.example.com/cb",
 		CodeChallenge:       s256("v"),
 		CodeChallengeMethod: "S256",
 		Resource:            "http://gw.example.com/cons/mcp",
 	})
 	if err != nil {
-		t.Fatalf("authorize must resolve the gateway's single IdP, got %v", err)
+		t.Fatalf("the refusal is the client's to hear about: %v", err)
 	}
-	loc, err := url.Parse(location)
-	if err != nil {
-		t.Fatalf("parse redirect: %v", err)
-	}
-	if got := loc.Scheme + "://" + loc.Host; got != idpGateway.URL {
-		t.Fatalf("authorize must redirect to the gateway IdP, got %s (want %s)", got, idpGateway.URL)
-	}
-	if len(*capturedOther) != 0 {
-		t.Fatalf("another tenant's IdP must never be contacted, got %v", *capturedOther)
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
+	if len(*capturedGateway) != 0 {
+		t.Fatalf("the unattached gateway IdP must not be contacted, got %v", *capturedGateway)
 	}
 }
 
@@ -598,18 +679,18 @@ func assertClientToldOfError(t *testing.T, location, redirectURI, code string) {
 func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
 	}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, storeWithClient("https://client.example.com/cb"), nil, nil, nil)
 
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
-		ClientID:            "cli",
+		ClientID:            testClientID,
 		RedirectURI:         "https://client.example.com/cb",
 		State:               "client-state",
 		CodeChallenge:       s256("v"),
@@ -624,8 +705,12 @@ func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	if got := u.Query().Get("state"); got != "client-state" {
 		t.Fatalf("state must survive the refusal, got %q", got)
 	}
-	if desc := u.Query().Get("error_description"); !strings.Contains(desc, "X-AG-API-Key") {
-		t.Fatalf("the refusal should name the credential the client is missing, got %q", desc)
+	desc := u.Query().Get("error_description")
+	if !strings.Contains(desc, "sign in through") {
+		t.Fatalf("the refusal should say the consumer has no identity to sign in through, got %q", desc)
+	}
+	if strings.Contains(desc, "X-AG-API-Key") || strings.Contains(strings.ToLower(desc), "api key") {
+		t.Fatalf("the refusal must not talk about api keys, got %q", desc)
 	}
 }
 
@@ -637,11 +722,11 @@ func TestAuthorizeUnregisteredPrivateUseRedirectIsNotFollowed(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, storeWithClient("https://client.example.com/cb"), nil, nil, nil)
 
-	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	_, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
-		ClientID:            "cli",
+		ClientID:            testClientID,
 		RedirectURI:         "cursor://cb",
 		CodeChallenge:       s256("v"),
 		CodeChallengeMethod: "S256",
@@ -670,7 +755,7 @@ func TestAuthorizeResourceAmbiguousWithinGateway(t *testing.T) {
 	}}
 	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
 
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "client-a",
 		RedirectURI:         "https://client.example.com/cb",
@@ -691,11 +776,11 @@ func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, storeWithClient("https://client.example.com/cb"), nil, nil, nil)
 
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
-		ClientID:            "cli",
+		ClientID:            testClientID,
 		RedirectURI:         "https://client.example.com/cb",
 		CodeChallenge:       s256("v"),
 		CodeChallengeMethod: "S256",
@@ -704,7 +789,7 @@ func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a consumer without oauth2 is the client's to hear about: %v", err)
 	}
-	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_request")
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
 }
 
 // Multiple IdPs without a resource indicator cannot be disambiguated: the
@@ -715,10 +800,11 @@ func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
 		enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", ClientID: "client-a"}),
 		enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", ClientID: "client-b"}),
 	}}
-	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, storeWithClient("https://client.example.com/cb"), nil, nil, nil)
 
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
+		ClientID:            testClientID,
 		RedirectURI:         "https://client.example.com/cb",
 		CodeChallenge:       s256("v"),
 		CodeChallengeMethod: "S256",
@@ -747,7 +833,7 @@ func TestAuthorizeFallsBackToContextGatewayWithoutResource(t *testing.T) {
 	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
 
 	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{ID: gatewayID, Slug: "acme"})
-	location, err := proxy.Authorize(ctx, "https://acme.mcp.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, ctx, "https://acme.mcp.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "client-gw",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -921,7 +1007,7 @@ func chainProxyUnderTest(t *testing.T, idpURL string, store FlowStore, chainer C
 
 func authorizeAndGetState(t *testing.T, proxy AuthProxy, resource string) string {
 	t.Helper()
-	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+	location, err := authorizeLocation(proxy, context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "gw-client-id",
 		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
@@ -1032,5 +1118,53 @@ func TestCallbackOpaqueTokenSkipsChain(t *testing.T) {
 	}
 	if chainer.calls != 0 {
 		t.Fatalf("chainer must not run without a subject, calls=%d", chainer.calls)
+	}
+}
+
+// authorizeLocation runs Authorize and, for an IdP leg, approves it the way
+// the consent page would, so the flow can continue to Callback.
+func authorizeLocation(p AuthProxy, ctx context.Context, baseURL string, req AuthorizeRequest) (string, error) {
+	res, err := p.Authorize(ctx, baseURL, req)
+	if err != nil || res.ConsentState == "" {
+		return res.Location, err
+	}
+	return p.Approve(ctx, res.ConsentState)
+}
+
+func TestAuthorizeRequiresAKnownClient(t *testing.T) {
+	t.Parallel()
+	withClientID := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", ClientID: "upstream-client"})
+	withoutClientID := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com"})
+	withoutClientID.Config.OAuth2.ClientID = ""
+
+	tests := []struct {
+		name     string
+		auths    []*authdomain.Auth
+		clientID string
+	}{
+		{name: "missing client_id", auths: []*authdomain.Auth{withClientID}},
+		{name: "unregistered client_id", auths: []*authdomain.Auth{withClientID}, clientID: "agw-unknown"},
+		{name: "unregistered client_id with no upstream client configured", auths: []*authdomain.Auth{withoutClientID}, clientID: "agw-unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newMemFlowStore()
+			proxy := NewAuthProxy(&fakeCredentialFinder{oauth2: tt.auths}, &fakePathResolver{}, http.DefaultClient, store, nil, nil, nil)
+			_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+				ResponseType:        "code",
+				ClientID:            tt.clientID,
+				RedirectURI:         "https://client.example.com/cb",
+				CodeChallenge:       s256("v"),
+				CodeChallengeMethod: "S256",
+			})
+			var oe *OAuthError
+			if !errors.As(err, &oe) || oe.Code != "invalid_client" {
+				t.Fatalf("expected invalid_client, got %v", err)
+			}
+			if len(store.pending) != 0 {
+				t.Fatal("no authorization may be parked for an unknown client")
+			}
+		})
 	}
 }

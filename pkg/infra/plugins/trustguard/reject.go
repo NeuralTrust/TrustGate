@@ -25,23 +25,20 @@ import (
 
 const typeBlocked = "trustguard_blocked"
 const typeRateLimited = "trustguard_rate_limited"
-const typeUnavailable = "trustguard_unavailable"
-const typeUnauthorized = "trustguard_unauthorized"
-const typeGuardError = "trustguard_error"
 
 const blockMessage = "request blocked due to a policy infraction"
 const rateLimitMessage = "rate limit exceeded"
-const unavailableMessage = "rate limit entitlements unavailable"
-const unauthorizedMessage = "trustguard authentication or configuration rejected"
-const guardErrorMessage = "trustguard unavailable"
 
-func blockError(resp *GuardResponse) *appplugins.PluginError {
+// blockError renders a TrustGuard block. direction ("input" or "output") says
+// which leg of the exchange was blocked; it travels in the body so an
+// integrator can tell a blocked prompt from a blocked completion.
+func blockError(resp *GuardResponse, direction string) *appplugins.PluginError {
 	message := clientBlockMessage(resp)
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,
 		Type:       typeBlocked,
 		Message:    message,
-		Body:       blockBody(resp, message),
+		Body:       blockBody(resp, message, direction),
 	}
 }
 
@@ -59,51 +56,7 @@ func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
 	}
 }
 
-func unavailableError(err *entitlementsUnavailableError) *appplugins.PluginError {
-	body := []byte(`{"error":"rate limit entitlements unavailable"}`)
-	if err != nil && len(err.body) > 0 {
-		body = err.body
-	}
-	return &appplugins.PluginError{
-		StatusCode: http.StatusServiceUnavailable,
-		Type:       typeUnavailable,
-		Message:    unavailableMessage,
-		Body:       body,
-	}
-}
-
-func unauthorizedError(err *authRejectedError) *appplugins.PluginError {
-	upstream := http.StatusUnauthorized
-	if err != nil && err.status != 0 {
-		upstream = err.status
-	}
-	body, _ := json.Marshal(map[string]any{
-		"error":           typeUnauthorized,
-		"message":         unauthorizedMessage,
-		"upstream_status": upstream,
-	})
-	return &appplugins.PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeUnauthorized,
-		Message:    unauthorizedMessage,
-		Body:       body,
-	}
-}
-
-func transportFailClosedError() *appplugins.PluginError {
-	body, _ := json.Marshal(map[string]any{
-		"error":   typeGuardError,
-		"message": guardErrorMessage,
-	})
-	return &appplugins.PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeGuardError,
-		Message:    guardErrorMessage,
-		Body:       body,
-	}
-}
-
-func blockBody(resp *GuardResponse, message string) []byte {
+func blockBody(resp *GuardResponse, message, direction string) []byte {
 	if message == "" {
 		message = blockMessage
 	}
@@ -111,6 +64,7 @@ func blockBody(resp *GuardResponse, message string) []byte {
 		Status       string `json:"status"`
 		Message      string `json:"message"`
 		Type         string `json:"type,omitempty"`
+		Direction    string `json:"direction,omitempty"`
 		Reason       string `json:"reason,omitempty"`
 		Plugin       string `json:"plugin,omitempty"`
 		DetectorName string `json:"detector_name,omitempty"`
@@ -118,9 +72,10 @@ func blockBody(resp *GuardResponse, message string) []byte {
 		TraceID      string `json:"trace_id,omitempty"`
 		RequestID    string `json:"request_id,omitempty"`
 	}{
-		Status:  statusBlock,
-		Message: message,
-		Type:    typeBlocked,
+		Status:    statusBlock,
+		Message:   message,
+		Type:      typeBlocked,
+		Direction: direction,
 	}
 	if resp != nil {
 		if resp.Status != "" {

@@ -17,9 +17,11 @@
 // Live tests against real AWS Bedrock. They drive the same adapter + client
 // path the proxy uses, for every model in BEDROCK_LIVE_MODELS:
 //
-//	BEDROCK_LIVE_MODELS  comma-separated model IDs, inference profiles or
-//	                     application-inference-profile ARNs (required)
-//	AWS_REGION           Bedrock region (default us-east-1)
+//	BEDROCK_LIVE_MODELS        comma-separated model IDs, inference profiles or
+//	                           application-inference-profile ARNs (required)
+//	AWS_REGION                 Bedrock region (default us-east-1)
+//	BEDROCK_LIVE_CACHE_MODELS  comma-separated model IDs that support prompt
+//	                           caching, for TestLive_PromptCache_UsageFold
 //
 // Credentials come from the SDK's default chain (AWS_* variables, then the
 // default profile in ~/.aws/credentials), so nothing secret has to be passed
@@ -33,6 +35,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -40,15 +43,23 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	bedrockTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func liveModels(t *testing.T) []string {
 	t.Helper()
-	raw := os.Getenv("BEDROCK_LIVE_MODELS")
+	return liveModelsFrom(t, "BEDROCK_LIVE_MODELS")
+}
+
+func liveModelsFrom(t *testing.T, env string) []string {
+	t.Helper()
+	raw := os.Getenv(env)
 	if raw == "" {
-		t.Skip("BEDROCK_LIVE_MODELS not set")
+		t.Skip(env + " not set")
 	}
 	var models []string
 	for _, m := range strings.Split(raw, ",") {
@@ -295,6 +306,167 @@ func TestLive_Completions_AnthropicIngress(t *testing.T) {
 			t.Logf("anthropic answer: %q", resp.Content[0].Text)
 			assert.Contains(t, strings.ToLower(resp.Content[0].Text), "blue")
 			assert.Contains(t, []string{"end_turn", "max_tokens"}, resp.StopReason, "chatty models run into maxTokens")
+		})
+	}
+}
+
+func cachedPrefix() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Run %d. You are a terse assistant. Reference material follows.\n", time.Now().UnixNano())
+	for i := range 600 {
+		fmt.Fprintf(&b, "Fact %d: the river number %d flows north for %d kilometres before it meets the sea.\n", i, i, i*7+3)
+	}
+	return b.String()
+}
+
+func cachedConverseInput(model, prefix string) *bedrockruntime.ConverseInput {
+	return &bedrockruntime.ConverseInput{
+		ModelId: aws.String(model),
+		System: []bedrockTypes.SystemContentBlock{
+			&bedrockTypes.SystemContentBlockMemberText{Value: prefix},
+			&bedrockTypes.SystemContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}},
+		},
+		Messages: []bedrockTypes.Message{{
+			Role:    bedrockTypes.ConversationRoleUser,
+			Content: []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "Reply with the single word OK."}},
+		}},
+		InferenceConfig: &bedrockTypes.InferenceConfiguration{MaxTokens: aws.Int32(16)},
+	}
+}
+
+func assertFolded(t *testing.T, raw *adapter.ConverseUsage, cu *adapter.CanonicalUsage) {
+	t.Helper()
+	require.NotNil(t, raw)
+	require.NotNil(t, cu)
+	assert.Equal(t, raw.InputTokens+raw.CacheReadInputTokens+raw.CacheWriteInputTokens+raw.OutputTokens, raw.TotalTokens,
+		"raw totalTokens already counts both cache buckets")
+	assert.Equal(t, raw.InputTokens+raw.CacheReadInputTokens+raw.CacheWriteInputTokens, cu.InputTokens)
+	assert.Equal(t, raw.CacheReadInputTokens, cu.CachedInputTokens)
+	assert.Equal(t, raw.CacheWriteInputTokens, cu.CacheWriteInputTokens)
+	assert.GreaterOrEqual(t, cu.TotalTokens, cu.InputTokens+cu.OutputTokens)
+}
+
+func TestLive_PromptCache_UsageFold(t *testing.T) {
+	for _, model := range liveModelsFrom(t, "BEDROCK_LIVE_CACHE_MODELS") {
+		t.Run(model, func(t *testing.T) {
+			ctx := liveContext(t)
+			c := NewBedrockClient().(*client)
+			sdk, err := c.getOrCreateClient(ctx, liveConfig(model).Credentials)
+			require.NoError(t, err)
+			prefix := cachedPrefix()
+
+			buffered := func(call string) (*adapter.ConverseUsage, *adapter.CanonicalUsage, []byte) {
+				out, err := sdk.Converse(ctx, cachedConverseInput(model, prefix))
+				require.NoError(t, err)
+				raw, err := converseResponseJSON(out)
+				require.NoError(t, err)
+				var wire adapter.ConverseResponse
+				require.NoError(t, json.Unmarshal(raw, &wire))
+				cr, err := (&adapter.BedrockAdapter{}).DecodeResponse(raw)
+				require.NoError(t, err)
+				usage, err := json.Marshal(wire.Usage)
+				require.NoError(t, err)
+				t.Logf("%s raw usage: %s canonical: %+v", call, usage, *cr.Usage)
+				return wire.Usage, cr.Usage, raw
+			}
+
+			firstRaw, firstCU, _ := buffered("first")
+			assertFolded(t, firstRaw, firstCU)
+			require.Positive(t, firstRaw.CacheReadInputTokens+firstRaw.CacheWriteInputTokens, "the prefix must be written to or read from the cache")
+
+			var (
+				secondRaw *adapter.ConverseUsage
+				secondCU  *adapter.CanonicalUsage
+				body      []byte
+			)
+			for attempt := range 4 {
+				if attempt > 0 {
+					time.Sleep(time.Duration(attempt+1) * time.Second)
+				}
+				secondRaw, secondCU, body = buffered(fmt.Sprintf("read attempt %d", attempt+1))
+				assertFolded(t, secondRaw, secondCU)
+				if secondRaw.CacheReadInputTokens > 0 {
+					break
+				}
+			}
+			require.Positive(t, secondRaw.CacheReadInputTokens, "a later call must read the cached prefix; cross-region profiles cache per region")
+			assert.Less(t, secondRaw.InputTokens, secondRaw.CacheReadInputTokens, "raw inputTokens excludes the cache read")
+
+			decoded, err := (&adapter.BedrockAdapter{}).DecodeResponse(body)
+			require.NoError(t, err)
+			reencoded, err := (&adapter.BedrockAdapter{}).EncodeResponse(decoded)
+			require.NoError(t, err)
+			var roundTrip adapter.ConverseResponse
+			require.NoError(t, json.Unmarshal(reencoded, &roundTrip))
+			require.NotNil(t, roundTrip.Usage)
+			assert.Equal(t, secondRaw.InputTokens, roundTrip.Usage.InputTokens, "round-trip inputTokens")
+			assert.Equal(t, secondRaw.CacheReadInputTokens, roundTrip.Usage.CacheReadInputTokens, "round-trip cacheReadInputTokens")
+			assert.Equal(t, secondRaw.CacheWriteInputTokens, roundTrip.Usage.CacheWriteInputTokens, "round-trip cacheWriteInputTokens")
+			assert.Equal(t, secondRaw.TotalTokens, roundTrip.Usage.TotalTokens, "round-trip totalTokens")
+			if len(secondRaw.CacheDetails) > 0 {
+				assert.ElementsMatch(t, secondRaw.CacheDetails, roundTrip.Usage.CacheDetails, "round-trip cacheDetails")
+			}
+
+			out, err := adapter.NewRegistry().AdaptResponse(body, adapter.FormatOpenAI, adapter.FormatBedrock)
+			require.NoError(t, err)
+			var resp openAIResponse
+			require.NoError(t, json.Unmarshal(out, &resp))
+			assert.Equal(t, secondCU.InputTokens, resp.Usage.PromptTokens)
+
+			streamed := func(call string) (*adapter.ConverseUsage, *adapter.CanonicalUsage) {
+				in := cachedConverseInput(model, prefix)
+				stream, err := sdk.ConverseStream(ctx, &bedrockruntime.ConverseStreamInput{
+					ModelId:         in.ModelId,
+					System:          in.System,
+					Messages:        in.Messages,
+					InferenceConfig: in.InferenceConfig,
+				})
+				require.NoError(t, err)
+				var (
+					raw    *adapter.ConverseUsage
+					merged *adapter.CanonicalUsage
+				)
+				for line, streamErr := range converseStreamLines(ctx, stream.GetStream()) {
+					require.NoError(t, streamErr)
+					if len(line) == 0 {
+						continue
+					}
+					payload := bytes.TrimPrefix(line, []byte("data: "))
+					var event adapter.ConverseStreamEvent
+					require.NoError(t, json.Unmarshal(payload, &event))
+					if event.Metadata != nil && event.Metadata.Usage != nil {
+						raw = event.Metadata.Usage
+					}
+					chunk, err := (&adapter.BedrockAdapter{}).DecodeStreamChunk(payload)
+					require.NoError(t, err)
+					if chunk != nil && chunk.Usage != nil {
+						merged = adapter.MergeUsage(merged, chunk.Usage)
+					}
+				}
+				require.NotNil(t, raw, "the metadata event must carry usage")
+				require.NotNil(t, merged, "decoded metadata must yield canonical usage")
+				usage, err := json.Marshal(raw)
+				require.NoError(t, err)
+				t.Logf("%s stream raw usage: %s canonical: %+v", call, usage, *merged)
+				return raw, merged
+			}
+
+			var (
+				streamRaw *adapter.ConverseUsage
+				streamCU  *adapter.CanonicalUsage
+			)
+			for attempt := range 4 {
+				if attempt > 0 {
+					time.Sleep(time.Duration(attempt+1) * time.Second)
+				}
+				streamRaw, streamCU = streamed(fmt.Sprintf("stream attempt %d", attempt+1))
+				assertFolded(t, streamRaw, streamCU)
+				if streamRaw.CacheReadInputTokens > 0 {
+					break
+				}
+			}
+			require.Positive(t, streamRaw.CacheReadInputTokens, "a streamed call must read the cached prefix; cross-region profiles cache per region")
+			assert.Equal(t, streamRaw.CacheReadInputTokens, streamCU.CachedInputTokens)
 		})
 	}
 }

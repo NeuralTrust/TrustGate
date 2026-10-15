@@ -31,6 +31,12 @@ type Registry interface {
 	Register(p Plugin) error
 	Get(name string) (Plugin, bool)
 	Validate(name string, settings map[string]any) error
+	// ValidateSettingsWrite runs the plugin's SettingsWriteValidator, if it
+	// implements one, against settings about to be written and the settings
+	// previously stored for this policy plugin (nil on create, or when the
+	// write also changes the slug). It is a no-op for a plugin that does not
+	// opt in, and mirrors Validate's unknown-plugin behaviour otherwise.
+	ValidateSettingsWrite(name string, settings, previous map[string]any) error
 	ValidateStages(name string, selected []policy.Stage) error
 	ValidateMode(name string, selected policy.Mode) error
 	Names() []string
@@ -95,6 +101,18 @@ func (r *registry) Validate(name string, settings map[string]any) error {
 		return fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
 	}
 	return p.ValidateConfig(settings)
+}
+
+func (r *registry) ValidateSettingsWrite(name string, settings, previous map[string]any) error {
+	p, ok := r.plugins[name]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
+	}
+	v, ok := p.(SettingsWriteValidator)
+	if !ok {
+		return nil
+	}
+	return v.ValidateSettingsWrite(settings, previous)
 }
 
 func (r *registry) ValidateStages(name string, selected []policy.Stage) error {

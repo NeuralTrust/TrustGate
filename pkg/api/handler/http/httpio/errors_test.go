@@ -21,6 +21,10 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -47,12 +51,25 @@ func TestMapDomainError(t *testing.T) {
 		{name: "wrapped not found → 404 does not leak", err: fmt.Errorf("repo secret=hunter2: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "Check the id", wantMsgAbsent: "hunter2"},
 		{name: "entity not found → 404 names entity", err: fmt.Errorf("gateway: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "gateway"},
 		{name: "already exists → 409", err: commonerrors.ErrAlreadyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists", wantMsgPart: "unique"},
+		{name: "personal key exists → 409 with its own hint", err: authdomain.ErrOwnedKeyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists", wantMsgPart: "Rotate or revoke it instead", wantMsgAbsent: "unique name"},
 		{name: "has dependents → 409", err: commonerrors.ErrHasDependents, wantStatus: fiber.StatusConflict, wantCode: "has_dependents", wantMsgPart: "dependent"},
 		{name: "conflict → 409", err: commonerrors.ErrConflict, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "conflict"},
+		{name: "policy placement changed → 409", err: policydomain.ErrPlacementChanged, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "placement changed"},
+		{name: "invalid policy placement → 422", err: policydomain.ErrInvalidPlacement, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid placement"},
+		{name: "mcp-wide on a plugin without MCP → 422", err: fmt.Errorf("%w: plugin model_allowlist does not support protocol MCP", policydomain.ErrMCPWideUnsupported), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "plugin model_allowlist does not support protocol MCP"},
+		{name: "attaching an mcp-wide policy → 422", err: consumerdomain.ErrPolicyMCPWide, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "consumer: policy is MCP-wide: it already runs on every MCP consumer; demote it before attaching a consumer"},
 		{name: "validation → 422", err: commonerrors.ErrValidation, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "schema"},
 		{name: "validation with detail → 422 keeps detail", err: fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "tenant_id is required"},
+		{name: "stale store request → 409 with a fixed, actionable message", err: fmt.Errorf("%w: instance x of \"custom:x\"", installationdomain.ErrStaleRequest), wantStatus: fiber.StatusConflict, wantCode: "stale_request", wantMsgPart: "Deny it and ask the requester", wantMsgAbsent: "resource conflict"},
+		{name: "owned auth key → 422 owned_key", err: authdomain.ErrOwnedKey, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "owned_key", wantMsgPart: "Delete it to revoke it"},
+		{name: "wrapped owned key → 422 owned_key", err: fmt.Errorf("rotate: %w", authdomain.ErrOwnedKey), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "owned_key", wantMsgPart: "only its owner"},
+		{name: "concurrent rotation → 409", err: authdomain.ErrRotatedConcurrently, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "rotated by another request"},
+		{name: "budget on an application key → 422 application_key", err: authdomain.ErrApplicationKey, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "application_key", wantMsgPart: "token_rate_limiter"},
+		{name: "invalid key budget → 422", err: authdomain.ErrInvalidBudget, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid budget"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},
 		{name: "result too large → 422", err: commonerrors.ErrResultTooLarge, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "result_too_large", wantMsgPart: "pagination"},
+		{name: "upstream unavailable → 502", err: commonerrors.ErrUpstreamUnavailable, wantStatus: fiber.StatusBadGateway, wantCode: "upstream_unavailable", wantMsgPart: "endpoint and credentials"},
+		{name: "upstream unavailable with detail → 502 keeps detail", err: fmt.Errorf("%w: could not list the deployments on this Azure resource", commonerrors.ErrUpstreamUnavailable), wantStatus: fiber.StatusBadGateway, wantCode: "upstream_unavailable", wantMsgPart: "could not list the deployments"},
 		{name: "unknown → 500 without leaking", err: errors.New("boom secret=hunter2"), wantStatus: fiber.StatusInternalServerError, wantCode: "internal_error", wantMsgPart: "X-Request-ID"},
 	}
 

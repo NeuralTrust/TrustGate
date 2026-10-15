@@ -1,0 +1,1 @@
+{"model":"meta-llama/llama-4-scout-17b-16e-instruct","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png","detail":"low"}},{"type":"text","text":"What is this?"}]}],"max_tokens":5}

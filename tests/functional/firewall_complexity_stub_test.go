@@ -64,6 +64,7 @@ type firewallScoreRequest struct {
 }
 
 type firewallScoreResponse struct {
+	Revision string  `json:"revision"`
 	Score    float64 `json:"score"`
 	RawScore float64 `json:"raw_score"`
 }
@@ -107,5 +108,5 @@ func isValidFirewallToken(signed string) bool {
 
 func writeFirewallScore(w http.ResponseWriter, score float64) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(firewallScoreResponse{Score: score, RawScore: score})
+	_ = json.NewEncoder(w).Encode(firewallScoreResponse{Score: score, RawScore: score, Revision: "9619f81d9db28141fc1cc0a3833c8446260ce603"})
 }

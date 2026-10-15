@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,12 +36,17 @@ import (
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	sessiondomain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -92,7 +98,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker, limiter ratelimitapp.Checker) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, limiter, nil, newTestLogger(),
 	)
 }
@@ -100,20 +106,26 @@ func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker,
 type fakeSessionStore struct {
 	last     string
 	recorded []appsession.RecordInput
+	looked   []appsession.Scope
 }
 
 func (f *fakeSessionStore) Record(_ context.Context, in appsession.RecordInput) {
 	f.recorded = append(f.recorded, in)
 }
 
-func (f *fakeSessionStore) LastTurnID(_ context.Context, _, _ string) string {
+func (f *fakeSessionStore) LastTurnID(_ context.Context, scope appsession.Scope, _ string) string {
+	f.looked = append(f.looked, scope)
 	return f.last
+}
+
+func (f *fakeSessionStore) SessionForTurn(_ context.Context, _ appsession.Scope, _ string) string {
+	return ""
 }
 
 func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, store appsession.Store) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
 	)
 }
@@ -183,7 +195,69 @@ func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
 	assert.Equal(t, []string{"10000"}, res.Headers["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonQuota}, res.Headers["X-RateLimit-Reason"])
+	assert.JSONEq(t, `{"error":{"message":"TrustGate blocked this request: monthly request quota exceeded. Retry in 10s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`, string(res.Body))
 	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestForward_BurstRateLimitUsesIngressDialect(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID)
+	message := "TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 42s."
+	cases := []struct {
+		name    string
+		format  string
+		retry   time.Duration
+		want    string
+		retryAt string
+	}{
+		{
+			name:    "openai",
+			format:  "openai",
+			retry:   42 * time.Second,
+			want:    `{"error":{"message":"` + message + `","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+			retryAt: "42",
+		},
+		{
+			name:    "anthropic",
+			format:  "anthropic",
+			retry:   42 * time.Second,
+			want:    `{"type":"error","error":{"type":"rate_limit_error","message":"` + message + `"}}`,
+			retryAt: "42",
+		},
+		{
+			name:   "unknown reset omits Retry-After",
+			format: "openai",
+			want:   `{"error":{"message":"TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 1s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := ratelimitmocks.NewChecker(t)
+			limiter.EXPECT().Check(mock.Anything, gatewayID).Return(&ratelimitapp.Exceeded{
+				Reason:     ratelimitapp.ReasonBurst,
+				Limit:      60,
+				RetryAfter: tc.retry,
+			}).Once()
+			invoker := proxymocks.NewProviderInvoker(t)
+			fwd := newTestForwarderWithLimiter(t, invoker, limiter)
+			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request:   &infracontext.RequestContext{SourceFormat: tc.format, ProxyCapability: "chat"},
+			})
+			require.NoError(t, err)
+			require.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+			assert.JSONEq(t, tc.want, string(res.Body))
+			assert.NotContains(t, string(res.Body), `"reason"`)
+			if tc.retryAt == "" {
+				_, ok := res.Headers["Retry-After"]
+				assert.False(t, ok)
+			} else {
+				assert.Equal(t, []string{tc.retryAt}, res.Headers["Retry-After"])
+			}
+			invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestForward_RateLimitUnavailable_PropagatesError(t *testing.T) {
@@ -591,8 +665,73 @@ func TestForward_RecordsSessionTurnOnSuccess(t *testing.T) {
 	require.Len(t, store.recorded, 1)
 	assert.Equal(t, "resp_turn", store.recorded[0].TurnID)
 	assert.Equal(t, "sess-1", store.recorded[0].SessionID)
-	assert.Equal(t, gatewayID.String(), store.recorded[0].GatewayID)
+	assert.Equal(t, appsession.Scope{GatewayID: gatewayID.String()}, store.recorded[0].Scope)
 	assert.Equal(t, "openai", store.recorded[0].Provider)
+}
+
+func TestForward_RecordsSessionTurnWhenStreamCompletes(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+
+	stream := func(yield func([]byte, error) bool) {
+		yield([]byte("data: {}"), nil)
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream, ResponseID: "resp_stream"}, nil).
+		Once()
+
+	store := &fakeSessionStore{}
+	fwd := newTestForwarderWithStore(t, invoker, store)
+
+	rt := trace.New("trace-1", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	res, err := fwd.Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			GatewayID: gatewayID.String(),
+			SessionID: "sess-stream",
+			Body:      []byte(`{"model":"gpt-4","stream":true}`),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Stream)
+	assert.Empty(t, store.recorded, "the turn is recorded once the stream is drained")
+
+	for _, err := range res.Stream {
+		require.NoError(t, err)
+	}
+	require.Len(t, store.recorded, 1)
+	assert.Equal(t, "resp_stream", store.recorded[0].TurnID)
+	assert.Equal(t, "sess-stream", store.recorded[0].SessionID)
+}
+
+func TestForward_DoesNotRecordSessionTurnOnErrorStatus(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 429, Body: []byte(`{}`), ResponseID: "resp_failed"}, nil).
+		Once()
+
+	store := &fakeSessionStore{}
+	fwd := newTestForwarderWithStore(t, invoker, store)
+
+	rt := trace.New("trace-1", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{GatewayID: gatewayID.String(), SessionID: "sess-1"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, store.recorded, "a failed turn must not be indexed")
 }
 
 func TestForward_DoesNotRecordWithoutSession(t *testing.T) {
@@ -637,6 +776,60 @@ func TestForward_StampsContinuationFromStore(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "resp_prev", req.PreviousResponseID, "last turn id is stamped for the invoker to thread")
+	assert.Equal(t, []appsession.Scope{{GatewayID: gatewayID.String()}}, store.looked)
+}
+
+type memSessionRepo struct {
+	sessions map[string]sessiondomain.Session
+	turns    map[string]string
+}
+
+func (m *memSessionRepo) Save(_ context.Context, s *sessiondomain.Session) error {
+	m.sessions[fmt.Sprintf("session:%s:%s", s.GatewayID, s.ID)] = *s
+	m.turns[fmt.Sprintf("session_turn:%s:%s", s.GatewayID, s.LastTurnID)] = s.ID
+	return nil
+}
+
+func (m *memSessionRepo) Get(_ context.Context, gatewayID, sessionID string) (*sessiondomain.Session, error) {
+	s, ok := m.sessions[fmt.Sprintf("session:%s:%s", gatewayID, sessionID)]
+	if !ok {
+		return nil, nil
+	}
+	return &s, nil
+}
+
+func (m *memSessionRepo) FindSessionIDByTurn(_ context.Context, gatewayID, turnID string) (string, error) {
+	return m.turns[fmt.Sprintf("session_turn:%s:%s", gatewayID, turnID)], nil
+}
+
+func TestForward_SessionTurnsStayWithTheirOwner(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+	repo := &memSessionRepo{sessions: map[string]sessiondomain.Session{}, turns: map[string]string{}}
+	store := appsession.NewService(repo, &config.Config{SessionStore: config.SessionStoreConfig{Enabled: true}}, nil)
+	turns := 0
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(context.Context, *registrydomain.Registry, *infracontext.RequestContext) (*appproxy.ProviderResponse, error) {
+			turns++
+			return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok"), ResponseID: fmt.Sprintf("resp_%d", turns)}, nil
+		})
+	fwd := newTestForwarderWithStore(t, invoker, store)
+	send := func(owner string) string {
+		req := &infracontext.RequestContext{GatewayID: gatewayID.String(), SessionID: "sess-1", OwnerID: owner}
+		_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
+		require.NoError(t, err)
+		return req.PreviousResponseID
+	}
+
+	assert.Empty(t, send("alice"))
+	assert.Empty(t, send("bob"), "another owner's same session id never continues alice's turn")
+	assert.Empty(t, send(""), "nor does an application key's")
+	assert.Equal(t, "resp_1", send("alice"))
+	assert.Equal(t, "resp_2", send("bob"))
+	assert.Equal(t, "resp_3", send(""))
+	assert.Contains(t, repo.sessions, "session:"+gatewayID.String()+":sess-1", "an application key keeps its session key")
+	assert.Equal(t, "sess-1", repo.turns["session_turn:"+gatewayID.String()+":resp_6"])
 }
 
 func TestForward_BackendErrorStatusPassthrough(t *testing.T) {
@@ -767,7 +960,7 @@ func TestForward_NilConsumer(t *testing.T) {
 
 type fixedScorer struct{ score float64 }
 
-func (f fixedScorer) Score(_ context.Context, _, _, _ string) (float64, error) { return f.score, nil }
+func (f fixedScorer) ScoreSR1(_ context.Context, _, _ string) (float64, error) { return f.score, nil }
 
 func (fixedScorer) Configured() bool { return true }
 
@@ -787,9 +980,10 @@ func smartRoutedConsumer(gatewayID ids.GatewayID, low, high *registrydomain.Regi
 			{RegistryID: high.ID, Model: "model-high"},
 		},
 		SmartRouting: &registrydomain.SmartRoutingConfig{
+			SR1: &registrydomain.SR1Config{CacheTTLSeconds: 300},
 			Tiers: []registrydomain.SmartRoutingTier{
 				{MinScore: 0, RegistryID: low.ID, Model: "model-low"},
-				{MinScore: 0.5, RegistryID: high.ID, Model: "model-high"},
+				{MinScore: 0.45, RegistryID: high.ID, Model: "model-high"},
 			},
 		},
 	}
@@ -806,8 +1000,11 @@ func newSmartRoutedForwarder(
 	mgr := cache.NewTTLMapManager(time.Minute)
 	cfg := &config.Config{}
 	cfg.Provider.MaxRetries = maxRetries
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil, fixedScorer{score: score}, newTestLogger()),
+		loadbalancer.NewBaseFactory(nil, nil, fixedScorer{score: score}, strategies.NewRedisSR1Store(client), newTestLogger()),
 		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, nil, cfg, newTestLogger(),
 	)
 }
@@ -901,9 +1098,7 @@ func TestForward_StampsServedAndBaselinePricingOnSpan(t *testing.T) {
 	assert.InDelta(t, 0.4, served.Baseline.Pricing.Discount, 1e-12)
 }
 
-// A fallback-chain hop never consults the strategy, so it must not inherit the
-// tier decision made for the pool route it replaced.
-func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
+func TestForward_SmartRoutingExhaustionDoesNotUseFallbackChain(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	low := backendFor(gatewayID, "openai")
 	high := backendFor(gatewayID, "anthropic")
@@ -916,10 +1111,6 @@ func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
 	invoker.EXPECT().
 		Invoke(mock.Anything, mock.Anything, mock.Anything).
 		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
-		Times(2)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("recovered")}, nil).
 		Once()
 
 	rt := trace.New("trace-chain", trace.Metadata{GatewayID: gatewayID.String()})
@@ -932,9 +1123,307 @@ func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
 		Request:   &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`)},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 200, res.StatusCode)
+	require.Equal(t, 503, res.StatusCode)
 
 	served := servedLLMAttrs(t, rt)
-	assert.True(t, served.Fallback, "expected the chain hop to be the served attempt")
-	assert.False(t, served.TierApplied, "a chain hop must not inherit a tier decision")
+	assert.False(t, served.Fallback, "smart routing cannot escape into the fallback chain")
+	assert.True(t, served.TierApplied, "the strongest tier remained the served attempt")
+}
+
+func TestForward_RefusesAChatBodyWithAmbiguousKeys(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+
+	for name, req := range map[string]*infracontext.RequestContext{
+		"chat tools and TOOLS": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[],"TOOLS":[]}`)},
+		"responses repeated input": {ProxyCapability: "chat", SourceFormat: "openai_responses",
+			Body: []byte(`{"model":"gpt-5","input":"evil","input":"hi"}`)},
+		"anthropic Content": {ProxyCapability: "chat", SourceFormat: "anthropic",
+			Body: []byte(`{"model":"c","max_tokens":1,"messages":[{"role":"user","content":"evil","Content":"hi"}]}`)},
+		"no capability, chat format": {SourceFormat: "google",
+			Body: []byte(`{"contents":[{"role":"user","parts":[{"text":"evil","Text":"hi"}]}]}`)},
+		"gemini both spellings": {ProxyCapability: "chat", SourceFormat: "google",
+			Body: []byte(`{"contents":[],"systemInstruction":{"parts":[{"text":"a"}]},"system_instruction":{"parts":[{"text":"b"}]}}`)},
+		"byte order mark": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte("\xef\xbb\xbf{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")},
+		"not valid json": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"temperature":NaN}`)},
+		"too deep": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":` + strings.Repeat("[", 1<<20))},
+	} {
+		_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
+		assert.ErrorIs(t, err, appproxy.ErrAmbiguousRequestBody, name)
+	}
+}
+
+func TestForward_LetsOtherBodiesThrough(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+
+	for name, req := range map[string]*infracontext.RequestContext{
+		"schema with case variants": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"Name":{},"name":{}}}}}]}`)},
+		"tool message parts with case variants": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"tool","tool_call_id":"c","content":[{"Result":1,"result":2}]}]}`)},
+		"anthropic input_examples": {ProxyCapability: "chat", SourceFormat: "anthropic",
+			Body: []byte(`{"model":"c","max_tokens":1,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"f","input_schema":{},"input_examples":[{"A":1,"a":2}]}]}`)},
+		"embeddings": {ProxyCapability: "embeddings", SourceFormat: "openai_embeddings",
+			Body: []byte(`{"model":"e","input":"a","Input":"b"}`)},
+	} {
+		invoker := proxymocks.NewProviderInvoker(t)
+		invoker.EXPECT().
+			Invoke(mock.Anything, mock.Anything, mock.Anything).
+			Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+			Once()
+		res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
+		require.NoError(t, err, name)
+		assert.Equal(t, 200, res.StatusCode, name)
+	}
+}
+
+func invokerByProvider(t *testing.T, status map[string]int) (*proxymocks.ProviderInvoker, *[]string) {
+	t.Helper()
+	return invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+		return &appproxy.ProviderResponse{StatusCode: status[provider], Body: []byte(provider)}, nil
+	})
+}
+
+func TestForward_ResolvedRoutingNeverReachesASubstitutedProvider(t *testing.T) {
+	userOpenAI := storeGrant{name: "D", level: levelUser, priority: 1, regs: []storeRegistry{{provider: "openai", allowed: []string{"gpt6"}}}}
+	pooled := storeGrant{name: "P", level: levelGroup, priority: 1, pool: "fast", regs: []storeRegistry{
+		{provider: "openai", def: "gpt-4.1", pooled: true}, {provider: "mistral", def: "mistral-large", pooled: true},
+	}}
+	balanced := storeGrant{name: "A", level: levelGroup, priority: 1, regs: []storeRegistry{
+		{provider: "openai", def: "gpt-4.1"}, {provider: "mistral", def: "mistral-large"},
+	}}
+	withFallback := storeGrant{name: "F", level: levelGroup, priority: 1, regs: []storeRegistry{
+		{provider: "mistral", def: "mistral-large"}, {provider: "openai", fallback: true},
+	}}
+	cases := []struct {
+		name   string
+		grants []storeGrant
+		model  string
+		want   string
+	}{
+		{name: "pool member on a substituted provider", grants: []storeGrant{userOpenAI, pooled}, model: "pool:fast", want: "P"},
+		{name: "auto default on a substituted provider", grants: []storeGrant{userOpenAI, balanced}, model: "auto", want: "A"},
+		{name: "fallback on a substituted provider", grants: []storeGrant{userOpenAI, withFallback}, model: "auto", want: "F"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newStoreFixture(tc.grants...)
+			req := storeRequest(tc.model, "", "")
+			sel, err := fx.choose(newStoreSelector(workedCatalog), req)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, sel.Link.Consumer.Consumer.Name)
+			sel.Link.Consumer.Consumer.Fallback = enabledFallback()
+			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 200})
+			fwd := newTestForwarder(t, invoker)
+			for range 3 {
+				res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+					GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+					Resolved: &sel.ResolvedRouting, Prechecked: true,
+				})
+				require.NoError(t, err)
+				assert.Equal(t, 503, res.StatusCode)
+				assert.Equal(t, "mistral-large", req.DefaultModel)
+			}
+			assert.Equal(t, []string{"mistral", "mistral", "mistral"}, *invoked)
+		})
+	}
+}
+
+func TestForward_PrecheckedIsExplicit(t *testing.T) {
+	fx := newStoreFixture(grantB)
+	ambiguous := []byte(`{"model":"opus-4.8","model":"opus-5.5"}`)
+	sel, err := fx.choose(newStoreSelector(workedCatalog), storeRequest("opus-4.8", "", ""))
+	require.NoError(t, err)
+
+	t.Run("prechecked skips the body check and the plan limit", func(t *testing.T) {
+		invoker, invoked := invokerByProvider(t, map[string]int{"anthropic": 200})
+		fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+		req := &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: ambiguous}
+		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+			Resolved: &sel.ResolvedRouting, Prechecked: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 200, res.StatusCode)
+		assert.Equal(t, []string{"anthropic"}, *invoked)
+	})
+
+	t.Run("a resolved request that is not prechecked is charged", func(t *testing.T) {
+		limiter := ratelimitmocks.NewChecker(t)
+		limiter.EXPECT().Check(mock.Anything, fx.data.GatewayID).
+			Return(&ratelimitapp.Exceeded{Reason: ratelimitapp.ReasonQuota, Limit: 1, RetryAfter: time.Second}).Once()
+		fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter)
+		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: storeRequest("opus-4.8", "", ""),
+			Resolved: &sel.ResolvedRouting,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+	})
+}
+
+func TestPrecheck_RefusesANonArrayMessagesBeforeTheRateLimit(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	cases := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano","messages":"x"}`)}},
+		{name: "object", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"messages":{"role":"user"}}`)}},
+		{name: "anthropic string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "anthropic", Body: []byte(`{"model":"claude","messages":"x"}`)}},
+		{name: "cohere string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "cohere", Body: []byte(`{"messages":"x"}`)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), ratelimitmocks.NewChecker(t))
+			res, err := fwd.Precheck(context.Background(), gatewayID, tc.req)
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			assert.ErrorContains(t, err, "messages must be an array")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.Nil(t, res)
+		})
+	}
+
+	allowed := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "array", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano","messages":[{"role":"user","content":"hi"}]}`)}},
+		{name: "absent", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano"}`)}},
+		{name: "responses input string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai_responses", Body: []byte(`{"model":"gpt-4.1-nano","input":"x"}`)}},
+		{name: "gemini ignores a stray messages string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "google", Body: []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"messages":"x"}`)}},
+		{name: "embeddings", req: &infracontext.RequestContext{ProxyCapability: "embeddings", SourceFormat: "openai", Body: []byte(`{"input":"x","messages":"x"}`)}},
+	}
+	for _, tc := range allowed {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := ratelimitmocks.NewChecker(t)
+			limiter.EXPECT().Check(mock.Anything, gatewayID).Return(nil).Once()
+			fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter)
+			res, err := fwd.Precheck(context.Background(), gatewayID, tc.req)
+			require.NoError(t, err)
+			assert.Nil(t, res)
+		})
+	}
+}
+
+func TestForward_NonArrayMessagesNeverReachesTheUpstream(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	invoker := proxymocks.NewProviderInvoker(t)
+	fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  routableConsumerWith(gatewayID),
+		Request: &infracontext.RequestContext{
+			ProxyCapability: "chat",
+			SourceFormat:    "openai",
+			Body:            []byte(`{"model":"gpt-4.1-nano","messages":"x"}`),
+		},
+	})
+	require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	assert.Nil(t, res)
+	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+	invoker.AssertNotCalled(t, "InvokeStream", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestPrecheck_RefusesAnAmbiguousBodyBeforeTheRateLimit(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), ratelimitmocks.NewChecker(t))
+	res, err := fwd.Precheck(context.Background(), gatewayID, &infracontext.RequestContext{
+		ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"a","model":"b"}`),
+	})
+	require.ErrorIs(t, err, appproxy.ErrAmbiguousRequestBody)
+	assert.Nil(t, res)
+
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, gatewayID).Return(nil).Once()
+	res, err = newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter).
+		Precheck(context.Background(), gatewayID, &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: chatBody("a")})
+	require.NoError(t, err)
+	assert.Nil(t, res)
+}
+
+func TestForward_ServesTheStoreSelection(t *testing.T) {
+	mistralA := storeGrant{name: "A", level: levelGroup, priority: 1,
+		regs: []storeRegistry{{provider: "mistral"}, {provider: "openai", fallback: true}}}
+	cases := []struct {
+		name    string
+		grants  []storeGrant
+		catalog storeCatalog
+		model   string
+		want    []string
+		status  int
+	}{
+		{name: "substituted fallback is not used", grants: []storeGrant{mistralA, grantD}, catalog: workedCatalog,
+			model: "mistral-large", want: []string{"mistral"}, status: 503},
+		{name: "fallback serves the selected consumer", grants: []storeGrant{grantA, grantB, grantC},
+			catalog: storeCatalog{"openai": {"gpt-4.1"}}, model: "gpt-4.1", want: []string{"openai", "deepseek"}, status: 200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newStoreFixture(tc.grants...)
+			req := storeRequest(tc.model, "", "")
+			sel, err := fx.choose(newStoreSelector(tc.catalog), req)
+			require.NoError(t, err)
+			require.Equal(t, "A", sel.Link.Consumer.Consumer.Name)
+			invoker, invoked := invokerByProvider(t, map[string]int{"mistral": 503, "openai": 503, "deepseek": 200})
+			fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+				Resolved: &sel.ResolvedRouting, Prechecked: true,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.status, res.StatusCode)
+			assert.Equal(t, tc.want, *invoked)
+			assert.Equal(t, tc.model, req.RequestedModel)
+		})
+	}
+}
+
+func TestForward_StoreConsumerSharesOneBalancerAcrossOwners(t *testing.T) {
+	fx := newStoreFixture(grantB)
+	mgr := cache.NewTTLMapManager(time.Minute)
+	invoker, invoked := invokerByProvider(t, map[string]int{"anthropic": 200})
+	fwd := appproxy.NewForwarder(loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil), newPermissiveCache(t), mgr, invoker,
+		nil, nil, approuting.NewResolver(), nil, nil, nil, newTestLogger())
+	for _, owner := range []string{"alice", "bob"} {
+		req := storeRequest("", "", "")
+		req.AuthID, req.OwnerID = ids.New[ids.AuthKind]().String(), owner
+		sel, err := fx.choose(newStoreSelector(workedCatalog), req)
+		require.NoError(t, err)
+		_, err = fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+			Resolved: &sel.ResolvedRouting, Prechecked: true,
+		})
+		require.NoError(t, err)
+	}
+	served := fx.data.StoreLinks(fx.authID)[0].Consumer.Consumer
+	balancers := mgr.GetTTLMap(cache.LoadBalancerTTLName)
+	_, ok := balancers.Get(served.GatewayID.String() + ":" + served.ID.String())
+	assert.True(t, ok)
+	assert.Equal(t, 1, balancers.Len())
+	assert.Equal(t, []string{"anthropic", "anthropic"}, *invoked)
+}
+
+func TestForward_StoreModelMissPointsAtTheStoreListing(t *testing.T) {
+	fx := newStoreFixture(grantD)
+	req := storeRequest("gpt6", "", "")
+	sel, err := fx.choose(newStoreSelector(workedCatalog), req)
+	require.NoError(t, err)
+	sel.Link.Consumer.Consumer.Slug = "pers0001"
+	invoker, _ := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+		return &appproxy.ProviderResponse{StatusCode: http.StatusNotFound, Body: modelNotFoundBody(provider)}, nil
+	})
+	_, err = newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: fx.data.GatewayID, Consumer: sel.Link.Consumer, Data: fx.data, Request: req,
+		Resolved: &sel.ResolvedRouting, RouteSlug: domainconsumer.StoreSlug, Prechecked: true,
+	})
+	require.ErrorIs(t, err, routingdomain.ErrNoRegistryServesModel)
+	assert.Contains(t, err.Error(), "GET /store/v1/models")
+	assert.NotContains(t, err.Error(), "pers0001")
 }

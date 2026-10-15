@@ -24,7 +24,7 @@ import (
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
-	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
@@ -42,8 +42,8 @@ const (
 	DocsPath        = "/docs/*"
 	// OpenAPIPath serves the OpenAPI 3 document. Swagger UI publishes Swagger
 	// 2.0, which OpenAPI 3 consumers cannot parse.
-	OpenAPIPath = "/docs/openapi.json"
-	GatewaysPath    = "/v1/gateways"
+	OpenAPIPath  = "/docs/openapi.json"
+	GatewaysPath = "/v1/gateways"
 	// TenantsPath carries admin operations that span every gateway of a tenant.
 	TenantsPath           = "/v1/tenants"
 	ProvidersCatalog      = "/v1/providers-catalog"
@@ -81,6 +81,9 @@ type AdminRouterDeps struct {
 	TestRegistryConnection *registryhttp.TestConnectionHandler
 	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
+	// RegistrySharedAccount serves the upstream account an MCP instance holds
+	// for every caller. Absent on planes without the connect service.
+	RegistrySharedAccount *registryhttp.SharedAccountHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -88,27 +91,24 @@ type AdminRouterDeps struct {
 	UpdatePolicy    *policyhttp.UpdatePolicyHandler
 	DeletePolicy    *policyhttp.DeletePolicyHandler
 	GlobalPolicy    *policyhttp.GlobalPolicyHandler
+	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
-	CreateConsumer      *consumerhttp.CreateConsumerHandler
-	GetConsumer         *consumerhttp.GetConsumerHandler
-	ListConsumer        *consumerhttp.ListConsumerHandler
-	UpdateConsumer      *consumerhttp.UpdateConsumerHandler
-	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
-	ConsumerAssociation *consumerhttp.AssociationHandler
-
-	CreateRole      *rolehttp.CreateRoleHandler
-	GetRole         *rolehttp.GetRoleHandler
-	ListRole        *rolehttp.ListRoleHandler
-	UpdateRole      *rolehttp.UpdateRoleHandler
-	DeleteRole      *rolehttp.DeleteRoleHandler
-	RoleAssociation *rolehttp.AssociationHandler
-
-	CreateAuth *authhttp.CreateAuthHandler
-	GetAuth    *authhttp.GetAuthHandler
-	ListAuth   *authhttp.ListAuthHandler
-	UpdateAuth *authhttp.UpdateAuthHandler
-	DeleteAuth *authhttp.DeleteAuthHandler
+	CreateConsumer          *consumerhttp.CreateConsumerHandler
+	GetConsumer             *consumerhttp.GetConsumerHandler
+	ListConsumer            *consumerhttp.ListConsumerHandler
+	UpdateConsumer          *consumerhttp.UpdateConsumerHandler
+	UpdateConsumerLabelSets *consumerhttp.UpdateConsumerLabelSetsHandler
+	DeleteConsumer          *consumerhttp.DeleteConsumerHandler
+	ConsumerAssociation     *consumerhttp.AssociationHandler
+	CreateAuth              *authhttp.CreateAuthHandler
+	GetAuth                 *authhttp.GetAuthHandler
+	ListAuth                *authhttp.ListAuthHandler
+	UpdateAuth              *authhttp.UpdateAuthHandler
+	RotateAuth              *authhttp.RotateAuthHandler
+	UpdateAuthBudget        *authhttp.UpdateAuthBudgetHandler
+	UpdateAuthOwnerGroups   *authhttp.UpdateAuthOwnerGroupsHandler
+	DeleteAuth              *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
@@ -118,6 +118,23 @@ type AdminRouterDeps struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+
+	// StoreRequests serves the MCP Store install-approval queue. Present only on
+	// the full plane; nil-guarded when absent.
+	StoreRequests *storehttp.RequestsHandler
+	// StoreGrants serves the MCP Store access grants (the Access page's grant
+	// read/write). Present only on the full plane.
+	StoreGrants *storehttp.GrantsHandler
+	// StorePolicies serves the per-principal Store access levels (Access page
+	// All / Selected / None). Present only on the full plane.
+	StorePolicies *storehttp.PoliciesHandler
+	// StorePrincipal serves the Portal's admin preview of one user's Store state.
+	StorePrincipal *storehttp.PrincipalHandler
+	// StoreMaterialize puts a self-service catalog server on the shelf on an
+	// admin's request (POST registries/from-catalog). Present only on the full
+	// plane; nil-guarded when absent.
+	StoreMaterialize *storehttp.MaterializeHandler
+	StoreLLMKey      *storehttp.LLMKeyHandler
 }
 
 type adminRouter struct {
@@ -168,9 +185,17 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Post("/validate-openapi", r.deps.ValidateOpenAPI.Handle)
+	if r.deps.StoreMaterialize != nil {
+		registries.Post("/from-catalog", r.deps.StoreMaterialize.Handle)
+	}
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)
+	if r.deps.RegistrySharedAccount != nil {
+		registries.Get("/:id/shared-account", r.deps.RegistrySharedAccount.Get)
+		registries.Post("/:id/shared-account/connect-link", r.deps.RegistrySharedAccount.ConnectLink)
+		registries.Delete("/:id/shared-account", r.deps.RegistrySharedAccount.Disconnect)
+	}
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
@@ -182,6 +207,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Delete("/:id", r.deps.DeletePolicy.Handle)
 	policies.Post("/:id/global", r.deps.GlobalPolicy.SetGlobal)
 	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
+	policies.Post("/:id/mcp-wide", r.deps.MCPWidePolicy.SetMCPWide)
+	policies.Delete("/:id/mcp-wide", r.deps.MCPWidePolicy.UnsetMCPWide)
 	policies.Post("/:id/duplicate", r.deps.DuplicatePolicy.Handle)
 
 	consumers := gw.Group("/:gateway_id/consumers", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceConsumers))
@@ -189,30 +216,62 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Get("", r.deps.ListConsumer.Handle)
 	consumers.Get("/:id", r.deps.GetConsumer.Handle)
 	consumers.Put("/:id", r.deps.UpdateConsumer.Handle)
+	consumers.Put("/:id/label-sets", r.deps.UpdateConsumerLabelSets.Handle)
 	consumers.Delete("/:id", r.deps.DeleteConsumer.Handle)
 	consumers.Post("/:id/registries/:registry_id", r.deps.ConsumerAssociation.AttachRegistry)
 	consumers.Delete("/:id/registries/:registry_id", r.deps.ConsumerAssociation.DetachRegistry)
-	consumers.Post("/:id/roles/:role_id", r.deps.ConsumerAssociation.AttachRole)
-	consumers.Delete("/:id/roles/:role_id", r.deps.ConsumerAssociation.DetachRole)
 	consumers.Post("/:id/auths/:auth_id", r.deps.ConsumerAssociation.AttachAuth)
 	consumers.Delete("/:id/auths/:auth_id", r.deps.ConsumerAssociation.DetachAuth)
 	consumers.Post("/:id/policies/:policy_id", r.deps.ConsumerAssociation.AttachPolicy)
 	consumers.Delete("/:id/policies/:policy_id", r.deps.ConsumerAssociation.DetachPolicy)
 
-	roles := gw.Group("/:gateway_id/roles", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRoles))
-	roles.Post("", r.deps.CreateRole.Handle)
-	roles.Get("", r.deps.ListRole.Handle)
-	roles.Get("/:id", r.deps.GetRole.Handle)
-	roles.Put("/:id", r.deps.UpdateRole.Handle)
-	roles.Delete("/:id", r.deps.DeleteRole.Handle)
-	roles.Post("/:role_id/registries/:registry_id", r.deps.RoleAssociation.AttachRegistry)
-	roles.Delete("/:role_id/registries/:registry_id", r.deps.RoleAssociation.DetachRegistry)
+	// MCP Store administration: access grants and the install-approval queue.
+	// Curating the Store is a registry-admin concern, so it reuses the
+	// registries access guard. Registered only when wired (full plane).
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil {
+		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
+		if r.deps.StoreRequests != nil {
+			store.Get("/requests", r.deps.StoreRequests.List)
+			store.Get("/requests/history", r.deps.StoreRequests.History)
+			store.Post("/requests/approve", r.deps.StoreRequests.Approve)
+			store.Post("/requests/deny", r.deps.StoreRequests.Deny)
+		}
+		if r.deps.StoreGrants != nil {
+			store.Get("/grants", r.deps.StoreGrants.List)
+			store.Put("/grants", r.deps.StoreGrants.Set)
+		}
+		if r.deps.StorePolicies != nil {
+			store.Get("/access-policies", r.deps.StorePolicies.List)
+			store.Put("/access-policies", r.deps.StorePolicies.Set)
+		}
+		if r.deps.StorePrincipal != nil {
+			store.Get("/principal", r.deps.StorePrincipal.Get)
+			store.Post("/principal/installs", r.deps.StorePrincipal.Install)
+			store.Post("/principal/connect-link", r.deps.StorePrincipal.ConnectLink)
+			store.Post("/principal/configure-link", r.deps.StorePrincipal.ConfigureLink)
+			store.Delete("/principal/connections/:registry_id", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.StorePrincipal.Disconnect)
+		}
+		if r.deps.StoreLLMKey != nil {
+			interactive := r.deps.AdminAuthz.RequireInteractiveIdentity()
+			store.Get("/principal/llm-key", interactive, r.deps.StoreLLMKey.Get)
+			store.Post("/principal/llm-key", interactive, r.deps.StoreLLMKey.Create)
+			store.Post("/principal/llm-key/rotate", interactive, r.deps.StoreLLMKey.Rotate)
+			store.Delete("/principal/llm-key", interactive, r.deps.StoreLLMKey.Revoke)
+			// An admin issuing a user's key for them: a person in the console, never a machine.
+			store.Post("/users/:user_id/llm-key", interactive, r.deps.StoreLLMKey.CreateForUser)
+		}
+	}
 
 	auths := gw.Group("/:gateway_id/auths", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
 	auths.Post("", r.deps.CreateAuth.Handle)
 	auths.Get("", r.deps.ListAuth.Handle)
 	auths.Get("/:id", r.deps.GetAuth.Handle)
 	auths.Put("/:id", r.deps.UpdateAuth.Handle)
+	auths.Post("/:id/rotate", r.deps.RotateAuth.Handle)
+	auths.Put("/:id/budget", r.deps.UpdateAuthBudget.Handle)
+	if r.deps.UpdateAuthOwnerGroups != nil {
+		auths.Put("/:id/groups", r.deps.UpdateAuthOwnerGroups.Handle)
+	}
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
 
 	// Routes that carry no gateway scope are console-only: a machine credential
@@ -225,7 +284,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), interactive, r.deps.GetTrace.Handle)
 
-	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListConfigSyncConnections.Handle)
+	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), interactive,
+		r.deps.AdminAuthz.RequireConfigSyncScopeAccess(), r.deps.ListConfigSyncConnections.Handle)
 
 	return nil
 }

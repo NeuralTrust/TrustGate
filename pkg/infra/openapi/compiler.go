@@ -31,6 +31,7 @@ import (
 	"time"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -633,43 +634,46 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, parsed.Hostname())
 	if err != nil {
-		return fmt.Errorf("resolve host: %w", err)
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return errors.New("host not found")
+		}
+		return errors.New("could not resolve host")
 	}
 	if len(addresses) == 0 {
 		return errors.New("host has no addresses")
 	}
 	host := parsed.Hostname()
 	for _, address := range addresses {
-		if blockedDestination(host, address.IP) {
-			return fmt.Errorf("host resolves to a blocked address %s", address.IP)
+		if blockedDestination(host, address.IP, netguard.AllowPrivate()) {
+			return errors.New("host resolves to a blocked address")
 		}
 	}
 	return nil
 }
 
 // NewSafeHTTPClient returns an HTTP client that rejects loopback, link-local,
-// and reserved destinations. RFC1918 and CGNAT addresses are allowed when the
-// URL host is a DNS name (cluster-internal FQDNs) and blocked when it is a
-// literal IP.
+// and reserved destinations. Where OUTBOUND_ALLOW_PRIVATE_NETWORKS is on,
+// RFC1918 and CGNAT addresses are allowed when the URL host is a DNS name
+// (cluster-internal FQDNs) and blocked when it is a literal IP; otherwise every
+// non-public address is refused.
 func NewSafeHTTPClient(timeout time.Duration) *http.Client {
+	return newSafeHTTPClient(timeout, false)
+}
+
+// NewPublicHTTPClient restricts requests to public IP addresses, including DNS answers.
+func NewPublicHTTPClient(timeout time.Duration) *http.Client {
+	return newSafeHTTPClient(timeout, true)
+}
+
+func newSafeHTTPClient(timeout time.Duration, publicOnly bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if publicOnly {
+		transport.Proxy = nil
+	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, resolved := range ips {
-			if blockedDestination(host, resolved.IP) {
-				continue
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
-		}
-		return nil, fmt.Errorf("host %q resolves only to blocked addresses", host)
+		return resolveAndDial(ctx, network, address, publicOnly, netguard.AllowPrivate(), net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
 	return &http.Client{
 		Transport: transport,
@@ -686,9 +690,45 @@ func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-func blockedDestination(host string, ip net.IP) bool {
+func resolveAndDial(
+	ctx context.Context, network, address string, publicOnly, allowPrivate bool,
+	lookup func(context.Context, string) ([]net.IPAddr, error),
+	dial func(context.Context, string, string) (net.Conn, error),
+) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if publicOnly {
+		for _, resolved := range ips {
+			if !publicDestination(resolved.IP) {
+				return nil, fmt.Errorf("host %q resolves to a blocked address", host)
+			}
+		}
+	}
+	for _, resolved := range ips {
+		if blockedDestination(host, resolved.IP, allowPrivate) {
+			continue
+		}
+		return dial(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
+	}
+	return nil, fmt.Errorf("host %q resolves only to blocked addresses", host)
+}
+
+func publicDestination(ip net.IP) bool {
+	return netguard.IsPublicUnicast(ip)
+}
+
+func blockedDestination(host string, ip net.IP, allowPrivate bool) bool {
 	if ipAlwaysBlocked(ip) {
 		return true
+	}
+	if !allowPrivate {
+		return !netguard.IsPublicUnicast(ip)
 	}
 	if net.ParseIP(host) == nil {
 		return false
