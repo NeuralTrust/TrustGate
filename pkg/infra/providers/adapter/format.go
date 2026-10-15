@@ -143,6 +143,28 @@ func DetectFormat(body []byte) Format {
 	return FormatOpenAI
 }
 
+// ChatMessagesNotArray reports a JSON object whose messages field is present
+// and is not a JSON array. An absent field, a body that is not an object, and
+// an array (including an empty one) are not reported: those are other refusals,
+// or a shape the chat decoders accept.
+func ChatMessagesNotArray(body []byte) bool {
+	var probe struct {
+		Messages json.RawMessage `json:"messages"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return false
+	}
+	raw := probe.Messages
+	i := 0
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\n' || raw[i] == '\r' || raw[i] == '\t') {
+		i++
+	}
+	if i >= len(raw) {
+		return false
+	}
+	return raw[i] != '['
+}
+
 // SupportsCanonicalToolCalls reports whether a response in this wire format can
 // carry tool calls the gateway knows how to translate into the caller's format.
 func (f Format) SupportsCanonicalToolCalls() bool {

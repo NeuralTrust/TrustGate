@@ -862,18 +862,24 @@ func canonicalFinishToResponsesStatus(reason string) (status, incompleteReason s
 	}
 }
 
-// responsesWireID rewrites a Chat Completions id onto the Responses prefix.
-// Any other upstream id is kept: a Responses client of a translated stream
-// still sees the identity the upstream assigned when it is not a chatcmpl id.
+// responsesWireID rewrites an upstream completion id onto the Responses prefix.
+// A chatcmpl- id drops that prefix. Any other id is kept after resp_, and an
+// id that already starts with resp_ is unchanged. Foundry hosts Llama, Mistral
+// and DeepSeek, and those return a bare hex id. An empty id stays empty so
+// the caller can synthesize one.
 func responsesWireID(upstream string) string {
-	if rest, ok := strings.CutPrefix(upstream, "chatcmpl-"); ok && rest != "" {
-		return "resp_" + rest
+	if upstream == "" {
+		return ""
 	}
-	return upstream
+	upstream = strings.TrimPrefix(upstream, "chatcmpl-")
+	if strings.HasPrefix(upstream, "resp_") {
+		return upstream
+	}
+	return "resp_" + upstream
 }
 
 // responsesObjectID is the id of a translated Response. An empty upstream id
-// is synthesized; a chatcmpl- id is rewritten; a resp_ id is kept.
+// is synthesized. Every other id is rewritten so it starts with resp_.
 func responsesObjectID(upstream string) string {
 	id := responsesWireID(upstream)
 	if id == "" {

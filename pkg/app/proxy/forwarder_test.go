@@ -195,7 +195,69 @@ func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
 	assert.Equal(t, []string{"10000"}, res.Headers["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonQuota}, res.Headers["X-RateLimit-Reason"])
+	assert.JSONEq(t, `{"error":{"message":"TrustGate blocked this request: monthly request quota exceeded. Retry in 10s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`, string(res.Body))
 	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestForward_BurstRateLimitUsesIngressDialect(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID)
+	message := "TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 42s."
+	cases := []struct {
+		name    string
+		format  string
+		retry   time.Duration
+		want    string
+		retryAt string
+	}{
+		{
+			name:    "openai",
+			format:  "openai",
+			retry:   42 * time.Second,
+			want:    `{"error":{"message":"` + message + `","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+			retryAt: "42",
+		},
+		{
+			name:    "anthropic",
+			format:  "anthropic",
+			retry:   42 * time.Second,
+			want:    `{"type":"error","error":{"type":"rate_limit_error","message":"` + message + `"}}`,
+			retryAt: "42",
+		},
+		{
+			name:   "unknown reset omits Retry-After",
+			format: "openai",
+			want:   `{"error":{"message":"TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 1s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := ratelimitmocks.NewChecker(t)
+			limiter.EXPECT().Check(mock.Anything, gatewayID).Return(&ratelimitapp.Exceeded{
+				Reason:     ratelimitapp.ReasonBurst,
+				Limit:      60,
+				RetryAfter: tc.retry,
+			}).Once()
+			invoker := proxymocks.NewProviderInvoker(t)
+			fwd := newTestForwarderWithLimiter(t, invoker, limiter)
+			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request:   &infracontext.RequestContext{SourceFormat: tc.format, ProxyCapability: "chat"},
+			})
+			require.NoError(t, err)
+			require.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+			assert.JSONEq(t, tc.want, string(res.Body))
+			assert.NotContains(t, string(res.Body), `"reason"`)
+			if tc.retryAt == "" {
+				_, ok := res.Headers["Retry-After"]
+				assert.False(t, ok)
+			} else {
+				assert.Equal(t, []string{tc.retryAt}, res.Headers["Retry-After"])
+			}
+			invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestForward_RateLimitUnavailable_PropagatesError(t *testing.T) {
@@ -1204,6 +1266,69 @@ func TestForward_PrecheckedIsExplicit(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusTooManyRequests, res.StatusCode)
 	})
+}
+
+func TestPrecheck_RefusesANonArrayMessagesBeforeTheRateLimit(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	cases := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano","messages":"x"}`)}},
+		{name: "object", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"messages":{"role":"user"}}`)}},
+		{name: "anthropic string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "anthropic", Body: []byte(`{"model":"claude","messages":"x"}`)}},
+		{name: "cohere string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "cohere", Body: []byte(`{"messages":"x"}`)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), ratelimitmocks.NewChecker(t))
+			res, err := fwd.Precheck(context.Background(), gatewayID, tc.req)
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			assert.ErrorContains(t, err, "messages must be an array")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.Nil(t, res)
+		})
+	}
+
+	allowed := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "array", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano","messages":[{"role":"user","content":"hi"}]}`)}},
+		{name: "absent", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4.1-nano"}`)}},
+		{name: "responses input string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "openai_responses", Body: []byte(`{"model":"gpt-4.1-nano","input":"x"}`)}},
+		{name: "gemini ignores a stray messages string", req: &infracontext.RequestContext{ProxyCapability: "chat", SourceFormat: "google", Body: []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"messages":"x"}`)}},
+		{name: "embeddings", req: &infracontext.RequestContext{ProxyCapability: "embeddings", SourceFormat: "openai", Body: []byte(`{"input":"x","messages":"x"}`)}},
+	}
+	for _, tc := range allowed {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := ratelimitmocks.NewChecker(t)
+			limiter.EXPECT().Check(mock.Anything, gatewayID).Return(nil).Once()
+			fwd := newTestForwarderWithLimiter(t, proxymocks.NewProviderInvoker(t), limiter)
+			res, err := fwd.Precheck(context.Background(), gatewayID, tc.req)
+			require.NoError(t, err)
+			assert.Nil(t, res)
+		})
+	}
+}
+
+func TestForward_NonArrayMessagesNeverReachesTheUpstream(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	invoker := proxymocks.NewProviderInvoker(t)
+	fwd := newTestForwarderWithLimiter(t, invoker, ratelimitmocks.NewChecker(t))
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  routableConsumerWith(gatewayID),
+		Request: &infracontext.RequestContext{
+			ProxyCapability: "chat",
+			SourceFormat:    "openai",
+			Body:            []byte(`{"model":"gpt-4.1-nano","messages":"x"}`),
+		},
+	})
+	require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	assert.Nil(t, res)
+	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+	invoker.AssertNotCalled(t, "InvokeStream", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestPrecheck_RefusesAnAmbiguousBodyBeforeTheRateLimit(t *testing.T) {

@@ -703,20 +703,25 @@ func TestResponsesStreamEncoder_RewritesChatCompletionIdentity(t *testing.T) {
 	}
 }
 
-func TestResponsesStreamEncoder_KeepsNonChatCompletionIdentity(t *testing.T) {
+func TestResponsesStreamEncoder_PrefixesBareUpstreamID(t *testing.T) {
+	const upstream = "2853b97153014cb28bd036a249a5175b"
 	clock := time.Unix(1_800_000_000, 0)
 	enc := NewResponsesStreamEncoder(WithResponsesClock(func() time.Time { return clock }))
-	lines := enc.Content(&CanonicalStreamChunk{ID: "c", Role: "assistant", Delta: "OK"})
+	lines := enc.Content(&CanonicalStreamChunk{ID: upstream, Role: "assistant", Delta: "OK"})
+	lines = append(lines, enc.Finish(&CanonicalStreamChunk{ID: upstream, FinishReason: "stop"})...)
 
-	var created map[string]any
+	var created, completed string
 	for _, payload := range responsesEncoderPayloads(lines) {
 		var event map[string]any
 		require.NoError(t, json.Unmarshal([]byte(payload), &event))
-		if event["type"] == "response.created" {
-			created, _ = event["response"].(map[string]any)
+		response, _ := event["response"].(map[string]any)
+		switch event["type"] {
+		case "response.created":
+			created, _ = response["id"].(string)
+		case "response.completed":
+			completed, _ = response["id"].(string)
 		}
 	}
-	require.NotNil(t, created)
-	assert.Equal(t, "c", created["id"])
-	assert.Equal(t, float64(clock.Unix()), created["created_at"])
+	assert.Equal(t, "resp_"+upstream, created)
+	assert.Equal(t, created, completed)
 }
