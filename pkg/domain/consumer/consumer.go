@@ -54,6 +54,10 @@ const (
 	MaxRegistryWeight = 100
 )
 
+// MaxDescriptionLen is the longest consumer description, in characters, the
+// Admin API accepts.
+const MaxDescriptionLen = 500
+
 // RegistryBindings is a complete desired registry association set for a
 // consumer, with the weight to apply to each member.
 type RegistryBindings struct {
@@ -65,6 +69,7 @@ type Consumer struct {
 	ID              ids.ConsumerID         `json:"id"`
 	GatewayID       ids.GatewayID          `json:"gateway_id"`
 	Name            string                 `json:"name"`
+	Description     string                 `json:"description,omitempty"`
 	Type            Type                   `json:"type"`
 	Audience        Audience               `json:"audience,omitempty"`
 	Slug            string                 `json:"slug"`
@@ -124,6 +129,7 @@ func (c *Consumer) ActiveFallbackChain() []ids.RegistryID {
 type CreateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
+	Description     string
 	Type            Type
 	Audience        Audience
 	LBConfig        *LBConfig
@@ -163,6 +169,7 @@ func New(params CreateParams) (*Consumer, error) {
 		ID:              id,
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
+		Description:     params.Description,
 		Type:            params.Type,
 		Audience:        params.Audience,
 		Slug:            slug,
@@ -194,6 +201,7 @@ type RehydrateParams struct {
 	ID              ids.ConsumerID
 	GatewayID       ids.GatewayID
 	Name            string
+	Description     string
 	Type            Type
 	Audience        Audience
 	Slug            string
@@ -219,6 +227,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		ID:              params.ID,
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
+		Description:     params.Description,
 		Type:            params.Type,
 		Audience:        params.Audience.canonical(),
 		Slug:            params.Slug,

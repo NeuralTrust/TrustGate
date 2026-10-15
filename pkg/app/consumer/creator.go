@@ -32,6 +32,7 @@ import (
 type CreateInput struct {
 	GatewayID       ids.GatewayID
 	Name            string
+	Description     string
 	Type            domain.Type
 	Audience        domain.Audience
 	LBConfig        *domain.LBConfig
@@ -96,6 +97,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	cons, err := domain.New(domain.CreateParams{
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,
+		Description:     in.Description,
 		Type:            in.Type,
 		Audience:        in.Audience,
 		LBConfig:        in.LBConfig,

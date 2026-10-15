@@ -16,6 +16,7 @@ package request
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -154,5 +155,37 @@ func TestAuthBindingRequest_ToDomain(t *testing.T) {
 	}
 	if empty := (&AuthBindingRequest{}).ToDomain(); empty == nil || !empty.IsZero() {
 		t.Fatalf("an empty binding clears the lists, got %+v", empty)
+	}
+}
+
+func TestConsumerRequests_ValidateDescription(t *testing.T) {
+	t.Parallel()
+	atLimit := strings.Repeat("ñ", domain.MaxDescriptionLen)
+	overLimit := strings.Repeat("a", domain.MaxDescriptionLen+1)
+	cases := []struct {
+		name        string
+		description string
+		wantErr     bool
+	}{
+		{"empty", "", false},
+		{"short", "Billing team, fronts the invoicing assistant (SR-4211)", false},
+		{"multibyte at the limit counts characters, not bytes", atLimit, false},
+		{"over the limit", overLimit, true},
+		{"a NUL character Postgres cannot store", "billing\x00team", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			create := CreateConsumerRequest{Name: "c", Description: tc.description}.Validate()
+			update := UpdateConsumerRequest{Description: strPtr(tc.description)}.Validate()
+			for label, err := range map[string]error{"create": create, "update": update} {
+				if tc.wantErr && !errors.Is(err, commonerrors.ErrValidation) {
+					t.Fatalf("%s Validate() = %v, want ErrValidation", label, err)
+				}
+				if !tc.wantErr && err != nil {
+					t.Fatalf("%s Validate() = %v, want nil", label, err)
+				}
+			}
+		})
 	}
 }
