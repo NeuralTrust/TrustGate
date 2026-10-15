@@ -227,8 +227,9 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 	headers := apiKeyHeaders(key)
+	sendEmail := exposedToolName(registryID, "send_email")
 	attachPerToolMCPPolicy(t, gatewayID, consumerID, map[string]any{
-		"rules": []any{perToolRule("send_email", 1, "reject_response")},
+		"rules": []any{perToolRule(sendEmail, 1, "reject_response")},
 	})
 
 	statusList, bodyList := mcpRPC(t, gatewayID, consumerID, headers, "tools/list", map[string]any{})
@@ -236,12 +237,12 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 	require.Zero(t, atomic.LoadInt64(&calls), "tools/list must not invoke the upstream tool")
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "send_email", "arguments": map[string]any{}})
+		map[string]any{"name": sendEmail, "arguments": map[string]any{}})
 	_ = rpcResult(t, status, body)
 	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "first tools/call is under budget and reaches the upstream")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "send_email", "arguments": map[string]any{}})
+		map[string]any{"name": sendEmail, "arguments": map[string]any{}})
 	require.Equal(t, rpcCodeRateLimited, rpcErrorCode(t, status, body),
 		"an exhausted budget is throttling, not a permanent denial: it must be -32004 so the client knows to retry")
 	require.Equal(t, http.StatusOK, status, "over-budget tools/call must stay on HTTP 200 with JSON-RPC error (non-2xx drops MCP sessions): %v", body)
@@ -267,4 +268,109 @@ func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T)
 	status, rlHeaders, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, proposal)
 	require.Equal(t, http.StatusTooManyRequests, status, "glob-matched tool must use the default reject behavior once exhausted")
 	assert.Equal(t, "get_weather", rlHeaders.Get("X-RateLimit-Tool"))
+}
+
+func makePolicyGlobal(t *testing.T, gatewayID, policyID string) {
+	t.Helper()
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/policies/%s/global", AdminURL, gatewayID, policyID), nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	require.Equal(t, true, body["global"], "policy must be gateway-wide for this scenario")
+}
+
+// mcpToolCall is a tools/call carrying the LLM tool_call_id the agent is
+// executing, which is how a cross-protocol app tells the gateway that the
+// `role: tool` message coming later is the same execution (ENG-1579).
+func mcpToolCall(tool, toolCallID string) map[string]any {
+	params := map[string]any{"name": tool, "arguments": map[string]any{}}
+	if toolCallID != "" {
+		params["_meta"] = map[string]any{"ai.neuraltrust/toolCallId": toolCallID}
+	}
+	return params
+}
+
+// One app, both protocols, one global budget: the tool runs over MCP and its
+// result comes back in the next LLM request. That is one execution and it must
+// cost one unit, so a budget of 2 still has room for a second tool call.
+// Without the correlation the two observations spend the whole budget and the
+// second execution is refused.
+func TestPluginE2E_PerToolRateLimiter_GlobalCrossProtocolCountsOnce(t *testing.T) {
+	defer Track(t, "PluginPerToolRateLimiter")()
+
+	var calls int64
+	mcpUpstream := startMCPUpstream(t, func(s *sdk.Server) { addCountingFixedTool(s, "send_email", "sent", &calls) })
+	llmUpstream := newPerToolUpstream(t, "send_email")
+
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("xproto-gw")})
+	mcpRegistryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), mcpUpstream.URL))
+	llmRegistryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), llmUpstream.URL()))
+
+	mcpConsumerID, mcpKey := createMCPConsumer(t, gatewayID, []string{mcpRegistryID}, nil, "")
+	mcpHeaders := apiKeyHeaders(mcpKey)
+	llmConsumerID := CreateConsumerWithRegistries(t, gatewayID, uniqueName("llm-cons"), llmRegistryID)
+	llmKey := createAndAttachAPIKey(t, gatewayID, llmConsumerID)
+	llmPath := chatCompletionsPath(t, llmConsumerID)
+
+	sendEmail := exposedToolName(mcpRegistryID, "send_email")
+	policyID := CreatePolicy(t, gatewayID, map[string]any{
+		"name":     uniqueName("xproto-ptrl-pol"),
+		"slug":     "per_tool_rate_limiter",
+		"enabled":  true,
+		"priority": 0,
+		"settings": map[string]any{"rules": []any{perToolRule(sendEmail, 2, "reject_response")}},
+	})
+	makePolicyGlobal(t, gatewayID, policyID)
+
+	status, body := mcpRPC(t, gatewayID, mcpConsumerID, mcpHeaders, "tools/call", mcpToolCall(sendEmail, "call_1"))
+	_ = rpcResult(t, status, body)
+	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "the first tools/call is under budget and must reach the upstream")
+
+	llmStatus, _, raw := proxyRequest(t, http.MethodPost, llmKey, llmPath, nil,
+		mustJSON(t, chatRequestWithToolResult("call_1", sendEmail)))
+	require.Equal(t, http.StatusOK, llmStatus, "the conversation carrying the tool result must pass, body: %s", raw)
+
+	status, body = mcpRPC(t, gatewayID, mcpConsumerID, mcpHeaders, "tools/call", mcpToolCall(sendEmail, "call_2"))
+	_ = rpcResult(t, status, body)
+	require.Equal(t, int64(2), atomic.LoadInt64(&calls),
+		"the LLM observation of call_1 must not have spent a second unit: a budget of 2 still owes one execution")
+
+	status, body = mcpRPC(t, gatewayID, mcpConsumerID, mcpHeaders, "tools/call", mcpToolCall(sendEmail, "call_3"))
+	require.Equal(t, rpcCodeRateLimited, rpcErrorCode(t, status, body),
+		"two executions exhaust a budget of 2, so the third must be throttled")
+	require.Equal(t, int64(2), atomic.LoadInt64(&calls), "a throttled tools/call must not reach the upstream")
+}
+
+// A caller that repeats a tool_call_id is not buying free executions: the
+// tools/call is the observation that witnesses a real run, so it is always
+// charged and the budget still runs out.
+func TestPluginE2E_PerToolRateLimiter_RepeatedToolCallIDStillCharged(t *testing.T) {
+	defer Track(t, "PluginPerToolRateLimiter")()
+
+	var calls int64
+	upstream := startMCPUpstream(t, func(s *sdk.Server) { addCountingFixedTool(s, "send_email", "sent", &calls) })
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("replay-gw")})
+	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+	headers := apiKeyHeaders(key)
+	sendEmail := exposedToolName(registryID, "send_email")
+
+	policyID := CreatePolicy(t, gatewayID, map[string]any{
+		"name":     uniqueName("replay-ptrl-pol"),
+		"slug":     "per_tool_rate_limiter",
+		"enabled":  true,
+		"priority": 0,
+		"settings": map[string]any{"rules": []any{perToolRule(sendEmail, 2, "reject_response")}},
+	})
+	makePolicyGlobal(t, gatewayID, policyID)
+
+	for i := 0; i < 2; i++ {
+		status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call", mcpToolCall(sendEmail, "call_same"))
+		_ = rpcResult(t, status, body)
+	}
+	require.Equal(t, int64(2), atomic.LoadInt64(&calls), "both executions really ran")
+
+	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call", mcpToolCall(sendEmail, "call_same"))
+	require.Equal(t, rpcCodeRateLimited, rpcErrorCode(t, status, body),
+		"repeating a tool_call_id must not dodge the budget")
+	require.Equal(t, int64(2), atomic.LoadInt64(&calls), "the throttled call must not reach the upstream")
 }

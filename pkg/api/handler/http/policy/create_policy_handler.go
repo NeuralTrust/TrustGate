@@ -20,22 +20,25 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
 )
 
 type CreatePolicyHandler struct {
-	creator apppolicy.Creator
+	creator  apppolicy.Creator
+	warner   apppolicy.Warner
+	registry appplugins.Registry
 }
 
-func NewCreatePolicyHandler(creator apppolicy.Creator) *CreatePolicyHandler {
-	return &CreatePolicyHandler{creator: creator}
+func NewCreatePolicyHandler(creator apppolicy.Creator, warner apppolicy.Warner, registry appplugins.Registry) *CreatePolicyHandler {
+	return &CreatePolicyHandler{creator: creator, warner: warner, registry: registry}
 }
 
 // Handle godoc
 // @Summary      Create a policy
-// @Description  Creates a new policy in a gateway.
+// @Description  Creates a new policy in a gateway. An optional mcp_scope narrows it to MCP registries, tools and principals; the response echoes the stored scope and may carry non-blocking warnings. The policy starts attached to no consumer and not global, so it runs nowhere and holds no level until it is attached or promoted.
 // @Tags         policies
 // @Accept       json
 // @Produce      json
@@ -46,7 +49,7 @@ func NewCreatePolicyHandler(creator apppolicy.Creator) *CreatePolicyHandler {
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "A policy of this name already exists in the gateway"
 // @Router       /v1/gateways/{gateway_id}/policies [post]
 func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)
@@ -61,6 +64,10 @@ func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err := req.Validate(); err != nil {
 		return httpio.WriteError(c, err)
 	}
+	scope, err := req.ToMCPScope()
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 
 	p, err := h.creator.Create(c.UserContext(), apppolicy.CreateInput{
 		GatewayID:   gatewayID,
@@ -73,9 +80,10 @@ func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Settings:    req.Settings,
 		Stages:      req.ToStages(),
 		Mode:        req.ToMode(),
+		MCPScope:    scope,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteCreated(c, response.FromPolicy(p))
+	return httpio.WriteCreated(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p), h.registry))
 }

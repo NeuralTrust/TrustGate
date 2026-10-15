@@ -58,6 +58,13 @@ func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
 	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
 }
 
+// ScopeInertSafe reports true: the limit is measured on the request body and
+// resolves no tool or registry name, so it means the same thing on every
+// plane. With the group inert the ceiling applies to all of the consumer's
+// traffic rather than to that group's, which is a stricter bound, not a
+// widened one.
+func (p *Plugin) ScopeInertSafe() bool { return true }
+
 func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
@@ -77,6 +84,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	if cfg.RequireContentLength && contentLength(in.Request) == "" {
 		if blocks {
+			appplugins.SetDecision(in.Event, in.Mode)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusLengthRequired,
 				Message:    "Content-Length header is required",
@@ -104,6 +112,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			ExceededType:       "bytes",
 		})
 		if blocks {
+			appplugins.SetDecision(in.Event, in.Mode)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusRequestEntityTooLarge,
 				Message:    fmt.Sprintf("request size limit exceeded: received %d bytes", byteSize),
@@ -123,6 +132,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			ExceededType:       "chars",
 		})
 		if blocks {
+			appplugins.SetDecision(in.Event, in.Mode)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusRequestEntityTooLarge,
 				Message:    fmt.Sprintf("character limit exceeded: received %d characters", charCount),

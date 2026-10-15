@@ -15,6 +15,7 @@
 package request
 
 import (
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
@@ -26,6 +27,7 @@ type ListPolicyRequest struct {
 	Mode       domain.Mode
 	Categories []string
 	Types      []string
+	RegistryID *ids.RegistryID
 	Page       listing.Page
 	Sort       listing.Sort
 }

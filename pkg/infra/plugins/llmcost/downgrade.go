@@ -56,7 +56,10 @@ func modelAllowed(model string, allowed []string) bool {
 // ApplyDowngrade rewrites the request body to target when the downgrade is
 // valid, returning the new model, the rewritten body, and the downgrade header.
 func ApplyDowngrade(req *infracontext.RequestContext, orig, target string) (string, []byte, map[string][]string, bool) {
-	if req == nil {
+	if req == nil || req.IsBedrockNative() {
+		// The model of a native Bedrock call is in its path, which a rewritten body
+		// cannot change: forwarding the original would charge the downgraded price
+		// for the expensive model. The caller refuses instead.
 		return "", nil, nil, false
 	}
 	newModel, ok := ResolveDowngrade(req.Provider, target, req.AllowedModels)

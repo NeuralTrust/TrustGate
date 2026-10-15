@@ -55,7 +55,10 @@ func TestOpenAIAdapter_DecodeStreamChunk_ResponseCreatedThenCompleted(t *testing
 		sc, err := a.DecodeStreamChunk([]byte(payload))
 		require.NoError(t, err)
 		if strings.Contains(payload, `"type":"response.created"`) {
-			assert.Nil(t, sc, "created event has no canonical chunk mapping")
+			require.NotNil(t, sc)
+			assert.Equal(t, "r1", sc.ID)
+			assert.Empty(t, sc.FinishReason)
+			assert.False(t, sc.StreamEnd)
 			continue
 		}
 		require.NotNil(t, sc, "completed event")

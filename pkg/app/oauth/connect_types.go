@@ -17,8 +17,10 @@ package oauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -27,52 +29,227 @@ var (
 	ErrTicketNotFound     = errors.New("oauth connect: ticket expired or unknown")
 	ErrProviderNotFound   = errors.New("oauth connect: provider not configured for this consumer")
 	ErrNoRegisteredClient = errors.New("oauth connect: no dynamically registered client for this upstream")
+	// ErrConnectFinishNotFound is answered for a finish token that was already
+	// used, has expired, or never existed.
+	ErrConnectFinishNotFound = errors.New("oauth connect: sign-in link already used or expired")
+	// ErrSharedAccountNotYours: the instance holds one account for every caller,
+	// so no caller owns it. Connecting it is refused at the runtime funnel for
+	// the same reason; this is the other half, revoking.
+	ErrSharedAccountNotYours = fmt.Errorf(
+		"oauth connect: this server uses one shared account; an administrator disconnects it on the instance: %w",
+		commonerrors.ErrConflict,
+	)
 )
 
+// ConnectFinishPath is where the provider callback sends the browser back to,
+// on the host the connection was started from: the cookie that host set when
+// the flow started is what lets it finish there.
+const ConnectFinishPath = "/oauth/connect/finish"
+
+// ConnectStateTTL is how long a started authorization waits for its callback.
+const ConnectStateTTL = 10 * time.Minute
+
+// ConnectFinishTTL is how long the browser has to follow the callback's
+// redirect to ConnectFinishPath, which it does at once.
+const ConnectFinishTTL = 2 * time.Minute
+
 type ConnectTicket struct {
-	GatewayID    string    `json:"gateway_id"`
-	PrincipalSub string    `json:"principal_sub"`
+	GatewayID    string `json:"gateway_id"`
+	PrincipalSub string `json:"principal_sub"`
+	// PrincipalEmail is the email of the person PrincipalSub names, taken when
+	// they minted the ticket themselves, so the page shows who an account is
+	// linked to as they know themselves rather than as a user id. Empty when
+	// the minter was not that person or had no email.
+	PrincipalEmail string `json:"principal_email,omitempty"`
+	// ClientName is the app the person minted the ticket from (the name its
+	// OAuth client registered with), so the page can say where to go back.
+	// Empty when the minter is not that person or no app is known.
+	ClientName   string    `json:"client_name,omitempty"`
 	ConsumerPath string    `json:"consumer_path"`
 	ResumeURL    string    `json:"resume_url,omitempty"`
 	ConsumerID   string    `json:"consumer_id,omitempty"`
 	AuthID       string    `json:"auth_id,omitempty"`
 	Providers    *[]string `json:"providers,omitempty"`
+	// Provider pins a ticket to the one provider it may act on: connect it,
+	// revoke it, see it on the page. It is what a link minted for one server
+	// carries. Providers cannot serve that purpose - a non-nil Providers is what
+	// marks a ticket as an application's (see appConnectTicket), and an end
+	// user's link is not one.
+	Provider string `json:"provider,omitempty"`
+	// Code scopes a configure ticket to one catalog server whose per-user URL
+	// variables the hosted form collects. Empty for OAuth/api-key connect tickets.
+	Code string `json:"code,omitempty"`
+	// InstanceID pins a Store-scoped ticket to one exact instance of Code, so it
+	// targets that instance rather than "whichever row has this code" when there
+	// are several. What it names depends on the ticket: a configure ticket's is
+	// the installation row the form writes to; a connect ticket's is the
+	// configured instance (registry) whose account is connected. Empty when
+	// nothing pins it.
+	InstanceID string `json:"instance_id,omitempty"`
+	// Groups snapshots the principal's IdP groups at mint time so a form-driven
+	// install (configure before install) applies the same group gate the install
+	// tool applied — the browser submitting the form carries no token.
+	Groups []string `json:"groups,omitempty"`
+	// Reason carries the requester's words from the install that minted this
+	// ticket, for the same reason Groups does: submitting the form is what files
+	// the request, and the form has no way to ask. A request without one is
+	// refused (appstore.ErrReasonRequired), so it has to travel.
+	Reason string `json:"reason,omitempty"`
+	// AskReason marks a ticket whose form must collect the reason itself: the
+	// install was refused for want of one, and the requester is the only
+	// acceptable author. An agent asked for a reason invents one from the task it
+	// was given, so the meta tool does not accept one at all and hands the user
+	// this form instead.
+	AskReason bool `json:"ask_reason,omitempty"`
 }
 
 type ConnectState struct {
 	Ticket   ConnectTicket `json:"ticket"`
 	TicketID string        `json:"ticket_id"`
 	Provider string        `json:"provider"`
-	Verifier string        `json:"verifier,omitempty"`
+	// Instance is the registry the authorization was started for, so the
+	// callback stores the credential for that instance instead of re-deriving it
+	// from the provider — which cannot tell two instances of one provider apart.
+	Instance string `json:"instance,omitempty"`
+	Verifier string `json:"verifier,omitempty"`
+	// StartOrigin is the origin the connection was started from, where the
+	// callback sends the browser to finish it.
+	StartOrigin string `json:"start_origin,omitempty"`
 }
 
+// ConnectStart is a started authorization: Location is the provider's
+// authorize URL, State the value the provider returns with the callback.
+type ConnectStart struct {
+	Location string
+	State    string
+}
+
+// ConnectFinish is a provider callback waiting for the browser that started
+// the flow to finish it on its start origin.
+type ConnectFinish struct {
+	Provider string `json:"provider"`
+	State    string `json:"state"`
+	Code     string `json:"code,omitempty"`
+	ErrCode  string `json:"error,omitempty"`
+	ErrDesc  string `json:"error_description,omitempty"`
+}
+
+// ConnectPrincipal names whose account a connect links, in the terms the
+// confirmation shows it.
+type ConnectPrincipal struct {
+	// Subject is the principal the credential is stored under.
+	Subject string `json:"subject"`
+	// Application is the consumer's name when Subject is that application or
+	// one of the end users it names.
+	Application string `json:"application,omitempty"`
+	// EndUser is the end-user id the application named, when Subject is one.
+	EndUser string `json:"end_user,omitempty"`
+	// Email is the person's email when Subject is a person who minted the
+	// ticket themselves.
+	Email string `json:"email,omitempty"`
+}
+
+// ConnectStore keeps the connect flow's short-lived records.
 type ConnectStore interface {
 	SaveTicket(ctx context.Context, id string, t ConnectTicket) error
 	GetTicket(ctx context.Context, id string) (*ConnectTicket, error)
 	SaveConnect(ctx context.Context, state string, s ConnectState) error
 	TakeConnect(ctx context.Context, state string) (*ConnectState, error)
+	// PeekConnect reads a started authorization without using it up.
+	PeekConnect(ctx context.Context, state string) (*ConnectState, error)
+	SaveFinish(ctx context.Context, token string, f ConnectFinish) error
+	// TakeFinish reads and removes a pending finish atomically, so it is used
+	// once.
+	TakeFinish(ctx context.Context, token string) (*ConnectFinish, error)
 }
 
 type ProviderStatus struct {
-	Provider       string
-	Registry       string
-	Code           string
-	Linked         bool
-	AccountRef     string
+	Provider string
+	Registry string
+	// Instance is the registry id this row is for. Two instances of one catalog
+	// code appear as two rows with the same Provider, and it is what a connect
+	// or revoke action names to act on this one.
+	Instance   string
+	Code       string
+	Linked     bool
+	AccountRef string
+	// Scopes are the scopes the upstream actually granted, as recorded on the
+	// stored credential. Empty when nothing is linked, or when the provider's
+	// token response omitted "scope" — it is never the catalog's declaration.
+	Scopes         []string
 	ExpiresAt      time.Time
 	NeedsReconnect bool
+	// Shared marks a row whose account the instance holds for every caller. It
+	// is reported like any other — connected or not, it is the account this
+	// server will call with — but nobody reading it can connect or revoke it.
+	Shared bool
 }
 
 type ConnectPage struct {
 	ConsumerPath string
 	Providers    []ProviderStatus
 	ResumeURL    string
+	// Code, when set, scopes the page to a single catalog server (the ticket was
+	// minted for one server, e.g. from a Store install) so the connect page shows
+	// just that server rather than every provider.
+	Code string
+	// Instance, when set, is the exact registry the ticket was minted for, so a
+	// single-server page of a code with several instances shows that one instead
+	// of whichever came first.
+	Instance string
+	// Principal is who the accounts connected from this page are linked to.
+	Principal ConnectPrincipal
+	// ClientName is the app the link came from, empty when unknown.
+	ClientName string
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
 type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
-	CreateAPIKeyTicket(
+	// CreateProviderTicket mints a connect ticket that can act on one provider
+	// and no other — the authority a link handed to an end user to connect one
+	// server should carry.
+	CreateProviderTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, provider string,
+	) (string, error)
+	// CreateInstanceTicket mints a ticket for one provider on one instance: it
+	// can act on that provider and no other, like CreateProviderTicket, and the
+	// page opens on that instance's own card. It is what a link handed to an end
+	// user should carry when the application named the instance, because two
+	// instances of one provider are two servers with two accounts.
+	CreateInstanceTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, provider, code, instanceID string,
+	) (string, error)
+	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
+	// the connect page opens focused on that server (e.g. from a Store install).
+	// instanceID optionally pins the ticket to one configured instance
+	// (registry id) of the code; empty when the code alone names the server.
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
+	// CreateResumableServerTicket is CreateServerTicket for a page the user
+	// opened from somewhere they should go back to: once the account is
+	// connected, the page returns them to resumeURL. It must be an absolute
+	// https URL (http only on loopback, for local development); empty means
+	// nowhere, as CreateServerTicket.
+	CreateResumableServerTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, code, instanceID, resumeURL string,
+	) (string, error)
+	// CreateAppTicket mints a connect ticket for an application's own upstream
+	// accounts, pinned to that consumer and to the providers bound to it at mint
+	// time. authID is the api key the ticket was minted from, so revoking that
+	// key kills it; pass a nil id for a ticket an admin minted, whose authority
+	// was the admin API and which stands on the consumer alone.
+	//
+	// code is the catalog code of the one server the ticket is focused on, which
+	// opens the connect page on that server's own card instead of the picker —
+	// what an admin authorizing a single row asked for. Empty covers every
+	// forwarded server of the application, and the picker is then the point.
+	CreateAppTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
 		principalSub,
@@ -80,12 +257,23 @@ type ConnectService interface {
 		consumerID ids.ConsumerID,
 		authID ids.AuthID,
 		providers []string,
+		code string,
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
-	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
+	// Start begins an upstream authorization. baseURL is the origin of the
+	// provider's redirect_uri; startOrigin is the origin the browser started
+	// from, which the callback sends it back to (see ConnectHandoff).
+	Start(ctx context.Context, baseURL, startOrigin, ticketID, provider, instanceID string) (*ConnectStart, error)
+	// Callback completes an authorization: it uses up the state, redeems the
+	// code and stores the credential under the ticket's principal.
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
-	Disconnect(ctx context.Context, ticketID, provider string) error
+	Disconnect(ctx context.Context, ticketID, provider, instanceID string) error
 	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
+	// CredentialUsable reports whether a credential stored for this registry can
+	// still be redeemed: for a dynamically registered client, that registration
+	// has to still exist. It is what keeps a reader of the vault from calling an
+	// account connected while every tool call on it asks the user to connect.
+	CredentialUsable(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (bool, error)
 	ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error)
 }

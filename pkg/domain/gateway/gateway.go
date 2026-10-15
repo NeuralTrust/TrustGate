@@ -18,12 +18,14 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
 const MetadataTenantIDKey = "tenant_id"
@@ -43,6 +45,7 @@ type Gateway struct {
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
 	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
 	Entitlements    Entitlements         `json:"entitlements"`
+	TrafficLabeling *trafficlabel.Config `json:"traffic_labeling,omitempty"`
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
 }
@@ -52,6 +55,59 @@ func (g *Gateway) TenantID() string {
 		return ""
 	}
 	return g.Metadata[MetadataTenantIDKey]
+}
+
+// MetadataStoreModeKey holds the MCP Store curation mode for the gateway.
+const MetadataStoreModeKey = "store_mode"
+
+// Store curation modes. These are the three access scopes an admin sets for the
+// gateway's MCP Store (surfaced in the Access → Users "default access" control):
+// All, Selected and None.
+const (
+	// StoreModeOpen ("All"): the whole catalog is browsable; servers not on the
+	// shelf can be requested.
+	StoreModeOpen = "open"
+	// StoreModeCurated ("Selected"): only shelf (store.available) servers are
+	// shown. This is the default: a gateway nobody has governed yet holds
+	// everyone to what an admin has granted them, rather than opening the whole
+	// catalog to an org that has not decided anything.
+	StoreModeCurated = "curated"
+	// StoreModeNone ("None"): the Store offers nothing — nothing new is browsable
+	// and self-service install is disabled. Per-group/per-user grants on a registry
+	// are a separate, additive layer and are unaffected.
+	StoreModeNone = "none"
+)
+
+// StoreMode returns the gateway's Store curation mode as stamped by its admin,
+// defaulting to curated. Governance is available on every plan, and the default
+// is the governed one: a fresh gateway grants nobody anything until an admin
+// says so, which is the only default that cannot leak. An admin widens it to
+// open (or narrows it to none) per principal from Access.
+func (g *Gateway) StoreMode() string {
+	if g == nil || g.Metadata == nil {
+		return StoreModeCurated
+	}
+	switch g.Metadata[MetadataStoreModeKey] {
+	case StoreModeOpen:
+		return StoreModeOpen
+	case StoreModeNone:
+		return StoreModeNone
+	default:
+		return StoreModeCurated
+	}
+}
+
+// WithStoreMode stamps the Store curation mode into gateway metadata. An
+// unrecognised mode falls back to open.
+func WithStoreMode(metadata map[string]string, mode string) map[string]string {
+	if mode != StoreModeCurated && mode != StoreModeNone {
+		mode = StoreModeOpen
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataStoreModeKey] = mode
+	return metadata
 }
 
 // RetentionWindow is the stamped trace-retention window for this gateway, and
@@ -72,6 +128,13 @@ func (g *Gateway) ServedByHybridDataPlane() bool {
 		return false
 	}
 	return g.Entitlements.IsHybridDataPlane()
+}
+
+// AllowsPersonal reports whether the gateway can hold personal consumers and
+// personal keys. A hybrid gateway cannot: its data plane predates them and
+// would serve a personal consumer at its slug.
+func (g *Gateway) AllowsPersonal() bool {
+	return !g.ServedByHybridDataPlane()
 }
 
 func isReservedMetadataKey(key string) bool {
@@ -214,7 +277,7 @@ func (g *Gateway) Validate() error {
 	}
 	g.Domain = domain
 
-	return nil
+	return g.TrafficLabeling.Validate()
 }
 
 func NormalizeDomain(domain string) (string, error) {
@@ -238,6 +301,27 @@ func NormalizeDomain(domain string) (string, error) {
 		}
 	}
 	return d, nil
+}
+
+// CheckDomainNotReserved refuses a domain equal to, or under, any of the
+// reserved suffixes. Hosts there are matched to gateways by their slug, so a
+// gateway claiming one as its domain would take that host from the gateway the
+// platform routes it to. An empty domain is always allowed.
+func CheckDomainNotReserved(domain string, reserved []string) error {
+	d, err := NormalizeDomain(domain)
+	if err != nil || d == "" {
+		return err
+	}
+	if net.ParseIP(d) != nil || !strings.Contains(d, ".") {
+		return fmt.Errorf("%w: %q must be a fully qualified hostname, not an address or a single label", ErrReservedDomain, d)
+	}
+	for _, suffix := range append([]string{"localhost", "cluster.local", "svc"}, reserved...) {
+		s := strings.ToLower(strings.Trim(strings.TrimSpace(suffix), "."))
+		if s != "" && (d == s || strings.HasSuffix(d, "."+s)) {
+			return fmt.Errorf("%w: %q is under %q, which the platform serves gateways on; use a domain you own", ErrReservedDomain, d, s)
+		}
+	}
+	return nil
 }
 
 func NormalizeSlug(slug string) string {

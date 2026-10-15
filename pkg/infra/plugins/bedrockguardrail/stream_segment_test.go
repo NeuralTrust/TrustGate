@@ -1,0 +1,667 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package bedrockguardrail
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+)
+
+type scriptedGuardrail struct {
+	mu      sync.Mutex
+	calls   int
+	inputs  []string
+	sources []types.GuardrailContentSource
+	apply   func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error)
+}
+
+func (s *scriptedGuardrail) ApplyGuardrail(
+	_ context.Context,
+	in *bedrockruntime.ApplyGuardrailInput,
+	_ ...func(*bedrockruntime.Options),
+) (*bedrockruntime.ApplyGuardrailOutput, error) {
+	s.mu.Lock()
+	s.calls++
+	s.sources = append(s.sources, in.Source)
+	for _, c := range in.Content {
+		if text, ok := c.(*types.GuardrailContentBlockMemberText); ok {
+			s.inputs = append(s.inputs, aws.ToString(text.Value.Text))
+		}
+	}
+	s.mu.Unlock()
+	return s.apply(in)
+}
+
+func streamPlugin(t *testing.T, g *scriptedGuardrail) *Plugin {
+	t.Helper()
+	p := New(adapter.NewRegistry(), nil)
+	p.guardrails = &cachedGuardrailClient{cache: &clientCache{
+		build: func(context.Context, awsCredentials) (guardrailClient, error) { return g, nil },
+	}}
+	return p
+}
+
+func allowing() *scriptedGuardrail {
+	return &scriptedGuardrail{apply: func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+		return &bedrockruntime.ApplyGuardrailOutput{Action: types.GuardrailActionNone}, nil
+	}}
+}
+
+func intervening(out *bedrockruntime.ApplyGuardrailOutput) *scriptedGuardrail {
+	return &scriptedGuardrail{apply: func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+		return out, nil
+	}}
+}
+
+func blockingOutput() *bedrockruntime.ApplyGuardrailOutput {
+	return &bedrockruntime.ApplyGuardrailOutput{
+		Action: types.GuardrailActionGuardrailIntervened,
+		Assessments: []types.GuardrailAssessment{{
+			ContentPolicy: &types.GuardrailContentPolicyAssessment{
+				Filters: []types.GuardrailContentFilter{{
+					Type:   types.GuardrailContentFilterTypeHate,
+					Action: types.GuardrailContentPolicyActionBlocked,
+				}},
+			},
+		}},
+	}
+}
+
+func anonymisingOutput(masked string) *bedrockruntime.ApplyGuardrailOutput {
+	out := &bedrockruntime.ApplyGuardrailOutput{
+		Action: types.GuardrailActionGuardrailIntervened,
+		Assessments: []types.GuardrailAssessment{{
+			SensitiveInformationPolicy: &types.GuardrailSensitiveInformationPolicyAssessment{
+				PiiEntities: []types.GuardrailPiiEntityFilter{{
+					Type:   types.GuardrailPiiEntityTypeEmail,
+					Action: types.GuardrailSensitiveInformationPolicyActionAnonymized,
+				}},
+			},
+		}},
+	}
+	if masked != "" {
+		out.Outputs = []types.GuardrailOutputContent{{Text: aws.String(masked)}}
+	}
+	return out
+}
+
+func streamSettings(over map[string]any) map[string]any {
+	stream := map[string]any{}
+	for k, v := range over {
+		stream[k] = v
+	}
+	return map[string]any{
+		"guardrail_id": "gr1abc",
+		"pii_action":   piiActionAnonymize,
+		"credentials": map[string]any{
+			"access_key_id":     "AKIAEXAMPLE",
+			"secret_access_key": "secret",
+		},
+		"streaming": stream,
+	}
+}
+
+func bufferedSettings() map[string]any {
+	s := streamSettings(nil)
+	delete(s, "streaming")
+	return s
+}
+
+func segment(seq int, accumulated string) appplugins.StreamSegment {
+	return appplugins.StreamSegment{StreamID: "s-1", Seq: seq, Accumulated: accumulated}
+}
+
+func streamInput(mode policy.Mode, set map[string]any, event *metrics.EventContext) appplugins.ExecInput {
+	in := execInput(policy.StagePreResponse, mode, set, nil, nil)
+	in.Event = event
+	return in
+}
+
+func newEvent() (*metrics.EventContext, *trace.Span) {
+	tr := trace.New("", trace.Metadata{})
+	span := tr.StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
+}
+
+func TestStreamSettingsParticipation(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	cases := []struct {
+		name     string
+		settings map[string]any
+		want     bool
+	}{
+		{"absent block", bufferedSettings(), true},
+		{"empty block", streamSettings(nil), true},
+		{"stored enabled: true", streamSettings(map[string]any{"enabled": true}), true},
+		{"stored enabled: false is ignored", streamSettings(map[string]any{"enabled": false}), true},
+		{
+			"settings that do not parse",
+			map[string]any{"streaming": map[string]any{"enabled": true}},
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, _ := p.StreamSettings(tc.settings)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestStreamSettingsDefaultsToFailOpen(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+
+	for name, set := range map[string]map[string]any{
+		"no streaming block":    bufferedSettings(),
+		"empty streaming block": streamSettings(nil),
+	} {
+		on, opts := p.StreamSettings(set)
+		require.True(t, on, name)
+		assert.Equal(t, "fail_open", opts.OnError,
+			"%s: a guardrail outage must not cut a stream the client is already reading", name)
+	}
+}
+
+func TestStreamSettingsIgnoreAStoredFailClosed(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	on, opts := p.StreamSettings(streamSettings(map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}))
+
+	require.True(t, on)
+	assert.Equal(t, "fail_open", opts.OnError)
+}
+
+func TestStreamSettingsDefaultsFitTheProviderLimit(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	_, opts := p.StreamSettings(streamSettings(nil))
+
+	// 25 text units of 1000 characters is the smallest ApplyGuardrail input
+	// quota in any region; bytes are never fewer than characters.
+	assert.LessOrEqual(t, opts.MaxAccumulatedBytes, 25*1000)
+}
+
+func TestStreamSettingsDefaultWindowFitsTheSmallestQuota(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+
+	_, opts := p.StreamSettings(streamSettings(nil))
+	assert.LessOrEqual(t, opts.MaxAccumulatedBytes, 25*1000,
+		"25 text units of 1,000 characters is the default per-request quota in eu-west-3")
+
+	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 524288}))
+	assert.Equal(t, maxStreamWindowBytes, opts.MaxAccumulatedBytes, "a larger window is capped so every evaluation fits the smallest quota")
+
+	_, opts = p.StreamSettings(streamSettings(map[string]any{"max_accumulated_bytes": 4096}))
+	assert.Equal(t, 4096, opts.MaxAccumulatedBytes, "a smaller window is honoured")
+}
+
+func TestInspectSegmentAllowsCleanText(t *testing.T) {
+	t.Parallel()
+	g := allowing()
+	p := streamPlugin(t, g)
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(1, "a clean paragraph"))
+
+	require.NoError(t, err)
+	assert.False(t, got.Block)
+	assert.False(t, got.HasTransform)
+	assert.Equal(t, 1, g.calls)
+}
+
+// The guardrail decides over a whole turn, so a block inspected on its own
+// loses what made it a violation.
+func TestInspectSegmentSendsTheAccumulatedPrefix(t *testing.T) {
+	t.Parallel()
+	g := allowing()
+	p := streamPlugin(t, g)
+
+	seg := appplugins.StreamSegment{
+		StreamID: "s-1", Seq: 2,
+		Text:        "only this delta",
+		Accumulated: "everything produced so far",
+	}
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), seg)
+
+	require.NoError(t, err)
+	require.Len(t, g.inputs, 1)
+	assert.Equal(t, "everything produced so far", g.inputs[0])
+}
+
+// Bedrock applies a different half of the guardrail configuration to each side,
+// so a response evaluated as INPUT is checked against the wrong policies and
+// says nothing about it.
+func TestInspectSegmentMarksTheTextAsOutput(t *testing.T) {
+	t.Parallel()
+	g := allowing()
+	p := streamPlugin(t, g)
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(1, "assistant text"))
+
+	require.NoError(t, err)
+	require.Len(t, g.sources, 1)
+	assert.Equal(t, types.GuardrailContentSourceOutput, g.sources[0])
+}
+
+func TestInspectSegmentBlocks(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(blockingOutput()))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(3, "hateful output"))
+
+	require.NoError(t, err)
+	assert.True(t, got.Block)
+	assert.Equal(t, typeGuardrailBlocked, got.Type)
+	assert.Equal(t, appplugins.DefaultBlockMessage, got.Message)
+	assert.False(t, got.HasTransform)
+}
+
+// Transformed replaces the whole of seg.Accumulated, and ApplyGuardrail returns
+// the masked form of exactly the text it was handed, so the two line up without
+// splicing per-block fragments.
+func TestInspectSegmentAnonymisesAsATransform(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(anonymisingOutput("write to {EMAIL} for details")))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil),
+		segment(2, "write to a@b.com for details"))
+
+	require.NoError(t, err)
+	assert.False(t, got.Block, "a maskable finding must not end the stream")
+	assert.True(t, got.HasTransform)
+	assert.Equal(t, "write to {EMAIL} for details", got.Transformed)
+}
+
+// Releasing the unmasked text is the one outcome the policy ruled out, and the
+// buffered leg blocks for the same reason: a mode that blocks cuts the stream,
+// carrying the failure so the span records blocked and degraded.
+func TestInspectSegmentCutsWhenAnonymisationProducedNothing(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(anonymisingOutput("")))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil),
+		segment(2, "write to a@b.com for details"))
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.False(t, got.HasTransform, "there is nothing to transform with")
+	assert.Equal(t, anonymizeDegradedMessage, got.Message)
+	assert.Equal(t, typeGuardrailBlocked, got.Type)
+	require.NotNil(t, got.Failure)
+	assert.Equal(t, reasonAnonymizeNoOutput, got.Failure.Detail)
+	assert.Equal(t, appplugins.FailureClassInput, got.Failure.Class)
+}
+
+// Observe never blocks: the finding is still reported and the failure is kept
+// without counting as a failed call.
+func TestInspectSegmentObserveReportsTheFindingWhenAnonymisationProducedNothing(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(anonymisingOutput("")))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(nil), nil),
+		segment(2, "write to a@b.com for details"))
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, got.Block)
+	assert.False(t, got.HasTransform)
+	assert.NotEmpty(t, got.Fingerprints)
+	require.NotNil(t, got.Incomplete)
+}
+
+// A cut that is a mask over a confirmed finding stays blocked, flagged degraded.
+func TestClosingSegmentFlagsAnUnappliedMaskCutAsBlockedAndDegraded(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, allowing())
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 2, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureVerdictIncomplete, FailureDetail: reasonAnonymizeNoOutput,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	require.NoError(t, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, decisionBlocked, data.Decision)
+	assert.True(t, data.Degraded)
+	assert.Equal(t, reasonAnonymizeNoOutput, data.DegradedReason)
+	assert.Equal(t, "input", data.FailureClass)
+}
+
+// A cut that is an input failure with no finding behind it records failed_closed.
+func TestClosingSegmentRecordsAnInputCutAsFailedClosed(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, allowing())
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 2, GuardCalls: 1, CutAtEval: 2, CutOnFailure: true,
+			FailureReason: appplugins.FailureInputTooLarge, FailureDetail: appplugins.DetailProviderRejectedInput,
+			FailureClass: appplugins.FailureClassInput,
+		}})
+
+	require.NoError(t, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	assert.Equal(t, appplugins.DecisionFailedClosed, data.Decision)
+	assert.False(t, data.Degraded)
+	assert.Equal(t, "input_too_large", data.FailureReason)
+	assert.Equal(t, "input", data.FailureClass)
+}
+
+func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("bedrock is down")
+	p := streamPlugin(t, &scriptedGuardrail{
+		apply: func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+			return nil, boom
+		},
+	})
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+
+	require.Error(t, err)
+	assert.Nil(t, got, "a failure must not be reported as a clean allow")
+	assert.ErrorIs(t, err, boom)
+	assert.Contains(t, err.Error(), "block 5")
+}
+
+// An intervention none of the read policy families can explain is not a clean
+// pass on the stream either: a mode that blocks cuts, carrying the failure, and
+// observe releases the block with the typed error.
+func TestInspectSegmentUnparsedInterventionByMode(t *testing.T) {
+	t.Parallel()
+	unparsed := func() *scriptedGuardrail {
+		return intervening(&bedrockruntime.ApplyGuardrailOutput{
+			Action:      types.GuardrailActionGuardrailIntervened,
+			Assessments: []types.GuardrailAssessment{{AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{}}},
+		})
+	}
+
+	got, err := streamPlugin(t, unparsed()).InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, got.Type)
+	require.NotNil(t, got.Failure)
+	assert.Equal(t, appplugins.FailureVerdictIncomplete, got.Failure.Reason)
+	assert.Equal(t, appplugins.DetailInterventionUnparsed, got.Failure.Detail)
+	assert.Contains(t, got.Failure.Error(), "automated_reasoning_policy")
+
+	got, err = streamPlugin(t, unparsed()).InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(nil), nil), segment(5, "some text"))
+	require.Error(t, err)
+	assert.Nil(t, got, "observe never cuts")
+	var failure *appplugins.ExternalStreamFailure
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, appplugins.DetailInterventionUnparsed, failure.Detail)
+}
+
+// A block AWS rejects with a ValidationException naming the content is the
+// content's: it cuts in a mode that blocks instead of releasing text no one
+// read. Any other client error is the policy's configuration and, like
+// credentials, throttling and 5xx, is availability and releases the block.
+func TestInspectSegmentProviderErrorByClass(t *testing.T) {
+	t.Parallel()
+	for _, tc := range awsApplyGuardrailErrors {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			awsErr := applyGuardrailAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Amzn-Errortype", tc.errType+":http://internal.amazon.com/coral/com.amazon.bedrock/")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+			})
+			newPlugin := func() *Plugin {
+				return streamPlugin(t, &scriptedGuardrail{apply: func(*bedrockruntime.ApplyGuardrailInput) (*bedrockruntime.ApplyGuardrailOutput, error) {
+					return nil, awsErr
+				}})
+			}
+			input := tc.reason == appplugins.FailureInputTooLarge
+
+			got, err := newPlugin().InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+			if input {
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.True(t, got.Block)
+				require.NotNil(t, got.Failure)
+				assert.Equal(t, appplugins.FailureInputTooLarge, got.Failure.Reason)
+			} else {
+				require.Error(t, err, "an availability failure releases the block")
+				assert.Nil(t, got)
+			}
+
+			got, err = newPlugin().InspectSegment(context.Background(),
+				streamInput(policy.ModeObserve, streamSettings(nil), nil), segment(5, "some text"))
+			require.Error(t, err, "observe never cuts")
+			assert.Nil(t, got)
+		})
+	}
+}
+
+func TestInspectSegmentInspectsWhateverStreamingSays(t *testing.T) {
+	t.Parallel()
+	for name, set := range map[string]map[string]any{
+		"no streaming block":               bufferedSettings(),
+		"stored enabled: false is ignored": streamSettings(map[string]any{"enabled": false}),
+	} {
+		g := intervening(blockingOutput())
+		p := streamPlugin(t, g)
+
+		got, err := p.InspectSegment(context.Background(),
+			streamInput(policy.ModeEnforce, set, nil), segment(1, "hateful output"))
+
+		require.NoError(t, err, name)
+		assert.True(t, got.Block, name)
+		assert.Equal(t, 1, g.calls, name)
+	}
+}
+
+func TestInspectSegmentSkipsEmptyText(t *testing.T) {
+	t.Parallel()
+	g := intervening(blockingOutput())
+	p := streamPlugin(t, g)
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(1, "  \n "))
+
+	require.NoError(t, err)
+	assert.False(t, got.Block)
+	assert.Zero(t, g.calls)
+}
+
+func TestClosingSegmentPublishesTheStreamAccount(t *testing.T) {
+	t.Parallel()
+	g := allowing()
+	p := streamPlugin(t, g)
+	event, span := newEvent()
+
+	_, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), event),
+		appplugins.StreamSegment{
+			StreamID: "s-1", Closing: true,
+			Report: appplugins.StreamReport{
+				Evals: 4, GuardCalls: 4, CutAtEval: 2, CutOffsetChars: 310,
+				GuardLatency: 900 * time.Millisecond,
+			},
+		})
+
+	require.NoError(t, err)
+	assert.Zero(t, g.calls, "the closing segment asks for no verdict")
+
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok)
+	require.NotNil(t, data.Streaming)
+	assert.True(t, data.Streaming.Enabled)
+	assert.Equal(t, 4, data.Streaming.EvalsTotal)
+	assert.Equal(t, 2, data.Streaming.CutAtEval)
+	assert.Equal(t, 310, data.Streaming.CutOffsetChars)
+	assert.Equal(t, int64(900), data.Streaming.GuardLatencyMsTotal)
+	assert.Equal(t, decisionBlocked, data.Decision)
+	assert.Equal(t, "gr1abc", data.GuardrailID)
+}
+
+func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		report   appplugins.StreamReport
+		findings []appplugins.StreamFinding
+		want     string
+	}{
+		{"clean", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, nil, decisionAllowed},
+		{
+			"reported but not cut",
+			appplugins.StreamReport{Evals: 3, GuardCalls: 3},
+			[]appplugins.StreamFinding{{Entry: "p", Fingerprint: "abcd"}},
+			decisionReported,
+		},
+		{"cut", appplugins.StreamReport{Evals: 2, CutAtEval: 1}, nil, decisionBlocked},
+		{"a failed block on an otherwise clean stream", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1}, nil, "failed_open"},
+		{
+			"a finding outranks a missing inspection",
+			appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1},
+			[]appplugins.StreamFinding{{Entry: "p", Fingerprint: "abcd"}},
+			decisionReported,
+		},
+		{"a cut outranks a failure", appplugins.StreamReport{Evals: 3, GuardCalls: 2, FailedEvals: 1, CutAtEval: 2}, nil, decisionBlocked},
+		// RUN-1745 F7: a masked stream used to read allowed.
+		{"masked", appplugins.StreamReport{Evals: 3, GuardCalls: 3, MaskedEvals: 2}, nil, decisionAnonymized},
+		{"masked, then cut", appplugins.StreamReport{Evals: 3, CutAtEval: 3, MaskedEvals: 2}, nil, decisionBlocked},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := streamPlugin(t, allowing())
+			event, span := newEvent()
+
+			_, err := p.InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), event),
+				appplugins.StreamSegment{
+					StreamID: "s-1", Closing: true,
+					Report: tc.report, Findings: tc.findings,
+				})
+
+			require.NoError(t, err)
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, data.Decision)
+		})
+	}
+}
+
+func TestFindingFingerprintsIdentifyTheMatch(t *testing.T) {
+	t.Parallel()
+	base := &finding{policy: "content", name: "HATE", matchType: "filter", action: "BLOCKED"}
+
+	got := findingFingerprints(policy.ModeObserve, base)
+	require.Len(t, got, 1)
+	assert.Equal(t, got, findingFingerprints(policy.ModeObserve, base),
+		"every field is a configuration label, so the key must not move with the prefix")
+
+	for _, other := range []*finding{
+		{policy: "topic", name: "HATE", matchType: "filter", action: "BLOCKED"},
+		{policy: "content", name: "VIOLENCE", matchType: "filter", action: "BLOCKED"},
+		{policy: "content", name: "HATE", matchType: "word", action: "BLOCKED"},
+		{policy: "content", name: "HATE", matchType: "filter", action: "ANONYMIZED"},
+	} {
+		assert.NotEqual(t, got, findingFingerprints(policy.ModeObserve, other),
+			"a different %v must not fold into the same key", other)
+	}
+}
+
+func TestFindingFingerprintsSkipBlockingModesAndNilFindings(t *testing.T) {
+	t.Parallel()
+	f := &finding{policy: "content", name: "HATE", matchType: "filter", action: "BLOCKED"}
+	assert.Nil(t, findingFingerprints(policy.ModeEnforce, f),
+		"a blocking mode stops the stream, so nothing comes back to deduplicate")
+	assert.Nil(t, findingFingerprints(policy.ModeObserve, nil))
+}
+
+// RUN-1710: the closing write carries the first failed block's reason whatever
+// the decision settled on.
+func TestClosingSegmentCarriesTheStreamFailure(t *testing.T) {
+	t.Parallel()
+	failed := func(r appplugins.StreamReport) appplugins.StreamReport {
+		r.FailedEvals = 1
+		r.FailureReason = appplugins.FailureTransport
+		r.FailureDetail = appplugins.DetailThrottled
+		return r
+	}
+	cases := []struct {
+		name         string
+		report       appplugins.StreamReport
+		wantDecision string
+		wantReason   string
+		wantDetail   string
+	}{
+		{"released after a failed block", failed(appplugins.StreamReport{Evals: 3, GuardCalls: 2}), "failed_open", "transport", appplugins.DetailThrottled},
+		{"a block after an earlier failure keeps the reason", failed(appplugins.StreamReport{Evals: 3, CutAtEval: 3}), decisionBlocked, "transport", appplugins.DetailThrottled},
+		{"no failure, no reason", appplugins.StreamReport{Evals: 3, GuardCalls: 3}, decisionAllowed, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := streamPlugin(t, allowing())
+			event, span := newEvent()
+
+			_, err := p.InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), event),
+				appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: tc.report})
+
+			require.NoError(t, err)
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantDecision, data.Decision)
+			assert.Equal(t, tc.wantReason, data.FailureReason)
+			assert.Equal(t, tc.wantDetail, data.FailureDetail)
+		})
+	}
+}

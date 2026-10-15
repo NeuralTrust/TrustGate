@@ -15,11 +15,14 @@
 package proxy
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -33,24 +36,41 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
-	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
+	ErrNoBackendsInPool       = errors.New("application has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
+	// ErrModelNotChatCapable is returned when a chat request names a catalog
+	// model whose known capabilities do not include chat. A model with no
+	// capability flags is not this error.
+	ErrModelNotChatCapable = errors.New("model does not support chat completions")
+	// ErrAmbiguousRequestBody refuses a chat request whose body
+	// adapter.HasAmbiguousKeys reports: one that is not valid JSON, starts
+	// with a byte order mark, repeats a key, or has two keys the decoder
+	// reads as one struct field. The plugins would judge what the decoder
+	// reads, and the upstream may read another body or another copy.
+	ErrAmbiguousRequestBody = errors.New("request body is not valid JSON, repeats a key, or has keys that differ only in case where the gateway decodes it")
 )
 
 type ForwardInput struct {
 	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
-	RoleIDs   []ids.RoleID
 	Request   *infracontext.RequestContext
+	Resolved  *ResolvedRouting
+	RouteSlug string
+	// Prechecked reports that the caller already ran Precheck on Request, so
+	// Forward neither refuses an ambiguous body nor charges the plan limit a
+	// second time.
+	Prechecked bool
 }
 
 type ForwardResult struct {
@@ -58,6 +78,22 @@ type ForwardResult struct {
 	Headers    map[string][]string
 	Body       []byte
 	Stream     iter.Seq2[[]byte, error]
+	// StreamSettled, read once Stream has returned, gives a channel closed
+	// when the upstream read Stream left running in the background is done,
+	// or nil when it left none. A stream guard cut leaves one: the drain that
+	// reads the rest of the upstream so its usage is still charged. The
+	// caller keeps the forward context alive until then.
+	StreamSettled func() <-chan struct{}
+	// Upstream marks a response that is exactly what the provider answered,
+	// status, body and stream alike. The handler uses it to leave a native
+	// Bedrock answer, AWS errors included, as AWS sent it, and to put the AWS
+	// error envelope on every other error the gateway makes itself.
+	Upstream bool
+	// RawFrames and StreamView carry ProviderResponse's, for a native Bedrock
+	// eventstream: Stream yields whole frames the handler writes with no
+	// separator, and StreamView turns one into the lines metrics capture.
+	RawFrames  bool
+	StreamView func(frame []byte) [][]byte
 }
 
 type forwardRequestDTO struct {
@@ -72,11 +108,13 @@ type forwardRequestDTO struct {
 	baseHeaders map[string][]string
 	baseline    *trace.RouteBaseline
 	tierRouted  bool
+	routeSlug   string
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
 type Forwarder interface {
 	Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error)
+	Precheck(ctx context.Context, gatewayID ids.GatewayID, req *infracontext.RequestContext) (*ForwardResult, error)
 }
 
 var _ Forwarder = (*forwarder)(nil)
@@ -86,11 +124,41 @@ type forwarder struct {
 	invoker    ProviderInvoker
 	executor   appplugins.Executor
 	sessions   appsession.Store
-	resolver   approuting.Resolver
-	listing    appcatalog.ModelListing
+	pipeline   candidatePipeline
 	limiter    ratelimitapp.Checker
+	codec      guardCodec
+	models     appcatalog.BedrockModelResolver
+	masker     NativeBodyMasker
 	maxRetries int
-	logger     *slog.Logger
+
+	nativeToolHold   time.Duration
+	nativeLookupWait time.Duration
+	logger           *slog.Logger
+}
+
+// ForwarderOption configures an optional forwarder capability.
+type ForwarderOption func(*forwarder)
+
+// WithStreamCodec attaches the codec the stream guard segments SSE events
+// with. Omitting it leaves the guard unbuilt, which is what keeps tests that do
+// not exercise streaming inspection off the path entirely.
+func WithStreamCodec(codec guardCodec) ForwarderOption {
+	return func(f *forwarder) {
+		f.codec = codec
+	}
+}
+
+// WithForwarderBedrockModelResolver lets the forwarder name the model behind an
+// opaque Bedrock ARN before the pre_request stage, so a cost cap and the token
+// budgets see it on the first call.
+func WithForwarderBedrockModelResolver(models appcatalog.BedrockModelResolver) ForwarderOption {
+	return func(f *forwarder) { f.models = models }
+}
+
+// WithNativeMasker replaces how a mask is carried onto a native Bedrock body.
+// It exists for tests that need a patcher that fails.
+func WithNativeMasker(masker NativeBodyMasker) ForwarderOption {
+	return func(f *forwarder) { f.masker = masker }
 }
 
 // NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
@@ -106,21 +174,29 @@ func NewForwarder(
 	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
+	opts ...ForwarderOption,
 ) Forwarder {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
-	return &forwarder{
+	fwd := &forwarder{
 		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
-		resolver:   resolver,
-		listing:    listing,
+		pipeline:   candidatePipeline{resolver: resolver, listing: listing, logger: logger},
 		limiter:    limiter,
+		masker:     adapter.NativeMasker{},
 		maxRetries: maxRetriesFromConfig(cfg),
-		logger:     logger,
+
+		nativeToolHold:   nativeToolHoldFromConfig(cfg),
+		nativeLookupWait: nativeLookupWaitFromConfig(cfg),
+		logger:           logger,
 	}
+	for _, opt := range opts {
+		opt(fwd)
+	}
+	return fwd
 }
 
 func maxRetriesFromConfig(cfg *config.Config) int {
@@ -130,13 +206,28 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 	return cfg.Provider.MaxRetries
 }
 
+func nativeToolHoldFromConfig(cfg *config.Config) time.Duration {
+	if cfg == nil || cfg.BedrockNative.ToolHold <= 0 {
+		return config.DefaultBedrockNative().ToolHold
+	}
+	return cfg.BedrockNative.ToolHold
+}
+
+func nativeLookupWaitFromConfig(cfg *config.Config) time.Duration {
+	if cfg == nil || cfg.BedrockNative.LookupWait <= 0 {
+		return config.DefaultBedrockNative().LookupWait
+	}
+	return cfg.BedrockNative.LookupWait
+}
+
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
-
-	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
-		return result, err
+	if !in.Prechecked {
+		if result, err := f.Precheck(ctx, in.GatewayID, in.Request); result != nil || err != nil {
+			return result, err
+		}
 	}
 
 	intent, candidates, err := f.resolveRouting(ctx, in)
@@ -154,6 +245,8 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	}
 
 	stampTarget(in.Request, route.route.Registry)
+	_, in.Request.DefaultModel = routePolicy(candidates, in.Consumer, route.route)
+	f.resolveOpaqueNativeModel(ctx, route.route.Registry, in.Request)
 	resp := &infracontext.ResponseContext{
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
@@ -161,10 +254,21 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	policies := in.Consumer.Policies
 	plan := in.Consumer.PolicyPlan
 
+	nativeBody := nativeBodySnapshot(in.Request)
+	if nativeBody != nil {
+		in.Request.NativeMask = &infracontext.NativeMaskLog{}
+	}
 	if short, err := f.runPreRequest(ctx, policies, plan, in.Request, resp); err != nil {
 		return nil, err
 	} else if short != nil {
-		return short, nil
+		return nativeShortCircuit(in.Request, short, policydomain.StagePreRequest), nil
+	}
+	if nativeBody != nil && !bytes.Equal(nativeBody, in.Request.Body) {
+		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreRequest, in.Request, nativeBody, in.Request.Body, f.masker.MaskRequestWhy)
+		if pe != nil {
+			return pluginErrorResult(pe), nil
+		}
+		in.Request.Body = masked
 	}
 
 	dto := &forwardRequestDTO{
@@ -177,10 +281,51 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		plan:        plan,
 		baseHeaders: cloneHeaders(resp.Headers),
 		baseline:    route.baseline,
+		routeSlug:   cmp.Or(in.RouteSlug, in.Consumer.Consumer.Slug),
 	}
 	stream := DetectStream(dto.request)
 
 	return f.invokeWithFailover(ctx, in.Consumer, dto, stream, route)
+}
+
+// ambiguousChatBody reports a chat request whose body the decoder may read
+// otherwise than the upstream. It runs before routing and before any plugin.
+// Only chat bodies are checked: the tool and prompt plugins judge them
+// through the canonical decode, whose struct shapes HasAmbiguousKeys knows.
+func ambiguousChatBody(req *infracontext.RequestContext) bool {
+	if req == nil || len(req.Body) == 0 {
+		return false
+	}
+	if req.IsBedrockNative() {
+		if adapter.BedrockNativeOp(req.BedrockNative.Op).IsConverse() {
+			return adapter.HasAmbiguousKeys(adapter.FormatBedrock, req.Body)
+		}
+		return adapter.HasAmbiguousInvokeKeys(req.Body)
+	}
+	format := sourceFormatFromRequest(req)
+	return adapter.IsChatRequest(req.ProxyCapability, format) && adapter.HasAmbiguousKeys(format, req.Body)
+}
+
+// malformedChatMessages reports a chat body whose messages field is present
+// and is not an array. It runs with ambiguousChatBody, before routing and
+// before any plugin: a guardrail that cannot decode the field would otherwise
+// refuse the call as uninspectable. Responses and Gemini do not decode
+// messages as that array, and a native invoke body is not a converse request.
+func malformedChatMessages(req *infracontext.RequestContext) bool {
+	if req == nil || len(req.Body) == 0 {
+		return false
+	}
+	if req.IsBedrockNative() {
+		return adapter.BedrockNativeOp(req.BedrockNative.Op).IsConverse() && adapter.ChatMessagesNotArray(req.Body)
+	}
+	format := sourceFormatFromRequest(req)
+	if !adapter.IsChatRequest(req.ProxyCapability, format) {
+		return false
+	}
+	if format == adapter.FormatOpenAIResponses || format == adapter.FormatGemini || format == adapter.FormatVertex {
+		return false
+	}
+	return adapter.ChatMessagesNotArray(req.Body)
 }
 
 func (f *forwarder) invokeWithFailover(
@@ -202,6 +347,7 @@ func (f *forwarder) invokeWithFailover(
 
 	last := failoverState{}
 	lastKind := failureNone
+	var misses []modelMiss
 	current := route.route
 	fromFallback := route.fromFallback
 	sequential := len(route.chain) > 0
@@ -221,6 +367,7 @@ func (f *forwarder) invokeWithFailover(
 			}
 			budget.recordAttempt()
 
+			dto.request.NativeMask.Reset(policydomain.StagePreResponse)
 			startedAt := time.Now()
 			resp, err := f.invokeOnce(ctx, bk, dto.request, stream)
 			elapsed := time.Since(startedAt)
@@ -253,11 +400,15 @@ func (f *forwarder) invokeWithFailover(
 				if !route.pinned && filesIDNotFound(dto.request, resp) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
+					if sequential {
+						misses = append(misses, newModelMiss(bk, resp))
+					}
 					break
 				}
-				if sequential && responseCarriesModelNotFound(resp) {
+				if sequential && (responseCarriesModelNotFound(resp) || nativeAccessDenied(dto.request, resp)) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
+					misses = append(misses, newModelMiss(bk, resp))
 					break
 				}
 				reportSuccess(lb, bk)
@@ -265,7 +416,7 @@ func (f *forwarder) invokeWithFailover(
 			case OutcomeRetryable:
 				modelMissOnly = false
 				reason := failureReason(resp, err)
-				reportFailure(lb, bk, reason)
+				reportFailure(ctx, lb, bk, reason)
 				last = failoverState{resp: resp, err: err}
 				lastKind = classifyFailure(resp, err)
 				f.logRetry(bk, reason, budget)
@@ -286,8 +437,15 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, f.noRegistryServesModelError(
-			ctx, rc, dto.request.RequestedModel, excludedRegistries(excluded))
+		// A native Bedrock caller is talking to AWS, and AWS's own answer to an
+		// unknown model identifier is the error its SDK knows how to read: the
+		// status, the x-amzn-ErrorType and the request id. Every registry was
+		// probed, so the last answer is relayed as it came instead of being
+		// replaced by a gateway 404 the SDK cannot classify.
+		if dto.request.IsBedrockNative() && last.resp != nil {
+			return f.finalizeBody(ctx, dto, last.resp), nil
+		}
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, dto.routeSlug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
 }
@@ -331,9 +489,6 @@ func (f *forwarder) nextCandidate(
 	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
 ) (*routingdomain.Route, bool) {
-	if isRoleBased(rc) {
-		return nil, false
-	}
 	if len(chain) > 0 {
 		return nextChainRoute(chain, excluded), false
 	}
@@ -342,6 +497,9 @@ func (f *forwarder) nextCandidate(
 			if _, seen := excluded[next.Key()]; !seen {
 				return next, false
 			}
+		}
+		if lb.Algorithm() == algorithm.SmartRouting {
+			return nil, false
 		}
 	}
 	if !allowChain {
@@ -360,9 +518,9 @@ func reportSuccess(lb *loadbalancer.LoadBalancer, bk *domain.Registry) {
 	}
 }
 
-func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
+func reportFailure(ctx context.Context, lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
 	if lb != nil {
-		lb.ReportFailure(bk, reason)
+		lb.ReportFailure(ctx, bk, reason)
 	}
 }
 
@@ -421,6 +579,7 @@ func (f *forwarder) stampConsumerScope(in ForwardInput) {
 		return
 	}
 	in.Request.ConsumerID = in.Consumer.Consumer.ID.String()
+	in.Request.ConsumerName = in.Consumer.Consumer.Name
 	in.Request.ConsumerType = string(in.Consumer.Consumer.Type)
 	if in.Request.GatewayID == "" {
 		in.Request.GatewayID = in.Consumer.Consumer.GatewayID.String()
@@ -431,7 +590,11 @@ func (f *forwarder) stampContinuation(ctx context.Context, req *infracontext.Req
 	if f.sessions == nil || req == nil || req.SessionID == "" {
 		return
 	}
-	req.PreviousResponseID = f.sessions.LastTurnID(ctx, req.GatewayID, req.SessionID)
+	req.PreviousResponseID = f.sessions.LastTurnID(ctx, sessionScope(req), req.SessionID)
+}
+
+func sessionScope(req *infracontext.RequestContext) appsession.Scope {
+	return appsession.Scope{GatewayID: req.GatewayID, OwnerID: req.OwnerID}
 }
 
 func (f *forwarder) recordSession(
@@ -447,7 +610,7 @@ func (f *forwarder) recordSession(
 		return
 	}
 	f.sessions.Record(ctx, appsession.RecordInput{
-		GatewayID: req.GatewayID,
+		Scope:     sessionScope(req),
 		SessionID: req.SessionID,
 		TurnID:    turnID,
 		Provider:  provider,
@@ -541,19 +704,154 @@ func (f *forwarder) finalizeStream(
 	startedAt time.Time,
 ) *ForwardResult {
 	pluginResp := dto.response
+	native := dto.request.IsBedrockNative()
 	mergeStreamingResponse(pluginResp, providerResp)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+	outcome, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	if pe != nil {
 		f.drainAsync(providerResp.Stream)
-		return pluginErrorResult(pe)
+		return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe))
 	}
-	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
+	if outcome != nil && outcome.ShortCircuit {
+		f.drainAsync(providerResp.Stream)
+		return applyPlanRateLimitDialect(dto.request, nativeShortCircuit(dto.request, f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome), policydomain.StagePreResponse))
+	}
+	stream := providerResp.Stream
+	var cutBarrier func() <-chan struct{}
+	var wasCut func() bool
+	var finalInspected func() bool
+	if guard := f.newStreamGuard(dto, pluginResp); guard != nil {
+		remaining, pe := guard.Run(ctx, stream)
+		if pe != nil {
+			f.drainAsync(remaining)
+			return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe))
+		}
+		stream = remaining
+		cutBarrier = guard.cutBarrier
+		wasCut = guard.wasCut
+		finalInspected = guard.wasFinalInspected
+	}
+	stream = f.refreshModelAtStreamEnd(ctx, dto, stream)
+	out := f.wrapStreamWithPostResponse(
+		ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier, wasCut, finalInspected, providerResp.StreamView)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
-		StatusCode: providerResp.StatusCode,
-		Headers:    pluginResp.Headers,
-		Stream:     out,
+		StatusCode:    providerResp.StatusCode,
+		Headers:       pluginResp.Headers,
+		Stream:        out,
+		StreamSettled: cutBarrier,
+		Upstream:      native,
+		RawFrames:     providerResp.RawFrames,
+		StreamView:    providerResp.StreamView,
 	}
+}
+
+// shortCircuitStream renders a pre_response stop on the streaming leg. What it
+// returns is a buffered response — a status, headers and a body, with no stream
+// behind it — so it runs the two tails finalizeBodyGated runs after its own
+// short circuit. Without them a plugin-stopped streamed response would be
+// invisible to post_response auditing and to session recording while the
+// identical buffered response is not, which is an asymmetry nothing downstream
+// could explain.
+//
+// The headers cannot be the ones the outcome carries. They were cloned from the
+// provider's streaming response, and text/event-stream in front of a plugin's
+// body is a content type the body does not have: an SSE client reads it as a
+// stream that never yields an event and never ends. Content-Type is replaced
+// for the same reason pluginErrorResult sets it, and Transfer-Encoding goes
+// with it because it described a response that is no longer being sent.
+func (f *forwarder) shortCircuitStream(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	providerResp *ProviderResponse,
+	pluginResp *infracontext.ResponseContext,
+	outcome *appplugins.StageOutcome,
+) *ForwardResult {
+	// The response leg is no longer streaming, and saying so is what lets
+	// post_response read the body: every output-inspecting plugin skips a
+	// response marked streaming, because on that leg the body is empty by
+	// construction. Here it is not — it is whatever the plugin handed back.
+	pluginResp.Streaming = false
+	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	f.recordSession(
+		ctx, dto.request, providerResp.ResponseID,
+		dto.backend.Provider(), providerResp.Model, providerResp.StatusCode,
+	)
+	headers := cloneResponseHeaders(outcome.Headers)
+	deleteResponseHeader(headers, "Transfer-Encoding")
+	if len(outcome.Body) > 0 {
+		setResponseHeader(headers, "Content-Type", "application/json")
+	}
+	return &ForwardResult{
+		StatusCode: outcome.StatusCode,
+		Headers:    headers,
+		Body:       outcome.Body,
+	}
+}
+
+// newStreamGuard builds the head gate, and returns nil when no policy takes
+// part in per-segment inspection. A gateway whose policies do not participate
+// keeps the streaming path it has today: not a wrapper that passes through, no
+// wrapper at all, so not one extra allocation or indirection sits between the
+// provider and the client.
+//
+// head_chars, on_error and the block-loop knobs come from StreamPlan rather
+// than from a literal, so a rewriter that asks for fail_closed is not silently
+// run as fail_open.
+func (f *forwarder) newStreamGuard(
+	dto *forwardRequestDTO,
+	resp *infracontext.ResponseContext,
+) *streamGuard {
+	if f.executor == nil || f.codec == nil {
+		return nil
+	}
+	participates, opts := dto.plan.StreamPlan(policydomain.StagePreResponse)
+	if !participates {
+		return nil
+	}
+	runner, ok := f.executor.(segmentRunner)
+	if !ok {
+		return nil
+	}
+	guard := newStreamGuard(
+		runner,
+		f.codec,
+		sourceFormatFromRequest(dto.request),
+		appplugins.StageInput{
+			Stage:    policydomain.StagePreResponse,
+			Policies: dto.policies,
+			Plan:     dto.plan,
+			Request:  dto.request,
+			Response: resp,
+		},
+		streamGuardConfig{
+			headChars:     opts.HeadChars,
+			onError:       streamOnError(opts.OnError),
+			minChars:      opts.MinCharsBetweenEvals,
+			maxHold:       time.Duration(opts.MaxHoldMS) * time.Millisecond,
+			maxAccumBytes: opts.MaxAccumulatedBytes,
+
+			nativeToolHold: f.nativeToolHold,
+			holdChatTools:  opts.ReadsToolCalls,
+		},
+		f.logger,
+	)
+	// A cut abandons the upstream mid-response, which is the same situation
+	// drainAsync already exists for: the usage the last chunk carries is read
+	// on the way through adaptStream, so draining is what keeps a cut stream
+	// charged. post_response then orders itself behind guard.cutBarrier, which
+	// is what makes "charged" true rather than aspirational.
+	guard.drain = f.drainAsync
+	guard.detach = f.goAsync
+	if dto.request.IsBedrockNative() {
+		// The same segmentation and plugin calls as an SSE stream, over frames:
+		// each frame is an event, its decoded text is what is inspected, and the
+		// original frame is what is released. Each entry's own stream
+		// failure direction is honoured, as on every other stream.
+		guard.native = true
+		guard.seg.frames = true
+	}
+	return guard
 }
 
 // retimeSpanOnStreamEnd re-times the provider LLM span so its latency spans the
@@ -595,6 +893,19 @@ func (f *forwarder) drainAsync(stream iter.Seq2[[]byte, error]) {
 	}()
 }
 
+// goAsync runs fn on its own goroutine, which owns its panic: a panic is
+// recovered and logged rather than crashing the process.
+func (f *forwarder) goAsync(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				f.logger.Error("panic in detached stream work", slog.Any("panic", r))
+			}
+		}()
+		fn()
+	}()
+}
+
 func (f *forwarder) finalizeBody(
 	ctx context.Context,
 	dto *forwardRequestDTO,
@@ -612,14 +923,36 @@ func (f *forwarder) finalizeBodyGated(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeBufferedResponse(pluginResp, providerResp)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
-		return pluginErrorResult(pe), pe
+	if _, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+		return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe)), pe
+	}
+	native := dto.request.IsBedrockNative()
+	if native && nativeResponseChanged(providerResp, pluginResp) {
+		errorResponse := providerResp.StatusCode >= http.StatusMultipleChoices &&
+			len(dto.request.NativeMask.Sources(policydomain.StagePreResponse)) > 0
+		if !errorResponse && pluginResp.StatusCode != providerResp.StatusCode {
+			pe := appplugins.WithBlockDirection(nativeModified(nativeResponseModified), appplugins.BlockDirectionOutput)
+			return pluginErrorResult(pe), pe
+		}
+		maskResponse := f.masker.MaskResponseWhy
+		if errorResponse {
+			maskResponse = func(_, _ []byte) ([]byte, adapter.MaskCause) {
+				return nil, adapter.MaskCauseErrorResponse
+			}
+		}
+		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreResponse, dto.request, providerResp.Body, pluginResp.Body, maskResponse)
+		if pe != nil {
+			return pluginErrorResult(pe), pe
+		}
+		pluginResp.Body = masked
+		pluginResp.StatusCode = providerResp.StatusCode
 	}
 	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
-	return &ForwardResult{
+	return applyPlanRateLimitDialect(dto.request, &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
 		Body:       pluginResp.Body,
-	}, nil
+		Upstream:   native,
+	}), nil
 }

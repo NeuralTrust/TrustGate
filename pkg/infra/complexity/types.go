@@ -15,12 +15,12 @@
 package complexity
 
 type scoreRequest struct {
-	Input          string `json:"input"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	TenantID       string `json:"tenant_id,omitempty"`
+	Input    string `json:"input"`
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 type scoreResponse struct {
-	Score    float64 `json:"score"`
-	RawScore float64 `json:"raw_score"`
+	Revision string   `json:"revision"`
+	Score    float64  `json:"score"`
+	RawScore *float64 `json:"raw_score"`
 }

@@ -15,8 +15,11 @@
 package oauth
 
 import (
+	"context"
 	"errors"
+	"net/url"
 	"strings"
+	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
@@ -30,27 +33,62 @@ const (
 	ConnectCallbackPath = "/oauth/callback/*"
 	DisconnectPath      = "/oauth/disconnect/*"
 	BrandAssetPath      = "/oauth/brands/*"
+	// ConnectFinishPath is an exact path under ConnectStartPath, so it has to
+	// be routed ahead of it.
+	ConnectFinishPath = appoauth.ConnectFinishPath
 )
 
 type ConnectHandler struct {
-	connect            appoauth.ConnectService
+	connect            ConnectFlow
+	handoff            appoauth.ConnectHandoff
 	catalog            appcatalog.MCPServerCatalog
 	oauthPublicBaseURL string
+	cookies            FlowCookies
+	// holdFor and holdEvery bound how long one request waits, before it
+	// answers, for a server its ticket names to reach this plane (see
+	// awaitServer). Fields rather than constants so tests need not sleep.
+	holdFor   time.Duration
+	holdEvery time.Duration
+}
+
+// connectPageHoldFor is how long a connect page waits for a server that is
+// not on this plane yet before it shows the "getting ready" page instead.
+// Config-sync brings a server shelved a moment ago within a few seconds, so
+// the page that opens right after a connect is usually the real one.
+const (
+	connectPageHoldFor   = 5 * time.Second
+	connectPageHoldEvery = 250 * time.Millisecond
+)
+
+// ConnectFlow is the connect service as the connect pages use it.
+type ConnectFlow interface {
+	Page(ctx context.Context, ticketID string) (*appoauth.ConnectPage, error)
+	Start(ctx context.Context, baseURL, startOrigin, ticketID, provider, instanceID string) (*appoauth.ConnectStart, error)
+	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
+	Disconnect(ctx context.Context, ticketID, provider, instanceID string) error
 }
 
 // NewConnectHandler builds the MCP upstream-connect OAuth handlers.
 // oauthPublicBaseURL, when non-empty, is used as the redirect_uri origin for
 // authorize and code exchange instead of the request Host (see
 // MCP_OAUTH_PUBLIC_BASE_URL). Empty keeps per-request BaseURL behavior.
+// handoff carries the provider's answer back to where the flow started, and
+// cookies decides the flow cookie's form as it does for the MCP sign-in.
 func NewConnectHandler(
-	connect appoauth.ConnectService,
+	connect ConnectFlow,
+	handoff appoauth.ConnectHandoff,
 	catalog appcatalog.MCPServerCatalog,
 	oauthPublicBaseURL string,
+	cookies FlowCookies,
 ) *ConnectHandler {
 	return &ConnectHandler{
 		connect:            connect,
+		handoff:            handoff,
 		catalog:            catalog,
+		cookies:            cookies,
 		oauthPublicBaseURL: strings.TrimRight(strings.TrimSpace(oauthPublicBaseURL), "/"),
+		holdFor:            connectPageHoldFor,
+		holdEvery:          connectPageHoldEvery,
 	}
 }
 
@@ -59,21 +97,122 @@ func (h *ConnectHandler) Page(c *fiber.Ctx) error {
 	if ticket == "" {
 		return fiber.NewError(fiber.StatusUnauthorized, "missing ticket: re-run the tool call to get a fresh connect link")
 	}
+	if moved, err := h.toCallbackOrigin(c, ticket); moved || err != nil {
+		return err
+	}
 	return h.showPage(c, ticket, "")
 }
 
-func (h *ConnectHandler) Start(c *fiber.Ctx) error {
-	location, err := h.connect.Start(c.UserContext(), h.connectBaseURL(c), c.Query("ticket"), providerParam(c))
+// toCallbackOrigin sends a connect page requested on a host connections are
+// not started from (a gateway's custom domain) to the same page on the
+// callback origin, where the connection is then started and finished. It
+// reports whether it did; any error has already been answered.
+func (h *ConnectHandler) toCallbackOrigin(c *fiber.Ctx, ticket string) (bool, error) {
+	callback := h.connectBaseURL(c)
+	if sameHost(callback, c) {
+		return false, nil
+	}
+	_, err := h.handoff.StartOrigin(c.UserContext(), callback, c.BaseURL(), ticket)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, appoauth.ErrStartOriginNotServed):
+		c.Set(fiber.HeaderCacheControl, "no-store")
+		return true, c.Redirect(callback+c.OriginalURL(), fiber.StatusFound)
+	default:
+		return false, h.pageError(c, err)
+	}
+}
+
+// Confirm answers a link that opens a provider connection directly. It names
+// who the account will be linked to and continues only on a POST, so following
+// a link never connects an account by itself.
+func (h *ConnectHandler) Confirm(c *fiber.Ctx) error {
+	ticket := c.Query("ticket")
+	if ticket == "" {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing ticket: re-run the tool call to get a fresh connect link")
+	}
+	if moved, err := h.toCallbackOrigin(c, ticket); moved || err != nil {
+		return err
+	}
+	page, err := h.connect.Page(c.UserContext(), ticket)
 	if err != nil {
 		return h.pageError(c, err)
 	}
-	return c.Redirect(location, fiber.StatusFound)
+	provider := providerParam(c)
+	row, ok := confirmRow(page, provider, c.Query("instance"))
+	if !ok {
+		return h.pageError(c, appoauth.ErrProviderNotFound)
+	}
+	if row.Shared {
+		return h.pageError(c, appoauth.ErrSharedAccountNotYours)
+	}
+	return renderConnectConfirmPage(c, connectConfirmView{
+		Owner:        ownerOf(page.Principal),
+		ConsumerPath: page.ConsumerPath,
+		AccountRef:   linkedAccount(row),
+		FormAction:   connectStartAction(provider, ticket, row.Instance),
+	}, row, h.catalog)
 }
 
+// Start begins a provider connection from a page of this gateway. It sets the
+// flow's cookie on this host before sending the browser to the provider, and
+// only this host finishes the flow (see Finish), so it completes only in the
+// browser that started it.
+func (h *ConnectHandler) Start(c *fiber.Ctx) error {
+	if !sentFromOwnPage(c) {
+		return h.pageError(c, errConnectNotFromPage)
+	}
+	started, err := h.connect.Start(
+		c.UserContext(), h.connectBaseURL(c), c.BaseURL(), c.Query("ticket"), providerParam(c), c.Query("instance"),
+	)
+	if err != nil {
+		return h.pageError(c, err)
+	}
+	h.setConnectCookie(c, started.State)
+	// Never cache or prefetch the start: each one mints a new state upstream.
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	return c.Redirect(started.Location, fiber.StatusFound)
+}
+
+// Callback receives the provider's redirect on the callback origin. It does
+// not complete the connection: it hands the result to the origin the flow was
+// started from, whose cookie decides whether this browser may finish it.
 func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
+	provider, state := providerParam(c), c.Query("state")
+	code, errCode, errDesc := c.Query("code"), c.Query("error"), c.Query("error_description")
+	receipt, err := h.handoff.ReceiveCallback(c.UserContext(), provider, state, code, errCode, errDesc)
+	if err != nil {
+		return h.pageError(c, err)
+	}
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	if receipt.Direct {
+		return h.complete(c, provider, state, code, errCode, errDesc)
+	}
+	return c.Redirect(receipt.FinishURL, fiber.StatusFound)
+}
+
+// Finish completes a connection on the origin it was started from, in the
+// browser holding that flow's cookie. Any other browser is refused and the
+// started authorization is left as it was.
+func (h *ConnectHandler) Finish(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	finish, err := h.handoff.TakeFinish(c.UserContext(), c.Query("f"))
+	if err != nil {
+		return h.pageError(c, err)
+	}
+	if !h.connectBoundTo(c, finish.State) {
+		return h.pageError(c, errConnectStartedElsewhere)
+	}
+	h.clearConnectCookie(c, finish.State)
+	return h.complete(c, finish.Provider, finish.State, finish.Code, finish.ErrCode, finish.ErrDesc)
+}
+
+// complete redeems the provider's answer and shows the page the connection
+// lands on.
+func (h *ConnectHandler) complete(c *fiber.Ctx, provider, state, code, errCode, errDesc string) error {
 	ticketID, err := h.connect.Callback(
-		c.UserContext(), h.connectBaseURL(c), providerParam(c),
-		c.Query("state"), c.Query("code"), c.Query("error"), c.Query("error_description"),
+		c.UserContext(), h.connectBaseURL(c), provider, state, code, errCode, errDesc,
 	)
 	if err != nil {
 		if ticketID == "" {
@@ -81,7 +220,57 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 		}
 		return h.showPage(c, ticketID, callbackFlash(err))
 	}
-	return h.showPage(c, ticketID, "")
+	page, err := h.connect.Page(c.UserContext(), ticketID)
+	if err != nil {
+		return h.pageError(c, err)
+	}
+	return renderConnectPageAfter(c, page, ticketID, "", true, h.catalog)
+}
+
+// confirmRow is the row a connect for this provider acts on, picked the way
+// the service picks the instance: the one named, else the one the ticket is
+// pinned to, else the first of the provider.
+func confirmRow(page *appoauth.ConnectPage, provider, instance string) (appoauth.ProviderStatus, bool) {
+	for _, want := range []string{instance, page.Instance} {
+		if want == "" {
+			continue
+		}
+		for _, row := range page.Providers {
+			if row.Provider == provider && row.Instance == want {
+				return row, true
+			}
+		}
+	}
+	for _, row := range page.Providers {
+		if row.Provider == provider {
+			return row, true
+		}
+	}
+	return appoauth.ProviderStatus{}, false
+}
+
+func linkedAccount(row appoauth.ProviderStatus) string {
+	if !row.Linked {
+		return ""
+	}
+	if row.AccountRef != "" {
+		return row.AccountRef
+	}
+	return "an account"
+}
+
+// connectStartAction is the form action that starts a connection. The provider
+// id is escaped segment by segment because it carries slashes.
+func connectStartAction(provider, ticket, instance string) string {
+	segments := strings.Split(provider, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	q := url.Values{"ticket": {ticket}}
+	if instance != "" {
+		q.Set("instance", instance)
+	}
+	return strings.TrimSuffix(ConnectStartPath, "*") + strings.Join(segments, "/") + "?" + q.Encode()
 }
 
 // callbackFlash turns an error the upstream identity provider sent back on the
@@ -114,7 +303,7 @@ func callbackFlash(err error) string {
 
 func (h *ConnectHandler) Disconnect(c *fiber.Ctx) error {
 	ticket := c.Query("ticket")
-	if err := h.connect.Disconnect(c.UserContext(), ticket, providerParam(c)); err != nil {
+	if err := h.connect.Disconnect(c.UserContext(), ticket, providerParam(c), c.Query("instance")); err != nil {
 		return h.pageError(c, err)
 	}
 	return h.showPage(c, ticket, "")
@@ -130,8 +319,22 @@ func (h *ConnectHandler) connectBaseURL(c *fiber.Ctx) string {
 	return c.BaseURL()
 }
 
+// providerParam is the provider id from the wildcard route.
+//
+// A provider id carries a slash ("com.notion/mcp"), and both spellings of it
+// reach here: the connect page links it raw, and a client that builds the URL
+// properly percent-encodes it. Fiber matches the wildcard against the raw path
+// and does not unescape, so decoding is this function's job - without it an
+// escaped link resolves to a provider nothing is configured for.
 func providerParam(c *fiber.Ctx) string {
-	return strings.TrimPrefix(c.Params("*"), "/")
+	raw := strings.TrimPrefix(c.Params("*"), "/")
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		// A stray % is not an escape. Take the id as written rather than
+		// refusing a provider that may well be named that.
+		return raw
+	}
+	return decoded
 }
 
 func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
@@ -139,7 +342,49 @@ func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
 	if err != nil {
 		return h.pageError(c, err)
 	}
+	// A flash answers something the user just did; it is shown as it is.
+	if flash == "" && connectWaitAttempt(c) < connectPageWaitAttempts {
+		page = h.awaitServer(c.UserContext(), ticket, page)
+	}
 	return renderConnectPage(c, page, ticket, flash, h.catalog)
+}
+
+// awaitServer holds the answer, briefly, while the server a ticket names is
+// not on this plane yet.
+//
+// Right after a connect the server was shelved on the control plane a moment
+// ago, and config-sync usually brings it here within a few seconds. Answering
+// at once showed "Getting … ready" and reloaded into the real page a moment
+// later, which read as an error first. Waiting here instead means the page the
+// user sees first is, in the common case, the one they came for; should the
+// server still be missing, the page says it is getting ready and reloads, as
+// before. A page the ticket does not scope to one server, or whose server is
+// already here, is returned as it is.
+func (h *ConnectHandler) awaitServer(ctx context.Context, ticket string, page *appoauth.ConnectPage) *appoauth.ConnectPage {
+	if strings.TrimSpace(page.Code) == "" || len(providerRowsForPage(page)) > 0 || h.holdFor <= 0 {
+		return page
+	}
+	deadline := time.NewTimer(h.holdFor)
+	defer deadline.Stop()
+	tick := time.NewTicker(h.holdEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return page
+		case <-deadline.C:
+			return page
+		case <-tick.C:
+			next, err := h.connect.Page(ctx, ticket)
+			if err != nil {
+				return page
+			}
+			page = next
+			if len(providerRowsForPage(page)) > 0 {
+				return page
+			}
+		}
+	}
 }
 
 func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
@@ -148,6 +393,25 @@ func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
 	}
 	if errors.Is(err, appoauth.ErrProviderNotFound) {
 		return fiber.NewError(fiber.StatusNotFound, err.Error())
+	}
+	if errors.Is(err, appoauth.ErrConnectFinishNotFound) {
+		return errConnectFinishGone
+	}
+	if errors.Is(err, appoauth.ErrStartOriginNotServed) {
+		return errConnectStartHost
+	}
+	// Not a fault of the request: the server holds one account for everyone and
+	// this caller is not who connects it. Saying so beats a 500.
+	if errors.Is(err, appoauth.ErrSharedAccountNotYours) {
+		return fiber.NewError(fiber.StatusConflict, err.Error())
+	}
+	// The upstream refused to register the gateway as an OAuth client: the
+	// person connecting can do nothing about it, an operator has to. Name it as
+	// the upstream's refusal instead of a 500, and keep its answer for them.
+	if errors.Is(err, appoauth.ErrUpstreamRegistrationRejected) {
+		return fiber.NewError(fiber.StatusBadGateway,
+			"The provider refused to register this gateway as an OAuth app, so the account cannot be connected yet. "+
+				"Ask your administrator to check this connector's configuration. Details: "+err.Error())
 	}
 	return err
 }

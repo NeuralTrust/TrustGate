@@ -22,10 +22,10 @@ import (
 	"testing"
 
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -33,18 +33,16 @@ import (
 
 const fullStamp = `{"entitlements":{"tier":"standard","burst_per_min":300,"quota_per_month":100000,"max_instances":5,"retention_days":30}}`
 
-// callerTenant is what a tenant-scoped admin JWT puts on the request. Platform
-// tokens carry no tenant, which is what this endpoint requires.
-func newApp(t *testing.T, callerTenant string) (*fiber.App, *mocks.EntitlementsRestamper) {
+var platform = middleware.AdminIdentity{Kind: middleware.AdminIdentityPlatform}
+
+func newApp(t *testing.T, caller middleware.AdminIdentity) (*fiber.App, *mocks.EntitlementsRestamper) {
 	t.Helper()
 	restamper := mocks.NewEntitlementsRestamper(t)
 	h := tenanthttp.NewRestampEntitlementsHandler(restamper)
 
 	a := fiber.New()
 	a.Use(func(c *fiber.Ctx) error {
-		if callerTenant != "" {
-			c.Locals(string(infracontext.TenantIDContextKey), callerTenant)
-		}
+		middleware.StoreAdminIdentity(c, caller)
 		return c.Next()
 	})
 	a.Put("/api/v1/tenants/:tenant_id/entitlements", h.Handle)
@@ -61,7 +59,7 @@ func put(t *testing.T, a *fiber.App, path, body string) *http.Response {
 }
 
 func TestRestampAppliesTheStampAcrossTheTenant(t *testing.T) {
-	a, restamper := newApp(t, "")
+	a, restamper := newApp(t, platform)
 	restamper.EXPECT().
 		RestampTenant(mock.Anything, "acme", mock.MatchedBy(func(e domain.Entitlements) bool {
 			return e.Tier == "standard" && e.RetentionDays != nil && *e.RetentionDays == 30
@@ -81,7 +79,7 @@ func TestRestampAppliesTheStampAcrossTheTenant(t *testing.T) {
 // A downgrade past the cap is reported, not refused: refusing would leave every
 // gateway of the tenant on the old plan.
 func TestRestampReportsOverCapWithoutFailing(t *testing.T) {
-	a, restamper := newApp(t, "")
+	a, restamper := newApp(t, platform)
 	restamper.EXPECT().
 		RestampTenant(mock.Anything, "acme", mock.Anything).
 		Return(appgateway.RestampResult{Stamped: 4, MaxInstances: 1, OverCap: true}, nil).Once()
@@ -99,14 +97,31 @@ func TestRestampReportsOverCapWithoutFailing(t *testing.T) {
 // Stamping crosses tenants by nature, so a tenant-scoped token must never reach it
 // — not even to re-stamp its own tenant.
 func TestRestampRejectsTenantScopedTokens(t *testing.T) {
-	a, _ := newApp(t, "acme")
+	a, _ := newApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "acme"})
 
 	resp := put(t, a, "/api/v1/tenants/acme/entitlements", fullStamp)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
+func TestRestampRejectsNonPlatformCallersWithoutTenant(t *testing.T) {
+	cases := map[string]middleware.AdminIdentity{
+		"human without tenant": {Kind: middleware.AdminIdentityHuman},
+		"service":              {Kind: middleware.AdminIdentityService, TenantID: "acme", GatewayID: "gw"},
+		"unauthenticated":      {},
+	}
+	for name, caller := range cases {
+		t.Run(name, func(t *testing.T) {
+			a, restamper := newApp(t, caller)
+
+			resp := put(t, a, "/api/v1/tenants/acme/entitlements", fullStamp)
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+			restamper.AssertNotCalled(t, "RestampTenant", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
 func TestRestampRejectsMissingEntitlements(t *testing.T) {
-	a, _ := newApp(t, "")
+	a, _ := newApp(t, platform)
 
 	resp := put(t, a, "/api/v1/tenants/acme/entitlements", `{}`)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
@@ -115,7 +130,7 @@ func TestRestampRejectsMissingEntitlements(t *testing.T) {
 // 0 is the unlimited sentinel the whole contract uses, so it must be accepted here
 // too rather than read as a missing value.
 func TestRestampAcceptsUnlimitedRetention(t *testing.T) {
-	a, restamper := newApp(t, "")
+	a, restamper := newApp(t, platform)
 	restamper.EXPECT().
 		RestampTenant(mock.Anything, "acme", mock.MatchedBy(func(e domain.Entitlements) bool {
 			return e.RetentionDays != nil && *e.RetentionDays == 0

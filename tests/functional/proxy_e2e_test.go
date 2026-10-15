@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,7 @@ type fakeUpstream struct {
 	lastBody []byte
 	lastAuth string
 	lastPath string
+	writes   []time.Time
 }
 
 func (u *fakeUpstream) URL() string { return u.server.URL }
@@ -62,6 +64,32 @@ func (u *fakeUpstream) record(r *http.Request) {
 	u.lastAuth = r.Header.Get("Authorization")
 	u.lastPath = r.URL.Path
 	u.mu.Unlock()
+}
+
+// recordWrite timestamps a chunk a paced handler has just flushed. A caller
+// that paces its body over time uses this plus WriteOffsets to assert on the
+// server's own pacing, not on when a reader's goroutine happened to be
+// scheduled to see it.
+func (u *fakeUpstream) recordWrite() {
+	u.mu.Lock()
+	u.writes = append(u.writes, time.Now())
+	u.mu.Unlock()
+}
+
+// WriteOffsets returns every recordWrite timestamp as a duration since the
+// first.
+func (u *fakeUpstream) WriteOffsets() []time.Duration {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if len(u.writes) == 0 {
+		return nil
+	}
+	out := make([]time.Duration, len(u.writes))
+	first := u.writes[0]
+	for i, at := range u.writes {
+		out[i] = at.Sub(first)
+	}
+	return out
 }
 
 // newJSONUpstream answers every request with a 200 chat-completion whose
@@ -496,7 +524,7 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 		assert.Equal(t, 0, up.Hits(), "default injection only applies when the model field is absent")
 	})
 
-	t.Run("non-string model is rejected and never reaches upstream", func(t *testing.T) {
+	t.Run("non-string model is an invalid request and never reaches upstream", func(t *testing.T) {
 		up := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
 
@@ -506,7 +534,12 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 		}
 		status, _, body := proxyPost(t, apiKey, path, payload)
 
-		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+		assert.Contains(t, string(body), `"type":"invalid_request_error"`)
+		assert.Contains(t, string(body), "model must be a string")
+		assert.NotContains(t, string(body), "request body must be a JSON object")
+		assert.NotContains(t, string(body), "cannot unmarshal")
+		assert.NotContains(t, string(body), "model_not_allowed")
 		assert.Equal(t, 0, up.Hits())
 	})
 

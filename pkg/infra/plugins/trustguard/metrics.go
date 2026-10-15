@@ -18,6 +18,8 @@ import (
 	"context"
 	"sync"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -26,26 +28,122 @@ import (
 const (
 	failureReasonUnauthorized = "unauthorized"
 	failureReasonTransport    = "transport"
+	failureReasonTimeout      = "timeout"
+	// failureReasonCredentialsMissing and failureReasonBaseURLMissing are a pod
+	// started without TRUSTGUARD_CLIENT_ID/SECRET or TRUSTGUARD_BASE_URL: no
+	// call is made at all.
+	failureReasonCredentialsMissing      = "credentials_missing"
+	failureReasonBaseURLMissing          = "base_url_missing"
+	failureReasonEntitlementsUnavailable = "entitlements_unavailable"
+	failureReasonConfigInvalid           = "config_invalid"
+	failureReasonGatewayIDMissing        = "gateway_id_missing"
+	failureReasonPayloadUnreadable       = "payload_unreadable"
+	// failureReasonPayloadTooLarge is TrustGuard refusing the body for its size
+	// (HTTP 413): what the request carries, not the engine being unavailable.
+	failureReasonPayloadTooLarge = "payload_too_large"
+	// failureReasonStreamBlockTooLarge is a streamed block above the one evaluate
+	// this plugin sends for it (the stream window): refused before any call as the
+	// response's own size, with the detail chunk_limit. It is distinct from
+	// payload_too_large, which is TrustGuard's 413 or the 8 MiB buffered limit.
+	failureReasonStreamBlockTooLarge = "stream_block_too_large"
+	// failureReasonAttachmentRejected is TrustGuard answering 400 "invalid
+	// attachment": it could not fetch or decode an attachment it was sent.
+	failureReasonAttachmentRejected = "attachment_rejected"
+	// failureReasonResponseTooLarge is an answer above what the client reads:
+	// the mask echoes the request's text, so the request chose its size.
+	failureReasonResponseTooLarge = "response_too_large"
+	// failureReasonTransformFailed is TrustGuard asking for a mask this plugin
+	// could not write back; degraded_reason on the span says which step failed.
+	failureReasonTransformFailed = "transform_failed"
+	// failureReasonVerdictIncomplete is an evaluation that ran without part of
+	// what the request carried: an attachment sent as a URL that TrustGuard could
+	// not fetch. The shared reason of the same name, with the detail
+	// attachment_not_fetched; availability.
+	failureReasonVerdictIncomplete = "verdict_incomplete"
 )
 
 var (
-	evaluateFailuresOnce sync.Once
-	evaluateFailures     metric.Int64Counter
+	instrumentsOnce    sync.Once
+	evaluateFailures   metric.Int64Counter
+	streamEvals        metric.Int64Counter
+	streamResponses    metric.Int64Counter
+	streamGuardCalls   metric.Int64Histogram
+	streamAddedLatency metric.Int64Histogram
 )
 
-func recordEvaluateFailure(ctx context.Context, reason string) {
-	evaluateFailuresOnce.Do(func() {
-		c, err := otel.Meter("trustgate/trustguard").Int64Counter(
+func initInstruments() {
+	instrumentsOnce.Do(func() {
+		meter := otel.Meter("trustgate/trustguard")
+		if c, err := meter.Int64Counter(
 			"trustguard_evaluate_failures_total",
 			metric.WithDescription("TrustGuard /v1/evaluate call failures by reason"),
-		)
-		if err != nil {
-			return
+		); err == nil {
+			evaluateFailures = c
 		}
-		evaluateFailures = c
+		if c, err := meter.Int64Counter(
+			"trustguard_stream_evals_total",
+			metric.WithDescription("Per-block TrustGuard evaluations of streamed responses by stream outcome"),
+		); err == nil {
+			streamEvals = c
+		}
+		if c, err := meter.Int64Counter(
+			"trustguard_stream_responses_total",
+			metric.WithDescription("Streamed responses inspected block by block, by stream outcome"),
+		); err == nil {
+			streamResponses = c
+		}
+		if h, err := meter.Int64Histogram(
+			"trustguard_stream_guard_calls_per_response",
+			metric.WithDescription("TrustGuard evaluate calls issued per streamed response"),
+		); err == nil {
+			streamGuardCalls = h
+		}
+		if h, err := meter.Int64Histogram(
+			"trustguard_stream_added_latency_ms",
+			metric.WithUnit("ms"),
+			metric.WithDescription(
+				"Sum over a streamed response of how long each held block waited before its first event reached the client",
+			),
+		); err == nil {
+			streamAddedLatency = h
+		}
 	})
+}
+
+func recordEvaluateFailure(ctx context.Context, reason string) {
+	initInstruments()
 	if evaluateFailures == nil {
 		return
 	}
 	evaluateFailures.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+}
+
+// recordStreamEvals publishes one streamed response, from the entry the
+// executor designated to speak for the whole stream. Every instrument here is
+// keyed on the response rather than on the policy, so recording it once per
+// entry would count a single response once per streaming policy in the chain.
+//
+// The response counter is not derivable from the eval counter: skipped is
+// defined as no evals at all, so its share of trustguard_stream_evals_total is
+// zero by construction and only a count of responses can answer how many
+// streams were never inspected.
+func recordStreamEvals(ctx context.Context, r appplugins.StreamReport, failedOpen bool) {
+	initInstruments()
+	label := streamOutcomeLabel(r)
+	if failedOpen && label != streamOutcomeBlocked {
+		label = streamOutcomeFailedOpen
+	}
+	outcome := metric.WithAttributes(attribute.String("outcome", label))
+	if streamEvals != nil {
+		streamEvals.Add(ctx, int64(r.Evals), outcome)
+	}
+	if streamResponses != nil {
+		streamResponses.Add(ctx, 1, outcome)
+	}
+	if streamGuardCalls != nil {
+		streamGuardCalls.Record(ctx, int64(r.GuardCalls))
+	}
+	if streamAddedLatency != nil {
+		streamAddedLatency.Record(ctx, r.AddedLatency.Milliseconds())
+	}
 }

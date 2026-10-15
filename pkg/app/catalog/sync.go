@@ -74,6 +74,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderCerebras, "Cerebras", "openai"},
 	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
 	{providers.ProviderCohere, "Cohere", "cohere"},
+	{providers.ProviderMoonshot, "Moonshot AI", "openai"},
 }
 
 var cohereSeedModels = []seedModel{
@@ -120,6 +121,7 @@ var modelsDevProviderToCode = map[string]string{
 	"cerebras":       providers.ProviderCerebras,
 	"openrouter":     providers.ProviderOpenRouter,
 	"cohere":         providers.ProviderCohere,
+	"moonshotai":     providers.ProviderMoonshot,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.
@@ -224,6 +226,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			ReleaseDate:      parseReleaseDate(m.ReleaseDate),
 			InputModalities:  m.InputModalities,
 			OutputModalities: m.OutputModalities,
+			Capabilities:     m.Capabilities,
 			Enabled:          true,
 			Source:           sourceModelsDev,
 		}

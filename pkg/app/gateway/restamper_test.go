@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
@@ -112,5 +113,23 @@ func TestRestampTenantEmptyTenantStampsNothing(t *testing.T) {
 	}
 	if got.Stamped != 0 || got.OverCap {
 		t.Fatalf("got %+v, want nothing stamped and no overage", got)
+	}
+}
+
+// The tenant's plan row is part of the snapshot, so a restamp must publish it
+// even when the tenant has no gateway for the UPDATE to touch.
+func TestRestampTenantSignalsEvenWhenNoGatewayWasTouched(t *testing.T) {
+	repo := mocks.NewRepository(t)
+	repo.EXPECT().
+		RestampEntitlementsByTenantID(mock.Anything, "ghost", mock.Anything).
+		Return(nil, nil).Once()
+
+	signaler := &configsynctest.FakeSignaler{}
+	r := appgateway.NewEntitlementsRestamper(repo, newCacheManager(), nil, signaler, newTestLogger())
+	if _, err := r.RestampTenant(context.Background(), "ghost", stamp("free", 1, 7)); err != nil {
+		t.Fatalf("RestampTenant: %v", err)
+	}
+	if got := signaler.Count(); got != 1 {
+		t.Fatalf("Signal count = %d, want 1 even though nothing was stamped", got)
 	}
 }

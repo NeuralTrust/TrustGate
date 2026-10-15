@@ -19,12 +19,13 @@ import "encoding/json"
 type CanonicalEmbeddingRequest struct {
 	Model     string   `json:"model,omitempty"`
 	Inputs    []string `json:"inputs,omitempty"`
+	Tokens    [][]int  `json:"tokens,omitempty"`
 	InputType string   `json:"input_type,omitempty"`
 }
 
 type CanonicalEmbeddingResponse struct {
-	Model      string       `json:"model,omitempty"`
-	Embeddings [][]float64  `json:"embeddings,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	Embeddings [][]float64     `json:"embeddings,omitempty"`
 	Usage      *CanonicalUsage `json:"usage,omitempty"`
 }
 
@@ -52,11 +53,11 @@ func (a *OpenAIEmbeddingsAdapter) DecodeRequest(body []byte) (*CanonicalRequest,
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}
-	inputs, err := decodeEmbeddingInputs(req.Input)
+	inputs, tokens, err := decodeEmbeddingInputs(req.Input)
 	if err != nil {
 		return nil, err
 	}
-	emb := &CanonicalEmbeddingRequest{Model: req.Model, Inputs: inputs}
+	emb := &CanonicalEmbeddingRequest{Model: req.Model, Inputs: inputs, Tokens: tokens}
 	raw, err := json.Marshal(emb)
 	if err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func (a *OpenAIEmbeddingsAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	inputRaw, err := encodeEmbeddingInputs(emb.Inputs)
+	inputRaw, err := encodeEmbeddingInputs(emb)
 	if err != nil {
 		return nil, err
 	}
@@ -136,15 +137,15 @@ func (a *OpenAIEmbeddingsAdapter) EncodeStreamChunk(*CanonicalStreamChunk) ([][]
 type CohereEmbedAdapter struct{}
 
 type cohereEmbedRequest struct {
-	Model           string   `json:"model"`
-	Texts           []string `json:"texts"`
-	InputType       string   `json:"input_type"`
-	EmbeddingTypes  []string `json:"embedding_types,omitempty"`
+	Model          string   `json:"model"`
+	Texts          []string `json:"texts"`
+	InputType      string   `json:"input_type"`
+	EmbeddingTypes []string `json:"embedding_types,omitempty"`
 }
 
 type cohereEmbedResponse struct {
-	ID         string        `json:"id,omitempty"`
-	Embeddings [][]float64   `json:"embeddings"`
+	ID         string      `json:"id,omitempty"`
+	Embeddings [][]float64 `json:"embeddings"`
 }
 
 func (a *CohereEmbedAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
@@ -165,7 +166,7 @@ func (a *CohereEmbedAdapter) DecodeRequest(body []byte) (*CanonicalRequest, erro
 }
 
 func (a *CohereEmbedAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	emb, err := embeddingFromCanonical(req)
+	emb, err := textEmbeddingFromCanonical(req)
 	if err != nil {
 		return nil, err
 	}
@@ -215,30 +216,63 @@ func (a *CohereEmbedAdapter) EncodeStreamChunk(*CanonicalStreamChunk) ([][]byte,
 	return nil, nil
 }
 
-func decodeEmbeddingInputs(raw json.RawMessage) ([]string, error) {
+// decodeEmbeddingInputs reads an OpenAI embeddings input: a string, a list of
+// strings, or pre-tokenized input as a list of token ids or a list of them.
+func decodeEmbeddingInputs(raw json.RawMessage) ([]string, [][]int, error) {
 	if len(raw) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return []string{s}, nil
+		return []string{s}, nil, nil
 	}
-	var arr []string
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		return nil, err
+	var texts []string
+	if json.Unmarshal(raw, &texts) == nil {
+		return texts, nil, nil
 	}
-	return arr, nil
+	var tokens []int
+	if json.Unmarshal(raw, &tokens) == nil {
+		return nil, [][]int{tokens}, nil
+	}
+	var batch [][]int
+	if err := json.Unmarshal(raw, &batch); err != nil {
+		return nil, nil, err
+	}
+	return nil, batch, nil
 }
 
-func encodeEmbeddingInputs(inputs []string) (json.RawMessage, error) {
-	if len(inputs) == 1 {
-		return json.Marshal(inputs[0])
+func encodeEmbeddingInputs(emb *CanonicalEmbeddingRequest) (json.RawMessage, error) {
+	if len(emb.Tokens) == 1 {
+		return json.Marshal(emb.Tokens[0])
 	}
-	return json.Marshal(inputs)
+	if len(emb.Tokens) > 0 {
+		return json.Marshal(emb.Tokens)
+	}
+	if len(emb.Inputs) == 1 {
+		return json.Marshal(emb.Inputs[0])
+	}
+	return json.Marshal(emb.Inputs)
+}
+
+// textEmbeddingFromCanonical is embeddingFromCanonical for a target that only
+// embeds text: token ids belong to one tokenizer and cannot be turned back
+// into text for another provider.
+func textEmbeddingFromCanonical(req *CanonicalRequest) (*CanonicalEmbeddingRequest, error) {
+	emb, err := embeddingFromCanonical(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(emb.Tokens) > 0 {
+		return nil, &UnsupportedContentError{Reason: "token array embedding input is not supported by the target provider; send text input"}
+	}
+	return emb, nil
 }
 
 func embeddingFromCanonical(req *CanonicalRequest) (*CanonicalEmbeddingRequest, error) {
-	if req == nil || req.Metadata == nil {
+	if req == nil {
+		return &CanonicalEmbeddingRequest{}, nil
+	}
+	if req.Metadata == nil {
 		return &CanonicalEmbeddingRequest{Model: req.Model}, nil
 	}
 	raw, ok := req.Metadata["embedding"]

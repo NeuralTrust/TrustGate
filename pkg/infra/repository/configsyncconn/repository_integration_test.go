@@ -23,8 +23,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+
 	// Register the config_sync_connections migration (and the rest of the schema).
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 )
@@ -153,7 +156,7 @@ func TestIntegration_ListScopeIsolation(t *testing.T) {
 		t.Fatalf("MarkConnected b/dp-9: %v", err)
 	}
 
-	scoped, err := repo.List(ctx, "tenant-a")
+	scoped, err := repo.List(ctx, "tenant-a", nil)
 	if err != nil {
 		t.Fatalf("List(tenant-a): %v", err)
 	}
@@ -164,7 +167,7 @@ func TestIntegration_ListScopeIsolation(t *testing.T) {
 		t.Fatal("List(tenant-a) leaked a tenant-b connection")
 	}
 
-	unknown, err := repo.List(ctx, "tenant-missing")
+	unknown, err := repo.List(ctx, "tenant-missing", nil)
 	if err != nil {
 		t.Fatalf("List(tenant-missing): %v", err)
 	}
@@ -172,18 +175,26 @@ func TestIntegration_ListScopeIsolation(t *testing.T) {
 		t.Fatalf("List(unknown scope) = %d rows, want 0", len(unknown))
 	}
 
-	all, err := repo.List(ctx, "")
+	all, err := repo.List(ctx, "", nil)
 	if err != nil {
 		t.Fatalf("List(all): %v", err)
 	}
 	if len(all) != 3 {
 		t.Fatalf("List(empty scope) = %d rows, want all 3", len(all))
 	}
+
+	second, err := repo.List(ctx, "tenant-a", &listing.Page{Number: 2, Size: 1})
+	if err != nil {
+		t.Fatalf("List(tenant-a, page 2): %v", err)
+	}
+	if len(second) != 1 || second[0].InstanceID != "dp-2" {
+		t.Fatalf("List(tenant-a, page 2) = %+v, want only dp-2", second)
+	}
 }
 
 func mustGet(t *testing.T, repo *Repository, scope, instanceID string) (Connection, bool) {
 	t.Helper()
-	conns, err := repo.List(context.Background(), scope)
+	conns, err := repo.List(context.Background(), scope, nil)
 	if err != nil {
 		t.Fatalf("List(%q): %v", scope, err)
 	}

@@ -56,6 +56,14 @@ func (e *EventContext) SetSLatency(duration time.Duration) {
 	e.span.SetLatency(duration)
 }
 
+// SetSLatencyDefault records a latency only if none was set explicitly.
+func (e *EventContext) SetSLatencyDefault(duration time.Duration) {
+	if e == nil || e.span == nil {
+		return
+	}
+	e.span.SetLatencyDefault(duration)
+}
+
 func (e *EventContext) SetMode(mode string) {
 	if e == nil || e.span == nil {
 		return
@@ -79,6 +87,14 @@ func (e *EventContext) SetScore(score float64, label string) {
 		return
 	}
 	e.span.SetScore(score, label)
+}
+
+// HasExtras reports whether the span already carries the plugin's extras.
+func (e *EventContext) HasExtras() bool {
+	if e == nil || e.span == nil {
+		return false
+	}
+	return e.span.HasExtras()
 }
 
 func (e *EventContext) HasDecision() bool {

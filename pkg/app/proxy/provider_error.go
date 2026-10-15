@@ -17,15 +17,29 @@ package proxy
 import "github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 
 func responseCarriesProviderError(resp *ProviderResponse) bool {
-	if resp == nil || len(resp.Body) == 0 {
+	body := providerWording(resp)
+	if len(body) == 0 {
 		return false
 	}
-	return adapter.BodyCarriesRetryableError(resp.Body)
+	return adapter.BodyCarriesRetryableError(body)
 }
 
 func responseCarriesModelNotFound(resp *ProviderResponse) bool {
-	if resp == nil || len(resp.Body) == 0 {
+	body := providerWording(resp)
+	if len(body) == 0 {
 		return false
 	}
-	return adapter.BodyCarriesModelNotFound(resp.Body)
+	return adapter.BodyCarriesModelNotFound(body)
+}
+
+// providerWording is the body the provider sent, before it was rewritten for
+// the client, so the checks match the provider's own error types.
+func providerWording(resp *ProviderResponse) []byte {
+	if resp == nil {
+		return nil
+	}
+	if resp.upstreamBody != nil {
+		return resp.upstreamBody
+	}
+	return resp.Body
 }

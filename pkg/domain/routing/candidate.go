@@ -15,13 +15,17 @@
 package routing
 
 import (
-	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
+
+// SourceFallback marks a candidate reached through the consumer's fallback
+// chain rather than its primary registries.
+const SourceFallback = "fallback"
 
 type Candidate struct {
 	Registry *registrydomain.Registry
@@ -32,9 +36,6 @@ type Candidate struct {
 }
 
 func (c Candidate) PolicyAllowsModel(model string) bool {
-	if modelmatch.IsPattern(model) {
-		return false
-	}
 	if c.Allowed == nil {
 		return true
 	}
@@ -44,6 +45,12 @@ func (c Candidate) PolicyAllowsModel(model string) bool {
 
 func (c Candidate) DefersModelChoice() bool {
 	return c.Allowed == nil
+}
+
+// FallbackOnly reports whether the candidate is reachable only as a fallback;
+// a candidate with no recorded source is not.
+func (c Candidate) FallbackOnly() bool {
+	return len(c.Sources) > 0 && !slices.ContainsFunc(c.Sources, func(s string) bool { return s != SourceFallback })
 }
 
 type CandidateSet struct {
@@ -176,7 +183,7 @@ func (s *CandidateSet) resolveAuto() (*CandidateSet, error) {
 		out.Add(c)
 	}
 	if out.Len() == 0 {
-		return nil, fmt.Errorf("%w: auto routing requires at least one registry with a default model", ErrModelDenied)
+		return nil, DenyModel("auto routing requires at least one registry with a default model")
 	}
 	return out, nil
 }
@@ -199,9 +206,9 @@ func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, 
 		return out, nil
 	}
 	if providerSeen {
-		return nil, fmt.Errorf("%w: model %q is not allowed for provider %q", ErrModelDenied, model, provider)
+		return nil, DenyModel("model %q is not allowed for provider %q", model, provider)
 	}
-	return nil, fmt.Errorf("%w: provider %q is not available for this consumer", ErrModelDenied, provider)
+	return nil, DenyModel("provider %q is not available for this application", provider)
 }
 
 func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
@@ -214,7 +221,7 @@ func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
 		out.Add(c)
 	}
 	if out.Len() == 0 {
-		return nil, fmt.Errorf("%w: model %q is not allowed for this consumer", ErrModelDenied, model)
+		return nil, DenyModel("model %q is not allowed for this application", model)
 	}
 	return out, nil
 }

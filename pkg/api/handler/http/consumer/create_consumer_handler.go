@@ -47,6 +47,7 @@ func NewCreateConsumerHandler(creator appconsumer.Creator) *CreateConsumerHandle
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers [post]
 func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)
@@ -77,25 +78,23 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	roleIDs, err := req.ToRoleIDs()
-	if err != nil {
-		return httpio.WriteError(c, err)
-	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:       gatewayID,
 		Name:            req.Name,
+		Description:     req.Description,
 		Type:            req.ToType(),
-		RoutingMode:     req.ToRoutingMode(),
+		Audience:        req.ToAudience(),
 		LBConfig:        lbConfig,
 		Headers:         req.Headers,
 		Active:          req.Active,
 		Fallback:        fallback,
 		RegistryIDs:     registryIDs,
 		RegistryWeights: registryWeights,
-		RoleIDs:         roleIDs,
 		ModelPolicies:   modelPolicies,
 		MCP:             mcp,
+		Identity:        req.Identity.ToDomain(),
+		AuthBinding:     req.AuthBinding.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

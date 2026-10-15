@@ -16,10 +16,32 @@ package context
 
 import (
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+)
+
+// Metadata keys the MCP tools/call path sets on RequestContext once the tool
+// has been bound to its upstream. Body.name stays the exposed (possibly
+// federated) name; these describe the native binding for plugins that only
+// read metadata, and for telemetry. They are advisory: the executor merges
+// metadata back out of isolated requests, so a plugin can overwrite them. A
+// plugin that gates the call must read RequestContext.MCPTool instead.
+const (
+	// MetadataMCPTool is the upstream-native tool name.
+	MetadataMCPTool = "mcp.tool"
+	// MetadataMCPRegistryID is the id of the registry that owns the tool.
+	MetadataMCPRegistryID = "mcp.registry_id"
+	// MetadataMCPRegistryName is the display name of the registry that owns the tool.
+	MetadataMCPRegistryName = "mcp.registry_name"
+	// MetadataMCPExposedTool is the name the caller used, as listed by tools/list.
+	MetadataMCPExposedTool = "mcp.exposed_tool"
 )
 
 type Attachment struct {
@@ -32,9 +54,79 @@ type RoutingDecision struct {
 	TierApplied bool
 }
 
+// BedrockNativeTarget is the Bedrock Runtime operation and model a native
+// request addressed in its path.
+type BedrockNativeTarget struct {
+	Op         bedrocknative.Op
+	ModelID    string
+	RawModelID string
+}
+
+// IsStream reports whether the operation answers with an event stream.
+func (t *BedrockNativeTarget) IsStream() bool {
+	return t != nil && t.Op.IsStream()
+}
+
+// NativeMaskSource is a policy whose change to a native Bedrock call is a mask:
+// the plugin declared it masks text, and the change is carried onto the bytes the
+// client sent.
+type NativeMaskSource struct {
+	Plugin string
+	Stage  policy.Stage
+}
+
+// NativeMaskLog collects the masks the plugins of a native call made, per stage.
+// A request context is copied for parallel plugins and the log is shared by every
+// copy, so it is safe for concurrent use.
+type NativeMaskLog struct {
+	mu      sync.Mutex
+	sources []NativeMaskSource
+}
+
+// Add records a mask.
+func (l *NativeMaskLog) Add(s NativeMaskSource) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.sources = append(l.sources, s)
+	l.mu.Unlock()
+}
+
+// Reset forgets the masks recorded for a stage.
+func (l *NativeMaskLog) Reset(stage policy.Stage) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sources = slices.DeleteFunc(l.sources, func(s NativeMaskSource) bool { return s.Stage == stage })
+}
+
+// Sources returns the masks recorded for a stage.
+func (l *NativeMaskLog) Sources(stage policy.Stage) []NativeMaskSource {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []NativeMaskSource
+	for _, s := range l.sources {
+		if s.Stage == stage {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 type RequestContext struct {
-	GatewayID          string
-	ConsumerID         string
+	GatewayID  string
+	ConsumerID string
+	// ConsumerName is the consumer's name, for the places an id alone reads as
+	// nothing: a guard that shows the application a request came from.
+	ConsumerName       string
+	AuthID             string
+	OwnerID            string
 	ConsumerType       string
 	RegistryID         string
 	RegistryPricing    *domain.Pricing
@@ -54,13 +146,49 @@ type RequestContext struct {
 	SourceFormat       string
 	TargetFormat       string
 	ProxyCapability    string
-	AllowedModels      []string
-	DefaultModel       string
-	RequestedModel     string
-	RoutingDecision    *RoutingDecision
+	// BedrockNative is set when the client called a Bedrock Runtime operation
+	// directly; the body is then relayed to Bedrock as received.
+	BedrockNative *BedrockNativeTarget
+	// NativeMask records the masks plugins made on a native call. The forwarder
+	// sets it before the first stage; it is nil on every other request.
+	NativeMask *NativeMaskLog
+	// ResolvedModel is the model behind an identifier that names it only
+	// indirectly, such as an application inference profile ARN, once known. It
+	// is for pricing and the span; RequestedModel keeps what the client sent.
+	ResolvedModel   string
+	AllowedModels   []string
+	DefaultModel    string
+	RequestedModel  string
+	RoutingDecision *RoutingDecision
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool
+	// PlaygroundVerified is true only when the playground identity resolver
+	// verified this request's X-AG-Playground-Token JWT. It is set by the
+	// gateway from the resolved AuthContext, never from a header, so the
+	// playground trace store can trust it where it cannot trust the raw header
+	// (MCP clients can send any header value and no resolver checks it there).
+	PlaygroundVerified bool
+	// KeyBudget is the spending limit of the personal key that authenticated
+	// the request, nil when it has none. The gateway sets it from the resolved
+	// key, never from a header; plugins read it and never modify it.
+	KeyBudget *authdomain.KeyBudget
+	// MCPTool is the upstream-native tool name a resolved tools/call is bound
+	// to, "" on any other request. A plugin deciding whether to allow the call
+	// must read it here and not from MetadataMCPTool: Metadata is a channel
+	// plugins write to and the executor merges back, so an earlier plugin in
+	// the chain could name a different tool there. Scalar fields are never
+	// merged out of an isolated request, so this one is the binding the
+	// dispatcher fixed.
+	MCPTool string
+	// MCPToolCallID is the LLM tool_call_id a client volunteered for a
+	// tools/call, "" when it sent none. It correlates one tool execution seen
+	// on the MCP path with the `role: tool` message the same execution produces
+	// on the LLM path, so a plugin counting executions can recognise the two
+	// observations as one (ENG-1579). It is a caller hint, not an identity:
+	// nothing stops a client from repeating or inventing one, so it may only
+	// suppress a duplicate count, never a charge no other path makes.
+	MCPToolCallID string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched
@@ -79,3 +207,8 @@ func (r *RequestContext) HeaderValue(name string) string {
 	}
 	return ""
 }
+
+// IsBedrockNative reports whether the client called a Bedrock Runtime operation
+// directly. It is the one answer to that question: every place that treats a
+// native call differently asks here.
+func (r *RequestContext) IsBedrockNative() bool { return r != nil && r.BedrockNative != nil }

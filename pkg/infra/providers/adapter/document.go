@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"cmp"
 	"encoding/base64"
 	"net/url"
 	"path"
@@ -132,7 +133,7 @@ func parseDocumentData(raw, mediaType, name string) CanonicalDocument {
 		return CanonicalDocument{MediaType: inferDocumentMediaType(mediaType, name), URL: raw, Name: name}
 	}
 	if isHTTPImageURL(raw) {
-		return CanonicalDocument{MediaType: inferDocumentMediaType(mediaType, firstNonEmptyString(name, urlPath(raw))), URL: raw, Name: name}
+		return CanonicalDocument{MediaType: inferDocumentMediaType(mediaType, cmp.Or(name, urlPath(raw))), URL: raw, Name: name}
 	}
 	return CanonicalDocument{MediaType: normalizeDocumentMediaType(mediaType, name), Data: raw, Name: name}
 }

@@ -16,26 +16,32 @@ package auth
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type ListAuthHandler struct {
 	finder appauth.Finder
+	// reach answers which consumers hold each auth, in one read for the page.
+	// Optional, as on the single read.
+	reach appconsumer.AuthConsumers
 }
 
-func NewListAuthHandler(finder appauth.Finder) *ListAuthHandler {
-	return &ListAuthHandler{finder: finder}
+func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) *ListAuthHandler {
+	return &ListAuthHandler{finder: finder, reach: reach}
 }
 
 // Handle godoc
 // @Summary      List auths
-// @Description  Returns a paginated list of auths in a gateway.
+// @Description  Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
@@ -44,6 +50,8 @@ func NewListAuthHandler(finder appauth.Finder) *ListAuthHandler {
 // @Param        name        query     string  false  "Alias of search"
 // @Param        type        query     string  false  "Filter by auth type (api_key, oauth2, oidc, mtls)"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
+// @Param        owner_id    query     string  false  "List only the personal key of this owner. Without it, personal keys are excluded"
+// @Param        owned       query     bool    false  "true lists only personal keys, of every owner; false lists only application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, type)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
@@ -77,21 +85,34 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "type"))
 		}
 	}
+	owned, err := httpio.ParseOptionalBool(c, "owned")
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 	req := request.ListAuthRequest{
 		Search:  httpio.ParseSearch(c),
 		Type:    authType,
 		Enabled: enabled,
+		OwnerID: strings.TrimSpace(c.Query("owner_id")),
+		Owned:   owned,
 		Page:    page,
 		Sort:    sort,
 	}
+	if req.Owned != nil && req.OwnerID != "" {
+		return httpio.WriteError(c, fmt.Errorf("%w: owned cannot be combined with owner_id", httpio.ErrInvalidFilter))
+	}
+	onlyOwned := req.Owned != nil && *req.Owned
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
-		GatewayID: gatewayID,
-		Search:    req.Search,
-		Type:      req.Type,
-		Enabled:   req.Enabled,
-		Page:      req.Page,
-		Sort:      req.Sort,
+		GatewayID:    gatewayID,
+		Search:       req.Search,
+		Type:         req.Type,
+		Enabled:      req.Enabled,
+		ExcludeOwned: req.OwnerID == "" && !onlyOwned,
+		OnlyOwned:    onlyOwned,
+		OwnerID:      req.OwnerID,
+		Page:         req.Page,
+		Sort:         req.Sort,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
@@ -103,8 +124,34 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 		Size:  req.Page.Size,
 		Total: total,
 	}
+	held, err := h.heldBy(c, gatewayID, items)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 	for _, a := range items {
-		out.Items = append(out.Items, response.FromAuth(a))
+		if held == nil {
+			out.Items = append(out.Items, response.FromAuth(a))
+			continue
+		}
+		out.Items = append(out.Items, response.FromAuthWithConsumers(a, held[a.ID]))
 	}
 	return httpio.WriteOK(c, out)
+}
+
+// heldBy reads the consumers of every auth on the page at once, since they all
+// come from the same gateway and that read is cached. Nil when this deployment
+// wires no reverse lookup.
+func (h *ListAuthHandler) heldBy(
+	c *fiber.Ctx,
+	gatewayID ids.GatewayID,
+	items []*domain.Auth,
+) (map[ids.AuthID][]appconsumer.AuthConsumer, error) {
+	if h.reach == nil || len(items) == 0 {
+		return nil, nil
+	}
+	authIDs := make([]ids.AuthID, 0, len(items))
+	for _, a := range items {
+		authIDs = append(authIDs, a.ID)
+	}
+	return h.reach.ForAuths(c.UserContext(), gatewayID, authIDs)
 }

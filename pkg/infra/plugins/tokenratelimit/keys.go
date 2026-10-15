@@ -24,6 +24,10 @@ func aggregateKey(cfgID, dimension, subject, headerValue string) string {
 	return key
 }
 
+func periodKey(base, period string) string {
+	return base + ":p:" + period
+}
+
 func modelKey(base, slug string) string {
 	return base + ":model:" + slug
 }

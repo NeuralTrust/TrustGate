@@ -103,6 +103,64 @@ func (_c *ModelListing_Lists_Call) RunAndReturn(run func(context.Context, string
 	return _c
 }
 
+// Capabilities provides a mock function with given fields: ctx, providerCode, model
+func (_m *ModelListing) Capabilities(ctx context.Context, providerCode string, model string) (map[string]any, bool) {
+	ret := _m.Called(ctx, providerCode, model)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Capabilities")
+	}
+
+	var r0 map[string]any
+	var r1 bool
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (map[string]any, bool)); ok {
+		return rf(ctx, providerCode, model)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) map[string]any); ok {
+		r0 = rf(ctx, providerCode, model)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]any)
+		}
+	}
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) bool); ok {
+		r1 = rf(ctx, providerCode, model)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+	return r0, r1
+}
+
+// ModelListing_Capabilities_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Capabilities'
+type ModelListing_Capabilities_Call struct {
+	*mock.Call
+}
+
+// Capabilities is a helper method to define mock.On call
+//   - ctx context.Context
+//   - providerCode string
+//   - model string
+func (_e *ModelListing_Expecter) Capabilities(ctx interface{}, providerCode interface{}, model interface{}) *ModelListing_Capabilities_Call {
+	return &ModelListing_Capabilities_Call{Call: _e.mock.On("Capabilities", ctx, providerCode, model)}
+}
+
+func (_c *ModelListing_Capabilities_Call) Run(run func(ctx context.Context, providerCode string, model string)) *ModelListing_Capabilities_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *ModelListing_Capabilities_Call) Return(flags map[string]any, known bool) *ModelListing_Capabilities_Call {
+	_c.Call.Return(flags, known)
+	return _c
+}
+
+func (_c *ModelListing_Capabilities_Call) RunAndReturn(run func(context.Context, string, string) (map[string]any, bool)) *ModelListing_Capabilities_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewModelListing creates a new instance of ModelListing. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewModelListing(t interface {

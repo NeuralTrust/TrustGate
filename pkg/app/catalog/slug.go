@@ -14,14 +14,18 @@
 
 package catalog
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+)
 
 // inferenceProfilePrefixes are the geographies AWS puts in front of a Bedrock
 // model ID to name a cross-region inference profile, which is the only way to
 // invoke many newer models. The catalog stores the bare ID (and a "global."
 // twin), so a request routed through a regional profile finds no price — and
 // therefore no cost, and no dollar budget — unless the geography is dropped.
-var inferenceProfilePrefixes = []string{"us.", "eu.", "apac.", "us-gov.", "jp.", "au.", "ca."}
+var inferenceProfilePrefixes = []string{"us.", "eu.", "apac.", "us-gov.", "jp.", "au.", "ca.", "global."}
 
 func SlugCandidates(models ...string) []string {
 	var slugs []string
@@ -34,6 +38,15 @@ func SlugCandidates(models ...string) []string {
 func appendModelSlugs(dst []string, model string) []string {
 	if model == "" {
 		return dst
+	}
+	// A native Bedrock call may name its model by ARN. The ARN carries the model
+	// (or the system profile) with no lookup, which then goes through the same
+	// prefix and date stripping as a plain ID. The literal ARN is kept last.
+	if arn, ok := bedrocknative.ParseBedrockARN(model); ok {
+		if id, ok := arn.ModelID(); ok {
+			dst = appendModelSlugs(dst, id)
+		}
+		return append(dst, model)
 	}
 	dst = appendDated(dst, model)
 	if bare := withoutInferenceProfile(model); bare != model {

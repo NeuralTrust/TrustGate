@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +111,7 @@ func (f *fakeIdP) Call(_ context.Context, issuer string, form url.Values) (*Toke
 func userPrincipal() *identity.Principal {
 	return &identity.Principal{
 		Subject:  "alice",
-		Method:   identity.MethodJWT,
+		Method:   identity.MethodExternalJWT,
 		Issuer:   "https://idp.example.com",
 		RawToken: "inbound-token",
 		Scopes:   []string{"mcp.access"},
@@ -324,5 +325,208 @@ func TestExchanger_CacheSweepsExpiredTokens(t *testing.T) {
 	}
 	if !freshAlive {
 		t.Fatal("fresh entry must be cached")
+	}
+}
+
+// TestExchanger_ExchangeRequiresAnExternalIdPAssertion covers the RUN-1501 split
+// of identity.MethodJWT. Both exchange patterns present the principal's raw
+// token back to the customer's identity provider, so only a token that provider
+// minted is a usable assertion. A token the gateway issued at its own login is
+// not: mintSession builds fresh claims and never carries the upstream token, so
+// the raw token is the gateway's own. The legacy "jwt" value stays accepted, so
+// a principal that predates the split keeps exchanging as it did.
+func TestExchanger_ExchangeRequiresAnExternalIdPAssertion(t *testing.T) {
+	t.Parallel()
+	patterns := map[string]registrydomain.MCPExchangePattern{
+		"on-behalf-of":   registrydomain.ExchangeOBO,
+		"token-exchange": registrydomain.ExchangeTokenExchange,
+	}
+	methods := map[string]struct {
+		method    identity.Method
+		exchanges bool
+	}{
+		"an external identity provider":  {identity.MethodExternalJWT, true},
+		"the pre-split legacy value":     {identity.MethodJWT, true},
+		"a gateway-issued session token": {identity.MethodOAuth, false},
+		"an api key":                     {identity.MethodAPIKey, false},
+		"a client certificate":           {identity.MethodMTLS, false},
+	}
+
+	for patternName, pattern := range patterns {
+		for name, tc := range methods {
+			t.Run(patternName+"/"+name, func(t *testing.T) {
+				idp := &fakeIdP{token: &Token{AccessToken: "upstream", ExpiresAt: time.Now().Add(time.Hour)}}
+				ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: idpAuths("https://idp.example.com")}, idp)
+				cfg := &registrydomain.MCPAuth{
+					Mode: registrydomain.MCPAuthModeExchange, Pattern: pattern,
+					Scope: "x/.default", Audience: "https://up.example.com",
+				}
+				p := userPrincipal()
+				p.Method = tc.method
+
+				_, err := ex.Exchange(context.Background(), p, ids.GatewayID{}, cfg, patternName+name)
+				if tc.exchanges {
+					if err != nil {
+						t.Fatalf("%s must reach the identity provider, got %v", name, err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrNoUserIdentity) {
+					t.Fatalf("%s: error = %v, want ErrNoUserIdentity", name, err)
+				}
+				if idp.gotForm != nil {
+					t.Fatalf("%s must never reach the identity provider, got form %v", name, idp.gotForm)
+				}
+			})
+		}
+	}
+}
+
+func TestExchanger_PinnedIdentity(t *testing.T) {
+	t.Parallel()
+	const issuer = "https://idp.example.com"
+	gatewayID := ids.New[ids.GatewayKind]()
+	pinned := idpAuth(gatewayID, issuer, "pinned-client", "pinned-secret")
+	pinned.ID = ids.New[ids.AuthKind]()
+	shadow := idpAuth(gatewayID, issuer, "", "")
+	shadow.ID = ids.New[ids.AuthKind]()
+	other := idpAuth(gatewayID, issuer, "other-client", "other-secret")
+	other.ID = ids.New[ids.AuthKind]()
+	noCreds := idpAuth(gatewayID, issuer, "", "")
+	noCreds.ID = ids.New[ids.AuthKind]()
+	foreign := idpAuth(gatewayID, "https://other-idp.example.com", "foreign-client", "foreign-secret")
+	foreign.ID = ids.New[ids.AuthKind]()
+	notOAuth2 := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gatewayID}
+
+	tests := []struct {
+		name       string
+		auths      []*authdomain.Auth
+		identityID string
+		wantClient string
+		wantErr    error
+	}{
+		{
+			name:       "uses the pinned identity over an earlier issuer match",
+			auths:      []*authdomain.Auth{shadow, other, pinned},
+			identityID: pinned.ID.String(),
+			wantClient: "pinned-client",
+		},
+		{
+			name:       "matches a pinned id stored in another uuid spelling",
+			auths:      []*authdomain.Auth{pinned},
+			identityID: strings.ToUpper(pinned.ID.String()),
+			wantClient: "pinned-client",
+		},
+		{
+			name:       "refuses a caller token from another issuer",
+			auths:      []*authdomain.Auth{foreign},
+			identityID: foreign.ID.String(),
+			wantErr:    ErrIdentityIssuerMismatch,
+		},
+		{
+			name:       "does not fall back when the pinned identity is gone or disabled",
+			auths:      []*authdomain.Auth{other},
+			identityID: pinned.ID.String(),
+			wantErr:    ErrExchangeIdentityUnavailable,
+		},
+		{
+			name:       "refuses a pinned identity without client credentials",
+			auths:      []*authdomain.Auth{noCreds},
+			identityID: noCreds.ID.String(),
+			wantErr:    ErrExchangeIdentityUnavailable,
+		},
+		{
+			name:       "refuses a pinned auth that is not oauth2",
+			auths:      []*authdomain.Auth{notOAuth2},
+			identityID: notOAuth2.ID.String(),
+			wantErr:    ErrExchangeIdentityUnavailable,
+		},
+	}
+	patterns := []*registrydomain.MCPAuth{
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://target/.default"},
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange, Audience: "api://target"},
+	}
+	for _, base := range patterns {
+		for _, tc := range tests {
+			t.Run(string(base.Pattern)+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				idp := &fakeIdP{token: &Token{AccessToken: "exchanged", TokenType: "Bearer", ExpiresAt: time.Now().Add(10 * time.Minute)}}
+				ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: tc.auths}, idp)
+				cfg := *base
+				cfg.IdentityID = tc.identityID
+				_, err := ex.Exchange(context.Background(), userPrincipal(), gatewayID, &cfg, "k")
+				if tc.wantErr == nil {
+					if err != nil {
+						t.Fatalf("Exchange: %v", err)
+					}
+					if idp.gotForm.Get("client_id") != tc.wantClient {
+						t.Fatalf("client_id = %q, want %q", idp.gotForm.Get("client_id"), tc.wantClient)
+					}
+					return
+				}
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				if idp.gotForm != nil {
+					t.Fatalf("IdP was called with %v despite the error", idp.gotForm)
+				}
+			})
+		}
+	}
+}
+
+func TestExchanger_SignsWithTheExchangeClient(t *testing.T) {
+	t.Parallel()
+	const issuer = "https://idp.example.com"
+	gatewayID := ids.New[ids.GatewayKind]()
+	exchangeOnly := &authdomain.Auth{
+		ID: ids.New[ids.AuthKind](), GatewayID: gatewayID,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer: issuer, ExchangeClientID: "obo-client", ExchangeClientSecret: "obo-secret",
+		}},
+	}
+	both := idpAuth(gatewayID, issuer, "login-client", "login-secret")
+	both.ID = ids.New[ids.AuthKind]()
+	both.Config.OAuth2.ExchangeClientID = "obo-client"
+	both.Config.OAuth2.ExchangeClientSecret = "obo-secret"
+
+	for name, auth := range map[string]*authdomain.Auth{"exchange client only": exchangeOnly, "both clients": both} {
+		for _, pinned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/pinned=%v", name, pinned), func(t *testing.T) {
+				t.Parallel()
+				idp := &fakeIdP{token: &Token{AccessToken: "obo", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour)}}
+				ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: []*authdomain.Auth{auth}}, idp)
+				cfg := &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://t/.default"}
+				if pinned {
+					cfg.IdentityID = auth.ID.String()
+				}
+				if _, err := ex.Exchange(context.Background(), userPrincipal(), gatewayID, cfg, "k"); err != nil {
+					t.Fatalf("Exchange: %v", err)
+				}
+				if idp.gotForm.Get("client_id") != "obo-client" || idp.gotForm.Get("client_secret") != "obo-secret" {
+					t.Fatalf("form = %v, want the exchange client", idp.gotForm)
+				}
+			})
+		}
+	}
+}
+
+func TestExchanger_SkipsAnIssuerMatchWithoutAnExchangeClient(t *testing.T) {
+	t.Parallel()
+	const issuer = "https://idp.example.com"
+	gatewayID := ids.New[ids.GatewayKind]()
+	validateOnly := idpAuth(gatewayID, issuer, "", "")
+	signer := &authdomain.Auth{GatewayID: gatewayID, Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+		Issuer: issuer, ExchangeClientID: "obo-client", ExchangeClientSecret: "obo-secret",
+	}}}
+	idp := &fakeIdP{token: &Token{AccessToken: "obo", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour)}}
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: []*authdomain.Auth{validateOnly, signer}}, idp)
+	cfg := &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://t/.default"}
+
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), gatewayID, cfg, "k"); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if idp.gotForm.Get("client_id") != "obo-client" {
+		t.Fatalf("client_id = %q, want the identity that has an exchange client", idp.gotForm.Get("client_id"))
 	}
 }

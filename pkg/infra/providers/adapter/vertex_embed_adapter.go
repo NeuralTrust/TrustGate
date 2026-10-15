@@ -69,7 +69,7 @@ func (a *VertexEmbedAdapter) DecodeRequest(body []byte) (*CanonicalRequest, erro
 }
 
 func (a *VertexEmbedAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	emb, err := embeddingFromCanonical(req)
+	emb, err := textEmbeddingFromCanonical(req)
 	if err != nil {
 		return nil, err
 	}

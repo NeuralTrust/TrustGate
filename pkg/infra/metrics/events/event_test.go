@@ -72,3 +72,68 @@ func TestEvent_LLMOmitsMCP(t *testing.T) {
 	_, hasMCP := decoded["mcp"]
 	assert.False(t, hasMCP)
 }
+
+func TestEvent_MarshalMCPPolicyScope(t *testing.T) {
+	evt := events.Event{
+		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindMCP,
+		TraceID:       "trace-3",
+		MCP: &events.MCP{
+			Method:    "tools/call",
+			Operation: "tool",
+			Tool:      "run_query",
+			PolicyScope: &events.MCPPolicyScope{
+				Evaluated: 3,
+				Matched:   []string{"pol-a"},
+				Skipped: []events.MCPSkippedPolicy{
+					{ID: "pol-b", Name: "jira", Reason: "destination"},
+					{ID: "pol-d", Name: "finanzas", Reason: "principal"},
+				},
+			},
+		},
+	}
+
+	raw, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	var decoded struct {
+		MCP struct {
+			PolicyScope struct {
+				Evaluated int      `json:"evaluated"`
+				Matched   []string `json:"matched"`
+				Skipped   []struct {
+					ID     string `json:"id"`
+					Name   string `json:"name"`
+					Reason string `json:"reason"`
+				} `json:"skipped"`
+			} `json:"policy_scope"`
+		} `json:"mcp"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, 3, decoded.MCP.PolicyScope.Evaluated)
+	assert.Equal(t, []string{"pol-a"}, decoded.MCP.PolicyScope.Matched)
+	require.Len(t, decoded.MCP.PolicyScope.Skipped, 2)
+	assert.Equal(t, "pol-b", decoded.MCP.PolicyScope.Skipped[0].ID)
+	assert.Equal(t, "jira", decoded.MCP.PolicyScope.Skipped[0].Name)
+	assert.Equal(t, "destination", decoded.MCP.PolicyScope.Skipped[0].Reason)
+	assert.Equal(t, "principal", decoded.MCP.PolicyScope.Skipped[1].Reason)
+}
+
+func TestEvent_MCPOmitsPolicyScopeWhenAbsent(t *testing.T) {
+	evt := events.Event{
+		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindMCP,
+		TraceID:       "trace-4",
+		MCP:           &events.MCP{Method: "tools/list", Operation: "discovery", Targets: 2},
+	}
+
+	raw, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	mcp, ok := decoded["mcp"].(map[string]any)
+	require.True(t, ok)
+	_, hasScope := mcp["policy_scope"]
+	assert.False(t, hasScope, "discovery carries no scope decision")
+}

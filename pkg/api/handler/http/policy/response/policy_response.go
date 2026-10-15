@@ -17,8 +17,18 @@ package response
 import (
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+)
+
+// Policy status values. They mirror app/policy.Status; the response package
+// stays free of app-layer imports.
+const (
+	StatusActive = "active"
+	StatusPaused = "paused"
+	StatusError  = "error"
 )
 
 type PolicyResponse struct {
@@ -30,17 +40,59 @@ type PolicyResponse struct {
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
-	Priority    int              `json:"priority"`
-	Parallel    bool             `json:"parallel,omitempty"`
-	Settings    map[string]any   `json:"settings,omitempty"`
-	Stages      []string         `json:"stages,omitempty"`
-	Mode        string           `json:"mode"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	// MCPWide marks a policy that runs on every MCP consumer of the gateway and
+	// on the MCP Store, narrowed by its mcp_scope. It is never true together
+	// with Global, and an MCP-wide policy has no consumer_ids.
+	MCPWide  bool           `json:"mcp_wide"`
+	Priority int            `json:"priority"`
+	Parallel bool           `json:"parallel,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
+	Stages   []string       `json:"stages,omitempty"`
+	Mode     string         `json:"mode"`
+	// Status is "active" (enabled and running), "paused" (disabled) or "error"
+	// (enabled but the gateway cannot run it; see status_message).
+	Status string `json:"status" enums:"active,paused,error"`
+	// StatusMessage is the reason the gateway cannot run the policy. It is
+	// present only when status is "error".
+	StatusMessage string `json:"status_message,omitempty"`
+	// MCPScope is echoed as stored: absent when the policy is consumer-wide,
+	// {} when a registry delete pruned every destination.
+	MCPScope *MCPScopeResponse `json:"mcp_scope,omitempty"`
+	// Warnings are non-blocking notes about the write that just succeeded,
+	// such as a consumer that already runs the same plugin without scope.
+	Warnings  []string  `json:"warnings,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func FromPolicy(p *domain.Policy) PolicyResponse {
+// MCPToolRefResponse names one upstream tool by registry and native name.
+type MCPToolRefResponse struct {
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Tool       string         `json:"tool"`
+}
+
+// MCPScopeResponse mirrors the stored mcp_scope of a policy.
+type MCPScopeResponse struct {
+	RegistryIDs  []ids.RegistryID     `json:"registry_ids,omitempty"`
+	Tools        []MCPToolRefResponse `json:"tools,omitempty"`
+	Groups       []string             `json:"groups,omitempty"`
+	ExceptGroups []string             `json:"except_groups,omitempty"`
+}
+
+// FromPolicy renders p for the API. Settings never leave in the clear: the
+// credential paths the plugin declared (see appplugins.CredentialSettings) are
+// masked, and when the plugin is unknown, or registry is nil, every scalar in
+// the settings is withheld because nothing says which of them is a secret.
+//
+// Masking never mutates p.Settings: that same map is handed to plugin
+// execution, which needs the real credential.
+func FromPolicy(p *domain.Policy, registry appplugins.Registry) PolicyResponse {
+	status := StatusActive
+	if !p.Enabled {
+		status = StatusPaused
+	}
 	return PolicyResponse{
+		Status:      status,
 		ID:          p.ID,
 		GatewayID:   p.GatewayID,
 		ConsumerIDs: p.ConsumerIDs,
@@ -49,14 +101,57 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		Slug:        p.Slug,
 		Enabled:     p.Enabled,
 		Global:      p.Global,
+		MCPWide:     p.MCPWide,
 		Priority:    p.Priority,
 		Parallel:    p.Parallel,
-		Settings:    p.Settings,
+		Settings:    maskSettings(p, registry),
 		Stages:      fromStages(p.Stages),
 		Mode:        string(p.Mode.Normalize()),
+		MCPScope:    fromMCPScope(p.MCPScope),
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// WithStatus overrides the status derived from Enabled with an evaluated one.
+func (r PolicyResponse) WithStatus(status, message string) PolicyResponse {
+	r.Status = status
+	r.StatusMessage = message
+	return r
+}
+
+// FromPolicyWithWarnings is FromPolicy plus the non-blocking warnings of the
+// write that produced p.
+func FromPolicyWithWarnings(p *domain.Policy, warnings []string, registry appplugins.Registry) PolicyResponse {
+	out := FromPolicy(p, registry)
+	out.Warnings = warnings
+	return out
+}
+
+func maskSettings(p *domain.Policy, registry appplugins.Registry) map[string]any {
+	paths, known := appplugins.PluginCredentialPaths(registry, p.Slug)
+	if !known {
+		return secret.WithholdSettings(p.Settings)
+	}
+	return secret.MaskSettings(p.Settings, paths)
+}
+
+func fromMCPScope(scope *domain.MCPScope) *MCPScopeResponse {
+	if scope == nil {
+		return nil
+	}
+	out := &MCPScopeResponse{
+		RegistryIDs:  scope.RegistryIDs,
+		Groups:       scope.Groups,
+		ExceptGroups: scope.ExceptGroups,
+	}
+	if len(scope.Tools) > 0 {
+		out.Tools = make([]MCPToolRefResponse, 0, len(scope.Tools))
+		for _, ref := range scope.Tools {
+			out.Tools = append(out.Tools, MCPToolRefResponse{RegistryID: ref.RegistryID, Tool: ref.Tool})
+		}
+	}
+	return out
 }
 
 func fromStages(stages []domain.Stage) []string {

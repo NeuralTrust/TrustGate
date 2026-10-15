@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -39,10 +40,11 @@ type Plugin struct {
 	redis    *redis.Client
 	registry *adapter.Registry
 	pricing  appcatalog.PricingResolver
+	now      func() time.Time
 }
 
 func New(redisClient *redis.Client, registry *adapter.Registry, pricing appcatalog.PricingResolver) *Plugin {
-	return &Plugin{redis: redisClient, registry: registry, pricing: pricing}
+	return &Plugin{redis: redisClient, registry: registry, pricing: pricing, now: time.Now}
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -52,6 +54,11 @@ func (p *Plugin) MutatesRequestBody() bool { return true }
 func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
+
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
@@ -84,9 +91,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
 	}
 
-	dimension, subject, err := in.Scope.Subject()
+	dimension, subject, counted, err := counterSubject(cfg, in.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
+	}
+	if !counted {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
+	cfg = cfg.forKey(in.Scope.KeyBudget)
+	if !cfg.limits() {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader))
 
@@ -94,10 +108,22 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	case policy.StagePreRequest:
 		return p.preRequest(ctx, cfg, base, dimension, in.Request, in.Mode, in.Event)
 	case policy.StagePostResponse:
-		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Event)
+		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Mode, in.Event)
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
+}
+
+func counterSubject(cfg *config, scope appplugins.RuntimeScope) (dimension, subject string, counted bool, err error) {
+	if !cfg.keyPartitioned() {
+		dimension, subject, err = scope.Subject()
+		return dimension, subject, err == nil, err
+	}
+	kind, id, ok := scope.Key()
+	if !ok {
+		return "", "", false, nil
+	}
+	return partitionKey, kind + ":" + url.QueryEscape(id), true, nil
 }
 
 func (p *Plugin) preRequest(
@@ -108,12 +134,12 @@ func (p *Plugin) preRequest(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	model := modelFor(req)
+	model := modelFor(cfg, req)
 	var capTel *llmcost.Telemetry
 	var downgradeHeaders map[string][]string
 	var downgradeBody []byte
 	if cfg.CostCap != nil && cfg.CostCap.Enabled {
-		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), cfg.CostCap, req.Provider, model, req.RequestedModel)
+		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), cfg.CostCap, req.Provider, model, req.RequestedModel, req.ResolvedModel)
 		capTel = llmcost.TelemetryFrom(dec)
 		if dec.Kind == llmcost.DecisionViolation {
 			appplugins.SetDecision(event, mode)
@@ -146,6 +172,11 @@ func (p *Plugin) preRequest(
 	return res, nil
 }
 
+func (p *Plugin) priced(ctx context.Context, cfg *config, req *infracontext.RequestContext, model string) bool {
+	_, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), req.Provider, model, req.RequestedModel, req.ResolvedModel)
+	return found
+}
+
 func mergeHeaderValues(dst, src map[string][]string) map[string][]string {
 	if len(src) == 0 {
 		return dst
@@ -165,9 +196,10 @@ func (p *Plugin) postResponse(
 	base string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, event)
+	return p.accrue(ctx, cfg, base, modelFor(cfg, req), req, resp, mode, event)
 }
 
 func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {

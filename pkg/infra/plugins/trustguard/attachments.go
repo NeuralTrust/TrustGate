@@ -15,12 +15,17 @@
 package trustguard
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"io"
+	"net/url"
 	"strings"
 )
 
 // extractPayloadAttachments walks provider request JSON for user file/image
-// parts and returns Guard attachments for doc_analyzer → IPI.
+// parts and returns Guard attachments for doc_analyzer → IPI. Parts that carry
+// nothing TrustGuard could fetch or decode are returned too, so that
+// partitionAttachments can account for them.
 func extractPayloadAttachments(rawBody []byte) []GuardAttachment {
 	if len(rawBody) == 0 {
 		return nil
@@ -36,15 +41,94 @@ func extractPayloadAttachments(rawBody []byte) []GuardAttachment {
 		if _, ok := seen[key]; ok {
 			return
 		}
-		if strings.TrimSpace(a.Data) == "" && strings.TrimSpace(a.URL) == "" {
-			return
-		}
 		seen[key] = struct{}{}
 		out = append(out, a)
 	}
 	walkAttachmentValue(root["messages"], add)
 	walkAttachmentValue(root["input"], add)
 	walkAttachmentValue(root["contents"], add)
+	return out
+}
+
+// partitionAttachments splits what a request carries into the attachments
+// TrustGuard's resolver accepts and a count of those it does not. The resolver
+// takes exactly one of data (standard base64) or url (http or https) and
+// answers 400 "invalid attachment" for the whole evaluate otherwise, before any
+// detector runs, so sending an attachment it cannot resolve would leave the
+// text beside it uninspected. A file_id, a gs:// or s3:// URI, a data URL that
+// is not base64 and a part with no content at all are omitted instead.
+func partitionAttachments(all []GuardAttachment) (resolvable []GuardAttachment, omitted int) {
+	for _, a := range all {
+		if resolvableAttachment(a) {
+			resolvable = append(resolvable, a)
+			continue
+		}
+		omitted++
+	}
+	return resolvable, omitted
+}
+
+// resolvableAttachment mirrors TrustGuard's resolver: exactly one of data and
+// url, compared as sent and not trimmed, so the two sides agree byte for byte.
+// A Gemini Files URI is not resolvable: it needs the caller's API key, which
+// TrustGuard does not have.
+func resolvableAttachment(a GuardAttachment) bool {
+	hasData, hasURL := a.Data != "", a.URL != ""
+	switch {
+	case hasData == hasURL:
+		return false
+	case hasURL:
+		u, err := url.Parse(a.URL)
+		return err == nil && (u.Scheme == "http" || u.Scheme == "https") && !needsCallerKey(u)
+	default:
+		_, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding, strings.NewReader(a.Data)))
+		return err == nil
+	}
+}
+
+// needsCallerKey reports whether u is a file in the Gemini Files API, which
+// answers only to the API key of the caller that uploaded it.
+func needsCallerKey(u *url.URL) bool {
+	return strings.EqualFold(u.Hostname(), geminiFilesHost) && strings.Contains(u.Path, "/files/")
+}
+
+const geminiFilesHost = "generativelanguage.googleapis.com"
+
+// countCallerAuthURLs is how many of the attachments are valid URLs that
+// partitionAttachments leaves out only because TrustGuard has no credentials for
+// them.
+func countCallerAuthURLs(all []GuardAttachment) int {
+	n := 0
+	for _, a := range all {
+		if a.Data != "" || a.URL == "" {
+			continue
+		}
+		if u, err := url.Parse(a.URL); err == nil && (u.Scheme == "http" || u.Scheme == "https") && needsCallerKey(u) {
+			n++
+		}
+	}
+	return n
+}
+
+func countURLAttachments(attachments []GuardAttachment) int {
+	n := 0
+	for _, a := range attachments {
+		if a.URL != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// dataAttachments keeps the attachments sent as data, which TrustGuard decodes
+// without a fetch.
+func dataAttachments(attachments []GuardAttachment) []GuardAttachment {
+	var out []GuardAttachment
+	for _, a := range attachments {
+		if a.URL == "" {
+			out = append(out, a)
+		}
+	}
 	return out
 }
 

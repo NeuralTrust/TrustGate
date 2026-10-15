@@ -27,11 +27,13 @@ import (
 //
 //go:generate mockery --name=RegistryAvailability --dir=. --output=./mocks --filename=catalog_registry_availability_mock.go --case=underscore --with-expecter
 type RegistryAvailability interface {
-	// Narrow drops the models these credentials cannot use. Like the filters it
-	// composes it never fails: any doubt yields the input unchanged, since a
-	// too-long list still fails at request time with the provider's own
-	// message, while a spuriously empty picker is a dead end.
-	Narrow(ctx context.Context, in ServerlessFilterInput) []domain.Model
+	// Narrow drops the models these credentials cannot use. Any doubt yields
+	// the input unchanged, since a too-long list still fails at request time
+	// with the provider's own message, while a spuriously empty picker is a
+	// dead end. The one exception is a provider whose listing is
+	// authoritative: its catalog ids are never valid request models, so
+	// failing to get the listing is an error rather than the catalog.
+	Narrow(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error)
 }
 
 var _ RegistryAvailability = (*registryAvailability)(nil)
@@ -48,11 +50,11 @@ func NewRegistryAvailability(
 	return &registryAvailability{serverless: serverless, live: live}
 }
 
-func (a *registryAvailability) Narrow(ctx context.Context, in ServerlessFilterInput) []domain.Model {
+func (a *registryAvailability) Narrow(ctx context.Context, in ServerlessFilterInput) ([]domain.Model, error) {
 	// Availability is a property of one credential set, so there is nothing to
 	// narrow against until the caller names the registry.
 	if in.GatewayID.IsNil() || in.RegistryID.IsNil() {
-		return in.Models
+		return in.Models, nil
 	}
 	// Bedrock availability comes from the AWS control plane; every other
 	// provider's from its authenticated models endpoint. Each filter no-ops on

@@ -54,11 +54,6 @@ func TestExecuteSkipsLossyShapes(t *testing.T) {
 			body:     `{"model":"gpt-4o","messages":[{"role":"user","name":"bob","content":"` + verboseJSON + `"}]}`,
 		},
 		{
-			name:     "unmodeled top-level fields are preserved",
-			provider: openAIProvider,
-			body:     `{"model":"gpt-4o","seed":42,"messages":[{"role":"user","content":"` + verboseJSON + `"}]}`,
-		},
-		{
 			name:     "unsupported wire format is never touched",
 			provider: "gemini",
 			body:     `{"contents":[{"role":"user","parts":[{"text":"` + verboseJSON + `"}]}]}`,

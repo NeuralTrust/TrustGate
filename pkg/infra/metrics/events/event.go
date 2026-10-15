@@ -27,6 +27,7 @@ type Event struct {
 	TraceID          string `json:"trace_id"`
 	GatewayID        string `json:"gateway_id"`
 	TenantID         string `json:"tenant_id,omitempty"`
+	AuthID           string `json:"auth_id,omitempty"`
 	PrincipalSubject string `json:"principal_subject,omitempty"`
 	PrincipalMethod  string `json:"principal_method,omitempty"`
 	PrincipalEmail   string `json:"principal_email,omitempty"`
@@ -73,6 +74,9 @@ const (
 	EndUserSourceTrustGate  = "trustgate"
 	EndUserSourceOpenWebUI  = "open_webui"
 	EndUserSourceOpenAIUser = "openai_user"
+	// EndUserSourceNeuralTrust is the X-NeuralTrust-End-User header, which the
+	// gateway validates and also uses to pick an end user's own MCP connections.
+	EndUserSourceNeuralTrust = "neuraltrust"
 )
 
 type EndUser struct {
@@ -126,6 +130,39 @@ type MCP struct {
 	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
 	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
 	AccountRef        string `json:"account_ref,omitempty"`
+
+	PolicyScope *MCPPolicyScope `json:"policy_scope,omitempty"`
+	// Decision is the tools/call-level outcome PluginRunner recorded directly
+	// on the MCP span — currently only "failed_open", when a plugin stage
+	// failed on a non-block error and the call proceeded uninspected. Empty
+	// when nothing at that level failed; a per-plugin decision still lives on
+	// its own PolicyChain entry.
+	Decision string `json:"decision,omitempty"`
+	// ToolRisk is the called tool's declared risk class (read_only, additive
+	// or destructive) and ToolOpenWorld its open-world hint, both from the MCP
+	// annotations its server publishes. Empty and nil when the tool declares
+	// no hint: the server's claim, advisory only.
+	ToolRisk      string `json:"tool_risk,omitempty"`
+	ToolOpenWorld *bool  `json:"tool_open_world,omitempty"`
+}
+
+// MCPPolicyScope tells which scoped policies of the consumer applied to a
+// tools/call. Evaluated counts the scoped policies considered; Matched holds
+// the ids of those that entered the plan and Skipped the ones left out with
+// the reason. PolicyChain keeps listing only the plugins that ran, so a policy
+// in Skipped never appears there.
+type MCPPolicyScope struct {
+	Evaluated int                `json:"evaluated"`
+	Matched   []string           `json:"matched,omitempty"`
+	Skipped   []MCPSkippedPolicy `json:"skipped,omitempty"`
+}
+
+// MCPSkippedPolicy is a scoped policy that did not run on the call. Reason is
+// destination, principal or except.
+type MCPSkippedPolicy struct {
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Reason string `json:"reason"`
 }
 
 type Consumer struct {
@@ -189,14 +226,19 @@ type Cost struct {
 // on: the provider, the policy chain and the gateway itself. PoliciesMs covers
 // every stage the chain ran, including post_response, which executes after the
 // response was already sent. GatewayMs discounts that asynchronous share, so the
-// stages reconcile as TotalMs = ProviderMs + blocking policies + GatewayMs. The
-// per-stage split is not duplicated here: it is derivable from PolicyChain,
-// where every entry carries its Stage and LatencyMs.
+// stages reconcile as TotalMs = ProviderMs + blocking policies + GatewayMs,
+// reading a nil ProviderMs as zero. The per-stage split is not duplicated
+// here: it is derivable from PolicyChain, where every entry carries its Stage
+// and LatencyMs.
+//
+// ProviderMs is nil when the request made no provider attempt, so a
+// pre-request refusal omits provider_ms. A real attempt is always set,
+// including zero for a call that finished in under a millisecond.
 type Latency struct {
-	TotalMs    int64 `json:"total_ms"`
-	ProviderMs int64 `json:"provider_ms"`
-	PoliciesMs int64 `json:"policies_ms"`
-	GatewayMs  int64 `json:"gateway_ms"`
+	TotalMs    int64  `json:"total_ms"`
+	ProviderMs *int64 `json:"provider_ms,omitempty"`
+	PoliciesMs int64  `json:"policies_ms"`
+	GatewayMs  int64  `json:"gateway_ms"`
 }
 
 type Attempt struct {

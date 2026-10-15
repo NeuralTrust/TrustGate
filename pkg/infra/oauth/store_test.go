@@ -16,6 +16,9 @@ package oauth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -31,6 +34,25 @@ func newSessionStore(t *testing.T) (*infraoauth.Store, *miniredis.Miniredis) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	return infraoauth.NewStore(rdb), mr
+}
+
+func digestSessionKey(refreshToken string) string {
+	sum := sha256.Sum256([]byte(refreshToken))
+	return "oauth:session:" + hex.EncodeToString(sum[:])
+}
+
+func seedLegacySession(t *testing.T, mr *miniredis.Miniredis, refreshToken string, rec appoauth.SessionRecord, ttl time.Duration) string {
+	t.Helper()
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("encode legacy record: %v", err)
+	}
+	key := "oauth:session:" + refreshToken
+	if err := mr.Set(key, string(raw)); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+	mr.SetTTL(key, ttl)
+	return key
 }
 
 func TestStoreSessionRoundTrip(t *testing.T) {
@@ -145,5 +167,251 @@ func TestStoreSessionRotation(t *testing.T) {
 	}
 	if fresh.Subject != "user-42" {
 		t.Fatalf("preserved record mismatch: %+v", fresh)
+	}
+}
+
+// The session's lifetime is fixed at login: the stored TTL runs out at
+// ExpiresAt, and re-saving a rotated record only ever gets what is left of
+// that window, never a fresh one.
+func TestStoreSessionTTLIsAbsoluteNotSliding(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	loginAt := time.Now()
+	rec := appoauth.SessionRecord{
+		Subject:   "user-42",
+		LoginAt:   loginAt,
+		ExpiresAt: loginAt.Add(time.Hour),
+	}
+	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	first := mr.TTL(digestSessionKey("refresh-1"))
+	if first > time.Hour || first < 59*time.Minute {
+		t.Fatalf("TTL must end at ExpiresAt (~1h), not the legacy 30d, got %v", first)
+	}
+
+	// A rotation later in the session re-saves the record under a new token
+	// with the same deadline: 40 minutes left means a 40 minute TTL.
+	rotated := rec
+	rotated.ExpiresAt = time.Now().Add(40 * time.Minute)
+	if err := store.SaveSession(ctx, "refresh-2", rotated); err != nil {
+		t.Fatalf("save rotated session: %v", err)
+	}
+	second := mr.TTL(digestSessionKey("refresh-2"))
+	if second > 40*time.Minute || second < 39*time.Minute {
+		t.Fatalf("rotated TTL must be the remaining lifetime (~40m), got %v", second)
+	}
+
+	got, err := store.GetSession(ctx, "refresh-2")
+	if err != nil || got == nil {
+		t.Fatalf("get rotated session: rec=%v err=%v", got, err)
+	}
+	if !got.LoginAt.Equal(loginAt) || !got.ExpiresAt.Equal(rotated.ExpiresAt) {
+		t.Fatalf("LoginAt/ExpiresAt must round-trip, got %+v", got)
+	}
+}
+
+func TestStoreSaveSessionRefusesExpiredRecord(t *testing.T) {
+	store, mr := newSessionStore(t)
+	err := store.SaveSession(context.Background(), "refresh-1", appoauth.SessionRecord{
+		Subject:   "user-42",
+		ExpiresAt: time.Now().Add(-time.Second),
+	})
+	if err == nil {
+		t.Fatal("saving a record past its deadline must fail rather than persist it")
+	}
+	if mr.Exists(digestSessionKey("refresh-1")) {
+		t.Fatal("an expired record must not be written")
+	}
+}
+
+func TestStoreSessionRecordRoundTripsStoreAccess(t *testing.T) {
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+	rec := appoauth.SessionRecord{Subject: "user-42", StoreAccess: "curated", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := store.GetSession(ctx, "refresh-1")
+	if err != nil || got == nil {
+		t.Fatalf("get: rec=%v err=%v", got, err)
+	}
+	if got.StoreAccess != "curated" {
+		t.Fatalf("store_access must round-trip, got %+v", got)
+	}
+}
+
+// The gateway's own authorization code is single-use: the first redemption
+// removes it atomically (GETDEL), so a replayed or injected code finds nothing.
+func TestStoreTakeCodeIsSingleUse(t *testing.T) {
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+
+	if err := store.SaveCode(ctx, "gw-code", appoauth.CodeGrant{ClientID: "agw-1", Subject: "user-42"}); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	first, err := store.TakeCode(ctx, "gw-code")
+	if err != nil || first == nil || first.Subject != "user-42" {
+		t.Fatalf("first take must return the grant: rec=%v err=%v", first, err)
+	}
+	second, err := store.TakeCode(ctx, "gw-code")
+	if err != nil {
+		t.Fatalf("second take: %v", err)
+	}
+	if second != nil {
+		t.Fatal("a redeemed code must not be redeemable again")
+	}
+}
+
+func TestStoreTakePendingIsSingleUse(t *testing.T) {
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+
+	if err := store.SavePending(ctx, "gw-state", appoauth.PendingAuthorization{ClientID: "agw-1"}); err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	if first, err := store.TakePending(ctx, "gw-state"); err != nil || first == nil {
+		t.Fatalf("first take must return the pending authorization: rec=%v err=%v", first, err)
+	}
+	second, err := store.TakePending(ctx, "gw-state")
+	if err != nil {
+		t.Fatalf("second take: %v", err)
+	}
+	if second != nil {
+		t.Fatal("a consumed state must not be consumable again")
+	}
+}
+
+// TestStoreGatewayClientTTLIsSlidingOnRead verifies the thirty-day sliding TTL
+// on dynamically registered clients. The RUN-1501 report claimed dynamic client
+// registration has no expiry or cleanup; it does, so no garbage collector is
+// warranted. An unused registration disappears on its own, and one that is
+// still being read stays.
+func TestStoreGatewayClientTTLIsSlidingOnRead(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	if err := store.SaveGatewayClient(ctx, appoauth.RegisteredGatewayClient{
+		ClientID:     "agw-abc",
+		RedirectURIs: []string{"https://app.example.com/cb"},
+	}); err != nil {
+		t.Fatalf("save client: %v", err)
+	}
+
+	ttl := mr.TTL("oauth:gwclient:agw-abc")
+	if ttl != 30*24*time.Hour {
+		t.Fatalf("registration TTL = %v, want 30 days", ttl)
+	}
+
+	mr.FastForward(20 * 24 * time.Hour)
+	got, err := store.GetGatewayClient(ctx, "agw-abc")
+	if err != nil || got == nil {
+		t.Fatalf("client must survive 20 days: %v (err %v)", got, err)
+	}
+	if ttl := mr.TTL("oauth:gwclient:agw-abc"); ttl != 30*24*time.Hour {
+		t.Fatalf("TTL after a read = %v, want it refreshed to 30 days", ttl)
+	}
+
+	mr.FastForward(31 * 24 * time.Hour)
+	gone, err := store.GetGatewayClient(ctx, "agw-abc")
+	if err != nil {
+		t.Fatalf("get expired client: %v", err)
+	}
+	if gone != nil {
+		t.Fatalf("an untouched registration must expire on its own, got %+v", gone)
+	}
+}
+
+// TestStoreGatewayClientManagementKeepsTheTTLSensible covers a client that is
+// only ever managed, never used to sign anyone in: reading and updating its
+// registration through the RFC 7592 endpoints keeps it alive on the same
+// thirty-day sliding window, and deleting it withdraws it at once.
+func TestStoreGatewayClientManagementKeepsTheTTLSensible(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	key := "oauth:gwclient:agw-managed"
+
+	client := appoauth.RegisteredGatewayClient{
+		ClientID:              "agw-managed",
+		RedirectURIs:          []string{"https://app.example.com/cb"},
+		RegistrationTokenHash: "digest",
+	}
+	if err := store.SaveGatewayClient(ctx, client); err != nil {
+		t.Fatalf("save client: %v", err)
+	}
+
+	mr.FastForward(25 * 24 * time.Hour)
+	client.RedirectURIs = []string{"https://app.example.com/cb2"}
+	if err := store.SaveGatewayClient(ctx, client); err != nil {
+		t.Fatalf("update client: %v", err)
+	}
+	if ttl := mr.TTL(key); ttl != 30*24*time.Hour {
+		t.Fatalf("TTL after an update = %v, want 30 days", ttl)
+	}
+
+	got, err := store.GetGatewayClient(ctx, "agw-managed")
+	if err != nil || got == nil {
+		t.Fatalf("read updated client: %v (err %v)", got, err)
+	}
+	if got.RedirectURIs[0] != "https://app.example.com/cb2" || got.RegistrationTokenHash != "digest" {
+		t.Fatalf("update must replace metadata and keep the digest, got %+v", got)
+	}
+
+	if err := store.DeleteGatewayClient(ctx, "agw-managed"); err != nil {
+		t.Fatalf("delete client: %v", err)
+	}
+	gone, err := store.GetGatewayClient(ctx, "agw-managed")
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if gone != nil {
+		t.Fatalf("delete must withdraw the registration, got %+v", gone)
+	}
+	// Deleting an absent registration is not an error: a client retrying a lost
+	// DELETE must not see a failure.
+	if err := store.DeleteGatewayClient(ctx, "agw-managed"); err != nil {
+		t.Fatalf("delete is idempotent: %v", err)
+	}
+}
+
+func TestStoreSaveSessionKeysRecordByTokenDigest(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	rec := appoauth.SessionRecord{Subject: "user-42", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := store.SaveSession(ctx, "gwrt_refresh-token-value", rec); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	keys := mr.Keys()
+	if len(keys) != 1 || keys[0] != digestSessionKey("gwrt_refresh-token-value") {
+		t.Fatalf("session must be stored under its digest key only, got %v", keys)
+	}
+	if ttl := mr.TTL(keys[0]); ttl <= 0 || ttl > time.Hour {
+		t.Fatalf("session must expire at its deadline, got %v", ttl)
+	}
+}
+
+func TestStoreSessionsUnderThePlainTokenKeyAreNotRead(t *testing.T) {
+	store, mr := newSessionStore(t)
+	seedLegacySession(t, mr, "legacy-refresh", appoauth.SessionRecord{Subject: "user-7"}, time.Hour)
+
+	got, err := store.GetSession(context.Background(), "legacy-refresh")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("a record stored under the plain token key must not resolve, got %+v", got)
+	}
+}
+
+func TestStoreRetireSessionUnknownTokenIsNoop(t *testing.T) {
+	store, mr := newSessionStore(t)
+	if err := store.RetireSession(context.Background(), "absent", time.Minute); err != nil {
+		t.Fatalf("retiring an unknown token must not fail: %v", err)
+	}
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Fatalf("retiring an unknown token must not create keys, got %v", keys)
 	}
 }

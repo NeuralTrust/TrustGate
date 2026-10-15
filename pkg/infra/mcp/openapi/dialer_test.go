@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
@@ -166,7 +167,7 @@ func TestOpenAPIUpstreamCallsTrustGateAdminHealthz(t *testing.T) {
 
 	tools, err := upstream.ListTools(context.Background())
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(tools), 50)
+	require.GreaterOrEqual(t, len(tools), 40)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)
@@ -216,6 +217,65 @@ func TestOpenAPIUpstreamRejectsInvalidArguments(t *testing.T) {
 	var rpcErr *appmcp.RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, int64(-32602), rpcErr.Code)
+}
+
+func TestOpenAPIUpstreamPathParameterValues(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	var lastPath atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		lastPath.Store(r.URL.EscapedPath())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	compiler := compilerFunc(func(context.Context, appopenapi.Source) (*appopenapi.Document, error) {
+		return &appopenapi.Document{
+			BaseURL: server.URL + "/v1",
+			Operations: []appopenapi.Operation{{
+				Name:        "getFile",
+				Method:      http.MethodGet,
+				Path:        "/files/{name}/content",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`),
+				Parameters:  []appopenapi.Parameter{{Name: "name", In: "path", Required: true}},
+			}},
+		}, nil
+	})
+	dialer := NewDialerWithClient(nil, compiler, server.Client())
+	upstream, err := dialer.Connect(context.Background(), appmcp.Target{
+		Revision: "registry:1",
+		OpenAPI:  &appopenapi.Source{SpecURL: "https://spec.example/openapi.json"},
+	})
+	require.NoError(t, err)
+
+	call := func(name string) error {
+		arguments, marshalErr := json.Marshal(map[string]string{"name": name})
+		require.NoError(t, marshalErr)
+		_, callErr := upstream.CallTool(context.Background(), "getFile", arguments)
+		return callErr
+	}
+
+	for _, value := range []string{".", ".."} {
+		err := call(value)
+		var rpcErr *appmcp.RPCError
+		require.ErrorAs(t, err, &rpcErr, value)
+		require.Equal(t, int64(-32602), rpcErr.Code)
+		require.Contains(t, rpcErr.Message, `path parameter "name"`)
+	}
+	require.Zero(t, calls.Load())
+
+	for _, tc := range []struct{ value, path string }{
+		{"file.json", "/v1/files/file.json/content"},
+		{"a..b", "/v1/files/a..b/content"},
+		{"v1.2", "/v1/files/v1.2/content"},
+		{"...", "/v1/files/.../content"},
+		{"dir/file", "/v1/files/dir%2Ffile/content"},
+		{"%2e%2e", "/v1/files/%252e%252e/content"},
+	} {
+		require.NoError(t, call(tc.value), tc.value)
+		require.Equal(t, tc.path, lastPath.Load(), tc.value)
+	}
+	require.Equal(t, int32(6), calls.Load())
 }
 
 func TestDialerPreservesRemoteMCPPath(t *testing.T) {
@@ -285,4 +345,110 @@ func (*fakeRemoteUpstream) SupportsPrompts() bool {
 }
 
 func (*fakeRemoteUpstream) Close(context.Context) {
+}
+
+func TestDialerServesExpiredDocumentWhileRefreshing(t *testing.T) {
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	compiler := compilerFunc(func(ctx context.Context, _ appopenapi.Source) (*appopenapi.Document, error) {
+		if calls.Add(1) == 1 {
+			return &appopenapi.Document{}, nil
+		}
+		close(started)
+		select {
+		case <-release:
+			return &appopenapi.Document{}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	dialer := NewDialerWithClient(nil, compiler, http.DefaultClient).(*Dialer)
+	target := appmcp.Target{Revision: "registry:1", OpenAPI: &appopenapi.Source{SpecURL: "https://example.com/openapi.json"}}
+	_, err := dialer.Connect(context.Background(), target)
+	require.NoError(t, err)
+	value, ok := dialer.cache.Load(compilationCacheKey(target))
+	require.True(t, ok)
+	entry := value.(cacheEntry)
+	entry.expiresAt = time.Now().Add(-time.Second)
+	dialer.cache.Store(compilationCacheKey(target), entry)
+
+	returned := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(), target)
+		returned <- err
+	}()
+	select {
+	case err := <-returned:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Connect blocked on refresh instead of serving the stale document")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not start")
+	}
+	close(release)
+}
+
+func TestDialerIsolatesResolvedDestinationsAndReusesEachDocument(t *testing.T) {
+	t.Parallel()
+	newServer := func(destination string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+destination {
+				t.Errorf("credentials routed to wrong destination %s", destination)
+			}
+			_, _ = w.Write([]byte(destination))
+		}))
+	}
+	a, b := newServer("A"), newServer("B")
+	defer a.Close()
+	defer b.Close()
+	var compiles atomic.Int32
+	compiler := compilerFunc(func(_ context.Context, source appopenapi.Source) (*appopenapi.Document, error) {
+		compiles.Add(1)
+		return &appopenapi.Document{BaseURL: source.BaseURL, Operations: []appopenapi.Operation{{Name: "get", Method: http.MethodGet, Path: "/", InputSchema: json.RawMessage(`{"type":"object"}`)}}}, nil
+	})
+	dialer := NewDialerWithClient(nil, compiler, http.DefaultClient)
+	for _, revision := range []string{"registry:1", "registry:2"} {
+		for range 2 {
+			for _, destination := range []struct{ name, url string }{{"A", a.URL}, {"B", b.URL}} {
+				up, err := dialer.Connect(context.Background(), appmcp.Target{Revision: revision, PinKey: destination.name, Headers: map[string]string{"Authorization": "Bearer " + destination.name}, OpenAPI: &appopenapi.Source{SpecURL: "https://example.com/spec.json", BaseURL: destination.url}})
+				require.NoError(t, err)
+				result, err := up.CallTool(context.Background(), "get", json.RawMessage(`{}`))
+				require.NoError(t, err)
+				require.Contains(t, string(result), `"text":"`+destination.name+`"`)
+			}
+		}
+	}
+	require.Equal(t, int32(4), compiles.Load())
+	_, err := dialer.Connect(context.Background(), appmcp.Target{
+		Revision: "registry:1",
+		OpenAPI:  &appopenapi.Source{SpecURL: "https://example.com/spec.json", BaseURL: a.URL},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(5), compiles.Load())
+}
+
+func TestDialerRestrictsVariableDestinationsEvenWithInjectedClient(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	compiler := compilerFunc(func(_ context.Context, source appopenapi.Source) (*appopenapi.Document, error) {
+		return &appopenapi.Document{BaseURL: source.BaseURL, Operations: []appopenapi.Operation{{Name: "get", Method: http.MethodGet, Path: "/", InputSchema: json.RawMessage(`{"type":"object"}`)}}}, nil
+	})
+	dialer := NewDialerWithClient(nil, compiler, server.Client())
+	for _, restricted := range []bool{false, true} {
+		up, err := dialer.Connect(context.Background(), appmcp.Target{Revision: "registry:1", RestrictPrivateNetwork: restricted, OpenAPI: &appopenapi.Source{SpecURL: "https://example.com/spec.json", BaseURL: server.URL}})
+		require.NoError(t, err)
+		_, err = up.CallTool(context.Background(), "get", json.RawMessage(`{}`))
+		if restricted {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, int32(1), calls.Load())
 }

@@ -84,7 +84,7 @@ func TestModelsDiscovery_AllowList(t *testing.T) {
 
 	status, _, body = proxyRequest(t, http.MethodGet, apiKey, path+"/gpt-4-forbidden", nil, nil)
 	assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
-	assert.Contains(t, string(body), `"error":"not_found"`)
+	assert.Contains(t, string(body), `"code":"not_found"`)
 }
 
 func TestModelsDiscovery_FiltersIncapableModels(t *testing.T) {

@@ -25,7 +25,9 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 func openAIRequestBody() []byte {
@@ -74,6 +76,7 @@ type fakeAzure struct {
 	lastBody analyzeRequest
 	status   int
 	response analyzeResponse
+	rawBody  string
 }
 
 func (f *fakeAzure) handler() http.HandlerFunc {
@@ -90,6 +93,10 @@ func (f *fakeAzure) handler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
+		if f.rawBody != "" {
+			_, _ = w.Write([]byte(f.rawBody))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(f.response)
 	}
 }
@@ -201,7 +208,7 @@ func TestExecuteEmptyTextPassThrough(t *testing.T) {
 	}
 }
 
-func TestExecuteAzureErrorEnforceReturnsError(t *testing.T) {
+func TestExecuteAzureErrorEnforceFailsOpen(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -209,17 +216,19 @@ func TestExecuteAzureErrorEnforceReturnsError(t *testing.T) {
 	srv.Close()
 
 	p := New(adapter.NewRegistry(), nil)
+	event, span := eventFor(t)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(addr, map[string]int{CategoryHate: 2}), requestContext(openAIRequestBody()))
+	in.Event = event
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected nil result on fail-closed, got %+v", res)
+	if err != nil {
+		t.Fatalf("expected no error on transport failure in enforce mode, got %v", err)
 	}
-	if err == nil {
-		t.Fatal("expected error on azure failure in enforce mode")
-		return
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
 	}
-	if _, ok := appplugins.AsPluginError(err); ok {
-		t.Fatalf("expected non-PluginError on transport failure, got %v", err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_open", extras, ok)
 	}
 }
 
@@ -260,5 +269,303 @@ func TestExecuteStageNotPreRequestPassThrough(t *testing.T) {
 	}
 	if f.count() != 0 {
 		t.Fatalf("expected azure not called when stage not selected, got %d hits", f.count())
+	}
+}
+
+func eventFor(t *testing.T) (*metrics.EventContext, *trace.Span) {
+	t.Helper()
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
+}
+
+func TestExecuteVerdictIncompleteEnforceFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	// category_severity names Violence, but categories only asks Azure for
+	// Hate: a policy saved before ValidateSettingsWrite existed. Execute still
+	// requests the union, and the fake server responds as if Azure silently
+	// dropped the extra category, which is the gap verdict_incomplete exists
+	// to catch.
+	f := &fakeAzure{response: analyzeResponse{CategoriesAnalysis: []categoryAnalysis{
+		{Category: CategoryHate, Severity: 2},
+	}}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), nil)
+	set := map[string]any{
+		"api_key":           "secret-key",
+		"endpoint":          srv.URL,
+		"output_type":       OutputTypeFourSeverityLevels,
+		"categories":        []any{CategoryHate},
+		"category_severity": map[string]any{CategoryViolence: 2},
+	}
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(openAIRequestBody()))
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected no error on verdict_incomplete in enforce mode, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("expected *Data extras")
+	}
+	if extras.Decision != "failed_open" {
+		t.Fatalf("decision = %q, want failed_open", extras.Decision)
+	}
+	if extras.FailureReason != "verdict_incomplete" {
+		t.Fatalf("failure_reason = %q, want verdict_incomplete", extras.FailureReason)
+	}
+	if extras.FailureDetail != CategoryViolence {
+		t.Fatalf("failure_detail = %q, want %q", extras.FailureDetail, CategoryViolence)
+	}
+	if len(f.lastBody.Categories) != 2 {
+		t.Fatalf("requested categories = %v, want the union of categories and category_severity", f.lastBody.Categories)
+	}
+}
+
+func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeAzure{response: analyzeResponse{CategoriesAnalysis: []categoryAnalysis{
+		{Category: CategoryHate, Severity: 2},
+	}}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), nil)
+	set := map[string]any{
+		"api_key":           "secret-key",
+		"endpoint":          srv.URL,
+		"output_type":       OutputTypeFourSeverityLevels,
+		"categories":        []any{CategoryHate},
+		"category_severity": map[string]any{CategoryViolence: 2},
+	}
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, set, requestContext(openAIRequestBody()))
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("expected *Data extras")
+	}
+	if extras.Decision != "failed_open" {
+		t.Fatalf("decision = %q, want failed_open", extras.Decision)
+	}
+	if extras.FailureReason != "verdict_incomplete" || extras.FailureDetail != CategoryViolence {
+		t.Fatalf("extras = %+v, want verdict_incomplete/%s", extras, CategoryViolence)
+	}
+}
+
+func TestExecuteConfigInvalidEnforceFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), nil)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, requestContext(openAIRequestBody()))
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected no error on config_invalid in enforce mode, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.FailureReason != "config_invalid" || extras.Decision != "failed_open" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", extras, ok)
+	}
+}
+
+func TestExecuteConfigInvalidObserveFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), nil)
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, map[string]any{}, requestContext(openAIRequestBody()))
+	in.Event = event
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.FailureReason != "config_invalid" || extras.Decision != "failed_open" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", extras, ok)
+	}
+}
+
+// A concrete body the adapters cannot decode is the client's: in a mode that blocks the
+// call is refused as uninspectable, and in observe it is only recorded.
+func TestExecuteDecodeFailedOfAnUndecodableBodyIsAnInputFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_closed", true},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeAzure{}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), nil)
+			req := requestContext(openAIRequestBody())
+			req.Body = []byte(`{"model":"gpt-4o","messages":123}`)
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, settings(srv.URL, map[string]int{CategoryHate: 2}), req)
+			in.Event = event
+
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else if err != nil || res == nil || res.StatusCode != http.StatusOK {
+				t.Fatalf("observe must pass through, got res=%+v err=%v", res, err)
+			}
+			if f.count() != 0 {
+				t.Fatalf("expected azure not called on decode failure, got %d hits", f.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.FailureReason != "decode_failed" || extras.Decision != tc.decision || extras.FailureClass != "input" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
+	}
+}
+
+// A provider or format the gateway does not support is a configuration gap, not
+// the body's fault: it fails open in every mode.
+func TestExecuteDecodeFailedOfAnUnsupportedFormatFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		mode     policy.Mode
+		decision string
+		refused  bool
+	}{
+		{policy.ModeEnforce, "failed_open", false},
+		{policy.ModeObserve, "failed_open", false},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeAzure{}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), nil)
+			req := requestContext(openAIRequestBody())
+			req.Provider = "not-a-real-provider"
+			req.SourceFormat = ""
+			event, span := eventFor(t)
+			in := execInput(policy.StagePreRequest, tc.mode, settings(srv.URL, map[string]int{CategoryHate: 2}), req)
+			in.Event = event
+
+			res, err := p.Execute(context.Background(), in)
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				if !ok || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+					t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+				}
+			} else if err != nil || res == nil || res.StatusCode != http.StatusOK {
+				t.Fatalf("observe must pass through, got res=%+v err=%v", res, err)
+			}
+			if f.count() != 0 {
+				t.Fatalf("expected azure not called on decode failure, got %d hits", f.count())
+			}
+			extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+			if !ok || extras.FailureReason != "config_invalid" || extras.Decision != tc.decision || extras.FailureClass != "availability" {
+				t.Fatalf("extras = %+v, ok=%v, want decode_failed/%s/input", extras, ok, tc.decision)
+			}
+		})
+	}
+}
+
+func TestValidateSettingsWriteRejectsThresholdOutsideCategories(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), nil)
+	set := map[string]any{
+		"api_key":           "secret-key",
+		"endpoint":          "https://content.azure.com/contentsafety/text:analyze?api-version=2023-10-01",
+		"categories":        []any{CategoryHate},
+		"category_severity": map[string]any{CategoryViolence: 2},
+	}
+	if err := p.ValidateSettingsWrite(set, nil); err == nil {
+		t.Fatal("expected an error for a category_severity key outside categories")
+	}
+}
+
+func TestValidateSettingsWriteAcceptsMatchingKeys(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), nil)
+	set := map[string]any{
+		"api_key":           "secret-key",
+		"endpoint":          "https://content.azure.com/contentsafety/text:analyze?api-version=2023-10-01",
+		"categories":        []any{CategoryHate, CategoryViolence},
+		"category_severity": map[string]any{CategoryViolence: 2},
+	}
+	if err := p.ValidateSettingsWrite(set, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func withRemovedKeys(set map[string]any) map[string]any {
+	set["on_error"] = "fail_closed"
+	set["on_timeout"] = "fail_closed"
+	set["timeout"] = "1ms"
+	set["on_mask_failure"] = "block"
+	set["streaming"] = map[string]any{"on_error": "fail_closed", "guard_timeout": "1ms"}
+	return set
+}
+
+// on_error is not an azure_content_safety setting: a policy stored with it, or with any
+// of the other failure keys a guardrail ignores, keeps loading and fails open on a transport error.
+func TestStoredRemovedKeysAreIgnored(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), nil)
+	if err := p.ValidateConfig(withRemovedKeys(settings("https://example.test", map[string]int{CategoryHate: 2}))); err != nil {
+		t.Fatalf("a stored policy with removed keys must keep loading, got %v", err)
+	}
+	set := settings("https://example.test", map[string]int{CategoryHate: 2})
+	set["on_error"] = "retry"
+	if err := p.ValidateConfig(set); err != nil {
+		t.Fatalf("a stored invalid on_error must not reject a write, got %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := srv.URL
+	srv.Close()
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, withRemovedKeys(settings(addr, map[string]int{CategoryHate: 2})), requestContext(openAIRequestBody()))
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a stored on_error: fail_closed must not refuse the request, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_open", extras, ok)
 	}
 }

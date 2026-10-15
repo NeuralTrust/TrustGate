@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/gofiber/fiber/v2"
 )
@@ -57,8 +58,18 @@ func (h *GetTraceHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	if evt == nil {
+	if evt == nil || !callerOwnsTrace(middleware.AdminIdentityFromContext(c), evt) {
 		return c.Status(fiber.StatusNotFound).JSON(httpio.NotFoundBody())
 	}
 	return httpio.WriteOK(c, evt)
+}
+
+// callerOwnsTrace reports whether the caller may read the trace. The event
+// carries the tenant of the gateway that served the request, stamped at capture
+// time, so a foreign trace answers exactly like an unknown one.
+func callerOwnsTrace(caller middleware.AdminIdentity, evt *events.Event) bool {
+	if caller.Kind == middleware.AdminIdentityPlatform {
+		return true
+	}
+	return caller.TenantID != "" && evt.TenantID == caller.TenantID
 }

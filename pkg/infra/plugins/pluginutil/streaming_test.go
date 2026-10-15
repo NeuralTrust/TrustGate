@@ -1,0 +1,512 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package pluginutil
+
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+)
+
+func testDefaults() StreamingDefaults {
+	return StreamingDefaults{
+		HeadChars:            400,
+		MinCharsBetweenEvals: 2048,
+		MaxHoldMS:            800,
+		MaxAccumulatedBytes:  262144,
+		GuardTimeout:         2 * time.Second,
+	}
+}
+
+func validSettings() StreamingSettings {
+	var s StreamingSettings
+	s.ApplyDefaults(testDefaults())
+	return s
+}
+
+func TestApplyDefaultsFillsAbsentKeys(t *testing.T) {
+	t.Parallel()
+	var s StreamingSettings
+	s.ApplyDefaults(testDefaults())
+
+	if s.HeadChars != 400 {
+		t.Errorf("HeadChars = %d, want 400", s.HeadChars)
+	}
+	if s.MinCharsBetweenEvals != 2048 {
+		t.Errorf("MinCharsBetweenEvals = %d, want 2048", s.MinCharsBetweenEvals)
+	}
+	if s.MaxHoldMS != 800 {
+		t.Errorf("MaxHoldMS = %d, want 800", s.MaxHoldMS)
+	}
+	if s.MaxAccumulatedBytes != 262144 {
+		t.Errorf("MaxAccumulatedBytes = %d, want 262144", s.MaxAccumulatedBytes)
+	}
+}
+
+func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
+	t.Parallel()
+	s := StreamingSettings{
+		HeadChars:            10,
+		MinCharsBetweenEvals: 300,
+		MaxHoldMS:            60,
+		MaxAccumulatedBytes:  8192,
+	}
+	s.ApplyDefaults(testDefaults())
+
+	if s.HeadChars != 10 || s.MinCharsBetweenEvals != 300 || s.MaxHoldMS != 60 ||
+		s.MaxAccumulatedBytes != 8192 {
+		t.Fatalf("defaults overwrote explicit numbers: %+v", s)
+	}
+}
+
+func TestValidateStreamingWrite(t *testing.T) {
+	t.Parallel()
+	streaming := func(key string, v any) map[string]any {
+		return map[string]any{"streaming": map[string]any{key: v}}
+	}
+	finalPass := func(v any) map[string]any { return streaming("final_pass", v) }
+	enabled := func(v any) map[string]any { return streaming("enabled", v) }
+	const (
+		finalPassOptOut = "streaming.final_pass cannot be false"
+		enabledOptOut   = "streaming.enabled cannot turn it off"
+		decoding        = "invalid settings"
+	)
+	tests := []struct {
+		name     string
+		settings map[string]any
+		previous map[string]any
+		wantErr  string
+	}{
+		{name: "no streaming block", settings: map[string]any{}},
+		{name: "final_pass absent", settings: map[string]any{"streaming": map[string]any{"head_chars": 100}}},
+		{name: "final_pass true", settings: finalPass(true)},
+		{name: "final_pass false on create", settings: finalPass(false), wantErr: finalPassOptOut},
+		{name: "final_pass false as a string", settings: finalPass("false"), wantErr: finalPassOptOut},
+		{name: "final_pass zero", settings: finalPass(0), wantErr: finalPassOptOut},
+		{name: "final_pass false newly added on update", settings: finalPass(false), previous: finalPass(true), wantErr: finalPassOptOut},
+		{name: "final_pass false already stored", settings: finalPass(false), previous: finalPass(false)},
+		{name: "final_pass false already stored as a string", settings: finalPass(false), previous: finalPass("false")},
+		{name: "final_pass unparseable", settings: finalPass([]any{1}), wantErr: decoding},
+		{name: "enabled true", settings: enabled(true)},
+		{name: "enabled null", settings: enabled(nil)},
+		{name: "enabled false on create", settings: enabled(false), wantErr: enabledOptOut},
+		{name: "enabled false as a string", settings: enabled("false"), wantErr: enabledOptOut},
+		{name: "enabled false newly added on update", settings: enabled(false), previous: enabled(true), wantErr: enabledOptOut},
+		{name: "enabled false already stored", settings: enabled(false), previous: enabled(false)},
+		{name: "enabled false already stored as a string", settings: enabled("false"), previous: enabled(false)},
+		{name: "enabled false stored, then removed", settings: map[string]any{}, previous: enabled(false)},
+		{name: "enabled unparseable", settings: enabled([]any{1}), wantErr: decoding},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateStreamingWrite("acme", tt.settings, tt.previous)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateStreamingWrite() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateStreamingWrite() = nil, want an error containing %q", tt.wantErr)
+			}
+			if !strings.HasPrefix(err.Error(), "acme: ") || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q must name the plugin and contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestStoredFinalPassStillDecodes(t *testing.T) {
+	t.Parallel()
+	for _, v := range []any{false, "false", "maybe", []any{1}} {
+		cfg, err := Parse[hostSettings](map[string]any{
+			"streaming": map[string]any{"enabled": true, "final_pass": v},
+		})
+		if err != nil {
+			t.Errorf("final_pass %v: a stored policy must keep loading, got %v", v, err)
+			continue
+		}
+		cfg.Streaming.ApplyDefaults(testDefaults())
+		if err := cfg.Streaming.Validate("acme"); err != nil {
+			t.Errorf("final_pass %v: a stored policy must keep validating, got %v", v, err)
+		}
+	}
+}
+
+func TestValidateAcceptsDefaults(t *testing.T) {
+	t.Parallel()
+	if err := validSettings().Validate("acme"); err != nil {
+		t.Fatalf("defaults must validate, got %v", err)
+	}
+}
+
+func TestValidateRejectsOutOfBounds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		mutate  func(*StreamingSettings)
+		wantKey string
+	}{
+		{"head_chars below min", func(s *StreamingSettings) { s.HeadChars = 0 }, "streaming.head_chars"},
+		{"head_chars above max", func(s *StreamingSettings) { s.HeadChars = 4097 }, "streaming.head_chars"},
+		{"min_chars below min", func(s *StreamingSettings) { s.MinCharsBetweenEvals = 255 }, "streaming.min_chars_between_evals"},
+		{"min_chars above max", func(s *StreamingSettings) { s.MinCharsBetweenEvals = 65537 }, "streaming.min_chars_between_evals"},
+		{"max_hold below min", func(s *StreamingSettings) { s.MaxHoldMS = 49 }, "streaming.max_hold_ms"},
+		{"max_hold above max", func(s *StreamingSettings) { s.MaxHoldMS = 5001 }, "streaming.max_hold_ms"},
+		{"accumulated below min", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 4095 }, "streaming.max_accumulated_bytes"},
+		{"accumulated above max", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 1048577 }, "streaming.max_accumulated_bytes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := validSettings()
+			tc.mutate(&s)
+			err := s.Validate("acme")
+			if err == nil {
+				t.Fatalf("expected %s to be rejected", tc.wantKey)
+			}
+			if !strings.Contains(err.Error(), tc.wantKey) {
+				t.Errorf("error %q does not name %s", err, tc.wantKey)
+			}
+			if !strings.HasPrefix(err.Error(), "acme: ") {
+				t.Errorf("error %q is not prefixed with the plugin name", err)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsBoundaries(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		mutate func(*StreamingSettings)
+	}{
+		{"head_chars at min", func(s *StreamingSettings) { s.HeadChars = 1 }},
+		{"head_chars at max", func(s *StreamingSettings) { s.HeadChars = 4096 }},
+		{"min_chars at min", func(s *StreamingSettings) { s.MinCharsBetweenEvals = 256 }},
+		{"min_chars at max", func(s *StreamingSettings) { s.MinCharsBetweenEvals = 65536 }},
+		{"max_hold at min", func(s *StreamingSettings) { s.MaxHoldMS = 50 }},
+		{"max_hold at max", func(s *StreamingSettings) { s.MaxHoldMS = 5000 }},
+		{"accumulated at min", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 4096 }},
+		{"accumulated at max", func(s *StreamingSettings) { s.MaxAccumulatedBytes = 1048576 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := validSettings()
+			tc.mutate(&s)
+			if err := s.Validate("acme"); err != nil {
+				t.Fatalf("boundary must be accepted, got %v", err)
+			}
+		})
+	}
+}
+
+func TestOptionsCarriesEveryKnob(t *testing.T) {
+	t.Parallel()
+	s := StreamingSettings{
+		HeadChars:            11,
+		MinCharsBetweenEvals: 22,
+		MaxHoldMS:            33,
+		MaxAccumulatedBytes:  44,
+	}
+	got := s.Options()
+	if got.HeadChars != 11 {
+		t.Errorf("HeadChars = %d, want 11", got.HeadChars)
+	}
+	if got.MinCharsBetweenEvals != 22 {
+		t.Errorf("MinCharsBetweenEvals = %d, want 22", got.MinCharsBetweenEvals)
+	}
+	if got.MaxHoldMS != 33 {
+		t.Errorf("MaxHoldMS = %d, want 33", got.MaxHoldMS)
+	}
+	if got.MaxAccumulatedBytes != 44 {
+		t.Errorf("MaxAccumulatedBytes = %d, want 44", got.MaxAccumulatedBytes)
+	}
+	if got.OnError != StreamOnErrorFailOpen {
+		t.Errorf("OnError = %q, want %q: a failed inspection call is released", got.OnError, StreamOnErrorFailOpen)
+	}
+}
+
+func TestNewStreamDataRendersTheReport(t *testing.T) {
+	t.Parallel()
+	got := NewStreamData("trace-1:response", appplugins.StreamReport{
+		Evals:           6,
+		GuardCalls:      5,
+		GuardLatency:    1500 * time.Millisecond,
+		GuardLatencyMax: 400 * time.Millisecond,
+		AddedLatency:    900 * time.Millisecond,
+		CutAtEval:       3,
+		CutOffsetChars:  438,
+		FinalPass:       true,
+		DegradedReason:  appplugins.StreamDegradeGuardTimeout,
+		FallbackReason:  appplugins.StreamFallbackClientDisconnected,
+	})
+
+	if !got.Enabled {
+		t.Error("Enabled must be set on a published envelope")
+	}
+	if got.StreamID != "trace-1:response" {
+		t.Errorf("StreamID = %q", got.StreamID)
+	}
+	if got.EvalsTotal != 6 || got.GuardCalls != 5 {
+		t.Errorf("counters = %d/%d, want 6/5", got.EvalsTotal, got.GuardCalls)
+	}
+	if got.GuardLatencyMsTotal != 1500 || got.GuardLatencyMsMax != 400 || got.AddedLatencyMs != 900 {
+		t.Errorf("latencies = %d/%d/%d, want 1500/400/900",
+			got.GuardLatencyMsTotal, got.GuardLatencyMsMax, got.AddedLatencyMs)
+	}
+	if got.CutAtEval != 3 || got.CutOffsetChars != 438 {
+		t.Errorf("cut = %d@%d, want 3@438", got.CutAtEval, got.CutOffsetChars)
+	}
+	if !got.FinalPass {
+		t.Error("FinalPass did not carry")
+	}
+	if got.DegradedReason != appplugins.StreamDegradeGuardTimeout ||
+		got.FallbackReason != appplugins.StreamFallbackClientDisconnected {
+		t.Errorf("reasons = %q/%q", got.DegradedReason, got.FallbackReason)
+	}
+}
+
+// The console reads these keys by name out of ClickHouse, so renaming one after
+// release is a data migration. The literal list is the point of the test.
+func TestStreamDataKeysAreStable(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(NewStreamData("id", appplugins.StreamReport{}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := []string{
+		"added_latency_ms", "cut_at_eval", "cut_offset_chars", "degraded_reason",
+		"enabled", "evals_total", "fallback_reason", "final_pass", "guard_calls",
+		"guard_latency_ms_max", "guard_latency_ms_total", "stream_id",
+	}
+	for _, key := range want {
+		if _, ok := got[key]; !ok {
+			t.Errorf("key %q is missing from the published envelope", key)
+		}
+	}
+	if len(got) != len(want) {
+		keys := make([]string, 0, len(got))
+		for k := range got {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		t.Errorf("envelope has %d keys, want %d: %v", len(got), len(want), keys)
+	}
+	if _, ok := got["findings"]; ok {
+		t.Error("findings must be omitted when the stream reported none")
+	}
+}
+
+func TestStreamFingerprintIsStableAndFieldSensitive(t *testing.T) {
+	t.Parallel()
+	base := StreamFingerprint("plug", "hate", "threshold")
+	if base == "" {
+		t.Fatal("identified fields must produce a key")
+	}
+	if base != StreamFingerprint("plug", "hate", "threshold") {
+		t.Error("the same identity must produce the same key")
+	}
+	if base == StreamFingerprint("plug", "hate", "flagged") {
+		t.Error("a different rule must produce a different key")
+	}
+	if base == StreamFingerprint("plug", "violence", "threshold") {
+		t.Error("a different category must produce a different key")
+	}
+	if len(base) != fingerprintBytes*2 {
+		t.Errorf("key length = %d, want %d hex chars", len(base), fingerprintBytes*2)
+	}
+}
+
+// Joining on a separator that cannot occur in a field is what stops two
+// different identities colliding by concatenation.
+func TestStreamFingerprintSeparatesFields(t *testing.T) {
+	t.Parallel()
+	if StreamFingerprint("ab", "c") == StreamFingerprint("a", "bc") {
+		t.Error("field boundaries must survive hashing")
+	}
+}
+
+func TestStreamFingerprintRejectsAnEmptyIdentity(t *testing.T) {
+	t.Parallel()
+	for _, fields := range [][]string{nil, {""}, {"", ""}, {"  ", "\t"}} {
+		if got := StreamFingerprint(fields...); got != "" {
+			t.Errorf("StreamFingerprint(%q) = %q, want an empty key", fields, got)
+		}
+	}
+}
+
+func TestDedupeFingerprintsKeepsFirstOccurrenceInOrder(t *testing.T) {
+	t.Parallel()
+	got := DedupeFingerprints([]string{"b", "a", "", "b", "c", "a"})
+	want := []string{"b", "a", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("DedupeFingerprints() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DedupeFingerprints() = %v, want %v", got, want)
+		}
+	}
+	if got := DedupeFingerprints(nil); got != nil {
+		t.Errorf("DedupeFingerprints(nil) = %v, want nil", got)
+	}
+	if got := DedupeFingerprints([]string{"", ""}); got != nil {
+		t.Errorf("a set of unidentified findings must collapse to nil, got %v", got)
+	}
+}
+
+func TestStreamFingerprintsDropsTheEntryTag(t *testing.T) {
+	t.Parallel()
+	if got := StreamFingerprints(nil); got != nil {
+		t.Errorf("StreamFingerprints(nil) = %v, want nil", got)
+	}
+	got := StreamFingerprints([]appplugins.StreamFinding{
+		{Entry: "policy-a", Fingerprint: "aaaa"},
+		{Entry: "policy-a", Fingerprint: "bbbb"},
+	})
+	if len(got) != 2 || got[0] != "aaaa" || got[1] != "bbbb" {
+		t.Errorf("StreamFingerprints() = %v, want [aaaa bbbb] in order", got)
+	}
+}
+
+type hostSettings struct {
+	Streaming StreamingSettings `mapstructure:"streaming"`
+}
+
+func TestStreamingDecodesFromASettingsMapAndIgnoresTheRemovedKeys(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse[hostSettings](map[string]any{
+		"streaming": map[string]any{
+			"enabled":                 true,
+			"head_chars":              200,
+			"min_chars_between_evals": 512,
+			"max_hold_ms":             300,
+			"max_accumulated_bytes":   8192,
+			"final_pass":              false,
+			"guard_timeout":           "1ms",
+			"on_error":                StreamOnErrorFailClosed,
+		},
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	s := cfg.Streaming
+	if s.HeadChars != 200 || s.MinCharsBetweenEvals != 512 || s.MaxHoldMS != 300 ||
+		s.MaxAccumulatedBytes != 8192 {
+		t.Errorf("numeric keys did not decode: %+v", s)
+	}
+	s.ApplyDefaults(testDefaults())
+	if err := s.Validate("acme"); err != nil {
+		t.Fatalf("a stored guard_timeout or on_error must not reject the settings, got %v", err)
+	}
+	if got := s.Options().OnError; got != StreamOnErrorFailOpen {
+		t.Errorf("a stored on_error: fail_closed gave OnError = %q, want fail_open", got)
+	}
+}
+
+// A stored streaming.enabled keeps decoding and validating, and whatever it
+// says does not change the options the stream runs under (RUN-1661).
+func TestStoredEnabledKeyIsIgnored(t *testing.T) {
+	t.Parallel()
+	options := func(settings map[string]any) appplugins.StreamOptions {
+		t.Helper()
+		cfg, err := Parse[hostSettings](settings)
+		if err != nil {
+			t.Fatalf("decode %v: %v", settings, err)
+		}
+		cfg.Streaming.ApplyDefaults(testDefaults())
+		if err := cfg.Streaming.Validate("acme"); err != nil {
+			t.Fatalf("validate %v: %v", settings, err)
+		}
+		return cfg.Streaming.Options()
+	}
+	want := options(map[string]any{"streaming": map[string]any{"head_chars": 100}})
+	for name, enabled := range map[string]any{
+		"false":        false,
+		"true":         true,
+		"null":         nil,
+		"string false": "false",
+	} {
+		got := options(map[string]any{"streaming": map[string]any{"enabled": enabled, "head_chars": 100}})
+		if got != want {
+			t.Errorf("%s: Options() = %+v, want %+v", name, got, want)
+		}
+	}
+}
+
+func TestStreamFailedOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		report appplugins.StreamReport
+		want   bool
+	}{
+		{"clean stream", appplugins.StreamReport{}, false},
+		{"this entry's call failed", appplugins.StreamReport{FailedEvals: 1}, true},
+		{"several failures", appplugins.StreamReport{FailedEvals: 3}, true},
+		// The chain-wide reason is copied to every entry and overwritten by a
+		// later size degrade, so it says nothing about this entry.
+		{"a chain degrade alone is not this entry's failure", appplugins.StreamReport{DegradedReason: appplugins.StreamDegradeGuardError}, false},
+		{"a later size degrade does not hide a failure", appplugins.StreamReport{FailedEvals: 1, DegradedReason: appplugins.StreamDegradeAccumulationCap}, true},
+		{"a cut wins over an earlier failure", appplugins.StreamReport{FailedEvals: 1, CutAtEval: 2}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StreamFailedOpen(tt.report); got != tt.want {
+				t.Errorf("StreamFailedOpen() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOptionsWithinCapsTheWindowWhateverTheSettingAsks(t *testing.T) {
+	t.Parallel()
+	if got := (StreamingSettings{MaxAccumulatedBytes: 1 << 20}).OptionsWithin(32768).MaxAccumulatedBytes; got != 32768 {
+		t.Fatalf("window = %d, want the 32768 ceiling", got)
+	}
+	if got := (StreamingSettings{MaxAccumulatedBytes: 4096}).OptionsWithin(32768).MaxAccumulatedBytes; got != 4096 {
+		t.Fatalf("window = %d, want the smaller window the policy asked for", got)
+	}
+}
+
+func TestNewStreamDataCountsChunkedBlocksOnlyWhenThereWereAny(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(NewStreamData("id", appplugins.StreamReport{ChunkedEvals: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"chunked_blocks":2`) {
+		t.Fatalf("chunked_blocks missing from %s", raw)
+	}
+	raw, err = json.Marshal(NewStreamData("id", appplugins.StreamReport{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "chunked_blocks") {
+		t.Fatalf("chunked_blocks must be omitted when no block was chunked: %s", raw)
+	}
+}

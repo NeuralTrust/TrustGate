@@ -16,14 +16,18 @@ package modules
 
 import (
 	"log/slog"
+	"net/url"
 
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
@@ -39,19 +43,37 @@ func Gateway(c *container.Container) error {
 }
 
 func provideGatewayRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) *gatewayrepo.Repository {
 		return gatewayrepo.NewRepository(conn, appender)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(r *gatewayrepo.Repository) domain.Repository { return r }); err != nil {
+		return err
+	}
+	// The same repository holds the per-tenant plan caps; the snapshot compiler
+	// and the Postgres planes' caps cache read them through this narrow port.
+	if err := c.Provide(func(r *gatewayrepo.Repository) ratelimitdomain.TenantCapsRepository { return r }); err != nil {
+		return err
+	}
+	// Postgres planes read the tenant caps from a copy reloaded on a timer
+	// instead of querying per request. The cache is nil with the limiter off.
+	return c.Provide(func(repo ratelimitdomain.TenantCapsRepository, cfg *config.Config, logger *slog.Logger) *ratelimitapp.TenantCapsCache {
+		if !cfg.RateLimit.Enabled {
+			return nil
+		}
+		return ratelimitapp.NewTenantCapsCache(repo, ratelimitapp.DefaultTenantCapsRefresh, logger)
 	})
 }
 
 func provideGatewayServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
-		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
+	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
+		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg))
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
-		return appgateway.NewUpdater(repo, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
+	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
+		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg))
 	}); err != nil {
 		return err
 	}
@@ -111,4 +133,15 @@ func provideGatewayServices(c *container.Container) error {
 		return err
 	}
 	return nil
+}
+
+// reservedGatewayDomains are the host suffixes this deployment routes gateways
+// on by slug, which no tenant may claim as one gateway's own domain.
+func reservedGatewayDomains(cfg *config.Config) []string {
+	reserved := []string{cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain}
+	if u, err := url.Parse(cfg.Server.MCPOAuthPublicBaseURL); err == nil && u.Hostname() != "" {
+		reserved = append(reserved, u.Hostname())
+	}
+	reserved = append(reserved, cfg.Server.MCPExtraBaseDomains...)
+	return append(reserved, cfg.Server.ReservedGatewayDomains...)
 }

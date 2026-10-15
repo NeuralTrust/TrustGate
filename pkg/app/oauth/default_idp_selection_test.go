@@ -23,6 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/require"
 )
@@ -78,23 +79,152 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
 	})
 	gw := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true, nil)
 	require.NoError(t, err)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
-		"/bare/mcp":    {{GatewayID: gw}},
+		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw), Auths: []*authdomain.Auth{apiKey}}},
+		"/nil-consumer": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
+		"/bare/mcp":     {{GatewayID: gw, Consumer: consumerdomain.BuildStoreConsumer(gw)}},
 	}}
 	p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
 
-	_, err = p.authForResource(t.Context(), "https://gw.example.com/api-key/mcp")
-	var oauthError *OAuthError
-	require.True(t, errors.As(err, &oauthError))
-	require.Equal(t, "invalid_target", oauthError.Code)
+	for _, resource := range []string{"https://gw.example.com/api-key/mcp", "https://gw.example.com/nil-consumer"} {
+		_, err = p.authForResource(t.Context(), resource)
+		var oauthError *OAuthError
+		require.True(t, errors.As(err, &oauthError), resource)
+		require.Equal(t, "invalid_target", oauthError.Code, resource)
+	}
 
-	// A consumer with no credential of its own still reaches the default.
+	// A sign-in consumer with no credential of its own still reaches the default.
 	auth, err := p.authForResource(t.Context(), "https://gw.example.com/bare/mcp")
 	require.NoError(t, err)
 	require.True(t, appauth.IsDefaultIdP(auth))
+}
+
+// A login is brokered through the built-in default only where the request-time
+// auth chain admits it (appconsumer.DefaultIdPAdmitted): any other answer mints
+// a session the chain refuses, and the client loops on 401 (RUN-1787).
+func TestAuthForResource_BrokersDefaultOnlyWhereTheChainAdmitsIt(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "residual", true, nil)
+	require.NoError(t, err)
+	disabledKey, err := authdomain.NewAPIKeyAuth(gw, "disabled", false, nil)
+	require.NoError(t, err)
+	disabledIdP := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeOAuth2,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:  "https://idp.example.com",
+			JWKSURL: "https://idp.example.com/jwks",
+		}},
+	}
+	mtls := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeMTLS,
+		Enabled:   true,
+	}
+	validationOnlyIdP := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeOAuth2,
+		Enabled:   true,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:  "https://idp.example.com",
+			JWKSURL: "https://idp.example.com/jwks",
+		}},
+	}
+
+	// Only the Store is entered by people signing in with nothing attached, so
+	// only the Store may be rescued by the built-in identity provider. Every
+	// other consumer is entered by what it holds: bringing a credential, or
+	// holding none, both keep the default out.
+	tests := []struct {
+		name        string
+		store       bool
+		auths       []*authdomain.Auth
+		wantDefault bool
+	}{
+		{name: "store consumer with no links", store: true, wantDefault: true},
+		{name: "store consumer with only a disabled api key", store: true, auths: []*authdomain.Auth{disabledKey}, wantDefault: true},
+		// An enabled credential is a way in the chain honours, and while it is
+		// there the chain keeps the default out.
+		{name: "store consumer with an api key", store: true, auths: []*authdomain.Auth{apiKey}},
+		{name: "store consumer with a client certificate", store: true, auths: []*authdomain.Auth{mtls}},
+		// The operator pinned this provider; overriding an explicit pin with the
+		// built-in default would widen who gets in on the gateway's own
+		// initiative, so it stays a dead end (RUN-1501).
+		{name: "store consumer with a validation only idp stays a dead end", store: true, auths: []*authdomain.Auth{validationOnlyIdP}},
+		{name: "store consumer whose only idp is disabled", store: true, auths: []*authdomain.Auth{disabledIdP}},
+		{name: "an ordinary consumer brings its own credential", auths: []*authdomain.Auth{apiKey}},
+		{name: "an ordinary consumer brings its own client certificate", auths: []*authdomain.Auth{mtls}},
+		{name: "an ordinary consumer with nothing attached"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cons := mcpConsumer(gw)
+			if tt.store {
+				cons = consumerdomain.BuildStoreConsumer(gw)
+			}
+			paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+				"/v1/mcp/app": {{GatewayID: gw, Consumer: cons, Auths: tt.auths}},
+			}}
+			p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
+
+			auth, err := p.authForResource(t.Context(), "https://gw.example.com/v1/mcp/app")
+			if tt.wantDefault {
+				require.NoError(t, err)
+				require.True(t, appauth.IsDefaultIdP(auth))
+				require.Equal(t, gw, auth.GatewayID)
+				return
+			}
+			var oauthError *OAuthError
+			require.True(t, errors.As(err, &oauthError))
+			require.Equal(t, "invalid_target", oauthError.Code)
+		})
+	}
+}
+
+func entraSignInIdentity(t *testing.T, gw ids.GatewayID) *authdomain.Auth {
+	t.Helper()
+	a := enabledOAuth2Auth(t, authdomain.OAuth2Config{
+		Issuer:         "https://login.microsoftonline.com/tid/v2.0",
+		Audiences:      []string{"api://gw"},
+		ClientID:       "entra-app",
+		RequiredScopes: []string{"mcp.access"},
+	})
+	a.GatewayID = gw
+	return a
+}
+
+// A sign-in consumer with no identity provider of its own is admitted by the
+// auth chain only through the built-in default, so turning sign-in on for an
+// unattached Entra identity on the same gateway must not divert its login
+// there: the Entra session would be refused and the client would loop on 401.
+func TestAuthForResource_UnpinnedSignInConsumerBrokersDefault(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	entra := entraSignInIdentity(t, gw)
+	require.True(t, entra.Config.OAuth2.Interactive())
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/v1/mcp/store": {{GatewayID: gw, Consumer: consumerdomain.BuildStoreConsumer(gw)}},
+	}}
+	p := &authProxy{
+		credentials: &fakeCredentialFinder{oauth2: []*authdomain.Auth{entra}, defaultIdP: def},
+		paths:       paths,
+	}
+
+	auth, err := p.authForResource(t.Context(), "https://gw.example.com/v1/mcp/store")
+	require.NoError(t, err)
+	require.True(t, appauth.IsDefaultIdP(auth))
+	require.Equal(t, gw, auth.GatewayID)
 }
 
 func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {
@@ -171,6 +301,7 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 		Resource:      "http://localhost:8082/oMTXK0qG/mcp",
 		AuthID:        appauth.DefaultIdPAuthID().String(),
 		GatewayID:     gw.String(),
+		Approved:      true,
 	}))
 
 	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")
@@ -203,6 +334,7 @@ func TestCallbackDefaultIdPCapturesEmailFromAccessToken(t *testing.T) {
 		Resource:      "http://localhost:8082/oMTXK0qG/mcp",
 		AuthID:        appauth.DefaultIdPAuthID().String(),
 		GatewayID:     gw.String(),
+		Approved:      true,
 	}))
 
 	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")

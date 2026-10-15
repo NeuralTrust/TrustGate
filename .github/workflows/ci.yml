@@ -10,50 +10,49 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
-  checks: read
-  security-events: write
-  actions: read
-  id-token: write
 
 jobs:
   license-check:
     name: License Headers
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.9"
+          go-version: "1.27"
           cache: true
       - name: Install addlicense
-        run: go install github.com/google/addlicense@latest
+        run: go install github.com/google/addlicense@v1.2.0
       - name: Check license headers
         run: make license-check
 
   unit-tests:
     uses: NeuralTrust/workflows/.github/workflows/tests.yml@main
+    # tests.yml's lint and test jobs both request contents: read + id-token: write.
+    permissions:
+      contents: read
+      id-token: write
     with:
       language: go
-      language_version: "1.26.9"
-      go_private_modules: true
+      language_version: "1.27"
       lint_enabled: true
+      # v2.13.x cannot load go1.27.2's stdlib export data ("could not import
+      # internal/reflectlite"); v2.14.0 can. Keep in sync with the Makefile.
+      golangci_version: v2.14.0
       coverage_enabled: true
       test_command: |
         go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
       setup_commands: |
         cp .env.example .env
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
   metrics-module:
     name: Metrics Schema Module
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.9"
+          go-version: "1.27"
           cache: true
       - name: Build, vet and test pkg/metrics
         working-directory: pkg/metrics
@@ -62,12 +61,16 @@ jobs:
           go vet ./...
           go test -race ./...
       - name: Lint pkg/metrics
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
-          # Released golangci-lint binaries are built with go1.25 and refuse to
-          # lint this module's go1.26.6 directive; goinstall recompiles it with
-          # the active setup-go toolchain so the versions match.
+          # v2.12.x bundles honnef.co/go/tools v0.7.0, whose IR builder panics
+          # on go1.27 stdlib sources ("unexpected expr: *ast.KeyValueExpr").
+          # v2.13.x bundles v0.8.1, which understands go1.27, but cannot load
+          # go1.27.2's stdlib export data; v2.14.0 can.
+          version: v2.14.0
+          # Released golangci-lint binaries are built with an older Go than
+          # this module's go1.27 directive and refuse to lint it; goinstall
+          # recompiles it with the active setup-go toolchain so they match.
           install-mode: goinstall
           working-directory: pkg/metrics
 
@@ -95,12 +98,12 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.9"
+          go-version: "1.27"
           check-latest: true
           cache: true
 
@@ -164,7 +167,7 @@ jobs:
       - name: Run Functional tests
         env:
           PG_TEST_URL: postgres://postgres:postgres@localhost:5432/trustgate_repo_test?sslmode=disable
-        run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/...
+        run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/... ./pkg/infra/database/migrations
 
       - name: Run Postgres exporter integration tests
         env:
@@ -175,12 +178,16 @@ jobs:
     name: CI Scripts Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test metrics module version bump
         run: bash .github/scripts/next-metrics-version.test.sh
 
   security:
-    uses: NeuralTrust/workflows/.github/workflows/sast.yml@codex/shared-govulncheck
+    uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
+    # sast.yml's trivy job inherits these and posts the findings PR comment.
+    permissions:
+      contents: read
+      pull-requests: write
     with:
       gitleaks_enabled: true
       gosec_enabled: true
@@ -193,8 +200,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      security-events: write
-      actions: read
     with:
       image_ref: europe-west1-docker.pkg.dev/${{ vars.DEV_GCP_PROJECT_ID }}/nt-docker/agentgateway:latest
       exit_code: '1'

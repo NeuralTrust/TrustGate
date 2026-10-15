@@ -24,6 +24,8 @@ import (
 	"testing"
 
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -45,6 +47,10 @@ const (
 	reasoningToolsBody    = `{"model":"gpt-5.6-luna","max_tokens":32,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"Read","description":"Read a file","input_schema":{"type":"object","properties":{}}}]}`
 	reasoningToolsError   = `{"error":{"message":"Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."}}`
 )
+
+func anthropicRequestWithModel(model string) string {
+	return `{"model":"` + model + `","max_tokens":10,"system":"be nice","messages":[{"role":"user","content":"hi"}]}`
+}
 
 func apiKeyTarget(provider string) *registrydomain.Registry {
 	return &registrydomain.Registry{
@@ -275,6 +281,129 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
 	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
 		"a failed attempt must still say which route was tried")
+	assert.Equal(t, "gpt-4", resp.SentModel,
+		"a failed attempt is recorded under the model it went out with")
+}
+
+func TestProviderInvoke_UpstreamTimeoutUsesDialectEnvelope(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		timeoutBody string
+		format      adapter.Format
+		want        string
+	}{
+		{
+			name:        "openai chat stream timeout",
+			body:        openaiRequestBody,
+			timeoutBody: "stream timeout",
+			format:      adapter.FormatOpenAI,
+			want:        `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:        "openai chat foundry request timeout",
+			body:        openaiRequestBody,
+			timeoutBody: "upstream request timeout",
+			format:      adapter.FormatOpenAI,
+			want:        `{"error":{"message":"upstream request timed out","type":"timeout_error","code":"upstream_timeout"}}`,
+		},
+		{
+			name:        "anthropic messages",
+			body:        anthropicRequestBody,
+			timeoutBody: "upstream request timeout",
+			format:      adapter.FormatAnthropic,
+			want:        `{"type":"error","error":{"type":"timeout_error","message":"upstream request timed out"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, registrydomain.NewBackendError(http.StatusGatewayTimeout, []byte(tc.timeoutBody))).
+				Once()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:         []byte(tc.body),
+				SourceFormat: string(tc.format),
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+			assert.Nil(t, resp.Stream)
+			assert.JSONEq(t, tc.want, string(resp.Body))
+			assert.NotContains(t, string(resp.Body), "stream timeout")
+			assert.NotContains(t, string(resp.Body), "upstream request timeout")
+		})
+	}
+}
+
+func TestProviderInvoke_CrossFormatBackendErrorUsesIngressEnvelope(t *testing.T) {
+	errBody := []byte(`{"error":{"message":"bad request","type":"invalid_request_error"}}`)
+	be := registrydomain.NewBackendHTTPError(http.StatusBadRequest, errBody, http.Header{"Retry-After": []string{"2"}})
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, be).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	req := &infracontext.RequestContext{
+		Body:         []byte(anthropicRequestBody),
+		SourceFormat: string(adapter.FormatAnthropic),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, string(resp.Body), `"type":"error"`)
+	assert.Contains(t, string(resp.Body), `"invalid_request_error"`)
+	assert.Contains(t, string(resp.Body), "bad request")
+	assert.Equal(t, []string{"2"}, resp.Headers["Retry-After"])
+}
+
+// ENG-1899: OpenAI's 401 names the registry's key by prefix and last
+// characters. The caller holds an application key, not that one.
+func TestProviderInvoke_UpstreamAuthFailureHidesProviderText(t *testing.T) {
+	errBody := []byte(`{"error":{"message":"Incorrect API key provided: sk-proj-****abcd.","type":"invalid_request_error","code":"invalid_api_key"}}`)
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusUnauthorized, errBody)).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(openaiRequestBody)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"upstream provider authentication failed"}}`, string(resp.Body))
+}
+
+// ENG-1899: an OpenAI client routed to Anthropic got Anthropic's own envelope.
+func TestProviderInvoke_OpenAIClientGetsOpenAIEnvelopeFromAnthropic(t *testing.T) {
+	errBody := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}`)
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, errBody)).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), &infracontext.RequestContext{Body: []byte(openaiRequestBody)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.JSONEq(t, `{"error":{"type":"invalid_request_error","message":"max_tokens: too large"}}`, string(resp.Body))
 }
 
 func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
@@ -307,6 +436,113 @@ func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, string(resp.Body), `"type":"message"`)
+}
+
+func TestProviderInvoke_ClientToolsOnModelsWithoutChatFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := `{"model":"` + model + `","messages":[{"role":"user","content":"hello, write me a short greeting"}],"tools":[{"type":"function","function":{"name":"qa_escalate","description":"escalate","parameters":{"type":"object"}}}]}`
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+					return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+						strings.Contains(string(sent), `"qa_escalate"`)
+				})).
+				Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+				Once()
+
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.JSONEq(t, `{
+				"error": {
+					"message": "function tools are not supported on Chat Completions for `+model+`. Use the Responses API for tool calling.",
+					"type": "invalid_request_error",
+					"param": "tools",
+					"code": "unsupported_value"
+				}
+			}`, string(resp.Body))
+		})
+	}
+}
+
+func TestProviderInvoke_ClientToolsMentionsReasoningEffortWhenSent(t *testing.T) {
+	for _, effort := range []string{`"none"`, `"low"`} {
+		t.Run(effort, func(t *testing.T) {
+			body := `{"model":"gpt-6.1-sol","reasoning_effort":` + effort + `,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+					hasEffort := strings.Contains(string(sent), `"reasoning_effort"`)
+					// "none" is dropped before the upstream call; any other value is kept.
+					return hasEffort == (effort != `"none"`) && strings.Contains(string(sent), `"qa_escalate"`)
+				})).
+				Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+				Once()
+
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.JSONEq(t, `{
+				"error": {
+					"message": "function tools are not supported on Chat Completions for gpt-6.1-sol. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+					"type": "invalid_request_error",
+					"param": "tools",
+					"code": "unsupported_value"
+				}
+			}`, string(resp.Body))
+		})
+	}
+}
+
+func TestProviderInvoke_SolKeepsUnrelatedProviderError(t *testing.T) {
+	body := `{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	upstream := `{"error":{"message":"rate limited","type":"invalid_request_error"}}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(upstream))).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.JSONEq(t, upstream, string(resp.Body))
+}
+
+func TestProviderInvoke_DropsClientReasoningEffortNoneForSol(t *testing.T) {
+	body := `{"model":"gpt-6.1-sol","max_tokens":32,"reasoning_effort":"none","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+				strings.Contains(string(sent), `"qa_escalate"`)
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestProviderInvoke_DoesNotOverrideExplicitReasoningEffort(t *testing.T) {
@@ -364,7 +600,8 @@ func TestProviderInvoke_DoesNotRetryReasoningToolsOutsideExactCase(t *testing.T)
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.status, resp.StatusCode)
-			assert.JSONEq(t, reasoningToolsError, string(resp.Body))
+			assert.Contains(t, string(resp.Body), `"type":"error"`)
+			assert.Contains(t, string(resp.Body), "Function tools with reasoning_effort")
 		})
 	}
 }
@@ -460,7 +697,8 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 		absentKey    string
 	}{
 		{name: "anthropic ingress to openai", provider: "openai", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
-		{name: "anthropic ingress to azure", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure openai", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("gpt-4o"), wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure mistral keeps max_tokens", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestWithModel("probe-mistral"), wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "anthropic ingress to cerebras keeps max_tokens", provider: "cerebras", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
 		{name: "openai passthrough to openai", provider: "openai", body: openaiPassthroughBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
 		{name: "openai passthrough to openai_compatible keeps max_tokens", provider: "openai_compatible", body: openaiPassthroughBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
@@ -509,6 +747,228 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProviderInvoke_CacheKeysFollowTheTargetProvider(t *testing.T) {
+	const responsesBody = `{"model":"gpt-4o-mini","instructions":"terse","input":"hi","prompt_cache_key":"k","prompt_cache_retention":"24h"}`
+
+	tests := []struct {
+		provider string
+		want     map[string]any
+	}{
+		{provider: "openai", want: map[string]any{"prompt_cache_key": "k", "prompt_cache_retention": "24h"}},
+		{provider: "azure", want: map[string]any{"prompt_cache_key": "k", "prompt_cache_retention": "24h"}},
+		{provider: "mistral", want: map[string]any{"prompt_cache_key": "k"}},
+		{provider: "cerebras"},
+		{provider: "openai_compatible"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+					sent = body
+					return []byte(openaiResponseBody), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, tc.provider, client)
+			req := &infracontext.RequestContext{Body: []byte(responsesBody), SourceFormat: string(adapter.FormatOpenAIResponses)}
+
+			_, err := inv.Invoke(context.Background(), apiKeyTarget(tc.provider), req)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(sent, &got))
+			cache := map[string]any{}
+			for k, v := range got {
+				if strings.HasPrefix(k, "prompt_cache") {
+					cache[k] = v
+				}
+			}
+			if tc.want == nil {
+				assert.Empty(t, cache)
+				return
+			}
+			assert.Equal(t, tc.want, cache)
+		})
+	}
+}
+
+func TestProviderInvoke_CacheProfileFollowsTheInjectedDefaultModel(t *testing.T) {
+	const strippedBody = `{"max_tokens":10,"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`
+	const responsesBody = `{"id":"r","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+
+	tests := []struct {
+		defaultModel   string
+		wantBreakpoint bool
+	}{
+		{defaultModel: "gpt-5.6", wantBreakpoint: true},
+		{defaultModel: "gpt-4o"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.defaultModel, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+					sent = body
+					return []byte(responsesBody), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "openai", client)
+			target := apiKeyTarget("openai")
+			target.LLMTarget.ProviderOptions = map[string]any{"api": "responses"}
+			req := &infracontext.RequestContext{
+				Body:         []byte(strippedBody),
+				SourceFormat: string(adapter.FormatAnthropic),
+				DefaultModel: tc.defaultModel,
+			}
+
+			_, err := inv.Invoke(context.Background(), target, req)
+			require.NoError(t, err)
+
+			model, err := adapter.ExtractModel(sent)
+			require.NoError(t, err)
+			assert.Equal(t, tc.defaultModel, model)
+			assert.Equal(t, tc.wantBreakpoint, strings.Contains(string(sent), "prompt_cache_breakpoint"), string(sent))
+		})
+	}
+}
+
+const maxTokensTooLarge = `{"error":{"type":"invalid_request_error","param":"max_tokens","message":"max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000."}}`
+
+type stubCatalog struct {
+	models map[string]*catalogdomain.Model
+}
+
+func (s stubCatalog) FindModel(_ context.Context, providerCode, slug string) (*catalogdomain.Model, error) {
+	if s.models == nil {
+		return nil, commonerrors.ErrNotFound
+	}
+	m, ok := s.models[providerCode+":"+slug]
+	if !ok {
+		return nil, commonerrors.ErrNotFound
+	}
+	return m, nil
+}
+
+func TestProviderInvoke_ClampsFromCatalog(t *testing.T) {
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+			sent = append([]byte(nil), body...)
+			return []byte(openaiResponseBody), nil
+		}).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	cat := stubCatalog{models: map[string]*catalogdomain.Model{
+		"openai:gpt-4o-mini": {MaxOutput: 16384},
+	}}
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(cat))
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-4o-mini","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`),
+		SourceFormat: string(adapter.FormatAnthropic),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+	assert.Contains(t, string(sent), `"max_completion_tokens":16384`)
+	assert.NotContains(t, string(sent), `"max_tokens"`)
+}
+
+func TestProviderInvoke_RetriesMaxTokensAndLearns(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":32000`)
+		})).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(maxTokensTooLarge))).
+		Once()
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":16384`)
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil)
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(stubCatalog{}))
+	reqBody := []byte(`{"model":"unknown-model","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`)
+	req := &infracontext.RequestContext{Body: reqBody, SourceFormat: string(adapter.FormatAnthropic)}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":16384`)
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	resp, err = inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body: reqBody, SourceFormat: string(adapter.FormatAnthropic),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+}
+
+func TestProviderInvoke_DoesNotRetryUnrelatedMaxTokensParam(t *testing.T) {
+	errBody := []byte(`{"error":{"type":"invalid_request_error","param":"messages","message":"This model supports at most 16384"}}`)
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, errBody)).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(stubCatalog{}))
+	req := &infracontext.RequestContext{
+		Body: []byte(`{"model":"gpt-4","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Empty(t, resp.Headers["X-Max-Tokens-Clamped"])
+	assert.JSONEq(t, string(errBody), string(resp.Body))
+}
+
+func TestProviderInvoke_LeavesMaxTokensWithinLimit(t *testing.T) {
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+			sent = append([]byte(nil), body...)
+			return []byte(openaiResponseBody), nil
+		}).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	cat := stubCatalog{models: map[string]*catalogdomain.Model{
+		"openai:gpt-4": {MaxOutput: 16384},
+	}}
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(cat))
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Empty(t, resp.Headers["X-Max-Tokens-Clamped"])
+	assert.NotContains(t, string(sent), `"max_completion_tokens"`)
 }
 
 func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
@@ -643,4 +1103,508 @@ func TestProviderInvoke_ClientDecodeErrorIsInvalidPayload(t *testing.T) {
 			assert.ErrorIs(t, err, networkErr)
 		})
 	}
+}
+
+func TestProviderInvoke_OpenAIChatIsReEncodedForGroqAndOpenRouter(t *testing.T) {
+	const body = `{"model":"m","seed":7,"n":2,"service_tier":"default","logprobs":true,"prompt_cache_key":"k","session_id":"s-1","user":"u-1",` +
+		`"provider":{"order":["Anthropic"]},"models":["a","b"],"plugins":[{"id":"web"}],"transforms":["middle-out"],"route":"fallback",` +
+		`"stream_options":{"include_usage":true,"include_obfuscation":false},` +
+		`"messages":[{"role":"developer","content":[{"type":"text","text":"sys"}]},{"role":"user","name":"alice","content":"hi"}]}`
+	const upstream = `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2},"x_groq":{"id":"req_1"},"provider":"Anthropic"}`
+
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{provider: "groq", want: `{"model":"m","seed":7,"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`},
+		{provider: "openrouter", want: `{"model":"m","seed":7,"session_id":"s-1","user":"u-1","provider":{"order":["Anthropic"]},` +
+			`"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			var sent []byte
+			var cfg *providers.Config
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, c *providers.Config, b []byte) ([]byte, error) {
+					sent, cfg = b, c
+					return []byte(upstream), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, tt.provider, client)
+			req := &infracontext.RequestContext{Body: []byte(body), SourceFormat: string(adapter.FormatOpenAI)}
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget(tt.provider), req)
+			require.NoError(t, err)
+
+			assert.JSONEq(t, tt.want, string(sent))
+			assert.True(t, cfg.CacheRetentionMapped)
+			assert.NotContains(t, string(resp.Body), "x_groq", "the response is still re-encoded")
+			assert.NotContains(t, string(resp.Body), `"provider"`)
+		})
+	}
+}
+
+func TestProviderInvoke_OpenRouterClientModelsCannotBypassEnforcement(t *testing.T) {
+	const body = `{"model":"anthropic/claude-sonnet-4.5","models":["openai/gpt-5.6-pro"],"route":"fallback","plugins":[{"id":"web"}],` +
+		`"provider":{"order":["Anthropic"],"models":["openai/gpt-5.6-pro"]},"messages":[{"role":"user","content":"hi"}]}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) ([]byte, error) {
+			sent = b
+			return []byte(`{"id":"x","choices":[]}`), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openrouter", client)
+	req := &infracontext.RequestContext{
+		Body:          []byte(body),
+		SourceFormat:  string(adapter.FormatOpenAI),
+		AllowedModels: []string{"anthropic/claude-sonnet-4.5"},
+	}
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openrouter"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `"anthropic/claude-sonnet-4.5"`, string(got["model"]))
+	assert.NotContains(t, got, "models")
+	assert.NotContains(t, got, "route")
+	assert.NotContains(t, got, "plugins")
+	assert.JSONEq(t, `{"order":["Anthropic"]}`, string(got["provider"]))
+}
+
+func TestProviderInvoke_GroqReEncodeKeepsGatewayMutations(t *testing.T) {
+	const body = `{"seed":7,"prompt_cache_key":"k","tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"hi"}]}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) (iter.Seq2[[]byte, error], error) {
+			sent = b
+			return func(func([]byte, error) bool) {}, nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "groq", client)
+	req := &infracontext.RequestContext{Body: []byte(body), SourceFormat: string(adapter.FormatOpenAI), DefaultModel: "openai/gpt-oss-120b"}
+
+	_, err := inv.InvokeStream(context.Background(), apiKeyTarget("groq"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `"openai/gpt-oss-120b"`, string(got["model"]), "EnforceModel still injects the default model")
+	assert.JSONEq(t, `true`, string(got["stream"]))
+	assert.JSONEq(t, `{"include_usage":true}`, string(got["stream_options"]))
+	assert.JSONEq(t, `false`, string(got["parallel_tool_calls"]), "Groq normalisation still applies")
+	assert.JSONEq(t, `7`, string(got["seed"]))
+	assert.NotContains(t, got, "prompt_cache_key", "Groq caches automatically and takes no cache keys")
+}
+
+func TestProviderInvoke_AzureRetentionIsMappedOnlyWhenTranslated(t *testing.T) {
+	tests := []struct {
+		name   string
+		source adapter.Format
+		body   string
+		mapped bool
+	}{
+		{name: "responses to azure chat", source: adapter.FormatOpenAIResponses, body: `{"model":"prod-chat","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h"}`, mapped: true},
+		{name: "chat passthrough", source: adapter.FormatOpenAI, body: `{"model":"prod-chat","messages":[{"role":"user","content":"hi"}],"prompt_cache_retention":"24h"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg *providers.Config
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, c *providers.Config, b []byte) ([]byte, error) {
+					cfg, sent = c, b
+					return []byte(`{"id":"x","choices":[]}`), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{Body: []byte(tt.body), SourceFormat: string(tt.source)}
+
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.mapped, cfg.CacheRetentionMapped)
+			assert.Contains(t, string(sent), `"prompt_cache_retention":"24h"`)
+		})
+	}
+}
+
+func TestProviderInvokeStream_ResponsesToAzureChatCarriesKeyAndRetention(t *testing.T) {
+	const responsesBody = `{"model":"prod-chat","input":"hi","stream":true,"prompt_cache_key":"k1","prompt_cache_retention":"24h"}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) (iter.Seq2[[]byte, error], error) {
+			sent = b
+			return func(func([]byte, error) bool) {}, nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{Body: []byte(responsesBody), SourceFormat: string(adapter.FormatOpenAIResponses)}
+
+	_, err := inv.InvokeStream(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.Contains(t, got, "messages", "Azure is still sent as Chat")
+	assert.JSONEq(t, `"k1"`, string(got["prompt_cache_key"]))
+	assert.JSONEq(t, `"24h"`, string(got["prompt_cache_retention"]))
+}
+
+// Claude Code sends context_management in the body with the beta that allows
+// it in anthropic-beta. On an Anthropic-to-Anthropic passthrough the body
+// reaches Anthropic as written, so the opt-in must travel with it, or the
+// request is refused with "context_management: Extra inputs are not permitted".
+func TestProviderInvoke_AnthropicPassthroughCarriesBetaOptIn(t *testing.T) {
+	var sent *providers.Config
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, cfg *providers.Config, _ []byte) ([]byte, error) {
+			sent = cfg
+			return []byte(anthropicResponseBody), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{
+		Body:         []byte(anthropicRequestBody),
+		SourceFormat: string(adapter.FormatAnthropic),
+		Headers: map[string][]string{
+			"Anthropic-Beta": {"context-management-2025-06-27, claude-code-20250219", "bad flag;drop"},
+		},
+	}
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, sent)
+	assert.Equal(t, "context-management-2025-06-27,claude-code-20250219", sent.AnthropicBeta)
+}
+
+// A body adapted from another wire format is the gateway's, not the caller's:
+// no beta field of theirs is in it, and their opt-in does not go upstream.
+func TestProviderInvoke_CrossFormatSendsNoBetaOptIn(t *testing.T) {
+	var sent *providers.Config
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, cfg *providers.Config, _ []byte) ([]byte, error) {
+			sent = cfg
+			return []byte(anthropicResponseBody), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{
+		Body:    []byte(openaiRequestBody),
+		Headers: map[string][]string{"anthropic-beta": {"context-management-2025-06-27"}},
+	}
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, sent)
+	assert.Empty(t, sent.AnthropicBeta)
+}
+
+func TestProviderInvoke_TranslatedResponsesRejectsServerState(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		param   string
+		message string
+	}{
+		{
+			name:    "previous_response_id",
+			body:    `{"model":"gpt-5.4-mini-std","input":"Reply OK","previous_response_id":"resp_prev"}`,
+			param:   `"previous_response_id"`,
+			message: "previous_response_id requires an OpenAI registry",
+		},
+		{
+			name:    "store true",
+			body:    `{"model":"gpt-5.4-mini-std","input":"Reply OK","store":true}`,
+			param:   `"store"`,
+			message: "store requires an OpenAI registry",
+		},
+		{
+			name:    "both",
+			body:    `{"model":"gpt-5.4-mini-std","input":"Reply OK","previous_response_id":"resp_prev","store":true}`,
+			param:   `null`,
+			message: "previous_response_id and store require an OpenAI registry",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{
+				Body:         []byte(tt.body),
+				SourceFormat: string(adapter.FormatOpenAIResponses),
+			}
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, []string{"application/json"}, resp.Headers["Content-Type"])
+			assert.Equal(t, []string{"azure"}, resp.Headers["X-Selected-Provider"])
+
+			var env struct {
+				Error struct {
+					Message string          `json:"message"`
+					Type    string          `json:"type"`
+					Param   json.RawMessage `json:"param"`
+					Code    json.RawMessage `json:"code"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(resp.Body, &env))
+			assert.Equal(t, "invalid_request_error", env.Error.Type)
+			assert.Contains(t, env.Error.Message, tt.message)
+			assert.JSONEq(t, tt.param, string(env.Error.Param))
+			assert.JSONEq(t, `null`, string(env.Error.Code))
+		})
+	}
+}
+
+func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		capability string
+		body       []byte
+		client     providers.Client
+	}{
+		{name: "chat empty", body: nil, client: &upstreamRecorder{}},
+		{name: "chat blank", body: []byte{}, client: &upstreamRecorder{}},
+		{name: "chat array", body: []byte("[]"), client: &upstreamRecorder{}},
+		{name: "images array", capability: "images", body: []byte("[]"), client: &imagesTestClient{}},
+		{name: "audio empty", capability: "audio_speech", body: nil, client: &audioTestClient{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(tt.client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:            tt.body,
+				ProxyCapability: tt.capability,
+				AllowedModels:   []string{"gpt-4o"},
+			})
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			require.NotErrorIs(t, err, appproxy.ErrModelNotAllowed)
+			assert.Contains(t, err.Error(), "request body must be a JSON object")
+			assert.NotContains(t, err.Error(), "unexpected end of JSON input")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+			assert.NotContains(t, err.Error(), "Go value of type")
+			assert.NotContains(t, err.Error(), "model must be a string")
+			assert.NotContains(t, err.Error(), "model enforcement")
+		})
+	}
+}
+
+func TestProviderInvoke_NonStringModelNamesTheField(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{name: "number", body: []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`)},
+		{name: "object", body: []byte(`{"model":{"id":"gpt-4o"},"messages":[{"role":"user","content":"Hello"}]}`)},
+		{name: "null", body: []byte(`{"model":null,"messages":[{"role":"user","content":"Hello"}]}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:          tt.body,
+				AllowedModels: []string{"gpt-4o"},
+			})
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			require.NotErrorIs(t, err, appproxy.ErrModelNotAllowed)
+			assert.Contains(t, err.Error(), "model must be a string")
+			assert.NotContains(t, err.Error(), "request body must be a JSON object")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
+		})
+	}
+}
+
+func TestProviderInvokeStream_TranslatedResponsesRejectsPreviousResponseID(t *testing.T) {
+	client := providermocks.NewClient(t)
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-5.4-mini-std","input":"Reply OK","stream":true,"previous_response_id":"resp_prev"}`),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, string(resp.Body), `"type":"invalid_request_error"`)
+}
+
+func TestProviderInvoke_TranslatedResponsesAllowsStoreFalse(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-5.4-mini-std","input":"Reply OK","store":false}`),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestProviderInvoke_OpenAIResponsesKeepsPreviousResponseID(t *testing.T) {
+	const body = `{"model":"gpt-5.4-mini-std","input":"Reply OK","previous_response_id":"resp_prev","store":true}`
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) ([]byte, error) {
+			sent = b
+			return []byte(`{"id":"resp_prev","object":"response","status":"completed","output":[]}`), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openai", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(body),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(sent), `"previous_response_id":"resp_prev"`)
+	assert.Contains(t, string(sent), `"store":true`)
+}
+
+func TestProviderInvoke_TranslatedResponsesIsConformant(t *testing.T) {
+	upstream := `{
+		"id":"chatcmpl-abc",
+		"object":"chat.completion",
+		"created":1710000000,
+		"model":"gpt-5.4-mini-std",
+		"choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}
+	}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(upstream), nil).
+		Once()
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-5.4-mini-std","input":"Reply OK"}`),
+		SourceFormat: string(adapter.FormatOpenAIResponses),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got struct {
+		ID        string `json:"id"`
+		Object    string `json:"object"`
+		CreatedAt int64  `json:"created_at"`
+		Status    string `json:"status"`
+		Output    []struct {
+			ID      string `json:"id"`
+			Type    string `json:"type"`
+			Content []struct {
+				Type        string            `json:"type"`
+				Text        string            `json:"text"`
+				Annotations []json.RawMessage `json:"annotations"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body, &got))
+	assert.Equal(t, "resp_abc", got.ID)
+	assert.Equal(t, "response", got.Object)
+	assert.Equal(t, int64(1710000000), got.CreatedAt)
+	assert.Equal(t, "completed", got.Status)
+	require.Len(t, got.Output, 1)
+	assert.Equal(t, "msg_abc", got.Output[0].ID)
+	assert.Equal(t, "message", got.Output[0].Type)
+	require.Len(t, got.Output[0].Content, 1)
+	assert.Equal(t, "OK", got.Output[0].Content[0].Text)
+	assert.NotNil(t, got.Output[0].Content[0].Annotations)
+	assert.Empty(t, got.Output[0].Content[0].Annotations)
+}
+
+func TestProviderInvoke_DisallowedStringModelStaysDenied(t *testing.T) {
+	t.Parallel()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body:          []byte(`{"model":"gpt-4-forbidden","messages":[{"role":"user","content":"Hello"}]}`),
+		AllowedModels: []string{"gpt-4o-mini"},
+	})
+
+	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+	require.NotErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	assert.NotContains(t, err.Error(), "cannot unmarshal")
+	assert.NotContains(t, err.Error(), "Go value of type")
+}
+
+func TestProviderInvoke_EmptyModelIsDeniedOnce(t *testing.T) {
+	t.Parallel()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body:          []byte(`{"model":"","messages":[{"role":"user","content":"Hello"}]}`),
+		AllowedModels: []string{"gpt-4o-mini"},
+	})
+
+	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+	require.EqualError(t, err, `model not allowed: ""`)
+}
+
+func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {
+	t.Parallel()
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, []byte("[]")).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body: []byte("[]"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }

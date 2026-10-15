@@ -30,12 +30,12 @@ func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableCons
 	// Same partial-federation contract as ListTools: upstreams awaiting consent
 	// are skipped and the linked ones still answer, so a client refreshing its
 	// surface never fails just because an optional provider is unconnected.
-	bindings, _, err := c.composePrompts(ctx, rc)
+	comp, err := c.composePrompts(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Prompt, 0, len(bindings))
-	for _, b := range bindings {
+	out := make([]Prompt, 0, len(comp.bindings))
+	for _, b := range comp.bindings {
 		p := attributePrompt(b.prompt, b.registry)
 		p.Name = b.exposed
 		out = append(out, p)
@@ -44,11 +44,11 @@ func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableCons
 }
 
 func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error) {
-	bindings, pendingConsent, err := c.composePrompts(ctx, rc)
+	comp, err := c.composePrompts(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
-	for _, b := range bindings {
+	for _, b := range comp.bindings {
 		if b.exposed != name {
 			continue
 		}
@@ -58,10 +58,10 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 			return up.GetPrompt(ctx, b.prompt.Name, arguments)
 		})
 	}
-	// Mirror CallTool: an upstream still awaiting consent may be the one that
-	// owns this prompt, so the consent requirement is the useful answer.
-	if pendingConsent != nil {
-		return nil, pendingConsent
+	// Mirror CallTool: an upstream still awaiting an account may be the one
+	// that owns this prompt, so what it is waiting on is the useful answer.
+	if comp.pending != nil {
+		return nil, comp.pending
 	}
 	return nil, fmt.Errorf("%w: %s", ErrPromptNotFound, name)
 }
@@ -72,10 +72,18 @@ type promptBinding struct {
 	exposed  string
 }
 
-func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]promptBinding, *ConsentRequiredError, error) {
+// promptComposition is the prompts the reachable upstreams offer and, when an
+// upstream served nothing because it is waiting on an account, what it waits
+// on: a pending consent first, then a server with no account for this caller.
+type promptComposition struct {
+	bindings []promptBinding
+	pending  error
+}
+
+func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) (*promptComposition, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
-		return nil, nil, ErrNoMCPRegistries
+		return nil, ErrNoMCPRegistries
 	}
 	// Same default as compose(): an absent or empty fail mode fails open, so
 	// tools and prompts always degrade the same way for the same consumer.
@@ -84,14 +92,15 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 
 	var candidates []promptBinding
 	var pendingConsent *ConsentRequiredError
+	var pendingNotConnected *ApplicationNotConnectedError
 	reachable := 0
-	for _, reg := range registries {
-		prompts, err := discoverCached(c, ctx, rc, reg, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
-			return up.ListPrompts(ctx)
-		})
+	for _, found := range discoverAll(c, ctx, rc, registries, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
+		return up.ListPrompts(ctx)
+	}) {
+		reg, prompts, err := found.registry, found.items, found.err
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, nil, ctx.Err()
+				return nil, ctx.Err()
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(err, &consentErr) {
@@ -105,8 +114,19 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
 			}
+			// Same for a server with no account for this caller: what is
+			// missing is an account, not the upstream.
+			var notConnected *ApplicationNotConnectedError
+			if errors.As(err, &notConnected) {
+				if pendingNotConnected == nil {
+					pendingNotConnected = notConnected
+				}
+				c.logger.Info("mcp composer: skipping upstream with no account for this caller",
+					"registry", reg.Name, "provider", notConnected.Provider, "shared", notConnected.Shared)
+				continue
+			}
 			if !failOpen {
-				return nil, nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
+				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
@@ -115,20 +135,23 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		reachable++
 		candidates = append(candidates, selectPrompts(toolkit, reg, prompts)...)
 	}
+	var pendingAccount error
+	switch {
+	case pendingConsent != nil:
+		pendingAccount = pendingConsent
+	case pendingNotConnected != nil:
+		pendingAccount = pendingNotConnected
+	}
 	if reachable == 0 {
-		if pendingConsent != nil {
-			return nil, nil, pendingConsent
+		if pendingAccount != nil {
+			return nil, pendingAccount
 		}
-		return nil, nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
+		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedName{name: b.exposed, registry: b.registry.Name, registryID: b.registry.ID.String()}
+		candidates[i].exposed = exposedNameFor(b.exposed, b.registry).String()
 	}
-	for i, name := range resolveExposedNames(items) {
-		candidates[i].exposed = name
-	}
-	return candidates, pendingConsent, nil
+	return &promptComposition{bindings: candidates, pending: pendingAccount}, nil
 }
 
 func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []Prompt) []promptBinding {

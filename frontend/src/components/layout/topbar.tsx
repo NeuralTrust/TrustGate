@@ -6,7 +6,6 @@ import { GatewaySwitcher } from "./gateway-switcher";
 const titles: Record<string, string> = {
   registries: "Registry",
   consumers: "Consumers",
-  roles: "Roles",
   auth: "Auth",
   policies: "Policies",
   playground: "Playground",

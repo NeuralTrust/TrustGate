@@ -35,7 +35,7 @@ var ErrModelNotFound = errors.New("model not found")
 type ListModelsInput struct {
 	Consumer *appconsumer.RoutableConsumer
 	Data     *appconsumer.Data
-	RoleIDs  []ids.RoleID
+	Keep     CandidateFilter
 }
 
 type ModelCard struct {
@@ -64,7 +64,7 @@ func NewModelsLister(resolver approuting.Resolver, catalog appcatalog.Service) M
 }
 
 func (l *modelsLister) List(ctx context.Context, in ListModelsInput) (*ModelsList, error) {
-	cards, err := l.collect(ctx, in)
+	cards, err := l.collect(ctx, in, make(map[string][]catalogdomain.Model))
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (l *modelsLister) List(ctx context.Context, in ListModelsInput) (*ModelsLis
 }
 
 func (l *modelsLister) Get(ctx context.Context, in ListModelsInput, id string) (*ModelCard, error) {
-	cards, err := l.collect(ctx, in)
+	cards, err := l.collect(ctx, in, make(map[string][]catalogdomain.Model))
 	if err != nil {
 		return nil, err
 	}
@@ -87,21 +87,26 @@ func (l *modelsLister) Get(ctx context.Context, in ListModelsInput, id string) (
 	return nil, ErrModelNotFound
 }
 
-func (l *modelsLister) collect(ctx context.Context, in ListModelsInput) ([]ModelCard, error) {
+func (l *modelsLister) collect(
+	ctx context.Context,
+	in ListModelsInput,
+	listed map[string][]catalogdomain.Model,
+) ([]ModelCard, error) {
 	if l == nil || l.resolver == nil || in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, nil
 	}
 	candidates, err := l.resolver.Resolve(approuting.ResolveInput{
 		Consumer:   in.Consumer,
-		Roles:      effectiveRoles(in.Data, in.RoleIDs),
 		Registries: registryLookup(in.Data),
 	})
 	if err != nil {
 		return nil, err
 	}
+	if in.Keep != nil {
+		candidates = candidates.Filter(in.Keep)
+	}
 	seen := make(map[string]struct{})
 	cards := make([]ModelCard, 0)
-	listed := make(map[string][]catalogdomain.Model)
 	for _, candidate := range candidates.Candidates() {
 		if candidate.Registry == nil {
 			continue

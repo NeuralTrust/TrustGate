@@ -130,8 +130,12 @@ func TestCandidateSet_ResolveQualifiedUnknownProvider(t *testing.T) {
 	s.Add(routing.Candidate{Registry: openai})
 
 	_, err := s.ResolveIntent(routing.Intent{Provider: "anthropic", Model: "claude-4"})
-	if !errors.Is(err, routing.ErrModelDenied) {
-		t.Fatalf("expected ErrModelDenied, got %v", err)
+	var denied *routing.ModelDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected *ModelDeniedError, got %v", err)
+	}
+	if want := `provider "anthropic" is not available for this application`; denied.Reason != want {
+		t.Fatalf("reason = %q, want %q", denied.Reason, want)
 	}
 }
 
@@ -180,6 +184,13 @@ func TestCandidateSet_ResolveShortModelDenied(t *testing.T) {
 	_, err := s.ResolveIntent(routing.Intent{Model: "claude-4"})
 	if !errors.Is(err, routing.ErrModelDenied) {
 		t.Fatalf("expected ErrModelDenied, got %v", err)
+	}
+	var denied *routing.ModelDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected *ModelDeniedError, got %T", err)
+	}
+	if want := `model "claude-4" is not allowed for this application`; denied.Reason != want {
+		t.Fatalf("reason = %q, want %q", denied.Reason, want)
 	}
 }
 
@@ -262,32 +273,23 @@ func TestCandidateSet_ZeroIntentKeepsSet(t *testing.T) {
 func TestCandidate_PolicyAllowsModel(t *testing.T) {
 	t.Parallel()
 	reg := newTestRegistry(t, "openai")
-	tests := []struct {
+	cases := []struct {
 		name    string
 		allowed []string
 		model   string
 		want    bool
 	}{
-		{name: "pattern matches family", allowed: []string{"gpt-*"}, model: "gpt-4.1", want: true},
-		{name: "pattern matches base", allowed: []string{"gpt-*"}, model: "gpt-", want: true},
-		{name: "pattern denies other family", allowed: []string{"gpt-*"}, model: "claude-3", want: false},
-		{name: "pattern is case sensitive", allowed: []string{"gpt-*"}, model: "GPT-4O", want: false},
-		{name: "pattern is prefix anchored", allowed: []string{"gpt-*"}, model: "xgpt-4o", want: false},
-		{name: "literal alongside pattern", allowed: []string{"claude-3", "gpt-*"}, model: "claude-3", want: true},
-		{name: "exact entry still exact", allowed: []string{"gpt-4o"}, model: "gpt-4o", want: true},
-		{name: "exact entry does not widen", allowed: []string{"gpt-4o"}, model: "gpt-4o-mini", want: false},
-		{name: "dot is literal", allowed: []string{"gpt-5.*"}, model: "gpt-5-mini", want: false},
-		{name: "dot matches a dot", allowed: []string{"gpt-5.*"}, model: "gpt-5.1", want: true},
-		{name: "a pattern never authorizes itself", allowed: []string{"gpt-*"}, model: "gpt-*", want: false},
-		{name: "open allow-list permits anything", allowed: nil, model: "anything", want: true},
-		{name: "empty allow-list denies everything", allowed: []string{}, model: "gpt-4.1", want: false},
+		{"no allow-list leaves the choice to the provider", nil, "anything", true},
+		{"listed model", []string{"gpt-4.1"}, "gpt-4.1", true},
+		{"unlisted model", []string{"gpt-4.1"}, "gpt-4o", false},
+		{"empty allow-list denies everything", []string{}, "gpt-4.1", false},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := routing.Candidate{Registry: reg, Allowed: tt.allowed}
-			if got := c.PolicyAllowsModel(tt.model); got != tt.want {
-				t.Fatalf("PolicyAllowsModel(%q) = %v, want %v", tt.model, got, tt.want)
+			c := routing.Candidate{Registry: reg, Allowed: tc.allowed}
+			if got := c.PolicyAllowsModel(tc.model); got != tc.want {
+				t.Errorf("PolicyAllowsModel(%q) = %v, want %v", tc.model, got, tc.want)
 			}
 		})
 	}
@@ -306,89 +308,43 @@ func TestCandidate_DefersModelChoice(t *testing.T) {
 		t.Error("an allow-list is an explicit operator restriction, not a deferral")
 	}
 }
-func TestCandidateSet_ResolveShortModelWildcardKeepsConcreteModel(t *testing.T) {
-	t.Parallel()
-	reg := newTestRegistry(t, "openai")
-	s := routing.NewCandidateSet()
-	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}})
 
-	out, err := s.ResolveIntent(routing.Intent{Model: "gpt-4.1"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestCandidate_FallbackOnly(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "deepseek")
+	cases := map[string]struct {
+		sources []string
+		want    bool
+	}{
+		"no sources":              {sources: nil, want: false},
+		"primary only":            {sources: []string{"consumer"}, want: false},
+		"fallback only":           {sources: []string{routing.SourceFallback}, want: true},
+		"fallback merged twice":   {sources: []string{routing.SourceFallback, routing.SourceFallback}, want: true},
+		"primary and fallback":    {sources: []string{"consumer", routing.SourceFallback}, want: false},
+		"fallback then a primary": {sources: []string{routing.SourceFallback, "consumer"}, want: false},
 	}
-	if out.Len() != 1 {
-		t.Fatalf("expected 1 candidate, got %d", out.Len())
-	}
-	if got := out.Candidates()[0].Model; got != "gpt-4.1" {
-		t.Fatalf("candidate model = %q, want the concrete requested model", got)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := (routing.Candidate{Registry: reg, Sources: tc.sources}).FallbackOnly(); got != tc.want {
+				t.Errorf("FallbackOnly(%v) = %v, want %v", tc.sources, got, tc.want)
+			}
+		})
 	}
 }
 
-func TestCandidateSet_ResolveQualifiedWildcardKeepsConcreteModel(t *testing.T) {
+func TestCandidate_FallbackOnlyClearsOnMergeWithAPrimary(t *testing.T) {
 	t.Parallel()
 	reg := newTestRegistry(t, "openai")
 	s := routing.NewCandidateSet()
-	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}})
-
-	out, err := s.ResolveIntent(routing.Intent{Provider: "openai", Model: "gpt-4.1"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	s.Add(routing.Candidate{Registry: reg, Sources: []string{routing.SourceFallback}})
+	merged, _ := s.ForRegistry(reg.ID)
+	if !merged.FallbackOnly() {
+		t.Fatal("a registry reached only as a fallback must be fallback-only")
 	}
-	if got := out.Candidates()[0].Model; got != "gpt-4.1" {
-		t.Fatalf("candidate model = %q, want the concrete requested model", got)
-	}
-}
-
-func TestCandidateSet_ResolveShortModelPatternSubjectDenied(t *testing.T) {
-	t.Parallel()
-	reg := newTestRegistry(t, "openai")
-	s := routing.NewCandidateSet()
-	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}})
-
-	if _, err := s.ResolveIntent(routing.Intent{Model: "gpt-*"}); !errors.Is(err, routing.ErrModelDenied) {
-		t.Fatalf("expected ErrModelDenied, got %v", err)
-	}
-}
-
-func TestCandidateSet_AddMergeUnionsPatternsAcrossRoles(t *testing.T) {
-	t.Parallel()
-	reg := newTestRegistry(t, "openai")
-	s := routing.NewCandidateSet()
-	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}, Sources: []string{"role:a"}})
-	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"claude-3"}, Sources: []string{"role:b"}})
-
-	c, ok := s.ForRegistry(reg.ID)
-	if !ok {
-		t.Fatal("candidate not found")
-	}
-	if len(c.Allowed) != 2 {
-		t.Fatalf("role grants union additively, got %v", c.Allowed)
-	}
-	if !c.PolicyAllowsModel("gpt-4.1") || !c.PolicyAllowsModel("claude-3") {
-		t.Fatalf("union must permit both grants, got %v", c.Allowed)
-	}
-}
-
-func TestCandidate_OpenAllowListStillRejectsAPattern(t *testing.T) {
-	t.Parallel()
-	reg := newTestRegistry(t, "openai")
-	c := routing.Candidate{Registry: reg}
-
-	if c.PolicyAllowsModel("gpt-*") {
-		t.Fatal("an open allow-list must not let a pattern through as a model")
-	}
-	if !c.PolicyAllowsModel("anything") {
-		t.Fatal("an open allow-list must still permit a concrete model")
-	}
-}
-
-func TestCandidateSet_ResolveQualifiedPatternSubjectDeniedOnOpenList(t *testing.T) {
-	t.Parallel()
-	reg := newTestRegistry(t, "openai")
-	s := routing.NewCandidateSet()
-	s.Add(routing.Candidate{Registry: reg})
-
-	if _, err := s.ResolveIntent(routing.Intent{Provider: "openai", Model: "gpt-*"}); !errors.Is(err, routing.ErrModelDenied) {
-		t.Fatalf("expected ErrModelDenied, got %v", err)
+	s.Add(routing.Candidate{Registry: reg, Sources: []string{"consumer"}})
+	merged, _ = s.ForRegistry(reg.ID)
+	if merged.FallbackOnly() {
+		t.Fatal("a registry that is also a primary must not be fallback-only")
 	}
 }

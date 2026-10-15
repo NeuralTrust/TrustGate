@@ -61,6 +61,7 @@ func TestConnectAttemptLimiterThresholds(t *testing.T) {
 	}{
 		{name: "source", scope: appoauth.ConnectAttemptScopeSource, subject: "192.0.2.1", limit: 10},
 		{name: "consumer", scope: appoauth.ConnectAttemptScopeConsumer, subject: "d99dcf57-8bbe-41de-aaae-c503f448a2f0", limit: 100},
+		{name: "registration", scope: appoauth.ConnectAttemptScopeRegistration, subject: "192.0.2.1", limit: 10},
 	}
 
 	for _, tc := range tests {
@@ -84,6 +85,23 @@ func TestConnectAttemptLimiterThresholds(t *testing.T) {
 				t.Fatalf("error exposes subject: %v", err)
 			}
 		})
+	}
+}
+
+// Personal key changes are bounded as the Portal bounds them, ten an hour,
+// whatever the connect window is.
+func TestConnectAttemptLimiterBoundsPersonalKeyChangesPerHour(t *testing.T) {
+	limiter, _ := newConnectLimiterTest(t, config.MCPConnectRateLimitConfig{SourceLimit: 1, ConsumerLimit: 1, Window: time.Minute})
+	subject := "gateway-id|user-1"
+	for attempt := 1; attempt <= 10; attempt++ {
+		if err := limiter.Check(context.Background(), appoauth.ConnectAttemptScopePersonalKey, subject); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+	}
+	err := limiter.Check(context.Background(), appoauth.ConnectAttemptScopePersonalKey, subject)
+	var exceeded *appoauth.ConnectRateLimitExceeded
+	if !errors.As(err, &exceeded) || exceeded.RetryAfter != time.Hour {
+		t.Fatalf("error = %v, want ConnectRateLimitExceeded retrying in an hour", err)
 	}
 }
 
@@ -439,4 +457,137 @@ func expectedConnectBucketKey(secret, domain, subject string) (string, error) {
 		return "", err
 	}
 	return connectBucketPrefix + ":" + domain + ":" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+func gcpClientIP(cidrs ...string) config.ClientIPConfig {
+	prefixes := make([]netip.Prefix, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		prefixes = append(prefixes, netip.MustParsePrefix(cidr))
+	}
+	return config.ClientIPConfig{Mode: "gcp", TrustedProxyCIDRs: prefixes}
+}
+
+func TestNewConnectSourceResolver(t *testing.T) {
+	t.Parallel()
+	behindGCP := gcpClientIP("10.129.0.0/23")
+	tests := []struct {
+		name           string
+		connectProxies []netip.Prefix
+		clientIP       config.ClientIPConfig
+		peer           string
+		forwardedFor   string
+		want           string
+	}{
+		{
+			name:         "managed proxy forwards the caller",
+			clientIP:     behindGCP,
+			peer:         "10.129.0.7:41234",
+			forwardedFor: "203.0.113.30, 10.0.0.36",
+			want:         "203.0.113.30",
+		},
+		{
+			name:         "caller supplied entries are ignored",
+			clientIP:     behindGCP,
+			peer:         "10.129.0.2:41234",
+			forwardedFor: "198.51.100.1, 198.51.100.2, 203.0.113.30, 10.0.0.36",
+			want:         "203.0.113.30",
+		},
+		{
+			name:         "peer outside the proxy range keeps its own address",
+			clientIP:     behindGCP,
+			peer:         "10.8.0.15:41234",
+			forwardedFor: "198.51.100.1, 10.0.0.36",
+			want:         "10.8.0.15",
+		},
+		{
+			name:         "chain without the forwarding rule falls back to the peer",
+			clientIP:     behindGCP,
+			peer:         "10.129.0.3:41234",
+			forwardedFor: "203.0.113.30",
+			want:         "10.129.0.3",
+		},
+		{
+			name:         "peer mode ignores forwarding",
+			clientIP:     config.ClientIPConfig{Mode: "peer"},
+			peer:         "10.129.0.3:41234",
+			forwardedFor: "203.0.113.30, 10.0.0.36",
+			want:         "10.129.0.3",
+		},
+		{
+			name:           "explicit connect proxies keep their own reading",
+			connectProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+			clientIP:       behindGCP,
+			peer:           "10.129.0.3:41234",
+			forwardedFor:   "198.51.100.1, 203.0.113.30, 10.0.0.36",
+			want:           "203.0.113.30",
+		},
+		{name: "invalid peer", clientIP: behindGCP, peer: "invalid", forwardedFor: "203.0.113.30, 10.0.0.36"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := NewConnectSourceResolver(tc.connectProxies, tc.clientIP)(tc.peer, tc.forwardedFor)
+			if got != tc.want {
+				t.Fatalf("source = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConnectAttemptLimiterCountsOneCallerAcrossManagedProxies(t *testing.T) {
+	t.Parallel()
+	cfg := config.MCPConnectRateLimitConfig{
+		SourceLimit:   10,
+		ConsumerLimit: 100,
+		Window:        time.Minute,
+	}
+	limiter, server := newConnectLimiterTest(t, cfg)
+	resolve := NewConnectSourceResolver(nil, gcpClientIP("10.129.0.0/23"))
+	ctx := context.Background()
+	proxies := []string{"10.129.0.2:40001", "10.129.0.3:40002", "10.129.0.7:40003"}
+	register := func(i int, forwardedFor string) error {
+		return limiter.Check(
+			ctx,
+			appoauth.ConnectAttemptScopeRegistration,
+			resolve(proxies[i%len(proxies)], forwardedFor),
+		)
+	}
+
+	for i := range cfg.SourceLimit {
+		if err := register(i, "203.0.113.30, 10.0.0.36"); err != nil {
+			t.Fatalf("registration %d: %v", i+1, err)
+		}
+	}
+	var exceeded *appoauth.ConnectRateLimitExceeded
+	if err := register(cfg.SourceLimit, "203.0.113.30, 10.0.0.36"); !errors.As(err, &exceeded) {
+		t.Fatalf("registration %d = %v, want ConnectRateLimitExceeded", cfg.SourceLimit+1, err)
+	}
+	if exceeded.RetryAfter <= 0 || exceeded.RetryAfter > cfg.Window {
+		t.Fatalf("retry after = %s, want within the window", exceeded.RetryAfter)
+	}
+	for i, spoofed := range []string{
+		"198.51.100.9, 203.0.113.30, 10.0.0.36",
+		"198.51.100.10, 198.51.100.11, 203.0.113.30, 10.0.0.36",
+	} {
+		if err := register(i, spoofed); !errors.As(err, &exceeded) {
+			t.Fatalf("spoofed chain %q = %v, want ConnectRateLimitExceeded", spoofed, err)
+		}
+	}
+
+	if err := register(0, "203.0.113.31, 10.0.0.36"); err != nil {
+		t.Fatalf("another caller shares the bucket: %v", err)
+	}
+	if err := limiter.Check(
+		ctx,
+		appoauth.ConnectAttemptScopeSource,
+		resolve(proxies[0], "203.0.113.30, 10.0.0.36"),
+	); err != nil {
+		t.Fatalf("connection bucket shares the registration count: %v", err)
+	}
+
+	server.FastForward(cfg.Window + time.Millisecond)
+	if err := register(1, "203.0.113.30, 10.0.0.36"); err != nil {
+		t.Fatalf("registration after the window: %v", err)
+	}
 }

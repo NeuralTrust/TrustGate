@@ -12,12 +12,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	// idpStubKeyID is the kid the stub publishes in its JWKS and stamps on
+	// every token it mints, so the gateway picks the right key.
+	idpStubKeyID = "kid-1"
+	// idpStubScope is the scope the stub grants by default. An auth created
+	// with oauth2AuthPayload requires it, so a minted token must carry it.
+	idpStubScope = "mcp.read"
 )
 
 // sharedHost is a hostname that is NOT a per-gateway subdomain
@@ -33,13 +44,17 @@ const sharedHost = "trustgate-mcp.shared.neuraltrust.ai"
 type oauthIDPStub struct {
 	server *httptest.Server
 	issuer string
+	// key signs the tokens mint returns. Keeping it is what lets a test choose
+	// the identity a caller presents; without it the stub could only publish a
+	// JWKS nobody could produce a token for.
+	key *rsa.PrivateKey
 }
 
 func newOAuthIDPStub(t *testing.T) *oauthIDPStub {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	stub := &oauthIDPStub{}
+	stub := &oauthIDPStub{key: key}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -52,7 +67,7 @@ func newOAuthIDPStub(t *testing.T) *oauthIDPStub {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"keys": []map[string]any{{
 				"kty": "RSA",
-				"kid": "kid-1",
+				"kid": idpStubKeyID,
 				"use": "sig",
 				"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
 				"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
@@ -66,6 +81,31 @@ func newOAuthIDPStub(t *testing.T) *oauthIDPStub {
 }
 
 func (s *oauthIDPStub) jwksURL() string { return s.server.URL + "/jwks" }
+
+// mint signs an access token that this stub's JWKS verifies, with claims the
+// caller chooses. It is how a test gives the MCP plane a principal carrying a
+// subject, an email or groups: an API key carries none of them, so a policy
+// scoped by user or group can only be matched by a token minted here.
+func (s *oauthIDPStub) mint(t *testing.T, audience string, claims map[string]any) string {
+	t.Helper()
+	now := time.Now()
+	payload := jwt.MapClaims{
+		"iss":   s.issuer,
+		"aud":   audience,
+		"iat":   now.Unix(),
+		"nbf":   now.Unix(),
+		"exp":   now.Add(time.Hour).Unix(),
+		"scope": idpStubScope,
+	}
+	for key, value := range claims {
+		payload[key] = value
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, payload)
+	token.Header["kid"] = idpStubKeyID
+	signed, err := token.SignedString(s.key)
+	require.NoError(t, err)
+	return signed
+}
 
 func (s *oauthIDPStub) host(t *testing.T) string {
 	t.Helper()
@@ -126,6 +166,29 @@ func mcpRequestWithHost(t *testing.T, method, path, host string, query url.Value
 	return resp
 }
 
+var consentStateField = regexp.MustCompile(`name="state" value="([^"]+)"`)
+
+// approveConsent submits the consent page in resp from the same browser,
+// carrying the cookie that page set.
+func approveConsent(t *testing.T, resp *http.Response, host string) *http.Response {
+	t.Helper()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	m := consentStateField.FindSubmatch(raw)
+	require.NotNil(t, m, "consent page carries no state: %s", string(raw))
+	form := url.Values{"state": {string(m[1])}, "decision": {"approve"}}
+	req, err := http.NewRequest(http.MethodPost, MCPURL+"/oauth/authorize", strings.NewReader(form.Encode()))
+	require.NoError(t, err)
+	req.Host = host
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range resp.Cookies() {
+		req.AddCookie(c)
+	}
+	out, err := noRedirectClient().Do(req)
+	require.NoError(t, err)
+	return out
+}
+
 func decodeBody(t *testing.T, resp *http.Response) map[string]any {
 	t.Helper()
 	defer func() { _ = resp.Body.Close() }()
@@ -174,21 +237,10 @@ func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) 
 		uniqueName("idp-b"), idpB.issuer, idpB.jwksURL(),
 		"mcp-"+strings.ToLower(uniqueName("aud")), "client-"+strings.ToLower(uniqueName("b")), "mcp.write"))
 
-	roleID := CreateRole(t, gatewayID, map[string]any{
-		"name": uniqueName("mcp-role"),
-		"oidc_mapping": map[string]any{
-			"match": "any",
-			"claims": []map[string]any{
-				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
-			},
-		},
-	})
-	AttachRoleRegistry(t, gatewayID, roleID, registryID)
 	consumerID := CreateConsumer(t, gatewayID, map[string]any{
-		"name":         uniqueName("mcp-rb-consumer"),
-		"type":         "mcp",
-		"routing_mode": "role_based",
-		"roles":        []string{roleID},
+		"name":       uniqueName("mcp-consumer"),
+		"type":       "mcp",
+		"registries": []map[string]any{{"id": registryID}},
 	})
 	AttachAuth(t, gatewayID, consumerID, authA)
 
@@ -240,10 +292,15 @@ func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) 
 			resp := mcpRequestWithHost(t, http.MethodGet, "/oauth/authorize", sharedHost,
 				authorizeQuery(clientA, wantResource), nil)
 			defer func() { _ = resp.Body.Close() }()
-			if resp.StatusCode != http.StatusFound {
+			if resp.StatusCode != http.StatusOK {
 				return false
 			}
-			loc, err := resp.Location()
+			approved := approveConsent(t, resp, sharedHost)
+			defer func() { _ = approved.Body.Close() }()
+			if approved.StatusCode != http.StatusSeeOther {
+				return false
+			}
+			loc, err := approved.Location()
 			return err == nil && loc.Host == idpA.host(t)
 		}, 5*time.Second, 100*time.Millisecond,
 			"authorize must redirect to the consumer's IdP once the credential propagates")

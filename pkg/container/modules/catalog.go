@@ -16,7 +16,10 @@ package modules
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
@@ -24,9 +27,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock/controlplane"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	catalogrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/catalog"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"go.uber.org/dig"
@@ -85,10 +91,21 @@ func provideCatalogServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(newBedrockModelARNLookup); err != nil {
+		return err
+	}
+	if err := c.Provide(newBedrockModelResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewLiveAvailabilityFilter); err != nil {
+	if err := c.Provide(newLiveModelSource); err != nil {
+		return err
+	}
+	// One instance serves both roles, so the live listing shares the filter's
+	// cache, its singleflight and its timeout budget.
+	if err := c.Provide(appcatalog.NewLiveCatalog); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewRegistryAvailability); err != nil {
@@ -98,6 +115,105 @@ func provideCatalogServices(c *container.Container) error {
 		return err
 	}
 	return c.Provide(cataloghttp.NewListModelsHandler)
+}
+
+// bedrockModelARNLookup adapts the infra control plane client to the port the
+// resolver depends on.
+type bedrockModelARNLookup struct {
+	client controlplane.Client
+}
+
+func newBedrockModelARNLookup(client controlplane.Client) appcatalog.BedrockModelARNLookup {
+	return &bedrockModelARNLookup{client: client}
+}
+
+func (l *bedrockModelARNLookup) ResolveModelARN(ctx context.Context, creds appcatalog.BedrockCredentials, arn string) (string, error) {
+	return l.client.ResolveModelARN(ctx, controlplane.Credentials{
+		Region: creds.Region, AccessKey: creds.AccessKey, SecretKey: creds.SecretKey,
+		SessionToken: creds.SessionToken, UseRole: creds.UseRole, RoleARN: creds.RoleARN,
+	}, arn)
+}
+
+func newBedrockModelResolver(lookup appcatalog.BedrockModelARNLookup, logger *slog.Logger, cfg *config.Config) appcatalog.BedrockModelResolver {
+	native := cfg.BedrockNative
+	return appcatalog.NewBedrockModelResolverWithLimits(lookup, logger, appcatalog.BedrockResolverLimits{
+		MaxInFlight:    native.ResolverMaxInFlight,
+		MaxPerRegistry: native.ResolverMaxPerRegistry,
+		MaxEntries:     native.ResolverCacheEntries,
+		ResolvedTTL:    native.ResolverResolvedTTL,
+		UnresolvedTTL:  native.ResolverUnresolvedTTL,
+		LookupTimeout:  native.ResolverControlPlaneTimeout,
+	})
+}
+
+type liveModelSource struct {
+	locator factory.ProviderLocator
+}
+
+func newLiveModelSource(locator factory.ProviderLocator) appcatalog.LiveModelSource {
+	return &liveModelSource{locator: locator}
+}
+
+func (s *liveModelSource) Supports(providerCode string) bool {
+	_, err := s.locator.GetModelLister(providerCode)
+	return err == nil
+}
+
+// Authoritative is true for Azure: a request names a deployment on the
+// resource, so only the resource's own listing can answer.
+func (s *liveModelSource) Authoritative(providerCode string) bool {
+	return providerCode == providers.ProviderAzure
+}
+
+func (s *liveModelSource) List(
+	ctx context.Context,
+	providerCode string,
+	auth *registrydomain.TargetAuth,
+	options map[string]any,
+) ([]appcatalog.LiveModel, error) {
+	lister, err := s.locator.GetModelLister(providerCode)
+	if err != nil {
+		return nil, err
+	}
+	models, err := lister.ListLiveModels(ctx, &providers.Config{
+		Options:     options,
+		Credentials: providers.CredentialsFromTargetAuth(auth),
+	})
+	if err != nil {
+		if listingMisconfigured(err) {
+			return nil, fmt.Errorf("%w: %w", appcatalog.ErrLiveListingMisconfigured, err)
+		}
+		return nil, err
+	}
+	out := make([]appcatalog.LiveModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, appcatalog.LiveModel{
+			ID:            model.ID,
+			DisplayName:   model.DisplayName,
+			ProviderModel: model.ProviderModel,
+			Pending:       model.Pending,
+		})
+	}
+	return out, nil
+}
+
+// listingMisconfigured reports a failure the registry's own configuration
+// causes and a retry cannot fix: a precondition the adapter rejected, or the
+// provider refusing the credentials or not knowing the endpoint.
+func listingMisconfigured(err error) bool {
+	if errors.Is(err, providers.ErrModelListingMisconfigured) {
+		return true
+	}
+	var status *providers.ModelListingStatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	switch status.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	default:
+		return false
+	}
 }
 
 type CatalogSyncParams struct {

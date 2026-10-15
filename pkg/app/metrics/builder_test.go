@@ -16,10 +16,15 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -86,6 +91,40 @@ func TestBuilder_SetsTenantIDFromMetadata(t *testing.T) {
 	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
 
 	assert.Equal(t, "team-123", evt.TenantID)
+}
+
+func TestBuilder_CarriesTheAuthIDOnlyWhenStamped(t *testing.T) {
+	cases := map[string]struct {
+		authID string
+	}{
+		"application key on a consumer": {authID: "auth-1"},
+		"no auth id":                    {authID: ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rt := trace.New("trace-auth", trace.Metadata{GatewayID: "gw-1"})
+			rt.SetAuthID(tc.authID)
+			rt.SetPrincipalIdentity("billing-service", string(identity.MethodAPIKey), "")
+			req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/billing/v1/chat/completions"}
+			resp := &infracontext.ResponseContext{StatusCode: 200}
+			start := time.UnixMilli(1_000_000)
+
+			evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+			assert.Equal(t, tc.authID, evt.AuthID)
+			assert.Equal(t, "billing-service", evt.PrincipalSubject)
+			assert.Equal(t, string(identity.MethodAPIKey), evt.PrincipalMethod)
+			raw, err := json.Marshal(evt)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(raw, &fields))
+			got, present := fields["auth_id"]
+			assert.Equal(t, tc.authID != "", present)
+			if present {
+				assert.Equal(t, tc.authID, got)
+			}
+		})
+	}
 }
 
 func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
@@ -165,7 +204,8 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, "USD", evt.Cost.Currency)
 
 	assert.Equal(t, int64(320), evt.Latency.TotalMs)
-	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
+	require.NotNil(t, evt.Latency.ProviderMs)
+	assert.Equal(t, int64(300), *evt.Latency.ProviderMs)
 	assert.Equal(t, int64(6), evt.Latency.PoliciesMs)
 	assert.Equal(t, int64(14), evt.Latency.GatewayMs)
 
@@ -481,7 +521,8 @@ func TestBuilder_FailoverAttemptsAndFlaggedPlugin(t *testing.T) {
 
 	require.Len(t, evt.Attempts, 2)
 	assert.True(t, evt.Attempts[1].Fallback)
-	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
+	require.NotNil(t, evt.Latency.ProviderMs)
+	assert.Equal(t, int64(300), *evt.Latency.ProviderMs)
 
 	require.Len(t, evt.PolicyChain, 1)
 	assert.True(t, evt.PolicyChain[0].Flagged)
@@ -836,4 +877,290 @@ func TestBuilder_StampsRetentionOnMCPTracesToo(t *testing.T) {
 	require.NotNil(t, evt.Retention)
 	assert.Equal(t, "free", evt.Retention.Plan)
 	assert.Equal(t, evt.OccurredOn+(7*24*time.Hour).Milliseconds(), evt.Retention.ExpiresAt)
+}
+
+// streamingChainTrace is a paced streamed request: a 1s wall clock of which the
+// provider took 900ms, inspected by len(holds) streaming policies whose spans
+// carry the latency each was charged rather than the span's own wall clock.
+func streamingChainTrace(holds ...time.Duration) *trace.RequestTrace {
+	rt := trace.New("trace-stream", trace.Metadata{GatewayID: "gw-1"})
+	for i, hold := range holds {
+		_ = rt.AddSpan(pluginSpan(fmt.Sprintf("trustguard_%d", i),
+			&trace.PluginAttrs{
+				Stage:    "pre_response",
+				Decision: "allow",
+				Extras:   map[string]any{"streaming": map[string]any{"enabled": true}},
+			}, 200, hold, ""))
+	}
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+		200, 900*time.Millisecond, ""))
+	return rt
+}
+
+// TestBuilder_StreamingChainChargesTheHoldOnce is the other half of the
+// per-entry split in pkg/app/plugins: it proves the shares actually arrive in
+// blocking_policies_ms, and that a chain-wide figure repeated on every entry is
+// summed once per streaming policy. The provider share here is deliberately
+// small, so the fold's arithmetic is what the two cases differ on and nothing
+// else.
+func TestBuilder_StreamingChainChargesTheHoldOnce(t *testing.T) {
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Method:       "POST",
+		Path:         "/v1/chat/completions",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+	start := time.UnixMilli(1_000_000)
+	end := start.Add(time.Second)
+
+	shared := newBuilder(appcatalog.Pricing{}).Build(context.Background(),
+		streamingChainTrace(40*time.Millisecond, 20*time.Millisecond), req, resp, start, end)
+
+	assert.Equal(t, int64(60), shared.Latency.PoliciesMs,
+		"two streaming policies sum to the one hold the guard measured")
+	assert.Equal(t, int64(40), shared.Latency.GatewayMs,
+		"gateway_ms is what is left of the wall clock once the provider and the hold are removed")
+	require.Len(t, shared.PolicyChain, 2, "a streamed leg emits one entry per streaming policy")
+
+	// The regression this pins: the guard's chain-wide 60ms written unchanged
+	// onto both spans is summed twice, so the remainder goes negative and the
+	// gateway's own time disappears.
+	duplicated := newBuilder(appcatalog.Pricing{}).Build(context.Background(),
+		streamingChainTrace(60*time.Millisecond, 60*time.Millisecond), req, resp, start, end)
+	assert.Equal(t, int64(120), duplicated.Latency.PoliciesMs)
+	assert.Zero(t, duplicated.Latency.GatewayMs,
+		"a per-chain aggregate on every span is what clamps gateway_ms; the split is what prevents it")
+}
+
+// TestBuilder_StreamedPoliciesLeaveProviderMs pins the streamed-leg
+// reconciliation. A policy that inspects the response block by block runs while
+// the response drains, so its latency elapses inside the LLM span and the raw
+// attempt sum already contains it. Counted in both buckets the remainder goes
+// negative and gateway_ms clamps to zero, which is what shipped before: the
+// second half of this test is that regression, held in place as the control.
+func TestBuilder_StreamedPoliciesLeaveProviderMs(t *testing.T) {
+	build := func(streamed bool) events.Latency {
+		rt := trace.New("trace-stream", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(pluginSpan("rate_limiter",
+			&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 6*time.Millisecond, ""))
+		_ = rt.AddSpan(pluginSpan("trustguard",
+			&trace.PluginAttrs{Stage: "pre_response", Decision: "allow", Streamed: streamed},
+			200, 120*time.Millisecond, ""))
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+			200, 500*time.Millisecond, ""))
+
+		req := &infracontext.RequestContext{
+			GatewayID:    "gw-1",
+			Method:       "POST",
+			Path:         "/v1/chat/completions",
+			Body:         []byte(openAIRequestBody),
+			SourceFormat: string(adapter.FormatOpenAI),
+		}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+		start := time.UnixMilli(1_000_000)
+		end := start.Add(530 * time.Millisecond)
+		return newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end).Latency
+	}
+
+	got := build(true)
+	require.NotNil(t, got.ProviderMs)
+	assert.Equal(t, int64(380), *got.ProviderMs,
+		"the 120ms the guard held bytes elapsed inside the 500ms drain, so it is not the provider's")
+	assert.Equal(t, int64(126), got.PoliciesMs, "policies_ms still reports the full chain cost")
+	assert.Equal(t, int64(24), got.GatewayMs)
+	assert.Equal(t, got.TotalMs, *got.ProviderMs+got.PoliciesMs+got.GatewayMs,
+		"the three buckets must reconcile against total_ms on a streamed leg")
+
+	unmarked := build(false)
+	require.NotNil(t, unmarked.ProviderMs)
+	assert.Equal(t, int64(500), *unmarked.ProviderMs)
+	assert.Zero(t, unmarked.GatewayMs,
+		"without the marker the guard's hold is counted twice and the remainder clamps to zero")
+}
+
+// A native Bedrock call names its model by ARN, or by a profile ARN that only the
+// control plane can resolve. Both must reach the catalog price, or the call is
+// recorded with usage and no cost.
+func TestBuilder_CostForNativeBedrockARNs(t *testing.T) {
+	const base = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+	systemARN := "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us." + base
+	appARN := "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123xyz"
+	pricing := map[string]appcatalog.Pricing{
+		"bedrock:" + base: {Found: true, InputPrice: 0.000003, OutputPrice: 0.000015},
+	}
+	cases := []struct {
+		name      string
+		sent      string
+		spanModel string
+		wantCost  bool
+	}{
+		{"system profile ARN", systemARN, systemARN, true},
+		{"foundation model ARN", "arn:aws:bedrock:us-east-1::foundation-model/" + base, "arn:aws:bedrock:us-east-1::foundation-model/" + base, true},
+		{"global system profile ARN", "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global." + base, "", true},
+		{"application profile resolved: span model is the resolved model", appARN, base, true},
+		{"application profile unresolved: usage without a cost", appARN, appARN, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := trace.New("trace-native", trace.Metadata{GatewayID: "gw-1"})
+			_ = rt.AddSpan(llmSpan("bedrock", &trace.LLMAttrs{
+				Provider: "bedrock", SentModel: tc.sent, Model: tc.spanModel, RequestedModel: tc.sent,
+				Attempt: 1, Outcome: "success",
+				Usage: &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+			}, 200, 300*time.Millisecond, ""))
+			req := &infracontext.RequestContext{
+				GatewayID: "gw-1", RequestedModel: tc.sent, SourceFormat: string(adapter.FormatBedrockNative),
+				Body: []byte(`{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`),
+			}
+			resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{}`)}
+
+			evt := newBuilderWithPricing(pricing).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+			if !tc.wantCost {
+				assert.Nil(t, evt.Cost)
+				return
+			}
+			require.NotNil(t, evt.Cost)
+			assert.InDelta(t, 10*0.000003, float64(evt.Cost.PromptUsd), 1e-12)
+			assert.InDelta(t, 5*0.000015, float64(evt.Cost.CompletionUsd), 1e-12)
+		})
+	}
+}
+
+// A mask a native Bedrock call could not have applied reaches the product event as
+// a policy-chain entry named native_bedrock_passthrough with decision block and
+// a failure_reason; docs/telemetry/otlp-metadata-contract.md documents it, so the
+// shape is pinned here.
+func TestBuilder_NativeBedrockMaskNotApplicableIsAPolicyChainEntry(t *testing.T) {
+	rt := trace.New("trace-native-mask", trace.Metadata{GatewayID: "gw-1"})
+	appplugins.RecordNativeMaskBlocked(trace.NewContext(context.Background(), rt), nil, policy.StagePreRequest, "leak_remaining", false)
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/acme/model/m/converse"}
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, &infracontext.ResponseContext{StatusCode: 200}, start, start.Add(time.Millisecond))
+
+	require.Len(t, evt.PolicyChain, 1)
+	entry := evt.PolicyChain[0]
+	assert.Equal(t, "native_bedrock_passthrough", entry.Name)
+	assert.Equal(t, "pre_request", entry.Stage)
+	assert.Equal(t, "block", entry.Decision)
+	raw, err := json.Marshal(entry.Extras)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"decision":"blocked","stage":"pre_request","mode":"enforce","failure_reason":"mask_not_applicable:leak_remaining","failure_detail":"anonymize_no_output","failure_class":"input","degraded":true,"degraded_reason":"leak_remaining"}`, string(raw))
+}
+
+// ENG-1811: a request sent with "auto" that fails upstream echoes no model, so
+// the event fell through to the request body and was recorded as "auto".
+func TestBuilder_FailedAttemptIsRecordedUnderTheModelItWentOutWith(t *testing.T) {
+	autoBody := []byte(`{"model":"auto","messages":[{"role":"user","content":"hello"}]}`)
+	req := &infracontext.RequestContext{
+		GatewayID:      "gw-1",
+		RequestedModel: "auto",
+		Body:           autoBody,
+		SourceFormat:   string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 401, Body: []byte(`{"error":{"message":"Unauthorized"}}`)}
+
+	cases := []struct {
+		name  string
+		attrs trace.LLMAttrs
+		want  string
+	}{
+		{
+			name:  "the model the gateway sent",
+			attrs: trace.LLMAttrs{Provider: "mistral", SentModel: "mistral-small-latest", RouteModel: "mistral-large-latest", RequestedModel: "auto", Attempt: 1, Outcome: "error"},
+			want:  "mistral-small-latest",
+		},
+		{
+			name:  "the route's model when nothing was sent",
+			attrs: trace.LLMAttrs{Provider: "mistral", RouteModel: "mistral-large-latest", RequestedModel: "auto", Attempt: 1, Outcome: "error"},
+			want:  "mistral-large-latest",
+		},
+		{
+			name:  "the request's model as a last resort",
+			attrs: trace.LLMAttrs{Provider: "mistral", RequestedModel: "auto", Attempt: 1, Outcome: "error"},
+			want:  "auto",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := tc.attrs
+			rt := trace.New("trace-failed", trace.Metadata{GatewayID: "gw-1"})
+			_ = rt.AddSpan(llmSpan("mistral", &attrs, 401, 50*time.Millisecond, ""))
+
+			evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+			assert.Equal(t, tc.want, evt.Request.Model)
+			assert.Equal(t, "auto", evt.Request.RequestedModel)
+			assert.Equal(t, "mistral", evt.Request.Provider)
+		})
+	}
+}
+
+func TestBuilder_SucceededAttemptKeepsTheModelTheProviderEchoed(t *testing.T) {
+	rt := trace.New("trace-ok", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai", &trace.LLMAttrs{
+		Provider:       "openai",
+		Model:          "gpt-4o-mini-2024-07-18",
+		SentModel:      "gpt-4o-mini",
+		RouteModel:     "gpt-4o-mini",
+		RequestedModel: "auto",
+		Attempt:        1,
+		Outcome:        "success",
+	}, 200, 50*time.Millisecond, ""))
+	req := &infracontext.RequestContext{GatewayID: "gw-1", RequestedModel: "auto", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+	assert.Equal(t, "gpt-4o-mini-2024-07-18", evt.Request.Model)
+}
+
+// ENG-1836: a pre-request refusal never called the provider, so provider_ms is
+// omitted. A real attempt that finished in under a millisecond still emits 0.
+func TestBuilder_ProviderMsOmittedWithoutAttempt(t *testing.T) {
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Method:       "POST",
+		Path:         "/v1/chat/completions",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+	}
+	start := time.UnixMilli(1_000_000)
+
+	t.Run("pre-request refusal", func(t *testing.T) {
+		rt := trace.New("trace-blocked", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(pluginSpan("request_size_limiter",
+			&trace.PluginAttrs{Stage: "pre_request", Decision: "block"}, 413, time.Millisecond, ""))
+		resp := &infracontext.ResponseContext{StatusCode: 413, Body: []byte(`{"error":"plugin_rejected"}`)}
+
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+		assert.Empty(t, evt.Attempts)
+		assert.Nil(t, evt.Latency.ProviderMs)
+		raw, err := json.Marshal(evt.Latency)
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "provider_ms")
+	})
+
+	t.Run("attempt under 1ms", func(t *testing.T) {
+		rt := trace.New("trace-fast", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+			200, 500*time.Microsecond, ""))
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(500*time.Microsecond))
+
+		require.Len(t, evt.Attempts, 1)
+		require.NotNil(t, evt.Latency.ProviderMs)
+		assert.Equal(t, int64(0), *evt.Latency.ProviderMs)
+		raw, err := json.Marshal(evt.Latency)
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"provider_ms":0`)
+	})
 }

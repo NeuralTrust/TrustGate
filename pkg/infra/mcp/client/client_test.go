@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
@@ -565,5 +566,58 @@ func TestPing(t *testing.T) {
 	sess := connect(t, appmcp.Target{URL: srv.URL})
 	if err := sess.Ping(context.Background()); err != nil {
 		t.Fatalf("ping: %v", err)
+	}
+}
+
+func TestSessionCloseCancelsActiveCall(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddTool(
+		&sdk.Tool{Name: "blocked", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			close(started)
+			<-release
+			return &sdk.CallToolResult{}, nil
+		},
+	)
+	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	sess, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := sess.CallTool(context.Background(), "blocked", nil)
+		callDone <- err
+	}()
+	<-started
+	closeDone := make(chan struct{})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		sess.Close(ctx)
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("session close waited for an unresponsive active call")
+	}
+	select {
+	case err := <-callDone:
+		if err == nil {
+			t.Fatal("active call succeeded after closing its session")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active call was not cancelled")
+	}
+
+	if err := sess.Ping(context.Background()); err == nil {
+		t.Fatal("closed session accepted a new operation")
 	}
 }

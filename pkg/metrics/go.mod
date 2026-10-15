@@ -1,3 +1,3 @@
 module github.com/NeuralTrust/TrustGate/pkg/metrics
 
-go 1.26.6
+go 1.27

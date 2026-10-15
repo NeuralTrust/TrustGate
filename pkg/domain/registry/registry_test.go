@@ -15,7 +15,9 @@
 package registry
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -217,7 +219,10 @@ func TestTargetAuth_Validate(t *testing.T) {
 		{name: "oauth2 missing token_url", auth: NewOAuth2Auth(&TargetOAuthConfig{GrantType: "client_credentials"}), wantErr: true},
 		{name: "oauth2 missing grant_type", auth: NewOAuth2Auth(&TargetOAuthConfig{TokenURL: "https://x"}), wantErr: true},
 		{name: "oauth2 nil config", auth: &TargetAuth{Type: AuthTypeOAuth2}, wantErr: true},
-		{name: "gcp ok", auth: NewGCPServiceAccountAuth("eyJ...")},
+		{name: "gcp ok", auth: NewGCPServiceAccountAuth(`{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token"}`)},
+		{name: "gcp hostile token_uri", auth: NewGCPServiceAccountAuth(`{"type":"service_account","token_uri":"http://169.254.169.254/"}`), wantErr: true},
+		{name: "gcp external_account", auth: NewGCPServiceAccountAuth(`{"type":"external_account"}`), wantErr: true},
+		{name: "gcp not json", auth: NewGCPServiceAccountAuth("eyJ..."), wantErr: true},
 		{name: "gcp empty", auth: &TargetAuth{Type: AuthTypeGCPServiceAccount}, wantErr: true},
 		{name: "passthrough ok", auth: &TargetAuth{Type: AuthTypePassthrough}},
 		{name: "unknown type", auth: &TargetAuth{Type: "weird"}, wantErr: true},
@@ -319,5 +324,40 @@ func TestEmbeddingConfig_ValueAndScan(t *testing.T) {
 	}
 	if rt.Provider != original.Provider || rt.Model != original.Model {
 		t.Fatalf("roundtrip mismatch: %+v vs %+v", rt, original)
+	}
+}
+
+func TestRegistry_ScopeKey(t *testing.T) {
+	t.Parallel()
+	shelf := ids.New[ids.RegistryKind]()
+	plain := &Registry{ID: ids.New[ids.RegistryKind]()}
+	if !plain.InstanceOf.IsNil() {
+		t.Fatal("a registry built from storage must not carry InstanceOf")
+	}
+	if plain.ScopeKey() != plain.ID {
+		t.Fatalf("ScopeKey = %s, want own id %s", plain.ScopeKey(), plain.ID)
+	}
+	clone := &Registry{ID: ids.New[ids.RegistryKind](), InstanceOf: shelf}
+	if clone.ScopeKey() != shelf {
+		t.Fatalf("ScopeKey = %s, want shelf id %s", clone.ScopeKey(), shelf)
+	}
+}
+
+func TestRegistry_InstanceOfNeverSerialises(t *testing.T) {
+	t.Parallel()
+	clone := &Registry{ID: ids.New[ids.RegistryKind](), InstanceOf: ids.New[ids.RegistryKind]()}
+	raw, err := json.Marshal(clone)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "instance_of") || strings.Contains(string(raw), clone.InstanceOf.String()) {
+		t.Fatalf("InstanceOf is a request-scoped view and must not reach JSON, got %s", raw)
+	}
+	var back Registry
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !back.InstanceOf.IsNil() {
+		t.Fatal("InstanceOf must not round-trip through JSON")
 	}
 }

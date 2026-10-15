@@ -286,6 +286,38 @@ func TestTokenRateLimiterSchema_RulesAndAggregate(t *testing.T) {
 	}
 }
 
+func TestTokenRateLimiterSchema_KeyPartition(t *testing.T) {
+	meta := pluginCatalogMeta["token_rate_limiter"]
+	assert.Contains(t, meta.description, "Without a partition, if the counter store is unavailable, requests are allowed through")
+
+	partition, ok := fieldByKey(meta.schema.Fields, "partition")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, partition.Type)
+	assert.Equal(t, []string{"key"}, enumValues(partition.Enum))
+	assert.False(t, partition.Required)
+	for _, want := range []string{"owner", "503 budget_unavailable", "403 model_unpriced", "custom_pricing", "group_by_header", "uncounted"} {
+		assert.Contains(t, partition.Description, want)
+	}
+
+	keyBudgets, ok := fieldByKey(meta.schema.Fields, "key_budgets")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, keyBudgets.Type)
+	assert.False(t, keyBudgets.Required)
+	for _, want := range []string{"partition key", "budget it carries", "instead of aggregate", "not counted"} {
+		assert.Contains(t, keyBudgets.Description, want)
+	}
+
+	rules, _ := fieldByKey(meta.schema.Fields, "rules")
+	require.NotNil(t, rules.Item)
+	ruleWindow, _ := fieldByKey(rules.Item.Fields, "time_window")
+	aggregate, _ := fieldByKey(meta.schema.Fields, "aggregate")
+	aggregateWindow, _ := fieldByKey(aggregate.Fields, "time_window")
+	for _, window := range []Field{ruleWindow, aggregateWindow} {
+		assert.Contains(t, window.Description, "calendar_month")
+		assert.Contains(t, window.Description, "calendar_day")
+	}
+}
+
 func TestTokenRateLimiterSchema_CustomPricingMap(t *testing.T) {
 	fields := pluginCatalogMeta["token_rate_limiter"].schema.Fields
 
@@ -432,6 +464,12 @@ func TestTrustGuardSchema(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeString, collectorID.Type)
 	assert.True(t, collectorID.Required)
+
+	// A guardrail always fails open, so none of its failure controls is a setting.
+	for _, removed := range []string{"on_error", "on_timeout", "timeout", "on_mask_failure"} {
+		_, ok := fieldByKey(fields, removed)
+		assert.False(t, ok, "trustguard schema must not expose %s", removed)
+	}
 }
 
 func TestAzureContentSafetySchema(t *testing.T) {
@@ -588,7 +626,9 @@ func TestSemanticCacheSchema(t *testing.T) {
 	skipIfStreaming, ok := fieldByKey(fields, "skip_if_streaming")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeBoolean, skipIfStreaming.Type)
-	assert.Equal(t, false, skipIfStreaming.Default)
+	assert.Equal(t, true, skipIfStreaming.Default,
+		"the console default must match config.skipIfStreaming(); a cache hit is served "+
+			"as application/json, so a streamed leg stays out of the cache unless asked")
 
 	embedding, ok := fieldByKey(fields, "embedding")
 	require.True(t, ok)
@@ -752,38 +792,31 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	}
 }
 
-// The keys are string literals rather than the plugin's config struct because
-// infra plugins depend on this package; the point of the test is that the two
-// lists cannot drift apart unnoticed. Settings are not validated against the
-// schema, so an option missing here still works over the API and is simply
-// unreachable from the admin UI — the failure mode this test exists to prevent.
-func TestPromptCompressionSchema_AdvertisesEveryHonouredOption(t *testing.T) {
+// Prompt compression deliberately exposes no settings: its defaults are the
+// values that keep provider prompt caches stable, and every knob the catalog
+// once offered was a way to make the policy worse. The plugin still parses
+// explicit settings over the API (see promptcompression.parseConfig); this test
+// pins that the console is shown nothing to edit.
+func TestPromptCompressionSchema_ExposesNoFields(t *testing.T) {
 	meta, ok := pluginCatalogMeta["prompt_compression"]
 	require.True(t, ok)
+	assert.Empty(t, meta.schema.Fields, "prompt_compression must run on its defaults; a field here puts a Configuration tab back in the console")
+	assert.Contains(t, meta.description, "nothing to configure")
+}
 
-	fields := meta.schema.Fields
-	for _, expected := range []struct {
-		key       string
-		fieldType FieldType
-		def       any
-	}{
-		{"compress_json", FieldTypeBoolean, true},
-		{"normalize_whitespace", FieldTypeBoolean, true},
-		{"strip_ansi", FieldTypeBoolean, true},
-		{"max_consecutive_blank_lines", FieldTypeInteger, 1},
-		{"min_length", FieldTypeInteger, 256},
-		{"max_body_bytes", FieldTypeInteger, 1048576},
-	} {
-		field, found := fieldByKey(fields, expected.key)
-		require.Truef(t, found, "the plugin honours %q but the catalog does not offer it", expected.key)
-		assert.Equal(t, expected.fieldType, field.Type, expected.key)
-		assert.Equal(t, expected.def, field.Default,
-			"%s must advertise the default the plugin actually applies", expected.key)
+func TestGuardrailSchemasExposeNoFailureControls(t *testing.T) {
+	for _, slug := range []string{"trustguard", "bedrock_guardrail", "google_model_armor", "azure_content_safety", "openai_moderation", "regex_replace"} {
+		meta, ok := pluginCatalogMeta[slug]
+		require.True(t, ok, slug)
+		for _, removed := range []string{"on_error", "on_timeout", "on_mask_failure", "streaming.on_error", "streaming.guard_timeout"} {
+			_, ok := fieldByKey(meta.schema.Fields, removed)
+			assert.False(t, ok, "%s must not expose %s", slug, removed)
+		}
+		if slug != "regex_replace" {
+			assert.NotContains(t, meta.description, "fail_closed", slug)
+		}
 	}
-
-	roles, found := fieldByKey(fields, "target_roles")
-	require.True(t, found)
-	assert.Equal(t, FieldTypeArray, roles.Type)
-	require.NotNil(t, roles.Item)
-	assert.Equal(t, []string{"system", "user", "assistant", "tool"}, enumValues(roles.Item.Enum))
+	for _, slug := range []string{"trustguard", "bedrock_guardrail", "google_model_armor", "azure_content_safety", "openai_moderation"} {
+		assert.Contains(t, pluginCatalogMeta[slug].description, "fail", slug)
+	}
 }

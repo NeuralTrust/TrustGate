@@ -46,6 +46,78 @@ func TestOAuthChallengeAddsWWWAuthenticateOn401(t *testing.T) {
 	if !strings.Contains(challenge, `resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`) {
 		t.Fatalf("expected path-scoped resource_metadata pointer, got %q", challenge)
 	}
+	if strings.Contains(challenge, "error=") {
+		t.Fatalf("a request with no token must not name an error, got %q", challenge)
+	}
+}
+
+func TestOAuthChallengeInvalidTokenWhenBearerPresented(t *testing.T) {
+	t.Parallel()
+
+	const want = `Bearer error="invalid_token", error_description="The access token is invalid or expired", resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`
+
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "expired or rejected bearer", header: "Bearer expired-token", want: want},
+		{name: "bearer with surrounding spaces", header: "Bearer   expired-token  ", want: want},
+		{name: "no authorization", want: `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`},
+		{name: "empty bearer", header: "Bearer ", want: `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`},
+		{name: "blank bearer", header: "Bearer    ", want: `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`},
+		{name: "non-bearer scheme", header: "Basic dXNlcjpwYXNz", want: `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`},
+		{name: "lowercase scheme is not a bearer", header: "bearer expired-token", want: `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			app := fiber.New()
+			app.Use(NewOAuthChallengeMiddleware().Middleware())
+			app.Post("/v1/mcp/dev", func(c *fiber.Ctx) error {
+				return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+			})
+
+			req := httptest.NewRequest(fiber.MethodPost, "/v1/mcp/dev", nil)
+			req.Host = "gw.example.com"
+			if tt.header != "" {
+				req.Header.Set(fiber.HeaderAuthorization, tt.header)
+			}
+			res, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.StatusCode != fiber.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", res.StatusCode)
+			}
+			if got := res.Header.Get(fiber.HeaderWWWAuthenticate); got != tt.want {
+				t.Fatalf("challenge = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOAuthChallengeEscapesQuotesInResourceMetadata(t *testing.T) {
+	t.Parallel()
+	app := fiber.New()
+	app.Use(NewOAuthChallengeMiddleware().Middleware())
+	app.Post("/*", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+	})
+
+	req := httptest.NewRequest(fiber.MethodPost, `/v1/"mcp\dev`, nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.StatusCode)
+	}
+	const want = `Bearer resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/\"mcp\\dev"`
+	if got := res.Header.Get(fiber.HeaderWWWAuthenticate); got != want {
+		t.Fatalf("challenge = %q, want %q", got, want)
+	}
 }
 
 func TestOAuthChallengeUsesRootMetadataForRootPath(t *testing.T) {

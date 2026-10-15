@@ -17,10 +17,13 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -74,7 +77,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -112,7 +115,7 @@ func TestUpdater_Update_Partial_PreservesTypeAndConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -126,6 +129,81 @@ func TestUpdater_Update_Partial_PreservesTypeAndConfig(t *testing.T) {
 	}
 	if got.Config.OAuth2 == nil || got.Config.OAuth2.ClientSecret != "real-secret" {
 		t.Fatalf("oauth2 config not preserved: %+v", got.Config.OAuth2)
+	}
+}
+
+func existingOAuth2AuthWithLoginScopes(t *testing.T, gwID ids.GatewayID) *domain.Auth {
+	t.Helper()
+	cfg := oauth2Config("real-secret")
+	cfg.OAuth2.LoginScopes = []string{"api://gw/mcp.access", "offline_access"}
+	a, err := domain.NewAuth(gwID, "oauth-cred", domain.TypeOAuth2, true, cfg)
+	if err != nil {
+		t.Fatalf("NewAuth: %v", err)
+	}
+	return a
+}
+
+func TestUpdater_Update_StatusToggle_KeepsLoginScopes(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingOAuth2AuthWithLoginScopes(t, gwID)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	var persisted []string
+	repo.EXPECT().Update(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, a *domain.Auth) { persisted = slices.Clone(a.Config.OAuth2.LoginScopes) }).
+		Return(nil).
+		Once()
+
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return(nil, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
+		ID:      existing.ID,
+		Enabled: ptr(false),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if want := []string{"api://gw/mcp.access", "offline_access"}; !slices.Equal(persisted, want) {
+		t.Fatalf("persisted LoginScopes = %q, want %q", persisted, want)
+	}
+}
+
+func TestUpdater_Update_ConfigWithoutLoginScopes_ClearsThem(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingOAuth2AuthWithLoginScopes(t, gwID)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
+	persisted := []string{"sentinel"}
+	repo.EXPECT().Update(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, a *domain.Auth) { persisted = slices.Clone(a.Config.OAuth2.LoginScopes) }).
+		Return(nil).
+		Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
+		ID:     existing.ID,
+		Config: ptr(oauth2Config("***")),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted LoginScopes = %q, want none", persisted)
 	}
 }
 
@@ -149,7 +227,7 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -163,6 +241,50 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_StatusToggleWithMaskedEchoKeepsBothSecrets(t *testing.T) {
+	t.Parallel()
+	const (
+		loginSecret    = "real-login-secret"
+		exchangeSecret = "real-exchange-secret"
+	)
+	withSecrets := func(login, exchange string) domain.Config {
+		cfg := oauth2Config(login)
+		cfg.OAuth2.ExchangeClientID = "exchange-456"
+		cfg.OAuth2.ExchangeClientSecret = exchange
+		return cfg
+	}
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	existing, err := domain.NewAuth(gwID, "oauth-cred", domain.TypeOAuth2, false, withSecrets(loginSecret, exchangeSecret))
+	if err != nil {
+		t.Fatalf("NewAuth: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+			o := a.Config.OAuth2
+			return a.Enabled && o != nil && o.ClientSecret == loginSecret && o.ExchangeClientSecret == exchangeSecret
+		})).
+		Return(nil).
+		Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
+		ID:      existing.ID,
+		Enabled: ptr(true),
+		Config:  ptr(withSecrets(secret.Mask(loginSecret), secret.Mask(exchangeSecret))),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
 func TestUpdater_Update_GatewayMismatch(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -171,7 +293,7 @@ func TestUpdater_Update_GatewayMismatch(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -193,7 +315,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:     id,
 		Name:   ptr("x"),
@@ -207,14 +329,18 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 }
 
 func oidcConfig() domain.Config {
-	return domain.Config{OIDC: &domain.OIDCConfig{
+	return domain.Config{OAuth2: &domain.OAuth2Config{
 		Issuer:    "https://idp.example.com",
 		Audiences: []string{"api://gateway"},
 		JWKSURL:   "https://idp.example.com/jwks",
 	}}
 }
 
-func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
+// Setting the deprecated alias on an auth an MCP consumer references no longer
+// breaks that consumer: the alias canonicalizes to oauth2, which is the type
+// MCP takes. Before unification the same request was a 409, so this pins the
+// behaviour change rather than leaving it to the type guard.
+func TestUpdater_Update_AliasedTypeKeepsMCPConsumerValid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
@@ -223,39 +349,50 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		Slug:        "mcp-cons",
-		Type:        consumerdomain.TypeMCP,
-		RoutingMode: consumerdomain.RoutingModeRoleBased,
-	}}, nil).Once()
+		ID:   ids.New[ids.ConsumerKind](),
+		Slug: "mcp-cons",
+		Type: consumerdomain.TypeMCP,
+	}}, nil).Maybe()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
 
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+		return a.Type == domain.TypeOAuth2
+	})).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appauth.UpdateInput{
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
 		Type:      ptr(domain.TypeOIDC),
 		Config:    ptr(oidcConfig()),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc breaks the MCP consumer referencing this auth)", err)
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
+// Sending the deprecated alias for an auth that is already oauth2 is accepted
+// and stores the canonical type. It is no longer a type change at all, so the
+// reference guard does not run — that path is covered by
+// TestUpdater_Update_AliasedTypeKeepsMCPConsumerValid.
+func TestUpdater_Update_AliasedTypeIsCanonicalizedOnWrite(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
-		return a.Type == domain.TypeOIDC
+		// Canonicalized on the way in: no row is ever written under the alias.
+		return a.Type == domain.TypeOAuth2
 	})).Return(nil).Once()
 
 	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return(nil, nil).Once()
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return(nil, nil).Maybe()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -263,7 +400,7 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -272,34 +409,6 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-}
-
-func TestUpdater_Update_RejectsDisablingAuthOfRoleBasedConsumer(t *testing.T) {
-	t.Parallel()
-	repo := repomocks.NewRepository(t)
-	gwID := ids.New[ids.GatewayKind]()
-	existing := existingOAuth2Auth(gwID)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		Slug:        "role-cons",
-		Type:        consumerdomain.TypeLLM,
-		RoutingMode: consumerdomain.RoutingModeRoleBased,
-	}}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appauth.UpdateInput{
-		ID:      existing.ID,
-		Enabled: ptr(false),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (disabling the only auth of a role_based consumer)", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
@@ -311,17 +420,16 @@ func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Slug:        "mcp-inline",
-		Type:        consumerdomain.TypeMCP,
-		RoutingMode: consumerdomain.RoutingModeInline,
-		AuthIDs:     []ids.AuthID{existing.ID},
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Slug:      "mcp-inline",
+		Type:      consumerdomain.TypeMCP,
+		AuthIDs:   []ids.AuthID{existing.ID},
 	}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -347,12 +455,11 @@ func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Slug:        "mcp-inline",
-		Type:        consumerdomain.TypeMCP,
-		RoutingMode: consumerdomain.RoutingModeInline,
-		AuthIDs:     []ids.AuthID{existing.ID, sibling.ID},
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Slug:      "mcp-inline",
+		Type:      consumerdomain.TypeMCP,
+		AuthIDs:   []ids.AuthID{existing.ID, sibling.ID},
 	}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
@@ -361,11 +468,78 @@ func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
 	}); err != nil {
 		t.Fatalf("expected disabling one of two usable MCP auths to be allowed, got %v", err)
+	}
+}
+
+func TestUpdater_Update_RefusesAnOwnedKey(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing, err := domain.NewAPIKeyAuth(gwID, "personal-alice", true, nil)
+	if err != nil {
+		t.Fatalf("NewAPIKeyAuth: %v", err)
+	}
+	existing.OwnerID = "alice"
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil, nil)
+	_, err = updater.Update(context.Background(), appauth.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		Name:      ptr("renamed"),
+		Enabled:   ptr(false),
+	})
+	if !errors.Is(err, domain.ErrOwnedKey) {
+		t.Fatalf("err = %v, want ErrOwnedKey", err)
+	}
+	if existing.Name != "personal-alice" || !existing.Enabled {
+		t.Fatalf("owned key was modified: %+v", existing)
+	}
+}
+
+func TestUpdater_Update_ReadsTheInjectedClock(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	clock := time.Date(2031, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		expiresAt time.Time
+		wantErr   error
+	}{
+		"expiry after the injected now":  {expiresAt: clock.Add(time.Hour)},
+		"expiry before the injected now": {expiresAt: clock.Add(-time.Hour), wantErr: domain.ErrExpiryInThePast},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			existing, err := domain.NewAPIKeyAuth(gwID, "client-key", true, nil)
+			if err != nil {
+				t.Fatalf("NewAPIKeyAuth: %v", err)
+			}
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tc.wantErr == nil {
+				repo.EXPECT().Update(mock.Anything, existing).Return(nil).Once()
+				publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+			}
+			updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil,
+				func() time.Time { return clock })
+
+			updated, err := updater.Update(context.Background(), appauth.UpdateInput{
+				ID: existing.ID, GatewayID: gwID, Expiry: &appauth.ExpiryChange{At: &tc.expiresAt},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Update() = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && !updated.UpdatedAt.Equal(clock) {
+				t.Fatalf("UpdatedAt = %v, want the injected clock %v", updated.UpdatedAt, clock)
+			}
+		})
 	}
 }

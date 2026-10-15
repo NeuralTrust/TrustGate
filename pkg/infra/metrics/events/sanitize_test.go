@@ -176,3 +176,45 @@ func TestSanitizeBody_JSONSafeCapNonJSONFallsBackToByteTruncate(t *testing.T) {
 	assert.True(t, strings.HasSuffix(got, "...[truncated]"))
 	assert.LessOrEqual(t, len(got), events.MaxSanitizedBodyBytes+len("...[truncated]"))
 }
+
+func TestRedactHeaders_RedactsDiagnosticsToken(t *testing.T) {
+	for _, key := range []string{"X-AG-Diagnostics-Token", "x-ag-diagnostics-token", "X-Ag-Diagnostics-Token"} {
+		t.Run(key, func(t *testing.T) {
+			out := events.RedactHeaders(map[string][]string{key: {"eyJhbGciOiJFUzI1NiJ9.diag.jwt"}})
+			assert.Equal(t, []string{"[REDACTED]"}, out[key])
+		})
+	}
+}
+
+func TestSanitizeBody_HidesOAuthTokenFields(t *testing.T) {
+	fields := []string{"refresh_token", "id_token", "code_verifier", "subject_token", "actor_token", "client_assertion", "password"}
+	for _, field := range fields {
+		t.Run(field, func(t *testing.T) {
+			body := []byte(`{"grant_type":"urn:example","nested":{"` + field + `":"sensitive-value-123"},"` + field + `":"sensitive-value-456"}`)
+			got := events.SanitizeBody(body, map[string][]string{"Content-Type": {"application/json"}})
+
+			assert.NotContains(t, got, "sensitive-value-123")
+			assert.NotContains(t, got, "sensitive-value-456")
+			assert.Contains(t, got, "urn:example")
+
+			var parsed map[string]any
+			require.NoError(t, json.Unmarshal([]byte(got), &parsed))
+			assert.Equal(t, "[REDACTED]", parsed[field])
+			nested, ok := parsed["nested"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "[REDACTED]", nested[field])
+		})
+	}
+}
+
+func TestSanitizeExtras_RedactsOAuthTokenFields(t *testing.T) {
+	out, ok := events.SanitizeExtras(map[string]any{
+		"id_token":         "idt-leak",
+		"client_assertion": "assertion-leak",
+		"subject":          "user-42",
+	}).(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "[REDACTED]", out["id_token"])
+	assert.Equal(t, "[REDACTED]", out["client_assertion"])
+	assert.Equal(t, "user-42", out["subject"])
+}

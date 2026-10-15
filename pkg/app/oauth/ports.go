@@ -38,6 +38,11 @@ type ProviderClient interface {
 	ClientCredentials(ctx context.Context, cfg *registrydomain.MCPAuth) (*ProviderToken, error)
 }
 
+// ErrUpstreamRegistrationRejected: the upstream authorization server refused
+// the dynamic client registration. It is the upstream's answer, not a gateway
+// fault, so callers report it as a bad gateway rather than a 500.
+var ErrUpstreamRegistrationRejected = errors.New("oauth dcr: registration rejected")
+
 var ErrUpstreamNotDiscoverable = errors.New(
 	"oauth dcr: upstream does not publish OAuth protected-resource metadata; configure registration: manual with a pre-registered OAuth app")
 
@@ -56,18 +61,25 @@ func (e *InvalidGrantError) Error() string { return ErrInvalidGrant.Error() }
 func (e *InvalidGrantError) Unwrap() error { return ErrInvalidGrant }
 
 type UpstreamAuthServer struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	RegistrationEndpoint  string   `json:"registration_endpoint"`
-	ScopesSupported       []string `json:"scopes_supported"`
-	Resource              string   `json:"resource"`
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	RegistrationEndpoint  string `json:"registration_endpoint"`
+	// UserinfoEndpoint is where an OpenID provider answers who a token is for.
+	// Optional in the metadata; when present, it names the account a
+	// connection was made with (see resolveAccountRef).
+	UserinfoEndpoint string   `json:"userinfo_endpoint,omitempty"`
+	ScopesSupported  []string `json:"scopes_supported"`
+	Resource         string   `json:"resource"`
 }
 
 type RegisteredClient struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	RedirectURI  string `json:"redirect_uri"`
+	// ClientName is the client_name the client was registered with. Empty on
+	// rows written before the name became configurable (the default name).
+	ClientName string `json:"client_name,omitempty"`
 }
 
 type ClientStore interface {

@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5"
@@ -113,17 +114,27 @@ func insertGatewayTx(ctx context.Context, tx pgx.Tx, g *domain.Gateway) error {
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	labelingBytes, err := marshalJSON(g.TrafficLabeling)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal traffic_labeling: %w", err)
+	}
 	entitlementsBytes, err := marshalJSON(g.Entitlements)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
 	}
 	const query = `
-		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	if _, err := tx.Exec(ctx, query,
-		g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt,
+		g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt, labelingBytes,
 	); err != nil {
 		return mapPgError(err)
+	}
+	// A stamped create fills the tenant's plan row when it has none yet; it never
+	// overwrites one, since the row is kept current by restamps and this stamp is
+	// written once.
+	if limits, ok := g.Entitlements.ResolveLimits(); ok && g.TenantID() != "" {
+		return seedTenantCaps(ctx, tx, g.TenantID(), g.Entitlements.Tier, limits)
 	}
 	return nil
 }
@@ -148,6 +159,10 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	labelingBytes, err := marshalJSON(g.TrafficLabeling)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal traffic_labeling: %w", err)
+	}
 	entitlementsBytes, err := marshalJSON(g.Entitlements)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
@@ -162,11 +177,12 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		       client_tls     = $7,
 		       session_config = $8,
 		       entitlements   = $9,
-		       updated_at     = $10
+		       updated_at     = $10,
+		       traffic_labeling = $11
 		 WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt, labelingBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -202,6 +218,7 @@ func (r *Repository) RestampEntitlementsByTenantID(
 		       updated_at   = NOW()
 		 WHERE metadata->>'tenant_id' = $1
 		RETURNING id, slug`
+	limits, hasLimits := e.ResolveLimits()
 	var stamped []domain.RestampedGateway
 	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, query, tenantID, entitlementsBytes)
@@ -219,6 +236,12 @@ func (r *Repository) RestampEntitlementsByTenantID(
 		}
 		if err := rows.Err(); err != nil {
 			return mapPgError(err)
+		}
+		// The tenant's plan row is written in the same transaction, whether or not
+		// the tenant has a gateway to stamp: the counters follow the row.
+		rows.Close()
+		if hasLimits {
+			return upsertTenantCaps(ctx, tx, tenantID, e.Tier, limits)
 		}
 		return nil
 	})
@@ -252,6 +275,10 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	labelingBytes, err := marshalJSON(g.TrafficLabeling)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal traffic_labeling: %w", err)
+	}
 	entitlementsBytes, err := marshalJSON(g.Entitlements)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
@@ -266,7 +293,8 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 		       client_tls     = $7,
 		       session_config = $8,
 		       entitlements   = $9,
-		       updated_at     = $10
+		       updated_at     = $10,
+		       traffic_labeling = $11
 		 WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
@@ -280,7 +308,7 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 			return ratelimit.ErrInstanceLimit
 		}
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt, labelingBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -295,20 +323,33 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 // cascadeDeleteStatements removes every resource that belongs to the gateway
 // before the gateway row itself. The order respects the ON DELETE RESTRICT
 // foreign keys on the junction tables (consumer_auth.auth_id,
-// consumer_policy.policy_id, role_registry.registry_id, consumer_registry.registry_id):
-// consumers and roles are deleted first so their junction rows cascade away,
-// leaving auths, policies and registries free to be removed.
+// consumer_policy.policy_id, consumer_registry.registry_id): consumers are
+// deleted first so their junction rows cascade away, leaving auths, policies
+// and registries free to be removed.
 var cascadeDeleteStatements = []string{
 	`DELETE FROM consumers  WHERE gateway_id = $1`,
-	`DELETE FROM roles      WHERE gateway_id = $1`,
 	`DELETE FROM policies   WHERE gateway_id = $1`,
 	`DELETE FROM auths      WHERE gateway_id = $1`,
 	`DELETE FROM registries WHERE gateway_id = $1`,
 }
 
+// cascadeLockStatements lock the consumers and then the policies of the gateway
+// in ascending id before the cascade deletes them, the order WithSlugLocked in
+// the policy repository documents (RUN-1746). A DELETE alone locks rows in scan
+// order, and an update that moves a tuple makes that disagree with id order.
+var cascadeLockStatements = []string{
+	`SELECT 1 FROM consumers WHERE gateway_id = $1 ORDER BY id FOR UPDATE`,
+	`SELECT 1 FROM policies  WHERE gateway_id = $1 ORDER BY id FOR UPDATE`,
+}
+
 func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 	const deleteGateway = `DELETE FROM gateways WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		for _, stmt := range cascadeLockStatements {
+			if _, err := tx.Exec(ctx, stmt, id); err != nil {
+				return fmt.Errorf("gateway repository: lock dependents: %w", err)
+			}
+		}
 		for _, stmt := range cascadeDeleteStatements {
 			if _, err := tx.Exec(ctx, stmt, id); err != nil {
 				return mapPgError(err)
@@ -327,7 +368,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -343,7 +384,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 
 func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
 	row := r.conn.Pool.QueryRow(ctx, query, host)
@@ -359,7 +400,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 
 func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE slug = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
@@ -393,7 +434,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
 		   AND ($2 = '' OR metadata->>'tenant_id' = $2)
@@ -434,11 +475,11 @@ type rowScanner interface {
 
 func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
-	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw, entitlementsRaw []byte
+	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw, entitlementsRaw, labelingRaw []byte
 	if err := s.Scan(
 		&g.ID, &g.Slug, &g.Status, &g.Domain,
 		&metadataRaw, &telemetryRaw, &clientTLSRaw, &sessionRaw, &entitlementsRaw,
-		&g.CreatedAt, &g.UpdatedAt,
+		&g.CreatedAt, &g.UpdatedAt, &labelingRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -470,6 +511,13 @@ func scanGateway(s rowScanner) (*domain.Gateway, error) {
 			return nil, fmt.Errorf("scan session_config: %w", err)
 		}
 		g.SessionConfig = &sc
+	}
+	if len(labelingRaw) > 0 {
+		var tl trafficlabel.Config
+		if err := json.Unmarshal(labelingRaw, &tl); err != nil {
+			return nil, fmt.Errorf("scan traffic_labeling: %w", err)
+		}
+		g.TrafficLabeling = &tl
 	}
 	g.Entitlements = domain.DefaultEntitlements()
 	if len(entitlementsRaw) > 0 {
@@ -504,6 +552,10 @@ func marshalJSON(v any) ([]byte, error) {
 			return nil, nil
 		}
 	case *domain.SessionConfig:
+		if t == nil {
+			return nil, nil
+		}
+	case *trafficlabel.Config:
 		if t == nil {
 			return nil, nil
 		}

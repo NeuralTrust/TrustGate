@@ -29,8 +29,8 @@ func TestRPCError_ResolvedHTTPStatus(t *testing.T) {
 		want int
 	}{
 		{name: "nil", err: nil, want: http.StatusBadGateway},
-		{name: "explicit", err: &RPCError{HTTPStatus: 403, Code: codePolicyBlocked}, want: 403},
-		{name: "policy default", err: &RPCError{Code: codePolicyBlocked}, want: http.StatusForbidden},
+		{name: "explicit", err: &RPCError{HTTPStatus: 403, Code: CodePolicyBlocked}, want: 403},
+		{name: "policy default", err: &RPCError{Code: CodePolicyBlocked}, want: http.StatusForbidden},
 		{name: "rate limited", err: &RPCError{Code: CodeRateLimited}, want: http.StatusTooManyRequests},
 		{name: "unavailable", err: &RPCError{Code: CodeUnavailable}, want: http.StatusServiceUnavailable},
 		{name: "other", err: &RPCError{Code: -32603}, want: http.StatusBadGateway},

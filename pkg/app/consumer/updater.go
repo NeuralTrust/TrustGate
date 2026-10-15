@@ -27,25 +27,35 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type UpdateInput struct {
-	ID          ids.ConsumerID
-	GatewayID   ids.GatewayID
-	Name        *string
-	Type        *domain.Type
-	RoutingMode *domain.RoutingMode
-	LBConfig    *domain.LBConfig
-	Headers     *map[string]string
-	Active      *bool
-	Fallback    *domain.Fallback
+	ID        ids.ConsumerID
+	GatewayID ids.GatewayID
+	Name      *string
+	Type      *domain.Type
+	Audience  *domain.Audience
+	LBConfig  *domain.LBConfig
+	Headers   *map[string]string
+	Active    *bool
+	Fallback  *domain.Fallback
 	// Registries replaces the whole registry association set. A nil value keeps
 	// the associations the consumer already has.
-	Registries    *domain.RegistryBindings
+	Registries *domain.RegistryBindings
+	// Auths replaces the whole auth association set. A nil value keeps the
+	// associations the consumer already has.
+	Auths         *[]ids.AuthID
 	ModelPolicies *domain.ModelPolicies
 	Toolkit       *domain.Toolkit
 	FailMode      *domain.FailMode
+	// Identity replaces who the consumer acts for. A nil value keeps it.
+	Identity *domain.Identity
+	// AuthBinding replaces the whole binding. A nil value keeps it.
+	AuthBinding *domain.AuthBinding
+	// Description replaces the free-text description. A nil value keeps it.
+	Description *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -93,19 +103,30 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	if err := validateAudienceUpdate(existing, in); err != nil {
+		return nil, err
+	}
 	if in.Name != nil {
 		existing.Name = *in.Name
+	}
+	if in.Description != nil {
+		existing.Description = *in.Description
 	}
 	previousType := existing.Type
 	if in.Type != nil && *in.Type != existing.Type {
 		existing.Type = *in.Type
 		existing.MCP = nil
 	}
-	previousMode := existing.RoutingMode
-	if in.RoutingMode != nil {
-		existing.RoutingMode = *in.RoutingMode
+	if in.Identity != nil {
+		existing.Identity = *in.Identity
+	}
+	if in.AuthBinding != nil {
+		existing.AuthBinding = *in.AuthBinding
 	}
 	if in.LBConfig != nil {
+		if err := validateLegacyRoutingWrite(in.LBConfig, existing.LBConfig); err != nil {
+			return nil, err
+		}
 		resolveLBConfigSecrets(in.LBConfig, existing.LBConfig)
 		existing.LBConfig = in.LBConfig
 	}
@@ -122,18 +143,21 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.ModelPolicies = *in.ModelPolicies
 	}
 	applyMCPPolicyUpdate(existing, in)
-	if previousMode != existing.RoutingMode {
-		cleanIncompatibleModeConfig(existing)
-	}
-	// Applied after the mode cleanup so that sending registries alongside
-	// routing_mode=role_based is rejected by Validate instead of silently dropped.
 	if in.Registries != nil {
 		existing.RegistryIDs = in.Registries.IDs
 		existing.RegistryWeights = in.Registries.Weights
 	}
+	if in.Auths != nil {
+		existing.AuthIDs = *in.Auths
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
 		return nil, err
+	}
+	if in.LBConfig != nil || in.ModelPolicies != nil || in.Registries != nil || in.Fallback != nil {
+		if err := validateSmartRoutingWrite(existing); err != nil {
+			return nil, err
+		}
 	}
 	if err := existing.Validate(); err != nil {
 		return nil, err
@@ -143,10 +167,10 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 			return nil, err
 		}
 	}
-	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, previousMode); err != nil {
+	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, in.Auths != nil); err != nil {
 		return nil, err
 	}
-	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries)); err != nil {
+	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries), requestedAuthLinks(existing, in.Auths)); err != nil {
 		return nil, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
@@ -157,10 +181,25 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	return existing, nil
 }
 
+func validateAudienceUpdate(existing *domain.Consumer, in UpdateInput) error {
+	if in.Audience != nil {
+		audience, err := domain.ParseAudience(string(*in.Audience))
+		if err != nil {
+			return err
+		}
+		if audience != existing.Audience {
+			return domain.ErrAudienceImmutable
+		}
+	}
+	if in.Auths != nil && existing.IsPersonal() {
+		return domain.ErrPersonalAuthsBulk
+	}
+	return nil
+}
+
 // requestedRegistryBindings returns the association set the repository must
 // persist, or nil when the caller did not ask to change it. It reads the
-// validated aggregate rather than the input so a switch to role_based, which
-// drops every registry, is reflected.
+// validated aggregate rather than the input.
 func requestedRegistryBindings(c *domain.Consumer, requested *domain.RegistryBindings) *domain.RegistryBindings {
 	if requested == nil {
 		return nil
@@ -168,15 +207,27 @@ func requestedRegistryBindings(c *domain.Consumer, requested *domain.RegistryBin
 	return &domain.RegistryBindings{IDs: c.RegistryIDs, Weights: c.RegistryWeights}
 }
 
+func requestedAuthLinks(c *domain.Consumer, requested *[]ids.AuthID) *[]ids.AuthID {
+	if requested == nil {
+		return nil
+	}
+	authIDs := c.AuthIDs
+	return &authIDs
+}
+
+// revalidateAuthsForTransition checks that every auth the consumer references
+// still exists in its gateway. It used to also re-apply a rule about which auth
+// types the consumer's declared identity allowed; nothing declares that now, so
+// what is left is the reference check — which is why an identity change no
+// longer triggers it.
 func (u *updater) revalidateAuthsForTransition(
 	ctx context.Context,
 	c *domain.Consumer,
 	previousType domain.Type,
-	previousMode domain.RoutingMode,
+	authsReplaced bool,
 ) error {
 	toMCP := c.Type == domain.TypeMCP && previousType != domain.TypeMCP
-	toRoleBased := c.RoutingMode == domain.RoutingModeRoleBased && previousMode != domain.RoutingModeRoleBased
-	if (!toMCP && !toRoleBased) || len(c.AuthIDs) == 0 {
+	if (!toMCP && !authsReplaced) || len(c.AuthIDs) == 0 {
 		return nil
 	}
 	auths, err := u.authRepo.FindByIDs(ctx, c.GatewayID, c.AuthIDs)
@@ -188,7 +239,7 @@ func (u *updater) revalidateAuthsForTransition(
 			commonerrors.ErrConflict, len(c.AuthIDs), len(auths))
 	}
 	for _, au := range auths {
-		if err := domain.ValidateAuthType(c.Type, c.RoutingMode, au.Type); err != nil {
+		if err := domain.ValidateAuthConfig(c, au); err != nil {
 			return err
 		}
 	}
@@ -212,9 +263,6 @@ func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
 }
 
 func validateRegistryRefsAssociated(c *domain.Consumer) error {
-	if c.RoutingMode == domain.RoutingModeRoleBased {
-		return nil
-	}
 	associated := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
 	for _, id := range c.RegistryIDs {
 		associated[id] = struct{}{}
@@ -250,20 +298,6 @@ func validateRegistryRefsAssociated(c *domain.Consumer) error {
 	return nil
 }
 
-func cleanIncompatibleModeConfig(c *domain.Consumer) {
-	switch c.RoutingMode {
-	case domain.RoutingModeRoleBased:
-		c.RegistryIDs = nil
-		c.RegistryWeights = nil
-		c.Fallback = nil
-		c.LBConfig = nil
-		c.ModelPolicies = nil
-		c.MCP = nil
-	case domain.RoutingModeInline:
-		c.RoleIDs = nil
-	}
-}
-
 func resolveLBConfigSecrets(next, prev *domain.LBConfig) {
 	if next == nil || next.EmbeddingConfig == nil {
 		return
@@ -273,4 +307,21 @@ func resolveLBConfigSecrets(next, prev *domain.LBConfig) {
 		return
 	}
 	next.EmbeddingConfig.ResolveSecretsFrom(prev.EmbeddingConfig)
+}
+
+func validateSmartRoutingWrite(c *domain.Consumer) error {
+	config := c.LBConfig
+	if config == nil || (config.SmartRouting == nil && config.Algorithm != algorithm.SmartRouting) {
+		return nil
+	}
+	validation := *config
+	validation.Enabled = true
+	known := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
+	for _, id := range c.RegistryIDs {
+		known[id] = struct{}{}
+	}
+	if err := validation.ValidateTierRegistries(known); err != nil {
+		return err
+	}
+	return validation.Validate(c.ModelPolicies)
 }

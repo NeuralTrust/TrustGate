@@ -33,10 +33,6 @@ type OpenAIAdapter struct{}
 // automatically produces Responses API wire format for the client.
 type OpenAIResponsesAdapter struct{}
 
-// ---------------------------------------------------------------------------
-// Format detection helpers
-// ---------------------------------------------------------------------------
-
 func isResponsesAPIRequest(body []byte) bool {
 	var probe struct {
 		Messages json.RawMessage `json:"messages"`
@@ -68,10 +64,6 @@ func isResponsesAPIStreamChunk(chunk []byte) bool {
 	return strings.HasPrefix(probe.Type, "response.")
 }
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
-
 func (a *OpenAIAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	if isResponsesAPIRequest(body) {
 		return decodeResponsesRequest(body)
@@ -82,10 +74,6 @@ func (a *OpenAIAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 func (a *OpenAIAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	return encodeCompletionsRequest(req)
 }
-
-// ---------------------------------------------------------------------------
-// Response
-// ---------------------------------------------------------------------------
 
 func (a *OpenAIAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	if isResponsesAPIResponse(body) {
@@ -98,10 +86,6 @@ func (a *OpenAIAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 	return encodeCompletionsResponse(resp)
 }
 
-// ---------------------------------------------------------------------------
-// Stream
-// ---------------------------------------------------------------------------
-
 func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	if isResponsesAPIStreamChunk(chunk) {
 		return decodeResponsesStreamChunk(chunk)
@@ -110,12 +94,8 @@ func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 }
 
 func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
-	return encodeCompletionsStreamChunk(chunk)
+	return encodeCompletionsStreamChunk(chunk, true)
 }
-
-// ---------------------------------------------------------------------------
-// Shared helpers (used by both sub-adapters)
-// ---------------------------------------------------------------------------
 
 func decodeOpenAIToolChoice(raw json.RawMessage) *CanonicalToolChoice {
 	if raw == nil {
@@ -165,43 +145,79 @@ func contentToString(raw json.RawMessage) string {
 // decodeOpenAIContent returns the text, images and documents of a content
 // field in a CanonicalMessage with only those fields set.
 func decodeOpenAIContent(raw json.RawMessage) CanonicalMessage {
+	var text cacheTextJoin
+	m := decodeOpenAIParts(raw, &text, nil, true)
+	m.Content = text.String()
+	return m
+}
+
+// decodeOpenAIParts adds the text of raw, a string or a list of content parts,
+// to text and returns its images and documents when keepMedia is set. marker
+// reads the cache marker of a part in the client's dialect; nil ignores
+// markers. A marker on an empty text part moves to the text before it, one on
+// an image stays on that image, and one on a file or a part the canonical
+// model drops (audio, media of a segment that keeps none) is dropped with it.
+func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(openaiContentPart) *CanonicalCacheBreakpoint, keepMedia bool) CanonicalMessage {
+	var media CanonicalMessage
 	if raw == nil {
-		return CanonicalMessage{}
+		return media
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return CanonicalMessage{Content: s}
+		text.add(s)
+		return media
 	}
 	var parts []openaiContentPart
 	if json.Unmarshal(raw, &parts) != nil {
-		return CanonicalMessage{Content: string(raw)}
+		text.add(string(raw))
+		return media
 	}
-	var texts []string
-	var images []CanonicalImage
-	var documents []CanonicalDocument
-	documentsFirst := false
-	for _, p := range parts {
+	for i, p := range parts {
+		var bp *CanonicalCacheBreakpoint
+		if marker != nil {
+			bp = marker(p)
+		}
+		last := i == len(parts)-1
+		isText := p.Type == "text" || p.Type == "input_text" || p.Text != "" || (p.Type == "refusal" && p.Refusal != "")
 		if p.Text != "" {
-			texts = append(texts, p.Text)
+			text.add(p.Text)
+		}
+		if p.Type == "refusal" && p.Refusal != "" {
+			text.add(p.Refusal)
+		}
+		if isText {
+			if len(text.parts) > 0 {
+				text.markText(bp, last)
+			}
+			continue
+		}
+		if !keepMedia {
+			continue
 		}
 		switch p.Type {
 		case "image_url":
 			if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
-				images = append(images, img)
+				media.Images = append(media.Images, img)
+				text.addImage()
+				text.markImage(bp, last)
 			}
 		case "file":
 			if doc, ok := decodeOpenAIFile(p.File); ok {
-				documentsFirst = documentsFirst || (len(documents) == 0 && len(texts) == 0)
-				documents = append(documents, doc)
+				media.DocumentsFirst = media.DocumentsFirst || (len(media.Documents) == 0 && len(text.parts) == 0)
+				media.Documents = append(media.Documents, doc)
 			}
 		}
 	}
-	return CanonicalMessage{
-		Content:        strings.Join(texts, "\n"),
-		Images:         images,
-		Documents:      documents,
-		DocumentsFirst: documentsFirst,
-	}
+	return media
+}
+
+// appendOpenAISystem adds one system or developer message to system the way
+// the decoders always joined them: with "\n", except before the first
+// non-empty one, so the text stays byte-exact.
+func appendOpenAISystem(system *cacheTextJoin, raw json.RawMessage, marker func(openaiContentPart) *CanonicalCacheBreakpoint) {
+	var msg cacheTextJoin
+	decodeOpenAIParts(raw, &msg, marker, false)
+	system.extend(&msg)
 }
 
 func decodeOpenAIFile(raw json.RawMessage) (CanonicalDocument, bool) {
@@ -263,10 +279,6 @@ func decodeStopField(raw json.RawMessage) []string {
 }
 
 func boolPtr(b bool) *bool { return &b }
-
-// ---------------------------------------------------------------------------
-// OpenAIResponsesAdapter — full ProviderAdapter for Responses API wire format
-// ---------------------------------------------------------------------------
 
 func (a *OpenAIResponsesAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	return decodeResponsesRequest(body)

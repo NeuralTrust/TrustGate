@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -42,6 +43,8 @@ const (
 
 	responsesTurnIDPrefix = "resp_"
 	fieldPreviousResponse = "previous_response_id"
+	fieldConversation     = "conversation"
+	fieldStore            = "store"
 
 	capabilityChat               = "chat"
 	capabilityEmbeddings         = "embeddings"
@@ -55,6 +58,16 @@ const (
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
+
+// invalidJSONObjectMessage is what a client sees when model enforcement cannot
+// read the body as a JSON object. The parser's own text stays in the log.
+const invalidJSONObjectMessage = "request body must be a JSON object"
+
+// invalidMessagesMessage is what a client sees when chat messages are present
+// but are not an array. The decoder's type error stays in the log.
+const invalidMessagesMessage = "messages must be an array"
+
+var ErrContextWindowExceeded = errors.New("context window exceeded")
 
 type ProviderResponse struct {
 	StatusCode int
@@ -75,6 +88,16 @@ type ProviderResponse struct {
 	SentModel    string
 	FinishReason string
 	ResponseID   string
+	// RawFrames marks a Stream whose items are whole Bedrock eventstream
+	// frames, written to the client as they are with no line separator.
+	// StreamView turns one such frame into the SSE-style lines the observers
+	// and post_response read; it never feeds what the client receives.
+	RawFrames  bool
+	StreamView func(frame []byte) [][]byte
+	// upstreamBody is the provider's error body as it came, kept for the
+	// retry and failover checks that read the provider's own wording. Body is
+	// what the client gets (see adapter.ClientErrorBody).
+	upstreamBody []byte
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -89,7 +112,7 @@ type ProviderInvoker interface {
 // registry keeps the app layer off the infra adapter implementation and makes
 // the invoker testable in isolation.
 type providerCodec interface {
-	AdaptRequest(body []byte, source, target adapter.Format) ([]byte, error)
+	AdaptRequestForProvider(body []byte, source, target adapter.Format, providerName, defaultModel string) ([]byte, error)
 	DecodeResponseFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalResponse, error)
 	AdaptResponse(body []byte, source, target adapter.Format) ([]byte, error)
 	AdaptStreamChunk(chunk []byte, source, target adapter.Format) ([][]byte, error)
@@ -103,18 +126,52 @@ type providerInvoker struct {
 	locator  factory.ProviderLocator
 	registry providerCodec
 	logger   *slog.Logger
+	catalog  CatalogReader
+	limits   *outputLimits
+	models   appcatalog.BedrockModelResolver
+
+	nativeMaxResponseBytes int64
+}
+
+type InvokerOption func(*providerInvoker)
+
+// WithBedrockModelResolver attaches the lookup that names the model behind an
+// opaque Bedrock ARN, so a native call through one can be priced.
+func WithBedrockModelResolver(models appcatalog.BedrockModelResolver) InvokerOption {
+	return func(p *providerInvoker) { p.models = models }
+}
+
+// WithNativeMaxResponseBytes bounds a buffered answer of a native Bedrock call.
+func WithNativeMaxResponseBytes(n int64) InvokerOption {
+	return func(p *providerInvoker) { p.nativeMaxResponseBytes = n }
+}
+
+// WithCatalog attaches the catalog used for output-token clamps and
+// context-window preflight. Tests omit it to keep those paths off.
+func WithCatalog(reader CatalogReader) InvokerOption {
+	return func(p *providerInvoker) {
+		p.catalog = reader
+		if reader != nil {
+			p.limits = newOutputLimits(reader, p.logger)
+		}
+	}
 }
 
 func NewProviderInvoker(
 	locator factory.ProviderLocator,
 	registry providerCodec,
 	logger *slog.Logger,
+	opts ...InvokerOption,
 ) ProviderInvoker {
-	return &providerInvoker{
+	inv := &providerInvoker{
 		locator:  locator,
 		registry: registry,
 		logger:   logger,
 	}
+	for _, opt := range opts {
+		opt(inv)
+	}
+	return inv
 }
 
 // preparedInvocation is the shared result of resolving the provider client and
@@ -130,6 +187,8 @@ type preparedInvocation struct {
 	targetFormat adapter.Format
 	crossFormat  bool
 	capability   string
+	clampedTo    int
+	clampSource  string
 	files        providers.FilesRequest
 	images       providers.ImagesRequest
 	audio        providers.AudioRequest
@@ -140,7 +199,13 @@ func (p *providerInvoker) Invoke(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
-	prep, err := p.prepare(bk, req)
+	if req.IsBedrockNative() {
+		return p.invokeBedrockNative(ctx, bk, req)
+	}
+	prep, err := p.prepare(ctx, bk, req)
+	if resp, ok := responsesStateRejection(bk, err); ok {
+		return resp, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -155,21 +220,22 @@ func (p *providerInvoker) Invoke(
 		return p.invokeAudio(ctx, bk, prep)
 	}
 
+	if err := p.checkContextBudget(ctx, prep); err != nil {
+		return nil, err
+	}
+
 	respBody, err := p.invokeUpstream(ctx, prep)
-	if retryBody, ok := reasoningEffortRetryBody(prep, prep.body, err); ok {
-		p.logger.Info("retrying OpenAI request with reasoning effort disabled",
-			slog.String("model", prep.sentModel))
+	if retryBody, ok := p.retryBodyFor(ctx, prep, prep.body, err); ok {
 		retryPrep := *prep
 		retryPrep.body = retryBody
 		respBody, err = p.invokeUpstream(ctx, &retryPrep)
+		prep = &retryPrep
+	} else {
+		err = unsupportedReasoningToolsError(prep, req.Body, err)
 	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, clientRequestError(err)
 	}
@@ -188,11 +254,11 @@ func (p *providerInvoker) Invoke(
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers: withSelectionHeaders(
+		Headers: withOutputLimitHeader(withSelectionHeaders(
 			map[string][]string{headerContentType: {contentTypeJSON}},
 			bk,
 			prep.sentModel,
-		),
+		), prep),
 		Body:         respBody,
 		Usage:        usage,
 		Model:        model,
@@ -215,7 +281,13 @@ func (p *providerInvoker) InvokeStream(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
-	prep, err := p.prepare(bk, req)
+	if req.IsBedrockNative() {
+		return p.invokeBedrockNative(ctx, bk, req)
+	}
+	prep, err := p.prepare(ctx, bk, req)
+	if resp, ok := responsesStateRejection(bk, err); ok {
+		return resp, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +298,10 @@ func (p *providerInvoker) InvokeStream(
 		return p.invokeAudio(ctx, bk, prep)
 	}
 
+	if err := p.checkContextBudget(ctx, prep); err != nil {
+		return nil, err
+	}
+
 	body := prep.body
 	// Registries speaking the OpenAI-style API need an explicit "stream": true even
 	// when the source format (e.g. Gemini) does not carry it in the body.
@@ -234,34 +310,62 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) {
-		body = injectStreamIncludeUsage(body)
+		body = applyStreamIncludeUsage(body, prep.providerName, prep.sentModel)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
-	if retryBody, ok := reasoningEffortRetryBody(prep, body, err); ok {
-		p.logger.Info("retrying OpenAI stream with reasoning effort disabled",
-			slog.String("model", prep.sentModel))
+	if retryBody, ok := p.retryBodyFor(ctx, prep, body, err); ok {
 		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
+	} else {
+		err = unsupportedReasoningToolsError(prep, req.Body, err)
 	}
 	if err != nil {
+		cancel()
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, clientRequestError(fmt.Errorf("provider completions stream: %w", err))
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req),
+		withStreamContext(ctx), withStreamCancel(cancel), withStreamIncludeUsage(adapter.OpenAIChatIncludesUsage(req.Body)),
+		withStreamModel(prep.sentModel))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers:    withSelectionHeaders(streamHeaders(), bk, prep.sentModel),
+		Headers:    withOutputLimitHeader(withSelectionHeaders(streamHeaders(), bk, prep.sentModel), prep),
 		Stream:     stream,
 		SentModel:  prep.sentModel,
 	}, nil
+}
+
+// applyModelEnforcement runs the binding's model rules. A body it cannot read,
+// when the binding restricts models, is an invalid request with a generic
+// message. With no allow-list the call proceeds on the original body and the
+// parser's text stays in the log.
+func (p *providerInvoker) applyModelEnforcement(body []byte, allowed []string, defaultModel string) ([]byte, error) {
+	normalized, _, verr := adapter.EnforceModel(body, allowed, defaultModel)
+	if verr == nil {
+		return normalized, nil
+	}
+	if errors.Is(verr, adapter.ErrModelNotAllowed) {
+		// EnforceModel already starts with "model not allowed". Prefixing it
+		// again doubled the client message (model not allowed: model not allowed: "").
+		detail := strings.TrimPrefix(verr.Error(), adapter.ErrModelNotAllowed.Error()+": ")
+		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, detail)
+	}
+	// A JSON object whose model is not a string is still a request. Name the
+	// model field. An empty body or a JSON array is not an object.
+	if errors.Is(verr, adapter.ErrModelMustBeString) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, verr.Error())
+	}
+	if len(allowed) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidJSONObjectMessage)
+	}
+	p.logger.Warn("model enforcement failed, proceeding without override",
+		slog.String("error", verr.Error()))
+	return body, nil
 }
 
 // clientRequestError turns a body the provider client could not decode into a
@@ -278,6 +382,7 @@ func clientRequestError(err error) error {
 // prepare resolves the provider client and transforms the request payload across
 // provider formats when needed, mutating req with the resolved format metadata.
 func (p *providerInvoker) prepare(
+	ctx context.Context,
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*preparedInvocation, error) {
@@ -314,9 +419,21 @@ func (p *providerInvoker) prepare(
 
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
 
+	// previous_response_id and store:true ask the upstream to continue or keep
+	// server-side response state. A translated route drops both fields, so the
+	// client would believe state was honored. There is no product path that
+	// stores Responses state for a non-Responses registry: gateway session
+	// threading injects previous_response_id only when the target already
+	// speaks the Responses API. store:false is not a request for that state.
+	if crossFormat && sourceFormat == adapter.FormatOpenAIResponses {
+		if params := translatedResponsesState(req.Body); len(params) > 0 {
+			return nil, &responsesStateError{params: params}
+		}
+	}
+
 	body := req.Body
 	if crossFormat {
-		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, capability)
+		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, bk.Provider(), req.DefaultModel, capability)
 		if err != nil {
 			var contentErr *adapter.UnsupportedContentError
 			if errors.As(err, &contentErr) {
@@ -336,32 +453,25 @@ func (p *providerInvoker) prepare(
 		body = adapter.CarryModel(req.Body, body)
 	}
 
-	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-	if verr != nil {
-		if errors.Is(verr, adapter.ErrModelNotAllowed) {
-			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
-		}
-		if len(req.AllowedModels) > 0 {
-			return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-		}
-		p.logger.Warn("model enforcement failed, proceeding without override",
-			slog.String("error", verr.Error()))
-	} else {
-		body = normalized
+	body, err = p.applyModelEnforcement(body, req.AllowedModels, req.DefaultModel)
+	if err != nil {
+		return nil, err
 	}
 
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
 
 	sentModel := resolveSentModel(body, req)
+	body = adapter.OmitUnsupportedReasoningEffort(body, sentModel)
 
-	return &preparedInvocation{
+	prep := &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
-			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
-			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
-			Model:         sentModel,
-			DefaultModel:  req.DefaultModel,
-			AllowedModels: req.AllowedModels,
+			Options:              adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
+			Credentials:          registryCredentials(bk, req.HeaderValue("Authorization")),
+			Model:                sentModel,
+			DefaultModel:         req.DefaultModel,
+			AllowedModels:        req.AllowedModels,
+			CacheRetentionMapped: crossFormat,
 		},
 		body:         body,
 		sentModel:    sentModel,
@@ -370,7 +480,86 @@ func (p *providerInvoker) prepare(
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
 		capability:   capability,
-	}, nil
+	}
+	if !crossFormat && bk.Provider() == providers.ProviderAnthropic && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
+		prep.cfg.AnthropicBeta = anthropicBetas(req)
+	}
+	p.applyOutputLimit(ctx, prep)
+	prep.cfg.Model = prep.sentModel
+	return prep, nil
+}
+
+func (p *providerInvoker) retryBodyFor(ctx context.Context, prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
+	if retryBody, ok := p.maxTokensRetryBody(ctx, prep, body, err); ok {
+		return retryBody, true
+	}
+	if retryBody, ok := reasoningEffortRetryBody(prep, body, err); ok {
+		p.logger.Info("retrying OpenAI request with reasoning effort disabled",
+			slog.String("model", prep.sentModel))
+		return retryBody, true
+	}
+	return nil, false
+}
+
+func (p *providerInvoker) maxTokensRetryBody(ctx context.Context, prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
+	if prep.clampedTo > 0 {
+		return nil, false
+	}
+	backendErr, ok := registry.IsBackendError(err)
+	if !ok || backendErr.StatusCode != http.StatusBadRequest {
+		return nil, false
+	}
+	limit, hit := adapter.BodyExceedsMaxTokens(backendErr.Body)
+	if !hit {
+		return nil, false
+	}
+	out, requested, clamped := adapter.ClampMaxOutputTokens(body, limit)
+	if !clamped || requested <= limit {
+		return nil, false
+	}
+	if p.limits != nil {
+		p.limits.Learn(prep.providerName, prep.sentModel, limit)
+	}
+	prep.clampedTo = limit
+	prep.clampSource = clampSourceUpstream
+	p.logger.Info("clamped max output tokens",
+		slog.String("provider", prep.providerName),
+		slog.String("model", prep.sentModel),
+		slog.Int("requested", requested),
+		slog.Int("limit", limit),
+		slog.String("source", clampSourceUpstream))
+	p.limits.record(ctx, prep.providerName, clampSourceUpstream)
+	return out, true
+}
+
+func (p *providerInvoker) backendErrorResponse(
+	be *registry.BackendError,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) *ProviderResponse {
+	source, target := adapter.FormatOpenAI, adapter.FormatOpenAI
+	if prep != nil {
+		source, target = prep.sourceFormat, prep.targetFormat
+	}
+	body := adapter.ClientErrorBody(be.Body, be.StatusCode, source, target)
+	headers := be.PassthroughHeaders()
+	sentModel := ""
+	if prep != nil {
+		sentModel = prep.sentModel
+		headers = withOutputLimitHeader(withSelectionHeaders(headers, bk, sentModel), prep)
+	} else {
+		headers = withSelectionHeaders(headers, bk, "")
+	}
+	// The model the attempt went out with, as X-Selected-Model already says: a
+	// failed request is recorded under it rather than under the client's
+	// routing keyword ("auto", "pool:…"), which names no model.
+	return &ProviderResponse{
+		StatusCode:   be.StatusCode,
+		Headers:      headers,
+		Body:         body,
+		SentModel:    sentModel,
+		upstreamBody: be.Body,
+	}
 }
 
 func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
@@ -394,12 +583,81 @@ func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) 
 	if json.Unmarshal(request["tools"], &tools) != nil || len(tools) == 0 {
 		return nil, false
 	}
+	// GPT-6.1 Sol and GPT-6 Astra reject reasoning_effort "none", and Chat
+	// Completions does not accept function tools for them at any effort.
+	// Retrying with "low" is still a reasoning effort, so it fails the same way.
+	if adapter.ModelRejectsReasoningEffortNone(prep.sentModel) {
+		return nil, false
+	}
 	request["reasoning_effort"] = json.RawMessage(`"none"`)
 	retryBody, marshalErr := json.Marshal(request)
 	if marshalErr != nil {
 		return nil, false
 	}
 	return retryBody, true
+}
+
+// unsupportedReasoningToolsError replaces OpenAI's "set reasoning_effort to
+// none" instruction when the model rejects that value. Function tools are not
+// supported on Chat Completions for these models at any effort, so the
+// instruction is not actionable. reasoning_effort is named only when the
+// client request included it.
+func unsupportedReasoningToolsError(prep *preparedInvocation, requestBody []byte, err error) error {
+	if prep == nil || err == nil || prep.providerName != provider.OpenAI || prep.targetFormat != adapter.FormatOpenAI ||
+		!adapter.ModelRejectsReasoningEffortNone(prep.sentModel) {
+		return err
+	}
+	backendErr, ok := registry.IsBackendError(err)
+	if !ok || !adapter.BodyRequiresReasoningEffortNone(backendErr.Body) {
+		return err
+	}
+	message := fmt.Sprintf(
+		"function tools are not supported on Chat Completions for %s. Use the Responses API for tool calling.",
+		prep.sentModel,
+	)
+	if clientSentReasoningEffort(requestBody) {
+		message = fmt.Sprintf(
+			"function tools are not supported on Chat Completions for %s. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+			prep.sentModel,
+		)
+	}
+	body, marshalErr := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "invalid_request_error",
+			"param":   "tools",
+			"code":    "unsupported_value",
+		},
+	})
+	if marshalErr != nil {
+		return err
+	}
+	return &registry.BackendError{
+		StatusCode: http.StatusBadRequest,
+		Body:       body,
+		RetryAfter: backendErr.RetryAfter,
+	}
+}
+
+// clientSentReasoningEffort reports whether the original client body set
+// reasoning_effort. A missing, empty, or null field does not count. The body
+// forwarded upstream is not a substitute: "none" is removed before the call
+// for models that reject it.
+func clientSentReasoningEffort(body []byte) bool {
+	var request map[string]json.RawMessage
+	if json.Unmarshal(body, &request) != nil {
+		return false
+	}
+	effort, ok := request["reasoning_effort"]
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(string(effort)) {
+	case "", "null", `""`:
+		return false
+	default:
+		return true
+	}
 }
 
 // Bedrock/Vertex strip the model from the adapted body (it travels out of band),
@@ -436,7 +694,7 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 func (p *providerInvoker) adaptRequestBody(
 	body []byte,
 	sourceFormat, targetFormat adapter.Format,
-	capability string,
+	providerName, defaultModel, capability string,
 ) ([]byte, error) {
 	switch capability {
 	case capabilityEmbeddings:
@@ -452,7 +710,7 @@ func (p *providerInvoker) adaptRequestBody(
 		}
 		return adapter.AdaptRerankRequest(reg, body, sourceFormat, targetFormat)
 	default:
-		return p.registry.AdaptRequest(body, sourceFormat, targetFormat)
+		return p.registry.AdaptRequestForProvider(body, sourceFormat, targetFormat, providerName, defaultModel)
 	}
 }
 
@@ -504,19 +762,11 @@ func (p *providerInvoker) prepareAudio(
 			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
 		}
 	} else {
-		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-		if verr != nil {
-			if errors.Is(verr, adapter.ErrModelNotAllowed) {
-				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
-			}
-			if len(req.AllowedModels) > 0 {
-				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-			}
-			p.logger.Warn("model enforcement failed, proceeding without override",
-				slog.String("error", verr.Error()))
-		} else {
-			body = normalized
+		enforced, err := p.applyModelEnforcement(body, req.AllowedModels, req.DefaultModel)
+		if err != nil {
+			return nil, err
 		}
+		body = enforced
 		sentModel = resolveSentModel(body, req)
 	}
 	audio := audioRequestFromContext(req)
@@ -579,11 +829,7 @@ func (p *providerInvoker) invokeAudio(
 	result, err := invokeAudioClient(ctx, prep)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider audio: %w", err)
 	}
@@ -647,19 +893,11 @@ func (p *providerInvoker) prepareImages(
 			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
 		}
 	} else {
-		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-		if verr != nil {
-			if errors.Is(verr, adapter.ErrModelNotAllowed) {
-				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
-			}
-			if len(req.AllowedModels) > 0 {
-				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-			}
-			p.logger.Warn("model enforcement failed, proceeding without override",
-				slog.String("error", verr.Error()))
-		} else {
-			body = normalized
+		enforced, err := p.applyModelEnforcement(body, req.AllowedModels, req.DefaultModel)
+		if err != nil {
+			return nil, err
 		}
+		body = enforced
 		sentModel = resolveSentModel(body, req)
 	}
 	images := imagesRequestFromContext(req)
@@ -726,11 +964,7 @@ func (p *providerInvoker) invokeFiles(
 	result, err := filesClient.Files(ctx, prep.cfg, prep.files)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider files: %w", err)
 	}
@@ -764,11 +998,7 @@ func (p *providerInvoker) invokeImages(
 	result, err := imagesClient.Images(ctx, prep.cfg, prep.images)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider images: %w", err)
 	}
@@ -819,6 +1049,85 @@ func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvo
 	}
 }
 
+// responsesStateError is a client request for Responses server-side state on a
+// route that translates off the Responses API.
+type responsesStateError struct {
+	params []string
+}
+
+func (e *responsesStateError) Error() string {
+	if len(e.params) == 1 && e.params[0] == fieldPreviousResponse {
+		return "previous_response_id requires an OpenAI registry. This route translates the Responses API and cannot continue a stored response."
+	}
+	if len(e.params) == 1 && e.params[0] == fieldStore {
+		return "store requires an OpenAI registry. This route translates the Responses API and cannot store responses for later retrieval."
+	}
+	return "previous_response_id and store require an OpenAI registry. This route translates the Responses API and cannot continue or store response state."
+}
+
+func (e *responsesStateError) Unwrap() error { return ErrInvalidRequestPayload }
+
+func translatedResponsesState(body []byte) []string {
+	var probe struct {
+		PreviousResponseID json.RawMessage `json:"previous_response_id"`
+		Store              json.RawMessage `json:"store"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return nil
+	}
+	var params []string
+	if jsonRequestsPreviousResponse(probe.PreviousResponseID) {
+		params = append(params, fieldPreviousResponse)
+	}
+	if strings.TrimSpace(string(probe.Store)) == "true" {
+		params = append(params, fieldStore)
+	}
+	return params
+}
+
+func jsonRequestsPreviousResponse(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s) != ""
+	}
+	return true
+}
+
+func responsesStateRejection(bk *registry.Registry, err error) (*ProviderResponse, bool) {
+	var state *responsesStateError
+	if !errors.As(err, &state) {
+		return nil, false
+	}
+	var param any
+	if len(state.params) == 1 {
+		param = state.params[0]
+	}
+	body, marshalErr := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": state.Error(),
+			"type":    "invalid_request_error",
+			"param":   param,
+			"code":    nil,
+		},
+	})
+	if marshalErr != nil {
+		return nil, false
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusBadRequest,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentTypeJSON}},
+			bk,
+			"",
+		),
+		Body: body,
+	}, true
+}
+
 func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previousResponseID string) []byte {
 	if previousResponseID == "" ||
 		targetFormat != adapter.FormatOpenAIResponses ||
@@ -830,6 +1139,11 @@ func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previous
 		return body
 	}
 	if _, exists := obj[fieldPreviousResponse]; exists {
+		return body
+	}
+	// The Responses API rejects previous_response_id next to conversation:
+	// the conversation already carries the history.
+	if _, exists := obj[fieldConversation]; exists {
 		return body
 	}
 	raw, err := json.Marshal(previousResponseID)

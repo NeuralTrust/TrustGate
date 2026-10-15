@@ -20,24 +20,42 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type UpdateConsumerRequest struct {
-	Name        *string            `json:"name,omitempty"`
-	Type        *string            `json:"type,omitempty"`
-	RoutingMode *string            `json:"routing_mode,omitempty"`
-	LBConfig    *LBConfigRequest   `json:"lb_config,omitempty"`
-	Headers     *map[string]string `json:"headers,omitempty"`
-	Active      *bool              `json:"active,omitempty"`
-	Fallback    *FallbackRequest   `json:"fallback,omitempty"`
+	Name     *string            `json:"name,omitempty"`
+	Type     *string            `json:"type,omitempty"`
+	LBConfig *LBConfigRequest   `json:"lb_config,omitempty"`
+	Headers  *map[string]string `json:"headers,omitempty"`
+	Active   *bool              `json:"active,omitempty"`
+	Fallback *FallbackRequest   `json:"fallback,omitempty"`
 	// Registries replaces the whole registry association set: registries absent
 	// from the list are detached. Omit the field to leave the associations as
 	// they are; send an empty list to detach every registry.
-	Registries    *[]RegistryBindingRequest `json:"registries,omitempty"`
-	ModelPolicies *[]ModelPolicyRequest     `json:"model_policies,omitempty"`
-	Toolkit       *[]ToolkitEntryRequest    `json:"toolkit,omitempty"`
-	FailMode      *string                   `json:"fail_mode,omitempty"`
+	Registries *[]RegistryBindingRequest `json:"registries,omitempty"`
+	// Auths replaces the whole auth association set with the listed auth ids:
+	// auths absent from the list are detached. Omit the field to leave the
+	// associations as they are; send an empty list to detach every auth.
+	Auths         *[]string              `json:"auths,omitempty"`
+	ModelPolicies *[]ModelPolicyRequest  `json:"model_policies,omitempty"`
+	Toolkit       *[]ToolkitEntryRequest `json:"toolkit,omitempty"`
+	FailMode      *string                `json:"fail_mode,omitempty"`
+	// Identity replaces who the consumer acts for. Omit to keep it as it is.
+	Identity *IdentityRequest `json:"identity,omitempty"`
+	// AuthBinding replaces the whole binding. Omit to keep it; send empty lists
+	// to clear it.
+	AuthBinding *AuthBindingRequest `json:"auth_binding,omitempty"`
+	// Audience is set at create and cannot change: a value other than the stored
+	// one answers 422.
+	Audience *string `json:"audience,omitempty" enums:"application,personal"`
+	// Description replaces the free-text description. Omit it to keep the
+	// current one; send an empty string to clear it.
+	Description *string `json:"description,omitempty" maxLength:"500"`
 }
+
+// MaxAuthAssociations bounds how many auth ids one update may associate.
+const MaxAuthAssociations = 64
 
 func (r UpdateConsumerRequest) Validate() error {
 	if r.Name != nil {
@@ -47,6 +65,20 @@ func (r UpdateConsumerRequest) Validate() error {
 		if len(*r.Name) > 255 {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 		}
+	}
+	if r.Description != nil {
+		if err := validateDescription(*r.Description); err != nil {
+			return err
+		}
+	}
+	if r.Audience != nil {
+		if _, err := domain.ParseAudience(*r.Audience); err != nil {
+			return err
+		}
+	}
+	if r.Auths != nil && len(*r.Auths) > MaxAuthAssociations {
+		return fmt.Errorf("auths accepts at most %d ids, got %d: %w",
+			MaxAuthAssociations, len(*r.Auths), commonerrors.ErrValidation)
 	}
 	if r.Registries == nil {
 		return nil
@@ -70,12 +102,13 @@ func (r UpdateConsumerRequest) ToType() *domain.Type {
 	return &t
 }
 
-func (r UpdateConsumerRequest) ToRoutingMode() *domain.RoutingMode {
-	if r.RoutingMode == nil || strings.TrimSpace(*r.RoutingMode) == "" {
+// ToAudience returns the requested audience, nil when the body leaves it out.
+func (r UpdateConsumerRequest) ToAudience() *domain.Audience {
+	if r.Audience == nil {
 		return nil
 	}
-	mode := domain.NewRoutingMode(*r.RoutingMode)
-	return &mode
+	audience := domain.Audience(*r.Audience)
+	return &audience
 }
 
 func (r UpdateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
@@ -100,6 +133,29 @@ func (r UpdateConsumerRequest) ToRegistryBindings() (*domain.RegistryBindings, e
 		return &domain.RegistryBindings{}, nil
 	}
 	return bindings, nil
+}
+
+// ToAuthIDs parses the optional auths block into deduplicated auth ids. A nil
+// result means the caller did not send the field and the current associations
+// must be kept.
+func (r UpdateConsumerRequest) ToAuthIDs() (*[]ids.AuthID, error) {
+	if r.Auths == nil {
+		return nil, nil
+	}
+	authIDs := make([]ids.AuthID, 0, len(*r.Auths))
+	seen := make(map[ids.AuthID]struct{}, len(*r.Auths))
+	for i, raw := range *r.Auths {
+		id, err := ids.Parse[ids.AuthKind](strings.TrimSpace(raw))
+		if err != nil {
+			return nil, fmt.Errorf("auths[%d]: invalid id %q: %w: %w", i, raw, commonerrors.ErrValidation, err)
+		}
+		if _, dup := seen[id]; dup {
+			return nil, fmt.Errorf("auths[%d]: duplicate id %q: %w", i, raw, commonerrors.ErrValidation)
+		}
+		seen[id] = struct{}{}
+		authIDs = append(authIDs, id)
+	}
+	return &authIDs, nil
 }
 
 func (r UpdateConsumerRequest) ToModelPolicies() (*domain.ModelPolicies, error) {

@@ -14,7 +14,10 @@
 
 package openaimoderation
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 type moderationRequest struct {
 	Model string            `json:"model"`
@@ -46,6 +49,24 @@ type ModerationData struct {
 	FlaggedByOpenAI   bool               `json:"flagged_by_openai"`
 	FlaggedCategories []violation        `json:"flagged_categories,omitempty"`
 	Decision          string             `json:"decision,omitempty"`
+	// ChunkCount is how many moderation requests the text was split into; it
+	// is set only when that is more than one.
+	ChunkCount int `json:"chunk_count,omitempty"`
+	// FailureReason and FailureDetail are set on a failed_open (or
+	// failed_closed) decision, and on a streamed leg also whenever a block
+	// failed, whatever the final decision: FailureReason is one of
+	// appplugins.FailureReason (transport,
+	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
+	// the thresholded category missing from the response on a
+	// verdict_incomplete.
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailureClass is availability or input (appplugins.ClassOf): whether the
+	// failure was the provider's or the request's own content.
+	FailureClass string `json:"failure_class,omitempty"`
+	// Streaming is present only on a streamed response leg, written once when
+	// the stream closes.
+	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`
 }
 
 type violation struct {

@@ -77,6 +77,7 @@ func (b *Builder) Build(
 		Consumer:         events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:        meta.SessionID,
 		IP:               meta.IP,
+		AuthID:           meta.AuthID,
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,
@@ -91,8 +92,9 @@ func (b *Builder) Build(
 	// Clients that send no identity headers may still name their end user the
 	// way the OpenAI API defines it, in the request body. Headers win when both
 	// are present: they carry a whole person (email, name, role) rather than one
-	// opaque identifier.
-	if evt.EndUser == nil {
+	// opaque identifier. A personal key already names its owner, so its body
+	// cannot name anyone else.
+	if evt.EndUser == nil && (req == nil || req.OwnerID == "") {
 		if id := requestBodyUser(req); id != "" {
 			evt.EndUser = &events.EndUser{ID: id, Source: events.EndUserSourceOpenAIUser}
 		}
@@ -109,12 +111,16 @@ func (b *Builder) Build(
 	evt.Security = policies.security
 
 	totalMs := endTime.Sub(startTime).Milliseconds()
-	providerMs := sumAttemptLatency(attempts)
+	providerMs := providerLatency(attempts, policies)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
-		ProviderMs: providerMs,
 		PoliciesMs: policies.totalMs,
 		GatewayMs:  gatewayLatency(totalMs, providerMs, policies),
+	}
+	// A pre-request refusal has no provider attempt. Leaving the pointer nil
+	// omits provider_ms. A real attempt is recorded even when it rounds to 0.
+	if len(attempts) > 0 {
+		evt.Latency.ProviderMs = &providerMs
 	}
 
 	b.fillRequest(evt, req, served)
@@ -219,22 +225,46 @@ func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttr
 }
 
 // pluginFold aggregates the policy spans of one request. totalMs covers every
-// stage; asyncMs is the share the client never waited for.
+// stage; asyncMs is the share the client never waited for; streamedMs is the
+// share that elapsed while the response was draining, and so inside the
+// provider span rather than beside it.
 type pluginFold struct {
-	chain    []events.PolicyEntry
-	totalMs  int64
-	asyncMs  int64
-	flagged  bool
-	security []string
+	chain      []events.PolicyEntry
+	totalMs    int64
+	asyncMs    int64
+	streamedMs int64
+	flagged    bool
+	security   []string
 }
 
 // gatewayLatency is what the gateway itself spent: the wall clock left once the
 // provider and the policies that blocked the response are removed. post_response
 // policies are excluded because they run after the client got its answer, so
 // counting them would make the remainder negative and clamp to zero.
+//
+// providerMs must already be net of the streamed share — see providerLatency.
 func gatewayLatency(totalMs, providerMs int64, policies pluginFold) int64 {
 	blockingPoliciesMs := policies.totalMs - policies.asyncMs
 	return maxInt64(0, totalMs-providerMs-blockingPoliciesMs)
+}
+
+// providerLatency is the upstream's share of the wall clock, net of the time a
+// streaming policy held bytes back.
+//
+// A policy that inspects a response block by block runs *during* drain, so its
+// latency elapses inside the LLM span and the raw attempt sum already contains
+// it. Left there it would be counted twice — once in provider_ms and once in
+// the blocking share of policies_ms — and the remainder gatewayLatency computes
+// would go negative and clamp to zero, which is the whole of the streamed-leg
+// reconciliation failure.
+//
+// Attributing the overlap to the policy rather than to the provider is a
+// convention, not a measurement: the two genuinely overlap, because the
+// provider keeps generating while the guard decides. It is the useful
+// convention because it is the policy that made the bytes late, and because it
+// is the only one of the two that an operator can switch off.
+func providerLatency(attempts []events.Attempt, policies pluginFold) int64 {
+	return maxInt64(0, sumAttemptLatency(attempts)-policies.streamedMs)
 }
 
 func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
@@ -244,6 +274,7 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
 	var chain []events.PolicyEntry
 	var pluginsMs int64
 	var asyncMs int64
+	var streamedMs int64
 	anyFlagged := false
 	seenLabels := make(map[string]struct{})
 	var security []string
@@ -262,6 +293,11 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
 		pluginsMs += latencyMs
 		if attrs.Stage == string(policy.StagePostResponse) {
 			asyncMs += latencyMs
+		}
+		// A streamed leg is always pre_response, so it is blocking and never
+		// also async: the two accumulators cannot both take the same span.
+		if attrs.Streamed {
+			streamedMs += latencyMs
 		}
 		if flagged {
 			anyFlagged = true
@@ -286,11 +322,12 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
 		})
 	}
 	return pluginFold{
-		chain:    chain,
-		totalMs:  pluginsMs,
-		asyncMs:  asyncMs,
-		flagged:  anyFlagged,
-		security: security,
+		chain:      chain,
+		totalMs:    pluginsMs,
+		asyncMs:    asyncMs,
+		streamedMs: streamedMs,
+		flagged:    anyFlagged,
+		security:   security,
 	}
 }
 
@@ -344,7 +381,7 @@ func (b *Builder) buildMCP(
 	totalMs := endTime.Sub(startTime).Milliseconds()
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
-		ProviderMs: upstreamMs,
+		ProviderMs: &upstreamMs,
 		PoliciesMs: policies.totalMs,
 		GatewayMs:  gatewayLatency(totalMs, upstreamMs, policies),
 	}
@@ -394,9 +431,29 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			UpstreamStatus: attrs.UpstreamStatus,
 			RPCErrorCode:   attrs.RPCErrorCode,
 			AccountRef:     attrs.AccountRef,
+			PolicyScope:    mcpPolicyScope(attrs.PolicyScope),
+			Decision:       attrs.Decision,
+			ToolRisk:       attrs.ToolRisk,
+			ToolOpenWorld:  attrs.ToolOpenWorld,
 		}
 	}
 	return mcp, upstreamMs
+}
+
+func mcpPolicyScope(scope *trace.MCPPolicyScope) *events.MCPPolicyScope {
+	if scope == nil {
+		return nil
+	}
+	out := &events.MCPPolicyScope{Evaluated: scope.Evaluated}
+	if len(scope.Matched) > 0 {
+		out.Matched = append([]string(nil), scope.Matched...)
+	}
+	for _, skipped := range scope.Skipped {
+		out.Skipped = append(out.Skipped, events.MCPSkippedPolicy{
+			ID: skipped.ID, Name: skipped.Name, Reason: skipped.Reason,
+		})
+	}
+	return out
 }
 
 func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContext, served *trace.LLMAttrs) {
@@ -410,7 +467,7 @@ func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContex
 	if served != nil {
 		evt.Request.Provider = served.Provider
 		evt.Request.RegistryID = served.RegistryID
-		evt.Request.Model = served.Model
+		evt.Request.Model = servedModelName(served)
 	}
 	canonical := b.decodeRequest(req)
 	if canonical == nil {
@@ -422,6 +479,20 @@ func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContex
 	evt.Request.Temperature = canonical.Temperature
 	evt.Request.MaxTokens = canonical.MaxTokens
 	evt.Request.Stream = canonical.Stream
+}
+
+// servedModelName is the model a served attempt is recorded under: the one the
+// provider echoed, else the one the gateway sent, else the one its route
+// names. A failed upstream call echoes nothing, and falling through to the
+// request body would record the client's routing keyword ("auto", "pool:…")
+// instead of the model that was tried.
+func servedModelName(served *trace.LLMAttrs) string {
+	for _, model := range []string{served.Model, served.SentModel, served.RouteModel} {
+		if model != "" {
+			return model
+		}
+	}
+	return ""
 }
 
 func (b *Builder) decodeRequest(req *infracontext.RequestContext) *adapter.CanonicalRequest {

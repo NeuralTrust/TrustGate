@@ -15,7 +15,6 @@
 package pertoolratelimit
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,6 +63,25 @@ end
 return totals
 `)
 
+// claimAndRecordScript counts an execution the MCP path observed and claims the
+// dedupe slot for it in the same round trip, so countOnceScript finds the slot
+// taken when the same execution comes back on the LLM path as a `role: tool`
+// message. Unlike countOnceScript it increments whether or not the claim
+// succeeds: this path is watching a call it knows really ran, so a caller that
+// repeats a tool_call_id must not buy itself an uncounted execution.
+var claimAndRecordScript = redis.NewScript(`
+redis.call('SET', KEYS[1], 1, 'NX', 'EX', tonumber(ARGV[1]))
+local totals = {}
+for i = 2, #KEYS do
+    local total = redis.call('INCRBY', KEYS[i], 1)
+    if redis.call('TTL', KEYS[i]) == -1 then
+        redis.call('EXPIRE', KEYS[i], tonumber(ARGV[i]))
+    end
+    totals[#totals + 1] = total
+end
+return totals
+`)
+
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
@@ -97,6 +115,11 @@ func (p *Plugin) MutatesRequestBody() bool { return true }
 func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
+
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
@@ -195,50 +218,133 @@ func (p *Plugin) preRequest(
 		return okResult(), nil
 	}
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
+	if adapter.IsRequestDecodeError(err) && adapter.IsChatRequest(in.Request.ProxyCapability, adapter.Format(format)) {
+		return nil, appplugins.UndecodableRequestError(PluginName)
+	}
 	if err != nil || canonical == nil {
 		return okResult(), nil
 	}
-	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, canonical.Tools)
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
-	}
-	if len(canonical.Messages) > 0 {
-		if err := p.countExecuted(ctx, cfg, in, dimension, subject, canonical.Messages); err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
-		}
-	}
-	if len(canonical.Tools) == 0 {
 		return okResult(), nil
+	}
+	legacy := legacyFunctionNames(ad, in.Request.Body, canonical)
+	executed := executedCalls(ad, in.Request.Body, canonical.Messages)
+	declared := append(toolNames(canonical.Tools), legacy...)
+	if !anyRuleMatches(cfg.Rules, declared) && !anyRuleMatches(cfg.Rules, executedNames(executed)) {
+		reason := skipReasonNoMatchingRule
+		if len(declared) == 0 && len(executed) == 0 {
+			reason = skipReasonNoTools
+		}
+		setSkipped(in.Event, policy.StagePreRequest, reason)
+	}
+	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, declared)
+	if err != nil {
+		return p.counterUnavailable(ctx, in, nil, "read", err)
+	}
+	if err := p.countExecuted(ctx, cfg, in, dimension, subject, executed); err != nil {
+		// spentBefore already read one or more tools' windows in this same
+		// request; carry that signal along rather than losing it to a bare
+		// failure record. See spentTelemetry for why only one tool's data
+		// travels when several are already over budget.
+		return p.counterUnavailable(ctx, in, p.spentTelemetry(cfg, spent, dimension, subject), "record", err)
 	}
 
-	strip := make(map[string]struct{})
-	for i := range canonical.Tools {
-		tool := canonical.Tools[i].Name
-		if tool == "" {
-			continue
+	strip := toolStrip{}
+	// Gemini and Vertex signal a stream in the URL, never in the body, so the
+	// decoded flag alone would read every Gemini stream as buffered and leave
+	// inject to a response leg that skips streams (RUN-1745).
+	streaming := canonical.Stream || adapter.URLRequestsStream(in.Request.Path, in.Request.Query)
+	// A legacy function is withdrawn at the request whatever the behavior:
+	// the response rewrite does not model a legacy function_call.
+	for _, set := range []struct {
+		names  []string
+		legacy bool
+	}{{toolNames(canonical.Tools), false}, {legacy, true}} {
+		for _, tool := range set.names {
+			rule, ok := matchRule(cfg.Rules, tool)
+			if !ok {
+				continue
+			}
+			behavior := effectiveBehavior(rule, cfg)
+			if !set.legacy && !p.enforcedAtRequest(behavior, streaming) {
+				continue
+			}
+			ws := spent[tool]
+			if ws == nil {
+				continue
+			}
+			setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, behavior, true))
+			if behavior == behaviorReject {
+				return p.reject(ctx, tool, ws, dimension)
+			}
+			strip.add(tool, set.legacy)
 		}
-		rule, ok := matchRule(cfg.Rules, tool)
-		if !ok {
-			continue
-		}
-		behavior := effectiveBehavior(rule, cfg)
-		if !p.enforcedAtRequest(behavior, canonical.Stream) {
-			continue
-		}
-		ws := spent[tool]
-		if ws == nil {
-			continue
-		}
-		setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, behavior, true))
-		if behavior == behaviorReject {
-			return p.reject(ctx, tool, ws, dimension)
-		}
-		strip[tool] = struct{}{}
 	}
-	if len(strip) == 0 {
-		return okResult(), nil
+	if strip.empty() {
+		return p.forward(in.Request.Body, format, canonical)
 	}
 	return p.stripTools(in.Request.Body, format, canonical, strip)
+}
+
+// toolStrip names the tools a request loses while they are over their
+// limits: tools the canonical request models, and legacy Chat functions.
+type toolStrip struct {
+	tools, legacy map[string]struct{}
+}
+
+func (s *toolStrip) add(tool string, legacy bool) {
+	set := &s.tools
+	if legacy {
+		set = &s.legacy
+	}
+	if *set == nil {
+		*set = map[string]struct{}{}
+	}
+	(*set)[tool] = struct{}{}
+}
+
+func (s toolStrip) empty() bool { return len(s.tools) == 0 && len(s.legacy) == 0 }
+
+func toolNames(tools []adapter.CanonicalTool) []string {
+	out := make([]string, 0, len(tools))
+	for i := range tools {
+		if tools[i].Name != "" {
+			out = append(out, tools[i].Name)
+		}
+	}
+	return out
+}
+
+// legacyFunctionNames returns the names of the legacy Chat functions body
+// declares, which canonical does not model.
+func legacyFunctionNames(ad adapter.RequestAdapter, body []byte, canonical *adapter.CanonicalRequest) []string {
+	unmodelled, _ := adapter.UnmodelledTools(ad, body, canonical)
+	var out []string
+	for _, u := range unmodelled {
+		if u.Kind == adapter.LegacyFunctionKind && u.Name != "" {
+			out = append(out, u.Name)
+		}
+	}
+	return out
+}
+
+// forward lets a request the limits leave alone through as it came. A body
+// adapter.HasAmbiguousKeys reports is re-encoded instead: the tools and
+// calls counted are the ones decoded, which the upstream may not read.
+func (p *Plugin) forward(body []byte, format string, canonical *adapter.CanonicalRequest) (*appplugins.Result, error) {
+	if !adapter.HasAmbiguousKeys(adapter.Format(format), body) {
+		return okResult(), nil
+	}
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: encode: %w", err)
+	}
+	encoded, err := ad.EncodeRequest(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: encode: %w", err)
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: encoded}, nil
 }
 
 func (p *Plugin) spentBefore(
@@ -246,14 +352,10 @@ func (p *Plugin) spentBefore(
 	cfg *config,
 	in appplugins.ExecInput,
 	dimension, subject string,
-	tools []adapter.CanonicalTool,
+	tools []string,
 ) (map[string]*windowState, error) {
 	spent := make(map[string]*windowState, len(tools))
-	for i := range tools {
-		tool := tools[i].Name
-		if tool == "" {
-			continue
-		}
+	for _, tool := range tools {
 		if _, done := spent[tool]; done {
 			continue
 		}
@@ -281,66 +383,39 @@ func (p *Plugin) enforcedAtRequest(behavior string, streaming bool) bool {
 	}
 }
 
+// stripTools removes the tools in strip. Other entries the canonical request
+// does not model go too when a modelled tool is removed, as a full re-encode
+// would drop them; a legacy function stays unless strip names it.
 func (p *Plugin) stripTools(
 	originalBody []byte,
 	format string,
 	canonical *adapter.CanonicalRequest,
-	strip map[string]struct{},
+	strip toolStrip,
 ) (*appplugins.Result, error) {
 	ad, err := p.registry.GetAdapter(adapter.Format(format))
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
 	}
-	fullEncoded, err := ad.EncodeRequest(canonical)
+	baseline := canonical.Clone()
+	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
+		_, drop := strip.tools[t.Name]
+		return !drop
+	})
+	adapter.DropDanglingToolChoice(canonical)
+	modelledChanged := len(strip.tools) > 0
+	body, err := adapter.GraftChangedFieldsWith(ad, originalBody, baseline, canonical, adapter.GraftOptions{
+		KeepUnmodelledTool: func(u adapter.UnmodelledTool) bool {
+			if u.Kind == adapter.LegacyFunctionKind {
+				_, drop := strip.legacy[u.Name]
+				return !drop
+			}
+			return !modelledChanged
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
-	}
-	kept := make([]adapter.CanonicalTool, 0, len(canonical.Tools))
-	for i := range canonical.Tools {
-		if _, drop := strip[canonical.Tools[i].Name]; drop {
-			continue
-		}
-		kept = append(kept, canonical.Tools[i])
-	}
-	canonical.Tools = kept
-	strippedEncoded, err := ad.EncodeRequest(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
-	}
-	body, err := graftChangedFields(originalBody, fullEncoded, strippedEncoded)
-	if err != nil {
-		body = strippedEncoded
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
-}
-
-func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, error) {
-	var orig, full, stripped map[string]json.RawMessage
-	if err := json.Unmarshal(original, &orig); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(fullEncoded, &full); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(strippedEncoded, &stripped); err != nil {
-		return nil, err
-	}
-	for key, fullValue := range full {
-		strippedValue, ok := stripped[key]
-		if !ok {
-			delete(orig, key)
-			continue
-		}
-		if !bytes.Equal(fullValue, strippedValue) {
-			orig[key] = strippedValue
-		}
-	}
-	for key, strippedValue := range stripped {
-		if _, ok := full[key]; !ok {
-			orig[key] = strippedValue
-		}
-	}
-	return json.Marshal(orig)
 }
 
 func (p *Plugin) preResponse(
@@ -376,7 +451,7 @@ func (p *Plugin) preResponse(
 		}
 		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
 		if err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+			return p.counterUnavailable(ctx, in, nil, "read", err)
 		}
 		if ws == nil {
 			continue
@@ -442,15 +517,17 @@ func (p *Plugin) mcpPreRequest(
 	}
 	tool := mcpToolName(in.Request.Body)
 	if tool == "" {
+		setSkipped(in.Event, policy.StagePreRequest, skipReasonNoTools)
 		return okResult(), nil
 	}
 	rule, ok := matchRule(cfg.Rules, tool)
 	if !ok {
+		setSkipped(in.Event, policy.StagePreRequest, skipReasonNoMatchingRule)
 		return okResult(), nil
 	}
 	ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		return p.counterUnavailable(ctx, in, nil, "read", err)
 	}
 	if ws == nil {
 		return okResult(), nil
@@ -476,15 +553,25 @@ func (p *Plugin) mcpPreResponse(
 	if !ok {
 		return okResult(), nil
 	}
-	keys := make([]string, 0, len(rule.Windows))
-	args := make([]any, 0, len(rule.Windows))
+	toolCallID := in.Request.MCPToolCallID
+	keys := make([]string, 0, len(rule.Windows)+1)
+	args := make([]any, 0, len(rule.Windows)+1)
+	script := recordWindowsScript
+	if toolCallID != "" {
+		script = claimAndRecordScript
+		keys = append(keys, dedupeKey(in.Config.ID, dimension, subject, toolCallID))
+		args = append(args, int(largestWindow(rule)/time.Second))
+	}
+	counters := make([]string, 0, len(rule.Windows))
 	for i := range rule.Windows {
-		keys = append(keys, counterKey(in.Config.ID, dimension, subject, tool, i))
+		key := counterKey(in.Config.ID, dimension, subject, tool, i)
+		counters = append(counters, key)
+		keys = append(keys, key)
 		args = append(args, rule.Windows[i].windowSeconds())
 	}
-	res, err := recordWindowsScript.Run(ctx, p.redis, keys, args...).Result()
+	res, err := script.Run(ctx, p.redis, keys, args...).Result()
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		return p.counterUnavailable(ctx, in, nil, "record", err)
 	}
 	totals, ok := res.([]any)
 	if !ok {
@@ -497,8 +584,8 @@ func (p *Plugin) mcpPreResponse(
 		}
 		total, _ := totals[i].(int64)
 		w := rule.Windows[i]
-		ws := &windowState{key: keys[i], window: w, total: int(total)}
-		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, "", dimension, subject, behavior, int(total) >= w.Max))
+		ws := &windowState{key: counters[i], window: w, total: int(total)}
+		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, toolCallID, dimension, subject, behavior, int(total) >= w.Max))
 	}
 	return okResult(), nil
 }
@@ -527,31 +614,53 @@ func latestToolCallTurn(messages []adapter.CanonicalMessage) int {
 	return last
 }
 
+// executedCall is a tool call a request reports the result of.
+type executedCall struct {
+	id, tool string
+}
+
+// executedCalls returns the calls of the latest tool call turn that later
+// tool messages answer, and those a legacy function message answers.
+func executedCalls(ad adapter.RequestAdapter, body []byte, messages []adapter.CanonicalMessage) []executedCall {
+	var out []executedCall
+	if turn := latestToolCallTurn(messages); turn >= 0 {
+		names := toolCallNames(messages)
+		for i := turn + 1; i < len(messages); i++ {
+			if messages[i].Role != "tool" || messages[i].ToolCallID == "" {
+				continue
+			}
+			if tool := names[messages[i].ToolCallID]; tool != "" {
+				out = append(out, executedCall{id: messages[i].ToolCallID, tool: tool})
+			}
+		}
+	}
+	for _, c := range adapter.ExecutedLegacyFunctionCalls(ad, body) {
+		out = append(out, executedCall{id: c.ID, tool: c.Name})
+	}
+	return out
+}
+
+func executedNames(calls []executedCall) []string {
+	out := make([]string, 0, len(calls))
+	for _, c := range calls {
+		out = append(out, c.tool)
+	}
+	return out
+}
+
 func (p *Plugin) countExecuted(
 	ctx context.Context,
 	cfg *config,
 	in appplugins.ExecInput,
 	dimension, subject string,
-	messages []adapter.CanonicalMessage,
+	calls []executedCall,
 ) error {
-	turn := latestToolCallTurn(messages)
-	if turn < 0 {
-		return nil
-	}
-	names := toolCallNames(messages)
-	for i := turn + 1; i < len(messages); i++ {
-		if messages[i].Role != "tool" || messages[i].ToolCallID == "" {
-			continue
-		}
-		tool, ok := names[messages[i].ToolCallID]
-		if !ok || tool == "" {
-			continue
-		}
-		rule, ok := matchRule(cfg.Rules, tool)
+	for _, c := range calls {
+		rule, ok := matchRule(cfg.Rules, c.tool)
 		if !ok {
 			continue
 		}
-		if err := p.recordOnce(ctx, cfg, in, dimension, subject, tool, messages[i].ToolCallID, rule); err != nil {
+		if err := p.recordOnce(ctx, cfg, in, dimension, subject, c.tool, c.id, rule); err != nil {
 			return err
 		}
 	}
@@ -629,6 +738,75 @@ func (p *Plugin) reject(ctx context.Context, tool string, ws *windowState, dimen
 		Message:    fmt.Sprintf("tool %q rate limit exceeded", tool),
 		Headers:    headers,
 	}
+}
+
+// counterUnavailable turns a counter-store (Redis) failure into a pass-through
+// outcome via the shared appplugins.HandleCounterFailure: unlike a rejected
+// tool call, this always fails open, whatever mode the policy is in — only
+// enforce is supported here, but the rule is "our own infrastructure fails
+// open", not "enforce fails open" (subject to the ctx exception below).
+// There is no throttle/observe-style alternate decision to preserve the way
+// rate_limiter has (this plugin only ever runs in enforce), so the decision
+// is always failed_open; base, when non-nil, is prior state worth keeping in
+// the extras anyway (see spentTelemetry) — this only adds
+// FailureReason/FailureDetail on top of it, or of a fresh PerToolRateLimiterData
+// when base is nil.
+//
+// A ctx the caller itself canceled (or let deadline out) is not a
+// counter-store outage — HandleCounterFailure reports that back as a non-nil
+// error, and this returns it unchanged: no failed_open, no
+// counter_unavailable, no Warn, exactly the pre-RUN-1675 behavior.
+func (p *Plugin) counterUnavailable(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	base *PerToolRateLimiterData,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	result, ferr := appplugins.HandleCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Detail: detail,
+		Err:    err,
+		Event:  in.Event,
+	})
+	if ferr != nil {
+		return nil, ferr
+	}
+	data := PerToolRateLimiterData{Stage: string(in.Stage)}
+	if base != nil {
+		data = *base
+	}
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	setExtras(in.Event, data)
+	return result, nil
+}
+
+// spentTelemetry returns the telemetry for the first tool spentBefore already
+// found over its window, so a countExecuted (record) failure right after it
+// does not lose that signal entirely. Only one tool's data can travel — a
+// PerToolRateLimiterData models one tool per span — so when several are
+// already over budget this surfaces just one of them; that is still strictly
+// more informative than the bare failure record a caller would otherwise get,
+// even though it cannot represent every exceeded tool at once. Returns nil
+// when spent has no tool over its window (spentBefore succeeded clean, or
+// found nothing to report).
+func (p *Plugin) spentTelemetry(cfg *config, spent map[string]*windowState, dimension, subject string) *PerToolRateLimiterData {
+	for tool, ws := range spent {
+		if ws == nil {
+			continue
+		}
+		rule, ok := matchRule(cfg.Rules, tool)
+		if !ok {
+			continue
+		}
+		data := p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, effectiveBehavior(rule, cfg), true)
+		return &data
+	}
+	return nil
 }
 
 func (p *Plugin) data(
@@ -719,6 +897,24 @@ func wireFormat(req *infracontext.RequestContext) string {
 		return req.SourceFormat
 	}
 	return req.Provider
+}
+
+// setSkipped records that the plugin ran on this leg and evaluated nothing.
+func setSkipped(event *metrics.EventContext, stage policy.Stage, reason string) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(skippedData{Stage: string(stage), Skipped: true, SkipReason: reason})
+}
+
+// anyRuleMatches reports whether at least one of names matches a rule.
+func anyRuleMatches(rules []ruleConfig, names []string) bool {
+	for _, n := range names {
+		if _, ok := matchRule(rules, n); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func setExtras(event *metrics.EventContext, data PerToolRateLimiterData) {

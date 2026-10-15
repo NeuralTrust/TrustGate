@@ -65,8 +65,14 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 		t.Fatalf("new cipher: %v", err)
 	}
 
+	sealer, err := crypto.NewFieldSealer(testSecretKey, crypto.RegistrySecretsPurpose)
+	if err != nil {
+		pool.Close()
+		t.Fatalf("new field sealer: %v", err)
+	}
+
 	appender := outboxrepo.NewRepository(conn)
-	return repo.NewRepository(conn, cipher, appender), gatewayrepo.NewRepository(conn, appender), conn
+	return repo.NewRepository(conn, cipher, appender, repo.WithFieldSealer(sealer, true)), gatewayrepo.NewRepository(conn, appender), conn
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
@@ -228,7 +234,7 @@ func TestRepository_Delete(t *testing.T) {
 	if err := r.Save(ctx, b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := r.Delete(ctx, gwID, b.ID); err != nil {
+	if _, err := r.Delete(ctx, gwID, b.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := r.FindByID(ctx, b.ID); !errors.Is(err, domain.ErrNotFound) {
@@ -238,7 +244,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	err := r.Delete(context.Background(), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]())
+	_, err := r.Delete(context.Background(), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

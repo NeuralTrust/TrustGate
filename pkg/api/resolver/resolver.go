@@ -16,6 +16,8 @@ package resolver
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -35,6 +37,21 @@ type IdentityResolver interface {
 	Resolve(c *fiber.Ctx, gw *gatewaydomain.Gateway, rc *appconsumer.RoutableConsumer) (*appauth.AuthContext, error)
 }
 
+// hasEnabledIdentityProvider reports whether the consumer carries any enabled
+// identity provider, deprecated aliases included: a bearer is refused outright
+// only when none is attached.
+func hasEnabledIdentityProvider(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	for _, a := range rc.Auths {
+		if a != nil && a.Enabled && a.Type.IsIdentityProvider() {
+			return true
+		}
+	}
+	return false
+}
+
 func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.Type) bool {
 	if rc == nil {
 		return false
@@ -45,4 +62,34 @@ func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.T
 		}
 	}
 	return false
+}
+
+// bearerToken extracts the credential from an Authorization header. It moved
+// here with the removal of the second bearer resolver, which owned it.
+// Basic, Token and Digest are credentials this gateway does not accept, the
+// same failure as any other bad credential, whether the header carries one
+// token, several (Digest), or none (a bare Basic). A Bearer header that is
+// not exactly scheme plus token stays a malformed bearer. Other multi-field
+// schemes, such as SigV4 on a non-Bedrock route, stay a malformed request.
+func bearerToken(header string) (string, error) {
+	if strings.TrimSpace(header) == "" {
+		return "", ErrUnauthenticated
+	}
+	parts := strings.Fields(header)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1], nil
+	}
+	if len(parts) > 0 && unrecognizedCredentialScheme(parts[0]) {
+		return "", ErrUnauthenticated
+	}
+	if len(parts) == 2 {
+		return "", ErrUnauthenticated
+	}
+	return "", fmt.Errorf("%w: malformed bearer authorization header", appauth.ErrInvalidAuthRequest)
+}
+
+func unrecognizedCredentialScheme(scheme string) bool {
+	return strings.EqualFold(scheme, "Basic") ||
+		strings.EqualFold(scheme, "Token") ||
+		strings.EqualFold(scheme, "Digest")
 }

@@ -17,6 +17,7 @@ package response
 import (
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -31,15 +32,46 @@ type AuthResponse struct {
 	Config    ConfigResponse `json:"config"`
 	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
 	// Non-secret recognition hint for api_key auths (e.g. "ag_3dlXk" + "Rv8Q").
-	KeyPrefix string    `json:"key_prefix,omitempty"`
-	KeySuffix string    `json:"key_suffix,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	KeyPrefix string `json:"key_prefix,omitempty"`
+	KeySuffix string `json:"key_suffix,omitempty"`
+	// When the key retires itself. Absent means it never does.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	OwnerID   string     `json:"owner_id,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	// Budget is the spending limit of a personal key. Absent means it has none.
+	Budget *KeyBudgetResponse `json:"budget,omitempty"`
+	// OwnerGroups are the directory groups of a personal key's owner, as the
+	// platform last reported them. Absent means none were reported.
+	OwnerGroups []string `json:"owner_groups,omitempty"`
+	// OwnerEmail is the email of a personal key's owner, which the key's calls
+	// are shown under. Absent means none was recorded.
+	OwnerEmail string `json:"owner_email,omitempty"`
+	// Consumers are the consumers this auth reaches, which is what a caller
+	// needs before revoking one: a key can be attached to several, so
+	// disabling it stops more than the endpoint the reader was looking at.
+	// Empty means it reaches none, which is an answer rather than a gap.
+	Consumers []AuthConsumerResponse `json:"consumers"`
+}
+
+// KeyBudgetResponse is the spending limit of a personal key. It holds the key
+// under every token_rate_limiter policy with key_budgets counting in Unit.
+type KeyBudgetResponse struct {
+	Max        float64 `json:"max"`
+	Unit       string  `json:"unit" enums:"tokens,dollars"`
+	TimeWindow string  `json:"time_window" enums:"calendar_month,calendar_day"`
+}
+
+// AuthConsumerResponse names one consumer an auth reaches.
+type AuthConsumerResponse struct {
+	ID   ids.ConsumerID `json:"id"`
+	Name string         `json:"name"`
+	Slug string         `json:"slug"`
+	Type string         `json:"type"`
 }
 
 type ConfigResponse struct {
 	OAuth2 *OAuth2ConfigResponse `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfigResponse   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfigResponse   `json:"mtls,omitempty"`
 }
 
@@ -47,26 +79,22 @@ type OAuth2ConfigResponse struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
 	RequiredScopes   []string `json:"required_scopes,omitempty"`
+	LoginScopes      []string `json:"login_scopes,omitempty"`
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
 	SessionMode      bool     `json:"session_mode,omitempty"`
 	UserInfoURL      string   `json:"userinfo_url,omitempty"`
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
-}
-
-type OIDCConfigResponse struct {
-	Issuer            string   `json:"issuer"`
-	Audiences         []string `json:"audiences"`
-	JWKSURL           string   `json:"jwks_url,omitempty"`
-	PublicKeys        []string `json:"public_keys,omitempty"`
-	RequiredScopes    []string `json:"required_scopes,omitempty"`
-	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
-	SubjectClaim      string   `json:"subject_claim,omitempty"`
+	// ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token
+	// exchanges; the secret is masked.
+	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
+	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117 -- masked before serialization
 }
 
 type MTLSConfigResponse struct {
@@ -76,23 +104,60 @@ type MTLSConfigResponse struct {
 	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
 }
 
+// FromAuthWithConsumers is FromAuth with the consumers the auth reaches.
+func FromAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuth(a)
+	res.Consumers = make([]AuthConsumerResponse, 0, len(held))
+	for _, c := range held {
+		res.Consumers = append(res.Consumers, AuthConsumerResponse{
+			ID:   c.ID,
+			Name: c.Name,
+			Slug: c.Slug,
+			Type: string(c.Type),
+		})
+	}
+	return res
+}
+
 func FromAuth(a *domain.Auth) AuthResponse {
 	return AuthResponse{
-		ID:        a.ID,
-		GatewayID: a.GatewayID,
-		Name:      a.Name,
-		Type:      string(a.Type),
-		Enabled:   a.Enabled,
-		Config:    fromConfig(a.Config),
-		KeyPrefix: a.KeyPrefix,
-		KeySuffix: a.KeySuffix,
-		CreatedAt: a.CreatedAt,
-		UpdatedAt: a.UpdatedAt,
+		Consumers:   []AuthConsumerResponse{},
+		ID:          a.ID,
+		GatewayID:   a.GatewayID,
+		Name:        a.Name,
+		Type:        string(a.Type),
+		Enabled:     a.Enabled,
+		Config:      fromConfig(a.Config),
+		KeyPrefix:   a.KeyPrefix,
+		KeySuffix:   a.KeySuffix,
+		ExpiresAt:   a.ExpiresAt,
+		OwnerID:     a.OwnerID,
+		Budget:      fromBudget(a.Budget),
+		OwnerGroups: a.OwnerGroups,
+		OwnerEmail:  a.OwnerEmail,
+		CreatedAt:   a.CreatedAt,
+		UpdatedAt:   a.UpdatedAt,
 	}
+}
+
+func fromBudget(b *domain.KeyBudget) *KeyBudgetResponse {
+	if b == nil {
+		return nil
+	}
+	return &KeyBudgetResponse{Max: b.Max, Unit: b.Unit, TimeWindow: b.TimeWindow}
 }
 
 func FromCreatedAuth(a *domain.Auth) AuthResponse {
 	res := FromAuth(a)
+	res.APIKey = a.RawKey
+	return res
+}
+
+// FromCreatedAuthWithConsumers carries the one-time secret and the consumers
+// the auth reaches. Rotation needs both: the secret because it is the only time
+// it is readable, and the consumers because they are what the rotation cut off.
+func FromCreatedAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuthWithConsumers(a, held)
 	res.APIKey = a.RawKey
 	return res
 }
@@ -104,27 +169,21 @@ func fromConfig(c domain.Config) ConfigResponse {
 			Issuer:           c.OAuth2.Issuer,
 			Audiences:        c.OAuth2.Audiences,
 			JWKSURL:          c.OAuth2.JWKSURL,
+			PublicKeys:       c.OAuth2.PublicKeys,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     secret.Mask(c.OAuth2.ClientSecret),
 			RequiredScopes:   c.OAuth2.RequiredScopes,
+			LoginScopes:      c.OAuth2.LoginScopes,
 			Algorithms:       c.OAuth2.Algorithms,
 			SessionMode:      c.OAuth2.SessionMode,
 			UserInfoURL:      c.OAuth2.UserInfoURL,
 			SubjectClaim:     c.OAuth2.SubjectClaim,
 			AuthorizeURL:     c.OAuth2.AuthorizeURL,
 			TokenURL:         c.OAuth2.TokenURL,
-		}
-	}
-	if c.OIDC != nil {
-		out.OIDC = &OIDCConfigResponse{
-			Issuer:            c.OIDC.Issuer,
-			Audiences:         c.OIDC.Audiences,
-			JWKSURL:           c.OIDC.JWKSURL,
-			PublicKeys:        c.OIDC.PublicKeys,
-			RequiredScopes:    c.OIDC.RequiredScopes,
-			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
-			SubjectClaim:      c.OIDC.SubjectClaim,
+
+			ExchangeClientID:     c.OAuth2.ExchangeClientID,
+			ExchangeClientSecret: secret.Mask(c.OAuth2.ExchangeClientSecret),
 		}
 	}
 	if c.MTLS != nil {

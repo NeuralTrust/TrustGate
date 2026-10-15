@@ -19,12 +19,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 func TestConfigValidate(t *testing.T) {
@@ -154,6 +157,20 @@ func TestApplyInjections(t *testing.T) {
 			wantTools: []adapter.CanonicalTool{
 				{Name: "safety_check", Description: "gateway"},
 				{Name: "other", Description: "o"},
+			},
+			wantOutcomes: []injectOutcome{{Name: "safety_check", Outcome: outcomeReplaced}},
+		},
+		{
+			name: "gateway wins keeps the client's cache marker on the replaced tool",
+			tools: []adapter.CanonicalTool{
+				{Name: "other", Description: "o"},
+				{Name: "safety_check", Description: "client", Cache: &adapter.CanonicalCacheBreakpoint{TTL: adapter.CacheTTL1h}},
+			},
+			entries:  []injectDef{injectFn("safety_check", "gateway")},
+			conflict: conflictGatewayWins,
+			wantTools: []adapter.CanonicalTool{
+				{Name: "other", Description: "o"},
+				{Name: "safety_check", Description: "gateway", Cache: &adapter.CanonicalCacheBreakpoint{TTL: adapter.CacheTTL1h}},
 			},
 			wantOutcomes: []injectOutcome{{Name: "safety_check", Outcome: outcomeReplaced}},
 		},
@@ -539,24 +556,59 @@ func mistralToolBody(t *testing.T, toolName string) []byte {
 
 func execPreRequest(t *testing.T, settings map[string]any, sourceFormat string, body []byte) *appplugins.Result {
 	t.Helper()
+	res, _ := execPreRequestObserving(t, settings, sourceFormat, body)
+	if res.RequestBody == nil {
+		t.Fatalf("Execute() result = %#v, want non-nil RequestBody", res)
+	}
+	return res
+}
+
+func execPreRequestObserving(t *testing.T, settings map[string]any, sourceFormat string, body []byte, mutate ...func(*infracontext.RequestContext)) (*appplugins.Result, *trace.Span) {
+	t.Helper()
+	tr := trace.New("", trace.Metadata{})
+	span := tr.StartSpan(trace.SpanPlugin, PluginName)
+	req := &infracontext.RequestContext{Provider: sourceFormat, SourceFormat: sourceFormat, Body: body}
+	for _, fn := range mutate {
+		fn(req)
+	}
 	p := New(adapter.NewRegistry())
 	in := appplugins.ExecInput{
 		Stage:   policy.StagePreRequest,
 		Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: settings},
 		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
-		Request: &infracontext.RequestContext{Provider: sourceFormat, SourceFormat: sourceFormat, Body: body},
+		Request: req,
+		Event:   metrics.NewEventContext(span),
 	}
 	res, err := p.Execute(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
-	if res == nil || res.RequestBody == nil {
-		t.Fatalf("Execute() result = %#v, want non-nil RequestBody", res)
+	if res == nil {
+		t.Fatal("Execute() result = nil")
 	}
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
 	}
-	return res
+	return res, span
+}
+
+func spanDecision(span *trace.Span) string {
+	if span == nil || span.Plugin == nil {
+		return ""
+	}
+	return span.Plugin.Decision
+}
+
+func injectionExtras(t *testing.T, span *trace.Span) ToolInjectionData {
+	t.Helper()
+	if span == nil || span.Plugin == nil {
+		t.Fatal("expected plugin span attrs")
+	}
+	data, ok := span.Plugin.Extras.(ToolInjectionData)
+	if !ok {
+		t.Fatalf("expected ToolInjectionData extras, got %T", span.Plugin.Extras)
+	}
+	return data
 }
 
 func TestPluginPreRequestProviderMatrix(t *testing.T) {
@@ -644,6 +696,130 @@ func TestPluginPreRequestProviderMatrix(t *testing.T) {
 	}
 }
 
+func TestPluginSkipsInjectionWhenChatCompletionsRejectsFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"model":    model,
+				"messages": []any{map[string]any{"role": "user", "content": "hello, write me a short greeting"}},
+			})
+			res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body)
+			if res.RequestBody != nil {
+				t.Fatalf("RequestBody = %s, want nil so the original request is forwarded", res.RequestBody)
+			}
+			if got := spanDecision(span); got != outcomeSkipped {
+				t.Fatalf("decision = %q, want %q", got, outcomeSkipped)
+			}
+			extras := injectionExtras(t, span)
+			if len(extras.Injected) != 1 || extras.Injected[0].Name != "safety_check" || extras.Injected[0].Outcome != outcomeSkipped {
+				t.Fatalf("extras.injected = %+v, want safety_check skipped", extras.Injected)
+			}
+			if strings.Contains(string(body), "safety_check") || strings.Contains(string(body), "reasoning_effort") {
+				t.Fatalf("original body was rewritten: %s", body)
+			}
+		})
+	}
+}
+
+func TestPluginSkipsInjectionLeavesClientToolsUntouched(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"model":    model,
+				"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+				"tools": []any{map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name":       "search_docs",
+						"parameters": map[string]any{"type": "object"},
+					},
+				}},
+			})
+			res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body)
+			if res.RequestBody != nil {
+				t.Fatalf("RequestBody = %s, want nil", res.RequestBody)
+			}
+			if got := spanDecision(span); got != outcomeSkipped {
+				t.Fatalf("decision = %q, want %q", got, outcomeSkipped)
+			}
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(body, adapter.FormatOpenAI)
+			if err != nil {
+				t.Fatalf("DecodeRequestFor error = %v", err)
+			}
+			if _, ok := findTool(decoded.Tools, "search_docs"); !ok {
+				t.Fatalf("client tool missing from forwarded body: %#v", decoded.Tools)
+			}
+			if _, ok := findTool(decoded.Tools, "safety_check"); ok {
+				t.Fatalf("injected tool present on a skipped request: %#v", decoded.Tools)
+			}
+		})
+	}
+}
+
+func TestPluginInjectsOnModelsThatSupportChatFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-4.1-nano", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"} {
+		t.Run(model, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"model":    model,
+				"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+			})
+			res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body)
+			if res.RequestBody == nil {
+				t.Fatal("RequestBody = nil, want the injected body")
+			}
+			if strings.Contains(string(res.RequestBody), `"reasoning_effort"`) {
+				t.Fatalf("tool injection added reasoning_effort: %s", res.RequestBody)
+			}
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+			if err != nil {
+				t.Fatalf("DecodeRequestFor error = %v", err)
+			}
+			if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+				t.Fatalf("injected tool missing: %#v", decoded.Tools)
+			}
+			if got := spanDecision(span); got == outcomeSkipped {
+				t.Fatalf("decision = %q on a model that accepts Chat Completions function tools", got)
+			}
+		})
+	}
+}
+
+func TestPluginInjectsResponsesToolsForModelsThatRejectChatFunctionTools(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"model": "gpt-6.1-sol",
+		"input": "hello",
+	})
+	res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAIResponses), body)
+	if res.RequestBody == nil {
+		t.Fatal("RequestBody = nil, want the injected Responses body")
+	}
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAIResponses)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor error = %v", err)
+	}
+	if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+		t.Fatalf("injected tool missing: %#v", decoded.Tools)
+	}
+	if got := spanDecision(span); got == outcomeSkipped {
+		t.Fatalf("decision = %q, Responses still accepts function tools", got)
+	}
+}
+
+func TestPluginSkipsWhenDefaultModelRejectsChatFunctionTools(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body, func(req *infracontext.RequestContext) {
+		req.DefaultModel = "gpt-6.1-sol"
+	})
+	if res.RequestBody != nil {
+		t.Fatalf("RequestBody = %s, want nil", res.RequestBody)
+	}
+	if got := spanDecision(span); got != outcomeSkipped {
+		t.Fatalf("decision = %q, want %q", got, outcomeSkipped)
+	}
+}
+
 func TestPluginInjectAppendsAfterClientTools(t *testing.T) {
 	res := execPreRequest(t, injectSettings(), string(adapter.FormatOpenAI), openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"}))
 	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
@@ -709,11 +885,6 @@ func TestPluginExecuteNoOpMatrix(t *testing.T) {
 			name:     "empty wire format",
 			settings: injectSettings(),
 			req:      &infracontext.RequestContext{Provider: "", SourceFormat: "", Body: openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"})},
-		},
-		{
-			name:     "undecodable body",
-			settings: injectSettings(),
-			req:      &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte("{not-json")},
 		},
 		{
 			name:     "client wins drop is a no-op",
@@ -792,5 +963,280 @@ func TestPluginExecuteRejectPath(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotMap, wantMap) {
 		t.Fatalf("reject body = %#v, want %#v", gotMap, wantMap)
+	}
+}
+
+func TestPluginExecuteUndecodableBodyFailsClosed(t *testing.T) {
+	p := New(adapter.NewRegistry())
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte("{not-json")},
+	}
+
+	res, err := p.Execute(context.Background(), in)
+
+	if res != nil {
+		t.Fatalf("Execute() result = %#v, want nil", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("Execute() error is not *PluginError: %v", err)
+	}
+	if pe.StatusCode != http.StatusBadRequest || pe.Type != "invalid_request_body" {
+		t.Fatalf("PluginError = %d %q, want 400 invalid_request_body", pe.StatusCode, pe.Type)
+	}
+}
+
+func TestPluginExecuteResponsesInputItemItCannotDecode(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"hi"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"docs"}},` +
+		`{"type":"function_call","call_id":"c1","name":"search_docs","arguments":{"q":1}}` +
+		`],"tools":[{"type":"function","name":"search_docs","parameters":{"type":"object"}}]}`)
+	p := New(adapter.NewRegistry())
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_responses", Body: body},
+	}
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAIResponses)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor(RequestBody) error = %v", err)
+	}
+	if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+		t.Fatalf("decoded tools missing injected safety_check: %#v", decoded.Tools)
+	}
+}
+
+func TestPluginExecuteNonChatRequestsPassThrough(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
+		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
+		`{"model":"m","input":[1,"a"]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			in := appplugins.ExecInput{
+				Stage:   policy.StagePreRequest,
+				Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+				Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+				Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_embeddings", ProxyCapability: "embeddings", Body: []byte(body)},
+			}
+
+			res, err := New(adapter.NewRegistry()).Execute(context.Background(), in)
+
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if res == nil || res.StatusCode != http.StatusOK || res.RequestBody != nil {
+				t.Fatalf("Execute() result = %#v, want an unchanged pass-through", res)
+			}
+		})
+	}
+}
+
+func newPluginSpan() (*metrics.EventContext, *trace.Span) {
+	tr := trace.New("t", trace.Metadata{})
+	span := tr.StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
+}
+
+func TestExecuteRecordsSpanDecision(t *testing.T) {
+	t.Parallel()
+
+	t.Run("appended", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		res, err := New(adapter.NewRegistry()).Execute(context.Background(), appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+			Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAIReqBody(t, "search_docs")},
+			Event:   event,
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if res == nil || res.RequestBody == nil {
+			t.Fatalf("Execute() result = %#v, want a rewritten body", res)
+		}
+		assertSpanDecision(t, span, outcomeAppended, ToolInjectionData{
+			Stage:    string(policy.StagePreRequest),
+			Injected: []InjectedOutcome{{Name: "safety_check", Outcome: outcomeAppended}},
+		})
+	})
+
+	t.Run("replaced", func(t *testing.T) {
+		t.Parallel()
+		settings := map[string]any{
+			"on_conflict": "gateway_wins",
+			"inject_tools": []any{
+				map[string]any{
+					"type":     "function",
+					"function": map[string]any{"name": "search_docs", "description": "gateway"},
+				},
+			},
+		}
+		event, span := newPluginSpan()
+		res, err := New(adapter.NewRegistry()).Execute(context.Background(), appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: settings},
+			Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAIReqBody(t, "search_docs")},
+			Event:   event,
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if res == nil || res.RequestBody == nil {
+			t.Fatalf("Execute() result = %#v, want a rewritten body", res)
+		}
+		assertSpanDecision(t, span, outcomeReplaced, ToolInjectionData{
+			Stage:    string(policy.StagePreRequest),
+			Injected: []InjectedOutcome{{Name: "search_docs", Outcome: outcomeReplaced}},
+		})
+	})
+
+	t.Run("client wins drop leaves the body unchanged", func(t *testing.T) {
+		t.Parallel()
+		settings := map[string]any{
+			"on_conflict": "client_wins",
+			"inject_tools": []any{
+				map[string]any{"type": "function", "function": map[string]any{"name": "search_docs"}},
+			},
+		}
+		body := openAIReqBody(t, "search_docs")
+		event, span := newPluginSpan()
+		res, err := New(adapter.NewRegistry()).Execute(context.Background(), appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: settings},
+			Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: body},
+			Event:   event,
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if res == nil || res.StatusCode != http.StatusOK || res.RequestBody != nil {
+			t.Fatalf("Execute() result = %#v, want an unchanged body", res)
+		}
+		assertSpanDecision(t, span, outcomeDropped, ToolInjectionData{
+			Stage:    string(policy.StagePreRequest),
+			Injected: []InjectedOutcome{{Name: "search_docs", Outcome: outcomeDropped}},
+		})
+	})
+
+	t.Run("several outcomes record the last token", func(t *testing.T) {
+		t.Parallel()
+		settings := map[string]any{
+			"on_conflict": "gateway_wins",
+			"inject_tools": []any{
+				map[string]any{"type": "function", "function": map[string]any{"name": "safety_check", "description": "gateway"}},
+				map[string]any{"type": "function", "function": map[string]any{"name": "search_docs", "description": "gateway"}},
+			},
+		}
+		event, span := newPluginSpan()
+		_, err := New(adapter.NewRegistry()).Execute(context.Background(), appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: settings},
+			Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAIReqBody(t, "search_docs")},
+			Event:   event,
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		assertSpanDecision(t, span, outcomeReplaced, ToolInjectionData{
+			Stage: string(policy.StagePreRequest),
+			Injected: []InjectedOutcome{
+				{Name: "safety_check", Outcome: outcomeAppended},
+				{Name: "search_docs", Outcome: outcomeReplaced},
+			},
+		})
+	})
+
+	t.Run("tool_name_reserved records block", func(t *testing.T) {
+		t.Parallel()
+		settings := map[string]any{
+			"on_conflict": "reject",
+			"inject_tools": []any{
+				map[string]any{"type": "function", "function": map[string]any{"name": "safety_check", "description": "gateway"}},
+			},
+		}
+		event, span := newPluginSpan()
+		res, err := New(adapter.NewRegistry()).Execute(context.Background(), appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: settings},
+			Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAIReqBody(t, "safety_check")},
+			Event:   event,
+		})
+		if res != nil {
+			t.Fatalf("Execute() result = %#v, want nil", res)
+		}
+		pe, ok := appplugins.AsPluginError(err)
+		if !ok {
+			t.Fatalf("Execute() error is not *PluginError: %v", err)
+		}
+		if pe.StatusCode != http.StatusBadRequest || pe.Type != "tool_name_reserved" {
+			t.Fatalf("PluginError = %d %q, want 400 tool_name_reserved", pe.StatusCode, pe.Type)
+		}
+		if got := span.PluginAttrsCopy().Decision; got != "block" {
+			t.Fatalf("span decision = %q, want %q", got, "block")
+		}
+		data, ok := span.PluginAttrsCopy().Extras.(ToolInjectionData)
+		if !ok {
+			t.Fatalf("extras = %#v, want ToolInjectionData", span.PluginAttrsCopy().Extras)
+		}
+		if !data.Rejected || data.RejectedName != "safety_check" {
+			t.Fatalf("extras = %#v, want rejected_name safety_check", data)
+		}
+	})
+
+	t.Run("pass-through leaves the span decision empty", func(t *testing.T) {
+		t.Parallel()
+		event, span := newPluginSpan()
+		res, err := New(adapter.NewRegistry()).Execute(context.Background(), appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Mode:    policy.ModeEnforce,
+			Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+			Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: nil},
+			Event:   event,
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if res == nil || res.StatusCode != http.StatusOK || res.RequestBody != nil {
+			t.Fatalf("Execute() result = %#v, want an unchanged pass-through", res)
+		}
+		attrs := span.PluginAttrsCopy()
+		if attrs.Decision != "" {
+			t.Fatalf("span decision = %q, want empty", attrs.Decision)
+		}
+		if attrs.Extras != nil {
+			t.Fatalf("extras = %#v, want nil", attrs.Extras)
+		}
+	})
+}
+
+func assertSpanDecision(t *testing.T, span *trace.Span, decision string, want ToolInjectionData) {
+	t.Helper()
+	attrs := span.PluginAttrsCopy()
+	if attrs.Decision != decision {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decision)
+	}
+	data, ok := attrs.Extras.(ToolInjectionData)
+	if !ok {
+		t.Fatalf("extras = %#v, want ToolInjectionData", attrs.Extras)
+	}
+	if !reflect.DeepEqual(data, want) {
+		t.Fatalf("extras = %#v, want %#v", data, want)
 	}
 }

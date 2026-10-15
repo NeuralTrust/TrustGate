@@ -15,6 +15,8 @@
 package registry
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -67,6 +69,76 @@ func TestSmartRoutingConfig_TierForScoreBelowEveryThreshold(t *testing.T) {
 	}
 	if _, ok := cfg.TierForScore(0.1); ok {
 		t.Fatal("expected no tier for a score below every threshold")
+	}
+}
+
+func TestSmartRoutingConfig_LowestTier(t *testing.T) {
+	t.Parallel()
+	shared := ids.New[ids.RegistryKind]()
+	tests := []struct {
+		name      string
+		cfg       *SmartRoutingConfig
+		wantOK    bool
+		wantModel string
+	}{
+		{
+			name: "ascending thresholds",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0, RegistryID: shared, Model: "gpt-4o-mini"},
+				{MinScore: 0.3, RegistryID: shared, Model: "gpt-4.1-mini"},
+				{MinScore: 0.8, RegistryID: shared, Model: "gpt-5"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name: "unsorted slice",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0.8, RegistryID: shared, Model: "gpt-5"},
+				{MinScore: 0.3, RegistryID: shared, Model: "gpt-4.1-mini"},
+				{MinScore: 0, RegistryID: shared, Model: "gpt-4o-mini"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name: "single tier",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0.4, RegistryID: shared, Model: "gpt-4o-mini"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name: "gap config never reaching zero",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0.49, RegistryID: shared, Model: "gpt-4o-mini"},
+				{MinScore: 0.8, RegistryID: shared, Model: "gpt-5"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{name: "nil receiver", cfg: nil},
+		{name: "empty tiers", cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{}}},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tier, ok := tc.cfg.LowestTier()
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			if got := tier.RouteModel(); got != tc.wantModel {
+				t.Fatalf("model = %q, want %q", got, tc.wantModel)
+			}
+			if tier.RegistryID != shared {
+				t.Fatalf("registry = %s, want %s", tier.RegistryID, shared)
+			}
+		})
 	}
 }
 
@@ -144,6 +216,58 @@ func TestSmartRoutingConfig_HighestTier(t *testing.T) {
 			}
 			if tier.RegistryID != shared {
 				t.Fatalf("registry = %s, want %s", tier.RegistryID, shared)
+			}
+		})
+	}
+}
+
+func TestSmartRoutingConfigValidateCanonicalAndPure(t *testing.T) {
+	id := ids.New[ids.RegistryKind]()
+	for _, tc := range []struct {
+		name      string
+		cuts      []float64
+		ttl       int
+		envelope  bool
+		model     string
+		wantError bool
+	}{
+		{"two unordered", []float64{.45, 0}, 30, true, "low", false},
+		{"three unordered", []float64{.45, 0, .187}, 30, true, "low", false},
+		{"no envelope", []float64{0, .45}, 30, false, "low", true},
+		{"custom cuts", []float64{0, .8}, 30, true, "low", true},
+		{"duplicate cuts", []float64{0, 0}, 30, true, "low", true},
+		{"one rung", []float64{0}, 30, true, "low", true},
+		{"zero lifetime", []float64{0, .45}, 0, true, "low", true},
+		{"long lifetime", []float64{0, .45}, 86401, true, "low", true},
+		{"missing pin", []float64{0, .45}, 30, true, "", true},
+		{"pattern pin", []float64{0, .45}, 30, true, "model-*", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &SmartRoutingConfig{}
+			if tc.envelope {
+				cfg.SR1 = &SR1Config{CacheTTLSeconds: tc.ttl}
+			}
+			for i, cut := range tc.cuts {
+				model := tc.model
+				if i > 0 {
+					model = fmt.Sprintf("model-%d", i)
+				}
+				cfg.Tiers = append(cfg.Tiers, SmartRoutingTier{RegistryID: id, Model: model, MinScore: cut})
+			}
+			before, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = cfg.Validate()
+			if (err != nil) != tc.wantError {
+				t.Fatalf("Validate error=%v wantError=%t", err, tc.wantError)
+			}
+			after, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("validation rewrites cuts, order or preference")
 			}
 		})
 	}

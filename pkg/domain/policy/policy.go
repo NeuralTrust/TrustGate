@@ -21,6 +21,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+// MaxDescriptionLen is the longest policy description, in bytes, the Admin API
+// accepts. Any text a client seeds a description with, such as a catalogue
+// description, must fit within it.
+const MaxDescriptionLen = 1000
+
 type Policy struct {
 	ID          ids.PolicyID     `json:"id"`
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
@@ -30,17 +35,51 @@ type Policy struct {
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
+	MCPWide     bool             `json:"mcp_wide,omitempty"`
 	Priority    int              `json:"priority"`
 	Parallel    bool             `json:"parallel"`
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []Stage          `json:"stages,omitempty"`
 	Mode        Mode             `json:"mode"`
+	MCPScope    *MCPScope        `json:"mcp_scope,omitempty"`
 	CreatedAt   time.Time        `json:"created_at"`
 	UpdatedAt   time.Time        `json:"updated_at"`
 }
 
 func (p *Policy) IsGlobal() bool {
 	return p.Global
+}
+
+// GatewayWide reports whether the policy runs for every consumer it can reach
+// regardless of its links: a global policy on every plane, an MCP-wide policy
+// on every MCP consumer and the Store.
+func (p *Policy) GatewayWide() bool {
+	return p != nil && (p.Global || p.MCPWide)
+}
+
+// SetGlobal sets the global flag. Promoting clears MCPWide, because a policy
+// has one placement; demoting leaves MCPWide as it is.
+func (p *Policy) SetGlobal(on bool) {
+	p.Global = on
+	if on {
+		p.MCPWide = false
+	}
+}
+
+// SetMCPWide sets the MCP-wide flag. Promoting clears Global, because a policy
+// has one placement; demoting leaves Global as it is.
+func (p *Policy) SetMCPWide(on bool) {
+	p.MCPWide = on
+	if on {
+		p.Global = false
+	}
+}
+
+// Dormant reports whether the policy carries a tombstone scope and therefore
+// runs in no plane, MCP or otherwise. It says nothing about routing: IsGlobal
+// keeps reporting the Global flag alone.
+func (p *Policy) Dormant() bool {
+	return p != nil && p.MCPScope.Dormant()
 }
 
 func NewPolicy(
@@ -54,6 +93,7 @@ func NewPolicy(
 	stages []Stage,
 	description string,
 	mode Mode,
+	mcpScope *MCPScope,
 ) (*Policy, error) {
 	id, err := ids.NewV7[ids.PolicyKind]()
 	if err != nil {
@@ -72,6 +112,7 @@ func NewPolicy(
 		Settings:    settings,
 		Stages:      stages,
 		Mode:        mode.Normalize(),
+		MCPScope:    mcpScope,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -95,6 +136,7 @@ func Rehydrate(
 	settings map[string]any,
 	stages []Stage,
 	mode Mode,
+	mcpScope *MCPScope,
 	createdAt, updatedAt time.Time,
 ) *Policy {
 	return &Policy{
@@ -111,6 +153,7 @@ func Rehydrate(
 		Settings:    settings,
 		Stages:      stages,
 		Mode:        mode.Normalize(),
+		MCPScope:    mcpScope,
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}
@@ -128,6 +171,9 @@ func (p *Policy) Validate() error {
 	}
 	if p.Priority < 0 {
 		return fmt.Errorf("%w: priority cannot be negative", ErrInvalidPriority)
+	}
+	if p.Global && p.MCPWide {
+		return fmt.Errorf("%w: global and mcp_wide are exclusive", ErrInvalidPlacement)
 	}
 	seen := make(map[ids.ConsumerID]struct{}, len(p.ConsumerIDs))
 	for _, cid := range p.ConsumerIDs {
@@ -147,5 +193,5 @@ func (p *Policy) Validate() error {
 	if p.Mode != "" && !p.Mode.IsValid() {
 		return fmt.Errorf("%w: %q", ErrInvalidMode, p.Mode)
 	}
-	return nil
+	return p.MCPScope.Validate()
 }

@@ -35,7 +35,7 @@ func validateExporters(factory appmetrics.ExporterFactory, tel *telemetry.Teleme
 		if factory == nil {
 			continue
 		}
-		if err := factory.Validate(exporter); err != nil {
+		if err := factory.ValidateTenant(exporter); err != nil {
 			return fmt.Errorf("invalid telemetry exporter: %v: %w", err, commonerrors.ErrValidation)
 		}
 	}

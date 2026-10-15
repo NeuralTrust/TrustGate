@@ -17,13 +17,14 @@ package tokenratelimit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
@@ -69,29 +70,54 @@ func ruleWindowSeconds(cfg *config, r budgetRule) int {
 	return cfg.windowSeconds()
 }
 
-func windowsFor(cfg *config, base, model string) []budgetWindow {
+// budgetClock is when a request arrived, which names its calendar period, and
+// the current time, which sets how long that period's counter lives.
+type budgetClock struct {
+	at  time.Time
+	now time.Time
+}
+
+func (p *Plugin) clockFor(req *infracontext.RequestContext) budgetClock {
+	now := p.now()
+	if req != nil && req.ProcessAt != nil && !req.ProcessAt.IsZero() {
+		return budgetClock{at: *req.ProcessAt, now: now}
+	}
+	return budgetClock{at: now, now: now}
+}
+
+func windowsFor(cfg *config, base, model string, clock budgetClock) []budgetWindow {
 	var windows []budgetWindow
 	if cfg.PerModel {
 		if r, ok := selectRule(cfg, model); ok {
+			key, secs := periodWindow(base, r.TimeWindow, clock, ruleWindowSeconds(cfg, r))
 			windows = append(windows, budgetWindow{
-				key:       modelKey(base, r.Model),
+				key:       modelKey(key, r.Model),
 				max:       counterMax(cfg, r.Max),
-				windowSec: ruleWindowSeconds(cfg, r),
+				windowSec: secs,
 				model:     r.Model,
 				label:     windowLabel(cfg, r.TimeWindow),
 			})
 		}
 	}
 	if cfg.Aggregate != nil {
+		key, secs := periodWindow(base, cfg.Aggregate.TimeWindow, clock, aggregateWindowSeconds(cfg))
 		windows = append(windows, budgetWindow{
-			key:       base,
+			key:       key,
 			max:       counterMax(cfg, cfg.Aggregate.Max),
-			windowSec: aggregateWindowSeconds(cfg),
+			windowSec: secs,
 			label:     windowLabel(cfg, cfg.Aggregate.TimeWindow),
 			aggregate: true,
 		})
 	}
 	return windows
+}
+
+func periodWindow(base, timeWindow string, clock budgetClock, rollingSeconds int) (string, int) {
+	period, ttl, ok := calendarPeriod(timeWindow, clock.at, clock.now)
+	if !ok {
+		return base, rollingSeconds
+	}
+	return periodKey(base, period), ttl
 }
 
 func windowLabel(cfg *config, timeWindow string) string {
@@ -157,16 +183,41 @@ func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	}
 }
 
-func modelFor(req *infracontext.RequestContext) string {
+func resolvedModel(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
+	}
+	return req.ResolvedModel
+}
+
+// modelFor names the model a request is counted against. A key-partitioned
+// policy falls back to the default model of the routed registry when the
+// request names none (no model, auto, a pool), so a hard limit cannot be
+// dodged by leaving the model out; every other policy keeps counting such a
+// request under the requested ref, as it always has.
+func modelFor(cfg *config, req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	if req.IsBedrockNative() {
+		// The model of a native Bedrock call is the identifier in its path, a
+		// literal one: never a routing reference, and never a field of its body.
+		return req.BedrockNative.ModelID
 	}
 	if len(req.Body) > 0 {
 		if m, err := adapter.ExtractModel(req.Body); err == nil && m != "" {
 			return m
 		}
 	}
+	if cfg.keyPartitioned() && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
+		return req.DefaultModel
+	}
 	return req.RequestedModel
+}
+
+func namesModel(ref string) bool {
+	intent, err := routingdomain.ParseModelRef(ref)
+	return err == nil && intent.Model != ""
 }
 
 func (p *Plugin) budgetGate(
@@ -182,7 +233,7 @@ func (p *Plugin) budgetGate(
 	if req != nil {
 		provider = req.Provider
 	}
-	windows := windowsFor(cfg, base, model)
+	windows := windowsFor(cfg, base, model, p.clockFor(req))
 	if len(windows) == 0 {
 		if capTel != nil {
 			data := TokenRateLimiterData{
@@ -196,12 +247,42 @@ func (p *Plugin) budgetGate(
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 
+	unpriced := cfg.refusesUnpriced() && !p.priced(ctx, cfg, req, model)
+	if unpriced {
+		appplugins.SetDecision(event, mode)
+		if appplugins.Blocks(mode) {
+			data := TokenRateLimiterData{
+				Stage:    string(policy.StagePreRequest),
+				Provider: provider,
+				Model:    model,
+				Unit:     unitDollars,
+				Unpriced: true,
+			}
+			applyCostCapTelemetry(&data, capTel)
+			setTokenExtras(event, data)
+			return nil, modelUnpricedError(model)
+		}
+	}
+
 	consumedByWindow := make([]int64, len(windows))
 	breachedIdx := -1
 	for i := range windows {
 		consumed, err := p.redis.Get(ctx, windows[i].key).Int64()
 		if err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("token_rate_limiter: read counter: %w", err)
+			// The window loop has not yet determined which counter is
+			// reported (that only happens once every window's read
+			// succeeds), so there is no reportWindow/reportConsumed to carry
+			// here — but provider, model and cost-cap telemetry are already
+			// known and must not be lost to a bare failure record.
+			failData := TokenRateLimiterData{Provider: provider, Model: model, Unpriced: unpriced}
+			if windows[i].model != "" {
+				failData.Model = windows[i].model
+			}
+			applyCostCapTelemetry(&failData, capTel)
+			if cfg.keyPartitioned() && appplugins.Blocks(mode) && ctx.Err() == nil {
+				return nil, failClosed(ctx, mode, event, failData, "read_counter", err)
+			}
+			return p.counterUnavailable(ctx, policy.StagePreRequest, mode, event, failData, "read_counter", err)
 		}
 		consumedByWindow[i] = consumed
 		if breachedIdx == -1 && exceeds(consumed, windows[i].max) {
@@ -229,6 +310,7 @@ func (p *Plugin) budgetGate(
 		TokensRemaining: tokensRemaining(reportWindow.max, reportConsumed),
 		Model:           model,
 		Unit:            cfg.Unit,
+		Unpriced:        unpriced,
 	}
 	if reportWindow.model != "" {
 		data.Model = reportWindow.model
@@ -270,6 +352,71 @@ func (p *Plugin) handleExceeded(
 	}
 }
 
+// counterUnavailable turns a counter-store (Redis) failure into a pass-through
+// outcome via the shared appplugins.HandleCounterFailure: unlike a budget
+// actually exceeded, this always fails open, whatever mode is in play
+// (subject to the ctx exception below) — our own infrastructure fails open in
+// every mode, including enforce, unlike a third-party guardrail. data is
+// whatever the caller already knows (provider, model, cost-cap telemetry);
+// this only adds FailureReason/FailureDetail on top of it, so that context is
+// not lost the way a bare TokenRateLimiterData would lose it.
+//
+// A ctx the caller itself canceled (or let deadline out) is not a
+// counter-store outage — HandleCounterFailure reports that back as a non-nil
+// error, and this returns it unchanged: no failed_open, no
+// counter_unavailable, no Warn, exactly the pre-RUN-1675 behavior.
+func (p *Plugin) counterUnavailable(
+	ctx context.Context,
+	stage policy.Stage,
+	mode policy.Mode,
+	event *metrics.EventContext,
+	data TokenRateLimiterData,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	result, ferr := appplugins.HandleCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  stage,
+		Mode:   mode,
+		Detail: detail,
+		Err:    err,
+		Event:  event,
+	})
+	if ferr != nil {
+		return nil, ferr
+	}
+	data.Stage = string(stage)
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	setTokenExtras(event, data)
+	return result, nil
+}
+
+func failClosed(
+	ctx context.Context,
+	mode policy.Mode,
+	event *metrics.EventContext,
+	data TokenRateLimiterData,
+	detail string,
+	err error,
+) *appplugins.PluginError {
+	appplugins.LogCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  policy.StagePreRequest,
+		Mode:   mode,
+		Detail: detail,
+		Err:    err,
+	}, decisionFailedClosed)
+	data.Stage = string(policy.StagePreRequest)
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	setTokenExtras(event, data)
+	appplugins.SetDecisionFromOutcome(event, decisionFailedClosed)
+	return budgetUnavailableError()
+}
+
 func (p *Plugin) budgetHeaders(ctx context.Context, cfg *config, w budgetWindow, consumed int64, scope string) map[string][]string {
 	reset := p.resetSeconds(ctx, w.key, w.windowSec)
 	if cfg.Unit == unitDollars {
@@ -300,13 +447,14 @@ func (p *Plugin) accrue(
 	base, model string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	if resp == nil {
 		return &appplugins.Result{}, nil
 	}
 	if cfg.Unit == unitDollars {
-		return p.accrueDollars(ctx, cfg, base, model, req, resp, event)
+		return p.accrueDollars(ctx, cfg, base, model, req, resp, mode, event)
 	}
 
 	tokens := countedTokens(cfg, p.extractUsage(req, resp))
@@ -314,17 +462,22 @@ func (p *Plugin) accrue(
 		return &appplugins.Result{}, nil
 	}
 
-	windows := windowsFor(cfg, base, model)
+	windows := windowsFor(cfg, base, model, p.clockFor(req))
 	if len(windows) == 0 {
 		return &appplugins.Result{}, nil
 	}
 	primary := windows[primaryWindowIndex(windows)]
 
+	provider := ""
+	if req != nil {
+		provider = req.Provider
+	}
 	var primaryTotal int64
 	for _, w := range windows {
 		total, err := recordScript.Run(ctx, p.redis, []string{w.key}, int64(tokens), w.windowSec).Int64()
 		if err != nil {
-			return nil, fmt.Errorf("token_rate_limiter: record tokens: %w", err)
+			failData := TokenRateLimiterData{Provider: provider, Model: model, TokensActual: tokens}
+			return p.counterUnavailable(ctx, policy.StagePostResponse, mode, event, failData, "record_tokens", err)
 		}
 		if w.key == primary.key {
 			primaryTotal = total
@@ -337,10 +490,6 @@ func (p *Plugin) accrue(
 		remaining = 0
 	}
 
-	provider := ""
-	if req != nil {
-		provider = req.Provider
-	}
 	setTokenExtras(event, TokenRateLimiterData{
 		Stage:           string(policy.StagePostResponse),
 		CounterKey:      primary.key,
@@ -361,6 +510,7 @@ func (p *Plugin) accrueDollars(
 	base, model string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	provider, requested := "", ""
@@ -375,7 +525,7 @@ func (p *Plugin) accrueDollars(
 	if req != nil {
 		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
 	}
-	rates, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested)
+	rates, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested, resolvedModel(req))
 	if !found {
 		slog.Warn("token_rate_limiter: unpriced model in dollar budget, accruing zero",
 			slog.String("provider", provider),
@@ -401,7 +551,7 @@ func (p *Plugin) accrueDollars(
 		return &appplugins.Result{}, nil
 	}
 
-	windows := windowsFor(cfg, base, model)
+	windows := windowsFor(cfg, base, model, p.clockFor(req))
 	if len(windows) == 0 {
 		return &appplugins.Result{}, nil
 	}
@@ -411,7 +561,13 @@ func (p *Plugin) accrueDollars(
 	for _, w := range windows {
 		total, err := recordScript.Run(ctx, p.redis, []string{w.key}, micros, w.windowSec).Int64()
 		if err != nil {
-			return nil, fmt.Errorf("token_rate_limiter: record cost: %w", err)
+			failData := TokenRateLimiterData{
+				Provider:     provider,
+				Model:        model,
+				Unit:         unitDollars,
+				CostMicroUSD: micros,
+			}
+			return p.counterUnavailable(ctx, policy.StagePostResponse, mode, event, failData, "record_cost", err)
 		}
 		if w.key == primary.key {
 			primaryTotal = total
@@ -439,12 +595,19 @@ func (p *Plugin) extractUsageAndModel(req *infracontext.RequestContext, resp *in
 	if resp == nil {
 		return nil, ""
 	}
-	if resp.Streaming {
-		if req != nil && req.Metadata != nil {
-			if cu, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage); ok {
-				return cu, ""
-			}
+	// The usage the provider invoker observed wins on both legs. A native
+	// Bedrock InvokeModel answer reports it in headers, and its model-native
+	// body may carry none, so for a native call the body is never the source.
+	if req != nil && req.Metadata != nil {
+		cu, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
+		if ok && cu != nil {
+			return cu, ""
 		}
+	}
+	if req.IsBedrockNative() {
+		return nil, ""
+	}
+	if resp.Streaming {
 		return nil, ""
 	}
 

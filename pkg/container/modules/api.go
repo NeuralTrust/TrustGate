@@ -15,16 +15,20 @@
 package modules
 
 import (
+	"context"
 	"log/slog"
+	"time"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
+	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
@@ -45,12 +49,31 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/dig"
 )
 
 type healthParams struct {
 	dig.In
-	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Store                  configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Status                 *configsync.SnapshotStatus                  `optional:"true"`
+	AdminSnapshotReadiness adminSnapshotReadiness                      `optional:"true"`
+	// Provider is only a dependency: it guarantees the SDK has installed the
+	// global MeterProvider before the snapshot gauges are registered.
+	Provider *o11y.Provider
+}
+
+type adminSnapshotReadiness func(context.Context) error
+
+func adminReadiness(plane string) container.Module {
+	return func(c *container.Container) error {
+		if plane != "admin" && plane != "run" {
+			return nil
+		}
+		return c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
+			return d.Readiness
+		})
+	}
 }
 
 type playgroundVerifierParams struct {
@@ -79,6 +102,22 @@ func diagnosticsVerifier(p playgroundVerifierParams) (jwt.ProxyTokenVerifier, er
 	return jwt.NewDiagnosticsVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys)), nil
 }
 
+const snapshotMeterScope = "trustgate/configsync"
+
+func snapshotReport(status *configsync.SnapshotStatus) func() apihandler.SnapshotReport {
+	return func() apihandler.SnapshotReport {
+		info := status.Info()
+		report := apihandler.SnapshotReport{State: string(info.State)}
+		if age, ok := status.Age(); ok {
+			appliedAt := info.AppliedAt.UTC()
+			seconds := int64(age.Seconds())
+			report.AppliedAt = &appliedAt
+			report.AgeSeconds = &seconds
+		}
+		return report
+	}
+}
+
 func API(c *container.Container) error {
 	if err := c.Provide(o11y.NewSDK); err != nil {
 		return err
@@ -86,12 +125,22 @@ func API(c *container.Container) error {
 	if err := c.Provide(o11y.NewProvider); err != nil {
 		return err
 	}
-	if err := c.Provide(func(p healthParams) *apihandler.HealthHandler {
+	if err := c.Provide(func(p healthParams) (*apihandler.HealthHandler, error) {
 		var checks []apihandler.ReadinessCheck
 		if p.Store != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "snapshot", Ping: configsync.ReadinessCheck(p.Store)})
 		}
-		return apihandler.NewHealthHandler(checks...)
+		if p.AdminSnapshotReadiness != nil {
+			checks = append(checks, apihandler.ReadinessCheck{Name: "compiled_snapshot", Ping: p.AdminSnapshotReadiness})
+		}
+		h := apihandler.NewHealthHandler(checks...)
+		if p.Status != nil {
+			if err := configsync.RegisterSnapshotGauges(otel.Meter(snapshotMeterScope), p.Status); err != nil {
+				return nil, err
+			}
+			h.WithSnapshotReport(snapshotReport(p.Status))
+		}
+		return h, nil
 	}); err != nil {
 		return err
 	}
@@ -162,7 +211,7 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
-		verifier appauth.OIDCVerifier,
+		verifier appauth.JWTVerifier,
 		sessionVerifier appauth.SessionTokenVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
@@ -192,7 +241,9 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
+	if err := c.Provide(func() *resolver.APIKeyIdentityResolver {
+		return resolver.NewAPIKeyIdentityResolver(utcNow)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(p playgroundVerifierParams) (*resolver.PlaygroundIdentityResolver, error) {
@@ -238,13 +289,23 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
+	if err := c.Provide(func(cfg *config.Config) *resolver.MTLSIdentityResolver {
+		return resolver.NewMTLSIdentityResolver(mtls.NewValidator(), mtls.NewXFCCExtractor(), cfg.Server.TrustXFCCFrom)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {
+	if err := c.Provide(func(
+		identityResolver resolver.IdentityResolver,
+		dataFinder appconsumer.DataFinder,
+		gatewayResolver resolver.GatewayResolver,
+		storeKeys appconsumer.StoreKeyResolver,
+		logger *slog.Logger,
+	) *middleware.AuthMiddleware {
+		return middleware.NewAuthMiddleware(identityResolver, dataFinder, gatewayResolver, storeKeys, logger, utcNow)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewOAuthChallengeMiddleware); err != nil {
@@ -272,8 +333,17 @@ func API(c *container.Container) error {
 		connect appoauth.ConnectService,
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
+		verifier appauth.JWTVerifier,
+		cfg *config.Config,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
+		// The platform token minted by the built-in default IdP is verified
+		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
+		// claims are trusted, and the sessions it brokers are bounded by
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
+			appoauth.WithIdPTokenVerifier(verifier),
+			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),
+		)
 	}); err != nil {
 		return err
 	}
@@ -283,34 +353,52 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewAuthorizationServerHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewRegisterHandler); err != nil {
+	if err := c.Provide(provideRegisterHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
-		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
+	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, store appoauth.FlowStore, cfg *config.Config) *oauthhttp.AuthorizeHandler {
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
+		return oauthhttp.NewAuthorizeHandler(proxy, gateways, store, oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewCallbackHandler); err != nil {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, cfg *config.Config) *oauthhttp.CallbackHandler {
+		return oauthhttp.NewCallbackHandler(proxy, oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 		return oauthhttp.NewTokenHandler(proxy, gateways)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
 		connect appoauth.ConnectService,
+		handoff appoauth.ConnectHandoff,
 		catalog appcatalog.MCPServerCatalog,
 		cfg *config.Config,
 	) *oauthhttp.ConnectHandler {
-		return oauthhttp.NewConnectHandler(connect, catalog, cfg.Server.MCPOAuthPublicBaseURL)
+		return oauthhttp.NewConnectHandler(connect, handoff, catalog, cfg.Server.MCPOAuthPublicBaseURL,
+			oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
+	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(provideWhoAmIHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
+		return oauthhttp.NewConfigureHandler(configure)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(provideModelRequestHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(providePersonalKeyHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
@@ -319,19 +407,88 @@ func API(c *container.Container) error {
 	return nil
 }
 
-func provideAPIKeyConnectHandler(
+// provideWhoAmIHandler serves the MCP plane's /whoami. It needs the proxy
+// plane's base domain because the LLM consumer it reports lives over there,
+// on a host this plane never sees in a request of its own.
+//
+// On a host that names no gateway — the fixed entry point a client can start
+// from with nothing but its key — the key says which gateway it belongs to,
+// and those lookups are counted per source like the connect pages'.
+func provideWhoAmIHandler(
 	finder appgateway.Finder,
 	cfg *config.Config,
-	connect appoauth.APIKeyConnectService,
+	consumers appconsumer.APIKeyConsumers,
+	apiKeys appauth.APIKeyFinder,
 	limiter appoauth.ConnectAttemptLimiter,
-) *oauthhttp.APIKeyConnectHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
-	resolveSource := func(peer, forwardedFor string) string {
-		return ratelimit.ResolveConnectSource(
-			peer,
-			forwardedFor,
-			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
-		)
+) *mcphttp.WhoAmIHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(
+		finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...,
+	)
+	resolveSource := connectSourceResolver(cfg)
+	opts := []mcphttp.WhoAmIOption{
+		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
 	}
-	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
+	if !cfg.Server.ServeHybridGateways {
+		opts = append(opts, mcphttp.WithWhoAmIRefuseHybrid())
+	}
+	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain, opts...)
+}
+
+func provideRegisterHandler(
+	metadata appoauth.MetadataService,
+	cfg *config.Config,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.RegisterHandler {
+	resolveSource := connectSourceResolver(cfg)
+	return oauthhttp.NewRegisterHandler(metadata, oauthhttp.WithRegistrationLimit(limiter, resolveSource))
+}
+
+func provideEndUserConnectionsHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	connections appoauth.EndUserConnectionsService,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.EndUserConnectionsHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
+	resolveSource := connectSourceResolver(cfg)
+	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
+}
+
+func connectSourceResolver(cfg *config.Config) func(peer, forwardedFor string) string {
+	return ratelimit.NewConnectSourceResolver(cfg.MCPConnectRateLimit.TrustedProxyCIDRs, cfg.ClientIP)
+}
+
+func utcNow() time.Time {
+	return time.Now().UTC()
+}
+
+type personalKeyHandlerParams struct {
+	dig.In
+	Pages  appoauth.PersonalKeyPages `optional:"true"`
+	Finder appgateway.Finder
+	Cfg    *config.Config
+}
+
+type modelRequestHandlerParams struct {
+	dig.In
+	Pages appoauth.ModelRequestPages `optional:"true"`
+}
+
+// provideModelRequestHandler serves the MCP Store's model request page where
+// the console takes requests; nil leaves the page unrouted.
+func provideModelRequestHandler(p modelRequestHandlerParams) *oauthhttp.ModelRequestHandler {
+	if p.Pages == nil {
+		return nil
+	}
+	return oauthhttp.NewModelRequestHandler(p.Pages)
+}
+
+// providePersonalKeyHandler serves the MCP Store's personal key page where
+// the plane can issue keys; nil leaves the page unrouted.
+func providePersonalKeyHandler(p personalKeyHandlerParams) *oauthhttp.PersonalKeyHandler {
+	if p.Pages == nil {
+		return nil
+	}
+	gateways := resolver.NewGatewayResolver(p.Finder, p.Cfg.Server.MCPBaseDomain, p.Cfg.Server.MCPExtraBaseDomains...)
+	return oauthhttp.NewPersonalKeyHandler(p.Pages, gateways, oauthhttp.FlowCookies{AllowInsecure: p.Cfg.Server.OAuthInsecureCookies})
 }

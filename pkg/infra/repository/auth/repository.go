@@ -23,6 +23,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
@@ -33,20 +34,35 @@ import (
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+
+	ownerUniqueIndex = "auths_gateway_owner_uniq"
+
+	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, budget, owner_groups, owner_email, created_at, updated_at`
 )
 
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn   *database.Connection
-	outbox outbox.Appender
+	conn          *database.Connection
+	outbox        outbox.Appender
+	sealer        *crypto.FieldSealer
+	encryptWrites bool
 }
+
+// Option customizes the repository at construction time.
+type Option func(*Repository)
 
 // NewRepository builds the pgx auth repository from the shared connection.
 // Each write commits its config-snapshot change marker in the same transaction
 // via the injected outbox appender.
-func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
-	return &Repository{conn: conn, outbox: appender}
+func NewRepository(conn *database.Connection, appender outbox.Appender, opts ...Option) *Repository {
+	r := &Repository{conn: conn, outbox: appender}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
 }
 
 // withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
@@ -64,20 +80,26 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	if a == nil {
 		return errors.New("auth repository: nil auth")
 	}
-	configBytes, err := json.Marshal(a.Config)
+	configBytes, err := r.marshalConfig(a.ID, a.Config)
 	if err != nil {
 		return fmt.Errorf("auth repository: marshal config: %w", err)
 	}
+	budget, err := budgetParam(a.Budget)
+	if err != nil {
+		return err
+	}
+	ownerGroups, err := ownerGroupsParam(a.OwnerGroups)
+	if err != nil {
+		return err
+	}
 	const query = `
-		INSERT INTO auths (
-			id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		INSERT INTO auths (` + authColumns + `)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
-			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix),
-			a.CreatedAt, a.UpdatedAt,
+			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
+			nullableString(a.OwnerID), budget, ownerGroups, nullableString(a.OwnerEmail), a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -89,10 +111,6 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 	if a == nil {
 		return errors.New("auth repository: nil auth")
 	}
-	configBytes, err := json.Marshal(a.Config)
-	if err != nil {
-		return fmt.Errorf("auth repository: marshal config: %w", err)
-	}
 	const query = `
 		UPDATE auths
 		   SET name       = $2,
@@ -100,10 +118,21 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       enabled    = $4,
 		       config     = $5,
 		       key_hash   = $6,
-		       updated_at = $7
-		 WHERE id = $1 AND gateway_id = $8`
+		       key_prefix = $7,
+		       key_suffix = $8,
+		       expires_at = $9,
+		       updated_at = $10
+		 WHERE id = $1 AND gateway_id = $11`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.UpdatedAt, a.GatewayID)
+		configBytes, err := r.encodeConfigForUpdate(ctx, tx, a.ID, a.GatewayID, a.Config)
+		if err != nil {
+			return fmt.Errorf("auth repository: marshal config: %w", err)
+		}
+		cmd, err := tx.Exec(ctx, query,
+			a.ID, a.Name, string(a.Type), a.Enabled, configBytes,
+			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
+			a.UpdatedAt, a.GatewayID,
+		)
 		if err != nil {
 			return mapPgError(err)
 		}
@@ -111,6 +140,106 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 			return domain.ErrNotFound
 		}
 		return nil
+	})
+}
+
+func (r *Repository) UpdateBudget(ctx context.Context, a *domain.Auth) (*domain.Auth, error) {
+	if a == nil {
+		return nil, errors.New("auth repository: nil auth")
+	}
+	budget, err := budgetParam(a.Budget)
+	if err != nil {
+		return nil, err
+	}
+	const query = `
+		UPDATE auths
+		   SET budget     = $3,
+		       updated_at = $4
+		 WHERE id = $1 AND gateway_id = $2
+		RETURNING ` + authColumns
+	var stored *domain.Auth
+	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var scanErr error
+		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, budget, a.UpdatedAt))
+		if errors.Is(scanErr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if scanErr != nil {
+			return fmt.Errorf("auth repository: update budget: %w", scanErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+func (r *Repository) UpdateOwner(ctx context.Context, a *domain.Auth) (*domain.Auth, error) {
+	if a == nil {
+		return nil, errors.New("auth repository: nil auth")
+	}
+	ownerGroups, err := ownerGroupsParam(a.OwnerGroups)
+	if err != nil {
+		return nil, err
+	}
+	const query = `
+		UPDATE auths
+		   SET owner_groups = $3,
+		       owner_email  = $5,
+		       updated_at   = $4
+		 WHERE id = $1 AND gateway_id = $2
+		RETURNING ` + authColumns
+	var stored *domain.Auth
+	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var scanErr error
+		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt, nullableString(a.OwnerEmail)))
+		if errors.Is(scanErr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if scanErr != nil {
+			return fmt.Errorf("auth repository: update owner: %w", scanErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+func (r *Repository) RotateKey(ctx context.Context, a *domain.Auth, previousHash string) error {
+	if a == nil {
+		return errors.New("auth repository: nil auth")
+	}
+	const query = `
+		UPDATE auths
+		   SET key_hash   = $3,
+		       key_prefix = $4,
+		       key_suffix = $5,
+		       expires_at = $6,
+		       updated_at = $7
+		 WHERE id = $1 AND gateway_id = $2 AND key_hash IS NOT DISTINCT FROM $8`
+	const exists = `SELECT EXISTS (SELECT 1 FROM auths WHERE id = $1 AND gateway_id = $2)`
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, query,
+			a.ID, a.GatewayID, nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix),
+			a.ExpiresAt, a.UpdatedAt, nullableString(previousHash),
+		)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() > 0 {
+			return nil
+		}
+		var found bool
+		if err := tx.QueryRow(ctx, exists, a.ID, a.GatewayID).Scan(&found); err != nil {
+			return fmt.Errorf("auth repository: rotate key: %w", err)
+		}
+		if !found {
+			return domain.ErrNotFound
+		}
+		return domain.ErrRotatedConcurrently
 	})
 }
 
@@ -128,13 +257,38 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 	})
 }
 
+// DeleteOwned locks the key first, so an attach racing the revoke either
+// commits before it and has its link removed here, or waits on the foreign
+// key and fails once the key is gone.
+func (r *Repository) DeleteOwned(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
+	const lock = `SELECT 1 FROM auths WHERE id = $1 AND gateway_id = $2 AND owner_id IS NOT NULL FOR UPDATE`
+	const unlink = `DELETE FROM consumer_auth WHERE auth_id = $1`
+	const remove = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var found int
+		if err := tx.QueryRow(ctx, lock, id, gatewayID).Scan(&found); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.ErrNotFound
+			}
+			return fmt.Errorf("auth repository: lock personal key: %w", err)
+		}
+		if _, err := tx.Exec(ctx, unlink, id); err != nil {
+			return fmt.Errorf("auth repository: unlink personal key: %w", err)
+		}
+		if _, err := tx.Exec(ctx, remove, id, gatewayID); err != nil {
+			return mapPgDeleteError(err)
+		}
+		return nil
+	})
+}
+
 func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
-	a, err := scanAuth(row)
+	a, err := r.scanAuth(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -146,13 +300,13 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 
 func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE key_hash = $1
 		   AND type = 'api_key'
 		   AND enabled = TRUE`
 	row := r.conn.Pool.QueryRow(ctx, query, keyHash)
-	a, err := scanAuth(row)
+	a, err := r.scanAuth(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -162,12 +316,31 @@ func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*dom
 	return a, nil
 }
 
+func (r *Repository) FindByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
+	if ownerID == "" {
+		return nil, domain.ErrNotFound
+	}
+	const query = `
+		SELECT ` + authColumns + `
+		  FROM auths
+		 WHERE gateway_id = $1
+		   AND owner_id = $2`
+	a, err := r.scanAuth(ctx, r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("auth repository: find by owner: %w", err)
+	}
+	return a, nil
+}
+
 func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*domain.Auth, error) {
 	if len(authIDs) == 0 {
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -179,7 +352,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 
 	out := make([]*domain.Auth, 0, len(authIDs))
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -200,7 +373,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 		typeNames = append(typeNames, string(t))
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE enabled = TRUE
 		   AND type = ANY($1::text[])
@@ -213,7 +386,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 
 	var out []*domain.Auth
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -231,13 +404,14 @@ func (r *Repository) ListEnabledByGatewayAndType(
 	authType domain.Type,
 ) ([]*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE gateway_id = $1
-		   AND type = $2
+		   AND type = ANY($2::text[])
 		   AND enabled = TRUE
+		   AND owner_id IS NULL
 		 ORDER BY created_at DESC, id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, string(authType))
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, storedTypeNames(authType))
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: list enabled by gateway and type: %w", err)
 	}
@@ -245,7 +419,7 @@ func (r *Repository) ListEnabledByGatewayAndType(
 
 	out := make([]*domain.Auth, 0)
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -266,27 +440,35 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		   AND ($3 = '' OR type = $3)
-		   AND ($4::boolean IS NULL OR enabled = $4)`
+		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
+		   AND ($4::boolean IS NULL OR enabled = $4)
+		   AND ($5::boolean IS NOT TRUE OR owner_id IS NULL)
+		   AND ($6 = '' OR owner_id = $6)
+		   AND ($7::boolean IS NOT TRUE OR owner_id IS NOT NULL)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
-	typeParam := string(filter.Type)
+	typeParam := storedTypeNames(filter.Type)
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
+		filter.ExcludeOwned, filter.OwnerID, filter.OnlyOwned).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("auth repository: count: %w", err)
 	}
 
 	listQuery := `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		   AND ($3 = '' OR type = $3)
+		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)
+		   AND ($5::boolean IS NOT TRUE OR owner_id IS NULL)
+		   AND ($6 = '' OR owner_id = $6)
+		   AND ($7::boolean IS NOT TRUE OR owner_id IS NOT NULL)
 		 ORDER BY ` + authOrderBy(filter.Sort) + `
-		 LIMIT $5 OFFSET $6`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled, page.Size, offset)
+		 LIMIT $8 OFFSET $9`
+	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
+		filter.ExcludeOwned, filter.OwnerID, filter.OnlyOwned, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("auth repository: list: %w", err)
 	}
@@ -294,7 +476,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 
 	items := make([]*domain.Auth, 0, page.Size)
 	for rows.Next() {
-		a, err := scanAuth(rows)
+		a, err := r.scanAuth(ctx, rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("auth repository: scan: %w", err)
 		}
@@ -310,23 +492,33 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanAuth(s rowScanner) (*domain.Auth, error) {
+func (r *Repository) scanAuth(ctx context.Context, s rowScanner) (*domain.Auth, error) {
 	a := &domain.Auth{}
 	var (
-		authType  string
-		configRaw []byte
-		keyHash   *string
-		keyPrefix *string
-		keySuffix *string
+		authType   string
+		configRaw  []byte
+		keyHash    *string
+		keyPrefix  *string
+		keySuffix  *string
+		ownerID    *string
+		budgetRaw  []byte
+		groupsRaw  []byte
+		ownerEmail *string
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
-		&configRaw, &keyHash, &keyPrefix, &keySuffix,
-		&a.CreatedAt, &a.UpdatedAt,
+		&configRaw, &keyHash, &keyPrefix, &keySuffix, &a.ExpiresAt,
+		&ownerID, &budgetRaw, &groupsRaw, &ownerEmail, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
-	a.Type = domain.Type(authType)
+	if ownerID != nil {
+		a.OwnerID = *ownerID
+	}
+	if ownerEmail != nil {
+		a.OwnerEmail = *ownerEmail
+	}
+	a.Type = domain.NormalizeType(domain.Type(authType))
 	if keyHash != nil {
 		a.KeyHash = *keyHash
 	}
@@ -340,8 +532,41 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 		if err := json.Unmarshal(configRaw, &a.Config); err != nil {
 			return nil, fmt.Errorf("scan config: %w", err)
 		}
+		r.openConfigForRead(ctx, a.ID, &a.Config)
+	}
+	if len(budgetRaw) > 0 {
+		if err := json.Unmarshal(budgetRaw, &a.Budget); err != nil {
+			return nil, fmt.Errorf("scan budget: %w", err)
+		}
+	}
+	if len(groupsRaw) > 0 {
+		if err := json.Unmarshal(groupsRaw, &a.OwnerGroups); err != nil {
+			return nil, fmt.Errorf("scan owner groups: %w", err)
+		}
 	}
 	return a, nil
+}
+
+func ownerGroupsParam(groups []string) (any, error) {
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(groups)
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: marshal owner groups: %w", err)
+	}
+	return raw, nil
+}
+
+func budgetParam(b *domain.KeyBudget) (any, error) {
+	if b == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: marshal budget: %w", err)
+	}
+	return raw, nil
 }
 
 func nullableUUID(id uuid.UUID) any {
@@ -384,6 +609,9 @@ func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
 		case pgUniqueViolation:
+			if pgErr.ConstraintName == ownerUniqueIndex {
+				return domain.ErrOwnedKeyExists
+			}
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:
 			return domain.ErrInvalidGatewayID
@@ -399,4 +627,19 @@ func mapPgDeleteError(err error) error {
 		}
 	}
 	return err
+}
+
+// storedTypeNames expands a canonical type into every value a persisted row may
+// carry for it, so a filter written against the canonical type still matches
+// rows stored under a deprecated alias before the migration runs.
+func storedTypeNames(t domain.Type) []string {
+	if t == "" {
+		return []string{}
+	}
+	stored := domain.StoredTypes(t)
+	names := make([]string, 0, len(stored))
+	for _, s := range stored {
+		names = append(names, string(s))
+	}
+	return names
 }

@@ -28,10 +28,12 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
 const (
-	defaultAppEnv = "dev"
+	defaultAppEnv         = "dev"
+	serverSecretKeyMinLen = 32
 
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
@@ -41,6 +43,16 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+	// defaultStoredSecretsEncryptionEnabled stores MCP and auth credentials
+	// encrypted from the first boot of this version.
+	defaultStoredSecretsEncryptionEnabled = true
+	// defaultReservedGatewayDomains keeps NeuralTrust's own hosts out of reach
+	// of a tenant's gateway domain.
+	defaultReservedGatewayDomains = "neuraltrust.ai"
+	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
+	// org/groups/store_access claims are a login-time snapshot re-minted on
+	// refresh, so the snapshot must expire and force a fresh platform login.
+	defaultMCPDefaultIdPSessionMaxAge = 24 * time.Hour
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -68,10 +80,7 @@ const (
 	defaultSessionStoreEnabled = true
 	defaultSessionStoreTTL     = time.Hour
 
-	defaultKafkaBrokers = "localhost:9092"
-
 	defaultTelemetryEnabled             = true
-	defaultTelemetryKafkaTopic          = "trustgate.requests"
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
@@ -84,6 +93,23 @@ const (
 	defaultMetricsQueueSize     = 1000
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
+
+	defaultTrafficLabelsIntakeQueueSize    = 1000
+	defaultTrafficLabelsIntakeWorkers      = 2
+	defaultTrafficLabelsIntakeMaxBodyBytes = 512 << 10
+	defaultTrafficLabelsIntakeMaxBuffer    = 64 << 20
+	defaultTrafficLabelsEnqueueTimeout     = 500 * time.Millisecond
+	defaultTrafficLabelsTimeout            = 15 * time.Second
+	defaultTrafficLabelsMaxTokens          = 4096
+	defaultTrafficLabelsCacheTTL           = time.Hour
+	defaultTrafficLabelsConversationTTL    = time.Hour
+	defaultTrafficLabelsStreamMaxLen       = 100_000
+	defaultTrafficLabelsStreamRetention    = time.Hour
+	defaultTrafficLabelsGatewayQuota       = 100
+	defaultTrafficLabelsConcurrency        = 8
+	defaultTrafficLabelsBatchMaxTexts      = 8
+	defaultTrafficLabelsClaimMinIdle       = time.Minute
+	defaultTrafficLabelsMaxAttempts        = 3
 
 	defaultPlaygroundTraceStoreEnabled = true
 	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
@@ -109,9 +135,12 @@ const (
 
 	defaultTrustGuardTimeout = 30 * time.Second
 
-	defaultFirewallComplexityTimeout = 30 * time.Second
+	defaultFirewallComplexityTimeout       = 30 * time.Second
+	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
+
+	defaultModelArmorTimeout = 15 * time.Second
 
 	defaultConfigSyncDataPlaneEnabled  = false
 	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
@@ -120,6 +149,10 @@ const (
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
 	defaultRateLimitEnabled = true
+
+	defaultRateLimitSyncInterval = time.Second
+	defaultRateLimitSyncTimeout  = 200 * time.Millisecond
+	defaultRateLimitRetention    = 30 * time.Second
 
 	defaultMCPConnectRateLimitEnabled  = true
 	defaultMCPConnectRateLimitSource   = 10
@@ -133,15 +166,18 @@ const (
 	defaultConfigSyncGRPCMaxBackoff             = 30 * time.Second
 	defaultConfigSyncOutboxRetention            = 24 * time.Hour
 	defaultConfigSyncOutboxMaxRows        int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge             = 7 * 24 * time.Hour
 
 	configSyncKeyBytes = 32
 
 	defaultAdminM2MAudience           = "trustgate-admin"
 	defaultAdminM2MMaxTokenTTL        = 24 * time.Hour
 	defaultAdminPlatformClaimRequired = false
+	maxAdminTokenMaxTTL               = 24 * time.Hour
 )
 
 type Config struct {
+	ClientIP            ClientIPConfig
 	AppEnv              string
 	Server              ServerConfig
 	Database            DatabaseConfig
@@ -149,18 +185,21 @@ type Config struct {
 	Cache               CacheConfig
 	SemanticCache       SemanticCacheConfig
 	SessionStore        SessionStoreConfig
-	Kafka               KafkaConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
+	TrafficLabels       TrafficLabelsConfig
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
+	BedrockNative       BedrockNativeConfig
+	Outbound            OutboundConfig
 	Catalog             CatalogConfig
 	CORS                CORSConfig
 	Logger              LoggerConfig
 	TrustGuard          TrustGuardConfig
 	FirewallComplexity  FirewallComplexityConfig
 	OpenAIModeration    OpenAIModerationConfig
+	ModelArmor          ModelArmorConfig
 	ConfigSync          ConfigSyncConfig
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
@@ -235,6 +274,11 @@ type ConfigSyncConfig struct {
 	GRPCMaxBackoff       time.Duration
 	OutboxRetention      time.Duration
 	OutboxMaxRows        int64
+	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
+	// serve them after a restart while compiling fails.
+	AdminLKGEnabled bool
+	// AdminLKGMaxAge refuses a persisted snapshot older than this.
+	AdminLKGMaxAge time.Duration
 }
 
 type ServerConfig struct {
@@ -247,17 +291,33 @@ type ServerConfig struct {
 	SecretKey         string
 	GatewayBaseDomain string
 	MCPBaseDomain     string
+	// MCPExtraBaseDomains lists further host suffixes this deployment answers
+	// on, beyond MCPBaseDomain. A gateway keeps publishing its URL under
+	// MCPBaseDomain; these only widen what the request router recognises, for
+	// when the same cluster is also reachable under a second domain.
+	MCPExtraBaseDomains []string
+	// ReservedGatewayDomains are host suffixes no tenant may claim as a
+	// gateway's own domain, on top of the base domains this deployment routes
+	// gateways on. GATEWAY_RESERVED_DOMAINS, comma separated.
+	ReservedGatewayDomains []string
 	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
 	// redirect_uri base for upstream MCP connect (authorize + code exchange +
 	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
 	// so a single Google/Entra app can allowlist one host across tenants.
 	// Example: https://oauth.mcp.neuraltrust.ai
 	MCPOAuthPublicBaseURL string
-	STSIssuer             string
-	STSSigningKey         string
-	TrustXFCCFrom         []string
-	MCPDefaultIdP         MCPDefaultIdPConfig
-	GoogleWorkspaceMCP    GoogleWorkspaceMCPConfig
+	// MCPOAuthClientName is the client_name the gateway registers with upstream
+	// MCP authorization servers through dynamic client registration — the app
+	// name a user sees on the upstream's consent screen and the admin sees in
+	// its third-party application list. Give each environment its own name so
+	// a dev gateway never collides with the prod app registered at the same
+	// upstream. Defaults to "TrustGate MCP Gateway".
+	MCPOAuthClientName string
+	STSIssuer          string
+	STSSigningKey      string
+	TrustXFCCFrom      []string
+	MCPDefaultIdP      MCPDefaultIdPConfig
+	GoogleWorkspaceMCP GoogleWorkspaceMCPConfig
 	// ServeHybridGateways marks a proxy deployment as allowed to serve gateways
 	// whose entitlements say data_plane=hybrid. Defaults to true only on
 	// config-sync data planes (the customer-run deployment those gateways belong
@@ -265,7 +325,43 @@ type ServerConfig struct {
 	// customer boundary through it. PROXY_SERVE_HYBRID_GATEWAYS overrides for
 	// non-dbless customer data planes.
 	ServeHybridGateways bool
+	// AdminTokenMaxTTL is the furthest a console token's exp may sit in the
+	// future. Tokens without exp, or beyond this horizon, are rejected.
+	AdminTokenMaxTTL time.Duration
+	// OAuthInsecureCookies lets the MCP OAuth flow cookies drop the Secure
+	// attribute on plain-http hosts other than loopback (local DNS, on-prem over
+	// http). Leave it off wherever the MCP plane is served over https.
+	OAuthInsecureCookies bool
+	// StoredSecretsEncryptionEnabled makes the registry and auth repositories
+	// store credentials encrypted (enc:v1) and runs the startup backfill that
+	// encrypts rows written before, on the admin and run planes. Every read
+	// path decrypts enc:v1 values whatever its value. A version older than the
+	// one that introduced it cannot read those values, so upgrade every plane
+	// in one deploy and do not roll back past it.
+	// STORED_SECRETS_ENCRYPTION_ENABLED, default true.
+	StoredSecretsEncryptionEnabled bool
+	// ConsoleEventsURL is where the control plane tells the console about a
+	// personal key the MCP Store's page created, rotated or revoked, so the
+	// console audits it and links the key to its models as it does for the
+	// Portal's (CONSOLE_EVENTS_URL, e.g.
+	// https://app.neuraltrust.ai/api/internal/trustgate/personal-key-events).
+	// Signed with SecretKey, the secret the console already shares. Empty: the
+	// console is not told, and a new key reaches its models on the console's
+	// next reconcile.
+	ConsoleEventsURL string
+	// ConsoleModelRequestsURL is where the MCP Store's request tool asks the
+	// console about a request for a provider's models, and files it once the
+	// person sends their reason, so Access → Approvals decides it as it does the
+	// Portal's (CONSOLE_MODEL_REQUESTS_URL, e.g.
+	// https://app.neuraltrust.ai/api/internal/trustgate/llm-access-requests).
+	// Signed with SecretKey, like ConsoleEventsURL. Empty: the Store offers no
+	// request tool, and users ask from the Portal.
+	ConsoleModelRequestsURL string
 }
+
+// DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
+// absent or invalid.
+const DefaultAdminTokenMaxTTL = time.Hour
 
 type MCPDefaultIdPConfig struct {
 	Issuer       string
@@ -276,6 +372,10 @@ type MCPDefaultIdPConfig struct {
 	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 	Audiences    []string
 	Scopes       []string
+	// SessionMaxAge is the absolute lifetime of an MCP session brokered through
+	// the built-in identity provider. Refreshing past it forces a new platform
+	// login so org, groups and store_access are re-derived.
+	SessionMaxAge time.Duration
 }
 
 type GoogleWorkspaceMCPConfig struct {
@@ -327,13 +427,8 @@ type SessionStoreConfig struct {
 	TTL     time.Duration
 }
 
-type KafkaConfig struct {
-	Brokers []string
-}
-
 type TelemetryConfig struct {
 	Enabled                bool
-	KafkaTopic             string
 	ExportersFile          string
 	ExportersMetadata      string
 	ExportersRaw           string
@@ -370,6 +465,25 @@ type MetricsConfig struct {
 	FlushInterval time.Duration
 }
 
+type TrafficLabelsConfig struct {
+	IntakeQueueSize       int
+	IntakeWorkers         int
+	IntakeMaxBodyBytes    int
+	IntakeMaxBufferBytes  int64
+	EnqueueTimeout        time.Duration
+	ClassifierTimeout     time.Duration
+	MaxTokens             int
+	CacheTTL              time.Duration
+	ConversationTTL       time.Duration
+	StreamMaxLen          int64
+	StreamRetention       time.Duration
+	GatewayQuotaPerSecond int64
+	Concurrency           int
+	BatchMaxTexts         int
+	ClaimMinIdle          time.Duration
+	MaxAttempts           int
+}
+
 type PlaygroundConfig struct {
 	TraceStoreEnabled bool
 	TraceStoreTTL     time.Duration
@@ -391,6 +505,45 @@ type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
 	MaxRetries            int
+}
+
+// BedrockNativeConfig tunes the relay of native Bedrock Runtime calls. Every limit
+// bounds work or memory a client can cause: a negative value is refused at load,
+// and a zero one, as in a Config built by hand, means the default.
+type BedrockNativeConfig struct {
+	// LookupWait is how long a call waits for the model behind an application
+	// inference profile ARN to be looked up before it goes on unpriced.
+	LookupWait time.Duration
+	// ToolHold is how long a streamed tool call is held, from its first frame, so
+	// its input can be inspected whole.
+	ToolHold time.Duration
+	// MaxResponseBytes bounds a buffered Bedrock answer.
+	MaxResponseBytes int64
+	// ResolverMaxInFlight is the model lookups in flight across every registry,
+	// ResolverMaxPerRegistry the ones a single registry can have, and
+	// ResolverCacheEntries what is remembered for each registry.
+	ResolverMaxInFlight    int
+	ResolverMaxPerRegistry int
+	ResolverCacheEntries   int
+	// ResolverResolvedTTL and ResolverUnresolvedTTL are how long a model and a
+	// failed lookup are remembered.
+	ResolverResolvedTTL   time.Duration
+	ResolverUnresolvedTTL time.Duration
+	// ResolverControlPlaneTimeout bounds one control plane call.
+	ResolverControlPlaneTimeout time.Duration
+}
+
+// OutboundConfig governs every outbound client whose destination a tenant can
+// steer: provider base_url, OAuth/OIDC/STS/introspection endpoints, telemetry
+// exporters.
+type OutboundConfig struct {
+	// AllowPrivateNetworks lets those clients dial loopback, RFC1918,
+	// link-local and other non-public addresses. On by default: hybrid and
+	// self-hosted gateways serve one operator and reach its private model
+	// hosts, IdPs and collectors. The destinations are tenant input, so shared
+	// gateways turn it off (OUTBOUND_ALLOW_PRIVATE_NETWORKS=false in
+	// k8s/overlays/*/config.env).
+	AllowPrivateNetworks bool
 }
 
 type CatalogConfig struct {
@@ -419,10 +572,12 @@ type TrustGuardConfig struct {
 	ClientSecret string
 }
 
+// FirewallComplexityConfig configures the scorer and its expected artifact revision.
 type FirewallComplexityConfig struct {
-	BaseURL   string
-	SecretKey string // #nosec G117 -- config struct field, not a hardcoded credential
-	Timeout   time.Duration
+	BaseURL       string
+	SecretKey     string // #nosec G117 -- config struct field, not a hardcoded credential
+	Timeout       time.Duration
+	ModelRevision string
 }
 
 type OpenAIModerationConfig struct {
@@ -430,8 +585,37 @@ type OpenAIModerationConfig struct {
 	Timeout time.Duration
 }
 
+// ModelArmorConfig configures the REST client used by the google_model_armor
+// guardrail plugin (pkg/infra/plugins/googlemodelarmor). BaseURL overrides Model
+// Armor's regional host — Model Armor has no global endpoint — for tests or
+// a private egress proxy; leave it empty in production so each call
+// addresses the region its own request names.
+//
+// AllowAmbientIdentity lets a policy authenticate as the gateway pod's own
+// identity (no credentials, or impersonate_service_account, which the pod
+// identity performs). That identity is shared by every tenant on the gateway,
+// so on a multi-tenant deploy it is a cross-tenant confused deputy. On by
+// default for single-operator (hybrid, self-hosted) gateways; shared gateways
+// turn it off (MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=false in
+// k8s/overlays/*/config.env).
+type ModelArmorConfig struct {
+	BaseURL              string
+	Timeout              time.Duration
+	AllowAmbientIdentity bool
+}
+
 type RateLimitConfig struct {
 	Enabled bool
+	// SyncInterval is how often the in-memory plan counters are reconciled with
+	// Redis. Overshoot past a cap is bounded by the tenant's request rate times
+	// this interval.
+	SyncInterval time.Duration
+	// SyncTimeout bounds one round trip to Redis from the sync loop. It never
+	// applies to a request: requests do not call Redis.
+	SyncTimeout time.Duration
+	// FailedRetention is how long usage that could not be synced is kept for
+	// resending, from its first failure, before it is dropped and counted.
+	FailedRetention time.Duration
 }
 
 type MCPConnectRateLimitConfig struct {
@@ -443,11 +627,20 @@ type MCPConnectRateLimitConfig struct {
 }
 
 func LoadConfig() (*Config, error) {
+	clientIP, err := getClientIPConfig()
+	if err != nil {
+		return nil, err
+	}
 	mcpConnectRateLimit, err := getMCPConnectRateLimitConfig()
 	if err != nil {
 		return nil, err
 	}
+	rateLimit, err := getRateLimitConfig()
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
+		ClientIP:            clientIP,
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
 		Server:              getServerConfig(),
 		Database:            getDatabaseConfig(),
@@ -455,20 +648,23 @@ func LoadConfig() (*Config, error) {
 		Cache:               getCacheConfig(),
 		SemanticCache:       getSemanticCacheConfig(),
 		SessionStore:        getSessionStoreConfig(),
-		Kafka:               getKafkaConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
+		TrafficLabels:       getTrafficLabelsConfig(),
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
+		BedrockNative:       getBedrockNativeConfig(),
+		Outbound:            getOutboundConfig(),
 		Catalog:             getCatalogConfig(),
 		CORS:                getCORSConfig(),
 		Logger:              getLoggerConfig(),
 		TrustGuard:          getTrustGuardConfig(),
 		FirewallComplexity:  getFirewallComplexityConfig(),
 		OpenAIModeration:    getOpenAIModerationConfig(),
+		ModelArmor:          getModelArmorConfig(),
 		ConfigSync:          getConfigSyncConfig(),
-		RateLimit:           getRateLimitConfig(),
+		RateLimit:           rateLimit,
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
 	}
@@ -500,20 +696,29 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
-		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
-		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
-		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
-		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
-		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
+		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		ReservedGatewayDomains:         splitCSV(getEnv("GATEWAY_RESERVED_DOMAINS", defaultReservedGatewayDomains)),
+		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
+		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
+		STSIssuer:                      getEnv("STS_ISSUER", "trustgate"),
+		STSSigningKey:                  getEnv("STS_SIGNING_KEY", ""),
+		TrustXFCCFrom:                  splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		ServeHybridGateways:            getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
+		AdminTokenMaxTTL:               min(getEnvDuration("ADMIN_TOKEN_MAX_TTL", DefaultAdminTokenMaxTTL), maxAdminTokenMaxTTL),
+		OAuthInsecureCookies:           getEnvBool("MCP_OAUTH_INSECURE_COOKIES", false),
+		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", defaultStoredSecretsEncryptionEnabled),
+		ConsoleEventsURL:               strings.TrimSpace(getEnv("CONSOLE_EVENTS_URL", "")),
+		ConsoleModelRequestsURL:        strings.TrimSpace(getEnv("CONSOLE_MODEL_REQUESTS_URL", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
-			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
-			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
-			TokenURL:     getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
-			JWKSURL:      getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
-			ClientID:     getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
-			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
-			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
-			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
+			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
+			TokenURL:      getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
+			JWKSURL:       getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
+			ClientID:      getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
+			ClientSecret:  getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
+			Audiences:     splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
+			Scopes:        splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			SessionMaxAge: getEnvDuration("MCP_DEFAULT_IDP_SESSION_MAX_AGE", defaultMCPDefaultIdPSessionMaxAge),
 		},
 		GoogleWorkspaceMCP: GoogleWorkspaceMCPConfig{
 			ClientID:     getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_ID", ""),
@@ -600,14 +805,9 @@ func getSessionStoreConfig() SessionStoreConfig {
 	}
 }
 
-func getKafkaConfig() KafkaConfig {
-	return KafkaConfig{Brokers: splitCSV(getEnv("KAFKA_BROKERS", defaultKafkaBrokers))}
-}
-
 func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
-		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
 		ExportersFile:       getEnvAllowEmpty("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		ExportersMetadata:   getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
 		ExportersRaw:        getEnv("TELEMETRY_EXPORTERS_RAW", ""),
@@ -679,6 +879,28 @@ func parseOTLPHeaders(raw string) map[string]string {
 	return out
 }
 
+func getTrafficLabelsConfig() TrafficLabelsConfig {
+	return TrafficLabelsConfig{
+		IntakeQueueSize:      getEnvInt("TRAFFIC_LABELS_INTAKE_QUEUE_SIZE", defaultTrafficLabelsIntakeQueueSize),
+		IntakeWorkers:        getEnvInt("TRAFFIC_LABELS_INTAKE_WORKERS", defaultTrafficLabelsIntakeWorkers),
+		IntakeMaxBodyBytes:   getEnvInt("TRAFFIC_LABELS_INTAKE_MAX_BODY_BYTES", defaultTrafficLabelsIntakeMaxBodyBytes),
+		IntakeMaxBufferBytes: getEnvInt64("TRAFFIC_LABELS_INTAKE_MAX_BUFFER_BYTES", defaultTrafficLabelsIntakeMaxBuffer),
+		EnqueueTimeout:       getEnvDuration("TRAFFIC_LABELS_ENQUEUE_TIMEOUT", defaultTrafficLabelsEnqueueTimeout),
+		ClassifierTimeout:    getEnvDuration("TRAFFIC_LABELS_TIMEOUT", defaultTrafficLabelsTimeout),
+		MaxTokens:            getEnvInt("TRAFFIC_LABELS_MAX_TOKENS", defaultTrafficLabelsMaxTokens),
+		CacheTTL:             getEnvDuration("TRAFFIC_LABELS_CACHE_TTL", defaultTrafficLabelsCacheTTL),
+		ConversationTTL:      getEnvDuration("TRAFFIC_LABELS_CONVERSATION_TTL", defaultTrafficLabelsConversationTTL),
+
+		StreamMaxLen:          getEnvInt64("TRAFFIC_LABELS_STREAM_MAX_LEN", defaultTrafficLabelsStreamMaxLen),
+		StreamRetention:       getEnvDuration("TRAFFIC_LABELS_STREAM_RETENTION", defaultTrafficLabelsStreamRetention),
+		GatewayQuotaPerSecond: getEnvInt64("TRAFFIC_LABELS_GATEWAY_QUOTA_PER_SEC", defaultTrafficLabelsGatewayQuota),
+		Concurrency:           getEnvInt("TRAFFIC_LABELS_CONCURRENCY", defaultTrafficLabelsConcurrency),
+		BatchMaxTexts:         getEnvInt("TRAFFIC_LABELS_BATCH_MAX_TEXTS", defaultTrafficLabelsBatchMaxTexts),
+		ClaimMinIdle:          getEnvDuration("TRAFFIC_LABELS_CLAIM_MIN_IDLE", defaultTrafficLabelsClaimMinIdle),
+		MaxAttempts:           getEnvInt("TRAFFIC_LABELS_MAX_ATTEMPTS", defaultTrafficLabelsMaxAttempts),
+	}
+}
+
 func getMetricsConfig() MetricsConfig {
 	return MetricsConfig{
 		Enabled:       getEnvBool("METRICS_ENABLED", defaultMetricsEnabled),
@@ -713,6 +935,65 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+	}
+}
+
+// DefaultBedrockNative is the one place the defaults of the native Bedrock limits
+// are written. Zero values of a hand-built Config fall back to it.
+func DefaultBedrockNative() BedrockNativeConfig {
+	return BedrockNativeConfig{
+		LookupWait:                  1500 * time.Millisecond,
+		ToolHold:                    30 * time.Second,
+		MaxResponseBytes:            32 << 20,
+		ResolverMaxInFlight:         8,
+		ResolverMaxPerRegistry:      2,
+		ResolverCacheEntries:        2048,
+		ResolverResolvedTTL:         6 * time.Hour,
+		ResolverUnresolvedTTL:       5 * time.Minute,
+		ResolverControlPlaneTimeout: 10 * time.Second,
+	}
+}
+
+func getBedrockNativeConfig() BedrockNativeConfig {
+	d := DefaultBedrockNative()
+	return BedrockNativeConfig{
+		LookupWait:                  getEnvDuration("BEDROCK_NATIVE_LOOKUP_WAIT", d.LookupWait),
+		ToolHold:                    getEnvDuration("BEDROCK_NATIVE_TOOL_HOLD", d.ToolHold),
+		MaxResponseBytes:            getEnvInt64("BEDROCK_NATIVE_MAX_RESPONSE_BYTES", d.MaxResponseBytes),
+		ResolverMaxInFlight:         getEnvInt("BEDROCK_MODEL_RESOLVER_MAX_IN_FLIGHT", d.ResolverMaxInFlight),
+		ResolverMaxPerRegistry:      getEnvInt("BEDROCK_MODEL_RESOLVER_MAX_PER_REGISTRY", d.ResolverMaxPerRegistry),
+		ResolverCacheEntries:        getEnvInt("BEDROCK_MODEL_RESOLVER_CACHE_ENTRIES", d.ResolverCacheEntries),
+		ResolverResolvedTTL:         getEnvDuration("BEDROCK_MODEL_RESOLVER_RESOLVED_TTL", d.ResolverResolvedTTL),
+		ResolverUnresolvedTTL:       getEnvDuration("BEDROCK_MODEL_RESOLVER_UNRESOLVED_TTL", d.ResolverUnresolvedTTL),
+		ResolverControlPlaneTimeout: getEnvDuration("BEDROCK_MODEL_RESOLVER_TIMEOUT", d.ResolverControlPlaneTimeout),
+	}
+}
+
+func (c BedrockNativeConfig) validate() error {
+	for name, n := range map[string]int64{
+		"BEDROCK_NATIVE_MAX_RESPONSE_BYTES":       c.MaxResponseBytes,
+		"BEDROCK_MODEL_RESOLVER_MAX_IN_FLIGHT":    int64(c.ResolverMaxInFlight),
+		"BEDROCK_MODEL_RESOLVER_MAX_PER_REGISTRY": int64(c.ResolverMaxPerRegistry),
+		"BEDROCK_MODEL_RESOLVER_CACHE_ENTRIES":    int64(c.ResolverCacheEntries),
+		"BEDROCK_NATIVE_LOOKUP_WAIT":              int64(c.LookupWait),
+		"BEDROCK_NATIVE_TOOL_HOLD":                int64(c.ToolHold),
+		"BEDROCK_MODEL_RESOLVER_RESOLVED_TTL":     int64(c.ResolverResolvedTTL),
+		"BEDROCK_MODEL_RESOLVER_UNRESOLVED_TTL":   int64(c.ResolverUnresolvedTTL),
+		"BEDROCK_MODEL_RESOLVER_TIMEOUT":          int64(c.ResolverControlPlaneTimeout),
+	} {
+		if n < 0 {
+			return fmt.Errorf("%w: %s must not be negative", errors.ErrInvalidConfig, name)
+		}
+	}
+	return nil
+}
+
+func getOutboundConfig() OutboundConfig {
+	return OutboundConfig{
+		// PROVIDER_ALLOW_PRIVATE_NETWORKS is the pre-rename name: an operator who
+		// set it false keeps the guard until they move to the new name.
+		AllowPrivateNetworks: getEnvBool("OUTBOUND_ALLOW_PRIVATE_NETWORKS",
+			getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", true)),
 	}
 }
 
@@ -763,9 +1044,10 @@ func getTrustGuardConfig() TrustGuardConfig {
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
 	return FirewallComplexityConfig{
-		BaseURL:   getEnv("FIREWALL_BASE_URL", ""),
-		SecretKey: getEnv("FIREWALL_SECRET_KEY", ""),
-		Timeout:   defaultFirewallComplexityTimeout,
+		BaseURL:       getEnv("FIREWALL_BASE_URL", ""),
+		SecretKey:     getEnv("FIREWALL_SECRET_KEY", ""),
+		Timeout:       defaultFirewallComplexityTimeout,
+		ModelRevision: getEnv("FIREWALL_COMPLEXITY_MODEL_REVISION", defaultFirewallComplexityModelRevision),
 	}
 }
 
@@ -773,6 +1055,20 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 	return OpenAIModerationConfig{
 		BaseURL: getEnv("OPENAI_MODERATION_BASE_URL", "https://api.openai.com"),
 		Timeout: getEnvDuration("OPENAI_MODERATION_TIMEOUT", defaultOpenAIModerationTimeout),
+	}
+}
+
+// getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT and
+// MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY (default true). Unlike
+// OpenAIModeration, BaseURL has no default host: Model Armor is regional, so
+// an empty value tells the client to derive the host per call from the
+// request's own location instead of pinning one region.
+func getModelArmorConfig() ModelArmorConfig {
+	return ModelArmorConfig{
+		BaseURL: getEnv("MODEL_ARMOR_BASE_URL", ""),
+		Timeout: getEnvDuration("MODEL_ARMOR_TIMEOUT", defaultModelArmorTimeout),
+		// Default true for single-operator gateways; shared ones set false.
+		AllowAmbientIdentity: getEnvBool("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", true),
 	}
 }
 
@@ -805,13 +1101,42 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
+		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
 	}
 }
 
-func getRateLimitConfig() RateLimitConfig {
-	return RateLimitConfig{
-		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
+func getRateLimitConfig() (RateLimitConfig, error) {
+	syncInterval, err := parsePositiveDurationEnv("RATE_LIMIT_SYNC_INTERVAL", defaultRateLimitSyncInterval)
+	if err != nil {
+		return RateLimitConfig{}, err
 	}
+	syncTimeout, err := parsePositiveDurationEnv("RATE_LIMIT_SYNC_TIMEOUT", defaultRateLimitSyncTimeout)
+	if err != nil {
+		return RateLimitConfig{}, err
+	}
+	retention, err := parsePositiveDurationEnv("RATE_LIMIT_FAILED_RETENTION", defaultRateLimitRetention)
+	if err != nil {
+		return RateLimitConfig{}, err
+	}
+	return RateLimitConfig{
+		Enabled:         getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
+		SyncInterval:    syncInterval,
+		SyncTimeout:     syncTimeout,
+		FailedRetention: retention,
+	}, nil
+}
+
+// Validate rejects a rate-limit configuration the sync loop cannot honour. With
+// the limiter off nothing runs, so nothing is checked.
+func (c RateLimitConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if err := ratelimitdomain.ValidateRetention(c.FailedRetention, c.SyncInterval, c.SyncTimeout); err != nil {
+		return fmt.Errorf("%w: RATE_LIMIT_FAILED_RETENTION: %v", errors.ErrInvalidConfig, err)
+	}
+	return nil
 }
 
 func getAdminM2MConfig() AdminM2MConfig {
@@ -1003,6 +1328,9 @@ func (c *Config) Validate() error {
 	if err := validateMCPOAuthPublicBaseURL(&c.Server.MCPOAuthPublicBaseURL); err != nil {
 		return err
 	}
+	if err := c.validateServerSecretKey(); err != nil {
+		return err
+	}
 	if !c.ConfigSync.DataPlaneEnabled {
 		if c.Database.Host == "" {
 			return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
@@ -1041,12 +1369,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
 		}
 	}
-	if len(c.Kafka.Brokers) == 0 {
-		return fmt.Errorf("%w: KAFKA_BROKERS must contain at least one broker", errors.ErrInvalidConfig)
-	}
-	if c.Telemetry.Enabled && c.Telemetry.KafkaTopic == "" {
-		return fmt.Errorf("%w: TELEMETRY_KAFKA_TOPIC is required when telemetry is enabled", errors.ErrInvalidConfig)
-	}
 	if c.Metrics.Enabled && c.Metrics.QueueSize <= 0 {
 		return fmt.Errorf("%w: METRICS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)
 	}
@@ -1056,7 +1378,13 @@ func (c *Config) Validate() error {
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
+	if err := c.BedrockNative.validate(); err != nil {
+		return err
+	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
+		return err
+	}
+	if err := c.RateLimit.Validate(); err != nil {
 		return err
 	}
 	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
@@ -1120,6 +1448,21 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
+}
+
+func (c *Config) validateServerSecretKey() error {
+	env := strings.ToLower(strings.TrimSpace(c.AppEnv))
+	if env == "prod" || env == "production" {
+		return nil
+	}
+	if len(strings.TrimSpace(c.Server.SecretKey)) < serverSecretKeyMinLen {
+		return fmt.Errorf(
+			"%w: SERVER_SECRET_KEY must be at least %d bytes of random data; generate one with: openssl rand -base64 32",
+			errors.ErrInvalidConfig,
+			serverSecretKeyMinLen,
+		)
+	}
+	return nil
 }
 
 func (c *Config) isDeployed() bool {
