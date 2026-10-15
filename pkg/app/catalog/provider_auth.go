@@ -269,6 +269,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providerdomain.OpenRouter:       {apiKeyAuthOption},
 	providerdomain.Cohere:           {apiKeyAuthOption},
 	providerdomain.Moonshot:         {apiKeyAuthOption},
+	providerdomain.DigitalOcean:     {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {

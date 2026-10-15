@@ -185,6 +185,30 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 64},
 		},
 		{
+			name:  "digitalocean claude cache write beside prompt_tokens",
+			usage: `{"cache_created_input_tokens":1043,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":1043},"cache_read_input_tokens":0,"prompt_tokens":14,"completion_tokens":100,"total_tokens":114}`,
+			want:  &CanonicalUsage{InputTokens: 1057, OutputTokens: 100, TotalTokens: 1157, CacheWriteInputTokens: 1043, cacheTTLKnown: true},
+			plain: new(14),
+		},
+		{
+			name:  "digitalocean claude 1h cache write",
+			usage: `{"cache_created_input_tokens":600,"cache_creation":{"ephemeral_1h_input_tokens":600,"ephemeral_5m_input_tokens":0},"cache_read_input_tokens":400,"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}`,
+			want:  &CanonicalUsage{InputTokens: 1020, OutputTokens: 5, TotalTokens: 1025, CachedInputTokens: 400, CacheWriteInputTokens: 600, CacheWrite1hInputTokens: 600, cacheTTLKnown: true},
+			plain: new(20),
+		},
+		{
+			name:  "digitalocean hosted model reports the read twice and counts it once",
+			usage: `{"prompt_tokens":214,"completion_tokens":217,"total_tokens":431,"cache_read_input_tokens":128,"prompt_tokens_details":{"cached_tokens":128}}`,
+			want:  &CanonicalUsage{InputTokens: 214, OutputTokens: 217, TotalTokens: 431, CachedInputTokens: 128},
+			plain: new(86),
+		},
+		{
+			name:  "top-level cache read without digitalocean's write count stays inside prompt_tokens",
+			usage: `{"prompt_tokens":1000,"completion_tokens":5,"total_tokens":1005,"cache_read_input_tokens":800}`,
+			want:  &CanonicalUsage{InputTokens: 1000, OutputTokens: 5, TotalTokens: 1005, CachedInputTokens: 800},
+			plain: new(200),
+		},
+		{
 			name:  "deepseek hit with zero cached details",
 			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20,"prompt_tokens_details":{"cached_tokens":0}}`,
 			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 80},
