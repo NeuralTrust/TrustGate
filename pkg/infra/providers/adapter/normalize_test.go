@@ -415,6 +415,30 @@ func TestPrefersMaxCompletionTokens_DependsOnModelFamily(t *testing.T) {
 	}
 }
 
+func TestAcceptsStreamIncludeUsage_FoundryFamilyGating(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		want     bool
+	}{
+		{provider: provider.OpenAI, model: "gpt-4o-mini", want: true},
+		{provider: provider.OpenAI, model: "mistral-small-2503", want: true},
+		{provider: provider.Azure, model: "gpt-4o", want: true},
+		{provider: provider.Azure, model: "gpt-4o-mini", want: true},
+		{provider: provider.Azure, model: "", want: true},
+		{provider: provider.Azure, model: "probe-mistral", want: false},
+		{provider: provider.Azure, model: "mistral-small-2503", want: false},
+		{provider: provider.Azure, model: "probe-llama33", want: false},
+		{provider: provider.Groq, model: "openai/gpt-oss-120b", want: true},
+		{provider: provider.Mistral, model: "mistral-large-latest", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) {
+			assert.Equal(t, tc.want, AcceptsStreamIncludeUsage(tc.provider, tc.model))
+		})
+	}
+}
+
 func TestNormalizeRequestForProvider_TokenParamKey(t *testing.T) {
 	openaiWire := []string{provider.OpenAI, provider.Azure}
 	others := []string{provider.Cerebras, provider.OpenAICompatible, provider.Groq, provider.DeepSeek, provider.XAI, provider.OpenRouter}

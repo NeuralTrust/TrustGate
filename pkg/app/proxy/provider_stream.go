@@ -45,12 +45,22 @@ func injectStreamTrue(body []byte) []byte {
 	return out
 }
 
+// applyStreamIncludeUsage injects stream_options.include_usage for families
+// that accept it, and strips stream_options when the family rejects it
+// (Azure Foundry Mistral and other non-OpenAI Foundry deployments).
+func applyStreamIncludeUsage(body []byte, providerName, model string) []byte {
+	if adapter.AcceptsStreamIncludeUsage(providerName, model) {
+		return injectStreamIncludeUsage(body)
+	}
+	return stripStreamOptions(body)
+}
+
 // injectStreamIncludeUsage forces "stream_options.include_usage": true on an
 // OpenAI Chat Completions request body. Without it OpenAI-wire backends omit the
 // final usage chunk while streaming, leaving the request metrics without token
 // usage. Existing stream_options keys are preserved. It must only be applied to
-// the OpenAI Chat Completions wire format: the Responses API, Anthropic and
-// Mistral stream usage by default and reject (or ignore) this field.
+// families that accept the field: the Responses API, Anthropic and Mistral
+// stream usage by default and reject (or ignore) this field.
 func injectStreamIncludeUsage(body []byte) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -66,6 +76,24 @@ func injectStreamIncludeUsage(body []byte) []byte {
 		return body
 	}
 	m["stream_options"] = encodedOpts
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// stripStreamOptions removes stream_options from a JSON request body. Families
+// that reject the field (Azure Foundry Mistral) 422 even when the client sent it.
+func stripStreamOptions(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	if _, ok := m["stream_options"]; !ok {
+		return body
+	}
+	delete(m, "stream_options")
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body

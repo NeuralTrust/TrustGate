@@ -257,6 +257,19 @@ func prefersMaxCompletionTokens(providerName, model string) bool {
 	}
 }
 
+// AcceptsStreamIncludeUsage reports whether this Chat Completions call accepts
+// stream_options.include_usage. Azure Foundry non-OpenAI families (mistral,
+// llama, …) reject the field even though they share the OpenAI-compatible
+// surface; detection uses the same deployment-name family tokens as
+// prefersMaxCompletionTokens. Other OpenAI-wire providers, including Groq,
+// take the field.
+func AcceptsStreamIncludeUsage(providerName, model string) bool {
+	if providerName == provider.Azure {
+		return !foundryModelKeepsMaxTokens(model)
+	}
+	return true
+}
+
 // foundryMaxTokensFamilies are non-OpenAI chat families Azure Foundry hosts on
 // its OpenAI-compatible surface. A deployment name often only embeds the
 // family (probe-mistral, probe-llama33), so matching is by family token, not
