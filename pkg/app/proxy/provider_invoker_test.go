@@ -399,7 +399,38 @@ func TestProviderInvoke_ToolInjectionDoesNotSendReasoningEffortNone(t *testing.T
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.JSONEq(t, reasoningToolsError, string(resp.Body))
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Param   string `json:"param"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body, &decoded))
+	assert.Equal(t, "invalid_request_error", decoded.Error.Type)
+	assert.Equal(t, "tools", decoded.Error.Param)
+	assert.Contains(t, decoded.Error.Message, "gpt-6.1-sol")
+	assert.Contains(t, decoded.Error.Message, "Responses API")
+	assert.NotContains(t, decoded.Error.Message, "set reasoning_effort to 'none'")
+}
+
+func TestProviderInvoke_SolKeepsUnrelatedProviderError(t *testing.T) {
+	body := `{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	upstream := `{"error":{"message":"rate limited","type":"invalid_request_error"}}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(upstream))).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.JSONEq(t, upstream, string(resp.Body))
 }
 
 func TestProviderInvoke_DropsClientReasoningEffortNoneForSol(t *testing.T) {
