@@ -444,6 +444,30 @@ The check fails on any link that 404s or redirects, and reports which catalog
 entries use it. `403`/`429` are treated as bot protection rather than a dead
 link, so verify those by hand.
 
+### Tool names
+
+An entry's `tools` are what the console's tool pickers offer, and an
+application saved with a subset of them is enforced by name. A name the
+server does not expose grants nothing and keeps the real tool out, so the
+names must be the ones `tools/list` returns, not the titles in vendor docs:
+
+```bash
+make mcp-catalog-probe ARGS='-check-tools -out /tmp/mcp-catalog-tools.jsonl'
+# After reviewing the drift lines:
+make mcp-catalog-probe ARGS='-check-tools -apply-tools'
+```
+
+The check calls `tools/list` without credentials, so it can only verify the
+servers that answer anonymously; the rest report `auth_required`, and their
+names have to be checked against an authenticated `tools/list` by hand. It
+fails when a listed server has a catalog name it does not expose, or exposes a
+tool the catalog lacks. `-apply-tools` takes the upstream list in upstream
+order, keeps the catalog's own description where the name already existed,
+and leaves every other field and entry untouched. Servers that hide part of
+their tools until a key is sent (`partialToolsList` in the probe) only fail on
+missing tools. CI runs the check on every catalog change and every night
+(`.github/workflows/mcp-catalog.yml`).
+
 ## 7. Appendix: TrustGuard on the MCP chain
 
 When a gateway policy runs the TrustGuard plugin on MCP `tools/call`
