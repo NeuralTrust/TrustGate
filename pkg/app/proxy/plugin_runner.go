@@ -24,6 +24,8 @@ import (
 	"maps"
 	"net/http"
 	"net/textproto"
+	"strconv"
+	"strings"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -58,16 +60,16 @@ func (f *forwarder) runPreRequest(
 	})
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return pluginErrorResult(pe), nil
+			return applyPlanRateLimitDialect(req, pluginErrorResult(pe)), nil
 		}
 		return nil, err
 	}
 	if outcome.ShortCircuit {
-		return &ForwardResult{
+		return applyPlanRateLimitDialect(req, &ForwardResult{
 			StatusCode: outcome.StatusCode,
 			Headers:    outcome.Headers,
 			Body:       outcome.Body,
-		}, nil
+		}), nil
 	}
 	return nil, nil
 }
@@ -142,6 +144,99 @@ func planRateLimitBody(req *infracontext.RequestContext, exceeded *ratelimitapp.
 		return adapter.EncodeOpenAIGatewayError(http.StatusTooManyRequests, rateLimitExceededCode, message)
 	}
 	return adapter.EncodeErrorBody(format, http.StatusTooManyRequests, message)
+}
+
+// RewritePlanRateLimitBody is the body a client reads for a plan burst or quota
+// 429. checkRateLimit already renders that body in the ingress dialect. A
+// policy can answer the same limit first: TrustGuard evaluate returns the flat
+// plan body, and pluginErrorResult copies it onto the response the handler
+// sends. This turns that flat body into the dialect envelope. A body that is
+// not the flat plan shape, including one already enveloped and a policy limit
+// whose reason is a dimension such as consumer, is returned unchanged. Native
+// Bedrock stays flat so the handler can wrap the AWS envelope. Retry-After and
+// the other rate-limit headers stay with the caller.
+func RewritePlanRateLimitBody(req *infracontext.RequestContext, status int, headers map[string][]string, body []byte) []byte {
+	if status != http.StatusTooManyRequests || (req != nil && req.IsBedrockNative()) {
+		return body
+	}
+	exceeded, ok := flatPlanExceeded(headers, body)
+	if !ok {
+		return body
+	}
+	return planRateLimitBody(req, exceeded)
+}
+
+func applyPlanRateLimitDialect(req *infracontext.RequestContext, result *ForwardResult) *ForwardResult {
+	if result == nil {
+		return nil
+	}
+	result.Body = RewritePlanRateLimitBody(req, result.StatusCode, result.Headers, result.Body)
+	return result
+}
+
+// flatPlanExceeded reports a body (*Exceeded).Body writes: error is the string
+// "rate limit exceeded" and the reason is the plan's burst or quota. An OpenAI
+// envelope has error as an object, so it does not match and is not wrapped again.
+func flatPlanExceeded(headers map[string][]string, body []byte) (*ratelimitapp.Exceeded, bool) {
+	if len(body) == 0 {
+		return nil, false
+	}
+	var payload struct {
+		Error             string `json:"error"`
+		Reason            string `json:"reason"`
+		Limit             int    `json:"limit"`
+		RetryAfterSeconds int    `json:"retry_after_seconds"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Error != "rate limit exceeded" {
+		return nil, false
+	}
+	reason := payload.Reason
+	if reason == "" {
+		reason = firstHeader(headers, "X-RateLimit-Reason")
+	}
+	if reason != ratelimitapp.ReasonBurst && reason != ratelimitapp.ReasonQuota {
+		return nil, false
+	}
+	limit := payload.Limit
+	if limit == 0 {
+		if n, err := strconv.Atoi(firstHeader(headers, "X-RateLimit-Limit")); err == nil {
+			limit = n
+		}
+	}
+	retrySeconds := payload.RetryAfterSeconds
+	if retrySeconds <= 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(firstHeader(headers, "Retry-After"))); err == nil && n > 0 {
+			retrySeconds = n
+		}
+	}
+	var retry time.Duration
+	if retrySeconds > 0 {
+		retry = time.Duration(retrySeconds) * time.Second
+	}
+	return &ratelimitapp.Exceeded{
+		Reason:     reason,
+		Limit:      limit,
+		RetryAfter: retry,
+	}, true
+}
+
+func firstHeader(headers map[string][]string, name string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	canonical := textproto.CanonicalMIMEHeaderKey(name)
+	if values := headers[canonical]; len(values) > 0 {
+		return values[0]
+	}
+	if values := headers[name]; len(values) > 0 {
+		return values[0]
+	}
+	for key, values := range headers {
+		if textproto.CanonicalMIMEHeaderKey(key) == canonical && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
 }
 
 // runPreResponseGated runs the pre_response stage and hands back both ways it
