@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -934,6 +935,72 @@ func TestEncodeResponsesResponse_Incomplete(t *testing.T) {
 	var resp openaiResponsesResponse
 	require.NoError(t, json.Unmarshal(out, &resp))
 	assert.Equal(t, "incomplete", resp.Status)
+}
+
+// A Foundry chat completion that spent its whole max_output_tokens budget on
+// reasoning comes back with no message text. The translated Responses body
+// must still carry output as an array: null is not iterable, which is what
+// LangChain.js throws on (ENG-1950). The stream path already emits [].
+func TestEncodeResponsesResponse_IncompleteMaxOutputTokens(t *testing.T) {
+	t.Parallel()
+
+	for _, tokens := range []int{16, 64} {
+		t.Run(fmt.Sprintf("foundry_%d", tokens), func(t *testing.T) {
+			t.Parallel()
+			total := tokens + 12
+			body := fmt.Sprintf(`{
+				"id": "chatcmpl-reasoning",
+				"object": "chat.completion",
+				"created": 1710000000,
+				"model": "gpt-5-mini",
+				"choices": [{
+					"index": 0,
+					"message": {"role": "assistant", "content": null},
+					"finish_reason": "length"
+				}],
+				"usage": {
+					"prompt_tokens": 12,
+					"completion_tokens": %d,
+					"total_tokens": %d,
+					"completion_tokens_details": {"reasoning_tokens": %d}
+				}
+			}`, tokens, total, tokens)
+
+			out, err := testRegistry().AdaptResponse([]byte(body), FormatOpenAIResponses, FormatAzure)
+			require.NoError(t, err)
+			assertResponsesOutputArray(t, out)
+		})
+	}
+
+	t.Run("encoder", func(t *testing.T) {
+		t.Parallel()
+		out, err := encodeResponsesResponse(&CanonicalResponse{
+			ID:           "resp_reasoning",
+			Model:        "gpt-5-mini",
+			FinishReason: "length",
+			Usage: &CanonicalUsage{
+				InputTokens:           12,
+				OutputTokens:          16,
+				TotalTokens:           28,
+				ReasoningOutputTokens: 16,
+			},
+		})
+		require.NoError(t, err)
+		assertResponsesOutputArray(t, out)
+	})
+}
+
+func assertResponsesOutputArray(t *testing.T, out []byte) {
+	t.Helper()
+	assert.NotContains(t, string(out), `"output":null`)
+	assert.JSONEq(t, `[]`, jsonField(t, string(out), "output"))
+	assert.JSONEq(t, `"incomplete"`, jsonField(t, string(out), "status"))
+	assert.JSONEq(t, `{"reason":"max_output_tokens"}`, jsonField(t, string(out), "incomplete_details"))
+
+	var resp openaiResponsesResponse
+	require.NoError(t, json.Unmarshal(out, &resp))
+	assert.NotNil(t, resp.Output)
+	assert.Empty(t, resp.Output)
 }
 
 func TestEncodeResponsesStreamChunk_TextDelta(t *testing.T) {

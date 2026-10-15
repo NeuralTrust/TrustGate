@@ -917,11 +917,15 @@ func emptyAnnotations() []json.RawMessage {
 
 func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 	responseID := responsesObjectID(resp.ID)
+	// Output is required. A nil slice encodes as null, and LangChain.js throws
+	// when it tries to iterate an incomplete response whose tokens all went to
+	// reasoning (ENG-1950). The stream encoder already emits an empty array.
 	out := openaiResponsesResponse{
 		ID:        responseID,
 		Object:    "response",
 		CreatedAt: responsesCreatedAt(resp.Created, time.Time{}),
 		Model:     resp.Model,
+		Output:    []openaiResponsesItem{},
 	}
 
 	status, incompleteReason := canonicalFinishToResponsesStatus(resp.FinishReason)
