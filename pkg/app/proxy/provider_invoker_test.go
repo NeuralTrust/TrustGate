@@ -1367,9 +1367,6 @@ func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T
 		{name: "chat empty", body: nil, client: &upstreamRecorder{}},
 		{name: "chat blank", body: []byte{}, client: &upstreamRecorder{}},
 		{name: "chat array", body: []byte("[]"), client: &upstreamRecorder{}},
-		{name: "chat model number", body: []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`), client: &upstreamRecorder{}},
-		{name: "chat model object", body: []byte(`{"model":{"id":"gpt-4o"},"messages":[{"role":"user","content":"Hello"}]}`), client: &upstreamRecorder{}},
-		{name: "chat model null", body: []byte(`{"model":null,"messages":[{"role":"user","content":"Hello"}]}`), client: &upstreamRecorder{}},
 		{name: "images array", capability: "images", body: []byte("[]"), client: &imagesTestClient{}},
 		{name: "audio empty", capability: "audio_speech", body: nil, client: &audioTestClient{}},
 	}
@@ -1392,6 +1389,35 @@ func TestProviderInvoke_UnreadableBodyWithAllowListIsInvalidRequest(t *testing.T
 			assert.NotContains(t, err.Error(), "Go value of type")
 			assert.NotContains(t, err.Error(), "model must be a string")
 			assert.NotContains(t, err.Error(), "model enforcement")
+		})
+	}
+}
+
+func TestProviderInvoke_NonStringModelNamesTheField(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{name: "number", body: []byte(`{"model":123,"messages":[{"role":"user","content":"Hello"}]}`)},
+		{name: "object", body: []byte(`{"model":{"id":"gpt-4o"},"messages":[{"role":"user","content":"Hello"}]}`)},
+		{name: "null", body: []byte(`{"model":null,"messages":[{"role":"user","content":"Hello"}]}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+				Body:          tt.body,
+				AllowedModels: []string{"gpt-4o"},
+			})
+			require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			require.NotErrorIs(t, err, appproxy.ErrModelNotAllowed)
+			assert.Contains(t, err.Error(), "model must be a string")
+			assert.NotContains(t, err.Error(), "request body must be a JSON object")
+			assert.NotContains(t, err.Error(), "cannot unmarshal")
 		})
 	}
 }
@@ -1519,6 +1545,21 @@ func TestProviderInvoke_DisallowedStringModelStaysDenied(t *testing.T) {
 	require.NotErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
 	assert.NotContains(t, err.Error(), "cannot unmarshal")
 	assert.NotContains(t, err.Error(), "Go value of type")
+}
+
+func TestProviderInvoke_EmptyModelIsDeniedOnce(t *testing.T) {
+	t.Parallel()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&upstreamRecorder{}, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body:          []byte(`{"model":"","messages":[{"role":"user","content":"Hello"}]}`),
+		AllowedModels: []string{"gpt-4o-mini"},
+	})
+
+	require.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+	require.EqualError(t, err, `model not allowed: ""`)
 }
 
 func TestProviderInvoke_UnreadableBodyWithoutAllowListProceeds(t *testing.T) {

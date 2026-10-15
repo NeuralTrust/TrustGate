@@ -200,6 +200,10 @@ func TestAuthMiddleware_LLMProxyAuthUsesDialectEnvelope(t *testing.T) {
 		{name: "token scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Token abc", want: openai},
 		{name: "basic scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Basic Zm9vOmJhcg==", want: anthropic},
 		{name: "token scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Token abc", want: anthropic},
+		{name: "digest scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: `Digest username="Mufasa", realm="testrealm@host.com", nonce="abc", uri="/", response="def"`, want: openai},
+		{name: "empty basic on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Basic", want: openai},
+		{name: "digest scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: `Digest username="Mufasa", realm="testrealm@host.com", nonce="abc", uri="/", response="def"`, want: anthropic},
+		{name: "empty basic on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Basic", want: anthropic},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -216,6 +220,22 @@ func TestAuthMiddleware_LLMProxyAuthUsesDialectEnvelope(t *testing.T) {
 			require.JSONEq(t, tt.want, string(raw))
 		})
 	}
+}
+
+func TestAuthMiddleware_MalformedBearerNamesBearer(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "malformed bearer authorization header")
 }
 
 func TestAuthMiddleware_UnknownProxyPathStaysFlat(t *testing.T) {

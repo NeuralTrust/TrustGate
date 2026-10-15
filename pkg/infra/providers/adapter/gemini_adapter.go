@@ -462,10 +462,14 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		var toolCalls []CanonicalToolCall
 		var toolResults []CanonicalMessage
 		for _, p := range c.Parts {
-			if p.Thought {
+			// Thought text is reasoning and stays out of the translated request.
+			// A functionResponse on that part is the tool result the client is
+			// replaying; dropping it makes the upstream reject the turn because
+			// the tool call has no response.
+			if p.Thought && p.FunctionResponse == nil {
 				continue
 			}
-			if p.Text != "" {
+			if p.Text != "" && !p.Thought {
 				textParts = append(textParts, p.Text)
 			}
 			if img, ok := geminiImageFromPart(p); ok {

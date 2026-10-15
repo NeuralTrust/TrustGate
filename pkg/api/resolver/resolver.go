@@ -66,10 +66,11 @@ func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.T
 
 // bearerToken extracts the credential from an Authorization header. It moved
 // here with the removal of the second bearer resolver, which owned it.
-// A different scheme that carries one credential (Basic, Token) is a
-// credential this gateway does not accept, the same failure as any other
-// bad credential. A bearer that is not exactly scheme plus token stays a
-// malformed request.
+// Basic, Token and Digest are credentials this gateway does not accept, the
+// same failure as any other bad credential, whether the header carries one
+// token, several (Digest), or none (a bare Basic). A Bearer header that is
+// not exactly scheme plus token stays a malformed bearer. Other multi-field
+// schemes, such as SigV4 on a non-Bedrock route, stay a malformed request.
 func bearerToken(header string) (string, error) {
 	if strings.TrimSpace(header) == "" {
 		return "", ErrUnauthenticated
@@ -78,8 +79,17 @@ func bearerToken(header string) (string, error) {
 	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 		return parts[1], nil
 	}
+	if len(parts) > 0 && unrecognizedCredentialScheme(parts[0]) {
+		return "", ErrUnauthenticated
+	}
 	if len(parts) == 2 {
 		return "", ErrUnauthenticated
 	}
 	return "", fmt.Errorf("%w: malformed bearer authorization header", appauth.ErrInvalidAuthRequest)
+}
+
+func unrecognizedCredentialScheme(scheme string) bool {
+	return strings.EqualFold(scheme, "Basic") ||
+		strings.EqualFold(scheme, "Token") ||
+		strings.EqualFold(scheme, "Digest")
 }

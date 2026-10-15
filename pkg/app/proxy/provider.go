@@ -346,11 +346,16 @@ func (p *providerInvoker) applyModelEnforcement(body []byte, allowed []string, d
 		return normalized, nil
 	}
 	if errors.Is(verr, adapter.ErrModelNotAllowed) {
-		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+		// EnforceModel already starts with "model not allowed". Prefixing it
+		// again doubled the client message (model not allowed: model not allowed: "").
+		detail := strings.TrimPrefix(verr.Error(), adapter.ErrModelNotAllowed.Error()+": ")
+		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, detail)
 	}
-	// An empty body, a JSON array, or a model value that is not a string is
-	// not a request. The client gets the same generic message as the other
-	// unreadable bodies.
+	// A JSON object whose model is not a string is still a request. Name the
+	// model field. An empty body or a JSON array is not an object.
+	if errors.Is(verr, adapter.ErrModelMustBeString) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, verr.Error())
+	}
 	if len(allowed) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidJSONObjectMessage)
 	}
