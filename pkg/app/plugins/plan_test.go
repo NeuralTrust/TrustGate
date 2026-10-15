@@ -434,6 +434,45 @@ func TestStagePlan_StreamPlan(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// toolReaderStreamPlugin is an inspector that reads the tool calls of a
+// segment, as TrustGuard does.
+type toolReaderStreamPlugin struct{ *streamPlugin }
+
+func (toolReaderStreamPlugin) ReadsStreamToolCalls() bool { return true }
+func (toolReaderStreamPlugin) OwnsStreamOptions() bool    { return false }
+
+func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	reader := toolReaderStreamPlugin{newStreamPlugin("reader", nil)}
+	owner := newStreamPlugin("guard", nil)
+	reg := newRegistry(t, reader, owner)
+	on := map[string]any{"enabled": true}
+
+	both := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
+	)
+	both[0].Settings, both[1].Settings = on, on
+	ok, opts := NewStagePlan(reg, both, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.True(t, opts.ReadsToolCalls,
+		"a passive participant that reads tool calls still asks the guard to hold them whole")
+
+	readerOff := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
+	)
+	readerOff[0].Settings, readerOff[1].Settings = on, map[string]any{"enabled": false}
+	ok, opts = NewStagePlan(reg, readerOff, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.False(t, opts.ReadsToolCalls, "a reader that does not take part in the stream holds nothing")
+
+	ownerOnly := streamPolicies(t, on, polSpec{slug: "guard", enabled: true, priority: 1, stages: pre})
+	ok, opts = NewStagePlan(reg, ownerOnly, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.False(t, opts.ReadsToolCalls, "a chain that reads text alone streams tool deltas as they arrive")
+}
+
 // passiveStreamPlugin is a local rewriter: a participant that must not decide
 // the stream-wide options, as regex_replace does not.
 type passiveStreamPlugin struct{ *streamPlugin }
