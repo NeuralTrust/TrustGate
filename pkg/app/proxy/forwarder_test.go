@@ -195,7 +195,69 @@ func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
 	assert.Equal(t, []string{"10000"}, res.Headers["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonQuota}, res.Headers["X-RateLimit-Reason"])
+	assert.JSONEq(t, `{"error":{"message":"TrustGate blocked this request: monthly request quota exceeded. Retry in 10s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`, string(res.Body))
 	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestForward_BurstRateLimitUsesIngressDialect(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID)
+	message := "TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 42s."
+	cases := []struct {
+		name    string
+		format  string
+		retry   time.Duration
+		want    string
+		retryAt string
+	}{
+		{
+			name:    "openai",
+			format:  "openai",
+			retry:   42 * time.Second,
+			want:    `{"error":{"message":"` + message + `","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+			retryAt: "42",
+		},
+		{
+			name:    "anthropic",
+			format:  "anthropic",
+			retry:   42 * time.Second,
+			want:    `{"type":"error","error":{"type":"rate_limit_error","message":"` + message + `"}}`,
+			retryAt: "42",
+		},
+		{
+			name:   "unknown reset omits Retry-After",
+			format: "openai",
+			want:   `{"error":{"message":"TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 1s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := ratelimitmocks.NewChecker(t)
+			limiter.EXPECT().Check(mock.Anything, gatewayID).Return(&ratelimitapp.Exceeded{
+				Reason:     ratelimitapp.ReasonBurst,
+				Limit:      60,
+				RetryAfter: tc.retry,
+			}).Once()
+			invoker := proxymocks.NewProviderInvoker(t)
+			fwd := newTestForwarderWithLimiter(t, invoker, limiter)
+			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request:   &infracontext.RequestContext{SourceFormat: tc.format, ProxyCapability: "chat"},
+			})
+			require.NoError(t, err)
+			require.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+			assert.JSONEq(t, tc.want, string(res.Body))
+			assert.NotContains(t, string(res.Body), `"reason"`)
+			if tc.retryAt == "" {
+				_, ok := res.Headers["Retry-After"]
+				assert.False(t, ok)
+			} else {
+				assert.Equal(t, []string{tc.retryAt}, res.Headers["Retry-After"])
+			}
+			invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestForward_RateLimitUnavailable_PropagatesError(t *testing.T) {
