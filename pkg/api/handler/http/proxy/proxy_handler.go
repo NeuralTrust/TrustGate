@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/textproto"
 	"net/url"
 	"runtime/debug"
@@ -77,6 +78,7 @@ const (
 	errCodeModelNotSupported     = "model_not_supported"
 	errCodeProviderCredential    = "provider_credential_error"
 	errCodeBackendError          = "backend_error"
+	errCodeUpstreamTimeout       = adapter.UpstreamTimeoutCode
 	errCodeRateLimitUnavailable  = "rate_limit_unavailable"
 )
 
@@ -825,9 +827,24 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 			Error:   errCodeProviderCredential,
 			Message: registrydomain.ErrCredentialAcquisition.Error(),
 		}
+	case isUpstreamTimeout(err):
+		return fiber.StatusGatewayTimeout, httpio.ErrorBody{
+			Error:   errCodeUpstreamTimeout,
+			Message: adapter.UpstreamTimeoutMessage,
+		}
 	default:
 		return fiber.StatusBadGateway, httpio.ErrorBody{Error: errCodeBackendError}
 	}
+}
+
+// isUpstreamTimeout reports a wait for the upstream that ended on a deadline.
+// A client cancel is not a timeout: the handler must not turn it into a 504.
+func isUpstreamTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // modelDeniedMessage keeps routing internals out of a model_not_allowed body:
