@@ -536,6 +536,8 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
 		assert.Contains(t, string(body), `"type":"invalid_request_error"`)
+		assert.Contains(t, string(body), "model must be a string")
+		assert.NotContains(t, string(body), "request body must be a JSON object")
 		assert.NotContains(t, string(body), "cannot unmarshal")
 		assert.NotContains(t, string(body), "model_not_allowed")
 		assert.Equal(t, 0, up.Hits())
