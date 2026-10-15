@@ -84,7 +84,13 @@ func (g *quotaGuardrail) ApplyGuardrail(
 	in *bedrockruntime.ApplyGuardrailInput,
 	opts ...func(*bedrockruntime.Options),
 ) (*bedrockruntime.ApplyGuardrailOutput, error) {
-	if !g.bucket.AllowN(time.Now(), (len(textOf(in))+999)/1000) {
+	// The spacer and this bucket are separate limiters on the same rate. A wait
+	// is an integer number of nanoseconds, so it can end a few microseconds
+	// before this bucket has the token, and AllowN counts that as a throttle.
+	// One text unit at this floor takes 40ms, so a millisecond of slack cannot
+	// hide a call the spacer failed to hold.
+	units := (len(textOf(in)) + 999) / 1000
+	if !g.bucket.AllowN(time.Now().Add(time.Millisecond), units) {
 		g.denied.Add(1)
 		return nil, g.err
 	}
