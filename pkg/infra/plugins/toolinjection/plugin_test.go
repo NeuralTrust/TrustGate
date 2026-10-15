@@ -19,12 +19,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 func TestConfigValidate(t *testing.T) {
@@ -553,24 +556,59 @@ func mistralToolBody(t *testing.T, toolName string) []byte {
 
 func execPreRequest(t *testing.T, settings map[string]any, sourceFormat string, body []byte) *appplugins.Result {
 	t.Helper()
+	res, _ := execPreRequestObserving(t, settings, sourceFormat, body)
+	if res.RequestBody == nil {
+		t.Fatalf("Execute() result = %#v, want non-nil RequestBody", res)
+	}
+	return res
+}
+
+func execPreRequestObserving(t *testing.T, settings map[string]any, sourceFormat string, body []byte, mutate ...func(*infracontext.RequestContext)) (*appplugins.Result, *trace.Span) {
+	t.Helper()
+	tr := trace.New("", trace.Metadata{})
+	span := tr.StartSpan(trace.SpanPlugin, PluginName)
+	req := &infracontext.RequestContext{Provider: sourceFormat, SourceFormat: sourceFormat, Body: body}
+	for _, fn := range mutate {
+		fn(req)
+	}
 	p := New(adapter.NewRegistry())
 	in := appplugins.ExecInput{
 		Stage:   policy.StagePreRequest,
 		Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: settings},
 		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
-		Request: &infracontext.RequestContext{Provider: sourceFormat, SourceFormat: sourceFormat, Body: body},
+		Request: req,
+		Event:   metrics.NewEventContext(span),
 	}
 	res, err := p.Execute(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
-	if res == nil || res.RequestBody == nil {
-		t.Fatalf("Execute() result = %#v, want non-nil RequestBody", res)
+	if res == nil {
+		t.Fatal("Execute() result = nil")
 	}
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
 	}
-	return res
+	return res, span
+}
+
+func spanDecision(span *trace.Span) string {
+	if span == nil || span.Plugin == nil {
+		return ""
+	}
+	return span.Plugin.Decision
+}
+
+func injectionExtras(t *testing.T, span *trace.Span) ToolInjectionData {
+	t.Helper()
+	if span == nil || span.Plugin == nil {
+		t.Fatal("expected plugin span attrs")
+	}
+	data, ok := span.Plugin.Extras.(ToolInjectionData)
+	if !ok {
+		t.Fatalf("expected ToolInjectionData extras, got %T", span.Plugin.Extras)
+	}
+	return data
 }
 
 func TestPluginPreRequestProviderMatrix(t *testing.T) {
@@ -655,6 +693,130 @@ func TestPluginPreRequestProviderMatrix(t *testing.T) {
 				t.Fatalf("untouched field %q = %#v, want %#v", tt.untouchedKey, got, tt.untouchedVal)
 			}
 		})
+	}
+}
+
+func TestPluginSkipsInjectionWhenChatCompletionsRejectsFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"model":    model,
+				"messages": []any{map[string]any{"role": "user", "content": "hello, write me a short greeting"}},
+			})
+			res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body)
+			if res.RequestBody != nil {
+				t.Fatalf("RequestBody = %s, want nil so the original request is forwarded", res.RequestBody)
+			}
+			if got := spanDecision(span); got != outcomeSkipped {
+				t.Fatalf("decision = %q, want %q", got, outcomeSkipped)
+			}
+			extras := injectionExtras(t, span)
+			if len(extras.Injected) != 1 || extras.Injected[0].Name != "safety_check" || extras.Injected[0].Outcome != outcomeSkipped {
+				t.Fatalf("extras.injected = %+v, want safety_check skipped", extras.Injected)
+			}
+			if strings.Contains(string(body), "safety_check") || strings.Contains(string(body), "reasoning_effort") {
+				t.Fatalf("original body was rewritten: %s", body)
+			}
+		})
+	}
+}
+
+func TestPluginSkipsInjectionLeavesClientToolsUntouched(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"model":    model,
+				"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+				"tools": []any{map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name":       "search_docs",
+						"parameters": map[string]any{"type": "object"},
+					},
+				}},
+			})
+			res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body)
+			if res.RequestBody != nil {
+				t.Fatalf("RequestBody = %s, want nil", res.RequestBody)
+			}
+			if got := spanDecision(span); got != outcomeSkipped {
+				t.Fatalf("decision = %q, want %q", got, outcomeSkipped)
+			}
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(body, adapter.FormatOpenAI)
+			if err != nil {
+				t.Fatalf("DecodeRequestFor error = %v", err)
+			}
+			if _, ok := findTool(decoded.Tools, "search_docs"); !ok {
+				t.Fatalf("client tool missing from forwarded body: %#v", decoded.Tools)
+			}
+			if _, ok := findTool(decoded.Tools, "safety_check"); ok {
+				t.Fatalf("injected tool present on a skipped request: %#v", decoded.Tools)
+			}
+		})
+	}
+}
+
+func TestPluginInjectsOnModelsThatSupportChatFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-4.1-nano", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"} {
+		t.Run(model, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"model":    model,
+				"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+			})
+			res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body)
+			if res.RequestBody == nil {
+				t.Fatal("RequestBody = nil, want the injected body")
+			}
+			if strings.Contains(string(res.RequestBody), `"reasoning_effort"`) {
+				t.Fatalf("tool injection added reasoning_effort: %s", res.RequestBody)
+			}
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+			if err != nil {
+				t.Fatalf("DecodeRequestFor error = %v", err)
+			}
+			if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+				t.Fatalf("injected tool missing: %#v", decoded.Tools)
+			}
+			if got := spanDecision(span); got == outcomeSkipped {
+				t.Fatalf("decision = %q on a model that accepts Chat Completions function tools", got)
+			}
+		})
+	}
+}
+
+func TestPluginInjectsResponsesToolsForModelsThatRejectChatFunctionTools(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"model": "gpt-6.1-sol",
+		"input": "hello",
+	})
+	res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAIResponses), body)
+	if res.RequestBody == nil {
+		t.Fatal("RequestBody = nil, want the injected Responses body")
+	}
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAIResponses)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor error = %v", err)
+	}
+	if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+		t.Fatalf("injected tool missing: %#v", decoded.Tools)
+	}
+	if got := spanDecision(span); got == outcomeSkipped {
+		t.Fatalf("decision = %q, Responses still accepts function tools", got)
+	}
+}
+
+func TestPluginSkipsWhenDefaultModelRejectsChatFunctionTools(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	res, span := execPreRequestObserving(t, injectSettings(), string(adapter.FormatOpenAI), body, func(req *infracontext.RequestContext) {
+		req.DefaultModel = "gpt-6.1-sol"
+	})
+	if res.RequestBody != nil {
+		t.Fatalf("RequestBody = %s, want nil", res.RequestBody)
+	}
+	if got := spanDecision(span); got != outcomeSkipped {
+		t.Fatalf("decision = %q, want %q", got, outcomeSkipped)
 	}
 }
 

@@ -222,6 +222,8 @@ func (p *providerInvoker) Invoke(
 		retryPrep.body = retryBody
 		respBody, err = p.invokeUpstream(ctx, &retryPrep)
 		prep = &retryPrep
+	} else {
+		err = unsupportedReasoningToolsError(prep, err)
 	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
@@ -304,6 +306,8 @@ func (p *providerInvoker) InvokeStream(
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if retryBody, ok := p.retryBodyFor(ctx, prep, body, err); ok {
 		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
+	} else {
+		err = unsupportedReasoningToolsError(prep, err)
 	}
 	if err != nil {
 		cancel()
@@ -437,6 +441,7 @@ func (p *providerInvoker) prepare(
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
 
 	sentModel := resolveSentModel(body, req)
+	body = adapter.OmitUnsupportedReasoningEffort(body, sentModel)
 
 	prep := &preparedInvocation{
 		client: client,
@@ -558,12 +563,52 @@ func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) 
 	if json.Unmarshal(request["tools"], &tools) != nil || len(tools) == 0 {
 		return nil, false
 	}
+	// GPT-6.1 Sol and GPT-6 Astra reject reasoning_effort "none", and Chat
+	// Completions does not accept function tools for them at any effort.
+	// Retrying with "low" is still a reasoning effort, so it fails the same way.
+	if adapter.ModelRejectsReasoningEffortNone(prep.sentModel) {
+		return nil, false
+	}
 	request["reasoning_effort"] = json.RawMessage(`"none"`)
 	retryBody, marshalErr := json.Marshal(request)
 	if marshalErr != nil {
 		return nil, false
 	}
 	return retryBody, true
+}
+
+// unsupportedReasoningToolsError replaces OpenAI's "set reasoning_effort to
+// none" instruction when the model rejects that value. The instruction is not
+// actionable: sending none is a second 400, and another effort still counts as
+// reasoning, which Chat Completions rejects for these models.
+func unsupportedReasoningToolsError(prep *preparedInvocation, err error) error {
+	if prep == nil || err == nil || prep.providerName != provider.OpenAI || prep.targetFormat != adapter.FormatOpenAI ||
+		!adapter.ModelRejectsReasoningEffortNone(prep.sentModel) {
+		return err
+	}
+	backendErr, ok := registry.IsBackendError(err)
+	if !ok || !adapter.BodyRequiresReasoningEffortNone(backendErr.Body) {
+		return err
+	}
+	body, marshalErr := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": fmt.Sprintf(
+				"function tools are not supported on Chat Completions for %s. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+				prep.sentModel,
+			),
+			"type":  "invalid_request_error",
+			"param": "tools",
+			"code":  "unsupported_value",
+		},
+	})
+	if marshalErr != nil {
+		return err
+	}
+	return &registry.BackendError{
+		StatusCode: http.StatusBadRequest,
+		Body:       body,
+		RetryAfter: backendErr.RetryAfter,
+	}
 }
 
 // Bedrock/Vertex strip the model from the adapted body (it travels out of band),
