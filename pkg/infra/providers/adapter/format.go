@@ -249,7 +249,7 @@ func resolveProviderWireFormat(providerName string) Format {
 		return FormatXAI
 	case provider.Cerebras:
 		return FormatOpenAI
-	case provider.Moonshot:
+	case provider.Moonshot, provider.DigitalOcean:
 		return FormatOpenAI
 	case provider.OpenRouter:
 		return FormatOpenRouter
@@ -267,10 +267,11 @@ func resolveProviderWireFormat(providerName string) Format {
 // OpenAI and Azure OpenAI models (the reasoning families reject max_tokens).
 // Azure Foundry serves other families on the same wire, and those reject the
 // field. The OpenAI provider only hosts OpenAI models, so the model is not
-// consulted there.
+// consulted there. DigitalOcean deprecates max_tokens for every model it
+// serves, so it gets the newer field regardless of the family.
 func prefersMaxCompletionTokens(providerName, model string) bool {
 	switch providerName {
-	case provider.OpenAI:
+	case provider.OpenAI, provider.DigitalOcean:
 		return true
 	case provider.Azure:
 		return !foundryModelKeepsMaxTokens(model)
@@ -400,7 +401,7 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 		return Format(sourceFormat), nil
 	}
 	switch providerName {
-	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.XAI, provider.Cerebras, provider.Moonshot, provider.OpenRouter:
+	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.XAI, provider.Cerebras, provider.Moonshot, provider.DigitalOcean, provider.OpenRouter:
 		return ResolveTargetFormat(providerName, providerOptions), nil
 	case provider.Anthropic:
 		return FormatAnthropic, nil

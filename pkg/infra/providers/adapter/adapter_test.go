@@ -163,6 +163,7 @@ func TestResolveAgentFormat_KnownProviders(t *testing.T) {
 		{"groq", FormatGroq},
 		{"deepseek", FormatDeepSeek},
 		{"cerebras", FormatOpenAI},
+		{"digitalocean", FormatOpenAI},
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
