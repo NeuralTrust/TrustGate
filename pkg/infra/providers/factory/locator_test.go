@@ -40,6 +40,8 @@ func TestProviderLocator_Get(t *testing.T) {
 		ProviderCerebras,
 		ProviderOpenRouter,
 		ProviderCohere,
+		ProviderMoonshot,
+		ProviderDigitalOcean,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)
@@ -140,6 +142,14 @@ func TestProviderLocator_AudioClients(t *testing.T) {
 	_, transcription := client.(providers.AudioTranscriptionClient)
 	assert.False(t, speech)
 	assert.False(t, transcription)
+}
+
+func TestProviderLocator_DigitalOceanListsLiveModels(t *testing.T) {
+	locator := NewProviderLocator()
+	_, err := locator.GetModelLister(ProviderDigitalOcean)
+	require.NoError(t, err)
+	_, err = locator.GetTester(ProviderDigitalOcean)
+	require.NoError(t, err)
 }
 
 func TestProviderLocator_GetUnknown(t *testing.T) {
