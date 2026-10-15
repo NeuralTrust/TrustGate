@@ -182,11 +182,42 @@ func TestInvokeStream_ClientToolsOnModelsWithoutChatFunctionTools(t *testing.T) 
 
 			require.NoError(t, err)
 			assert.Equal(t, 400, resp.StatusCode)
-			assert.Contains(t, string(resp.Body), "Responses API")
-			assert.Contains(t, string(resp.Body), model)
-			assert.NotContains(t, string(resp.Body), "set reasoning_effort to 'none'")
+			assert.JSONEq(t, `{
+				"error": {
+					"message": "function tools are not supported on Chat Completions for `+model+`. Use the Responses API for tool calling.",
+					"type": "invalid_request_error",
+					"param": "tools",
+					"code": "unsupported_value"
+				}
+			}`, string(resp.Body))
 		})
 	}
+}
+
+func TestInvokeStream_ClientToolsMentionsReasoningEffortWhenSent(t *testing.T) {
+	body := `{"model":"gpt-6-astra","stream":true,"reasoning_effort":"none","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+				strings.Contains(string(sent), `"qa_escalate"`)
+		})).
+		Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
+		Once()
+
+	inv := newStreamInvoker(t, "openai", client)
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
+	assert.JSONEq(t, `{
+		"error": {
+			"message": "function tools are not supported on Chat Completions for gpt-6-astra. This model does not accept reasoning_effort \"none\". Use the Responses API for tool calling.",
+			"type": "invalid_request_error",
+			"param": "tools",
+			"code": "unsupported_value"
+		}
+	}`, string(resp.Body))
 }
 
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
