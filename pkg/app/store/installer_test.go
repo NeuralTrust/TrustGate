@@ -198,6 +198,7 @@ func namedRegistry(code, name string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
 		Name:      name,
+		Enabled:   true,
 		CreatedAt: shelfClock,
 		MCPTarget: &registrydomain.MCPTarget{Code: code},
 	}

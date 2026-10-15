@@ -55,6 +55,7 @@ func withOpenPrincipal(sub string) context.Context {
 func githubRegistry() *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
+		Enabled:   true,
 		MCPTarget: &registrydomain.MCPTarget{Code: "github"},
 	}
 }
@@ -129,8 +130,9 @@ func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
 func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	shelf := &registrydomain.Registry{
-		ID:   ids.New[ids.RegistryKind](),
-		Name: "Snowflake",
+		ID:      ids.New[ids.RegistryKind](),
+		Name:    "Snowflake",
+		Enabled: true,
 		MCPTarget: &registrydomain.MCPTarget{
 			Code: "snowflake",
 			URL:  "https://acme/api/v2/databases/{database}/mcp",
