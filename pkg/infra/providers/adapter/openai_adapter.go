@@ -139,37 +139,39 @@ func encodeOpenAIToolChoice(tc *CanonicalToolChoice) json.RawMessage {
 // contentToString extracts text from a JSON content field that may be a plain
 // string or an array of content-part objects.
 func contentToString(raw json.RawMessage) string {
-	text, _ := decodeOpenAIContent(raw)
-	return text
+	return decodeOpenAIContent(raw).Content
 }
 
-func decodeOpenAIContent(raw json.RawMessage) (string, []CanonicalImage) {
+// decodeOpenAIContent returns the text, images and documents of a content
+// field in a CanonicalMessage with only those fields set.
+func decodeOpenAIContent(raw json.RawMessage) CanonicalMessage {
 	var text cacheTextJoin
-	images := decodeOpenAIParts(raw, &text, nil, true)
-	return text.String(), images
+	m := decodeOpenAIParts(raw, &text, nil, true)
+	m.Content = text.String()
+	return m
 }
 
 // decodeOpenAIParts adds the text of raw, a string or a list of content parts,
-// to text and returns its images when keepImages is set. marker reads the
-// cache marker of a part in the client's dialect; nil ignores markers. A
-// marker on an empty text part moves to the text before it, one on an image
-// stays on that image, and one on a part the canonical model drops (audio,
-// files, images of a segment that keeps none) is dropped with it.
-func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(openaiContentPart) *CanonicalCacheBreakpoint, keepImages bool) []CanonicalImage {
+// to text and returns its images and documents when keepMedia is set. marker
+// reads the cache marker of a part in the client's dialect; nil ignores
+// markers. A marker on an empty text part moves to the text before it, one on
+// an image stays on that image, and one on a file or a part the canonical
+// model drops (audio, media of a segment that keeps none) is dropped with it.
+func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(openaiContentPart) *CanonicalCacheBreakpoint, keepMedia bool) CanonicalMessage {
+	var media CanonicalMessage
 	if raw == nil {
-		return nil
+		return media
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		text.add(s)
-		return nil
+		return media
 	}
 	var parts []openaiContentPart
 	if json.Unmarshal(raw, &parts) != nil {
 		text.add(string(raw))
-		return nil
+		return media
 	}
-	var images []CanonicalImage
 	for i, p := range parts {
 		var bp *CanonicalCacheBreakpoint
 		if marker != nil {
@@ -189,16 +191,24 @@ func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(ope
 			}
 			continue
 		}
-		if p.Type != "image_url" || !keepImages {
+		if !keepMedia {
 			continue
 		}
-		if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
-			images = append(images, img)
-			text.addImage()
-			text.markImage(bp, last)
+		switch p.Type {
+		case "image_url":
+			if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
+				media.Images = append(media.Images, img)
+				text.addImage()
+				text.markImage(bp, last)
+			}
+		case "file":
+			if doc, ok := decodeOpenAIFile(p.File); ok {
+				media.DocumentsFirst = media.DocumentsFirst || (len(media.Documents) == 0 && len(text.parts) == 0)
+				media.Documents = append(media.Documents, doc)
+			}
 		}
 	}
-	return images
+	return media
 }
 
 // appendOpenAISystem adds one system or developer message to system the way
@@ -208,6 +218,21 @@ func appendOpenAISystem(system *cacheTextJoin, raw json.RawMessage, marker func(
 	var msg cacheTextJoin
 	decodeOpenAIParts(raw, &msg, marker, false)
 	system.extend(&msg)
+}
+
+func decodeOpenAIFile(raw json.RawMessage) (CanonicalDocument, bool) {
+	var f openaiFile
+	if len(raw) == 0 || json.Unmarshal(raw, &f) != nil {
+		return CanonicalDocument{}, false
+	}
+	switch {
+	case strings.TrimSpace(f.FileData) != "":
+		return parseDocumentData(f.FileData, "", f.Filename), true
+	case f.FileID != "":
+		return CanonicalDocument{FileID: f.FileID, FileOwner: FormatOpenAI, MediaType: inferDocumentMediaType("", f.Filename), Name: f.Filename}, true
+	default:
+		return CanonicalDocument{}, false
+	}
 }
 
 func decodeOpenAIImageURL(raw json.RawMessage) (CanonicalImage, bool) {

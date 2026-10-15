@@ -47,6 +47,22 @@ func normalizeImageMediaType(mt string) string {
 	return mt
 }
 
+var imageExtensionMediaTypes = map[string]string{
+	"png":  "image/png",
+	"jpg":  "image/jpeg",
+	"jpeg": "image/jpeg",
+	"gif":  "image/gif",
+	"webp": "image/webp",
+	"heic": "image/heic",
+	"heif": "image/heif",
+}
+
+// imageMediaTypeFromURL guesses an image type from the URL path for targets
+// that want one alongside a URL; "" lets the target sniff it.
+func imageMediaTypeFromURL(raw string) string {
+	return imageExtensionMediaTypes[fileExtension(urlPath(raw))]
+}
+
 func parseImageURL(raw, detail string) CanonicalImage {
 	rest, ok := strings.CutPrefix(raw, "data:")
 	if !ok {

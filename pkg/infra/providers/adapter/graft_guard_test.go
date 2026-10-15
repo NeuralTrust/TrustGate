@@ -30,7 +30,8 @@ const leakSecret = "bob@corp.example"
 
 // leakBodies carry the secret in the text a masking plugin edits and again
 // in a field the canonical request does not model. A graft would keep that
-// copy, which is why redaction plugins encode the request in full.
+// copy, which is why redaction plugins encode the request in full. Attached
+// documents are modelled and forwarded, so they are not here (ENG-1957).
 var leakBodies = []struct {
 	name   string
 	format Format
@@ -42,7 +43,6 @@ var leakBodies = []struct {
 	{"chat user", FormatOpenAI, `{"model":"m","user":"S","messages":[{"role":"user","content":"reach S"}]}`},
 	{"chat refusal", FormatOpenAI, `{"model":"m","messages":[{"role":"user","content":"reach S"},{"role":"assistant","content":null,"refusal":"no S"},{"role":"user","content":"x"}]}`},
 	{"chat refusal part", FormatOpenAI, `{"model":"m","messages":[{"role":"user","content":"reach S"},{"role":"assistant","content":[{"type":"refusal","refusal":"no S"}]},{"role":"user","content":"x"}]}`},
-	{"chat file part", FormatOpenAI, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"reach S"},{"type":"file","file":{"filename":"S.txt","file_data":"data:,x"}}]}]}`},
 	{"chat input_audio part", FormatOpenAI, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"reach S"},{"type":"input_audio","input_audio":{"data":"S","format":"wav"}}]}]}`},
 	{"chat functions", FormatOpenAI, `{"model":"m","functions":[{"name":"f","description":"S"}],"messages":[{"role":"user","content":"reach S"}]}`},
 	{"chat web_search_options", FormatOpenAI, `{"model":"m","web_search_options":{"user_location":{"type":"approximate","approximate":{"city":"S"}}},"messages":[{"role":"user","content":"reach S"}]}`},
@@ -57,18 +57,15 @@ var leakBodies = []struct {
 	{"responses annotations", FormatOpenAIResponses, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"reach S"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok","annotations":[{"type":"url_citation","title":"S","url":"u"}]}]},{"type":"message","role":"user","content":"again"}]}`},
 	{"anthropic thinking", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"reach S"},{"role":"assistant","content":[{"type":"thinking","thinking":"reach S","signature":"s"},{"type":"text","text":"ok"}]},{"role":"user","content":"go"}]}`},
 	{"anthropic redacted_thinking", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"reach S"},{"role":"assistant","content":[{"type":"redacted_thinking","data":"S"},{"type":"text","text":"ok"}]},{"role":"user","content":"go"}]}`},
-	{"anthropic document text", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"doc S"},"title":"S"},{"type":"text","text":"reach S"}]}]}`},
 	{"anthropic search_result", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":[{"type":"search_result","source":"s","title":"t","content":[{"type":"text","text":"sr S"}]},{"type":"text","text":"reach S"}]}]}`},
 	{"anthropic web search result", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"reach S"},{"role":"assistant","content":[{"type":"server_tool_use","id":"s1","name":"web_search","input":{"query":"q"}},{"type":"web_search_tool_result","tool_use_id":"s1","content":[{"type":"web_search_result","title":"S","url":"u","encrypted_content":"e"}]},{"type":"text","text":"ok"}]},{"role":"user","content":"b"}]}`},
 	{"anthropic citations", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"reach S"},{"role":"assistant","content":[{"type":"text","text":"ok","citations":[{"type":"char_location","cited_text":"S","document_index":0,"start_char_index":0,"end_char_index":1}]}]},{"role":"user","content":"b"}]}`},
 	{"anthropic mcp_servers token", FormatAnthropic, `{"model":"m","max_tokens":5,"mcp_servers":[{"type":"url","url":"https://m","name":"m","authorization_token":"S"}],"messages":[{"role":"user","content":"reach S"}]}`},
 	{"bedrock guardContent", FormatBedrock, `{"messages":[{"role":"user","content":[{"text":"reach S"},{"guardContent":{"text":{"text":"g S"}}}]}]}`},
 	{"bedrock reasoningContent", FormatBedrock, `{"messages":[{"role":"user","content":[{"text":"reach S"}]},{"role":"assistant","content":[{"reasoningContent":{"reasoningText":{"text":"think S","signature":"s"}}},{"text":"ok"}]},{"role":"user","content":[{"text":"go"}]}]}`},
-	{"bedrock document source text", FormatBedrock, `{"messages":[{"role":"user","content":[{"text":"reach S"},{"document":{"format":"txt","name":"d","source":{"text":"doc S"}}}]}]}`},
 	{"bedrock promptVariables", FormatBedrock, `{"promptVariables":{"v":{"text":"S"}},"messages":[{"role":"user","content":[{"text":"reach S"}]}]}`},
 	{"gemini thought part", FormatGemini, `{"contents":[{"role":"user","parts":[{"text":"reach S"}]},{"role":"model","parts":[{"text":"think S","thought":true},{"text":"ok"}]},{"role":"user","parts":[{"text":"go"}]}]}`},
 	{"gemini labels", FormatGemini, `{"labels":{"x":"S"},"contents":[{"role":"user","parts":[{"text":"reach S"}]}]}`},
-	{"gemini inlineData", FormatGemini, `{"contents":[{"role":"user","parts":[{"text":"reach S"},{"inlineData":{"mimeType":"text/plain","data":"S"}}]}]}`},
 	{"gemini executableCode", FormatGemini, `{"contents":[{"role":"user","parts":[{"text":"reach S"}]},{"role":"model","parts":[{"executableCode":{"language":"PYTHON","code":"print('S')"}},{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"S"}}]},{"role":"user","parts":[{"text":"b"}]}]}`},
 	{"gemini snake system_instruction", FormatGemini, `{"system_instruction":{"parts":[{"text":"sys S"}]},"contents":[{"role":"user","parts":[{"text":"reach S"}]}]}`},
 	{"cohere documents", FormatCohere, `{"model":"c","documents":[{"id":"d","data":{"text":"doc S","title":"S"}}],"messages":[{"role":"user","content":"reach S"}]}`},
