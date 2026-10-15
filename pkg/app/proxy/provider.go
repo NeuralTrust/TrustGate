@@ -44,6 +44,7 @@ const (
 	responsesTurnIDPrefix = "resp_"
 	fieldPreviousResponse = "previous_response_id"
 	fieldConversation     = "conversation"
+	fieldStore            = "store"
 
 	capabilityChat               = "chat"
 	capabilityEmbeddings         = "embeddings"
@@ -198,6 +199,9 @@ func (p *providerInvoker) Invoke(
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
 	prep, err := p.prepare(ctx, bk, req)
+	if resp, ok := responsesStateRejection(bk, err); ok {
+		return resp, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +281,9 @@ func (p *providerInvoker) InvokeStream(
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
 	prep, err := p.prepare(ctx, bk, req)
+	if resp, ok := responsesStateRejection(bk, err); ok {
+		return resp, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -410,6 +417,18 @@ func (p *providerInvoker) prepare(
 	}
 
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
+
+	// previous_response_id and store:true ask the upstream to continue or keep
+	// server-side response state. A translated route drops both fields, so the
+	// client would believe state was honored. There is no product path that
+	// stores Responses state for a non-Responses registry: gateway session
+	// threading injects previous_response_id only when the target already
+	// speaks the Responses API. store:false is not a request for that state.
+	if crossFormat && sourceFormat == adapter.FormatOpenAIResponses {
+		if params := translatedResponsesState(req.Body); len(params) > 0 {
+			return nil, &responsesStateError{params: params}
+		}
+	}
 
 	body := req.Body
 	if crossFormat {
@@ -998,6 +1017,85 @@ func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvo
 		}
 		return respBody, nil
 	}
+}
+
+// responsesStateError is a client request for Responses server-side state on a
+// route that translates off the Responses API.
+type responsesStateError struct {
+	params []string
+}
+
+func (e *responsesStateError) Error() string {
+	if len(e.params) == 1 && e.params[0] == fieldPreviousResponse {
+		return "previous_response_id requires an OpenAI registry. This route translates the Responses API and cannot continue a stored response."
+	}
+	if len(e.params) == 1 && e.params[0] == fieldStore {
+		return "store requires an OpenAI registry. This route translates the Responses API and cannot store responses for later retrieval."
+	}
+	return "previous_response_id and store require an OpenAI registry. This route translates the Responses API and cannot continue or store response state."
+}
+
+func (e *responsesStateError) Unwrap() error { return ErrInvalidRequestPayload }
+
+func translatedResponsesState(body []byte) []string {
+	var probe struct {
+		PreviousResponseID json.RawMessage `json:"previous_response_id"`
+		Store              json.RawMessage `json:"store"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return nil
+	}
+	var params []string
+	if jsonRequestsPreviousResponse(probe.PreviousResponseID) {
+		params = append(params, fieldPreviousResponse)
+	}
+	if strings.TrimSpace(string(probe.Store)) == "true" {
+		params = append(params, fieldStore)
+	}
+	return params
+}
+
+func jsonRequestsPreviousResponse(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s) != ""
+	}
+	return true
+}
+
+func responsesStateRejection(bk *registry.Registry, err error) (*ProviderResponse, bool) {
+	var state *responsesStateError
+	if !errors.As(err, &state) {
+		return nil, false
+	}
+	var param any
+	if len(state.params) == 1 {
+		param = state.params[0]
+	}
+	body, marshalErr := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": state.Error(),
+			"type":    "invalid_request_error",
+			"param":   param,
+			"code":    nil,
+		},
+	})
+	if marshalErr != nil {
+		return nil, false
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusBadRequest,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentTypeJSON}},
+			bk,
+			"",
+		),
+		Body: body,
+	}, true
 }
 
 func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previousResponseID string) []byte {

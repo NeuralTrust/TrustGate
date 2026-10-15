@@ -119,8 +119,11 @@ type CanonicalRespFormat struct {
 // CanonicalResponse is the internal neutral representation of a provider
 // response.
 type CanonicalResponse struct {
-	ID                 string                     `json:"id,omitempty"`
-	Model              string                     `json:"model,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Created is the upstream unix-second timestamp: Chat Completions "created"
+	// or Responses "created_at". Zero means the upstream did not report one.
+	Created            int64                      `json:"created,omitempty"`
 	Content            string                     `json:"content,omitempty"`
 	Role               string                     `json:"role,omitempty"`
 	ToolCalls          []CanonicalToolCall        `json:"tool_calls,omitempty"`
@@ -259,8 +262,11 @@ type StreamToolCallDelta struct {
 
 // CanonicalStreamChunk is one piece of a streamed response.
 type CanonicalStreamChunk struct {
-	ID                 string                     `json:"id,omitempty"`
-	Model              string                     `json:"model,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Created is the upstream unix-second timestamp (Chat Completions "created").
+	// Zero means the chunk did not report one.
+	Created            int64                      `json:"created,omitempty"`
 	Role               string                     `json:"role,omitempty"`  // only on first chunk
 	Delta              string                     `json:"delta,omitempty"` // text content delta
 	ReasoningDelta     string                     `json:"reasoning_delta,omitempty"`
