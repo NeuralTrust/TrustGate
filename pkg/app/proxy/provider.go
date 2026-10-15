@@ -338,8 +338,8 @@ func (p *providerInvoker) InvokeStream(
 
 // applyModelEnforcement runs the binding's model rules. A body it cannot read,
 // when the binding restricts models, is an invalid request with a generic
-// message. The parser's text stays in the log. With no allow-list the call
-// proceeds on the original body.
+// message. With no allow-list the call proceeds on the original body and the
+// parser's text stays in the log.
 func (p *providerInvoker) applyModelEnforcement(body []byte, allowed []string, defaultModel string) ([]byte, error) {
 	normalized, _, verr := adapter.EnforceModel(body, allowed, defaultModel)
 	if verr == nil {
@@ -348,23 +348,15 @@ func (p *providerInvoker) applyModelEnforcement(body []byte, allowed []string, d
 	if errors.Is(verr, adapter.ErrModelNotAllowed) {
 		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
 	}
-	// An empty body or a JSON array is not a request. A JSON object whose
-	// model is not a string is still a model denial, which is what callers
-	// already receive for a model the binding rejects.
-	if len(allowed) > 0 && !jsonObject(body) {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidJSONObjectMessage)
-	}
+	// An empty body, a JSON array, or a model value that is not a string is
+	// not a request. The client gets the same generic message as the other
+	// unreadable bodies.
 	if len(allowed) > 0 {
-		return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, invalidJSONObjectMessage)
 	}
 	p.logger.Warn("model enforcement failed, proceeding without override",
 		slog.String("error", verr.Error()))
 	return body, nil
-}
-
-func jsonObject(body []byte) bool {
-	var raw map[string]json.RawMessage
-	return json.Unmarshal(body, &raw) == nil && raw != nil
 }
 
 // clientRequestError turns a body the provider client could not decode into a
