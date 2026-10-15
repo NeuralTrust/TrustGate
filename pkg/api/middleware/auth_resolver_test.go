@@ -196,6 +196,10 @@ func TestAuthMiddleware_LLMProxyAuthUsesDialectEnvelope(t *testing.T) {
 		{name: "provider key in x-api-key", path: "/cons1234/v1/chat/completions", header: resolver.HeaderAPIKeyCompat, value: "sk-proj-abc", want: openai},
 		{name: "provider key as bearer", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Bearer sk-proj-abc", want: openai},
 		{name: "provider key as bearer on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Bearer sk-proj-abc", want: anthropic},
+		{name: "basic scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Basic Zm9vOmJhcg==", want: openai},
+		{name: "token scheme on chat completions", path: "/cons1234/v1/chat/completions", header: fiber.HeaderAuthorization, value: "Token abc", want: openai},
+		{name: "basic scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Basic Zm9vOmJhcg==", want: anthropic},
+		{name: "token scheme on messages", path: "/cons1234/v1/messages", header: fiber.HeaderAuthorization, value: "Token abc", want: anthropic},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

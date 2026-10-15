@@ -66,13 +66,20 @@ func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.T
 
 // bearerToken extracts the credential from an Authorization header. It moved
 // here with the removal of the second bearer resolver, which owned it.
+// A different scheme that carries one credential (Basic, Token) is a
+// credential this gateway does not accept, the same failure as any other
+// bad credential. A bearer that is not exactly scheme plus token stays a
+// malformed request.
 func bearerToken(header string) (string, error) {
 	if strings.TrimSpace(header) == "" {
 		return "", ErrUnauthenticated
 	}
 	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", fmt.Errorf("%w: malformed bearer authorization header", appauth.ErrInvalidAuthRequest)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1], nil
 	}
-	return parts[1], nil
+	if len(parts) == 2 {
+		return "", ErrUnauthenticated
+	}
+	return "", fmt.Errorf("%w: malformed bearer authorization header", appauth.ErrInvalidAuthRequest)
 }
