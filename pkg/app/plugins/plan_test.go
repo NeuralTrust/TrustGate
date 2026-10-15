@@ -17,6 +17,7 @@ package plugins
 import (
 	"bytes"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -127,6 +128,98 @@ func TestStagePlan_GroupBatchesForcesSequentialAndLogs(t *testing.T) {
 	assert.Contains(t, out, "forced sequential")
 	assert.Contains(t, out, "capability=request_body")
 	assert.Contains(t, out, "slug=b_req")
+	assert.Contains(t, out, "held_by=a_req")
+}
+
+func TestStagePlan_GroupBatchesForcedSequentialLogLevel(t *testing.T) {
+	stages := []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	rewriter := func(name string) *fakePlugin {
+		return &fakePlugin{name: name, stages: stages, result: &Result{}, mutReq: true, mutResp: true}
+	}
+	reg := newRegistry(t,
+		rewriter("a_remote"), rewriter("b_remote"),
+		localPlugin{rewriter("c_local")}, localPlugin{rewriter("d_local")},
+	)
+
+	tests := []struct {
+		name       string
+		slugs      []string
+		stage      policy.Stage
+		level      string
+		capability string
+		slug       string
+		heldBy     string
+	}{
+		{
+			name:       "an off-box rewriter behind a local one is debug on the request leg",
+			slugs:      []string{"a_remote", "c_local"},
+			stage:      policy.StagePreRequest,
+			level:      "DEBUG",
+			capability: "request_body",
+			slug:       "a_remote",
+			heldBy:     "c_local",
+		},
+		{
+			name:       "an off-box rewriter behind a local one is debug on the response leg",
+			slugs:      []string{"a_remote", "c_local"},
+			stage:      policy.StagePreResponse,
+			level:      "DEBUG",
+			capability: "response_body",
+			slug:       "a_remote",
+			heldBy:     "c_local",
+		},
+		{
+			name:       "two local rewriters are debug",
+			slugs:      []string{"c_local", "d_local"},
+			stage:      policy.StagePreRequest,
+			level:      "DEBUG",
+			capability: "request_body",
+			slug:       "d_local",
+			heldBy:     "c_local",
+		},
+		{
+			name:       "two off-box rewriters warn on the request leg",
+			slugs:      []string{"a_remote", "b_remote"},
+			stage:      policy.StagePreRequest,
+			level:      "WARN",
+			capability: "request_body",
+			slug:       "b_remote",
+			heldBy:     "a_remote",
+		},
+		{
+			name:       "two off-box rewriters warn on the response leg",
+			slugs:      []string{"a_remote", "b_remote"},
+			stage:      policy.StagePreResponse,
+			level:      "WARN",
+			capability: "response_body",
+			slug:       "b_remote",
+			heldBy:     "a_remote",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			specs := make([]polSpec, 0, len(tc.slugs))
+			for _, slug := range tc.slugs {
+				specs = append(specs, polSpec{slug: slug, enabled: true, parallel: true, stages: stages})
+			}
+			plan := NewStagePlan(reg, policies(t, specs...), logger)
+
+			require.Len(t, plan.batchesFor(tc.stage), 2)
+			var lines []string
+			for _, line := range strings.Split(buf.String(), "\n") {
+				if strings.Contains(line, "stage="+string(tc.stage)+" ") {
+					lines = append(lines, line)
+				}
+			}
+			require.Len(t, lines, 1)
+			assert.Contains(t, lines[0], "level="+tc.level)
+			assert.Contains(t, lines[0], "capability="+tc.capability)
+			assert.Contains(t, lines[0], "slug="+tc.slug+" ")
+			assert.Contains(t, lines[0], "held_by="+tc.heldBy+" ")
+		})
+	}
 }
 
 func TestStagePlan_GroupBatchesIsDeterministicByPriorityThenSlug(t *testing.T) {
