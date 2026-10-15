@@ -524,7 +524,7 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 		assert.Equal(t, 0, up.Hits(), "default injection only applies when the model field is absent")
 	})
 
-	t.Run("non-string model is rejected and never reaches upstream", func(t *testing.T) {
+	t.Run("non-string model is an invalid request and never reaches upstream", func(t *testing.T) {
 		up := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
 
@@ -534,7 +534,10 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 		}
 		status, _, body := proxyPost(t, apiKey, path, payload)
 
-		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+		assert.Contains(t, string(body), `"type":"invalid_request_error"`)
+		assert.NotContains(t, string(body), "cannot unmarshal")
+		assert.NotContains(t, string(body), "model_not_allowed")
 		assert.Equal(t, 0, up.Hits())
 	})
 
