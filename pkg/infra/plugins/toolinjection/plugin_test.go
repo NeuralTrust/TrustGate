@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -655,6 +656,27 @@ func TestPluginPreRequestProviderMatrix(t *testing.T) {
 				t.Fatalf("untouched field %q = %#v, want %#v", tt.untouchedKey, got, tt.untouchedVal)
 			}
 		})
+	}
+}
+
+func TestPluginInjectReasoningModelDoesNotAddReasoningEffortNone(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"model":    "gpt-6.1-sol",
+		"messages": []any{map[string]any{"role": "user", "content": "hello, write me a short greeting"}},
+	})
+	res := execPreRequest(t, injectSettings(), string(adapter.FormatOpenAI), body)
+	if strings.Contains(string(res.RequestBody), `"reasoning_effort"`) {
+		t.Fatalf("tool injection added reasoning_effort: %s", res.RequestBody)
+	}
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor error = %v", err)
+	}
+	if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+		t.Fatalf("injected tool missing: %#v", decoded.Tools)
+	}
+	if decoded.Model != "gpt-6.1-sol" {
+		t.Fatalf("model = %q, want gpt-6.1-sol", decoded.Model)
 	}
 }
 

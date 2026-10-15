@@ -378,6 +378,51 @@ func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	assert.Contains(t, string(resp.Body), `"type":"message"`)
 }
 
+func TestProviderInvoke_ToolInjectionDoesNotSendReasoningEffortNone(t *testing.T) {
+	// The body is what Tool Injection leaves behind: the client's prompt plus
+	// one gateway function, and no reasoning_effort. GPT-6.1 Sol rejects none.
+	body := `{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"hello, write me a short greeting"}],"tools":[{"type":"function","function":{"name":"qa_escalate","description":"escalate","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+				strings.Contains(string(sent), `"qa_escalate"`)
+		})).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.JSONEq(t, reasoningToolsError, string(resp.Body))
+}
+
+func TestProviderInvoke_DropsClientReasoningEffortNoneForSol(t *testing.T) {
+	body := `{"model":"gpt-6.1-sol","max_tokens":32,"reasoning_effort":"none","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+				strings.Contains(string(sent), `"qa_escalate"`)
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func TestProviderInvoke_DoesNotOverrideExplicitReasoningEffort(t *testing.T) {
 	body := `{"model":"gpt-5.6-luna","max_tokens":32,"reasoning_effort":"high","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"Read","parameters":{"type":"object"}}}]}`
 	client := providermocks.NewClient(t)
