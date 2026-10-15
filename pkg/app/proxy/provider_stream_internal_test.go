@@ -286,7 +286,7 @@ func TestAdaptStream_ResponsesClientGetsTrailingUsageInCompleted(t *testing.T) {
 			target:    adapter.FormatOpenAI,
 			wantTypes: responsesTextOnlyTypes,
 			wantUsage: `{"input_tokens":2000,"output_tokens":10,"total_tokens":2010,"input_tokens_details":{"cached_tokens":1000},"output_tokens_details":{"reasoning_tokens":0}}`,
-			wantID:    "c",
+			wantID:    "resp_c",
 			wantModel: "gpt",
 		},
 		{
@@ -302,7 +302,7 @@ func TestAdaptStream_ResponsesClientGetsTrailingUsageInCompleted(t *testing.T) {
 			target:    adapter.FormatAnthropic,
 			wantTypes: responsesTextOnlyTypes,
 			wantUsage: `{"input_tokens":1310,"output_tokens":7,"total_tokens":1317,"input_tokens_details":{"cached_tokens":1000,"cache_write_tokens":300},"output_tokens_details":{"reasoning_tokens":0}}`,
-			wantID:    "msg_1",
+			wantID:    "resp_msg_1",
 			wantModel: "claude",
 		},
 	}
