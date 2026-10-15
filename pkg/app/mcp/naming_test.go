@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -188,5 +189,88 @@ func TestComposer_ListTools_PerInstanceNamesDoNotFlap(t *testing.T) {
 	// And the prefixed name is callable, so a client that cached it keeps working.
 	if _, err := resolveAndInvoke(context.Background(), oneDown, routable(consumer, finance, analytics), namedFor(finance, "query"), nil); err != nil {
 		t.Fatalf("calling the stable per-instance name: %v", err)
+	}
+}
+
+func linearShelf(t *testing.T, url string) *registrydomain.Registry {
+	t.Helper()
+	reg := mcpRegistry(t, "Linear", url)
+	reg.MCPTarget.Code = "app.linear/mcp"
+	return reg
+}
+
+// storeClone is the per-install view the Store scoper builds when a principal
+// holds several instances of one code: its own id, pointing back at the shelf.
+func storeClone(shelf *registrydomain.Registry) *registrydomain.Registry {
+	clone := *shelf
+	target := *shelf.MCPTarget
+	clone.MCPTarget = &target
+	clone.ID = ids.New[ids.RegistryKind]()
+	clone.InstanceOf = shelf.ID
+	return &clone
+}
+
+// A server without URL variables gives its Store instances no config, but two
+// of them installed side by side are still two instances of one code.
+func TestExposedName_ConfiglessStoreInstancesStayApart(t *testing.T) {
+	t.Parallel()
+	a := storeClone(linearShelf(t, "https://a.linear.example/mcp"))
+	b := storeClone(linearShelf(t, "https://b.linear.example/mcp"))
+
+	nameA, nameB := namedFor(a, "save_issue"), namedFor(b, "save_issue")
+	if nameA == nameB {
+		t.Fatalf("two instances share the name %q", nameA)
+	}
+	for _, name := range []string{nameA, nameB} {
+		if name == "linear_save_issue" || !strings.HasPrefix(name, "linear_") || !strings.HasSuffix(name, "_save_issue") {
+			t.Fatalf("name = %q, want linear_<instance>_save_issue", name)
+		}
+	}
+}
+
+// Only a per-install clone takes the digest: the shelf, and the one configured
+// instance that keeps the shelf's id, keep the names they already had.
+func TestExposedName_ShelfAndConfiguredInstanceKeepTheirNames(t *testing.T) {
+	t.Parallel()
+	shelf := linearShelf(t, "https://linear.example/mcp")
+	if got := namedFor(shelf, "save_issue"); got != "linear_save_issue" {
+		t.Fatalf("shelf name = %q, want linear_save_issue", got)
+	}
+
+	configured := *shelf
+	target := *shelf.MCPTarget
+	target.InstanceConfig = map[string]string{"workspace": "acme"}
+	configured.MCPTarget = &target
+	configured.InstanceOf = shelf.ID
+	want := "linear_" + registryDigest(shelf, 6) + "_save_issue"
+	if got := namedFor(&configured, "save_issue"); got != want {
+		t.Fatalf("configured instance name = %q, want %q", got, want)
+	}
+}
+
+func TestComposer_ListTools_ConfiglessStoreInstancesServeDistinctNames(t *testing.T) {
+	t.Parallel()
+	a := storeClone(linearShelf(t, "https://a.linear.example/mcp"))
+	b := storeClone(linearShelf(t, "https://b.linear.example/mcp"))
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen}}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.linear.example/mcp": {tools: tools("save_issue", "get_issue")},
+		"https://b.linear.example/mcp": {tools: tools("save_issue", "get_issue")},
+	}})
+
+	got, err := c.ListTools(context.Background(), routable(consumer, a, b))
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(got)
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if _, dup := seen[name]; dup {
+			t.Fatalf("tools/list repeats %q: %v", name, names)
+		}
+		seen[name] = struct{}{}
+	}
+	if len(names) != 4 {
+		t.Fatalf("tools = %v, want both instances' two tools", names)
 	}
 }

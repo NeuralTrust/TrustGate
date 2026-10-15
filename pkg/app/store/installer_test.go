@@ -698,6 +698,73 @@ func TestInstallReportsAlreadyInstalled(t *testing.T) {
 	}
 }
 
+// A request for a code with one instance is bound to it, and approving it keeps
+// the binding. Installing the code afterwards — how the user gets its connect
+// link — binds implicitly, and must land on the approved row rather than record
+// the same server a second time.
+func TestInstallAfterAnApprovedRequestIsThatInstall(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := shelfRegistry("github")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelf}}
+	grants := &fakeGrants{}
+	installs := &fakeInstalls{}
+	inst := newInstallerWith(t, regs, installs, grants, nil)
+
+	if _, err := inst.Install(context.Background(), req(gw, "github")); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	request := installs.upserts[0]
+	if request.RegistryID != shelf.ID {
+		t.Fatalf("the request must be bound to the sole instance, got %s", request.RegistryID)
+	}
+	installs.byCode = []*installationdomain.Installation{request}
+	if err := newApproverWith(t, installs, regs, grants, nil).Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "github", ApprovedBy: "admin",
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	res, err := inst.Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	got := installs.upserts[len(installs.upserts)-1]
+	if !res.AlreadyInstalled || got.ID != request.ID {
+		t.Fatalf("must refresh the approved row %s, got row %s (already_installed=%v)", request.ID, got.ID, res.AlreadyInstalled)
+	}
+	if got.RegistryID != shelf.ID {
+		t.Fatalf("the refreshed row must keep its binding, got %s", got.RegistryID)
+	}
+}
+
+// An older sibling of the same instance — a request bound to the sole instance,
+// or a denied one — must not be refreshed over the installed row: that would
+// leave the principal holding the installed instance twice.
+func TestInstallRefreshesTheInstalledRowOverAnOlderSiblingOfTheSameInstance(t *testing.T) {
+	for _, status := range []installationdomain.Status{installationdomain.StatusPendingApproval, installationdomain.StatusRevoked} {
+		t.Run(string(status), func(t *testing.T) {
+			gw := ids.New[ids.GatewayKind]()
+			shelf := shelfRegistry("github")
+			regs := &fakeRegistries{items: []*registrydomain.Registry{shelf}}
+			created := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+			sibling := &installationdomain.Installation{
+				ID: ids.New[ids.InstallationKind](), Status: status, RegistryID: shelf.ID, CreatedAt: created,
+			}
+			installed := &installationdomain.Installation{
+				ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, CreatedAt: created.Add(time.Hour),
+			}
+			installs := &fakeInstalls{byCode: []*installationdomain.Installation{sibling, installed}}
+			res, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github"))
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			if got := installs.upserts[0]; got.ID != installed.ID || !res.AlreadyInstalled {
+				t.Fatalf("must refresh the installed row %s, got %s (already_installed=%v)", installed.ID, got.ID, res.AlreadyInstalled)
+			}
+		})
+	}
+}
+
 func TestInstallUnknownCatalogCode(t *testing.T) {
 	inst := newInstaller(t, &fakeRegistries{}, &fakeInstalls{})
 	_, err := inst.Install(context.Background(), req(ids.New[ids.GatewayKind](), "does-not-exist"))

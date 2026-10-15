@@ -282,11 +282,16 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	if err != nil {
 		return nil, err
 	}
+	// Older data can hold one instance in several rows. Refresh the installed
+	// one: refreshing a pending or revoked sibling instead would make the
+	// principal hold the installed instance twice.
 	var sameInstance *installationdomain.Installation
 	for _, e := range existing {
-		if e.SameInstance(decision.registryID, config) {
+		if !e.SameInstance(decision.registryID, decision.canonical, config) {
+			continue
+		}
+		if sameInstance == nil || refreshRank(e) < refreshRank(sameInstance) {
 			sameInstance = e
-			break
 		}
 	}
 	alreadyInstalled := sameInstance != nil && sameInstance.IsActive()
@@ -311,9 +316,11 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	}
 	// Reuse the existing instance's id so a repeat install updates it in place
 	// rather than inserting a duplicate; a new-config install keeps its fresh id.
+	// Its binding is kept too: the upsert finds the row by it.
 	if sameInstance != nil {
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
+		record.RegistryID = sameInstance.RegistryID
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err
@@ -336,6 +343,17 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		result.ConfigVariables = secretRequired
 	}
 	return result, nil
+}
+
+func refreshRank(in *installationdomain.Installation) int {
+	switch in.Status {
+	case installationdomain.StatusInstalled:
+		return 0
+	case installationdomain.StatusPendingApproval:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // planInstallConfig validates the caller's supplied URL-variable values against
@@ -404,7 +422,10 @@ type installDecision struct {
 	// left implicit, so the result can be answered from how that instance
 	// actually authenticates rather than from the catalog entry alone. Nil when
 	// no single instance was resolved (a materialised one, or a pending choice).
-	bound              *registrydomain.Registry
+	bound *registrydomain.Registry
+	// canonical is the code's oldest instance, which serves an install that is
+	// not bound to one. Nil while the code has no instance.
+	canonical          ids.RegistryID
 	status             installationdomain.Status
 	materialise        bool
 	choices            []InstanceChoice
@@ -450,6 +471,23 @@ func (i *installer) decide(
 	if err != nil {
 		return installDecision{}, err
 	}
+	d, err := i.decideAmong(ctx, in, entry, code, instances)
+	if err != nil {
+		return installDecision{}, err
+	}
+	if len(instances) > 0 {
+		d.canonical = instances[0].ID
+	}
+	return d, nil
+}
+
+func (i *installer) decideAmong(
+	ctx context.Context,
+	in InstallRequest,
+	entry catalogdomain.MCPServer,
+	code string,
+	instances []*registrydomain.Registry,
+) (installDecision, error) {
 	grants, err := i.grantSet(ctx, in.GatewayID)
 	if err != nil {
 		return installDecision{}, err
