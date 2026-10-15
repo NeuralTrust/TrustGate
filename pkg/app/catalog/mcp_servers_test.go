@@ -473,7 +473,7 @@ func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 			dcr:            false,
 			requiresConfig: true,
 			scopes:         []string{"full"},
-			tools:          []string{"search", "create_form", "edit_form", "get_submissions"},
+			tools:          []string{"form_list", "create_form", "edit_form", "create_submission", "get_submissions"},
 			assertTools:    true,
 		},
 		{
