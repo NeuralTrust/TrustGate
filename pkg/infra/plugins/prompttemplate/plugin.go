@@ -112,8 +112,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if !appplugins.Blocks(in.Mode) {
 		aOutcome, bOutcome, _ := runModes(cfg, rb.clone(), properties, ctxVars, modeA, modeB)
 		bOutcome.markUnscanned(modeB, in.Request.Body)
-		setExtras(in.Event, observeData(aOutcome, bOutcome))
-		appplugins.SetDecision(in.Event, in.Mode)
+		data := observeData(aOutcome, bOutcome)
+		setExtras(in.Event, data)
+		recordSpanOutcome(in.Event, data.Decision)
 		return forwardOrNoOp(rb, hadProperties, false)
 	}
 
@@ -129,7 +130,11 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			})
 			return nil, runErr
 		}
-		setExtras(in.Event, rejectionData(aOutcome, bOutcome))
+		data := rejectionData(aOutcome, bOutcome)
+		setExtras(in.Event, data)
+		// Enforce refusals record "block" directly. SetDecisionFromOutcome
+		// would turn a "rejected" outcome into "reported".
+		appplugins.SetDecision(in.Event, in.Mode)
 		return nil, runErr
 	}
 	if reason, blocked := blockingUnapplied(aOutcome.unapplied); blocked {
@@ -157,7 +162,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		}
 	}
 
-	setExtras(in.Event, enforceData(aOutcome, bOutcome))
+	data := enforceData(aOutcome, bOutcome)
+	setExtras(in.Event, data)
+	recordSpanOutcome(in.Event, data.Decision)
 	return forwardOrNoOp(rb, hadProperties, rb.dirty())
 }
 
@@ -180,10 +187,12 @@ func skipRequest(in appplugins.ExecInput, cfg *config, skip *passThrough, rb *re
 		return nil, rejectUnsupportedShape(skip.reason)
 	}
 	if appplugins.Blocks(in.Mode) && len(cfg.NamedTemplates) > 0 && !cfg.AllowUntemplatedRequests {
-		// Refused exactly as a request with no reference is. The decision is the
-		// one that rejection records (no_op); skipped_reason says why.
-		data.Decision = decisionNoOp
+		// Refused exactly as a request with no reference is. Record block, the
+		// same token other enforce refusals use, rather than no_op.
+		// skipped_reason says why the body could not be read.
+		data.Decision = decisionBlock
 		setExtras(in.Event, data)
+		appplugins.SetDecision(in.Event, in.Mode)
 		return nil, reject(http.StatusBadRequest, typeRequired, "request does not reference a template")
 	}
 	setExtras(in.Event, data)
@@ -273,7 +282,16 @@ func observeData(a modeAOutcome, b modeBResult) PromptTemplateData {
 }
 
 func rejectionData(a modeAOutcome, b modeBResult) PromptTemplateData {
-	return buildData(decisionNoOp, a, b)
+	return buildData(decisionBlock, a, b)
+}
+
+// recordSpanOutcome copies a real template outcome onto the metrics span.
+// A pass-through (no_op) is left unset so Activity keeps showing Passed.
+func recordSpanOutcome(event *metrics.EventContext, decision string) {
+	switch decision {
+	case decisionInjected, decisionSkipped, decisionRendered, decisionObserved:
+		appplugins.SetDecisionFromOutcome(event, decision)
+	}
 }
 
 func reject(status int, errType, message string) error {
