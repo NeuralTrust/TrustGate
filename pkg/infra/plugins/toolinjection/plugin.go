@@ -110,6 +110,14 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		return okResult(), nil
 	}
 
+	// These models reject function tools on Chat Completions at every
+	// reasoning_effort. Injecting one would turn a tool-free prompt into a
+	// provider 400, so the request is forwarded exactly as the client sent it.
+	if chatCompletionsWithoutFunctionTools(format, targetModel(canonical, in.Request)) {
+		recordToolInjectionSkipped(in, cfg)
+		return okResult(), nil
+	}
+
 	ad, err := p.registry.GetAdapter(adapter.Format(format))
 	if err != nil {
 		return okResult(), nil
@@ -175,6 +183,32 @@ func legacyFunctions(ad adapter.RequestAdapter, body []byte, canonical *adapter.
 		}
 	}
 	return out
+}
+
+func chatCompletionsWithoutFunctionTools(format, model string) bool {
+	return adapter.Format(format) == adapter.FormatOpenAI && adapter.ModelRejectsReasoningEffortNone(model)
+}
+
+func targetModel(canonical *adapter.CanonicalRequest, req *infracontext.RequestContext) string {
+	if canonical != nil && canonical.Model != "" {
+		return canonical.Model
+	}
+	if req == nil {
+		return ""
+	}
+	return req.DefaultModel
+}
+
+func recordToolInjectionSkipped(in appplugins.ExecInput, cfg *config) {
+	appplugins.SetDecisionFromOutcome(in.Event, outcomeSkipped)
+	if cfg == nil {
+		return
+	}
+	outcomes := make([]injectOutcome, 0, len(cfg.InjectTools))
+	for i := range cfg.InjectTools {
+		outcomes = append(outcomes, injectOutcome{Name: cfg.InjectTools[i].Function.Name, Outcome: outcomeSkipped})
+	}
+	setExtras(in.Event, data(string(policy.StagePreRequest), outcomes))
 }
 
 func injectionChanged(outcomes []injectOutcome) bool {

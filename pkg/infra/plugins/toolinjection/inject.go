@@ -28,6 +28,7 @@ const (
 	outcomeReplaced = "replaced"
 	outcomeDropped  = "dropped"
 	outcomeRejected = "rejected"
+	outcomeSkipped  = "skipped"
 )
 
 type injectOutcome struct {

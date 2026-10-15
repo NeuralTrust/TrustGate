@@ -163,25 +163,29 @@ func TestInvokeStream_RetriesMaxTokensOnce(t *testing.T) {
 	assert.Contains(t, got, "ok")
 }
 
-func TestInvokeStream_ToolInjectionDoesNotSendReasoningEffortNone(t *testing.T) {
-	body := `{"model":"gpt-6.1-sol","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
-	client := providermocks.NewClient(t)
-	client.EXPECT().
-		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
-			return !strings.Contains(string(sent), `"reasoning_effort"`) &&
-				strings.Contains(string(sent), `"qa_escalate"`)
-		})).
-		Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
-		Once()
+func TestInvokeStream_ClientToolsOnModelsWithoutChatFunctionTools(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			body := `{"model":"` + model + `","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"qa_escalate","parameters":{"type":"object"}}}]}`
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(sent []byte) bool {
+					return !strings.Contains(string(sent), `"reasoning_effort"`) &&
+						strings.Contains(string(sent), `"qa_escalate"`)
+				})).
+				Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
+				Once()
 
-	inv := newStreamInvoker(t, "openai", client)
-	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
+			inv := newStreamInvoker(t, "openai", client)
+			resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{Body: []byte(body)})
 
-	require.NoError(t, err)
-	assert.Equal(t, 400, resp.StatusCode)
-	assert.Contains(t, string(resp.Body), "Responses API")
-	assert.Contains(t, string(resp.Body), "gpt-6.1-sol")
-	assert.NotContains(t, string(resp.Body), "set reasoning_effort to 'none'")
+			require.NoError(t, err)
+			assert.Equal(t, 400, resp.StatusCode)
+			assert.Contains(t, string(resp.Body), "Responses API")
+			assert.Contains(t, string(resp.Body), model)
+			assert.NotContains(t, string(resp.Body), "set reasoning_effort to 'none'")
+		})
+	}
 }
 
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
