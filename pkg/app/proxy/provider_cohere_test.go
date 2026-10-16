@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"iter"
 	"net/http"
+	"strings"
 	"testing"
 
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
@@ -28,6 +29,7 @@ import (
 	factorymocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
 	providermocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/mocks"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -137,7 +139,7 @@ func TestProviderInvoke_CohereChatNativeFormat(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, string(resp.Body), `"text":"hi"`)
+	assert.JSONEq(t, `{"id":"chat-1","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`, string(resp.Body))
 }
 
 func TestProviderInvoke_CohereEmbeddingsUnsupportedProvider(t *testing.T) {
@@ -157,4 +159,83 @@ func TestProviderInvoke_CohereEmbeddingsUnsupportedProvider(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, appproxy.ErrCapabilityNotSupported)
+}
+
+func TestProviderInvoke_CohereChatResponseModel(t *testing.T) {
+	t.Parallel()
+	const model = "command-r7b-12-2024"
+	for _, tc := range []struct {
+		name  string
+		body  string
+		model string
+	}{
+		{name: "explicit model", body: `{"model":"command-r-plus","messages":[{"role":"user","content":"hi"}]}`, model: "command-r-plus"},
+		{name: "routed default", body: `{"messages":[{"role":"user","content":"hi"}]}`, model: model},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := &cohereTestClient{completionsFn: func(_ context.Context, cfg *providers.Config, body []byte) ([]byte, error) {
+				var sent struct {
+					Model string `json:"model"`
+				}
+				require.NoError(t, json.Unmarshal(body, &sent))
+				require.Equal(t, tc.model, sent.Model)
+				require.Equal(t, tc.model, cfg.Model)
+				return []byte(`{"id":"chat-1","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"QA_OK"}]},"usage":{"tokens":{"input_tokens":512,"output_tokens":6},"cached_tokens":480}}`), nil
+			}}
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("cohere").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget("cohere"), &infracontext.RequestContext{
+				Body: []byte(tc.body), SourceFormat: string(adapter.FormatOpenAI),
+				DefaultModel: model, AllowedModels: []string{model, "command-r-plus"},
+			})
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, tc.model, resp.SentModel)
+			assert.Equal(t, []string{tc.model}, resp.Headers["X-Selected-Model"])
+			assert.JSONEq(t, strings.ReplaceAll(`{"id":"chat-1","object":"chat.completion","model":"command-r7b-12-2024","choices":[{"index":0,"message":{"role":"assistant","content":"QA_OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":512,"completion_tokens":6,"total_tokens":518,"prompt_tokens_details":{"cached_tokens":480}}}`, model, tc.model), string(resp.Body))
+		})
+	}
+}
+
+func TestProviderInvoke_CohereChatStreamResponseModel(t *testing.T) {
+	t.Parallel()
+	const model = "command-r7b-12-2024"
+	client := providermocks.NewClient(t)
+	client.EXPECT().CompletionsStream(mock.Anything, mock.Anything, mock.Anything).Return(seqOf(
+		[]byte(`data: {"id":"chat-stream","type":"message-start","delta":{"message":{"role":"assistant"}}}`),
+		[]byte(`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"QA_OK"}}}}`),
+		[]byte(`data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"tokens":{"input_tokens":10,"output_tokens":2}}}}`),
+	), nil).Once()
+	inv := newStreamInvoker(t, "cohere", client)
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("cohere"), &infracontext.RequestContext{
+		Body:         []byte(`{"stream":true,"messages":[{"role":"user","content":"hi"}]}`),
+		SourceFormat: string(adapter.FormatOpenAI), DefaultModel: model, AllowedModels: []string{model},
+	})
+	require.NoError(t, err)
+	var text string
+	var chunks int
+	for _, line := range collectStream(t, resp.Stream) {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok || payload == "[DONE]" {
+			continue
+		}
+		var chunk struct {
+			Model   string `json:"model"`
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(payload), &chunk))
+		assert.Equal(t, model, chunk.Model)
+		for _, choice := range chunk.Choices {
+			text += choice.Delta.Content
+		}
+		chunks++
+	}
+	assert.Positive(t, chunks)
+	assert.Equal(t, "QA_OK", text)
 }
