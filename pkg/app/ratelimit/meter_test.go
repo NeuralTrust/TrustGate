@@ -158,12 +158,13 @@ func TestMeterTierChangeAppliesWithoutWaitingForASync(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		require.NoError(t, m.Check(bg, id))
 	}
+	hydrated := backend.calls.Load()
 	r.set(id, "t1", domain.Limits{BurstPerMin: 4, QuotaPerMonth: 1000}) // downgrade
 	_ = exceeded(t, m.Check(bg, id))
 
 	r.set(id, "t1", domain.Limits{BurstPerMin: 100, QuotaPerMonth: 1000}) // upgrade
 	require.NoError(t, m.Check(bg, id))
-	assert.Zero(t, backend.calls.Load(), "no sync was involved")
+	assert.Equal(t, hydrated, backend.calls.Load(), "a tier change does not sync")
 }
 
 // Q4: a plan with no monthly cap still has its usage counted, so the number
@@ -194,7 +195,7 @@ func TestMeterPodsLearnTheTenantWideTotalFromTheSync(t *testing.T) {
 		require.NoError(t, podA.Check(bg, id))
 	}
 	require.NoError(t, podA.SyncNow(bg))
-	require.NoError(t, podB.Check(bg, id), "B has not synced yet and admits on its own view")
+	require.NoError(t, podB.Check(bg, id), "B reads A's 3 and still has room for one")
 	require.NoError(t, podB.SyncNow(bg))
 
 	// B now sees 3 (from A) + 1 (its own) = 4 = the cap.
