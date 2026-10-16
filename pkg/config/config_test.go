@@ -1307,7 +1307,7 @@ func TestLoadConfig_RateLimitSyncDefaults(t *testing.T) {
 	}
 	rl := cfg.RateLimit
 	if !rl.Enabled || rl.SyncInterval != time.Second || rl.SyncTimeout != 200*time.Millisecond ||
-		rl.FailedRetention != 30*time.Second {
+		rl.ColdReadTimeout != time.Second || rl.FailedRetention != 30*time.Second {
 		t.Fatalf("rate limit defaults = %+v", rl)
 	}
 }
@@ -1316,6 +1316,7 @@ func TestLoadConfig_RateLimitSyncConfigured(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("RATE_LIMIT_SYNC_INTERVAL", "2s")
 	t.Setenv("RATE_LIMIT_SYNC_TIMEOUT", "500ms")
+	t.Setenv("RATE_LIMIT_COLD_READ_TIMEOUT", "750ms")
 	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "45s")
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -1323,7 +1324,7 @@ func TestLoadConfig_RateLimitSyncConfigured(t *testing.T) {
 	}
 	rl := cfg.RateLimit
 	if rl.SyncInterval != 2*time.Second || rl.SyncTimeout != 500*time.Millisecond ||
-		rl.FailedRetention != 45*time.Second {
+		rl.ColdReadTimeout != 750*time.Millisecond || rl.FailedRetention != 45*time.Second {
 		t.Fatalf("rate limit = %+v", rl)
 	}
 }
@@ -1337,6 +1338,7 @@ func TestLoadConfig_RejectsInvalidRateLimitSync(t *testing.T) {
 		{name: "malformed interval", key: "RATE_LIMIT_SYNC_INTERVAL", value: "fast"},
 		{name: "zero timeout", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "0s"},
 		{name: "timeout over the cap", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "6s"},
+		{name: "cold read over the cap", key: "RATE_LIMIT_COLD_READ_TIMEOUT", value: "6s"},
 		{name: "retention over the cap", key: "RATE_LIMIT_FAILED_RETENTION", value: "11m"},
 	}
 	for _, tt := range tests {
