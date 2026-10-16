@@ -114,7 +114,7 @@ type ProviderInvoker interface {
 type providerCodec interface {
 	AdaptRequestForProvider(body []byte, source, target adapter.Format, providerName, defaultModel string) ([]byte, error)
 	DecodeResponseFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalResponse, error)
-	AdaptResponse(body []byte, source, target adapter.Format) ([]byte, error)
+	AdaptResponseWithModel(body []byte, source, target adapter.Format, sentModel string) ([]byte, error)
 	AdaptStreamChunk(chunk []byte, source, target adapter.Format) ([][]byte, error)
 	DecodeStreamChunkFor(chunk []byte, target adapter.Format) (*adapter.CanonicalStreamChunk, error)
 	EncodeStreamChunkFor(canonical *adapter.CanonicalStreamChunk, source adapter.Format) ([][]byte, error)
@@ -729,7 +729,11 @@ func (p *providerInvoker) adaptResponseBody(body []byte, prep *preparedInvocatio
 		}
 		return adapter.AdaptRerankResponse(reg, body, prep.sourceFormat, prep.targetFormat)
 	default:
-		return p.registry.AdaptResponse(body, prep.sourceFormat, prep.targetFormat)
+		var fallbackModel string
+		if prep.targetFormat == adapter.FormatCohere {
+			fallbackModel = prep.sentModel
+		}
+		return p.registry.AdaptResponseWithModel(body, prep.sourceFormat, prep.targetFormat, fallbackModel)
 	}
 }
 
