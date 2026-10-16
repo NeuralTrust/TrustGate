@@ -377,7 +377,7 @@ func TestIsEmptyOrNull(t *testing.T) {
 
 func TestPrefersMaxCompletionTokens_ClassifiesEverySupportedProvider(t *testing.T) {
 	for _, p := range provider.Supported() {
-		want := p == provider.OpenAI || p == provider.Azure
+		want := p == provider.OpenAI || p == provider.Azure || p == provider.DigitalOcean
 		assert.Equal(t, want, prefersMaxCompletionTokens(p, "gpt-5"), p)
 	}
 }
@@ -464,6 +464,8 @@ func TestNormalizeRequestForProvider_TokenParamKey(t *testing.T) {
 		{name: "string max_tokens is left alone", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":"100","messages":[]}`, byteIdentical: true},
 		{name: "absent max_tokens is a no-op", providers: openaiWire, in: `{"model":"gpt-5","messages":[]}`, byteIdentical: true},
 		{name: "other openai-wire providers keep max_tokens", providers: others, in: `{"model":"m","max_tokens":10,"messages":[]}`, wantMaxTokens: 10},
+		{name: "digitalocean claude slug moves to max_completion_tokens", providers: []string{provider.DigitalOcean}, in: `{"model":"anthropic-claude-5.5-haiku","max_tokens":10,"messages":[]}`, wantMaxCompletion: 10},
+		{name: "digitalocean open-weight slug moves to max_completion_tokens", providers: []string{provider.DigitalOcean}, in: `{"model":"llama3.3-70b-instruct","max_tokens":10,"messages":[]}`, wantMaxCompletion: 10},
 		{name: "responses api is untouched", providers: []string{provider.OpenAI}, target: FormatOpenAIResponses, in: `{"model":"gpt-5","max_tokens":10,"input":"hi"}`, byteIdentical: true},
 	}
 

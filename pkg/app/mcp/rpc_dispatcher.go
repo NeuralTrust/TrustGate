@@ -236,6 +236,11 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	if err != nil {
 		return nil, err
 	}
+	if span := trace.SpanFromContext(ctx); span != nil {
+		annotateRegistry(span, target.Registry, target.Tool.Name)
+		span.SetMCPToolRisk(target.Tool.Risk())
+		span.SetLatency(0)
+	}
 	call := ToolCall{
 		Exposed:          target.Exposed,
 		Registry:         target.Registry,

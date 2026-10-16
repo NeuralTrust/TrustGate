@@ -304,6 +304,9 @@ func (t *storeTool) install(
 			return t.reasonRequired(ctx, rc, baseURL, args.Code, registryID, principal)
 		}
 	}
+	if errors.Is(err, appstore.ErrServerDisabled) {
+		return serverDisabled(args.Code, t.displayNameFor(args.Code))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -600,6 +603,16 @@ func (t *storeTool) reasonRequired(
 			" — they write, in their own words, why they need it, and the request is filed when they submit"+
 			" the form. Do not write the reason for them, and do not re-run install.",
 		structured,
+	)
+}
+
+// serverDisabled answers an install of a server an administrator turned off on
+// the gateway. It is a decision the caller reports to the user, not a fault, so
+// it is a result rather than an error a client shows as "internal error".
+func serverDisabled(code, name string) (json.RawMessage, error) {
+	return marshalToolResult(
+		fmt.Sprintf("%s is turned off on this gateway by an administrator, so it cannot be installed or used right now. Do not re-run install; tell the user an administrator has to turn it back on.", name),
+		map[string]any{"code": code, "name": name, "disabled": true},
 	)
 }
 

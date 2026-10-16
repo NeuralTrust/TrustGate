@@ -71,6 +71,36 @@ func TestNewInstallationValidation(t *testing.T) {
 	}
 }
 
+func TestSameInstanceReadsAnUnboundInstallAsTheCanonicalOne(t *testing.T) {
+	canonical := ids.New[ids.RegistryKind]()
+	other := ids.New[ids.RegistryKind]()
+	cfg := map[string]string{"database": "analytics"}
+	tests := []struct {
+		name      string
+		row       *Installation
+		binding   ids.RegistryID
+		canonical ids.RegistryID
+		config    map[string]string
+		want      bool
+	}{
+		{"both unbound", &Installation{}, ids.RegistryID{}, canonical, nil, true},
+		{"bound row, unbound install", &Installation{RegistryID: canonical}, ids.RegistryID{}, canonical, nil, true},
+		{"unbound row, install bound to canonical", &Installation{}, canonical, canonical, nil, true},
+		{"unbound row, install bound elsewhere", &Installation{}, other, canonical, nil, false},
+		{"bound row, unbound install of a code with no instance", &Installation{RegistryID: canonical}, ids.RegistryID{}, ids.RegistryID{}, nil, false},
+		{"same server, other config", &Installation{RegistryID: canonical}, ids.RegistryID{}, canonical, cfg, false},
+		{"same server, same config", &Installation{RegistryID: canonical, Config: cfg}, ids.RegistryID{}, canonical, cfg, true},
+		{"nil row", nil, ids.RegistryID{}, canonical, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.row.SameInstance(tt.binding, tt.canonical, tt.config); got != tt.want {
+				t.Fatalf("SameInstance = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInstallationIsActiveOnlyWhenInstalled(t *testing.T) {
 	if (&Installation{Status: StatusPendingApproval}).IsActive() {
 		t.Fatal("pending_approval must not be active")

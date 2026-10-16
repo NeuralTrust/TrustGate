@@ -466,7 +466,7 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
-<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title>{{if .Waiting}}<meta http-equiv="refresh" content="{{.RetryAfter}};url={{.RetryURL}}">{{end}}<style>` + pageCSS + `</style></head>
+<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title>{{if .Waiting}}<meta http-equiv="refresh" content="{{.RetryAfter}};url={{.RetryURL}}">{{end}}<style>` + pageCSS + `#close-tab:disabled{opacity:.55;cursor:default}</style></head>
 <body class="dotted"><div class="card flush">
 <div class="card-hero">
   <div class="pair">
@@ -502,8 +502,7 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     <span class="done-body">{{.ServerName}} is ready to use there. If its tools do not show up, refresh the connector's tools in {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}} or start a new conversation — some clients read the tool list only when asked to or when a conversation opens.</span>
     {{if not .ResumeURL}}<span class="done-body" id="close-hint" hidden>This browser keeps open the tabs it did not open itself: switch back to {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}}, and close this tab whenever you like.</span>{{end}}
   </div></div>
-  {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}
-  {{if .AutoClose}}<script>setTimeout(function () { window.close(); setTimeout(function () { var h = document.getElementById('close-hint'); if (!window.closed && h) { h.hidden = false; } }, 300); }, 1500);</script>{{end}}{{end}}
+  {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}{{end}}
   {{if .Owner.Name}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
@@ -517,7 +516,10 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     {{if .ResumeURL}}<a class="btn primary block" href="{{.ResumeURL}}">Return to your app</a>
     {{else}}<button class="btn primary block" type="button" id="close-tab">Close and go back to {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}}</button>
     <script>(function(){var b=document.getElementById('close-tab'),h=document.getElementById('close-hint');if(!b)return;
-    b.addEventListener('click',function(){window.close();setTimeout(function(){if(!window.closed&&h){h.hidden=false;}},300);});})();</script>{{end}}
+    function kept(){if(window.closed)return;if(h){h.hidden=false;}b.disabled=true;
+    b.textContent=window.matchMedia('(pointer: coarse)').matches?'Close this tab from your browser':'Press '+(/Mac|iPhone|iPad/.test(navigator.platform)?'⌘W':'Ctrl+W')+' to close this tab';}
+    function tryClose(){window.close();setTimeout(kept,300);}
+    b.addEventListener('click',tryClose);{{if .AutoClose}}setTimeout(tryClose,1500);{{end}}})();</script>{{end}}
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn ghost-danger block" type="submit">Disconnect {{.ServerName}}</button></form>
   {{else}}
     <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn primary block" type="submit">Connect account</button></form>

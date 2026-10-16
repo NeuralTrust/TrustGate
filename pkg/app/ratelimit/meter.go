@@ -107,7 +107,14 @@ func (o Options) withDefaults() Options {
 }
 
 // Meter is the plan rate limiter. It counts in memory and reconciles with Redis
-// in the background, so a request never waits on Redis.
+// in the background, so a request that already has a counter never waits on Redis.
+//
+// A pod with no counter for the tenant reads the shared totals once before it
+// decides. That counter is dropped after IdleEviction of quiet time, and the
+// next request would otherwise see zeros and be admitted until a background
+// sync filled them back in. A missing counter is not zero usage. A failed read
+// leaves the counters at zero and the request is admitted: Redis being down
+// stays fail-open, the same as a failed background sync.
 //
 // Each pod keeps, per tenant, how much the tenant had spent when it last
 // looked (synced), how much it has admitted since (pending), and how much is on
@@ -165,14 +172,14 @@ func (m *Meter) tracked() int64 {
 	return int64(len(m.slots))
 }
 
-// Check charges one request against the gateway's plan, in memory: it never
-// waits on Redis.
+// Check charges one request against the gateway's plan. A tenant this pod
+// already tracks is decided from memory and does not wait on Redis. A tenant
+// it does not track is read from the shared counters first; see primeAndAdmit.
 //
-// The tier lookup runs on every call and everything after it is memory only. A
-// gateway that is not metered (no tenant, or neither tenant caps nor a stamp)
-// is let through without touching the meter, so self-hosted traffic leaves no
-// counter behind. A lookup that fails for any other reason fails open and is
-// counted.
+// The tier lookup runs on every call. A gateway that is not metered (no tenant,
+// or neither tenant caps nor a stamp) is let through without touching the
+// meter, so self-hosted traffic leaves no counter behind. A lookup that fails
+// for any other reason fails open and is counted.
 func (m *Meter) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 	resolved, err := m.resolver.Resolve(ctx, gatewayID)
 	if err != nil {
@@ -190,7 +197,15 @@ func (m *Meter) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 func (m *Meter) admit(r Resolved) error {
 	now := m.opts.Now()
 	for {
-		s, created := m.slotFor(r.Subject)
+		s, created := m.slotFor(r.Subject, now)
+		if created {
+			err, retry := m.primeAndAdmit(s, r.Limits, now)
+			if retry {
+				continue
+			}
+			return err
+		}
+		<-s.ready
 		s.mu.Lock()
 		if s.evicted {
 			// Eviction removes the slot from the map under the same locks that
@@ -200,18 +215,74 @@ func (m *Meter) admit(r Resolved) error {
 		}
 		wantKick, err := s.admit(r.Limits, now)
 		s.mu.Unlock()
-		// A tenant this pod has not seen has no view of what the others spent,
-		// and learns it only from a sync: ask for one now rather than at the
-		// next tick.
-		if wantKick || created {
+		if wantKick {
 			m.signalKick()
 		}
 		return err
 	}
 }
 
+// primeAndAdmit loads the shared totals for a slot this pod has just created,
+// then admits one request against them. retry is set when the slot was evicted
+// during the read; the caller looks up a fresh one.
+//
+// The read is a zero-delta sync: it does not create keys and it does not add
+// usage. It runs before the decision and before ready is closed, so a burst
+// that arrives on the empty slot waits and is judged on the same total. When
+// the read fails the counters stay at zero and the request is admitted.
+func (m *Meter) primeAndAdmit(s *slot, limits domain.Limits, now time.Time) (err error, retry bool) {
+	defer close(s.ready)
+	quota, burst, ok := m.readShared(s.subject, now)
+	s.mu.Lock()
+	if s.evicted {
+		s.mu.Unlock()
+		return nil, true
+	}
+	if ok {
+		s.seed(now, quota, burst)
+	}
+	_, err = s.admit(limits, now)
+	s.mu.Unlock()
+	// The slot is new, so ask for a sync now rather than at the next tick: what
+	// this request admitted has to reach the shared counters. A rejection
+	// admitted nothing; the read above is already the shared total, and the
+	// kick is still the same one a new tenant has always asked for.
+	m.signalKick()
+	return err, false
+}
+
+// readShared is the one request-path read. A successful answer is the shared
+// total, including zero for a key that is not there. An error is not a total:
+// the caller fails open and the background sync keeps trying.
+func (m *Meter) readShared(subject string, now time.Time) (quota, burst int64, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), m.opts.SyncTimeout)
+	defer cancel()
+	results, err := m.backend.Sync(ctx, []domain.SyncItem{{
+		Subject: subject,
+		Bumps: []domain.Bump{
+			{Kind: domain.KindQuota, Window: quotaWindow(now), Delta: 0},
+			{Kind: domain.KindBurst, Window: burstWindow(now), Delta: 0},
+		},
+	}})
+	if err == nil && len(results) == 1 && results[0].Err == nil && len(results[0].Totals) == 2 {
+		return results[0].Totals[0], results[0].Totals[1], true
+	}
+	if err == nil {
+		if len(results) == 1 && results[0].Err != nil {
+			err = results[0].Err
+		} else {
+			err = errors.New("malformed cold counter read")
+		}
+	}
+	m.logger.Warn("rate limit: cold counter read failed; fail-open",
+		slog.String("component", "ratelimit"),
+		slog.String("subject", subject),
+		slog.Any("error", err))
+	return 0, 0, false
+}
+
 // slotFor returns the tenant's counter, and whether this call created it.
-func (m *Meter) slotFor(subject string) (s *slot, created bool) {
+func (m *Meter) slotFor(subject string, now time.Time) (s *slot, created bool) {
 	m.mu.RLock()
 	s, ok := m.slots[subject]
 	m.mu.RUnlock()
@@ -223,7 +294,7 @@ func (m *Meter) slotFor(subject string) (s *slot, created bool) {
 	if s, ok = m.slots[subject]; ok {
 		return s, false
 	}
-	s = &slot{subject: subject}
+	s = &slot{subject: subject, lastSeen: now, ready: make(chan struct{})}
 	m.slots[subject] = s
 	return s, true
 }
@@ -258,6 +329,9 @@ type slot struct {
 	retry    []*syncEntry
 	lastSeen time.Time
 	evicted  bool
+	// ready is closed once the slot's first shared read has finished or failed
+	// open. Requests that arrive during that read wait on it.
+	ready chan struct{}
 }
 
 // counter is one window of one tenant counter.
@@ -269,6 +343,26 @@ type counter struct {
 }
 
 func (c counter) total() int64 { return c.synced + c.inflight + c.pending }
+
+// seed records a shared total learned before the first decision on this slot.
+// The windows are set too, so the admission that follows does not roll the
+// counters back to zero. A later read only raises a total.
+func (s *slot) seed(now time.Time, quota, burst int64) {
+	qw := quotaWindow(now)
+	if s.quota.window == "" || s.quota.window == qw {
+		s.quota.window = qw
+		if quota > s.quota.synced {
+			s.quota.synced = quota
+		}
+	}
+	bw := burstWindow(now)
+	if s.burst.window == "" || s.burst.window == bw {
+		s.burst.window = bw
+		if burst > s.burst.synced {
+			s.burst.synced = burst
+		}
+	}
+}
 
 // carried is usage that belongs to a quota month that has already ended and has
 // not reached Redis yet. It is flushed to the month it was spent in.

@@ -750,7 +750,7 @@ func TestSingleConnectPage_ClosesItselfOnlyRightAfterConnecting(t *testing.T) {
 		})
 	}
 	// The landing page's own attempt, as opposed to the button's.
-	const autoClose = "setTimeout(function () { window.close();"
+	const autoClose = "setTimeout(tryClose,1500)"
 	if body := render(page(""), true, ""); !strings.Contains(body, autoClose) {
 		t.Fatalf("the page the callback lands on must close itself, body:\n%s", body)
 	}
@@ -767,7 +767,8 @@ func TestSingleConnectPage_ClosesItselfOnlyRightAfterConnecting(t *testing.T) {
 
 // Once connected, the page offers the way back by name: the app the link came
 // from, from the OAuth client its Store session was issued to. A browser that
-// will not close the tab gets told to switch back instead.
+// will not close the tab gets told to switch back, and the button says how to
+// close it by hand.
 func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
 	t.Parallel()
 	render := func(app, resume string) string {
@@ -784,7 +785,7 @@ func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
 		})
 	}
 	body := render("Claude", "")
-	for _, want := range []string{`id="close-tab"`, "Close and go back to Claude", "All set — go back to Claude", `id="close-hint"`, "switch back to Claude"} {
+	for _, want := range []string{`id="close-tab"`, "Close and go back to Claude", "All set — go back to Claude", `id="close-hint"`, "switch back to Claude", "to close this tab"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the connected page must say %q, body:\n%s", want, body)
 		}

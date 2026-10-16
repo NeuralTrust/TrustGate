@@ -75,6 +75,25 @@ var seedProviders = []seedProvider{
 	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
 	{providers.ProviderCohere, "Cohere", "cohere"},
 	{providers.ProviderMoonshot, "Moonshot AI", "openai"},
+	{providers.ProviderDigitalOcean, "DigitalOcean", "openai"},
+}
+
+// manualSeedModels are models a provider serves that models.dev does not
+// publish.
+var manualSeedModels = map[string][]seedModel{
+	providers.ProviderCohere:       cohereSeedModels,
+	providers.ProviderDigitalOcean: digitalOceanSeedModels,
+}
+
+// digitalOceanSeedModels holds DigitalOcean's Inference Router, which picks the
+// model per request and so has no list price.
+var digitalOceanSeedModels = []seedModel{
+	{
+		slug:         "inference-router",
+		externalID:   "inference-router",
+		displayName:  "Inference Router",
+		capabilities: map[string]any{"chat": true},
+	},
 }
 
 var cohereSeedModels = []seedModel{
@@ -122,6 +141,7 @@ var modelsDevProviderToCode = map[string]string{
 	"openrouter":     providers.ProviderOpenRouter,
 	"cohere":         providers.ProviderCohere,
 	"moonshotai":     providers.ProviderMoonshot,
+	"digitalocean":   providers.ProviderDigitalOcean,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.
@@ -273,22 +293,24 @@ func (s *syncer) seedProviders(ctx context.Context) error {
 }
 
 func (s *syncer) seedManualModels(ctx context.Context, codeToProvider map[string]domain.Provider) error {
-	provider, ok := codeToProvider[providers.ProviderCohere]
-	if !ok {
-		return nil
-	}
-	for _, m := range cohereSeedModels {
-		entity := &domain.Model{
-			ProviderID:   provider.ID,
-			Slug:         m.slug,
-			ExternalID:   m.externalID,
-			DisplayName:  m.displayName,
-			Capabilities: m.capabilities,
-			Enabled:      true,
-			Source:       sourceManualSeed,
+	for code, models := range manualSeedModels {
+		provider, ok := codeToProvider[code]
+		if !ok {
+			continue
 		}
-		if err := s.repo.UpsertModel(ctx, entity); err != nil {
-			return err
+		for _, m := range models {
+			entity := &domain.Model{
+				ProviderID:   provider.ID,
+				Slug:         m.slug,
+				ExternalID:   m.externalID,
+				DisplayName:  m.displayName,
+				Capabilities: m.capabilities,
+				Enabled:      true,
+				Source:       sourceManualSeed,
+			}
+			if err := s.repo.UpsertModel(ctx, entity); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

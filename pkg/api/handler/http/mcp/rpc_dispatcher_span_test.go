@@ -25,8 +25,11 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
@@ -300,6 +303,42 @@ func TestRPCGateway_Dispatch_NoScopeDecisionOutsideResolvedToolCalls(t *testing.
 
 			attrs := mcpSpanAttrs(t, rt)
 			assert.Nil(t, attrs.PolicyScope, "%s must not carry a scope decision", tc.name)
+		})
+	}
+}
+
+func TestRPCGateway_ToolsCall_PolicyDenialKeepsResolvedMetadata(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			reg, err := registrydomain.NewMCPRegistry(ids.New[ids.GatewayKind](), "Microsoft", "", &registrydomain.MCPTarget{URL: "https://learn.example.com/mcp"})
+			require.NoError(t, err)
+			var tool appmcp.Tool
+			require.NoError(t, json.Unmarshal([]byte(`{"name":"docs_search","annotations":{"readOnlyHint":true,"openWorldHint":true}}`), &tool))
+			target := &appmcp.ResolvedTool{Registry: reg, Tool: tool, Exposed: "microsoft_docs_search"}
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().Resolve(mock.Anything, mock.Anything, target.Exposed).Return(target, nil).Once()
+			executor := pluginmocks.NewExecutor(t)
+			executor.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, &appplugins.PluginError{StatusCode: status, Message: "policy denied"}).Once()
+			rt := trace.New("blocked", trace.Metadata{Kind: events.KindMCP})
+			gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), nil)
+			_, err = gateway.Dispatch(trace.NewContext(context.Background(), rt), mcpRoutableConsumer(), "tools/call", json.RawMessage(`{"name":"microsoft_docs_search","arguments":{}}`))
+			require.Error(t, err)
+			spans := rt.Spans()
+			require.Len(t, spans, 1)
+			attrs := mcpSpanAttrs(t, rt)
+			assert.Equal(t, reg.ID.String(), attrs.RegistryID)
+			assert.Equal(t, "Microsoft", attrs.ServerName)
+			assert.Equal(t, "learn.example.com", attrs.Host)
+			assert.Equal(t, "microsoft_docs_search", attrs.Tool)
+			assert.Equal(t, "docs_search", attrs.UpstreamTool)
+			assert.Equal(t, appmcp.ToolRiskReadOnly, attrs.ToolRisk)
+			require.NotNil(t, attrs.ToolOpenWorld)
+			assert.True(t, *attrs.ToolOpenWorld)
+			assert.Zero(t, spans[0].Latency(), "a rejected call has no upstream invocation latency")
+			assert.Equal(t, status, attrs.UpstreamStatus)
+			composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 	}
 }
