@@ -66,9 +66,9 @@ func countedStore(t *testing.T) (*ratelimitinfra.Store, *RedisCallCounter, *mini
 	return ratelimitinfra.NewStore(rc, discardLogger()), counter, mr
 }
 
-// The headline property of the redesign, proved against a real client: a
-// request never makes a Redis call. Redis is touched only when the sync loop
-// runs, and then once per round, however many requests there were.
+// A tenant this pod already tracks never makes a Redis call. The first request
+// reads the shared counters once; every request after that stays in memory.
+// Increments still reach Redis only through the sync loop.
 func TestRequestPathMakesZeroRedisCalls(t *testing.T) {
 	store, calls, mr := countedStore(t)
 	r := newResolver()
@@ -89,14 +89,20 @@ func TestRequestPathMakesZeroRedisCalls(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	assert.Zero(t, calls.Calls(), "3000 requests, 0 Redis calls")
-	assert.Empty(t, mr.Keys(), "and nothing in Redis yet: increments reach it only through the sync loop")
+	cold := calls.Calls()
+	assert.Positive(t, cold, "the cold slot reads Redis once")
+	assert.LessOrEqual(t, cold, int64(16), "3000 requests must not each call Redis, got %d", cold)
+	assert.Empty(t, mr.Keys(), "a zero-delta read does not create keys; increments reach Redis only through the sync loop")
+
+	before := calls.Calls()
+	require.NoError(t, m.Check(bg, gateways[0]))
+	assert.Equal(t, before, calls.Calls(), "a warm request makes no Redis call")
 
 	require.NoError(t, m.SyncNow(bg))
-	assert.Positive(t, calls.Calls(), "the sync loop is what talks to Redis")
+	assert.Greater(t, calls.Calls(), before, "the sync loop is what writes Redis")
 	got, err := mr.Get("gt:rl:quota:{tenant-1}:2026-10")
 	require.NoError(t, err)
-	assert.Equal(t, "3000", got, "three gateways of one tenant added to one counter")
+	assert.Equal(t, "3001", got, "three gateways of one tenant added to one counter")
 }
 
 // Redis load is one pipelined round trip per pod per interval, independent of
@@ -168,8 +174,8 @@ func TestTwoPodsShareOneQuotaThroughRealRedis(t *testing.T) {
 	}
 	require.NoError(t, podA.SyncNow(bg))
 
-	// B has not seen the tenant yet, so its first request is admitted on an
-	// empty view; its first sync is what teaches it that A spent 6.
+	// B has no slot yet. Its first request reads A's 6 before deciding, then
+	// its sync publishes what B itself admitted.
 	admitted := 0
 	require.NoError(t, podB.Check(bg, b))
 	admitted++
@@ -182,8 +188,9 @@ func TestTwoPodsShareOneQuotaThroughRealRedis(t *testing.T) {
 	assert.Equal(t, 4, admitted, "10 for the tenant across both pods and both gateways (6 on A, 4 on B), not 10 each")
 }
 
-// A listener that accepts and never answers, behind the real store: the loop
-// gives up on the sync timeout and requests are never held up.
+// A listener that accepts and never answers, behind the real store: the cold
+// read fails open when it times out, and a tenant already tracked is not held
+// up by the sync loop waiting on the same server.
 func TestUnresponsiveRedisNeverDelaysRequests(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -210,8 +217,12 @@ func TestUnresponsiveRedisNeverDelaysRequests(t *testing.T) {
 	})
 	startRun(t, m)
 
+	cold := time.Now()
+	require.NoError(t, m.Check(bg, id), "a failed cold read fails open")
+	assert.Less(t, time.Since(cold), 2*time.Second, "the cold read is bounded by the sync timeout")
+
 	var worst time.Duration
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		start := time.Now()
 		require.NoError(t, m.Check(bg, id))
@@ -220,6 +231,100 @@ func TestUnresponsiveRedisNeverDelaysRequests(t *testing.T) {
 		}
 		time.Sleep(500 * time.Microsecond)
 	}
-	// A fraction of the timeout: requests must not wait on the silent server.
+	// A fraction of the timeout: a tracked tenant must not wait on the silent server.
 	assert.Less(t, worst, 500*time.Millisecond/4)
+}
+
+// An exhausted monthly quota that this pod has no counter for must reject the
+// request that discovers the gap. The shared key is not incremented, and a
+// parallel burst on the same cold slot does not slip through.
+func TestExhaustedQuotaWithMissingSlotRejectsTheColdRequest(t *testing.T) {
+	store, _, mr := countedStore(t)
+	const quotaKey = "gt:rl:quota:{acme}:2026-10"
+	require.NoError(t, mr.Set(quotaKey, "100000"))
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+	m := testMeter(r, store, newClock(midMonth), nil)
+
+	ex := exceeded(t, m.Check(bg, id))
+	assert.Equal(t, ReasonQuota, ex.Reason)
+	assert.Equal(t, 100_000, ex.Limit)
+	assert.Equal(t, 0, ex.Remaining)
+	assert.Positive(t, ex.RetryAfter)
+	headers := ex.Headers()
+	assert.Equal(t, []string{ReasonQuota}, headers["X-RateLimit-Reason"])
+	assert.Equal(t, []string{"100000"}, headers["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"0"}, headers["X-RateLimit-Remaining"])
+	got, err := mr.Get(quotaKey)
+	require.NoError(t, err)
+	assert.Equal(t, "100000", got, "the rejected request is not usage")
+
+	fresh := testMeter(r, store, newClock(midMonth), nil)
+	var wg sync.WaitGroup
+	errs := make([]error, 10)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = fresh.Check(bg, id)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		ex := exceeded(t, err)
+		assert.Equal(t, ReasonQuota, ex.Reason, "request %d", i)
+	}
+	got, err = mr.Get(quotaKey)
+	require.NoError(t, err)
+	assert.Equal(t, "100000", got, "none of the cold burst was spent")
+}
+
+// Idle eviction drops the in-memory counter. The next request has to load the
+// shared total before it decides, and an exhausted quota rejects that request.
+func TestIdleEvictionReloadsExhaustedQuota(t *testing.T) {
+	store, _, mr := countedStore(t)
+	clock := newClock(midMonth)
+	const limit = 3
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 1000, QuotaPerMonth: limit})
+	m := testMeter(r, store, clock, nil)
+
+	for i := 0; i < limit; i++ {
+		require.NoError(t, m.Check(bg, id))
+	}
+	require.NoError(t, m.SyncNow(bg))
+	_ = exceeded(t, m.Check(bg, id))
+
+	clock.Advance(DefaultIdleEviction + time.Minute)
+	require.NoError(t, m.SyncNow(bg))
+	assert.Zero(t, m.tracked(), "the quiet slot is gone")
+
+	ex := exceeded(t, m.Check(bg, id))
+	assert.Equal(t, ReasonQuota, ex.Reason)
+	assert.Equal(t, limit, ex.Limit)
+	got, err := mr.Get("gt:rl:quota:{acme}:2026-10")
+	require.NoError(t, err)
+	assert.Equal(t, "3", got, "the cold rejection does not spend another unit")
+}
+
+// Redis being down is not a cache miss. The cold request is admitted, which is
+// the same fail-open a failed background sync already uses.
+func TestColdReadWhenRedisIsDownStillFailsOpen(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	rc := redis.NewClient(&redis.Options{
+		Addr:                  addr,
+		DialTimeout:           50 * time.Millisecond,
+		ReadTimeout:           50 * time.Millisecond,
+		WriteTimeout:          50 * time.Millisecond,
+		MaxRetries:            -1,
+		ContextTimeoutEnabled: true,
+	})
+	t.Cleanup(func() { _ = rc.Close() })
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+	m := testMeter(r, ratelimitinfra.NewStore(rc, discardLogger()), newClock(midMonth), func(o *Options) {
+		o.SyncTimeout = 200 * time.Millisecond
+	})
+
+	require.NoError(t, m.Check(bg, id), "a backend error fails open even when the quota may be exhausted")
 }

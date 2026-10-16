@@ -126,8 +126,9 @@ type GatewayTierLoader interface {
 
 //go:generate mockery --name=Checker --dir=. --output=./mocks --filename=checker_mock.go --case=underscore --with-expecter
 type Checker interface {
-	// Check charges one request against the gateway's plan, in memory: it never
-	// waits on Redis.
+	// Check charges one request against the gateway's plan. A tenant the pod
+	// already tracks is decided from memory. A tenant it does not is read from
+	// the shared counters once before the decision; a failed read fails open.
 	Check(ctx context.Context, gatewayID ids.GatewayID) error
 }
 

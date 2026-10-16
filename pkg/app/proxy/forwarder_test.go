@@ -195,6 +195,7 @@ func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
 	assert.Equal(t, []string{"10000"}, res.Headers["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonQuota}, res.Headers["X-RateLimit-Reason"])
+	assert.Equal(t, []string{"application/json"}, res.Headers["Content-Type"])
 	assert.JSONEq(t, `{"error":{"message":"TrustGate blocked this request: monthly request quota exceeded. Retry in 10s.","type":"rate_limit_error","code":"rate_limit_exceeded"}}`, string(res.Body))
 	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
 }

@@ -107,10 +107,10 @@ func TestRunKickBringsTheSyncForwardWhenUsageReachesATenthOfTheCap(t *testing.T)
 	m := testMeter(r, backend, newClock(midMonth), func(o *Options) { o.SyncInterval = time.Hour })
 	startRun(t, m)
 
-	// The first request of a tenant this pod has not seen asks for a sync of
-	// its own; let it pass so it does not blur the threshold below.
+	// The first request reads the shared total and asks for a sync of its own;
+	// let both finish so they do not blur the threshold below.
 	require.NoError(t, m.Check(bg, id))
-	waitFor(t, 2*time.Second, func() bool { return backend.calls.Load() == 1 }, "the new tenant is synced right away")
+	waitFor(t, 2*time.Second, func() bool { return shared.total("t1", domain.KindBurst, burstWindow(midMonth)) == 1 }, "the new tenant is synced right away")
 	base := backend.calls.Load()
 
 	for i := 0; i < 9; i++ {
@@ -126,7 +126,8 @@ func TestRunKickBringsTheSyncForwardWhenUsageReachesATenthOfTheCap(t *testing.T)
 
 func TestRunWithoutKickWaitsForTheTick(t *testing.T) {
 	t.Parallel()
-	backend := newBackend(newShared())
+	shared := newShared()
+	backend := newBackend(shared)
 	r, id := oneGateway("t1", domain.Limits{BurstPerMin: 100, QuotaPerMonth: 0})
 	m := testMeter(r, backend, newClock(midMonth), func(o *Options) {
 		o.SyncInterval = time.Hour
@@ -138,7 +139,8 @@ func TestRunWithoutKickWaitsForTheTick(t *testing.T) {
 		require.NoError(t, m.Check(bg, id))
 	}
 	time.Sleep(150 * time.Millisecond)
-	assert.Zero(t, backend.calls.Load())
+	assert.EqualValues(t, 1, backend.calls.Load(), "the cold read is the only backend call; DisableKick waits for the tick")
+	assert.Zero(t, shared.total("t1", domain.KindQuota, "2026-10"), "admitted usage stays local until the tick")
 }
 
 // Early syncs are spaced: a flood must not become a flood of Redis calls.
@@ -167,9 +169,11 @@ func TestRunKickRespectsTheMinimumGapBetweenSyncs(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	require.GreaterOrEqual(t, len(stamps), 2, "the kick fired more than once")
-	gaps := make([]time.Duration, 0, len(stamps)-1)
-	for i := 1; i < len(stamps); i++ {
+	require.GreaterOrEqual(t, len(stamps), 3, "the kick fired more than once")
+	// stamps[0] is the cold read, which is not a kick. The first kick follows it
+	// at once because the loop has not synced yet; every kick after that waits.
+	gaps := make([]time.Duration, 0, len(stamps)-2)
+	for i := 2; i < len(stamps); i++ {
 		gaps = append(gaps, stamps[i].Sub(stamps[i-1]))
 	}
 	sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
@@ -186,16 +190,16 @@ func (b *recordingBackend) Sync(ctx context.Context, items []domain.SyncItem) ([
 	return b.inner.Sync(ctx, items)
 }
 
-// A Redis that never answers must cost the sync loop its timeout and cost
-// requests nothing.
+// A Redis that never answers must cost the sync loop its timeout and cost a
+// tenant this pod already tracks nothing. The cold read is the one request
+// that waits on Redis; it runs before the hang.
 func TestSlowRedisAddsNoLatencyToRequests(t *testing.T) {
 	t.Parallel()
 	shared := newShared()
 	backend := newBackend(shared)
 	hang := make(chan struct{})
-	backend.block.Store(&hang)
 	// The call ignores its context, so the sync timeout cannot release it: the
-	// single hung call stays hung until cleanup and calls == 1 is structural.
+	// hung call stays hung until cleanup.
 	backend.blockIgnoresCtx.Store(true)
 
 	// The timeout is long on purpose: the claim is that requests do not wait on
@@ -212,24 +216,27 @@ func TestSlowRedisAddsNoLatencyToRequests(t *testing.T) {
 	// it is asked to stop.
 	t.Cleanup(func() { close(hang) })
 
-	// Structural precondition: one request makes the tenant known, and the loop
-	// then enters the hung call and stays in it for the whole measurement.
 	require.NoError(t, m.Check(bg, id))
-	waitFor(t, 5*time.Second, func() bool { return backend.calls.Load() >= 1 }, "the loop entered the hung sync")
+	waitFor(t, 2*time.Second, func() bool { return backend.calls.Load() >= 1 }, "the cold read reached the backend")
+	time.Sleep(30 * time.Millisecond) // the kick sync, if queued, finishes before the hang
+	backend.block.Store(&hang)
+	settled := backend.calls.Load()
+	waitFor(t, 5*time.Second, func() bool { return backend.calls.Load() > settled }, "the loop entered the hung sync")
+	stuck := backend.calls.Load()
 
 	var worst time.Duration
 	deadline := time.Now().Add(400 * time.Millisecond)
 	n := 0
 	for time.Now().Before(deadline) {
 		start := time.Now()
-		require.NoError(t, m.Check(bg, id), "requests fail open while Redis hangs")
+		require.NoError(t, m.Check(bg, id), "a tracked tenant does not wait on the hung sync")
 		if d := time.Since(start); d > worst {
 			worst = d
 		}
 		n++
 		time.Sleep(200 * time.Microsecond)
 	}
-	assert.EqualValues(t, 1, backend.calls.Load(), "the loop is still stuck in its one hung call")
+	assert.Equal(t, stuck, backend.calls.Load(), "the loop stays stuck in the hung call")
 	assert.Less(t, worst, syncTimeout/4, "worst Check latency over %d requests while Redis hung", n)
 }
 
@@ -253,8 +260,8 @@ func TestDownRedisFailsOpenAndRecovers(t *testing.T) {
 		"usage admitted during the outage reaches Redis once it is back")
 }
 
-// The request path must not touch the backend at all, however many requests
-// and goroutines hit it.
+// After the one cold read, the request path does not touch the backend again,
+// however many requests and goroutines hit it.
 func TestHotPathNeverCallsTheBackend(t *testing.T) {
 	t.Parallel()
 	backend := newBackend(newShared())
@@ -276,7 +283,7 @@ func TestHotPathNeverCallsTheBackend(t *testing.T) {
 	}
 	wg.Wait()
 	assert.EqualValues(t, 16000, admitted.Load())
-	assert.Zero(t, backend.calls.Load())
+	assert.EqualValues(t, 1, backend.calls.Load(), "one cold read, then nothing")
 }
 
 // A pod that has never seen a tenant knows nothing of what the others spent.
@@ -314,7 +321,7 @@ func TestRunADisabledKickAlsoSilencesTheNewTenantSync(t *testing.T) {
 	startRun(t, m)
 	require.NoError(t, m.Check(bg, id))
 	time.Sleep(100 * time.Millisecond)
-	assert.Zero(t, backend.calls.Load())
+	assert.EqualValues(t, 1, backend.calls.Load(), "the cold read runs; DisableKick does not add a sync")
 }
 
 // Eviction removes the slot from the map together with the mark, so a request
