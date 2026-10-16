@@ -122,13 +122,14 @@ type SessionRecord struct {
 	Audiences   []string `json:"audiences,omitempty"`
 	// LoginAt is when the user last authenticated at the identity provider. The
 	// claims above are a snapshot taken at that moment; a refresh re-mints them
-	// without consulting the IdP, so the snapshot must not live forever.
+	// without consulting the IdP.
 	LoginAt time.Time `json:"login_at,omitempty"`
-	// ExpiresAt is the absolute end of the session, fixed at login as LoginAt
-	// plus the session lifetime. A refresh past it is refused so the client
-	// re-runs the authorization and the claims are re-derived, and the store
-	// expires the record here instead of sliding its TTL on every rotation. A
-	// zero value (a record written before this field existed) counts as expired.
+	// ExpiresAt is the end of the session. With an absolute lifetime it is
+	// fixed at login as LoginAt plus that lifetime; without one, each refresh
+	// moves it a full idle window ahead. A refresh past it is refused so the
+	// client re-runs the authorization and the claims are re-derived, and the
+	// store expires the record here. A zero value (a record written before this
+	// field existed) counts as expired.
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
@@ -153,9 +154,9 @@ type FlowStore interface {
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
 	DeleteGatewayClient(ctx context.Context, clientID string) error
-	// SaveSession persists the record until rec.ExpiresAt. Saving a rotated
-	// record again must not extend that deadline: the session's lifetime is
-	// fixed at login, not renewed by use.
+	// SaveSession persists the record until rec.ExpiresAt, and only until then:
+	// whether a rotated record's deadline moves is the proxy's decision, made
+	// in rec.ExpiresAt, never the store's.
 	SaveSession(ctx context.Context, refreshToken string, rec SessionRecord) error
 	GetSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
 	// RetireSession shortens the session's remaining lifetime to the grace
