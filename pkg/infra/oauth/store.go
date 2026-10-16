@@ -101,12 +101,12 @@ func (s *Store) DeleteGatewayClient(ctx context.Context, clientID string) error 
 	return nil
 }
 
-// SaveSession stores the record until rec.ExpiresAt, the absolute deadline the
-// proxy fixed at login. Re-saving a rotated record therefore shortens the TTL
-// rather than resetting it: the session cannot be kept alive indefinitely by
-// refreshing, and a revoked or changed platform decision is re-derived at the
-// next login. A record with no deadline keeps the legacy TTL. The record is
-// keyed by a digest of the refresh token, never by the token itself.
+// SaveSession stores the record until rec.ExpiresAt, the deadline the proxy
+// set: fixed at login for a session with an absolute lifetime, so re-saving a
+// rotated record shortens the TTL rather than resetting it, or moved ahead on
+// each refresh for one without. A record with no deadline keeps the legacy
+// TTL. The record is keyed by a digest of the refresh token, never by the
+// token itself.
 func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord) error {
 	ttl := sessionTTL
 	if !rec.ExpiresAt.IsZero() {
