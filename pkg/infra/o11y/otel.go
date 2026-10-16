@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/version"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -253,8 +255,21 @@ func newResource(cfg *config.Config) *resource.Resource {
 		semconv.ServiceNameKey.String(ServiceName),
 		semconv.ServiceVersionKey.String(version.Version),
 		semconv.DeploymentEnvironmentNameKey.String(cfg.AppEnv),
+		semconv.ServiceInstanceIDKey.String(instanceID()),
 		attribute.String(gatewayAttribute, ServiceName),
 	)
+}
+
+// instanceID tells replicas apart. Without it every admin, proxy and mcp pod
+// exports an identical resource, and two pods whose meters start in the same
+// second (StartTimeUnix is stored to the second downstream) merge into one
+// cumulative series whose counts interleave, so its rate cannot be computed.
+// The hostname is the pod name in Kubernetes; a random id is the fallback.
+func instanceID() string {
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host
+	}
+	return uuid.NewString()
 }
 
 // signalEndpoint normalises an OTLP/HTTP endpoint into a full URL. WithEndpointURL
