@@ -119,9 +119,11 @@ func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID,
 	}
 	var exceeded *ratelimitapp.Exceeded
 	if errors.As(err, &exceeded) {
+		headers := exceeded.Headers()
+		headers["Content-Type"] = []string{"application/json"}
 		return &ForwardResult{
 			StatusCode: http.StatusTooManyRequests,
-			Headers:    exceeded.Headers(),
+			Headers:    headers,
 			Body:       planRateLimitBody(req, exceeded),
 		}, nil
 	}
