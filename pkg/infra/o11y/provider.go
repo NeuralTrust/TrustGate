@@ -82,11 +82,16 @@ type Request struct {
 }
 
 // SpanOutcome closes a server span. It carries the same bounded Request the
-// metric records plus the product trace id, which belongs on a span (one value
-// per request) and never on a metric attribute (unbounded cardinality).
+// metric records plus what belongs on a span (one value per request) and never
+// on a metric attribute: the product trace id, the exact status code, and the
+// stable error code that says why a request failed.
 type SpanOutcome struct {
 	Request
-	TraceID string
+	TraceID    string
+	StatusCode int
+	// ErrorType is a stable error code such as "upstream_unavailable", never
+	// an error message: messages can carry upstream bodies.
+	ErrorType string
 }
 
 // RequestSpan is the server span of one in-flight request.
@@ -216,6 +221,12 @@ func (s otelSpan) Finish(out SpanOutcome) {
 	}
 	if out.TraceID != "" {
 		attrs = append(attrs, attribute.String("trustgate.trace_id", out.TraceID))
+	}
+	if out.StatusCode != 0 {
+		attrs = append(attrs, attribute.Int("http.response.status_code", out.StatusCode))
+	}
+	if out.ErrorType != "" {
+		attrs = append(attrs, attribute.String("error.type", out.ErrorType))
 	}
 	s.span.SetAttributes(attrs...)
 	if out.Outcome == OutcomeServerError {
