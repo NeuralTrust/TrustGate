@@ -17,6 +17,7 @@ package ratelimit
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -278,6 +279,83 @@ func TestExhaustedQuotaWithMissingSlotRejectsTheColdRequest(t *testing.T) {
 	assert.Equal(t, "100000", got, "none of the cold burst was spent")
 }
 
+// N requests that arrive together on a cold exhausted slot all get 429, and
+// they share one read of Redis. A second read would mean the burst did not
+// wait for the first.
+func TestColdParallelBurstReadsSharedQuotaOnce(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	reads := &evalCounter{}
+	rc.AddHook(reads)
+	const quotaKey = "gt:rl:quota:{acme}:2026-10"
+	require.NoError(t, mr.Set(quotaKey, "100000"))
+
+	release := make(chan struct{})
+	backend := &holdingSync{
+		inner:   ratelimitinfra.NewStore(rc, discardLogger()),
+		release: release,
+		entered: make(chan struct{}),
+	}
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+	m := testMeter(r, backend, newClock(midMonth), func(o *Options) { o.SyncTimeout = 2 * time.Second })
+
+	const n = 8
+	start := make(chan struct{})
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = m.Check(bg, id)
+		}()
+	}
+	close(start)
+	select {
+	case <-backend.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the cold read did not start")
+	}
+	time.Sleep(50 * time.Millisecond)
+	assert.EqualValues(t, 1, backend.calls.Load(), "the other requests must wait on the one cold read")
+	close(release)
+	wg.Wait()
+
+	for i, err := range errs {
+		ex := exceeded(t, err)
+		assert.Equal(t, ReasonQuota, ex.Reason, "request %d", i)
+	}
+	assert.EqualValues(t, 1, backend.calls.Load(), "Redis is read exactly once")
+	assert.EqualValues(t, 1, reads.n.Load(), "one script read, not one per request")
+	got, err := mr.Get(quotaKey)
+	require.NoError(t, err)
+	assert.Equal(t, "100000", got)
+}
+
+// A second replica with no slot of its own still rejects its first request
+// when Redis is already over the monthly quota. On the old build that replica
+// answered 200 between two 429s.
+func TestFreshReplicaRejectsWhenSharedQuotaIsAlreadyOver(t *testing.T) {
+	store, _, mr := countedStore(t)
+	const quotaKey = "gt:rl:quota:{acme}:2026-10"
+	require.NoError(t, mr.Set(quotaKey, "100001"))
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+
+	for replica := 1; replica <= 2; replica++ {
+		m := testMeter(r, store, newClock(midMonth), nil)
+		ex := exceeded(t, m.Check(bg, id))
+		assert.Equal(t, ReasonQuota, ex.Reason, "replica %d first request", replica)
+		assert.Equal(t, 0, ex.Remaining, "replica %d", replica)
+	}
+	got, err := mr.Get(quotaKey)
+	require.NoError(t, err)
+	assert.Equal(t, "100001", got, "neither replica spent the rejected request")
+}
+
 // Idle eviction drops the in-memory counter. The next request has to load the
 // shared total before it decides, and an exhausted quota rejects that request.
 func TestIdleEvictionReloadsExhaustedQuota(t *testing.T) {
@@ -327,4 +405,60 @@ func TestColdReadWhenRedisIsDownStillFailsOpen(t *testing.T) {
 	})
 
 	require.NoError(t, m.Check(bg, id), "a backend error fails open even when the quota may be exhausted")
+}
+
+// holdingSync stalls the first Sync until release is closed. The burst in
+// TestColdParallelBurstReadsSharedQuotaOnce piles up on that one read.
+type holdingSync struct {
+	inner   SyncBackend
+	release chan struct{}
+	entered chan struct{}
+	calls   atomic.Int64
+}
+
+func (h *holdingSync) Sync(ctx context.Context, items []domain.SyncItem) ([]domain.SyncResult, error) {
+	if h.calls.Add(1) == 1 {
+		close(h.entered)
+		select {
+		case <-h.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return h.inner.Sync(ctx, items)
+}
+
+// evalCounter counts EVAL and EVALSHA. Handshake and SCRIPT LOAD are not reads
+// of the quota key.
+type evalCounter struct{ n atomic.Int64 }
+
+func (c *evalCounter) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (c *evalCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if isEvalCommand(cmd) {
+			c.n.Add(1)
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (c *evalCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if isEvalCommand(cmd) {
+				c.n.Add(1)
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func isEvalCommand(cmd redis.Cmder) bool {
+	switch strings.ToLower(cmd.Name()) {
+	case "eval", "evalsha":
+		return true
+	default:
+		return false
+	}
 }

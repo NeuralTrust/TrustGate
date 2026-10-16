@@ -90,10 +90,11 @@ end
 return totals
 `)
 
-// Store keeps the shared plan counters in Redis. It is used only by the
-// background sync, through its own client with short timeouts and no retries,
-// so a slow or unreachable Redis costs the sync loop time and costs requests
-// nothing.
+// Store keeps the shared plan counters in Redis. The background sync and the
+// cold read both use it, through its own client with short timeouts and no
+// retries. A slow or unreachable Redis costs the sync loop time. A request
+// that already has a counter does not wait on it. A cold read waits up to the
+// sync timeout.
 type Store struct {
 	redis  *redis.Client
 	logger *slog.Logger

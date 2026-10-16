@@ -110,8 +110,9 @@ type Resolved struct {
 }
 
 // SyncBackend applies batched counter deltas to the shared store and returns the
-// new totals. It is called only from the background sync loop, never from a
-// request.
+// new totals. The background sync loop calls it, and so does the one cold read
+// that fills a slot this pod does not have yet. A request that already has a
+// counter does not.
 type SyncBackend interface {
 	Sync(ctx context.Context, items []domain.SyncItem) ([]domain.SyncResult, error)
 }
