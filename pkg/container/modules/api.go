@@ -339,7 +339,7 @@ func API(c *container.Container) error {
 		// The platform token minted by the built-in default IdP is verified
 		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
 		// claims are trusted, and the sessions it brokers are bounded by
-		// MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE when it is set.
 		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
 			appoauth.WithIdPTokenVerifier(verifier),
 			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),

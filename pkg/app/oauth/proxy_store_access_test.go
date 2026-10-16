@@ -428,7 +428,7 @@ func TestCallbackOperatorIdPIgnoresVerifier(t *testing.T) {
 
 func fixedClock(at time.Time) func() time.Time { return func() time.Time { return at } }
 
-func TestExchangeCodeStampsAbsoluteSessionDeadline(t *testing.T) {
+func TestExchangeCodeStampsSessionDeadline(t *testing.T) {
 	t.Parallel()
 	loginAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
@@ -439,7 +439,7 @@ func TestExchangeCodeStampsAbsoluteSessionDeadline(t *testing.T) {
 		lifetime time.Duration
 	}{
 		{"default idp uses configured max age", appauth.DefaultIdPAuthID().String(), []ProxyOption{WithDefaultIdPSessionMaxAge(8 * time.Hour)}, 8 * time.Hour},
-		{"default idp falls back to 24h", appauth.DefaultIdPAuthID().String(), nil, DefaultIdPSessionMaxAge},
+		{"default idp without a max age gets one idle window", appauth.DefaultIdPAuthID().String(), nil, sessionIdleLifetime},
 		{"operator idp keeps 30d", "auth-1", nil, operatorSessionLifetime},
 	}
 	for _, tc := range cases {
@@ -503,7 +503,8 @@ func TestRefreshSessionWithinWindowKeepsDeadline(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
 	noIdP := &http.Client{Transport: failingTransport{t}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil).(*authProxy)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil,
+		WithDefaultIdPSessionMaxAge(24*time.Hour)).(*authProxy)
 	loginAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	seedDefaultIdPSession(t, store, "gwrt_old", loginAt, 24*time.Hour)
 
@@ -534,7 +535,8 @@ func TestRefreshSessionPastWindowRefused(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
 	noIdP := &http.Client{Transport: failingTransport{t}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil).(*authProxy)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil,
+		WithDefaultIdPSessionMaxAge(24*time.Hour)).(*authProxy)
 	loginAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	seedDefaultIdPSession(t, store, "gwrt_old", loginAt, 24*time.Hour)
 
@@ -549,6 +551,68 @@ func TestRefreshSessionPastWindowRefused(t *testing.T) {
 	}
 	if len(store.sessions) != 1 {
 		t.Fatalf("a refused refresh must not mint a new session, got %d records", len(store.sessions))
+	}
+}
+
+// Without MCP_DEFAULT_IDP_SESSION_MAX_AGE a default-IdP session (the MCP Store)
+// is renewed by use: each refresh moves its deadline a full idle window ahead,
+// so a client that keeps refreshing outlives any fixed lifetime counted from
+// login. A session minted under the former 24h limit is renewed the same way.
+func TestRefreshSessionWithoutMaxAgeSlidesDeadline(t *testing.T) {
+	t.Parallel()
+	store := newMemFlowStore()
+	noIdP := &http.Client{Transport: failingTransport{t}}
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil).(*authProxy)
+	loginAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	seedDefaultIdPSession(t, store, "gwrt_old", loginAt, 24*time.Hour)
+
+	refresh := func(token string, at time.Time) string {
+		t.Helper()
+		proxy.now = fixedClock(at)
+		resp, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+			GrantType:    "refresh_token",
+			RefreshToken: token,
+		})
+		if err != nil {
+			t.Fatalf("refresh at %v must succeed: %v", at, err)
+		}
+		next := resp["refresh_token"].(string)
+		rec := store.peekSession(next)
+		if rec == nil {
+			t.Fatal("rotated session must be persisted")
+			return ""
+		}
+		if want := at.Add(sessionIdleLifetime); !rec.ExpiresAt.Equal(want) {
+			t.Fatalf("ExpiresAt = %v, want %v (one idle window from the refresh)", rec.ExpiresAt, want)
+		}
+		if !rec.LoginAt.Equal(loginAt) || rec.StoreAccess != "curated" || rec.Org != "team-a" {
+			t.Fatalf("rotation must preserve the login snapshot, got %+v", rec)
+		}
+		return next
+	}
+
+	// Inside the former 24h deadline, then again almost a full idle window
+	// later: well past both 24h and 30 days from login.
+	next := refresh("gwrt_old", loginAt.Add(23*time.Hour))
+	refresh(next, loginAt.Add(23*time.Hour+sessionIdleLifetime-time.Hour))
+}
+
+func TestRefreshSessionWithoutMaxAgeIdlePastWindowRefused(t *testing.T) {
+	t.Parallel()
+	store := newMemFlowStore()
+	noIdP := &http.Client{Transport: failingTransport{t}}
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil).(*authProxy)
+	loginAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	seedDefaultIdPSession(t, store, "gwrt_old", loginAt, sessionIdleLifetime)
+
+	proxy.now = fixedClock(loginAt.Add(sessionIdleLifetime + time.Second))
+	_, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "gwrt_old",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
+		t.Fatalf("a session left unused past its idle window must be invalid_grant, got %v", err)
 	}
 }
 

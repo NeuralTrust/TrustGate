@@ -49,10 +49,6 @@ const (
 	// defaultReservedGatewayDomains keeps NeuralTrust's own hosts out of reach
 	// of a tenant's gateway domain.
 	defaultReservedGatewayDomains = "neuraltrust.ai"
-	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
-	// org/groups/store_access claims are a login-time snapshot re-minted on
-	// refresh, so the snapshot must expire and force a fresh platform login.
-	defaultMCPDefaultIdPSessionMaxAge = 24 * time.Hour
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -374,7 +370,8 @@ type MCPDefaultIdPConfig struct {
 	Scopes       []string
 	// SessionMaxAge is the absolute lifetime of an MCP session brokered through
 	// the built-in identity provider. Refreshing past it forces a new platform
-	// login so org, groups and store_access are re-derived.
+	// login so org, groups and store_access are re-derived. Zero (the default)
+	// sets none: a session lasts while its client keeps refreshing it.
 	SessionMaxAge time.Duration
 }
 
@@ -718,7 +715,7 @@ func getServerConfig() ServerConfig {
 			ClientSecret:  getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
 			Audiences:     splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
 			Scopes:        splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
-			SessionMaxAge: getEnvDuration("MCP_DEFAULT_IDP_SESSION_MAX_AGE", defaultMCPDefaultIdPSessionMaxAge),
+			SessionMaxAge: getEnvDuration("MCP_DEFAULT_IDP_SESSION_MAX_AGE", 0),
 		},
 		GoogleWorkspaceMCP: GoogleWorkspaceMCPConfig{
 			ClientID:     getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_ID", ""),
