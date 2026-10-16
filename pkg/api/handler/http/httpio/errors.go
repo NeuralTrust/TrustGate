@@ -197,8 +197,18 @@ func WriteError(c *fiber.Ctx, err error) error {
 	status, body := MapDomainError(err)
 	if err != nil {
 		logError(c, status, err)
+		c.Locals(errorCodeKey, body.Error)
 	}
 	return c.Status(status).JSON(body)
+}
+
+const errorCodeKey = "trustgate.httpio.error_code"
+
+// ErrorCode returns the stable error code WriteError answered the request with,
+// or "" when the request did not fail through WriteError.
+func ErrorCode(c *fiber.Ctx) string {
+	code, _ := c.Locals(errorCodeKey).(string)
+	return code
 }
 
 // stackSkip drops the runtime.Callers, logError and WriteError frames so the
