@@ -55,22 +55,23 @@ type authProxy struct {
 	// claims are read unverified (logged once).
 	verifier appauth.JWTVerifier
 	// defaultIdPSessionMaxAge is the absolute lifetime of a session brokered
-	// through the built-in default identity provider.
+	// through the built-in default identity provider. Zero (the default) means
+	// none: the session is renewed by use, see sessionIdleLifetime.
 	defaultIdPSessionMaxAge time.Duration
 	now                     func() time.Time
 }
-
-// DefaultIdPSessionMaxAge is the absolute lifetime of a default-IdP session
-// when none is configured. The session claims (org, groups, store_access) are
-// a snapshot taken at login and are re-minted on refresh without consulting
-// the platform, so a session must not outlive the admin's ability to revoke
-// or change them by more than this.
-const DefaultIdPSessionMaxAge = 24 * time.Hour
 
 // operatorSessionLifetime is the absolute lifetime of a session brokered
 // through an operator-configured identity provider. It matches the previous
 // store TTL, but is now fixed at login instead of sliding on every refresh.
 const operatorSessionLifetime = 30 * 24 * time.Hour
+
+// sessionIdleLifetime is how long a session with no absolute lifetime survives
+// without a refresh. Every refresh moves its deadline this far ahead, so an MCP
+// client in use (Claude, Cursor) is never sent back to sign in, while one left
+// unused for this long is. Its org, groups and store_access are the login
+// snapshot for as long as it lives.
+const sessionIdleLifetime = 30 * 24 * time.Hour
 
 // ProxyOption tunes an AuthProxy beyond its required collaborators.
 type ProxyOption func(*authProxy)
@@ -83,8 +84,9 @@ func WithIdPTokenVerifier(v appauth.JWTVerifier) ProxyOption {
 }
 
 // WithDefaultIdPSessionMaxAge bounds the absolute lifetime of sessions
-// brokered through the built-in default identity provider. Non-positive
-// values keep DefaultIdPSessionMaxAge.
+// brokered through the built-in default identity provider: past it, a refresh
+// is refused and the client signs in again. Non-positive values leave them
+// without one.
 func WithDefaultIdPSessionMaxAge(d time.Duration) ProxyOption {
 	return func(p *authProxy) {
 		if d > 0 {
@@ -108,15 +110,14 @@ func NewAuthProxy(
 	}
 	meta := &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}}
 	p := &authProxy{
-		credentials:             credentials,
-		paths:                   paths,
-		store:                   store,
-		idp:                     newIDPTransport(client, meta),
-		chainer:                 chainer,
-		signer:                  signer,
-		userinfo:                userinfo,
-		defaultIdPSessionMaxAge: DefaultIdPSessionMaxAge,
-		now:                     time.Now,
+		credentials: credentials,
+		paths:       paths,
+		store:       store,
+		idp:         newIDPTransport(client, meta),
+		chainer:     chainer,
+		signer:      signer,
+		userinfo:    userinfo,
+		now:         time.Now,
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -769,6 +770,12 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		}
 		refresh := gatewayRefreshPrefix + token
 		loginAt := p.now()
+		// A session without an absolute lifetime starts with one idle window;
+		// each refresh moves it ahead.
+		lifetime := p.sessionLifetime(grant.AuthID)
+		if lifetime <= 0 {
+			lifetime = sessionIdleLifetime
+		}
 		rec := SessionRecord{
 			ClientID:    grant.ClientID,
 			Subject:     grant.Subject,
@@ -781,7 +788,7 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 			StoreAccess: grant.StoreAccess,
 			Audiences:   grant.Audiences,
 			LoginAt:     loginAt,
-			ExpiresAt:   loginAt.Add(p.sessionLifetime(grant.AuthID)),
+			ExpiresAt:   loginAt.Add(lifetime),
 		}
 		if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
 			return nil, fmt.Errorf("oauth: persist session: %w", err)
@@ -871,10 +878,8 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		if rec == nil {
 			return nil, oauthErr("invalid_grant", "unknown or expired refresh token")
 		}
-		// The session's claims are a login-time snapshot: refreshing re-mints
-		// them without asking the identity provider again, so access revoked or
-		// changed there would otherwise persist for as long as the client keeps
-		// refreshing. Past the absolute deadline the client must re-run the
+		// Past the session's deadline (the end of its absolute lifetime, or of
+		// its idle window when it has none) the client must re-run the
 		// authorization, which re-derives org, groups and store_access. Records
 		// without a deadline predate it and cannot prove they are still within
 		// one, so they are refused too.
@@ -918,9 +923,11 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 }
 
 // sessionLifetime is the absolute lifetime of a session minted for the given
-// auth. Default-IdP sessions are bounded tightly because their claims stand in
-// for the platform's access decisions; operator-IdP sessions keep the longer
-// lifetime they always had, now fixed at login rather than renewed on refresh.
+// auth, or zero when it has none. Default-IdP sessions (the MCP Store and every
+// platform login) have none unless MCP_DEFAULT_IDP_SESSION_MAX_AGE sets one, so
+// a client that keeps using its connection is not sent back to sign in every
+// day; operator-IdP sessions keep the lifetime they always had, fixed at login
+// rather than renewed on refresh.
 func (p *authProxy) sessionLifetime(authID string) time.Duration {
 	if authID == appauth.DefaultIdPAuthID().String() {
 		return p.defaultIdPSessionMaxAge
@@ -958,8 +965,12 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 		return nil, err
 	}
 	newRefresh := gatewayRefreshPrefix + token
-	// The rotated record keeps LoginAt and ExpiresAt untouched: rotation renews
-	// the token, never the session.
+	// A session with an absolute lifetime keeps LoginAt and ExpiresAt
+	// untouched: rotation renews the token, never the session. One without is
+	// renewed by use, its deadline moved a full idle window ahead.
+	if p.sessionLifetime(rec.AuthID) <= 0 {
+		rec.ExpiresAt = p.now().Add(sessionIdleLifetime)
+	}
 	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
 		return nil, fmt.Errorf("oauth: rotate session: %w", err)
 	}
