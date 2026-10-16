@@ -1190,7 +1190,9 @@ func TestPlugin_MCP_PreRequest_DenyCollapsesAllBehaviors(t *testing.T) {
 			settings := ruleSettings("send_email", behavior, "1m", 5)
 			seed(t, rdb, consumerKey("send_email", 0), 5)
 
-			_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil))
+			in, _, span := withSpan(input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil))
+			_, err := p.Execute(context.Background(), in)
+			assert.Equal(t, "block", span.PluginAttrsCopy().Decision)
 			pe, ok := appplugins.AsPluginError(err)
 			require.True(t, ok)
 			assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
