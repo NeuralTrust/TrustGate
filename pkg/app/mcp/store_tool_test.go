@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -861,6 +862,28 @@ func TestStoreInstallWithoutAReasonHandsBackTheRequestForm(t *testing.T) {
 	}
 	if strings.Contains(text, "github is outside") {
 		t.Fatalf("the text must name the server, not its code: %s", text)
+	}
+}
+
+func TestStoreInstallOfDisabledServerAnswersInsteadOfFailing(t *testing.T) {
+	inst := &fakeInstaller{installErr: fmt.Errorf("%w: %q", appstore.ErrServerDisabled, "github")}
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), inst, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewStoreToolWithInstaller: %v", err)
+	}
+
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github"}`))
+
+	if err != nil {
+		t.Fatalf("a turned-off server must be reported, not fail as an internal error: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["disabled"] != true || sc["code"] != "github" || sc["name"] != "GitHub" {
+		t.Fatalf("expected a disabled result for the server, got %+v", sc)
+	}
+	if text := decodeText(t, raw); !strings.Contains(text, "GitHub is turned off") {
+		t.Fatalf("the text must tell the user the server is off: %s", text)
 	}
 }
 

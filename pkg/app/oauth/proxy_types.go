@@ -69,6 +69,10 @@ type PendingAuthorization struct {
 	// pages (see BrowserSignIn): its callback leaves a proof of who signed in
 	// at RedirectURI instead of a code for a client.
 	BrowserSignIn bool `json:"browser_sign_in,omitempty"`
+	// Tenant is the tenant of the gateway a browser sign-in was started on, so
+	// its callback refuses a person of another organization, as the MCP plane
+	// refuses their session. Empty on a gateway with no tenant.
+	Tenant string `json:"tenant,omitempty"`
 }
 
 type CodeGrant struct {

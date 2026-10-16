@@ -180,6 +180,15 @@ func annotateUpstream(ctx context.Context, reg *registrydomain.Registry, upstrea
 	if span == nil {
 		return func() {}
 	}
+	annotateRegistry(span, reg, upstreamTool)
+	start := time.Now()
+	return func() { span.SetLatency(time.Since(start)) }
+}
+
+func annotateRegistry(span *trace.Span, reg *registrydomain.Registry, upstreamTool string) {
+	if reg == nil {
+		return
+	}
 	var host, catalog, transport string
 	if reg.MCPTarget != nil {
 		host = hostFromURL(reg.MCPTarget.URL)
@@ -187,8 +196,6 @@ func annotateUpstream(ctx context.Context, reg *registrydomain.Registry, upstrea
 		transport = string(reg.MCPTarget.Transport)
 	}
 	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool)
-	start := time.Now()
-	return func() { span.SetLatency(time.Since(start)) }
 }
 
 func annotateTargets(ctx context.Context, count int) {

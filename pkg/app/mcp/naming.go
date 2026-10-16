@@ -94,18 +94,21 @@ func (e exposedName) String() string {
 // com.google_cloud/developerknowledge as "google_cloud_developerknowledge".
 //
 // Several instances of one code — a Snowflake schema per team — share it, so
-// each takes a short digest of its own registry id. A registry wired by hand
-// carries no code at all and takes the digest alone: opaque, but the price of
-// having nothing stable to read.
+// each takes a short digest of its own registry id. That covers a Store
+// principal's per-install clones that carry no config too: two configured
+// instances of a server without URL variables, both installed, would otherwise
+// serve every tool twice under one name. A registry wired by hand carries no
+// code at all and takes the digest alone: opaque, but the price of having
+// nothing stable to read.
 func serverSlug(reg *registrydomain.Registry) string {
 	if reg == nil {
 		return ""
 	}
 	code := ""
-	perInstance := false
+	perInstance := !reg.InstanceOf.IsNil() && reg.ID != reg.InstanceOf
 	if reg.MCPTarget != nil {
 		code = strings.TrimSpace(reg.MCPTarget.Code)
-		perInstance = len(reg.MCPTarget.InstanceConfig) > 0
+		perInstance = perInstance || len(reg.MCPTarget.InstanceConfig) > 0
 	}
 	slug := slugFromCatalogCode(code)
 	if slug == "" {

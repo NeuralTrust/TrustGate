@@ -110,8 +110,9 @@ type Resolved struct {
 }
 
 // SyncBackend applies batched counter deltas to the shared store and returns the
-// new totals. It is called only from the background sync loop, never from a
-// request.
+// new totals. The background sync loop calls it, and so does the one cold read
+// that fills a slot this pod does not have yet. A request that already has a
+// counter does not.
 type SyncBackend interface {
 	Sync(ctx context.Context, items []domain.SyncItem) ([]domain.SyncResult, error)
 }
@@ -126,8 +127,9 @@ type GatewayTierLoader interface {
 
 //go:generate mockery --name=Checker --dir=. --output=./mocks --filename=checker_mock.go --case=underscore --with-expecter
 type Checker interface {
-	// Check charges one request against the gateway's plan, in memory: it never
-	// waits on Redis.
+	// Check charges one request against the gateway's plan. A tenant the pod
+	// already tracks is decided from memory. A tenant it does not is read from
+	// the shared counters once before the decision; a failed read fails open.
 	Check(ctx context.Context, gatewayID ids.GatewayID) error
 }
 

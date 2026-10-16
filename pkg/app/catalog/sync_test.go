@@ -98,6 +98,13 @@ func TestSyncer_Sync(t *testing.T) {
 				"mistral-large-2411": {"id":"mistral-large-2411","name":"Mistral Large","limit":{"context":131072,"output":8192},"cost":{"input":2,"output":6}}
 			}
 		},
+		"digitalocean": {
+			"id": "digitalocean",
+			"name": "DigitalOcean",
+			"models": {
+				"anthropic-claude-5.5-haiku": {"id":"anthropic-claude-5.5-haiku","name":"Anthropic Claude 5.5 Haiku","cost":{"input":0.1,"output":0.5}}
+			}
+		},
 		"unknownvendor": {
 			"id": "unknownvendor",
 			"name": "Ignored",
@@ -123,8 +130,9 @@ func TestSyncer_Sync(t *testing.T) {
 	if len(repo.providers) != len(seedProviders) {
 		t.Fatalf("expected %d providers seeded, got %d", len(seedProviders), len(repo.providers))
 	}
-	if len(repo.upsertedModels) != 2+len(cohereSeedModels) {
-		t.Fatalf("expected %d mapped models upserted (unknown vendor skipped), got %d", 2+len(cohereSeedModels), len(repo.upsertedModels))
+	wantUpserts := 3 + len(cohereSeedModels) + len(digitalOceanSeedModels)
+	if len(repo.upsertedModels) != wantUpserts {
+		t.Fatalf("expected %d mapped models upserted (unknown vendor skipped), got %d", wantUpserts, len(repo.upsertedModels))
 	}
 	for _, m := range repo.upsertedModels {
 		if !m.Enabled {
@@ -137,6 +145,19 @@ func TestSyncer_Sync(t *testing.T) {
 	openaiID := repo.providers["openai"].ID
 	if keep := repo.disabledCalls[openaiID]; len(keep) != 1 || keep[0] != "gpt-4o" {
 		t.Fatalf("openai keep slugs = %v, want [gpt-4o]", keep)
+	}
+	digitalOceanID := repo.providers["digitalocean"].ID
+	if keep := repo.disabledCalls[digitalOceanID]; len(keep) != 1 || keep[0] != "anthropic-claude-5.5-haiku" {
+		t.Fatalf("digitalocean keep slugs = %v, want [anthropic-claude-5.5-haiku]", keep)
+	}
+	var routerSeeded bool
+	for _, m := range repo.upsertedModels {
+		if m.Slug == "inference-router" && m.ProviderID == digitalOceanID && m.Source == sourceManualSeed {
+			routerSeeded = true
+		}
+	}
+	if !routerSeeded {
+		t.Fatal("inference-router should be seeded under digitalocean, models.dev does not publish it")
 	}
 	vertexID := repo.providers["vertex"].ID
 	if keep := repo.disabledCalls[vertexID]; len(keep) != 0 {

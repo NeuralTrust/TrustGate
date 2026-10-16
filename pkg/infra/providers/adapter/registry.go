@@ -221,6 +221,11 @@ func (r *Registry) DecodeResponseFor(body []byte, providerFormat Format) (*Canon
 // If the two formats are wire-compatible the body is returned unmodified,
 // except when provider-specific extensions require canonical filtering.
 func (r *Registry) AdaptResponse(body []byte, source, target Format) ([]byte, error) {
+	return r.AdaptResponseWithModel(body, source, target, "")
+}
+
+// AdaptResponseWithModel uses sentModel when a translated response omits its model.
+func (r *Registry) AdaptResponseWithModel(body []byte, source, target Format, sentModel string) ([]byte, error) {
 	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
 	}
@@ -237,6 +242,9 @@ func (r *Registry) AdaptResponse(body []byte, source, target Format) ([]byte, er
 	canonical, err := targetAdapter.DecodeResponse(body)
 	if err != nil {
 		return nil, fmt.Errorf("adapter response decode (%s): %w", target, err)
+	}
+	if canonical.Model == "" {
+		canonical.Model = sentModel
 	}
 	dropProviderExtensionsForCrossFormat(source, target, canonical)
 

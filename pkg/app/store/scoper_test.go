@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -54,6 +55,7 @@ func withOpenPrincipal(sub string) context.Context {
 func githubRegistry() *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
+		Enabled:   true,
 		MCPTarget: &registrydomain.MCPTarget{Code: "github"},
 	}
 }
@@ -128,8 +130,9 @@ func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
 func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	shelf := &registrydomain.Registry{
-		ID:   ids.New[ids.RegistryKind](),
-		Name: "Snowflake",
+		ID:      ids.New[ids.RegistryKind](),
+		Name:    "Snowflake",
+		Enabled: true,
 		MCPTarget: &registrydomain.MCPTarget{
 			Code: "snowflake",
 			URL:  "https://acme/api/v2/databases/{database}/mcp",
@@ -176,6 +179,56 @@ func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 	}
 	if !names["Snowflake (analytics)"] || !names["Snowflake (finance)"] {
 		t.Fatalf("instances must be labelled by their config, got %v", names)
+	}
+}
+
+// An approved request stays bound to the server it named, and a later install of
+// the code is unbound: two rows, one server. Exposed as two clones they served
+// every tool twice under one name, so they surface once, as the shelf itself.
+func TestScoperExposesTwoInstallsOfOneServerOnce(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := githubRegistry()
+	approved := mustInstall(t, gw, "ana", "github")
+	approved.RegistryID = shelf.ID
+	later := mustInstall(t, gw, "ana", "github")
+	later.CreatedAt = approved.CreatedAt.Add(time.Minute)
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{later, approved}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 1 || scoped.Registries[0] != shelf {
+		t.Fatalf("one server must surface once, as the shelf registry, got %+v", scoped.Registries)
+	}
+}
+
+// An install bound to a registry that was deleted serves nothing. It must not
+// make its live sibling a per-install clone, or that sibling's tools would carry
+// a per-instance name until the dead row is cleaned up.
+func TestScoperExposesTheLiveInstallOfAServerAsTheShelf(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := githubRegistry()
+	dead := mustInstall(t, gw, "ana", "github")
+	dead.RegistryID = ids.New[ids.RegistryKind]()
+	live := mustInstall(t, gw, "ana", "github")
+	live.CreatedAt = dead.CreatedAt.Add(time.Minute)
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{dead, live}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 1 || scoped.Registries[0] != shelf {
+		t.Fatalf("the live install must surface as the shelf registry, got %+v", scoped.Registries)
 	}
 }
 

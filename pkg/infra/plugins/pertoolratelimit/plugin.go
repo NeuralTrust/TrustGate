@@ -533,6 +533,7 @@ func (p *Plugin) mcpPreRequest(
 		return okResult(), nil
 	}
 	setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, effectiveBehavior(rule, cfg), true))
+	appplugins.SetDecisionFromOutcome(in.Event, appplugins.DecisionBlocked)
 	return p.reject(ctx, tool, ws, dimension)
 }
 

@@ -125,10 +125,10 @@ func hook(t *testing.T, c *container.Container) requestPathDeps {
 	return d
 }
 
-// The headline property: a proxied request never makes a Redis call. Both
-// clients are hooked, 30 requests are charged (5 admitted, 25 refused with a
-// 429 from memory), and neither has seen a command. Redis is reached only when
-// the sync runs, through the sync client, once per round.
+// A proxied request that already has a counter never makes a Redis call. The
+// first request reads the shared counters once, through the sync client; the
+// other 29 stay in memory (5 admitted, 25 refused). Writes still happen only
+// when the sync runs.
 func TestRateLimit_ProxyForwardPathMakesZeroRedisCalls(t *testing.T) {
 	setDBLessSmokeEnv(t)
 	c, err := container.New(modules.All("proxy", true)...)
@@ -159,14 +159,15 @@ func TestRateLimit_ProxyForwardPathMakesZeroRedisCalls(t *testing.T) {
 	if got := d.shared.n.Load(); got != 0 {
 		t.Fatalf("the shared Redis client received %d commands on the forward path, want 0", got)
 	}
-	if got := d.sync.n.Load(); got != 0 {
-		t.Fatalf("the sync client received %d commands on the forward path, want 0", got)
+	cold := d.sync.n.Load()
+	if cold == 0 || cold > 16 {
+		t.Fatalf("the cold read made %d sync-client commands, want one read", cold)
 	}
 
 	if err := d.meter.SyncNow(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if got := d.sync.n.Load(); got == 0 {
+	if got := d.sync.n.Load(); got <= cold {
 		t.Fatal("the sync did not reach Redis through the sync client: usage would never be shared between pods")
 	}
 	if got := d.shared.n.Load(); got != 0 {
@@ -174,7 +175,7 @@ func TestRateLimit_ProxyForwardPathMakesZeroRedisCalls(t *testing.T) {
 	}
 }
 
-// The MCP data plane charges tools/call the same way: in memory, no Redis call.
+// The MCP data plane charges tools/call the same way: one cold read, then memory.
 func TestRateLimit_MCPToolsCallPathMakesZeroRedisCalls(t *testing.T) {
 	setDBLessSmokeEnv(t)
 	c, err := container.New(modules.All("mcp", true)...)
@@ -207,13 +208,14 @@ func TestRateLimit_MCPToolsCallPathMakesZeroRedisCalls(t *testing.T) {
 		d.shared.names.Range(func(k, _ any) bool { seen = append(seen, k.(string)); return true })
 		t.Fatalf("the shared Redis client received %d commands on the tools/call path (%v), want 0", got, seen)
 	}
-	if got := d.sync.n.Load(); got != 0 {
-		t.Fatalf("the sync client received %d commands on the tools/call path, want 0", got)
+	cold := d.sync.n.Load()
+	if cold == 0 || cold > 16 {
+		t.Fatalf("the cold read made %d sync-client commands, want one read", cold)
 	}
 	if err := d.meter.SyncNow(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if d.sync.n.Load() == 0 || d.shared.n.Load() != 0 {
+	if d.sync.n.Load() <= cold || d.shared.n.Load() != 0 {
 		t.Fatalf("only the sync client may reach Redis: sync=%d shared=%d", d.sync.n.Load(), d.shared.n.Load())
 	}
 }
@@ -360,9 +362,9 @@ func postgresPlane(t *testing.T, plane string, burst int) (requestPathDeps, *con
 	return d, c, gwID
 }
 
-// The same headline property on a plane that reads Postgres: the gateway is
-// resolved through the finder and the caps from the polled copy, so a request
-// costs no Redis command on either client and no per-request caps query.
+// On a plane that reads Postgres the gateway is resolved through the finder and
+// the caps from the polled copy. A request costs no shared-client command and
+// no per-request caps query; the sync client is touched once, for the cold read.
 func TestRateLimit_PostgresPlaneProxyForwardMakesZeroRedisCalls(t *testing.T) {
 	d, c, gw := postgresPlane(t, "proxy", 5)
 
@@ -387,13 +389,14 @@ func TestRateLimit_PostgresPlaneProxyForwardMakesZeroRedisCalls(t *testing.T) {
 	if got := d.shared.n.Load(); got != 0 {
 		t.Fatalf("the shared Redis client received %d commands on the forward path, want 0", got)
 	}
-	if got := d.sync.n.Load(); got != 0 {
-		t.Fatalf("the sync client received %d commands on the forward path, want 0", got)
+	cold := d.sync.n.Load()
+	if cold == 0 || cold > 16 {
+		t.Fatalf("the cold read made %d sync-client commands, want one read", cold)
 	}
 	if err := d.meter.SyncNow(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if d.sync.n.Load() == 0 || d.shared.n.Load() != 0 {
+	if d.sync.n.Load() <= cold || d.shared.n.Load() != 0 {
 		t.Fatalf("only the sync client may reach Redis: sync=%d shared=%d", d.sync.n.Load(), d.shared.n.Load())
 	}
 }
@@ -424,13 +427,14 @@ func TestRateLimit_PostgresPlaneMCPToolsCallMakesZeroRedisCalls(t *testing.T) {
 		d.shared.names.Range(func(k, _ any) bool { seen = append(seen, k.(string)); return true })
 		t.Fatalf("the shared Redis client received %d commands on the tools/call path (%v), want 0", got, seen)
 	}
-	if got := d.sync.n.Load(); got != 0 {
-		t.Fatalf("the sync client received %d commands on the tools/call path, want 0", got)
+	cold := d.sync.n.Load()
+	if cold == 0 || cold > 16 {
+		t.Fatalf("the cold read made %d sync-client commands, want one read", cold)
 	}
 	if err := d.meter.SyncNow(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if d.sync.n.Load() == 0 || d.shared.n.Load() != 0 {
+	if d.sync.n.Load() <= cold || d.shared.n.Load() != 0 {
 		t.Fatalf("only the sync client may reach Redis: sync=%d shared=%d", d.sync.n.Load(), d.shared.n.Load())
 	}
 }
