@@ -122,7 +122,7 @@ func TestRunShutdownDoesNotCancelARoundInFlight(t *testing.T) {
 		m.Run(ctx)
 		close(done)
 	}()
-	waitFor(t, 2*time.Second, func() bool { return backend.calls.Load() >= 1 }, "the first round reaches the backend")
+	waitFor(t, 2*time.Second, func() bool { return backend.calls.Load() >= 2 }, "the loop's round reaches the backend")
 	cancel()
 	time.Sleep(20 * time.Millisecond)
 	close(release)

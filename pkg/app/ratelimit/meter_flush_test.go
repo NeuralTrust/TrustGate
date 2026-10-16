@@ -100,22 +100,24 @@ func TestFlushStopsStartingChunksButFinishesTheOneInFlight(t *testing.T) {
 	shared := newShared()
 	backend := newBackend(shared)
 	backend.failIfCancelled.Store(true)
-	backend.delay.Store(int64(50 * time.Millisecond))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// The flush's deadline expires while the first chunk is on the wire.
+	m := sixTenants(t, backend, nil)
+	// The cold reads have already happened. The delay and the cancel apply to
+	// the flush, whose deadline expires while the first chunk is on the wire.
+	backend.delay.Store(int64(50 * time.Millisecond))
+	base := backend.calls.Load()
 	hook := func(n int64) {
-		if n == 1 {
+		if n == base+1 {
 			cancel()
 		}
 	}
 	backend.onCall.Store(&hook)
-	m := sixTenants(t, backend, nil)
 
 	err := m.sync(ctx, true)
 
 	require.Error(t, err)
-	assert.EqualValues(t, 1, backend.calls.Load(), "no chunk is started after the deadline")
+	assert.EqualValues(t, base+1, backend.calls.Load(), "no chunk is started after the deadline")
 	assert.Zero(t, backend.cancelledCalls.Load(), "the chunk on the wire was not cancelled")
 	assert.EqualValues(t, 4, sentTotal(shared), "the in-flight chunk (two tenants) completed")
 	assert.EqualValues(t, 8, read("shutdown"), "the four tenants left unsent are counted as dropped")
@@ -127,13 +129,14 @@ func TestFlushStopsStartingChunksButFinishesTheOneInFlight(t *testing.T) {
 func TestFlushTimeoutBoundsTheShutdownFlush(t *testing.T) {
 	read := droppedByReason(t)
 	backend := newBackend(newShared())
-	backend.delay.Store(int64(300 * time.Millisecond))
 	m := sixTenants(t, backend, func(o *Options) { o.FlushTimeout = 100 * time.Millisecond })
+	backend.delay.Store(int64(300 * time.Millisecond))
+	base := backend.calls.Load()
 
 	start := time.Now()
 	m.flushOnShutdown()
 
-	assert.EqualValues(t, 1, backend.calls.Load(), "FlushTimeout ended the flush after the first chunk")
+	assert.EqualValues(t, base+1, backend.calls.Load(), "FlushTimeout ended the flush after the first chunk")
 	assert.Less(t, time.Since(start), 900*time.Millisecond, "it did not go through all three chunks")
 	assert.EqualValues(t, 8, read("shutdown"))
 }
@@ -146,16 +149,17 @@ func TestSyncCutShortKeepsUnsentUsageForTheNextRound(t *testing.T) {
 	backend := newBackend(shared)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	m := sixTenants(t, backend, nil)
+	base := backend.calls.Load()
 	hook := func(n int64) {
-		if n == 1 {
+		if n == base+1 {
 			cancel()
 		}
 	}
 	backend.onCall.Store(&hook)
-	m := sixTenants(t, backend, nil)
 
 	require.Error(t, m.sync(ctx, false))
-	require.EqualValues(t, 1, backend.calls.Load())
+	require.EqualValues(t, base+1, backend.calls.Load())
 	require.NoError(t, m.SyncNow(bg))
 
 	assert.EqualValues(t, 12, sentTotal(shared), "nothing was lost")

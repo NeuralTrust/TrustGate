@@ -215,6 +215,7 @@ func TestHandle_PlanBurstRateLimitUsesDialectEnvelope(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "body: %s", raw)
 		assert.Equal(t, retryAfter, resp.Header.Get("Retry-After"))
+		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 		assert.JSONEq(t, want, string(raw))
 		assert.NotContains(t, string(raw), `"reason"`)
 	})
