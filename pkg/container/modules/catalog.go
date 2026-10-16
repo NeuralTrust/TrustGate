@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -198,10 +199,17 @@ func (s *liveModelSource) List(
 }
 
 // listingMisconfigured reports a failure the registry's own configuration
-// causes and a retry cannot fix: a precondition the adapter rejected, or the
-// provider refusing the credentials or not knowing the endpoint.
+// causes and a retry cannot fix: a precondition the adapter rejected, an
+// endpoint host that does not exist, or the provider refusing the credentials
+// or not knowing the endpoint.
 func listingMisconfigured(err error) bool {
 	if errors.Is(err, providers.ErrModelListingMisconfigured) {
+		return true
+	}
+	// Only NXDOMAIN: a deleted Azure resource fails every call this way, while a
+	// temporary or timed-out lookup is the resolver, not the registry (ENG-2057).
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 		return true
 	}
 	var status *providers.ModelListingStatusError
