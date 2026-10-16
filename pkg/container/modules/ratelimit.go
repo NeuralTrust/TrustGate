@@ -77,7 +77,7 @@ func RateLimit(c *container.Container) error {
 			TLSInsecureVerify: cfg.Redis.TLSInsecureVerify,
 			CacheName:         cfg.Redis.CacheName,
 			AWSServerless:     cfg.Redis.AWSServerless,
-		}, cfg.RateLimit.SyncTimeout)
+		}, cfg.RateLimit.SyncTimeout, cfg.RateLimit.ColdReadTimeout)
 	}); err != nil {
 		return err
 	}
@@ -94,6 +94,7 @@ func RateLimit(c *container.Container) error {
 			ratelimitapp.Options{
 				SyncInterval:    p.Cfg.RateLimit.SyncInterval,
 				SyncTimeout:     p.Cfg.RateLimit.SyncTimeout,
+				ColdReadTimeout: p.Cfg.RateLimit.ColdReadTimeout,
 				FailedRetention: p.Cfg.RateLimit.FailedRetention,
 			},
 			p.Logger,

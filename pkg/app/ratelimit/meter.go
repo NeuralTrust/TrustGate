@@ -39,6 +39,13 @@ const (
 	DefaultMaxBatch        = 500
 	DefaultFlushTimeout    = 2 * time.Second
 	DefaultSyncTimeout     = 200 * time.Millisecond
+	// DefaultColdReadTimeout bounds the one read that fills a slot this pod does
+	// not have yet. It is longer than the sync round trip because that read can
+	// be the first command on the connection.
+	DefaultColdReadTimeout = time.Second
+	// DefaultSyncWarmTimeout bounds the startup ping and script load. Redis
+	// being down must not hold boot; the limiter still serves and fails open.
+	DefaultSyncWarmTimeout = 2 * time.Second
 
 	// kickDivisor makes the early-flush threshold a tenth of the cap.
 	kickDivisor = 10
@@ -64,8 +71,12 @@ type Options struct {
 	FailedRetention time.Duration
 	// MaxBatch is how many tenants share one pipelined round trip.
 	MaxBatch int
-	// SyncTimeout bounds one round trip to Redis, independently of any request.
+	// SyncTimeout bounds one background sync round trip. A request that already
+	// has a counter does not wait on it. The cold read uses ColdReadTimeout.
 	SyncTimeout time.Duration
+	// ColdReadTimeout bounds the Redis read that fills a slot this pod does not
+	// have yet. A hard error still fails open.
+	ColdReadTimeout time.Duration
 	// FlushTimeout is how long the final sync on shutdown may keep starting
 	// chunks. A chunk already on the wire is not cancelled (SyncTimeout bounds
 	// it), so the flush can overrun FlushTimeout by one chunk. Usage not sent by
@@ -96,6 +107,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.SyncTimeout <= 0 {
 		o.SyncTimeout = DefaultSyncTimeout
+	}
+	if o.ColdReadTimeout <= 0 {
+		o.ColdReadTimeout = DefaultColdReadTimeout
 	}
 	if o.FlushTimeout <= 0 {
 		o.FlushTimeout = DefaultFlushTimeout
@@ -253,9 +267,11 @@ func (m *Meter) primeAndAdmit(s *slot, limits domain.Limits, now time.Time) (err
 
 // readShared is the one request-path read. A successful answer is the shared
 // total, including zero for a key that is not there. An error is not a total:
-// the caller fails open and the background sync keeps trying.
+// the caller fails open and the background sync keeps trying. The budget is
+// ColdReadTimeout, not the sync round trip: this call can be the first command
+// on the connection.
 func (m *Meter) readShared(subject string, now time.Time) (quota, burst int64, ok bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.opts.SyncTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), m.opts.ColdReadTimeout)
 	defer cancel()
 	results, err := m.backend.Sync(ctx, []domain.SyncItem{{
 		Subject: subject,
@@ -274,11 +290,26 @@ func (m *Meter) readShared(subject string, now time.Time) (quota, burst int64, o
 			err = errors.New("malformed cold counter read")
 		}
 	}
+	m.metrics.recordFailOpen(context.WithoutCancel(ctx), "cold_read")
 	m.logger.Warn("rate limit: cold counter read failed; fail-open",
 		slog.String("component", "ratelimit"),
 		slog.String("subject", subject),
 		slog.Any("error", err))
 	return 0, 0, false
+}
+
+// Warm asks the backend to authenticate and load the sync script. A backend
+// with nothing to warm succeeds. The caller bounds ctx and logs a failure;
+// enforcement is unchanged either way.
+func (m *Meter) Warm(ctx context.Context) error {
+	type warmer interface {
+		Warm(context.Context) error
+	}
+	w, ok := m.backend.(warmer)
+	if !ok || w == nil {
+		return nil
+	}
+	return w.Warm(ctx)
 }
 
 // slotFor returns the tenant's counter, and whether this call created it.

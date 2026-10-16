@@ -15,7 +15,10 @@
 package ratelimit
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -220,7 +223,7 @@ func TestUnresponsiveRedisNeverDelaysRequests(t *testing.T) {
 
 	cold := time.Now()
 	require.NoError(t, m.Check(bg, id), "a failed cold read fails open")
-	assert.Less(t, time.Since(cold), 2*time.Second, "the cold read is bounded by the sync timeout")
+	assert.Less(t, time.Since(cold), 2*time.Second, "the cold read stays inside its budget")
 
 	var worst time.Duration
 	deadline := time.Now().Add(200 * time.Millisecond)
@@ -407,6 +410,52 @@ func TestColdReadWhenRedisIsDownStillFailsOpen(t *testing.T) {
 	require.NoError(t, m.Check(bg, id), "a backend error fails open even when the quota may be exhausted")
 }
 
+// A first read slower than the sync round trip, and inside the cold-read
+// budget, still learns an exhausted quota and rejects. The sync timeout is
+// left at 200 ms so a read that still used it would fail open instead.
+func TestSlowColdReadRejectsExhaustedQuotaWithinItsBudget(t *testing.T) {
+	store, _, mr := countedStore(t)
+	const quotaKey = "gt:rl:quota:{acme}:2026-10"
+	require.NoError(t, mr.Set(quotaKey, "100000"))
+	const delay = 400 * time.Millisecond
+	backend := &slowFirstSync{inner: store, delay: delay}
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+	m := testMeter(r, backend, newClock(midMonth), func(o *Options) {
+		o.SyncTimeout = 200 * time.Millisecond
+		o.ColdReadTimeout = time.Second
+	})
+
+	start := time.Now()
+	ex := exceeded(t, m.Check(bg, id))
+	elapsed := time.Since(start)
+	assert.Equal(t, ReasonQuota, ex.Reason)
+	assert.Equal(t, 0, ex.Remaining)
+	assert.GreaterOrEqual(t, elapsed, delay)
+	assert.Less(t, elapsed, time.Second+500*time.Millisecond, "the rejection lands inside the cold-read budget")
+	got, err := mr.Get(quotaKey)
+	require.NoError(t, err)
+	assert.Equal(t, "100000", got, "the rejected request is not usage")
+}
+
+// A hard Redis error is not a slow read. The request is admitted, and the
+// fail-open is counted against the tenant.
+func TestColdReadHardErrorStillFailsOpen(t *testing.T) {
+	read := captureMetrics(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+	m := NewMeter(r, failingSync{err: errors.New("redis down")}, Options{
+		Now:             newClock(midMonth).Now,
+		ColdReadTimeout: time.Second,
+		SyncTimeout:     200 * time.Millisecond,
+	}, logger)
+
+	require.NoError(t, m.Check(bg, id), "a hard backend error fails open")
+	assert.EqualValues(t, 1, read("trustgate.ratelimit.fail_open"))
+	assert.Contains(t, logs.String(), "acme")
+	assert.Contains(t, logs.String(), "cold counter read failed")
+}
+
 // holdingSync stalls the first Sync until release is closed. The burst in
 // TestColdParallelBurstReadsSharedQuotaOnce piles up on that one read.
 type holdingSync struct {
@@ -452,6 +501,33 @@ func (c *evalCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.
 		}
 		return next(ctx, cmds)
 	}
+}
+
+// slowFirstSync holds only the first Sync, and it gives up when the call's
+// context ends, so a budget shorter than delay fails open.
+type slowFirstSync struct {
+	inner SyncBackend
+	delay time.Duration
+	calls atomic.Int64
+}
+
+func (s *slowFirstSync) Sync(ctx context.Context, items []domain.SyncItem) ([]domain.SyncResult, error) {
+	if s.calls.Add(1) == 1 {
+		timer := time.NewTimer(s.delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		}
+	}
+	return s.inner.Sync(ctx, items)
+}
+
+type failingSync struct{ err error }
+
+func (f failingSync) Sync(context.Context, []domain.SyncItem) ([]domain.SyncResult, error) {
+	return nil, f.err
 }
 
 func isEvalCommand(cmd redis.Cmder) bool {
