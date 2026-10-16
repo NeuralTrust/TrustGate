@@ -17,9 +17,11 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/gofiber/fiber/v2"
 )
@@ -76,9 +78,27 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 		// ships it. Uncloned, one exported span carried a trace id whose first
 		// seven bytes had become the string "nosniff" from a later response's
 		// X-Content-Type-Options header.
-		span.Finish(o11y.SpanOutcome{Request: request, TraceID: strings.Clone(c.GetRespHeader(HeaderTraceID))})
+		span.Finish(o11y.SpanOutcome{
+			Request:    request,
+			TraceID:    strings.Clone(c.GetRespHeader(HeaderTraceID)),
+			StatusCode: status,
+			ErrorType:  spanErrorType(c, status),
+		})
 		return err
 	}
+}
+
+// spanErrorType names why a request failed without its message, which can carry
+// an upstream body. A 5xx that did not go through httpio.WriteError falls back
+// to its status code, as OTel semconv does for error.type.
+func spanErrorType(c *fiber.Ctx, status int) string {
+	if code := httpio.ErrorCode(c); code != "" {
+		return code
+	}
+	if status >= fiber.StatusInternalServerError {
+		return strconv.Itoa(status)
+	}
+	return ""
 }
 
 func SetOpsOutcome(c *fiber.Ctx, outcome o11y.Outcome) {

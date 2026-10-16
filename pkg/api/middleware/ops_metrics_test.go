@@ -16,11 +16,15 @@ package middleware
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"unsafe"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
@@ -311,5 +315,67 @@ func TestBoundedMethodSurvivesMutationOfTheCallersBuffer(t *testing.T) {
 func TestBoundedMethodCollapsesAnythingElse(t *testing.T) {
 	for _, in := range []string{"TRACE", "CONNECT", "", "get", "GETT"} {
 		require.Equal(t, "OTHER", boundedMethod(in))
+	}
+}
+
+func TestOpsMetricsMiddlewareRecordsWhyARequestFailedOnTheSpan(t *testing.T) {
+	tests := []struct {
+		name          string
+		handler       fiber.Handler
+		wantStatus    int
+		wantErrorType string
+	}{
+		{
+			name: "upstream unavailable",
+			handler: func(c *fiber.Ctx) error {
+				return httpio.WriteError(c, fmt.Errorf("%w: secret-upstream-body", commonerrors.ErrUpstreamUnavailable))
+			},
+			wantStatus:    fiber.StatusBadGateway,
+			wantErrorType: "upstream_unavailable",
+		},
+		{
+			name: "registry misconfigured",
+			handler: func(c *fiber.Ctx) error {
+				return httpio.WriteError(c, fmt.Errorf("%w: secret-upstream-body", commonerrors.ErrInvalidConfig))
+			},
+			wantStatus:    fiber.StatusUnprocessableEntity,
+			wantErrorType: "invalid_config",
+		},
+		{
+			name:          "returned server error",
+			handler:       func(*fiber.Ctx) error { return errors.New("secret-upstream-body") },
+			wantStatus:    fiber.StatusInternalServerError,
+			wantErrorType: "500",
+		},
+		{
+			name:       "returned client error",
+			handler:    func(*fiber.Ctx) error { return fiber.NewError(fiber.StatusNotFound, "secret-upstream-body") },
+			wantStatus: fiber.StatusNotFound,
+		},
+		{
+			name:       "success",
+			handler:    func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) },
+			wantStatus: fiber.StatusOK,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &recordingOps{enabled: true}
+			app := fiber.New()
+			app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneAdmin).Middleware())
+			app.Get("/v1/models-catalog", tc.handler)
+
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/models-catalog?registry_id=customer-id", nil))
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, tc.wantStatus, resp.StatusCode)
+			require.Len(t, recorder.finished, 1)
+
+			out := recorder.finished[0]
+			require.Equal(t, tc.wantStatus, out.StatusCode)
+			require.Equal(t, tc.wantErrorType, out.ErrorType)
+			require.NotContains(t, fmt.Sprintf("%+v", out), "secret-upstream-body")
+			require.NotContains(t, fmt.Sprintf("%+v", out), "customer-id")
+		})
 	}
 }

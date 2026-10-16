@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -84,6 +85,31 @@ func TestStartRequestSpanMarksServerErrors(t *testing.T) {
 	ended := recorder.Ended()
 	require.Len(t, ended, 1)
 	require.Equal(t, codes.Error, ended[0].Status().Code)
+}
+
+func TestStartRequestSpanRecordsWhyARequestFailed(t *testing.T) {
+	provider, recorder := recordingProvider(t)
+
+	_, span := provider.StartRequestSpan(context.Background(), "GET admin.catalog", RouteAdminCatalog)
+	span.Finish(SpanOutcome{
+		Request:    Request{Route: RouteAdminCatalog, StatusClass: "5xx", Outcome: OutcomeServerError},
+		StatusCode: 502,
+		ErrorType:  "upstream_unavailable",
+	})
+
+	ended := recorder.Ended()
+	require.Len(t, ended, 1)
+	require.Equal(t, codes.Error, ended[0].Status().Code)
+	require.Equal(t, string(OutcomeServerError), ended[0].Status().Description)
+
+	attrs := map[attribute.Key]attribute.Value{}
+	for _, kv := range ended[0].Attributes() {
+		attrs[kv.Key] = kv.Value
+	}
+	require.Equal(t, attribute.INT64, attrs["http.response.status_code"].Type())
+	require.Equal(t, int64(502), attrs["http.response.status_code"].AsInt64())
+	require.Equal(t, "upstream_unavailable", attrs["error.type"].AsString())
+	require.Equal(t, "5xx", attrs["http.response.status_class"].AsString())
 }
 
 func TestStartRequestSpanWithoutTracerIsNoop(t *testing.T) {
