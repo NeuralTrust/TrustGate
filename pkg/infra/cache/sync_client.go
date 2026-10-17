@@ -91,6 +91,8 @@ func buildSyncOptions(options *redis.Options, syncTimeout, coldReadTimeout time.
 	options.PoolSize = 2
 	options.MinIdleConns = syncMinIdleConns
 	options.PoolTimeout = budget
+	// Not go-redis's 30 minute default. See syncConnMaxIdleTime.
+	options.ConnMaxIdleTime = syncConnMaxIdleTime
 	return options
 }
 
@@ -106,11 +108,22 @@ func buildSyncOptions(options *redis.Options, syncTimeout, coldReadTimeout time.
 // still runs inside the call is the handshake of a connection that was already
 // dialed: fetching the IAM token and HELLO/AUTH. The AWS credentials cache keeps retrieving after the
 // call's context is cancelled, so a slow first retrieval is cached for the next
-// tick. ConnMaxIdleTime (30 minutes by default) is left alone: a tick uses the
-// connection far more often than that, and an idle one that is reaped is
-// replaced in the background by the same mechanism. The pool size stays at 2, of
-// which this takes one.
+// tick. The pool size stays at 2, of which this takes one.
 const syncMinIdleConns = 1
+
+// syncConnMaxIdleTime is how long a pooled sync connection may sit unused.
+// go-redis defaults this to 30 minutes. That is too long here: once the last
+// slot is evicted the sync loop returns before it calls Redis, so nothing
+// touches the socket. A load balancer or NAT idle timeout (350 seconds on the
+// AWS defaults) drops it first, and a TLS session is not a syscall.Conn, so
+// the pool's peek never notices. The next command is sent on the dead socket.
+// Retries are off, the pool holds two of them, and the cold read fails open.
+// Four minutes is under that network timeout, and under the 30 minute default
+// that still hands a socket out after about 29 minutes idle. The cold read
+// then discards the idle sockets and dials inside its own budget. A tenant
+// that is still tracked is synced every second, so its connection never meets
+// this.
+const syncConnMaxIdleTime = 4 * time.Minute
 
 // syncDialTimeout is the dial timeout for a (already clamped) sync timeout: at
 // least minDialTimeout, because a cold connection needs the TCP connect and the
