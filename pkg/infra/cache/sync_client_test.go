@@ -29,14 +29,14 @@ import (
 
 func TestBuildSyncOptionsIsBoundedAndDoesNotRetry(t *testing.T) {
 	t.Parallel()
-	o := buildSyncOptions(&redis.Options{Addr: "x:1"}, 200*time.Millisecond)
+	o := buildSyncOptions(&redis.Options{Addr: "x:1"}, 200*time.Millisecond, time.Second)
 
 	assert.True(t, o.ContextTimeoutEnabled, "the caller's deadline must bound every call")
 	assert.Equal(t, -1, o.MaxRetries, "go-redis retries 3 times by default; the next tick is the retry")
 	assert.Equal(t, time.Second, o.DialTimeout, "a cold connection needs TLS and an IAM token: floor of 1s")
-	assert.Equal(t, 200*time.Millisecond, o.ReadTimeout)
-	assert.Equal(t, 200*time.Millisecond, o.WriteTimeout)
-	assert.Equal(t, 200*time.Millisecond, o.PoolTimeout)
+	assert.Equal(t, time.Second, o.ReadTimeout, "a cold read may be the first command, so the command budget is longer than the sync round")
+	assert.Equal(t, time.Second, o.WriteTimeout)
+	assert.Equal(t, time.Second, o.PoolTimeout)
 	assert.Equal(t, 2, o.PoolSize, "the loop runs one round trip at a time")
 	assert.Equal(t, 1, o.MinIdleConns, "one connection is dialed in the background, outside the sync deadline")
 	assert.LessOrEqual(t, o.MinIdleConns, o.PoolSize, "go-redis ignores a warm-up larger than the pool")
@@ -47,7 +47,7 @@ func TestBuildSyncOptionsIsBoundedAndDoesNotRetry(t *testing.T) {
 func TestBuildSyncOptionsCapsTheTimeout(t *testing.T) {
 	t.Parallel()
 	for _, in := range []time.Duration{0, -time.Second, time.Minute} {
-		o := buildSyncOptions(&redis.Options{}, in)
+		o := buildSyncOptions(&redis.Options{}, in, 0)
 		assert.Equal(t, MaxSyncTimeout, o.ReadTimeout, "timeout %s", in)
 		assert.Equal(t, MaxSyncTimeout, o.DialTimeout, "timeout %s", in)
 	}
@@ -66,9 +66,9 @@ func TestSyncDialTimeoutHasAFloorAndACap(t *testing.T) {
 		{"capped at the maximum", MaxSyncTimeout, MaxSyncTimeout},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			o := buildSyncOptions(&redis.Options{}, tt.in)
+			o := buildSyncOptions(&redis.Options{}, tt.in, 0)
 			assert.Equal(t, tt.want, o.DialTimeout)
-			assert.Equal(t, min(max(tt.in, 0), MaxSyncTimeout), o.ReadTimeout, "read and write stay at the sync timeout")
+			assert.Equal(t, min(max(tt.in, 0), MaxSyncTimeout), o.ReadTimeout, "with no cold-read budget, read and write stay at the sync timeout")
 			assert.Equal(t, o.ReadTimeout, o.WriteTimeout)
 		})
 	}
@@ -79,7 +79,7 @@ func TestSyncDialTimeoutHasAFloorAndACap(t *testing.T) {
 func TestNewSyncClientDoesNotFailOrBlockAtBoot(t *testing.T) {
 	t.Parallel()
 	started := time.Now()
-	c, err := NewSyncClient(Config{Host: "127.0.0.1", Port: 1}, 200*time.Millisecond)
+	c, err := NewSyncClient(Config{Host: "127.0.0.1", Port: 1}, 200*time.Millisecond, time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	assert.Less(t, time.Since(started), time.Second)
@@ -119,7 +119,7 @@ func TestSyncClientFirstCallSucceedsAfterASlowBackgroundDial(t *testing.T) {
 			return conn, err
 		},
 	}
-	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout))}
+	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout, syncTimeout))}
 	t.Cleanup(func() { _ = c.Close() })
 
 	select { // the first tick comes after the warm-up dial
@@ -136,4 +136,46 @@ func TestSyncClientFirstCallSucceedsAfterASlowBackgroundDial(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), callBudget)
 	defer cancel()
 	require.NoError(t, c.Ping(ctx).Err(), "the connection was dialed outside the call")
+}
+
+// slowFirstRead holds the first read, which is where a cold HELLO/AUTH sits,
+// and then behaves like the connection it wraps.
+type slowFirstRead struct {
+	net.Conn
+	delay time.Duration
+	once  sync.Once
+}
+
+func (c *slowFirstRead) Read(b []byte) (int, error) {
+	c.once.Do(func() { time.Sleep(c.delay) })
+	return c.Conn.Read(b)
+}
+
+// The command budget is the cold-read timeout, not the 200 ms sync round. A
+// first read slower than the sync round and inside the cold-read budget
+// completes. The sync loop still ends at its own context.
+func TestSyncClientSlowFirstReadFitsTheColdReadBudget(t *testing.T) {
+	t.Parallel()
+	const (
+		syncTimeout = 200 * time.Millisecond
+		coldRead    = time.Second
+		slowRead    = 400 * time.Millisecond
+	)
+	server := miniredis.RunT(t)
+	options := &redis.Options{
+		Addr: server.Addr(),
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &slowFirstRead{Conn: conn, delay: slowRead}, nil
+		},
+	}
+	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout, coldRead))}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), coldRead)
+	defer cancel()
+	require.NoError(t, c.Ping(ctx).Err(), "the first read is allowed the cold-read budget")
 }

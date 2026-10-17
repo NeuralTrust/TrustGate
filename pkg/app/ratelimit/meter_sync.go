@@ -77,8 +77,7 @@ func (m *Meter) flushOnShutdown() {
 }
 
 // SyncNow runs one sync round: it pushes every tenant's pending usage to Redis,
-// pulls the tenant-wide totals back, and applies them. It is the only code path
-// that talks to the backend.
+// pulls the tenant-wide totals back, and applies them.
 func (m *Meter) SyncNow(ctx context.Context) error {
 	return m.sync(ctx, false)
 }
