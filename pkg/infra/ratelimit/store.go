@@ -125,6 +125,23 @@ func NewStore(rc *redis.Client, logger *slog.Logger, opts ...StoreOption) *Store
 
 func (s *Store) available() bool { return s != nil && s.redis != nil }
 
+// Warm authenticates the sync connection and loads the script, so the first
+// request does not pay for HELLO/AUTH and SCRIPT LOAD inside its own deadline.
+// The caller bounds ctx. A failure leaves enforcement as it is: the limiter
+// still serves, and a cold read fails open when Redis does not answer.
+func (s *Store) Warm(ctx context.Context) error {
+	if !s.available() {
+		return errors.New("redis unavailable")
+	}
+	if err := s.redis.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("rate limit redis warmup: %w", err)
+	}
+	if err := s.loadScript(ctx); err != nil {
+		return fmt.Errorf("rate limit redis warmup: %w", err)
+	}
+	return nil
+}
+
 // Sync applies one batch, one pipelined round trip with one script call per
 // tenant. go-redis does not fall back to EVAL when a script is missing from a
 // pipelined EVALSHA, so the script is loaded up front and again, once, if Redis
