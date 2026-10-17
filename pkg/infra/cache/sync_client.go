@@ -114,15 +114,15 @@ const syncMinIdleConns = 1
 // syncConnMaxIdleTime is how long a pooled sync connection may sit unused.
 // go-redis defaults this to 30 minutes. That is too long here: once the last
 // slot is evicted the sync loop returns before it calls Redis, so nothing
-// touches the socket. A load balancer or NAT idle timeout (350 seconds on the
-// AWS defaults) drops it first, and a TLS session is not a syscall.Conn, so
-// the pool's peek never notices. The next command is sent on the dead socket.
-// Retries are off, the pool holds two of them, and the cold read fails open.
-// Four minutes is under that network timeout, and under the 30 minute default
-// that still hands a socket out after about 29 minutes idle. The cold read
-// then discards the idle sockets and dials inside its own budget. A tenant
-// that is still tracked is synced every second, so its connection never meets
-// this.
+// touches the socket. The default dialer already probes with a 30 second
+// keepalive, which keeps a load balancer or NAT from idle-dropping the flow.
+// The EOF on the next command is the server closing it. ElastiCache Serverless
+// does that. A TLS session is not a syscall.Conn, so the pool's peek never
+// notices, and the command is sent on the dead socket. Four minutes is under
+// the 30 minute default that still hands a socket out after about 29 minutes
+// idle. The cold read then discards the idle sockets and dials inside its own
+// budget. A tenant that is still tracked is synced every second, so its
+// connection never meets this.
 const syncConnMaxIdleTime = 4 * time.Minute
 
 // syncDialTimeout is the dial timeout for a (already clamped) sync timeout: at

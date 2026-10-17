@@ -41,7 +41,7 @@ func TestBuildSyncOptionsIsBoundedAndDoesNotRetry(t *testing.T) {
 	assert.Equal(t, 1, o.MinIdleConns, "one connection is dialed in the background, outside the sync deadline")
 	assert.LessOrEqual(t, o.MinIdleConns, o.PoolSize, "go-redis ignores a warm-up larger than the pool")
 	assert.Zero(t, o.ConnMaxLifetime, "the warm connection must not be recycled")
-	assert.Equal(t, syncConnMaxIdleTime, o.ConnMaxIdleTime, "an idle socket is closed before a load balancer drops it")
+	assert.Equal(t, syncConnMaxIdleTime, o.ConnMaxIdleTime, "an idle socket is closed before ElastiCache Serverless drops it")
 	assert.Less(t, o.ConnMaxIdleTime, 30*time.Minute, "go-redis's default still hands out a socket after ~29 minutes idle")
 }
 

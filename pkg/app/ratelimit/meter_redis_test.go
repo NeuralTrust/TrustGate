@@ -542,6 +542,56 @@ func TestEvictedSlotFailsOpenWhenTheReplacementDialFails(t *testing.T) {
 	assert.EqualValues(t, 1, read("trustgate.ratelimit.fail_open"))
 }
 
+// The pooled socket is already closed, and idle time has not reaped it. The
+// first read fails, the one retry dials, and an exhausted quota rejects.
+func TestColdReadRetriesAClosedSocketAndRejectsExhaustedQuota(t *testing.T) {
+	mr := miniredis.RunT(t)
+	const quotaKey = "gt:rl:quota:{acme}:2026-10"
+	require.NoError(t, mr.Set(quotaKey, "100000"))
+	rc := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			// Hide the socket the way TLS does, so the pool's peek cannot
+			// discard it before the command. The retry has to do that.
+			return opaqueConn{conn}, nil
+		},
+		ConnMaxIdleTime:       30 * time.Minute,
+		MaxRetries:            -1,
+		PoolSize:              1,
+		ContextTimeoutEnabled: true,
+		DialTimeout:           time.Second,
+		ReadTimeout:           time.Second,
+		WriteTimeout:          time.Second,
+		PoolTimeout:           time.Second,
+	})
+	t.Cleanup(func() { _ = rc.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, rc.Ping(ctx).Err())
+
+	mr.Close()
+	require.NoError(t, mr.Restart())
+	got, err := mr.Get(quotaKey)
+	require.NoError(t, err)
+	require.Equal(t, "100000", got, "restart keeps the quota key")
+
+	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
+	m := testMeter(r, ratelimitinfra.NewStore(rc, discardLogger()), newClock(midMonth), func(o *Options) {
+		o.SyncTimeout = 200 * time.Millisecond
+		o.ColdReadTimeout = time.Second
+	})
+	ex := exceeded(t, m.Check(bg, id))
+	assert.Equal(t, ReasonQuota, ex.Reason)
+	assert.Equal(t, 0, ex.Remaining)
+	got, err = mr.Get(quotaKey)
+	require.NoError(t, err)
+	assert.Equal(t, "100000", got, "the rejected request is not usage")
+}
+
 // A hard Redis error is not a slow read. The request is admitted, and the
 // fail-open is counted against the tenant.
 func TestColdReadHardErrorStillFailsOpen(t *testing.T) {
@@ -549,13 +599,15 @@ func TestColdReadHardErrorStillFailsOpen(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	r, id := oneGateway("acme", domain.Limits{BurstPerMin: 100_000, QuotaPerMonth: 100_000})
-	m := NewMeter(r, failingSync{err: errors.New("redis down")}, Options{
+	backend := &failingSync{err: errors.New("redis down")}
+	m := NewMeter(r, backend, Options{
 		Now:             newClock(midMonth).Now,
 		ColdReadTimeout: time.Second,
 		SyncTimeout:     200 * time.Millisecond,
 	}, logger)
 
 	require.NoError(t, m.Check(bg, id), "a hard backend error fails open")
+	assert.EqualValues(t, 1, backend.calls.Load(), "a hard error is not retried")
 	assert.EqualValues(t, 1, read("trustgate.ratelimit.fail_open"))
 	assert.Contains(t, logs.String(), "acme")
 	assert.Contains(t, logs.String(), "cold counter read failed")
@@ -680,9 +732,13 @@ func (s *slowFirstSync) Sync(ctx context.Context, items []domain.SyncItem) ([]do
 	return s.inner.Sync(ctx, items)
 }
 
-type failingSync struct{ err error }
+type failingSync struct {
+	err   error
+	calls atomic.Int64
+}
 
-func (f failingSync) Sync(context.Context, []domain.SyncItem) ([]domain.SyncResult, error) {
+func (f *failingSync) Sync(context.Context, []domain.SyncItem) ([]domain.SyncResult, error) {
+	f.calls.Add(1)
 	return nil, f.err
 }
 
