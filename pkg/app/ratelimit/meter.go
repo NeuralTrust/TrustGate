@@ -17,10 +17,12 @@ package ratelimit
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -270,9 +272,29 @@ func (m *Meter) primeAndAdmit(s *slot, limits domain.Limits, now time.Time) (err
 // the caller fails open and the background sync keeps trying. The budget is
 // ColdReadTimeout, not the sync round trip: this call can be the first command
 // on the connection.
+//
+// A closed socket is retried once, on this same context. The bumps are a zero
+// delta, so the first attempt cannot have added usage. Any other error, a
+// second failure, or a context that is already done fails open.
 func (m *Meter) readShared(subject string, now time.Time) (quota, burst int64, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.opts.ColdReadTimeout)
 	defer cancel()
+	quota, burst, err := m.readSharedOnce(ctx, subject, now)
+	if err != nil && ctx.Err() == nil && isClosedSocket(err) {
+		quota, burst, err = m.readSharedOnce(ctx, subject, now)
+	}
+	if err == nil {
+		return quota, burst, true
+	}
+	m.metrics.recordFailOpen(context.WithoutCancel(ctx), "cold_read")
+	m.logger.Warn("rate limit: cold counter read failed; fail-open",
+		slog.String("component", "ratelimit"),
+		slog.String("subject", subject),
+		slog.Any("error", err))
+	return 0, 0, false
+}
+
+func (m *Meter) readSharedOnce(ctx context.Context, subject string, now time.Time) (quota, burst int64, err error) {
 	results, err := m.backend.Sync(ctx, []domain.SyncItem{{
 		Subject: subject,
 		Bumps: []domain.Bump{
@@ -281,7 +303,7 @@ func (m *Meter) readShared(subject string, now time.Time) (quota, burst int64, o
 		},
 	}})
 	if err == nil && len(results) == 1 && results[0].Err == nil && len(results[0].Totals) == 2 {
-		return results[0].Totals[0], results[0].Totals[1], true
+		return results[0].Totals[0], results[0].Totals[1], nil
 	}
 	if err == nil {
 		if len(results) == 1 && results[0].Err != nil {
@@ -290,12 +312,14 @@ func (m *Meter) readShared(subject string, now time.Time) (quota, burst int64, o
 			err = errors.New("malformed cold counter read")
 		}
 	}
-	m.metrics.recordFailOpen(context.WithoutCancel(ctx), "cold_read")
-	m.logger.Warn("rate limit: cold counter read failed; fail-open",
-		slog.String("component", "ratelimit"),
-		slog.String("subject", subject),
-		slog.Any("error", err))
-	return 0, 0, false
+	return 0, 0, err
+}
+
+// isClosedSocket reports a peer that hung up. Those three are the only errors
+// the cold read retries. A timeout, a refusal, or Redis being down is not one
+// of them.
+func isClosedSocket(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 // Warm asks the backend to authenticate and load the sync script. A backend
