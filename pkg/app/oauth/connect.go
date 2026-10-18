@@ -559,7 +559,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	token, err := s.provider.ExchangeCode(ctx, cfg, code, connectCallbackURL(baseURL, provider), st.Verifier)
 	if err != nil {
 		if errors.Is(err, ErrInvalidClient) {
-			s.rejectDynamicClient(ctx, gatewayID, st.Ticket.PrincipalSub, reg, cfg.ClientID)
+			s.rejectDynamicClient(ctx, gatewayID, reg, cfg.ClientID, cfg.ClientSlot)
 		}
 		return st.TicketID, err
 	}
@@ -580,15 +580,12 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	return st.TicketID, nil
 }
 
-func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry, clientID string) {
+func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID, slot string) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
 		return
 	}
-	if principalSub != "" {
-		ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: principalSub})
-	}
-	if err := s.DropRegisteredClient(ctx, gatewayID, reg, clientID); err != nil {
+	if err := s.DropRegisteredClient(ctx, gatewayID, reg, clientID, slot); err != nil {
 		slog.Warn("oauth connect: failed to drop a dynamic client the authorization server rejected",
 			"error", err, "provider", cfg.Provider, "gateway_id", gatewayID.String())
 	}
