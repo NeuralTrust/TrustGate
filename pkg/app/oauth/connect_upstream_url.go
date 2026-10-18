@@ -143,7 +143,8 @@ func (s *connectService) finalizeAuthURLs(
 	if cfg == nil {
 		return nil, nil
 	}
-	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta); err != nil {
+	vars := s.hostBoundURLVariables(reg)
+	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta, vars); err != nil {
 		return nil, err
 	}
 	if !hasOAuthPlaceholder(cfg) {
@@ -169,7 +170,6 @@ func (s *connectService) finalizeAuthURLs(
 	if err != nil {
 		return nil, err
 	}
-	vars := reg.MCPTarget.URLVariables
 	for _, field := range []*string{&out.AuthorizeURL, &out.TokenURL, &out.UserinfoURL} {
 		rewritten, err := substituteContactURL(*field, resolved, vars, values)
 		if err != nil {
@@ -199,6 +199,7 @@ func (s *connectService) refuseOpenWholeHostDiscovery(
 	reg *registrydomain.Registry,
 	cfg *registrydomain.MCPAuth,
 	meta *UpstreamAuthServer,
+	vars []registrydomain.MCPURLVariable,
 ) error {
 	if cfg.Registration == registrydomain.RegistrationAuto || meta == nil || reg == nil || reg.MCPTarget == nil {
 		return nil
@@ -207,7 +208,6 @@ func (s *connectService) refuseOpenWholeHostDiscovery(
 	if !whole {
 		return nil
 	}
-	vars := reg.MCPTarget.URLVariables
 	if hostVariablesClosed(names, vars) {
 		return nil
 	}
@@ -398,15 +398,108 @@ func declaredSuffixMatches(host string, names []string, vars []registrydomain.MC
 	byName := variablesByName(vars)
 	for _, name := range names {
 		v, ok := byName[name]
-		suffix := normalizeHostSuffix(v.HostSuffix)
-		if !ok || suffix == "" {
+		if !ok {
 			continue
 		}
-		if host == suffix || strings.HasSuffix(host, "."+suffix) {
-			return true
+		for _, raw := range v.HostSuffix {
+			suffix := normalizeHostSuffix(raw)
+			if suffix == "" {
+				continue
+			}
+			if host == suffix || strings.HasSuffix(host, "."+suffix) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// hostBoundURLVariables is the variable list the host check uses. A stored
+// registry copied from the catalog before host_suffix existed has an empty
+// list; when its code is still a catalog code, the catalog's current suffixes
+// for that variable name fill the gap. A suffix the registry already stores
+// is left as written. The stored registry is not modified, so this is not a
+// write to the database.
+func (s *connectService) hostBoundURLVariables(reg *registrydomain.Registry) []registrydomain.MCPURLVariable {
+	if reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	vars := reg.MCPTarget.URLVariables
+	fromCatalog := s.catalogHostSuffixes(reg)
+	if len(fromCatalog) == 0 {
+		return vars
+	}
+	out := make([]registrydomain.MCPURLVariable, len(vars))
+	copy(out, vars)
+	filled := false
+	for i := range out {
+		if !hostSuffixUnset(out[i].HostSuffix) {
+			continue
+		}
+		suffixes, ok := fromCatalog[out[i].Name]
+		if !ok {
+			continue
+		}
+		out[i].HostSuffix = suffixes
+		filled = true
+	}
+	if !filled {
+		return vars
+	}
+	return out
+}
+
+func (s *connectService) catalogHostSuffixes(reg *registrydomain.Registry) map[string][]string {
+	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" {
+		return nil
+	}
+	entry, ok := s.catalog.GetByCode(code)
+	if !ok {
+		return nil
+	}
+	var out map[string][]string
+	for _, v := range entry.URLVariables {
+		suffixes := cloneHostSuffixes(v.HostSuffix)
+		if len(suffixes) == 0 {
+			continue
+		}
+		if out == nil {
+			out = make(map[string][]string, len(entry.URLVariables))
+		}
+		out[v.Name] = suffixes
+	}
+	return out
+}
+
+func hostSuffixUnset(suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if normalizeHostSuffix(suffix) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneHostSuffixes(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, suffix := range in {
+		suffix = strings.TrimSpace(suffix)
+		if suffix == "" {
+			continue
+		}
+		out = append(out, suffix)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func variablesByName(vars []registrydomain.MCPURLVariable) map[string]registrydomain.MCPURLVariable {

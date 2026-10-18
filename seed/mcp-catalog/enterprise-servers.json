@@ -3970,7 +3970,8 @@
         {
           "name": "cube_host",
           "description": "Your Cube MCP server host.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.cubecloud.dev"]
         }
       ],
       "requires_auth": true,
@@ -4107,7 +4108,16 @@
         {
           "name": "workspace_host",
           "description": "Databricks workspace host.",
-          "required": true
+          "required": true,
+          "host_suffix": [
+            "*.cloud.databricks.com",
+            "*.cloud.databricks.us",
+            "*.cloud.databricks.mil",
+            "*.azuredatabricks.net",
+            "*.databricks.azure.us",
+            "*.databricks.azure.cn",
+            "*.gcp.databricks.com"
+          ]
         },
         {
           "name": "path",
@@ -4417,7 +4427,8 @@
         {
           "name": "dbt_host",
           "description": "dbt Cloud host, e.g. cloud.getdbt.com or <prefix>.us1.dbt.com.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.getdbt.com", "*.dbt.com"]
         }
       ],
       "requires_auth": true,
@@ -5672,7 +5683,8 @@
         {
           "name": "domain",
           "description": "Your Freshworks instance domain, e.g. yourco.freshservice.com.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.freshservice.com", "*.freshdesk.com"]
         }
       ],
       "requires_auth": true,
@@ -14501,7 +14513,8 @@
         {
           "name": "account_url",
           "description": "Snowflake account URL host.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.snowflakecomputing.com", "*.snowflakecomputing.cn"]
         },
         {
           "name": "database",

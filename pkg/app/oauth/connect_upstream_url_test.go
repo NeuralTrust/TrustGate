@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -169,15 +170,108 @@ func TestSameContactOrigin(t *testing.T) {
 
 func TestDeclaredSuffixMatches(t *testing.T) {
 	t.Parallel()
-	vars := []registrydomain.MCPURLVariable{{Name: "account_url", HostSuffix: "*.vendor.com"}}
+	vars := []registrydomain.MCPURLVariable{{
+		Name:       "account_url",
+		HostSuffix: []string{"*.vendor.com", "*.other.example"},
+	}}
 	if !declaredSuffixMatches("acme.vendor.com", []string{"account_url"}, vars) {
 		t.Fatal("expected a subdomain of the declared suffix")
 	}
 	if !declaredSuffixMatches("vendor.com", []string{"account_url"}, vars) {
 		t.Fatal("expected the suffix itself")
 	}
+	if !declaredSuffixMatches("acme.other.example", []string{"account_url"}, vars) {
+		t.Fatal("expected a later suffix in the list")
+	}
 	if declaredSuffixMatches("evilvendor.com", []string{"account_url"}, vars) || declaredSuffixMatches("evil.example", []string{"account_url"}, vars) {
 		t.Fatal("suffix matched a host outside it")
+	}
+}
+
+type suffixCatalog struct {
+	entry catalogdomain.MCPServer
+	ok    bool
+}
+
+func (c suffixCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
+	if !c.ok || code != c.entry.Code {
+		return catalogdomain.MCPServer{}, false
+	}
+	return c.entry, true
+}
+
+func TestHostBoundURLVariables_UsesCatalogWhenStoredSuffixIsEmpty(t *testing.T) {
+	t.Parallel()
+	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{
+		Code: "com.snowflake/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{
+			Name: "account_url",
+		}},
+	}}
+	s := &connectService{catalog: suffixCatalog{
+		ok: true,
+		entry: catalogdomain.MCPServer{
+			Code: "com.snowflake/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name:       "account_url",
+				HostSuffix: []string{" *.snowflakecomputing.com ", "*.snowflakecomputing.cn"},
+			}},
+		},
+	}}
+
+	got := s.hostBoundURLVariables(reg)
+	if len(got) != 1 || len(got[0].HostSuffix) != 2 || got[0].HostSuffix[0] != "*.snowflakecomputing.com" {
+		t.Fatalf("fallback suffixes = %+v", got)
+	}
+	if len(reg.MCPTarget.URLVariables[0].HostSuffix) != 0 {
+		t.Fatalf("stored suffix was written: %+v", reg.MCPTarget.URLVariables[0].HostSuffix)
+	}
+}
+
+func TestHostBoundURLVariables_KeepsStoredSuffix(t *testing.T) {
+	t.Parallel()
+	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{
+		Code: "com.snowflake/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{
+			Name:       "account_url",
+			HostSuffix: []string{"*.stored.example"},
+		}},
+	}}
+	s := &connectService{catalog: suffixCatalog{
+		ok: true,
+		entry: catalogdomain.MCPServer{
+			Code: "com.snowflake/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name:       "account_url",
+				HostSuffix: []string{"*.snowflakecomputing.com"},
+			}},
+		},
+	}}
+
+	got := s.hostBoundURLVariables(reg)
+	if len(got) != 1 || len(got[0].HostSuffix) != 1 || got[0].HostSuffix[0] != "*.stored.example" {
+		t.Fatalf("stored suffix replaced: %+v", got)
+	}
+}
+
+func TestHostBoundURLVariables_SkipsARegistryWithoutACatalogCode(t *testing.T) {
+	t.Parallel()
+	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "account_url"}},
+	}}
+	s := &connectService{catalog: suffixCatalog{
+		ok: true,
+		entry: catalogdomain.MCPServer{
+			Code: "com.snowflake/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name:       "account_url",
+				HostSuffix: []string{"*.snowflakecomputing.com"},
+			}},
+		},
+	}}
+	got := s.hostBoundURLVariables(reg)
+	if len(got) != 1 || len(got[0].HostSuffix) != 0 {
+		t.Fatalf("suffix applied without a catalog code: %+v", got)
 	}
 }
 

@@ -582,7 +582,7 @@ func toRegistryURLVar(v catalogdomain.MCPURLVariable) registrydomain.MCPURLVaria
 		Required:    v.Required,
 		Secret:      v.Secret,
 		In:          strings.TrimSpace(v.In),
-		HostSuffix:  strings.TrimSpace(v.HostSuffix),
+		HostSuffix:  cloneHostSuffixes(v.HostSuffix),
 	}
 	// A closed variable's set travels with it: the configure form offers these
 	// and the install path refuses anything else.

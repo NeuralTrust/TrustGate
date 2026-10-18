@@ -205,6 +205,59 @@ func TestCuratedCatalog_VantaIsOneEntryPerRegionChoice(t *testing.T) {
 	require.True(t, entry.OAuth.ResourceMetadata)
 }
 
+// These five entries template the whole host. The suffix list is the bound
+// that lets an existing install keep connecting on the vendor's domains.
+func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	want := map[string]struct {
+		variable string
+		suffixes []string
+	}{
+		"dev.cube/mcp": {
+			variable: "cube_host",
+			suffixes: []string{"*.cubecloud.dev"},
+		},
+		"com.databricks/mcp": {
+			variable: "workspace_host",
+			suffixes: []string{
+				"*.cloud.databricks.com",
+				"*.cloud.databricks.us",
+				"*.cloud.databricks.mil",
+				"*.azuredatabricks.net",
+				"*.databricks.azure.us",
+				"*.databricks.azure.cn",
+				"*.gcp.databricks.com",
+			},
+		},
+		"com.getdbt/mcp": {
+			variable: "dbt_host",
+			suffixes: []string{"*.getdbt.com", "*.dbt.com"},
+		},
+		"com.freshworks/mcp": {
+			variable: "domain",
+			suffixes: []string{"*.freshservice.com", "*.freshdesk.com"},
+		},
+		"com.snowflake/mcp": {
+			variable: "account_url",
+			suffixes: []string{"*.snowflakecomputing.com", "*.snowflakecomputing.cn"},
+		},
+	}
+	for code, spec := range want {
+		entry, ok := cat.GetByCode(code)
+		require.True(t, ok, code)
+		var got []string
+		for _, v := range entry.URLVariables {
+			if v.Name == spec.variable {
+				got = v.HostSuffix
+			}
+		}
+		require.Equal(t, spec.suffixes, got, "%s %s", code, spec.variable)
+	}
+}
+
 func optionValues(v domain.MCPURLVariable) []string {
 	out := make([]string, 0, len(v.Options))
 	for _, option := range v.Options {
