@@ -152,6 +152,9 @@ type storePrincipalParams struct {
 	// on planes without the OAuth connect service.
 	Connect appoauth.ConnectService `optional:"true"`
 	Logger  *slog.Logger            `optional:"true"`
+	// Revoker asks the vendor to revoke a per-user token on uninstall. Absent,
+	// uninstall still deletes the local credential when Vault is set.
+	Revoker appstore.CredentialRevoker `optional:"true"`
 }
 
 // provideStorePrincipalHandler serves the Portal's admin preview of one user's
@@ -165,7 +168,8 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	if err != nil {
 		return nil, err
 	}
-	installer, err := appstore.NewInstaller(p.Catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+	installer, err := appstore.NewInstaller(p.Catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
+		appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 	if err != nil {
 		return nil, err
 	}
