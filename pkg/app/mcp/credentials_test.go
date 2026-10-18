@@ -128,6 +128,7 @@ type stubConnect struct {
 	// for, so a test can tell a server-scoped (Store) ticket from a plain one.
 	serverTicketCodes []string
 	droppedClients    int
+	droppedSlot       string
 }
 
 func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -144,11 +145,12 @@ func (s *stubConnect) RefreshAuth(context.Context, ids.GatewayID, *registrydomai
 	return s.refreshCfg, s.refreshErr
 }
 
-func (s *stubConnect) DropRegisteredClient(_ context.Context, _ ids.GatewayID, _ *registrydomain.Registry, clientID string) error {
+func (s *stubConnect) DropRegisteredClient(_ context.Context, _ ids.GatewayID, _ *registrydomain.Registry, clientID, slot string) error {
 	if clientID == "" {
 		return nil
 	}
 	s.droppedClients++
+	s.droppedSlot = slot
 	return nil
 }
 
@@ -1224,7 +1226,7 @@ func TestCredentialResolver_InvalidClientDropsDynamicClient(t *testing.T) {
 				t.Fatalf("vault: %v", err)
 			}
 			connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
-				Provider: "supabase", ClientID: "stale", TokenURL: idp.URL,
+				Provider: "supabase", ClientID: "stale", ClientSlot: "slot-stale", TokenURL: idp.URL,
 			}}
 			r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
 			err = r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), mcpConsumer(gw), reg, &Target{})
@@ -1237,6 +1239,9 @@ func TestCredentialResolver_InvalidClientDropsDynamicClient(t *testing.T) {
 			}
 			if connect.droppedClients != tc.wantDrops {
 				t.Fatalf("dropped clients = %d, want %d", connect.droppedClients, tc.wantDrops)
+			}
+			if tc.wantDrops > 0 && connect.droppedSlot != "slot-stale" {
+				t.Fatalf("dropped slot = %q, want the slot the refresh used", connect.droppedSlot)
 			}
 		})
 	}

@@ -152,7 +152,8 @@ type UpstreamRegistrar interface {
 
 // RegisteredClientDropper forgets a dynamic client the authorization server
 // rejected. ConnectService implements it. clientID is the client the token
-// endpoint refused; a cache row for a different client is left alone.
+// endpoint refused; a cache row for a different client is left alone. slot is
+// the ClientSlot key the failing exchange or refresh already used.
 type RegisteredClientDropper interface {
-	DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID string) error
+	DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID, slot string) error
 }
