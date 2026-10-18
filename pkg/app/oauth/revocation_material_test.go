@@ -190,6 +190,30 @@ func TestRevocationMaterialRefusesDCRSecretOnUserChosenHost(t *testing.T) {
 
 // A catalog suffix is a bound, so revocation of a dynamically registered
 // client on that vendor host still returns the secret and the endpoint.
+func TestRevocationMaterialRefusesDCRSecretOnPublicSuffixHost(t *testing.T) {
+	const host = "github.io"
+	registrar := &revocationRegistrar{
+		meta: &UpstreamAuthServer{
+			AuthorizationEndpoint: "https://" + host + "/authorize",
+			TokenEndpoint:         "https://" + host + "/token",
+			RevocationEndpoint:    "https://" + host + "/revoke",
+			ValidatedIssuer:       "https://" + host,
+		},
+		cached: &RegisteredClient{ClientID: "dcr-id", ClientSecret: "dcr-secret"},
+	}
+	s := &connectService{registrar: registrar}
+	reg := wholeHostAutoRegistry(host)
+	reg.MCPTarget.URLVariables[0].Options = []registrydomain.MCPURLVariableOption{{Value: host, Label: "Pages"}}
+
+	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
+		t.Fatalf("material = %+v, err = %v; want host refusal", material, err)
+	}
+	if strings.Contains(err.Error(), "dcr-secret") || strings.Contains(err.Error(), host) {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
+	}
+}
+
 func TestRevocationMaterialAllowsDCROnCatalogSuffix(t *testing.T) {
 	const host = "acme.snowflakecomputing.com"
 	registrar := &revocationRegistrar{

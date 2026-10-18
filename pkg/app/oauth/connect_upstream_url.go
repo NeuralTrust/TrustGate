@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -159,6 +160,9 @@ func (s *connectService) finalizeAuthURLs(
 		return nil, nil
 	}
 	vars := s.hostBoundURLVariables(reg)
+	if err := s.refusePublicSuffixHosts(ctx, gatewayID, principalSub, reg, cfg, meta); err != nil {
+		return nil, err
+	}
 	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta, vars); err != nil {
 		return nil, err
 	}
@@ -244,17 +248,55 @@ func (s *connectService) refuseUnboundUserChosenHost(
 	if !chosen {
 		return nil
 	}
+	resolved, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return err
+	}
+	if publicSuffixHost(normalizedHostname(resolved)) {
+		return ErrOAuthURLHost
+	}
 	if hostVariablesClosed(names, vars) {
+		return nil
+	}
+	if declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
+		return nil
+	}
+	return ErrOAuthURLHost
+}
+
+// refusePublicSuffixHosts rejects a contact host, or the upstream host
+// discovery was made against, when that host is itself a public suffix.
+// A closed variable or a suffix match cannot authorize `com`, `co.uk`, or
+// `github.io`: anyone can register a name under them.
+func (s *connectService) refusePublicSuffixHosts(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	meta *UpstreamAuthServer,
+) error {
+	if cfg != nil {
+		for _, raw := range []string{cfg.AuthorizeURL, cfg.TokenURL, cfg.UserinfoURL} {
+			if strings.TrimSpace(raw) == "" || strings.ContainsAny(raw, "{}") {
+				continue
+			}
+			if publicSuffixHost(normalizedHostname(raw)) {
+				return ErrOAuthURLHost
+			}
+		}
+	}
+	if meta == nil || reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
 		return nil
 	}
 	resolved, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return err
 	}
-	if declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
-		return nil
+	if publicSuffixHost(normalizedHostname(resolved)) {
+		return ErrOAuthURLHost
 	}
-	return ErrOAuthURLHost
+	return nil
 }
 
 func (s *connectService) finishResolvedAuth(reg *registrydomain.Registry, cfg *registrydomain.MCPAuth) (*registrydomain.MCPAuth, error) {
@@ -289,6 +331,9 @@ func substituteContactURL(raw, resolvedUpstream string, vars []registrydomain.MC
 	}
 	if !templatedHost {
 		return resolved, nil
+	}
+	if publicSuffixHost(normalizedHostname(resolved)) {
+		return "", ErrOAuthURLHost
 	}
 	names, chosen := userChosenHostNames(raw)
 	if chosen && !hostVariablesClosed(names, vars) && !declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
@@ -337,9 +382,10 @@ func userChosenHostNames(raw string) ([]string, bool) {
 	return names, !literalRegistrableSuffix(host)
 }
 
-// literalRegistrableSuffix reports whether the complete labels after the
-// last placeholder contain a registrable domain. The label that holds the
-// placeholder is skipped even when it has literal text after it.
+// literalRegistrableSuffix reports whether a registrable domain
+// (publicsuffix.EffectiveTLDPlusOne) is fully literal to the right of the
+// last placeholder. The label that holds the placeholder is not part of
+// that domain, so mcp.{domain} and mcp.{domain}.com stay user-chosen.
 func literalRegistrableSuffix(host string) bool {
 	end := strings.LastIndex(host, "}")
 	if end < 0 {
@@ -452,7 +498,7 @@ func hostVariablesClosed(names []string, vars []registrydomain.MCPURLVariable) b
 
 func declaredSuffixMatches(host string, names []string, vars []registrydomain.MCPURLVariable) bool {
 	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
-	if host == "" {
+	if host == "" || publicSuffixHost(host) {
 		return false
 	}
 	byName := variablesByName(vars)
@@ -597,13 +643,28 @@ func normalizeHostSuffix(raw string) string {
 	suffix := strings.ToLower(strings.TrimSpace(raw))
 	suffix = strings.TrimPrefix(suffix, "*.")
 	suffix = strings.Trim(suffix, ".")
-	if suffix == "" || strings.ContainsAny(suffix, "*{}/:@ ") || strings.Count(suffix, ".") < 1 {
-		return ""
-	}
-	if ps, _ := publicsuffix.PublicSuffix(suffix); ps == suffix {
+	if suffix == "" || strings.ContainsAny(suffix, "*{}/:@ ") || strings.Count(suffix, ".") < 1 || publicSuffixHost(suffix) {
 		return ""
 	}
 	return suffix
+}
+
+// publicSuffixHost reports whether host is a public suffix. A name under it
+// can be registered by anyone, so it is neither a host_suffix nor a host the
+// gateway will send a client secret to.
+func publicSuffixHost(host string) bool {
+	host = strings.ToLower(strings.Trim(strings.TrimSpace(host), "."))
+	if host == "" || strings.ContainsAny(host, "*{}/:@ ") || net.ParseIP(host) != nil {
+		return false
+	}
+	ps, icann := publicsuffix.PublicSuffix(host)
+	if ps != host {
+		return false
+	}
+	// An unmatched name is reported as its own last label. That is not a
+	// listed suffix (`unused`, `localhost`). A listed one is an ICANN suffix
+	// (`com`, `co.uk`) or a multi-label private suffix (`github.io`).
+	return icann || strings.Contains(host, ".")
 }
 
 // sameContactOrigin compares scheme, hostname, and port. An empty port is the
