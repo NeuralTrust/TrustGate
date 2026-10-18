@@ -207,6 +207,13 @@ func joinWatchSnapshot(dynamic string, bindings []string) string {
 // Vault credentials and Store installs do not move when a registry is
 // attached or detached, so without these parts the SSE watch stays quiet and
 // the client keeps the tool list from handshake.
+//
+// Upstream tool names are not part of this fingerprint. An upstream that adds
+// a sibling can rebind a v2 name (clickup_get_task becomes clickup_clickup_get_task
+// once get_task appears) without tools/list_changed. Putting those names here
+// would dial every server on the watch path, which mints credentials and is
+// not safe to do from a snapshot. Clients pick the new spelling up on the
+// next tools/list.
 func consumerBindings(rc *appconsumer.RoutableConsumer) []string {
 	if rc == nil || rc.Consumer == nil {
 		return nil

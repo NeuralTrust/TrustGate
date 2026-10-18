@@ -122,7 +122,11 @@ func (h *Handler) surfaceMoved(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) b
 // surfaceVersion is the value a client keys its cached tool list on, in
 // server/discover's serverInfo and in initialize's.
 //
-// It has to move whenever the caller's tools do. SurfaceFingerprint reads the
+// It has to move whenever the caller's bound servers, toolkit, installs, or
+// grants do. It does not see upstream tool names: an upstream that adds a
+// sibling can rebind a v2 name without this version moving, and folding those
+// names in would dial every server on the watch path. The client learns the
+// new spelling on its next tools/list. SurfaceFingerprint reads the
 // consumer's own record — bound registries and toolkit — which describes a
 // custom MCP consumer exactly and the MCP Store not at all: the Store's
 // consumer is synthetic, carries no registries, and resolves its servers per

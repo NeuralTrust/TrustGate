@@ -111,12 +111,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	if in.Enabled != nil {
 		b.Enabled = *in.Enabled
 	}
-	// New MCP registries take the current naming rules. A zero version is what
-	// every registry written before this field existed still carries, and an
-	// update never fills it in, so existing installs keep the names they have.
-	if b.IsMCP() && b.MCPTarget != nil && b.MCPTarget.NamingVersion == 0 {
-		b.MCPTarget.NamingVersion = domain.NamingVersionV2
-	}
 	if err := c.repo.Save(ctx, b); err != nil {
 		return nil, err
 	}

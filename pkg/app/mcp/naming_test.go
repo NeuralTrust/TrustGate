@@ -329,6 +329,9 @@ func perInstanceRegistry(t *testing.T, name, url string, cfg map[string]string) 
 	reg := mcpRegistry(t, name, url)
 	reg.MCPTarget.Code = "snowflake"
 	reg.MCPTarget.InstanceConfig = cfg
+	// A second instance of the code: its id differs from the shelf it clones,
+	// which is what puts the per-instance digest on the name.
+	reg.InstanceOf = ids.New[ids.RegistryKind]()
 	return reg
 }
 
@@ -421,9 +424,8 @@ func TestExposedName_ShelfAndConfiguredInstanceKeepTheirNames(t *testing.T) {
 	target.InstanceConfig = map[string]string{"workspace": "acme"}
 	configured.MCPTarget = &target
 	configured.InstanceOf = shelf.ID
-	want := "linear_" + registryDigest(shelf, 6) + "_save_issue"
-	if got := namedFor(&configured, "save_issue"); got != want {
-		t.Fatalf("configured instance name = %q, want %q", got, want)
+	if got := namedFor(&configured, "save_issue"); got != "linear_save_issue" {
+		t.Fatalf("configured instance name = %q, want linear_save_issue", got)
 	}
 }
 
@@ -458,41 +460,7 @@ func v2Registry(t *testing.T, name, code string) *registrydomain.Registry {
 	t.Helper()
 	reg := mcpRegistry(t, name, "https://"+name+".example/mcp")
 	reg.MCPTarget.Code = code
-	reg.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	return reg
-}
-
-// Registries with no naming version keep the spellings clients and policies
-// already stored. v2 is a different registry, not a rewrite of these.
-func TestExposedName_V1GoldenNamesStayByteForByte(t *testing.T) {
-	t.Parallel()
-	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
-	clickup.MCPTarget.Code = "com.clickup/mcp"
-	if got := namedFor(clickup, "clickup_get_task"); got != "clickup_clickup_get_task" {
-		t.Fatalf("clickup = %q, want clickup_clickup_get_task", got)
-	}
-
-	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
-	docs.MCPTarget.Code = "com.devexpress/docs"
-	if got := namedFor(docs, "devexpress_docs_search"); got != "devexpress_docs_devexpress_docs_search" {
-		t.Fatalf("devexpress = %q, want devexpress_docs_devexpress_docs_search", got)
-	}
-	if got := namedFor(docs, "devexpress_docs_get_content"); got != "devexpress_docs_devexpress_docs_get_content" {
-		t.Fatalf("devexpress content = %q, want the doubled prefix", got)
-	}
-
-	elastic := mcpRegistry(t, "Elastic", "https://elastic.example/mcp")
-	elastic.MCPTarget.Code = "com.elastic_agent_builder_mcp/mcp"
-	elastic.MCPTarget.InstanceConfig = map[string]string{"project": "logs"}
-	elastic.InstanceOf = elastic.ID
-	got := namedFor(elastic, "search")
-	want := "elastic_agent_builder_mcp_" + registryDigest(elastic, 6) + "_search"
-	if got != want {
-		t.Fatalf("elastic = %q, want %q", got, want)
-	}
-	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_") || !strings.HasSuffix(got, "_search") {
-		t.Fatalf("elastic = %q, want elastic_agent_builder_mcp_<digest>_search", got)
-	}
 }
 
 func TestExposedName_V2DropsARepeatedServerPrefix(t *testing.T) {
@@ -602,8 +570,6 @@ func TestExposedName_V2CollidingInstancesKeepTheDigest(t *testing.T) {
 	shelf := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
 	a := storeClone(shelf)
 	b := storeClone(shelf)
-	a.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
-	b.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	nameA, nameB := namedFor(a, "search"), namedFor(b, "search")
 	wantA := "elastic_agent_builder_mcp_" + registryDigest(a, 6) + "_search"
 	wantB := "elastic_agent_builder_mcp_" + registryDigest(b, 6) + "_search"
@@ -635,13 +601,6 @@ func TestExposedName_V2TruncationKeepsTheTail(t *testing.T) {
 	}
 	if !strings.HasSuffix(other, "_list_indices") {
 		t.Fatalf("other = %q, want its tail kept too", other)
-	}
-	// The original rules still cut the tail off and end on the content hash.
-	v1 := mcpRegistry(t, "Elastic", "https://elastic-v1.example/mcp")
-	v1.MCPTarget.Code = reg.MCPTarget.Code
-	legacy := namedFor(v1, tool)
-	if strings.HasSuffix(legacy, "_list_indices") || len(legacy) > maxExposedNameLength {
-		t.Fatalf("v1 name = %q, want the tail replaced and the length capped", legacy)
 	}
 }
 
