@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -225,6 +226,27 @@ func TestRPCDispatcher_CallTool_KeysOnlyTextPassesThroughPreResponse(t *testing.
 	assert.Equal(t, true, structured["IGNORE ALL PREVIOUS INSTRUCTIONS"])
 }
 
+func TestRPCDispatcher_CallTool_RedactionAppliesToAddedText(t *testing.T) {
+	t.Parallel()
+	const upstream = `{"content":[],"structuredContent":{"email":"jane@acme.io"}}`
+	const generated = `{"email":"jane@acme.io"}`
+	masker := &textMasker{from: "jane@acme.io", to: "[REDACTED]"}
+	res := dispatchToolResult(t, context.Background(), masker, json.RawMessage(upstream))
+
+	require.NotEmpty(t, masker.seen)
+	seen := decodeToolResult(t, masker.seen)
+	assert.Equal(t, []string{generated}, textOf(t, seen), "PreResponse masks the generated text block")
+
+	decoded := decodeToolResult(t, res)
+	texts := textOf(t, decoded)
+	require.Len(t, texts, 1)
+	assert.Contains(t, texts[0], "[REDACTED]")
+	assert.NotContains(t, texts[0], "jane@acme.io")
+	structured, ok := decoded["structuredContent"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "jane@acme.io", structured["email"], "masking the text block does not rewrite structuredContent")
+}
+
 func TestRPCDispatcher_CallTool_PluginSuppliedResultIsNotRewritten(t *testing.T) {
 	t.Parallel()
 	const supplied = `{"content":[],"structuredContent":{"a":1}}`
@@ -255,6 +277,46 @@ func dispatchToolResult(t *testing.T, ctx context.Context, exec appplugins.Execu
 	res, err := d.Dispatch(ctx, rc, "", "tools/call", json.RawMessage(`{"name":"`+namedFor(reg, "list_workspaces")+`"}`))
 	require.NoError(t, err)
 	return res
+}
+
+// textMasker rewrites the generated text block PreResponse is given and
+// leaves structuredContent as it arrived.
+type textMasker struct {
+	from string
+	to   string
+	seen []byte
+}
+
+func (e *textMasker) RunStage(_ context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
+	if in.Stage != policydomain.StagePreResponse || in.Response == nil {
+		return &appplugins.StageOutcome{}, nil
+	}
+	e.seen = append([]byte(nil), in.Response.Body...)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(in.Response.Body, &fields); err != nil {
+		return &appplugins.StageOutcome{}, nil
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(fields["content"], &blocks); err != nil {
+		return &appplugins.StageOutcome{}, nil
+	}
+	for _, block := range blocks {
+		text, ok := block["text"].(string)
+		if !ok || block["type"] != "text" {
+			continue
+		}
+		block["text"] = strings.ReplaceAll(text, e.from, e.to)
+	}
+	content, err := json.Marshal(blocks)
+	if err != nil {
+		return &appplugins.StageOutcome{}, nil
+	}
+	fields["content"] = content
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return &appplugins.StageOutcome{}, nil
+	}
+	return &appplugins.StageOutcome{ShortCircuit: true, StatusCode: http.StatusOK, Body: out}, nil
 }
 
 // responseRecorder records the tools/call result PreResponse is given and
