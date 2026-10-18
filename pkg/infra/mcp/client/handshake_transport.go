@@ -85,13 +85,11 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		boundResponse(resp, req)
 	}
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
-		// Size first: an SSE-typed error body must not skip the response
-		// limit. A body that fits is then dropped so it cannot ride out in
-		// the error text. 401 unwraps to ErrUpstreamUnauthorized, which is
-		// what the refresh retry keys on.
-		if tooLarge := discardUpstreamBody(resp); tooLarge != nil {
-			return nil, tooLarge
-		}
+		// A 401 is the refresh retry's signal whatever the body size is.
+		// Reading the body through the response limit would turn a large
+		// 401 into ErrResponseTooLarge and skip that retry. The body is
+		// closed unread, so it cannot ride out in the error text.
+		dropResponseBody(resp)
 		t.unauthorizedResponses.Add(1)
 		if tracker, ok := req.Context().Value(unauthorizedTrackerKey{}).(*atomic.Bool); ok {
 			tracker.Store(true)
@@ -141,6 +139,14 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 
 func rejectRedirect(*http.Request, []*http.Request) error {
 	return errors.New("MCP upstream redirects are not allowed")
+}
+
+// dropResponseBody closes the body without reading it.
+func dropResponseBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // discardUpstreamBody drains resp.Body through the response size limit and
