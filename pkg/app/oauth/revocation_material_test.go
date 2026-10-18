@@ -125,6 +125,34 @@ func TestRevocationMaterialWithholdsSharedSecret(t *testing.T) {
 	}
 }
 
+// Uninstall posts the admin client secret to the discovered revocation
+// endpoint, so a user-chosen host is refused here as it is on refresh.
+func TestRevocationMaterialRefusesAUserChosenHost(t *testing.T) {
+	registrar := &revocationRegistrar{meta: &UpstreamAuthServer{
+		AuthorizationEndpoint: "https://evil.example/authorize",
+		TokenEndpoint:         "https://evil.example/token",
+		RevocationEndpoint:    "https://evil.example/revoke",
+	}}
+	s := &connectService{registrar: registrar}
+	reg := &registrydomain.Registry{Type: registrydomain.TypeMCP, MCPTarget: &registrydomain.MCPTarget{
+		URL:            "https://{account_url}/mcp",
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "account_url", Required: true}},
+		InstanceConfig: map[string]string{"account_url": "evil.example"},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.snowflake/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "admin-id",
+			ClientSecret: "admin-secret",
+		},
+	}}
+
+	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
+		t.Fatalf("material = %+v, err = %v; want host refusal", material, err)
+	}
+}
+
 func TestRevocationMaterialAutoUsesCachedClientOnly(t *testing.T) {
 	registrar := &revocationRegistrar{
 		meta: &UpstreamAuthServer{
