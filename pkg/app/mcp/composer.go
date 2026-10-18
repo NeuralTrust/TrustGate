@@ -171,10 +171,15 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 			candidates = append(candidates, surface.bindings...)
 		}
 	}
-	for _, b := range resolveNames(candidates, owners) {
-		if b.exposed == name {
-			return &ResolvedTool{Registry: b.registry, Tool: b.tool, Exposed: b.exposed}, nil
-		}
+	// More than one published binding for this name is not a choice between
+	// them. The first one used to win, which is how a copied suffix was
+	// invoked. The call is refused before any consent ticket is minted.
+	chosen, ok, err := matchExposed(resolveNames(candidates, owners), name)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return &ResolvedTool{Registry: chosen.registry, Tool: chosen.tool, Exposed: chosen.exposed}, nil
 	}
 	if unscoped {
 		if denied(surfaces, name) {
@@ -215,6 +220,25 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 		return nil, unavailable
 	}
 	return nil, &UnknownToolError{Name: name}
+}
+
+// matchExposed returns the single binding published under name. A second
+// match is Unknown tool: callers map that to JSON-RPC -32602, and Resolve
+// returns it before the consent path, so neither side is minted a ticket.
+func matchExposed(bindings []binding, name string) (binding, bool, error) {
+	var found binding
+	seen := false
+	for _, b := range bindings {
+		if b.exposed != name {
+			continue
+		}
+		if seen {
+			return binding{}, false, &UnknownToolError{Name: name}
+		}
+		found = b
+		seen = true
+	}
+	return found, seen, nil
 }
 
 // denied reports whether a serving surface turned this exact name away. A

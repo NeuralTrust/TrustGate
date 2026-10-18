@@ -49,12 +49,44 @@ func resolveNames(candidates []binding, _ []*registrydomain.Registry) []binding 
 		count[name]++
 		out[i] = b
 	}
+	// fromSuffix marks a name produced by the collision digest. That binding is
+	// the original owner of the spelling. A later plain name that copies it
+	// (list_<that digest> on the other server) is not.
+	fromSuffix := make([]bool, len(out))
 	for i := range out {
 		name := base[i]
 		if count[name] > 1 {
 			name = disambiguateCollision(name, out[i].registry)
+			fromSuffix[i] = true
 		}
 		out[i].exposed = name
+	}
+	return withholdCopiedNames(out, fromSuffix)
+}
+
+// withholdCopiedNames drops a final name that more than one binding ended up
+// with. The binding whose collision suffix produced the spelling stays; every
+// other copy is withheld, so a server cannot publish list_<victim digest> and
+// take the victim's name. When no single suffix owns the spelling, every copy
+// is withheld. Order of the names that remain is the order they were given.
+func withholdCopiedNames(named []binding, fromSuffix []bool) []binding {
+	finalCount := make(map[string]int, len(named))
+	ownerCount := make(map[string]int, len(named))
+	for i, b := range named {
+		finalCount[b.exposed]++
+		if fromSuffix[i] {
+			ownerCount[b.exposed]++
+		}
+	}
+	out := make([]binding, 0, len(named))
+	for i, b := range named {
+		if finalCount[b.exposed] < 2 {
+			out = append(out, b)
+			continue
+		}
+		if fromSuffix[i] && ownerCount[b.exposed] == 1 {
+			out = append(out, b)
+		}
 	}
 	return out
 }

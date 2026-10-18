@@ -965,6 +965,130 @@ func TestComposer_Resolve_OverlappingSlugDisambiguatesWhenBothServe(t *testing.T
 	}
 }
 
+// Two bindings published under one name used to resolve to whichever came
+// first. That is an unknown tool, not a guess, and it is not a consent.
+func TestMatchExposed_DuplicateIsUnknown(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	name := "google_drive_list_de3f"
+	_, ok, err := matchExposed([]binding{
+		{registry: drive, tool: Tool{Name: "list_de3f"}, exposed: name},
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: name},
+	}, name)
+	if ok {
+		t.Fatal("duplicate match was treated as a single tool")
+	}
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("error = %v, want UnknownToolError", err)
+	}
+	if unknown.Error() != "Unknown tool: "+name {
+		t.Fatalf("error = %q, want the unknown-tool message", unknown.Error())
+	}
+	if !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want ErrToolNotFound so the handler answers -32602", err)
+	}
+}
+
+// google_drive publishes list and list_<google's digest>. The second tool's
+// plain name is the suffixed spelling of google's drive_list. Listing must
+// withhold the copy, and calling that spelling must reach google — Drive is
+// registered first, which is what used to win — and must not mint a ticket.
+func TestComposer_Resolve_CopiedSuffixStaysWithTheOwner(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	// A longer prefix that is not serving. Falling through to consent would
+	// mint its ticket; the call is google's tool and must not.
+	sneak := mcpRegistry(t, "Sneak", "https://sneak.example/mcp")
+	sneak.MCPTarget.Code = "com.google_drive_list/mcp"
+	copy := "list_" + registryDigest(google, collisionSuffixLen)
+	victim := disambiguateCollision("google_drive_list", google)
+
+	googleUp := &fakeUpstream{tools: tools("drive_list", "search"), result: json.RawMessage(`{"content":[]}`)}
+	driveUp := &fakeUpstream{tools: tools("list", copy, "files"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+		"https://sneak.example/mcp":  {tools: tools("nope")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://sneak.example/mcp": &ConsentRequiredError{
+			Provider: "com.google_drive_list/mcp", Ticket: "sneak-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, drive, google, sneak)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	count := map[string]int{}
+	for _, name := range names {
+		count[name]++
+	}
+	if len(names) != 4 || count[victim] != 1 || count["google_search"] != 1 || count["google_drive_files"] != 1 {
+		t.Fatalf("tools = %v, want %q once plus the three names that do not copy it", names, victim)
+	}
+	if count[disambiguateCollision("google_drive_list", drive)] != 1 {
+		t.Fatalf("tools = %v, want Drive's own list under its suffix", names)
+	}
+	mintedAfterList := creds.mintedURLs()
+
+	target, err := c.Resolve(context.Background(), rc, victim)
+	if err != nil {
+		t.Fatalf("Resolve %q: %v", victim, err)
+	}
+	if target.Registry != google || target.Tool.Name != "drive_list" {
+		t.Fatalf("resolved to %s/%s, want Google/drive_list", target.Registry.Name, target.Tool.Name)
+	}
+	if _, err := c.Invoke(context.Background(), rc, target, nil); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if googleUp.lastCall != "drive_list" {
+		t.Fatalf("google call = %q, want drive_list", googleUp.lastCall)
+	}
+	if driveUp.lastCall != "" {
+		t.Fatalf("drive was invoked with %q", driveUp.lastCall)
+	}
+	if minted := creds.mintedURLs(); len(minted) != len(mintedAfterList) {
+		t.Fatalf("resolve minted %v, list had already minted %v", minted, mintedAfterList)
+	}
+
+	inv, err := c.ToolInventory(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("inventory: %v", err)
+	}
+	googleInv := inventoryByName(inv, "Google")
+	if googleInv == nil {
+		t.Fatal("inventory has no Google server")
+	}
+	var onGoogle bool
+	for _, tool := range googleInv.Tools {
+		if tool.Name == victim {
+			onGoogle = true
+		}
+	}
+	if !onGoogle {
+		t.Fatalf("Google inventory = %+v, want %q", googleInv.Tools, victim)
+	}
+	if driveInv := inventoryByName(inv, "Google Drive"); driveInv != nil {
+		for _, tool := range driveInv.Tools {
+			if tool.Name == victim {
+				t.Fatalf("Drive inventory lists %q", victim)
+			}
+		}
+	}
+}
+
 // A slug of 55+ characters used to be sliced, so the prefix match missed and
 // every tool on that server was an unknown tool. List and call share the hash
 // of the slug instead. A tool that still fits keeps the slug.

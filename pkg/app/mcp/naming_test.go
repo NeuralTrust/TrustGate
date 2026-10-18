@@ -148,6 +148,59 @@ func TestResolveNames_CollisionSuffixOnlyOnOverlap(t *testing.T) {
 	}
 }
 
+// google_drive can publish list_<google's digest> next to list. The plain tool
+// then spells exactly the suffixed name google's drive_list was given. That
+// copy is withheld; the suffix owner keeps the name. Anything that does not
+// collide is unchanged.
+func TestResolveNames_PlainCopyOfSuffixIsWithheld(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	copy := "list_" + registryDigest(google, collisionSuffixLen)
+	victim := disambiguateCollision("google_drive_list", google)
+
+	// Drive is first, which is the order that used to make the copy win.
+	got := resolveNames([]binding{
+		{registry: drive, tool: Tool{Name: copy}, exposed: copy},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+		{registry: drive, tool: Tool{Name: "files"}, exposed: "files"},
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: google, tool: Tool{Name: "search"}, exposed: "search"},
+	}, nil)
+
+	byNative := map[string]string{}
+	for _, b := range got {
+		key := b.registry.Name + "/" + b.tool.Name
+		if _, dup := byNative[key]; dup {
+			t.Fatalf("tool %s published twice", key)
+		}
+		byNative[key] = b.exposed
+	}
+	if _, stolen := byNative["Google Drive/"+copy]; stolen {
+		t.Fatalf("copied name %q was published as %q", copy, byNative["Google Drive/"+copy])
+	}
+	if byNative["Google/drive_list"] != victim {
+		t.Fatalf("victim = %q, want %q", byNative["Google/drive_list"], victim)
+	}
+	owners := 0
+	for _, name := range byNative {
+		if name == victim {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("bindings spelling %q = %d, want the suffix owner only", victim, owners)
+	}
+	if byNative["Google Drive/files"] != "google_drive_files" || byNative["Google/search"] != "google_search" {
+		t.Fatalf("unchanged names = %q and %q", byNative["Google Drive/files"], byNative["Google/search"])
+	}
+	if byNative["Google Drive/list"] == "" || byNative["Google Drive/list"] == "google_drive_list" || byNative["Google Drive/list"] == victim {
+		t.Fatalf("drive list = %q, want its own suffix", byNative["Google Drive/list"])
+	}
+}
+
 // An admin renames an instance; the tools keep their names. The catalog code is
 // what identifies a server, and that is not the admin's to edit.
 func TestExposedName_SurvivesARename(t *testing.T) {
