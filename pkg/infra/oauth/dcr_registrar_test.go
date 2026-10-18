@@ -465,6 +465,28 @@ func TestDropCachedClient_NextEnsureClientReplaces(t *testing.T) {
 	require.Equal(t, 1, claims, "the replacement must not claim a fresh slot")
 }
 
+func TestDropCachedClient_ClearsRefreshRetained(t *testing.T) {
+	t.Parallel()
+	store := newClaimStore()
+	ctx := context.Background()
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:              "client-a",
+		ClientSecret:          "legacy-secret",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+		RefreshRetained:       true,
+	}))
+	r := infraoauth.NewUpstreamRegistrar(store, nil)
+
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", "client-a"))
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, "client-a", got.ClientID)
+	require.Equal(t, "legacy-secret", got.ClientSecret)
+	require.False(t, got.RefreshRetained)
+	require.EqualValues(t, 1, got.ClientSecretExpiresAt)
+}
+
 func TestDropCachedClient_StaleClientIDIsIgnored(t *testing.T) {
 	t.Parallel()
 	store := newClaimStore()

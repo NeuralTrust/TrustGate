@@ -71,7 +71,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	client, err = s.healLegacyAuthorizeClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI)
+	client, err = s.healLegacyAuthorizeClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI, res)
 	if err != nil {
 		return nil, err
 	}
