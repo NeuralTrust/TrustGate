@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -34,20 +35,24 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		resolved, resolveErr := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		catalogRes := upstreamResolution{}
+		if resolveErr == nil {
+			catalogRes = resolved
+		}
+		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog, catalogRes))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, upstreamResolution{})
+			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, catalogRes)
 		}
-		res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
-		if err != nil {
-			return nil, err
+		if resolveErr != nil {
+			return nil, resolveErr
 		}
-		meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg, resolved)
 		if err != nil {
 			return nil, err
 		}
 		// withholdSharedSecret runs inside finalizeAuthURLs, after substitution.
-		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta, res)
+		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta, resolved)
 	}
 	res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -65,7 +70,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta, res)
+	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog, res), meta, client)), meta, res)
 }
 
 // exchangeAuth builds the token-endpoint configuration for a code that was
@@ -105,7 +110,7 @@ func (s *connectService) exchangeAuth(
 	if cached == nil || cached.ClientID != clientID {
 		return nil, fmt.Errorf("%w: client %q", ErrNoRegisteredClient, clientID)
 	}
-	auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), meta, res)
+	auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog, res), meta, cached)), meta, res)
 	if err != nil || auth == nil {
 		return auth, err
 	}
@@ -181,21 +186,25 @@ func (s *connectService) refreshMaterial(
 		return nil, "", upstreamResolution{}, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		resolved, resolveErr := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		catalogRes := upstreamResolution{}
+		if resolveErr == nil {
+			catalogRes = resolved
+		}
+		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog, catalogRes))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, upstreamResolution{})
+			auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, catalogRes)
 			return auth, "", upstreamResolution{}, err
 		}
-		res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
-		if err != nil {
-			return nil, "", upstreamResolution{}, err
+		if resolveErr != nil {
+			return nil, "", upstreamResolution{}, resolveErr
 		}
-		meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg, resolved)
 		if err != nil {
 			return nil, "", upstreamResolution{}, err
 		}
 		// withholdSharedSecret runs inside finalizeAuthURLs, after substitution.
-		return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta, res)
+		return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta, resolved)
 	}
 	res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -216,7 +225,7 @@ func (s *connectService) refreshMaterial(
 	if client == nil {
 		return nil, "", upstreamResolution{}, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	auth, endpoint, res, err := s.finalizedRefresh(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta, res)
+	auth, endpoint, res, err := s.finalizedRefresh(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog, res), meta, client)), meta, res)
 	if auth != nil {
 		auth.ClientSlot = slot
 	}
@@ -304,7 +313,14 @@ func registryCode(reg *registrydomain.Registry) string {
 // older catalog keeps asking for scopes the upstream may since have dropped, or
 // naming a resource its authorization server rejects with invalid_target (Axiom
 // only accepts its root resource), and nothing else ever rewrites them.
-func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
+//
+// The correction is applied only when this row's resolved upstream URL is the
+// catalog server URL. A self-hosted install of the same catalog code (an old
+// Cube row whose {cube_host} resolves somewhere other than cubecloud.dev) keeps
+// the resource and scopes it stored. Sending the hosted resource to that
+// authorization server fails with invalid_target. res is the resolution this
+// flow already computed; a not-ready resolution does not match.
+func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog, res upstreamResolution) *registrydomain.MCPAuth {
 	if cfg == nil || cat == nil {
 		return cfg
 	}
@@ -323,6 +339,9 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 	if len(entry.OAuth.Scopes) == 0 && resource == "" {
 		return cfg
 	}
+	if !catalogServerMatches(entry, res) {
+		return cfg
+	}
 	out := *cfg
 	if len(entry.OAuth.Scopes) > 0 {
 		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
@@ -331,6 +350,41 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 		out.Resource = resource
 	}
 	return &out
+}
+
+// catalogServerMatches reports whether the row's resolved upstream URL is the
+// catalog entry's server URL. A templated catalog URL is filled with the same
+// values that produced the row URL. Comparison is SameCanonicalResource, so a
+// trailing slash or default port does not hide a match. An empty catalog URL,
+// or a template that these values cannot fill, does not match.
+func catalogServerMatches(entry catalogdomain.MCPServer, res upstreamResolution) bool {
+	if !res.ready {
+		return false
+	}
+	catalogURL, ok := resolveCatalogServerURL(entry, res.values)
+	if !ok {
+		return false
+	}
+	return registrydomain.SameCanonicalResource(res.url, catalogURL)
+}
+
+func resolveCatalogServerURL(entry catalogdomain.MCPServer, values map[string]string) (string, bool) {
+	raw := strings.TrimSpace(entry.URL)
+	if raw == "" {
+		return "", false
+	}
+	if !strings.Contains(raw, "{") {
+		return raw, true
+	}
+	vars := make([]registrydomain.MCPURLVariable, 0, len(entry.URLVariables))
+	for _, v := range entry.URLVariables {
+		vars = append(vars, toRegistryURLVar(v))
+	}
+	resolved, err := registrydomain.ResolveURL(raw, vars, values)
+	if err != nil {
+		return "", false
+	}
+	return resolved, true
 }
 
 func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *RegisteredClient) *registrydomain.MCPAuth {

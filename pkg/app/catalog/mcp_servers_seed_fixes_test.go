@@ -127,8 +127,8 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 			{"com.motherduck/mcp", []string{"mcp:connect"}},
 			{"net.todoist/mcp", []string{"data:read_write"}},
 			{"com.clickhouse/cloud-mcp", []string{"mcp:access", "openid", "profile", "email"}},
-			{"com.railway/mcp", []string{"workspace:member"}},
-			{"com.amplitude/mcp", []string{"all:read"}},
+			{"com.railway/mcp", []string{"workspace:member", "offline_access"}},
+			{"com.amplitude/mcp", []string{"all:read", "offline_access"}},
 			{"com.pandadoc/mcp", []string{"read", "documents:read"}},
 			{"com.pagerduty/mcp", []string{"read", "incidents.read", "oncalls.read", "services.read", "users.read", "openid"}},
 		}

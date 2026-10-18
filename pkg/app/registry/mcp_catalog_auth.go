@@ -158,6 +158,16 @@ func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain
 	if reg := strings.TrimSpace(entry.OAuth.Registration); reg != "" {
 		target.Auth.Registration = domain.MCPClientRegistration(reg)
 	}
+	// A row saved while this server required a manual client already has a
+	// client id. The catalog may since have switched to dynamic registration
+	// (Dropbox, Jotform). Forcing auto here makes Validate reject the row,
+	// because auto does not accept client_id, and the admin would have to
+	// clear the client id to save any other edit. Keep the stored client on
+	// manual registration. A save that carries no client id still follows the
+	// catalog and becomes auto.
+	if target.Auth.Registration == domain.RegistrationAuto && strings.TrimSpace(target.Auth.ClientID) != "" {
+		target.Auth.Registration = domain.RegistrationManual
+	}
 	if target.Auth.Registration == "" {
 		target.Auth.Registration = domain.RegistrationManual
 	}
