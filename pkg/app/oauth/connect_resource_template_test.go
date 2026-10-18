@@ -657,6 +657,36 @@ func TestConnectService_ManualWholeHostDiscoveryAllowedWhenClosed(t *testing.T) 
 	}
 }
 
+// A closed list does not make a public suffix a safe host. github.io is a
+// suffix anyone can register under, so the admin secret is not sent there.
+func TestConnectService_ClosedPublicSuffixHostRefused(t *testing.T) {
+	t.Parallel()
+	const host = "github.io"
+	var tokenHits int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	reg := wholeHostManualRegistry(t, nil, []registrydomain.MCPURLVariableOption{{
+		Value: host, Label: "Pages",
+	}}, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	assertNoRedirect(t, reg, map[string]string{"account_url": host}, &fixedRegistrar{}, oauth.ErrOAuthURLHost)
+
+	reg = wholeHostManualRegistry(t, nil, []registrydomain.MCPURLVariableOption{{
+		Value: host, Label: "Pages",
+	}}, "", "")
+	registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
+		AuthorizationEndpoint: "https://" + host + "/oauth/authorize",
+		TokenEndpoint:         "https://" + host + "/oauth/token",
+	}}
+	assertNoRedirect(t, reg, map[string]string{"account_url": host}, registrar, oauth.ErrOAuthURLHost)
+	if tokenHits != 0 {
+		t.Fatalf("token server was called %d times", tokenHits)
+	}
+}
+
 func TestConnectService_TemplatedOAuthURLPortMustMatch(t *testing.T) {
 	t.Parallel()
 	reg := ahaRegistry(t, ahaResolved, ahaAuthorize, "https://{domain}.aha.io/oauth/token")

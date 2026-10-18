@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -127,6 +128,7 @@ func TestUserChosenHostNames(t *testing.T) {
 		{raw: "https://{cube_host}/api/mcp", chosen: true, names: []string{"cube_host"}},
 		{raw: "https://{account_url}:8443/mcp", chosen: true, names: []string{"account_url"}},
 		{raw: "https://mcp.{domain}/token", chosen: true, names: []string{"domain"}},
+		{raw: "https://mcp.{domain}.com/token", chosen: true, names: []string{"domain"}},
 		{raw: "https://api-{domain}/token", chosen: true, names: []string{"domain"}},
 		{raw: "https://{a}.{b}.com/token", chosen: true, names: []string{"a", "b"}},
 		{raw: "https://{tenant}.github.io/token", chosen: true, names: []string{"tenant"}},
@@ -176,6 +178,46 @@ func TestNormalizeHostSuffix(t *testing.T) {
 		if got := normalizeHostSuffix(raw); got != want {
 			t.Fatalf("normalizeHostSuffix(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+func TestPublicSuffixHost(t *testing.T) {
+	t.Parallel()
+	for _, host := range []string{"com", "co.uk", "github.io", "GITHUB.IO."} {
+		if !publicSuffixHost(host) {
+			t.Fatalf("%s should be a public suffix", host)
+		}
+	}
+	for _, host := range []string{"acme.github.io", "evil.example", "mcp.vendor.com", "127.0.0.1", "localhost", "unused", ""} {
+		if publicSuffixHost(host) {
+			t.Fatalf("%s should not be a public suffix", host)
+		}
+	}
+}
+
+func TestSubstituteContactURLRejectsPublicSuffixHost(t *testing.T) {
+	t.Parallel()
+	vars := []registrydomain.MCPURLVariable{{
+		Name:    "host",
+		Options: []registrydomain.MCPURLVariableOption{{Value: "github.io", Label: "Pages"}},
+	}}
+	got, err := substituteContactURL("https://{host}/oauth/token", "https://github.io/mcp", vars, map[string]string{"host": "github.io"})
+	if !errors.Is(err, ErrOAuthURLHost) || got != "" {
+		t.Fatalf("closed public-suffix host: got %q err %v", got, err)
+	}
+	if strings.Contains(err.Error(), "github.io") {
+		t.Fatalf("error names the rejected host: %v", err)
+	}
+}
+
+func TestDeclaredSuffixMatchesIgnoresPublicSuffixHost(t *testing.T) {
+	t.Parallel()
+	vars := []registrydomain.MCPURLVariable{{
+		Name:       "host",
+		HostSuffix: []string{"*.github.io", "*.co.uk", "com"},
+	}}
+	if declaredSuffixMatches("github.io", []string{"host"}, vars) || declaredSuffixMatches("co.uk", []string{"host"}, vars) {
+		t.Fatal("a public-suffix host matched a suffix")
 	}
 }
 
