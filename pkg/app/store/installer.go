@@ -394,6 +394,11 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
 		record.RegistryID = sameInstance.RegistryID
+		// The naming rules are fixed when the row is first written. A repeat
+		// install keeps them, including a row that has none (the original rules).
+		record.NamingVersion = sameInstance.NamingVersion
+	} else {
+		record.NamingVersion = registrydomain.NamingVersionV2
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err

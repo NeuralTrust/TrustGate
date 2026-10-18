@@ -260,6 +260,68 @@ func TestUpdater_Update_PartialMCPTargetPreservesAuthAndHeaders(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_PreservesNamingVersion(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL: "https://old.example.com/mcp",
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	existing.MCPTarget.NamingVersion = domain.NamingVersionV2
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		MCPTarget: &domain.MCPTarget{URL: "https://new.example.com/mcp"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.NamingVersion != domain.NamingVersionV2 {
+		t.Fatalf("naming version = %d, want it kept", got.MCPTarget.NamingVersion)
+	}
+}
+
+func TestUpdater_Update_DoesNotInventANamingVersion(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL: "https://old.example.com/mcp",
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		MCPTarget: &domain.MCPTarget{
+			URL:           "https://new.example.com/mcp",
+			NamingVersion: domain.NamingVersionV2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.NamingVersion != 0 {
+		t.Fatalf("naming version = %d, want the original rules kept", got.MCPTarget.NamingVersion)
+	}
+}
+
 func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
