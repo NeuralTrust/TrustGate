@@ -247,36 +247,6 @@ func TestScoperBoundInstallFollowsItsRegistry(t *testing.T) {
 	}
 }
 
-func TestScoperNewInstallDoesNotRewriteTheShelfNamingVersion(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	shelf := githubRegistry()
-	installed := mustInstall(t, gw, "ana", "github")
-	installed.NamingVersion = registrydomain.NamingVersionV2
-	sc := newScoperT(t,
-		&fakeInstalls{byPrincipal: []*installationdomain.Installation{installed}},
-		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
-		nil,
-	)
-	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
-	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
-	if err != nil {
-		t.Fatalf("Scope: %v", err)
-	}
-	if len(scoped.Registries) != 1 {
-		t.Fatalf("registries = %d, want 1", len(scoped.Registries))
-	}
-	got := scoped.Registries[0]
-	if got == shelf {
-		t.Fatal("a new install must not write its naming version onto the shared shelf")
-	}
-	if got.ID != shelf.ID {
-		t.Fatalf("exposed id = %s, want the shelf %s", got.ID, shelf.ID)
-	}
-	if got.MCPTarget.NamingVersion != registrydomain.NamingVersionV2 || shelf.MCPTarget.NamingVersion != 0 {
-		t.Fatalf("exposed version = %d, shelf version = %d", got.MCPTarget.NamingVersion, shelf.MCPTarget.NamingVersion)
-	}
-}
-
 func names(regs []*registrydomain.Registry) []string {
 	out := make([]string, 0, len(regs))
 	for _, r := range regs {

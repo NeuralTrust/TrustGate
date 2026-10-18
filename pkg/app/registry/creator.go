@@ -52,7 +52,6 @@ type creator struct {
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
 	auths       AuthLookup
-	namingV2    bool
 }
 
 func NewCreator(
@@ -72,7 +71,6 @@ func NewCreator(
 		catalog:     catalog,
 		openapi:     o.openapi,
 		auths:       o.auths,
-		namingV2:    o.namingV2,
 	}
 }
 
@@ -112,16 +110,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	}
 	if in.Enabled != nil {
 		b.Enabled = *in.Enabled
-	}
-	// New MCP registries take NamingVersionV2 only while MCP_NAMING_V2 is on.
-	// Off, the row stays at zero — the original spelling, and what a snapshot
-	// from a replica that does not know the field already sends. A zero version
-	// is what every registry written before this field existed still carries,
-	// and an update never fills it in, so existing installs keep the names they
-	// have. A row already stamped 2 is not rewritten here; create only runs for
-	// a new registry.
-	if c.namingV2 && b.IsMCP() && b.MCPTarget != nil && b.MCPTarget.NamingVersion == 0 {
-		b.MCPTarget.NamingVersion = domain.NamingVersionV2
 	}
 	if err := c.repo.Save(ctx, b); err != nil {
 		return nil, err

@@ -62,9 +62,9 @@ type Installation struct {
 	Decision      string `protobuf:"bytes,13,opt,name=decision,proto3" json:"decision,omitempty"`
 	DecidedBy     string `protobuf:"bytes,14,opt,name=decided_by,json=decidedBy,proto3" json:"decided_by,omitempty"`
 	DecidedAtUnix int64  `protobuf:"varint,15,opt,name=decided_at_unix,json=decidedAtUnix,proto3" json:"decided_at_unix,omitempty"`
-	// naming_version is the tool-naming rules this install was created under.
-	// Zero is the original spelling (a row that predates the field). New installs
-	// send 2. A repeat upsert must not change the stored value.
+	// naming_version is obsolete. Tool names no longer depend on a stored
+	// version, and upsert ignores this field. The number stays so an older data
+	// plane that still sends it decodes.
 	NamingVersion int32 `protobuf:"varint,16,opt,name=naming_version,json=namingVersion,proto3" json:"naming_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

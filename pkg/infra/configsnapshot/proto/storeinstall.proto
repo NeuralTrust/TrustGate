@@ -73,9 +73,9 @@ message Installation {
   string decision = 13;
   string decided_by = 14;
   int64 decided_at_unix = 15;
-  // naming_version is the tool-naming rules this install was created under.
-  // Zero is the original spelling (a row that predates the field). New installs
-  // send 2. A repeat upsert must not change the stored value.
+  // naming_version is obsolete. Tool names no longer depend on a stored
+  // version, and upsert ignores this field. The number stays so an older data
+  // plane that still sends it decodes.
   int32 naming_version = 16;
 }
 

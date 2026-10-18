@@ -363,8 +363,7 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
 		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger),
-			appstore.WithNamingV2(p.Cfg.Server.MCPNamingV2))
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 		if err != nil {
 			return nil, err
 		}
@@ -493,8 +492,7 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 	var opts []appoauth.ConfigureOption
 	if p.Registries != nil {
 		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger),
-			appstore.WithNamingV2(p.Config.Server.MCPNamingV2))
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 		if err != nil {
 			return nil, err
 		}

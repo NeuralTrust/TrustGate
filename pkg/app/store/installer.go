@@ -194,15 +194,6 @@ func WithUninstallCredentials(vault vaultdomain.Repository, revoker CredentialRe
 	}
 }
 
-// WithNamingV2 stamps NamingVersionV2 on a new Store install. Off, the row is
-// stored as NULL and keeps the original tool names. A repeat install still
-// keeps whatever version the row already has, including 2.
-func WithNamingV2(enabled bool) InstallerOption {
-	return func(i *installer) {
-		i.namingV2 = enabled
-	}
-}
-
 // InstallRequest carries everything an install decision needs. Groups are the
 // caller's IdP groups (from the token), used for role-gated servers. OpenMode is
 // true when the gateway's Store is open (self-service): a catalog server that is
@@ -242,9 +233,6 @@ type installer struct {
 	vault      vaultdomain.Repository
 	revoker    CredentialRevoker
 	logger     *slog.Logger
-	// namingV2 stamps NamingVersionV2 on a new install. Off by default, so a
-	// rollout keeps writing NULL and every install keeps the original names.
-	namingV2 bool
 }
 
 // NewInstaller wires the Store installer over the catalog, the gateway's
@@ -406,12 +394,6 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
 		record.RegistryID = sameInstance.RegistryID
-		// The naming rules are fixed when the row is first written. A repeat
-		// install keeps them, including a row that has none (the original rules)
-		// and a row already stamped 2.
-		record.NamingVersion = sameInstance.NamingVersion
-	} else if i.namingV2 {
-		record.NamingVersion = registrydomain.NamingVersionV2
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err

@@ -59,11 +59,6 @@ const MCPOriginStore MCPOrigin = "store"
 // and from there to the real registry once the snapshot arrives.
 const MCPOriginPending MCPOrigin = "pending"
 
-// NamingVersionV2 is the tool-naming rules for a registry created after exposed
-// names stopped repeating the server slug and the per-instance digest. Rows
-// that omit the field stay on the original rules.
-const NamingVersionV2 = 2
-
 type OpenAPITarget struct {
 	SpecURL string `json:"spec_url"`
 }
@@ -182,13 +177,6 @@ type MCPTarget struct {
 	// without re-reading the catalog. Empty for servers whose URL is fully
 	// determined (the common case). See ResolveURL.
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
-	// NamingVersion is the tool-naming rules this registry was created under.
-	// Zero — the value every row written before the field existed, and the
-	// value written while MCP_NAMING_V2 is off — is the original spelling.
-	// NamingVersionV2 is recorded only when the registry is created with that
-	// flag on; an edit preserves it (see appregistry.applyMCPTargetUpdate) and
-	// nothing backfills existing rows.
-	NamingVersion int `json:"naming_version,omitempty"`
 	// InstanceConfig carries one instance's resolved plain URL-variable values when
 	// the Store scoper exposes several instances of the same catalog code for a
 	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
