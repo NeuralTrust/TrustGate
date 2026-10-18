@@ -407,6 +407,50 @@ func registrationExpired(cached *appoauth.RegisteredClient, now time.Time) bool 
 	return !now.Before(time.Unix(cached.ClientSecretExpiresAt, 0))
 }
 
+const (
+	authorizePreflightTimeout = 3 * time.Second
+	authorizePreflightMaxBody = 8 << 10
+)
+
+// PreflightAuthorize GETs rawURL once, through the same guarded client
+// discovery uses, and returns that response without following a redirect.
+// allowedAuthorizeURL is the catalog authorize URL. The request must be https
+// and share that URL's scheme, host, and port. Anything else is refused
+// before a dial.
+func (r *upstreamRegistrar) PreflightAuthorize(ctx context.Context, rawURL, allowedAuthorizeURL string) (appoauth.AuthorizePreflight, error) {
+	if !appoauth.AuthorizeEndpointAllowed(rawURL, allowedAuthorizeURL) {
+		return appoauth.AuthorizePreflight{}, fmt.Errorf("oauth dcr: authorize preflight url is not allowed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, authorizePreflightTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return appoauth.AuthorizePreflight{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	client := *r.http
+	client.CheckRedirect = refuseAuthorizeRedirect
+	client.Timeout = authorizePreflightTimeout
+	res, err := client.Do(req)
+	if err != nil {
+		return appoauth.AuthorizePreflight{}, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, authorizePreflightMaxBody))
+	if err != nil {
+		return appoauth.AuthorizePreflight{}, err
+	}
+	return appoauth.AuthorizePreflight{
+		Status:   res.StatusCode,
+		Location: res.Header.Get("Location"),
+		Body:     string(raw),
+	}, nil
+}
+
+func refuseAuthorizeRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 func (r *upstreamRegistrar) getJSON(ctx context.Context, rawurl string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawurl, nil)
 	if err != nil {
