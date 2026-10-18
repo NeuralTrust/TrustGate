@@ -89,10 +89,16 @@ function buildCatalogTarget(
     const required = server.auth_headers ?? [];
     const secretHeader = required.find((h) => h.secret) ?? required[0];
     if (secretHeader) {
-      const raw = headerValues[secretHeader.name] ?? "";
+      const raw = (headerValues[secretHeader.name] ?? "").trim();
       const prefix =
         secretHeader.scheme && secretHeader.scheme !== "raw" ? `${secretHeader.scheme} ` : "";
-      auth = { mode: "static", header: secretHeader.name, value: `${prefix}${raw}` };
+      // An optional key left blank must not be sent as "Bearer " — public
+      // endpoints (Algolia) reject or ignore a present Authorization header.
+      if (raw === "" && secretHeader.required === false) {
+        auth = { mode: "none" };
+      } else {
+        auth = { mode: "static", header: secretHeader.name, value: `${prefix}${raw}` };
+      }
     }
     for (const header of required) {
       if (header === secretHeader) continue;
