@@ -147,7 +147,7 @@ func (s *connectService) finalizeAuthURLs(
 		return nil, err
 	}
 	if !hasOAuthPlaceholder(cfg) {
-		return cfg, nil
+		return s.finishResolvedAuth(reg, cfg)
 	}
 	if reg == nil || reg.MCPTarget == nil {
 		return nil, ErrUnresolvedOAuthPlaceholder

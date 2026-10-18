@@ -42,7 +42,8 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		if err != nil {
 			return nil, err
 		}
-		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), meta)
+		// withholdSharedSecret runs inside finalizeAuthURLs, after substitution.
+		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta)
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -92,7 +93,7 @@ func (s *connectService) exchangeAuth(
 	if cached == nil || cached.ClientID != clientID {
 		return nil, fmt.Errorf("%w: client %q", ErrNoRegisteredClient, clientID)
 	}
-	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), nil
+	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), meta)
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -114,7 +115,8 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		if err != nil {
 			return nil, err
 		}
-		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), meta)
+		// withholdSharedSecret runs inside finalizeAuthURLs, after substitution.
+		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta)
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
