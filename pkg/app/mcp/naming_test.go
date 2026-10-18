@@ -75,6 +75,132 @@ func TestExposedName_CarriesItsServerWhateverElseIsBound(t *testing.T) {
 	}
 }
 
+// Every prefix that fits is a candidate. notion_ai_search fits both notion and
+// notion_ai; which one serves it is decided from the tools, not by keeping the
+// longer prefix and dropping the other. A name with no server prefix belongs
+// to nobody.
+func TestRegistriesForExposedName_OverlappingPrefixesAreCandidates(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	notionAI := mcpRegistry(t, "Notion AI", "https://notion-ai.example/mcp")
+	notionAI.MCPTarget.Code = "com.notion_ai/mcp"
+
+	owners := registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "notion_ai_search")
+	if len(owners) != 2 || owners[0] != notion || owners[1] != notionAI {
+		t.Fatalf("owners = %v, want Notion and Notion AI", owners)
+	}
+	owners = registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "notion_search")
+	if len(owners) != 1 || owners[0] != notion {
+		t.Fatalf("owners = %v, want Notion", owners)
+	}
+	if got := registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "does-not-exist"); len(got) != 0 {
+		t.Fatalf("owners = %v, want none", got)
+	}
+}
+
+// Two servers can spell different tools as one string. Only those names take a
+// digest; everything else stays exactly the name it had with one server bound.
+func TestResolveNames_CollisionSuffixOnlyOnOverlap(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+
+	got := resolveNames([]binding{
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: google, tool: Tool{Name: "search"}, exposed: "search"},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+		{registry: drive, tool: Tool{Name: "files"}, exposed: "files"},
+	}, nil)
+
+	byNative := map[string]string{}
+	for _, b := range got {
+		byNative[b.registry.Name+"/"+b.tool.Name] = b.exposed
+	}
+	if byNative["Google/search"] != "google_search" {
+		t.Fatalf("search = %q, want it unchanged", byNative["Google/search"])
+	}
+	if byNative["Google Drive/files"] != "google_drive_files" {
+		t.Fatalf("files = %q, want it unchanged", byNative["Google Drive/files"])
+	}
+	googleList := byNative["Google/drive_list"]
+	driveList := byNative["Google Drive/list"]
+	if googleList == "google_drive_list" || driveList == "google_drive_list" || googleList == driveList {
+		t.Fatalf("colliding names = %q and %q, want two distinct suffixed names", googleList, driveList)
+	}
+	for _, name := range []string{googleList, driveList} {
+		if !strings.HasPrefix(name, "google_drive_list_") || len(name) > maxExposedNameLength {
+			t.Fatalf("colliding name = %q, want google_drive_list_<digest> within %d", name, maxExposedNameLength)
+		}
+	}
+	if googleList != disambiguateCollision("google_drive_list", google) || driveList != disambiguateCollision("google_drive_list", drive) {
+		t.Fatalf("suffixes = %q and %q, want the registry digests", googleList, driveList)
+	}
+	// The same inputs name the tools the same way again.
+	again := resolveNames([]binding{
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+	}, nil)
+	if again[0].exposed != googleList || again[1].exposed != driveList {
+		t.Fatalf("second resolution = %q %q, want %q %q", again[0].exposed, again[1].exposed, googleList, driveList)
+	}
+}
+
+// google_drive can publish list_<google's digest> next to list. The plain tool
+// then spells exactly the suffixed name google's drive_list was given. That
+// copy is withheld; the suffix owner keeps the name. Anything that does not
+// collide is unchanged.
+func TestResolveNames_PlainCopyOfSuffixIsWithheld(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	copy := "list_" + registryDigest(google, collisionSuffixLen)
+	victim := disambiguateCollision("google_drive_list", google)
+
+	// Drive is first, which is the order that used to make the copy win.
+	got := resolveNames([]binding{
+		{registry: drive, tool: Tool{Name: copy}, exposed: copy},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+		{registry: drive, tool: Tool{Name: "files"}, exposed: "files"},
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: google, tool: Tool{Name: "search"}, exposed: "search"},
+	}, nil)
+
+	byNative := map[string]string{}
+	for _, b := range got {
+		key := b.registry.Name + "/" + b.tool.Name
+		if _, dup := byNative[key]; dup {
+			t.Fatalf("tool %s published twice", key)
+		}
+		byNative[key] = b.exposed
+	}
+	if _, stolen := byNative["Google Drive/"+copy]; stolen {
+		t.Fatalf("copied name %q was published as %q", copy, byNative["Google Drive/"+copy])
+	}
+	if byNative["Google/drive_list"] != victim {
+		t.Fatalf("victim = %q, want %q", byNative["Google/drive_list"], victim)
+	}
+	owners := 0
+	for _, name := range byNative {
+		if name == victim {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("bindings spelling %q = %d, want the suffix owner only", victim, owners)
+	}
+	if byNative["Google Drive/files"] != "google_drive_files" || byNative["Google/search"] != "google_search" {
+		t.Fatalf("unchanged names = %q and %q", byNative["Google Drive/files"], byNative["Google/search"])
+	}
+	if byNative["Google Drive/list"] == "" || byNative["Google Drive/list"] == "google_drive_list" || byNative["Google Drive/list"] == victim {
+		t.Fatalf("drive list = %q, want its own suffix", byNative["Google Drive/list"])
+	}
+}
+
 // An admin renames an instance; the tools keep their names. The catalog code is
 // what identifies a server, and that is not the admin's to edit.
 func TestExposedName_SurvivesARename(t *testing.T) {
@@ -142,6 +268,58 @@ func TestExposedName_TooLongIsCutButStaysDistinct(t *testing.T) {
 	}
 	if one == two {
 		t.Fatalf("two tools truncated to the same name %q", one)
+	}
+}
+
+// A slug long enough that the content-hash suffix would leave the tool nothing
+// used to be cut, so the exposed name no longer started with the server and
+// every call answered "Unknown tool". The server part becomes a short hash of
+// the slug instead. A name that still fits is not touched, and neither is a
+// slug that leaves the tool one character.
+func TestExposedName_OverlongSlugIsHashedNotCut(t *testing.T) {
+	t.Parallel()
+	slug := strings.Repeat("a", 55)
+	reg := mcpRegistry(t, "Long", "https://long.example/mcp")
+	reg.MCPTarget.Code = "com." + slug + "/mcp"
+	if got := serverSlug(reg); got != slug {
+		t.Fatalf("slug = %q, want %d a's", got, len(slug))
+	}
+
+	tool := strings.Repeat("b", 20)
+	one := exposedNameFor(tool+"_one", reg).String()
+	two := exposedNameFor(tool+"_two", reg).String()
+	prefix := hashedSlug(slug) + "_"
+	for _, name := range []string{one, two} {
+		if len(name) > maxExposedNameLength {
+			t.Fatalf("name %q is %d characters, want at most %d", name, len(name), maxExposedNameLength)
+		}
+		if !strings.HasPrefix(name, prefix) {
+			t.Fatalf("name = %q, want the slug's hash %q", name, prefix)
+		}
+		if strings.HasPrefix(name, slug) {
+			t.Fatalf("name = %q still starts with the slug, which is what the cut did", name)
+		}
+	}
+	if one == two {
+		t.Fatalf("two tools share the hashed name %q", one)
+	}
+	if got := registriesForExposedName([]*registrydomain.Registry{reg}, one); len(got) != 1 || got[0] != reg {
+		t.Fatalf("owners of %q = %v, want the long server", one, got)
+	}
+
+	// Short enough to fit after the slug: the hash must not rename it.
+	if got, want := exposedNameFor("x", reg).String(), slug+"_x"; got != want {
+		t.Fatalf("short tool = %q, want %q", got, want)
+	}
+
+	// One character of tool still fits, so the server stays whole.
+	barely := strings.Repeat("c", 53)
+	barelyReg := mcpRegistry(t, "Barely", "https://barely.example/mcp")
+	barelyReg.MCPTarget.Code = "com." + barely + "/mcp"
+	longTool := strings.Repeat("d", 40)
+	got := exposedNameFor(longTool, barelyReg).String()
+	if !strings.HasPrefix(got, barely+"_") || len(got) > maxExposedNameLength {
+		t.Fatalf("name = %q, want the 53-character server kept whole", got)
 	}
 }
 
