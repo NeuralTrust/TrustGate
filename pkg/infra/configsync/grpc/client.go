@@ -131,7 +131,7 @@ func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, 
 		return nil, "", false, fmt.Errorf("configsync: first snapshot chunk is not a header")
 	}
 	if header.GetNotModified() {
-		return nil, "", true, nil
+		return nil, header.GetVersion(), true, nil
 	}
 	total := header.GetTotalBytes()
 	if total < 0 || total > maxSnapshotBytes {
