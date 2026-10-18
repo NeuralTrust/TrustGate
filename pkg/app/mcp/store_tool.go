@@ -307,6 +307,19 @@ func (t *storeTool) install(
 	if errors.Is(err, appstore.ErrServerDisabled) {
 		return serverDisabled(args.Code, t.displayNameFor(args.Code))
 	}
+	// These are facts about the request, not faults in the gateway. A tool
+	// error is a successful JSON-RPC response the caller can read; leaving
+	// them as Go errors turns them into an internal error (-32603).
+	if errors.Is(err, appstore.ErrCatalogEntryNotFound) {
+		return toolErrorResult("no catalog server with code "+strings.TrimSpace(args.Code), map[string]any{
+			"code": strings.TrimSpace(args.Code),
+		})
+	}
+	if errors.Is(err, appstore.ErrSSEUnsupported) {
+		return toolErrorResult("SSE transport is not supported by the gateway yet", map[string]any{
+			"code": strings.TrimSpace(args.Code),
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -487,12 +500,18 @@ func (t *storeTool) uninstall(
 		// caller can re-issue uninstall with the chosen instance id.
 		return t.instancePicker(ctx, rc, code, "uninstall")
 	}
+	if errors.Is(err, appstore.ErrNothingInstalled) {
+		return marshalToolResult(
+			fmt.Sprintf("%s is not installed.", code),
+			map[string]any{"code": code, "uninstalled": false, "was_installed": false},
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return marshalToolResult(
 		fmt.Sprintf("Uninstalled %s.", code),
-		map[string]any{"code": code, "uninstalled": true},
+		map[string]any{"code": code, "uninstalled": true, "was_installed": true},
 	)
 }
 
@@ -726,6 +745,20 @@ func marshalToolResult(text string, structured map[string]any) (json.RawMessage,
 	return raw, nil
 }
 
+// toolErrorResult is a tool result the caller reads as a failure (isError)
+// without it becoming a JSON-RPC internal error.
+func toolErrorResult(text string, structured map[string]any) (json.RawMessage, error) {
+	raw, err := json.Marshal(map[string]any{
+		"content":           []map[string]string{{"type": "text", "text": text}},
+		"structuredContent": structured,
+		"isError":           true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode result: %w", ErrStoreToolUnavailable, err)
+	}
+	return raw, nil
+}
+
 type storeSearchArgs struct {
 	Query    string `json:"query"`
 	Category string `json:"category"`
@@ -740,13 +773,15 @@ type storeSearchResult struct {
 	Description  string `json:"description,omitempty"`
 	ToolCount    int    `json:"tool_count"`
 	RequiresAuth bool   `json:"requires_auth"`
-	// StoreState is how the caller can obtain this server: "available" (installs
-	// immediately), "approval" (install needs approval), or "request" (not on the
-	// admin's shelf yet — installing files a request).
+	// StoreState is how the caller can obtain this server: "installed" (this
+	// principal already has it), "available" (installs immediately), "approval"
+	// (install needs approval), or "request" (not on the admin's shelf yet —
+	// installing files a request).
 	StoreState string `json:"store_state"`
 }
 
 const (
+	storeStateInstalled = "installed"
 	storeStateAvailable = "available"
 	storeStateRequest   = "request"
 )
@@ -814,6 +849,10 @@ func (t *storeTool) search(
 		return raw, nil
 	}
 
+	// Installed is a fact about this principal, read once. A lookup failure
+	// leaves the availability states as they are: search still answers.
+	installed := t.installedCodes(ctx, rc, subject)
+
 	// The catalog is served in relevance order; a query narrows it, an empty
 	// query browses the top of the whole catalog.
 	all := t.catalog.ListMCPServers()
@@ -829,7 +868,12 @@ func (t *storeTool) search(
 		}
 		// The whole catalog is browsable in All and Selected; the state tells the
 		// caller whether install is instant for them or files a request.
+		// A code this principal already installed is reported as installed,
+		// ahead of whether they could install it again.
 		state := storeAvailability(access, entry.Code, mode, groups, subject)
+		if _, ok := installed[entry.Code]; ok {
+			state = storeStateInstalled
+		}
 		total++
 		if len(matched) < limit {
 			matched = append(matched, toSearchResult(entry, state))
@@ -907,6 +951,19 @@ func (t *storeTool) StoreOffer(ctx context.Context, rc *appconsumer.RoutableCons
 		}
 	}
 	return StoreOffer{Mode: mode, Servers: offered, Bounded: true}, nil
+}
+
+// installedCodes is the principal's active installs, or nil when they cannot
+// be read. Nil means search does not relabel anything.
+func (t *storeTool) installedCodes(ctx context.Context, rc *appconsumer.RoutableConsumer, subject string) map[string]struct{} {
+	if t == nil || t.installer == nil || rc == nil || rc.Consumer == nil || strings.TrimSpace(subject) == "" {
+		return nil
+	}
+	codes, err := t.installer.InstalledCodes(ctx, rc.Consumer.GatewayID, subject)
+	if err != nil {
+		return nil
+	}
+	return codes
 }
 
 func (t *storeTool) loadStoreAccess(ctx context.Context, rc *appconsumer.RoutableConsumer) (*storeAccessIndex, error) {

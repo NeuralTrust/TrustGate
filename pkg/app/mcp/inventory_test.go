@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -153,8 +154,34 @@ func TestComposer_ToolInventory_KeepsTheUpstreamFailureOutOfTheAnswer(t *testing
 	if len(inv.Servers) != 1 || inv.Servers[0].State != InventoryStateUnavailable {
 		t.Fatalf("servers = %+v, want one %q", inv.Servers, InventoryStateUnavailable)
 	}
-	if strings.Contains(inv.Servers[0].Provider, "10.1.2.3") {
+	if strings.Contains(inv.Servers[0].Provider, "10.1.2.3") || strings.Contains(inv.Servers[0].Cause, "10.1.2.3") {
 		t.Fatal("the inventory must not hand the upstream's dial error to the caller")
+	}
+}
+
+func TestComposer_ToolInventory_NamesARejectedCredential(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "example", "https://a.example.com/mcp")
+	reg.MCPTarget.Code = "com.example/mcp"
+	dialer := &fakeDialer{dialErr: map[string]error{
+		"https://a.example.com/mcp": &UpstreamFailure{Kind: UpstreamFailureCredential, Status: http.StatusUnauthorized},
+	}}
+	c := newTestComposer(dialer)
+
+	inv, err := c.ToolInventory(context.Background(),
+		routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg))
+	if err != nil {
+		t.Fatalf("inventory: %v", err)
+	}
+	if len(inv.Servers) != 1 {
+		t.Fatalf("servers = %+v", inv.Servers)
+	}
+	server := inv.Servers[0]
+	if server.State != InventoryStateUnavailable || server.Cause != "credential_rejected_401" || server.slug != "example" {
+		t.Fatalf("server = %+v, want unavailable credential_rejected_401 slug example", server)
+	}
+	if strings.Contains(server.Cause, "a.example.com") {
+		t.Fatal("the cause must be the classified code, not the dial address")
 	}
 }
 

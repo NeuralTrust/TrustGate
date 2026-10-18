@@ -67,11 +67,12 @@ type InventoryServer struct {
 	Code string
 	// Provider names the upstream account a server awaiting consent needs.
 	Provider string
-	// Cause is why a needs_connect server is not serving, as one of the
-	// ConsentCause codes, or an InventoryCause one when this caller cannot
-	// connect it. Empty for every other state. It is what keeps a
-	// client from having to guess ("the session expired") when the gateway
-	// already knows.
+	// Cause is why a server is not serving. For needs_connect it is a
+	// ConsentCause code, or an InventoryCause one when this caller cannot
+	// connect it. For unavailable it names the dial failure
+	// (credential_rejected_<status>, redirect_not_followed_<status>,
+	// redirect_http_refused, dns, timeout) when that failure is one the
+	// status text can say. Empty when the cause is not one of those.
 	Cause string
 	State string
 	Tools []InventoryEntry
@@ -85,6 +86,10 @@ type InventoryServer struct {
 	// permission travels with the entry. The zero value permits everything,
 	// which keeps a hand-built InventoryServer unrestricted.
 	policy toolPolicy
+	// slug is the server prefix exposed tool names use. An unavailable server
+	// lists its catalog preview under that prefix; an empty slug lists none,
+	// because a raw upstream name is not a name the caller can call.
+	slug string
 }
 
 // Permits reports whether this consumer's toolkit lets it use the server's own
@@ -157,8 +162,11 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 			}
 		case surface.err != nil:
 			// The upstream's own error is logged, not handed to the caller: it
-			// carries hosts and transport detail the caller cannot act on.
+			// carries hosts and transport detail the caller cannot act on. The
+			// cause is the classified phrase's code, never the error text.
 			server.State = InventoryStateUnavailable
+			server.Cause = inventoryCauseForFailure(surface.err)
+			server.slug = serverSlug(surface.registry)
 		default:
 			// resolveNames withholds a tool whose final name copied another
 			// server's, so the resolved list is a subsequence of this server's
