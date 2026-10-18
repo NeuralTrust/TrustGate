@@ -106,6 +106,12 @@ type MCPURLVariable struct {
 	// an edition. One entry then covers what would otherwise be a near-duplicate
 	// entry per value. Empty means free text.
 	Options []MCPURLVariableOption `json:"options,omitempty"`
+	// HostSuffix lists the DNS suffixes a whole-host value must stay under
+	// (`vendor.com` or `*.vendor.com`). One vendor often has several zones, so
+	// the list is the whole bound. Only vendor-run zones that do not serve
+	// tenant content belong here; a public suffix is ignored. An open variable
+	// with an empty list is not a bound on the host.
+	HostSuffix []string `json:"host_suffix,omitempty"`
 }
 
 // MCPURLVariableOption is one allowed value of a closed URL variable.

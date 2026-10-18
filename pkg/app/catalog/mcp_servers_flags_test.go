@@ -22,6 +22,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/publicsuffix"
 )
 
 // self_service is declared per entry rather than derived, so the one thing that
@@ -205,6 +206,89 @@ func TestCuratedCatalog_VantaIsOneEntryPerRegionChoice(t *testing.T) {
 	require.True(t, entry.OAuth.ResourceMetadata)
 }
 
+// These five entries template the whole host. The suffix list is the bound
+// that lets an existing install keep connecting on the vendor's domains. Each
+// suffix is a vendor-run zone that does not serve tenant content; Cube has no
+// such zone, so it declares none and stays refused.
+func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	want := map[string]struct {
+		variable string
+		suffixes []string
+	}{
+		"dev.cube/mcp": {
+			variable: "cube_host",
+		},
+		"com.databricks/mcp": {
+			variable: "workspace_host",
+			suffixes: []string{
+				"*.cloud.databricks.com",
+				"*.gcp.databricks.com",
+				"*.azuredatabricks.net",
+			},
+		},
+		"com.getdbt/mcp": {
+			variable: "dbt_host",
+			suffixes: []string{
+				"*.getdbt.com",
+				"*.us1.dbt.com",
+				"*.us2.dbt.com",
+				"*.us3.dbt.com",
+				"*.us5.dbt.com",
+				"*.eu1.dbt.com",
+				"*.eu2.dbt.com",
+				"*.eu3.dbt.com",
+				"*.eu4.dbt.com",
+				"*.au1.dbt.com",
+				"*.au2.dbt.com",
+				"*.jp1.dbt.com",
+			},
+		},
+		"com.freshworks/mcp": {
+			variable: "domain",
+			suffixes: []string{"*.freshservice.com"},
+		},
+		"com.snowflake/mcp": {
+			variable: "account_url",
+			suffixes: []string{"*.snowflakecomputing.com"},
+		},
+	}
+	for code, spec := range want {
+		entry, ok := cat.GetByCode(code)
+		require.True(t, ok, code)
+		var got []string
+		for _, v := range entry.URLVariables {
+			if v.Name == spec.variable {
+				got = v.HostSuffix
+			}
+		}
+		require.Equal(t, spec.suffixes, got, "%s %s", code, spec.variable)
+	}
+}
+
+// The connect path ignores a suffix that is a public suffix or a single label,
+// so a seeded one would silently refuse every install of that entry.
+func TestCuratedCatalog_HostSuffixesAreRegistrable(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, entry := range cat.ListMCPServers() {
+		for _, v := range entry.URLVariables {
+			for _, raw := range v.HostSuffix {
+				suffix := strings.TrimPrefix(raw, "*.")
+				require.Equal(t, raw, "*."+suffix, "%s %s: %q must be written as *.domain", entry.Code, v.Name, raw)
+				require.GreaterOrEqual(t, strings.Count(suffix, "."), 1, "%s %s: %q", entry.Code, v.Name, raw)
+				ps, _ := publicsuffix.PublicSuffix(suffix)
+				require.NotEqual(t, suffix, ps, "%s %s: %q is a public suffix", entry.Code, v.Name, raw)
+			}
+		}
+	}
+}
+
 func optionValues(v domain.MCPURLVariable) []string {
 	out := make([]string, 0, len(v.Options))
 	for _, option := range v.Options {
@@ -217,10 +301,11 @@ func optionValues(v domain.MCPURLVariable) []string {
 // seed guard runs the real rules rather than a copy of them.
 func asRegistryURLVariable(v domain.MCPURLVariable) registrydomain.MCPURLVariable {
 	out := registrydomain.MCPURLVariable{
-		Name:     v.Name,
-		Required: v.Required,
-		Secret:   v.Secret,
-		In:       v.In,
+		Name:       v.Name,
+		Required:   v.Required,
+		Secret:     v.Secret,
+		In:         v.In,
+		HostSuffix: v.HostSuffix,
 	}
 	for _, option := range v.Options {
 		out.Options = append(out.Options, registrydomain.MCPURLVariableOption{

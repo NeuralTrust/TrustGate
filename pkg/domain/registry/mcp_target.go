@@ -212,6 +212,16 @@ type MCPURLVariable struct {
 	// every one of them instead of a near-duplicate entry each. Empty means the
 	// value is free text, validated by the charset rules alone.
 	Options []MCPURLVariableOption `json:"options,omitempty"`
+	// HostSuffix lists the DNS suffixes a whole-host value must stay under
+	// (`vendor.com` or `*.vendor.com`). OAuth connect sends an admin client
+	// secret only when a whole-host variable is closed by Options or the
+	// resolved host matches one of these suffixes. Empty does not constrain
+	// the host. A public suffix (`com`, `co.uk`) or a single label is ignored.
+	// When this target's code is a catalog code, the catalog entry for that
+	// code is the bound: an empty list (a registry materialised before the
+	// catalog declared suffixes) takes the catalog's list, and a stored list
+	// can only narrow it.
+	HostSuffix []string `json:"host_suffix,omitempty"`
 }
 
 // MCPURLVariableOption is one allowed value of a closed URL variable.
