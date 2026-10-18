@@ -272,15 +272,16 @@ func (s *scoper) installedRegistries(
 		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, principal.Subject) {
 			continue
 		}
+		version := int(in.NamingVersion)
 		if countByCode[in.CatalogCode] <= 1 {
 			if len(in.Config) == 0 {
-				out = append(out, registryAtNamingVersion(shelf, in.NamingVersion))
+				out = append(out, registryAtNamingVersion(shelf, version))
 				continue
 			}
-			out = append(out, stampNamingVersion(configuredRegistry(shelf, in), in.NamingVersion))
+			out = append(out, stampNamingVersion(configuredRegistry(shelf, in), version))
 			continue
 		}
-		out = append(out, stampNamingVersion(instanceRegistry(shelf, in), in.NamingVersion))
+		out = append(out, stampNamingVersion(instanceRegistry(shelf, in), version))
 	}
 	return out, nil
 }

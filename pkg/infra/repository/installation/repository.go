@@ -95,7 +95,7 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 			    -- not move an existing row onto the new rules.
 		RETURNING id, reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at,
 		          naming_version`
-	var storedVersion *int
+	var storedVersion *int32
 	if err := r.conn.Pool.QueryRow(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
 		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.Reason, groupArray(in.RequesterGroups),
@@ -352,7 +352,7 @@ func scanInstallation(row scannable) (*domain.Installation, error) {
 		decidedAt     *time.Time
 		configJSON    []byte
 		registryID    *ids.RegistryID
-		namingVersion *int
+		namingVersion *int32
 	)
 	if err := row.Scan(
 		&in.ID, &in.GatewayID, &in.PrincipalSub, &in.CatalogCode, &status,
@@ -392,7 +392,7 @@ func nullableTime(t time.Time) *time.Time {
 // nullableNamingVersion stores the original rules as SQL NULL. A row written
 // before the column existed reads back as NULL, and a new row records the
 // version it was created under. Nothing updates the column later.
-func nullableNamingVersion(version int) *int {
+func nullableNamingVersion(version int32) *int32 {
 	if version == 0 {
 		return nil
 	}

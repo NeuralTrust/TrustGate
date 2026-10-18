@@ -94,8 +94,9 @@ type Installation struct {
 	// NamingVersion is the tool-naming rules this install was created under.
 	// Zero — a row written before the column existed, or any row the column
 	// leaves NULL — is the original spelling. New installs record
-	// registry.NamingVersionV2. A repeat install does not change it.
-	NamingVersion int
+	// registry.NamingVersionV2. A repeat install does not change it. int32
+	// matches the wire field, so mapping it does not narrow an int.
+	NamingVersion int32
 	// RegistryID binds the install to one configured instance (registry) of its
 	// catalog code when the admin has connected several (e.g. "Snowflake
 	// (finance)" and "Snowflake (analytics)", each with its own credentials).
