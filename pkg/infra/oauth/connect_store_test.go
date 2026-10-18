@@ -16,6 +16,7 @@ package oauth_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -176,4 +177,106 @@ func TestConnectStoreKeepsOnePendingFinishPerFlow(t *testing.T) {
 	for _, key := range server.Keys() {
 		require.NotContains(t, key, "state-sentinel", "the state must not appear in key names")
 	}
+}
+
+func TestConnectStore_ReplaceClientIfMatch(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _ := newConnectStore(t)
+	original := appoauth.RegisteredClient{ClientID: "client-a", ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", original))
+
+	replacement := appoauth.RegisteredClient{ClientID: "client-b", ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix()}
+	stored, swapped, err := store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", replacement)
+	require.NoError(t, err)
+	require.True(t, swapped)
+	require.Equal(t, "client-b", stored.ClientID)
+
+	other := appoauth.RegisteredClient{ClientID: "client-c", ClientSecretExpiresAt: 1}
+	stored, swapped, err = store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", other)
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Equal(t, "client-b", stored.ClientID)
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, replacement, *got)
+
+	missing, swapped, err := store.ReplaceClientIfMatch(ctx, "missing", "client-a", other)
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Nil(t, missing)
+}
+
+func TestConnectStore_ConcurrentDropAndReplace(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _ := newConnectStore(t)
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:              "client-a",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}))
+	replacement := appoauth.RegisteredClient{
+		ClientID:              "client-b",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	tombstone := appoauth.RegisteredClient{ClientID: "client-a", ClientSecretExpiresAt: 1}
+
+	var wg sync.WaitGroup
+	const n = 32
+	for range n {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _, _ = store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", tombstone)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, _ = store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", replacement)
+		}()
+	}
+	wg.Wait()
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	switch got.ClientID {
+	case "client-a":
+		require.EqualValues(t, 1, got.ClientSecretExpiresAt)
+	case "client-b":
+		require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+	default:
+		t.Fatalf("client_id = %q", got.ClientID)
+	}
+
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", replacement))
+	stored, swapped, err := store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", tombstone)
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Equal(t, "client-b", stored.ClientID)
+	require.Greater(t, stored.ClientSecretExpiresAt, time.Now().Unix())
+}
+
+func TestConnectStore_ReplaceClientIfMatchDecodesClientID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _ := newConnectStore(t)
+	storedID := `say "client-a"`
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:     storedID,
+		ClientSecret: `prefix "client_id":"other" suffix`,
+		RedirectURI:  "https://gw.example/callback",
+	}))
+
+	other := appoauth.RegisteredClient{ClientID: "other", ClientSecretExpiresAt: 1}
+	got, swapped, err := store.ReplaceClientIfMatch(ctx, "gw|reg", "other", other)
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Equal(t, storedID, got.ClientID)
+
+	replacement := appoauth.RegisteredClient{ClientID: "next", ClientSecret: "kept"}
+	got, swapped, err = store.ReplaceClientIfMatch(ctx, "gw|reg", storedID, replacement)
+	require.NoError(t, err)
+	require.True(t, swapped)
+	require.Equal(t, "next", got.ClientID)
+	require.Equal(t, "kept", got.ClientSecret)
 }

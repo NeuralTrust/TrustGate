@@ -45,6 +45,10 @@ func (r *revocationRegistrar) CachedClient(context.Context, string) (*Registered
 	return r.cached, nil
 }
 
+func (r *revocationRegistrar) DropCachedClient(context.Context, string, string) error {
+	return nil
+}
+
 func gmailRegistry(auth *registrydomain.MCPAuth) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		Type: registrydomain.TypeMCP,
@@ -126,6 +130,7 @@ func TestRevocationMaterialAutoUsesCachedClientOnly(t *testing.T) {
 		meta: &UpstreamAuthServer{
 			TokenEndpoint:      "https://as.example/token",
 			RevocationEndpoint: "https://as.example/revoke",
+			ValidatedIssuer:    "https://as.example",
 		},
 		cached: &RegisteredClient{ClientID: "dcr-client", ClientSecret: "dcr-secret"},
 	}

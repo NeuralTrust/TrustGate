@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -32,7 +33,10 @@ import (
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
-var _ ConnectService = (*connectService)(nil)
+var (
+	_ ConnectService          = (*connectService)(nil)
+	_ RegisteredClientDropper = (*connectService)(nil)
+)
 
 // registryLister finds a gateway's registries so the connect flow can attach the
 // installed registry a Store-scoped ticket points at (the synthetic Store
@@ -387,7 +391,7 @@ func (s *connectService) providerStatuses(
 			if !status.NeedsReconnect {
 				// A lookup failure answers "usable" (see CredentialUsable), so a
 				// cache blip cannot tell every user to reconnect.
-				usable, _ := s.CredentialUsable(ctx, gatewayID, reg)
+				usable, _ := s.credentialUsable(ctx, gatewayID, ticket.PrincipalSub, reg)
 				status.NeedsReconnect = !usable
 			}
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
@@ -439,14 +443,18 @@ func (s *connectService) Start(
 	// started from, so the instance travels in the state and is not re-derived
 	// there: two instances of one provider are otherwise indistinguishable on
 	// the way back, and the first one always won.
-	if err := s.store.SaveConnect(ctx, state, ConnectState{
+	connectState := ConnectState{
 		Ticket:      *ticket,
 		TicketID:    ticketID,
 		Provider:    provider,
 		Instance:    reg.ID.String(),
 		Verifier:    verifier,
 		StartOrigin: startOrigin,
-	}); err != nil {
+	}
+	if forwarded := forwardedAuth(reg); forwarded != nil && forwarded.Registration == registrydomain.RegistrationAuto {
+		connectState.ClientID = cfg.ClientID
+	}
+	if err := s.store.SaveConnect(ctx, state, connectState); err != nil {
 		return nil, err
 	}
 	return &ConnectStart{
@@ -544,12 +552,15 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg)
+	cfg, err := s.exchangeAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg, st.ClientID)
 	if err != nil {
 		return st.TicketID, err
 	}
 	token, err := s.provider.ExchangeCode(ctx, cfg, code, connectCallbackURL(baseURL, provider), st.Verifier)
 	if err != nil {
+		if errors.Is(err, ErrInvalidClient) {
+			s.rejectDynamicClient(ctx, gatewayID, st.Ticket.PrincipalSub, reg, cfg.ClientID)
+		}
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
@@ -567,6 +578,20 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		s.auditor.ProviderLinked(ctx, identity, cfg.Provider)
 	}
 	return st.TicketID, nil
+}
+
+func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry, clientID string) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
+		return
+	}
+	if principalSub != "" {
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: principalSub})
+	}
+	if err := s.DropRegisteredClient(ctx, gatewayID, reg, clientID); err != nil {
+		slog.Warn("oauth connect: failed to drop a dynamic client the authorization server rejected",
+			"error", err, "provider", cfg.Provider, "gateway_id", gatewayID.String())
+	}
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, instanceID string) error {
