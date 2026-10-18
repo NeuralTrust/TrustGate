@@ -321,6 +321,10 @@ func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	if fixableByConnecting(err) {
 		c.forgetDiscovery(ctx, target.Registry)
 	}
+	// After the unauthorized retry above, so a revoked Zoom token is still
+	// refreshed once. Only error 4741 is rewritten; every other failure,
+	// including a 401 that is not 4741, is returned as it was.
+	out, err = rewriteZoomRevokedCall(target.Registry, out, err)
 	if err != nil || ClientAcceptsTypedOutput(ctx) {
 		return out, err
 	}
