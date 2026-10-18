@@ -413,12 +413,5 @@ func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
 			"The provider refused to register this gateway as an OAuth app, so the account cannot be connected yet. "+
 				"Ask your administrator to check this connector's configuration. Details: "+err.Error())
 	}
-	// The cached client's redirect URI was refused. Existing refresh grants
-	// still name that registration, so the connect stops without replacing it.
-	if errors.Is(err, appoauth.ErrLegacyAuthorizeRedirectRejected) {
-		return fiber.NewError(fiber.StatusBadGateway,
-			"The provider rejected the redirect URI of the OAuth client already registered, so a new connection cannot start. "+
-				"Existing connections were left in place. Ask your administrator to check this connector's redirect URI.")
-	}
 	return err
 }

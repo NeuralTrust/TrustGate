@@ -433,6 +433,9 @@ func (r *credentialResolver) refreshCredential(
 		refreshed := *cred
 		cred = &refreshed
 		previousRefreshToken := cred.RefreshToken
+		if cred.OAuthClientID == "" && refreshCfg != nil {
+			cred.OAuthClientID = refreshCfg.ClientID
+		}
 		cred.AccessToken = fresh.AccessToken
 		if fresh.RefreshToken != "" {
 			cred.RefreshToken = fresh.RefreshToken

@@ -210,11 +210,7 @@ func (s *connectService) refreshMaterial(
 	if err != nil {
 		return nil, "", upstreamResolution{}, err
 	}
-	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
-	if err != nil {
-		return nil, "", upstreamResolution{}, err
-	}
-	client, err := s.registrar.CachedClient(ctx, slot)
+	client, slot, err := s.clientForRefresh(ctx, gatewayID, principalSub, reg, meta)
 	if err != nil {
 		return nil, "", upstreamResolution{}, err
 	}

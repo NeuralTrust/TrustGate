@@ -45,12 +45,16 @@ type Credential struct {
 	PrincipalSub string
 	Provider     string
 	AccountRef   string
-	AccessToken  string
-	RefreshToken string
-	Scopes       []string
-	ExpiresAt    time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// OAuthClientID is the dynamic client this grant was issued to. Empty on a
+	// credential stored before that client was recorded; refresh then keeps
+	// using the legacy registration while it is still held for that grant.
+	OAuthClientID string
+	AccessToken   string
+	RefreshToken  string
+	Scopes        []string
+	ExpiresAt     time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func NewCredential(

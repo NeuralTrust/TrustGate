@@ -19,6 +19,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/url"
@@ -27,6 +29,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 // legacyAuthorizeAcceptTTL is how long an accepted authorize probe suppresses
@@ -34,12 +37,11 @@ import (
 const legacyAuthorizeAcceptTTL = time.Hour
 
 // healLegacyAuthorizeClient replaces one cached dynamic client registered
-// before the issuer was recorded, when the authorize endpoint says that
-// client_id is dead. The replacement is registered first. The legacy row is
-// tombstoned only after that registration is stored, so a failed registration
-// leaves the row the existing refresh grants still name. A redirect URI
-// rejection does not replace the row: those grants may still be good
-// (ENG-2190, ENG-2189).
+// before the issuer was recorded, when the authorize endpoint rejects it.
+// The replacement is registered first. The legacy row is tombstoned only after
+// that registration is stored, and the row is kept so a grant that names no
+// client can still be refreshed with it. A failed registration leaves the
+// legacy row untouched (ENG-2190, ENG-2189).
 func (s *connectService) healLegacyAuthorizeClient(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -79,33 +81,116 @@ func (s *connectService) healLegacyAuthorizeClient(
 			s.rememberLegacyAuthorizeAccepted(slot)
 		}
 		return client, nil
-	case authorizeDeadClient(reason):
-		fresh, err := s.registrar.EnsureClient(ctx, clientCacheKey(gatewayID, reg, meta), meta, redirectURI)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.registrar.DropCachedClient(ctx, slot, client.ClientID); err != nil {
-			slog.Warn("oauth dcr: replacement client is stored; the legacy row could not be tombstoned",
-				"code", catalogServerCode(reg, cfg),
-				"slot", slotHash(slot),
-				"reason", reason,
-				"error", err)
-			return fresh, nil
-		}
-		slog.Warn("oauth dcr: authorization server rejected a legacy client at authorize; replacing that cached client",
-			"code", catalogServerCode(reg, cfg),
-			"slot", slotHash(slot),
-			"reason", reason)
-		return fresh, nil
-	case authorizeRedirectRejected(reason):
-		slog.Warn("oauth dcr: authorization server rejected the cached client's redirect URI; leaving that client in place",
-			"code", catalogServerCode(reg, cfg),
-			"slot", slotHash(slot),
-			"reason", reason)
-		return nil, ErrLegacyAuthorizeRedirectRejected
+	case authorizeDeadClient(reason), authorizeRedirectRejected(reason):
+		return s.swapLegacyClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI, reason)
 	default:
 		return client, nil
 	}
+}
+
+// swapLegacyClient registers the issuer-bound replacement before tombstoning
+// the legacy row. The tombstone hides that row from new connects. GetClient
+// still returns it, which is how an existing grant keeps its original client.
+func (s *connectService) swapLegacyClient(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	slot string,
+	meta *UpstreamAuthServer,
+	client *RegisteredClient,
+	redirectURI, reason string,
+) (*RegisteredClient, error) {
+	fresh, err := s.registrar.EnsureClient(ctx, clientCacheKey(gatewayID, reg, meta), meta, redirectURI)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.registrar.DropCachedClient(ctx, slot, client.ClientID); err != nil {
+		slog.Warn("oauth dcr: replacement client is stored; the legacy row could not be tombstoned",
+			"code", catalogServerCode(reg, cfg),
+			"slot", slotHash(slot),
+			"reason", reason,
+			"error", err)
+		return fresh, nil
+	}
+	slog.Warn("oauth dcr: authorization server rejected a legacy client at authorize; new connects use the replacement",
+		"code", catalogServerCode(reg, cfg),
+		"slot", slotHash(slot),
+		"reason", reason)
+	return fresh, nil
+}
+
+// clientForRefresh picks the dynamic client a stored grant was issued to.
+// A credential that records a client id uses that registration. One that
+// records none was issued before the id was stored, so it keeps the legacy
+// row when a newer registration is now the client new connects use.
+func (s *connectService) clientForRefresh(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	meta *UpstreamAuthServer,
+) (*RegisteredClient, string, error) {
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, "", err
+	}
+	current, err := s.registrar.CachedClient(ctx, slot)
+	if err != nil {
+		return nil, "", err
+	}
+	issued, err := s.issuedOAuthClientID(ctx, gatewayID, registrydomain.CredentialSubject(reg, principalSub), reg)
+	if err != nil {
+		return nil, "", err
+	}
+	legacyKey := clientKey(gatewayID, reg)
+	legacy := s.retainedClient(ctx, legacyKey)
+	if issued != "" {
+		if current != nil && current.ClientID == issued {
+			return current, slot, nil
+		}
+		if legacy != nil && legacy.ClientID == issued {
+			return legacy, legacyKey, nil
+		}
+		return nil, "", fmt.Errorf("%w: client %q", ErrNoRegisteredClient, issued)
+	}
+	if legacy != nil && (current == nil || legacy.ClientID != current.ClientID) {
+		return legacy, legacyKey, nil
+	}
+	return current, slot, nil
+}
+
+func (s *connectService) issuedOAuthClientID(ctx context.Context, gatewayID ids.GatewayID, subject string, reg *registrydomain.Registry) (string, error) {
+	if s == nil || s.vault == nil || subject == "" || reg == nil {
+		return "", nil
+	}
+	cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+	if errors.Is(err, vaultdomain.ErrNotFound) || cred == nil {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return cred.OAuthClientID, nil
+}
+
+type retainedClientReader interface {
+	GetClient(ctx context.Context, key string) (*RegisteredClient, error)
+}
+
+func (s *connectService) retainedClient(ctx context.Context, key string) *RegisteredClient {
+	if s == nil || key == "" {
+		return nil
+	}
+	reader, ok := s.store.(retainedClientReader)
+	if !ok {
+		return nil
+	}
+	client, err := reader.GetClient(ctx, key)
+	if err != nil || client == nil || client.ClientID == "" {
+		return nil
+	}
+	return client
 }
 
 func (s *connectService) legacyAuthorizeAccepted(slot string) bool {
