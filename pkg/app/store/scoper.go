@@ -30,7 +30,6 @@ import (
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
-	"github.com/google/uuid"
 )
 
 // InstallLister is the read side the CatalogScoper needs: what a principal has
@@ -62,24 +61,33 @@ type scoper struct {
 	// until that snapshot arrives. Nil leaves the snapshot as the only source.
 	catalog CatalogReader
 	now     func() time.Time
+	// snapshot reports whether the registry list is a live converge recent
+	// enough to bridge. Nil means there is no snapshot (the control plane's
+	// database, or a test) and a just-written install may still be served
+	// from the catalog.
+	snapshot SnapshotStandIn
 }
 
 // pendingShelfWindow is how long a just-written install may be served from the
 // catalog while its registry is still absent from the config snapshot. The lag
 // on dev is a few seconds (recompile debounce plus compile and push). Two
-// minutes leaves room for a slow compile and for the control-plane clock that
-// stamped UpdatedAt to sit ahead of this replica. Past the window an install
-// whose registry is still absent stays dormant, the same as a registry that
-// was deleted.
+// minutes leaves room for a slow compile and for the installing data plane's
+// clock to sit ahead of this replica. Past the window an install whose
+// registry is still absent stays dormant, the same as a registry that was
+// deleted.
 const pendingShelfWindow = 2 * time.Minute
 
 // pendingShelfSkew is how far UpdatedAt may sit in the future and still count
-// as just written. The control plane stamps it; this replica only reads it.
+// as just written. The data plane stamps it when it records the install
+// (installationForStatus); another replica only reads the row.
 const pendingShelfSkew = 30 * time.Second
 
-// pendingShelfNamespace keeps the stand-in registry id out of the uuid v5
-// space of anything else hashed the same way.
-var pendingShelfNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("trustgate.store.pending-shelf.v1"))
+// SnapshotStandIn reports whether the registry list just read may be bridged
+// from the catalog. maxAge is the stand-in window. False when that list is a
+// restored last-known-good snapshot or a live one older than maxAge: the
+// database may already hold the registry, including one an administrator
+// turned off, and a re-install must not bring it back.
+type SnapshotStandIn func(maxAge time.Duration) bool
 
 // ScoperOption tunes NewScoper.
 type ScoperOption func(*scoper)
@@ -95,6 +103,16 @@ func WithScoperModes(r ModeResolver) ScoperOption {
 // materialised. Without it the snapshot is the only registry source.
 func WithScoperCatalog(r CatalogReader) ScoperOption {
 	return func(s *scoper) { s.catalog = r }
+}
+
+// WithScoperSnapshot stops the stand-in when the registry list is stale or
+// restored from last-known-good. Without it the list is treated as current.
+func WithScoperSnapshot(allow SnapshotStandIn) ScoperOption {
+	return func(s *scoper) {
+		if allow != nil {
+			s.snapshot = allow
+		}
+	}
 }
 
 // withScoperClock overrides the clock the pending-shelf window is measured
@@ -344,17 +362,23 @@ func resolveInstance(
 // missing id stays dormant rather than being replaced by another instance.
 // A snapshot entry for the code, including one an administrator turned off,
 // is left alone. The stand-in is the same shape Ensure persists (URL,
-// transport, auth) with an id derived from the gateway and the code, so every
-// replica agrees for the whole window and a later snapshot registry replaces
-// it once instead of sitting beside it. A server that is not self-service is
-// skipped: its credential lives on the admin's registry, which the catalog
-// does not carry. A registry read that failed never reaches here.
+// transport, auth). Its id is the installation's, so every replica agrees and
+// audit's registry id joins the call to that row; a later snapshot registry
+// replaces it once instead of sitting beside it. A server that is not
+// self-service is skipped: its credential lives on the admin's registry, which
+// the catalog does not carry. A registry read that failed never reaches here.
 func (s *scoper) fillPendingShelves(
 	gatewayID ids.GatewayID,
 	active []*installationdomain.Installation,
 	byCode map[string][]*registrydomain.Registry,
 ) {
 	if s == nil || s.catalog == nil {
+		return
+	}
+	// A stale or last-known-good snapshot is missing registries the database
+	// already has. Serving the catalog then would override a later disable.
+	// Only a live snapshot younger than the window is the first-install lag.
+	if s.snapshot != nil && !s.snapshot(pendingShelfWindow) {
 		return
 	}
 	now := s.clock()
@@ -377,7 +401,14 @@ func (s *scoper) fillPendingShelves(
 		if err != nil {
 			continue
 		}
-		reg.ID = pendingShelfID(gatewayID, in.CatalogCode)
+		// The id audit already stores is the registry id. Using the install's
+		// id there joins the call to this row, and the catalog code joins that
+		// row to the real registry once the snapshot arrives. Origin marks the
+		// stand-in; it is not persisted.
+		reg.ID = ids.From[ids.RegistryKind](in.ID.UUID())
+		if reg.MCPTarget != nil {
+			reg.MCPTarget.Origin = registrydomain.MCPOriginPending
+		}
 		// Pin the timestamps to the install so discovery caches one entry for
 		// the window instead of a new one on every list.
 		reg.CreatedAt = in.UpdatedAt
@@ -402,15 +433,6 @@ func pendingShelfFresh(now, updated time.Time) bool {
 		return false
 	}
 	return !updated.Before(now.Add(-pendingShelfWindow))
-}
-
-// pendingShelfID is stable across replicas and requests for one gateway and
-// catalog code. The real registry id arrives with the snapshot and replaces
-// this one; tool names are taken from the code, so that hand-off does not
-// rename them.
-func pendingShelfID(gatewayID ids.GatewayID, code string) ids.RegistryID {
-	name := gatewayID.String() + "\x00" + code
-	return ids.From[ids.RegistryKind](uuid.NewSHA1(pendingShelfNamespace, []byte(name)))
 }
 
 // configuredRegistry is the single-instance exposure of an install that carries
