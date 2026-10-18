@@ -207,8 +207,10 @@ type MCPURLVariable struct {
 	// keeps it out of the model context (collected via the connect link, never as
 	// a chat argument).
 	Secret bool `json:"secret,omitempty"`
-	// In is where the placeholder sits: "" (a host or path segment, validated to a
-	// structure-safe charset) or "query" (a query-string value, percent-escaped).
+	// In is where the placeholder sits: "" or "path" (a host or path segment,
+	// validated to a structure-safe charset that may start with '-') or "query"
+	// (a query-string value, percent-escaped). Any other placement keeps the
+	// stricter charset, which rejects a leading '-'.
 	In string `json:"in,omitempty"`
 	// Options closes the value to a fixed set. Some servers differ only by a
 	// region or an edition whose hosts the vendor publishes — the answer is a
@@ -254,8 +256,11 @@ func (v MCPURLVariable) AllowsValue(val string) bool {
 	return false
 }
 
-// URLVariableIn values.
+// URLVariableIn values. Empty In is a host or path segment, the same placement
+// as URLVariableInPath. Query values are percent-escaped and do not use the
+// segment charset.
 const (
+	URLVariableInPath  = "path"
 	URLVariableInQuery = "query"
 )
 
