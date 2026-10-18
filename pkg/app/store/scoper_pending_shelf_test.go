@@ -21,6 +21,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -113,6 +114,7 @@ func TestScoperServesJustInstalledServerBeforeSnapshot(t *testing.T) {
 		indexedRegistries{},
 		nil,
 		WithScoperCatalog(pendingCatalog(deepWikiEntry())),
+		WithScoperSnapshot(func(time.Duration) bool { return true }),
 	)
 	if err != nil {
 		t.Fatalf("NewScoper: %v", err)
@@ -130,9 +132,12 @@ func TestScoperServesJustInstalledServerBeforeSnapshot(t *testing.T) {
 	if !reg.Enabled || reg.Name != "DeepWiki" {
 		t.Fatalf("pending shelf must be the catalog registry, got %+v", reg)
 	}
-	wantID := pendingShelfID(gw, "com.deepwiki/mcp")
+	wantID := ids.From[ids.RegistryKind](in.ID.UUID())
 	if reg.ID != wantID || second.Registries[0].ID != wantID {
-		t.Fatalf("pending shelf id must be stable across replicas, got %s then %s, want %s", reg.ID, second.Registries[0].ID, wantID)
+		t.Fatalf("stand-in id must be the install id, got %s then %s, want %s", reg.ID, second.Registries[0].ID, wantID)
+	}
+	if reg.MCPTarget.Origin != registrydomain.MCPOriginPending {
+		t.Fatalf("origin = %q, want the pending stand-in", reg.MCPTarget.Origin)
 	}
 	if !reg.UpdatedAt.Equal(in.UpdatedAt) {
 		t.Fatalf("pending shelf UpdatedAt = %s, want the install's %s", reg.UpdatedAt, in.UpdatedAt)
@@ -348,7 +353,53 @@ func TestScoperPendingShelfKeepsPerUserConfig(t *testing.T) {
 		t.Fatalf("config overlay = %+v", reg.MCPTarget.InstanceConfig)
 	}
 	// One instance keeps the shelf id; the overlay is what the dial reads.
-	if reg.ID != pendingShelfID(gw, "snowflake") || reg.InstanceOf != reg.ID {
-		t.Fatalf("id = %s InstanceOf = %s, want the pending shelf for both", reg.ID, reg.InstanceOf)
+	wantID := ids.From[ids.RegistryKind](in.ID.UUID())
+	if reg.ID != wantID || reg.InstanceOf != reg.ID {
+		t.Fatalf("id = %s InstanceOf = %s, want the install id for both", reg.ID, reg.InstanceOf)
+	}
+}
+
+// refuseCreator fails the test if Ensure tries to insert a registry that the
+// database already has.
+type refuseCreator struct{}
+
+func (refuseCreator) Create(context.Context, appregistry.CreateInput) (*registrydomain.Registry, error) {
+	return nil, errors.New("registry already present")
+}
+
+// The database already has the registry (an earlier install, or one an
+// administrator has since turned off). This replica's snapshot does not,
+// because it is stale or last-known-good, so the re-install looks local like
+// a first install. The stand-in must not come back over that disable.
+func TestReinstallWithRegistryAlreadyPresentDoesNotServeStandIn(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := shelfRegistry("github")
+	shelf.Enabled = false
+	db := &fakeRegistries{items: []*registrydomain.Registry{shelf}}
+	snapshot := &fakeRegistries{}
+	installs := &fakeInstalls{}
+	ensurer, err := NewRegistryEnsurer(testCatalog(), db, refuseCreator{})
+	if err != nil {
+		t.Fatalf("NewRegistryEnsurer: %v", err)
+	}
+	res, err := newInstallerWith(t, snapshot, installs, nil, ensurer).Install(withOpenPrincipal("ana"), openReq(gw, "github"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled || !res.RegistryID.IsNil() {
+		t.Fatalf("re-install must record an unbound installed row, got %+v", res)
+	}
+	installs.byPrincipal = installs.upserts
+
+	sc, err := NewScoper(installs, snapshot, nil,
+		WithScoperCatalog(testCatalog()),
+		WithScoperSnapshot(func(time.Duration) bool { return false }),
+	)
+	if err != nil {
+		t.Fatalf("NewScoper: %v", err)
+	}
+	scoped := scopePending(t, sc, gw, withOpenPrincipal("ana"))
+	if len(scoped.Registries) != 0 {
+		t.Fatalf("a stale snapshot must not revive the stand-in, got %+v", scoped.Registries)
 	}
 }
