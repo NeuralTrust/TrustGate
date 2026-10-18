@@ -27,6 +27,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -78,7 +79,29 @@ func (r *fixedRegistrar) CachedClient(context.Context, string) (*oauth.Registere
 
 func (r *fixedRegistrar) DropCachedClient(context.Context, string, string) error { return nil }
 
+type legacySuffixCatalog struct {
+	suffixes []string
+}
+
+func (c legacySuffixCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
+	if code != "com.snowflake/mcp" {
+		return catalogdomain.MCPServer{}, false
+	}
+	return catalogdomain.MCPServer{
+		Code: code,
+		URLVariables: []catalogdomain.MCPURLVariable{{
+			Name:       "account_url",
+			HostSuffix: c.suffixes,
+		}},
+	}, true
+}
+
 func templatedConnect(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar) oauth.ConnectService {
+	t.Helper()
+	return templatedConnectCatalog(t, reg, values, registrar, legacySuffixCatalog{})
+}
+
+func templatedConnectCatalog(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog legacySuffixCatalog) oauth.ConnectService {
 	t.Helper()
 	data := appconsumer.NewData(reg.GatewayID, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
@@ -94,7 +117,7 @@ func templatedConnect(t *testing.T, reg *registrydomain.Registry, values map[str
 		infraoauth.NewProviderClient(nil),
 		registrar,
 		discardConnectAuditor(),
-		nil, nil, nil, nil,
+		nil, nil, catalog, nil,
 		oauth.WithConnectURLValues(mapURLValues{"alice": values}),
 	)
 }
@@ -397,14 +420,14 @@ func TestConnectService_FixedServerResourceAndVaultKeyUnchanged(t *testing.T) {
 // must not be sent there.
 func TestConnectService_WholeHostPinnedSecretRefused(t *testing.T) {
 	t.Parallel()
-	reg := wholeHostManualRegistry(t, "", nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	reg := wholeHostManualRegistry(t, nil, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
 	assertWholeHostSecretStays(t, reg, map[string]string{"account_url": "evil.example"}, nil)
 }
 
 // A declared suffix is the bound a whole-host pin is allowed to use.
 func TestConnectService_WholeHostPinnedSecretAllowedBySuffix(t *testing.T) {
 	t.Parallel()
-	reg := wholeHostManualRegistry(t, "*.vendor.com", nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	reg := wholeHostManualRegistry(t, []string{"*.vendor.com"}, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
 	svc := templatedConnect(t, reg, map[string]string{"account_url": "acme.vendor.com"}, &fixedRegistrar{})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
@@ -420,6 +443,91 @@ func TestConnectService_WholeHostPinnedSecretAllowedBySuffix(t *testing.T) {
 	}
 }
 
+// A registry row written before host_suffix existed has an empty list. Connect
+// still allows a vendor host because the catalog code supplies the current
+// suffixes, and it does not write that list back onto the row.
+func TestConnectService_LegacyWholeHostUsesCatalogSuffix(t *testing.T) {
+	t.Parallel()
+	const host = "xy12345.us-west-2.privatelink.snowflakecomputing.com"
+	reg := wholeHostManualRegistry(t, nil, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	svc := templatedConnectCatalog(t, reg, map[string]string{"account_url": host}, &fixedRegistrar{}, legacySuffixCatalog{
+		suffixes: []string{"*.snowflakecomputing.com", "*.snowflakecomputing.cn"},
+	})
+
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.snowflake/mcp", ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://"+host+"/oauth/authorize?") {
+		t.Fatalf("redirect = %q, want the catalog suffix to allow the vendor host", location)
+	}
+	if len(reg.MCPTarget.URLVariables[0].HostSuffix) != 0 {
+		t.Fatalf("fallback wrote a suffix onto the stored registry: %+v", reg.MCPTarget.URLVariables[0].HostSuffix)
+	}
+
+	refreshCtx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	refreshed, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshed.TokenURL != "https://"+host+"/oauth/token" {
+		t.Fatalf("refresh token url = %q", refreshed.TokenURL)
+	}
+}
+
+// The same legacy row still refuses a host outside the catalog suffixes, and
+// the admin client secret is not posted there.
+func TestConnectService_LegacyWholeHostRefusesNonVendorHost(t *testing.T) {
+	t.Parallel()
+	var tokenHits int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse form: %v", err)
+		}
+		if r.Form.Get("client_secret") != "" {
+			t.Errorf("client secret was posted")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	reg := wholeHostManualRegistry(t, nil, nil, "", "")
+	registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
+		AuthorizationEndpoint: tokenSrv.URL + "/authorize",
+		TokenEndpoint:         tokenSrv.URL + "/token",
+	}}
+	values := map[string]string{"account_url": "evil.example"}
+	svc := templatedConnectCatalog(t, reg, values, registrar, legacySuffixCatalog{
+		suffixes: []string{"*.snowflakecomputing.com", "*.snowflakecomputing.cn"},
+	})
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	started, err := svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.snowflake/mcp", "")
+	if err == nil || started != nil {
+		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
+	}
+	if !errors.Is(err, oauth.ErrOAuthURLHost) {
+		t.Fatalf("err = %v, want host refusal", err)
+	}
+	if strings.Contains(err.Error(), "admin-secret") || strings.Contains(err.Error(), "evil.example") {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
+	}
+	refreshCtx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	if _, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg); !errors.Is(err, oauth.ErrOAuthURLHost) {
+		t.Fatalf("RefreshAuth err = %v, want host refusal", err)
+	}
+	if tokenHits != 0 {
+		t.Fatalf("token server was called %d times", tokenHits)
+	}
+}
+
 // A manual registry with no pinned token URL takes the token URL from metadata
 // discovered on the host the user typed. That host is not a bound.
 func TestConnectService_ManualWholeHostDiscoveredTokenRefused(t *testing.T) {
@@ -431,7 +539,7 @@ func TestConnectService_ManualWholeHostDiscoveredTokenRefused(t *testing.T) {
 	}))
 	t.Cleanup(tokenSrv.Close)
 
-	reg := wholeHostManualRegistry(t, "", nil, "", "")
+	reg := wholeHostManualRegistry(t, nil, nil, "", "")
 	registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
 		AuthorizationEndpoint: tokenSrv.URL + "/authorize",
 		TokenEndpoint:         tokenSrv.URL + "/token",
@@ -447,7 +555,7 @@ func TestConnectService_ManualWholeHostDiscoveredTokenRefused(t *testing.T) {
 func TestConnectService_ManualWholeHostDiscoveryAllowedWhenClosed(t *testing.T) {
 	t.Parallel()
 	const host = "mcp.vendor.com"
-	reg := wholeHostManualRegistry(t, "", []registrydomain.MCPURLVariableOption{{
+	reg := wholeHostManualRegistry(t, nil, []registrydomain.MCPURLVariableOption{{
 		Value: host, Label: "Vendor",
 	}}, "", "")
 	registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
@@ -533,7 +641,7 @@ func TestConnectService_PathAndQueryPlaceholdersStayAllowed(t *testing.T) {
 	}
 }
 
-func wholeHostManualRegistry(t *testing.T, suffix string, options []registrydomain.MCPURLVariableOption, authorize, token string) *registrydomain.Registry {
+func wholeHostManualRegistry(t *testing.T, suffix []string, options []registrydomain.MCPURLVariableOption, authorize, token string) *registrydomain.Registry {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "snowflake", "", &registrydomain.MCPTarget{

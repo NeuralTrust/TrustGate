@@ -91,7 +91,7 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 			Secret:      v.Secret,
 			In:          strings.TrimSpace(v.In),
 			Options:     registryURLVarOptions(v.Options),
-			HostSuffix:  strings.TrimSpace(v.HostSuffix),
+			HostSuffix:  cloneHostSuffixes(v.HostSuffix),
 		})
 	}
 	return out
@@ -101,6 +101,24 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 // registry. The set is what the install path validates a supplied value
 // against, so dropping it here would leave the choice enforceable only by the
 // UI that offered it.
+func cloneHostSuffixes(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, suffix := range in {
+		suffix = strings.TrimSpace(suffix)
+		if suffix == "" {
+			continue
+		}
+		out = append(out, suffix)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func registryURLVarOptions(options []catalogdomain.MCPURLVariableOption) []registrydomain.MCPURLVariableOption {
 	if len(options) == 0 {
 		return nil
