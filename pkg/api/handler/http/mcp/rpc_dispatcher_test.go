@@ -697,3 +697,49 @@ func TestHandler_ToolsCall_MaskedResultReachesClient(t *testing.T) {
 	// envelope every result carries.
 	assert.JSONEq(t, `{"content":[{"type":"text","text":"[REDACTED]"}],"resultType":"complete"}`, string(got))
 }
+
+// A tool result that carries structuredContent and no text item gains one text
+// block of that JSON. resultType stays on the envelope; it is not part of the
+// tool result the upstream sent.
+func TestHandler_ToolsCall_StructuredContentGainsText(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	expectToolCall(composer, "airtable_list_workspaces", json.RawMessage(
+		`{"content":[],"structuredContent":{"workspaces":[{"id":"wsp","name":"My First Workspace"}]}}`,
+	), nil)
+
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"airtable_list_workspaces"}}`)
+
+	require.Equal(t, fiber.StatusOK, status)
+	require.Nil(t, body["error"], "structured content must not fail the call: %v", body["error"])
+	got, err := json.Marshal(body["result"])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"content":[{"type":"text","text":"{\"workspaces\":[{\"id\":\"wsp\",\"name\":\"My First Workspace\"}]}"}],
+		"structuredContent":{"workspaces":[{"id":"wsp","name":"My First Workspace"}]},
+		"resultType":"complete"
+	}`, string(got))
+}
+
+// A result that already has a text item is relayed as the upstream sent it,
+// plus the envelope. The structured payload is not copied into a second block.
+func TestHandler_ToolsCall_ExistingTextUnchanged(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	expectToolCall(composer, "airtable_ping", json.RawMessage(
+		`{"content":[{"type":"text","text":"pong"}],"structuredContent":{"ok":true}}`,
+	), nil)
+
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"airtable_ping"}}`)
+
+	require.Equal(t, fiber.StatusOK, status)
+	got, err := json.Marshal(body["result"])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"content":[{"type":"text","text":"pong"}],
+		"structuredContent":{"ok":true},
+		"resultType":"complete"
+	}`, string(got))
+}

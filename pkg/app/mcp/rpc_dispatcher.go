@@ -272,7 +272,10 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	if post != nil && post.Result != nil {
 		result = post.Result
 	}
-	return result, nil
+	// Content-only clients read content, not structuredContent. The text is
+	// taken from structuredContent after response plugins, so a redaction of
+	// that object is what the text carries. isError is left as it arrived.
+	return withStructuredContentText(result), nil
 }
 
 // clientToolCallID reads the tool_call_id a caller volunteered in
