@@ -265,6 +265,11 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	if err != nil {
 		return nil, err
 	}
+	// The text block has to exist before response plugins run. TrustGuard
+	// inspects text blocks and the string values of structuredContent, not
+	// object keys, so a keys-only payload would otherwise reach the model
+	// as text no guard had seen. isError is left as it arrived.
+	result = withStructuredContentText(result)
 	post, err := d.plugins.PreResponse(ctx, req.consumer, call, result)
 	if err != nil {
 		return nil, err
