@@ -30,9 +30,11 @@ import (
 )
 
 type stubScopeCatalog struct {
-	code     string
-	scopes   []string
-	resource string
+	code         string
+	url          string
+	scopes       []string
+	resource     string
+	urlVariables []catalogdomain.MCPURLVariable
 }
 
 func (c stubScopeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
@@ -40,8 +42,10 @@ func (c stubScopeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool)
 		return catalogdomain.MCPServer{}, false
 	}
 	return catalogdomain.MCPServer{
-		Code:  c.code,
-		OAuth: &catalogdomain.MCPOAuth{Scopes: c.scopes, Resource: c.resource},
+		Code:         c.code,
+		URL:          c.url,
+		URLVariables: c.urlVariables,
+		OAuth:        &catalogdomain.MCPOAuth{Scopes: c.scopes, Resource: c.resource},
 	}, true
 }
 
@@ -87,7 +91,7 @@ func TestConnectService_AutoRegistrationAppliesCatalogScopes(t *testing.T) {
 		discardConnectAuditor(),
 		nil,
 		nil,
-		stubScopeCatalog{code: "com.vanta/mcp", scopes: []string{"mcp-api.all:write"}},
+		stubScopeCatalog{code: "com.vanta/mcp", url: upstream.URL + "/mcp", scopes: []string{"mcp-api.all:write"}},
 		nil,
 	)
 	ctx := context.Background()
@@ -157,7 +161,7 @@ func TestConnectService_AutoRegistrationAppliesCatalogResource(t *testing.T) {
 		discardConnectAuditor(),
 		nil,
 		nil,
-		stubScopeCatalog{code: "co.axiom/mcp", resource: upstream.URL},
+		stubScopeCatalog{code: "co.axiom/mcp", url: upstream.URL + "/mcp", resource: upstream.URL},
 		nil,
 	)
 	ctx := context.Background()
@@ -184,5 +188,277 @@ func TestConnectService_AutoRegistrationAppliesCatalogResource(t *testing.T) {
 	}
 	if refreshed.Resource != upstream.URL {
 		t.Fatalf("refresh resource = %q, want the catalog root resource", refreshed.Resource)
+	}
+}
+
+// An old self-hosted Cube row stores https://{cube_host}/api/mcp. The catalog
+// now names the hosted server and its resource. Connect and refresh must keep
+// the row's resource and scopes: the hosted resource is not that deployment's
+// audience, and the authorization server rejects it with invalid_target.
+func TestConnectService_SelfHostedCubeKeepsStoredResourceAndScopes(t *testing.T) {
+	t.Parallel()
+	const (
+		code            = "dev.cube/mcp"
+		template        = "https://{cube_host}/api/mcp"
+		resolved        = "https://self.cube.example/api/mcp"
+		storedScope     = "meta"
+		catalogScope    = "mcp-agent-access"
+		catalogResource = "https://cubecloud.dev/mcp"
+	)
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "cube", "", &registrydomain.MCPTarget{
+		Code:           code,
+		URL:            template,
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "cube_host", Required: true}},
+		InstanceConfig: map[string]string{"cube_host": "self.cube.example"},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     code,
+			Registration: registrydomain.RegistrationAuto,
+			Scopes:       []string{storedScope},
+			Resource:     template,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	registrar := &fixedRegistrar{
+		meta: &oauth.UpstreamAuthServer{
+			AuthorizationEndpoint: "https://self.cube.example/oauth/authorize",
+			TokenEndpoint:         "https://self.cube.example/oauth/token",
+			ScopesSupported:       []string{"discovered"},
+		},
+		client: &oauth.RegisteredClient{ClientID: "dcr-cube"},
+	}
+	svc := oauth.NewConnectService(
+		newMemConnectStore(),
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		registrar,
+		discardConnectAuditor(),
+		nil, nil,
+		stubScopeCatalog{
+			code:     code,
+			url:      "https://cubecloud.dev/mcp",
+			scopes:   []string{catalogScope},
+			resource: catalogResource,
+		},
+		nil,
+	)
+	ctx := context.Background()
+
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, code, ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, _ := url.Parse(location)
+	if got := u.Query().Get("scope"); got != storedScope {
+		t.Fatalf("scope = %q, want the stored scope %q", got, storedScope)
+	}
+	if got := u.Query().Get("resource"); got != resolved {
+		t.Fatalf("resource = %q, want the resolved stored resource %q", got, resolved)
+	}
+
+	refreshed, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if strings.Join(refreshed.Scopes, " ") != storedScope {
+		t.Fatalf("refresh scope = %q, want the stored scope", strings.Join(refreshed.Scopes, " "))
+	}
+	if refreshed.Resource != resolved {
+		t.Fatalf("refresh resource = %q, want the resolved stored resource", refreshed.Resource)
+	}
+}
+
+// A row whose URL is the catalog server URL still takes the catalog scopes and
+// resource. The hosted Cube entry is that case: connect and refresh must keep
+// applying mcp-agent-access and https://cubecloud.dev/mcp.
+func TestConnectService_MatchingCubeURLAppliesCatalogResourceAndScopes(t *testing.T) {
+	t.Parallel()
+	registrations := 0
+	var tokenForm url.Values
+	upstream := fakeSpecUpstream(t, &registrations, &tokenForm)
+
+	const (
+		code            = "dev.cube/mcp"
+		catalogScope    = "mcp-agent-access"
+		catalogResource = "https://cubecloud.dev/mcp"
+	)
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "cube-cloud", "", &registrydomain.MCPTarget{
+		URL:  upstream.URL + "/mcp",
+		Code: code,
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     code,
+			Registration: registrydomain.RegistrationAuto,
+			Scopes:       []string{"meta"},
+			Resource:     upstream.URL + "/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil, nil,
+		stubScopeCatalog{
+			code:     code,
+			url:      upstream.URL + "/mcp",
+			scopes:   []string{catalogScope},
+			resource: catalogResource,
+		},
+		nil,
+	)
+	ctx := context.Background()
+
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, code, ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, _ := url.Parse(location)
+	if got := u.Query().Get("scope"); got != catalogScope {
+		t.Fatalf("scope = %q, want the catalog scope %q", got, catalogScope)
+	}
+	if got := u.Query().Get("resource"); got != catalogResource {
+		t.Fatalf("resource = %q, want the catalog resource %q", got, catalogResource)
+	}
+
+	refreshed, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if strings.Join(refreshed.Scopes, " ") != catalogScope {
+		t.Fatalf("refresh scope = %q, want the catalog scope", strings.Join(refreshed.Scopes, " "))
+	}
+	if refreshed.Resource != catalogResource {
+		t.Fatalf("refresh resource = %q, want the catalog resource", refreshed.Resource)
+	}
+}
+
+// A catalog server URL that is itself a template matches after the row's
+// values fill it. Servers whose URL did not change (only the placeholder
+// spelling is shared) still receive the catalog scopes and resource.
+func TestConnectService_CatalogAppliesWhenTemplateResolvesToTheRowURL(t *testing.T) {
+	t.Parallel()
+	const (
+		code            = "com.vendor/mcp"
+		template        = "https://{host}/mcp"
+		resolved        = "https://mcp.vendor.example/mcp"
+		catalogScope    = "catalog-scope"
+		catalogResource = "https://mcp.vendor.example/audience"
+	)
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "vendor", "", &registrydomain.MCPTarget{
+		Code:           code,
+		URL:            template,
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "host", Required: true}},
+		InstanceConfig: map[string]string{"host": "mcp.vendor.example"},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     code,
+			Registration: registrydomain.RegistrationAuto,
+			Scopes:       []string{"stored-scope"},
+			Resource:     "https://old.example/audience",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	registrar := &fixedRegistrar{
+		meta: &oauth.UpstreamAuthServer{
+			AuthorizationEndpoint: "https://mcp.vendor.example/oauth/authorize",
+			TokenEndpoint:         "https://mcp.vendor.example/oauth/token",
+			ScopesSupported:       []string{"discovered"},
+		},
+		client: &oauth.RegisteredClient{ClientID: "dcr-vendor"},
+	}
+	svc := oauth.NewConnectService(
+		newMemConnectStore(),
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		registrar,
+		discardConnectAuditor(),
+		nil, nil,
+		stubScopeCatalog{
+			code:     code,
+			url:      template,
+			scopes:   []string{catalogScope},
+			resource: catalogResource,
+			urlVariables: []catalogdomain.MCPURLVariable{{
+				Name:     "host",
+				Required: true,
+			}},
+		},
+		nil,
+	)
+	ctx := context.Background()
+
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, code, ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(registrar.discovered) != 1 || registrar.discovered[0] != resolved {
+		t.Fatalf("discovered %v, want %s", registrar.discovered, resolved)
+	}
+	u, _ := url.Parse(location)
+	if got := u.Query().Get("scope"); got != catalogScope {
+		t.Fatalf("scope = %q, want the catalog scope %q", got, catalogScope)
+	}
+	if got := u.Query().Get("resource"); got != catalogResource {
+		t.Fatalf("resource = %q, want the catalog resource %q", got, catalogResource)
+	}
+
+	refreshed, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if strings.Join(refreshed.Scopes, " ") != catalogScope {
+		t.Fatalf("refresh scope = %q, want the catalog scope", strings.Join(refreshed.Scopes, " "))
+	}
+	if refreshed.Resource != catalogResource {
+		t.Fatalf("refresh resource = %q, want the catalog resource", refreshed.Resource)
 	}
 }
