@@ -25,9 +25,10 @@ import (
 // still sees the payload. Results that already contain a text item are returned
 // as they arrived.
 //
-// Callers run this on the result response plugins left behind. The text is that
-// structuredContent, so a redaction applied to the object is what the text
-// carries. isError is not read and not written: an error result stays an error.
+// Callers run this before response plugins. The block is then ordinary content
+// text, which those plugins already inspect and mask; object keys are not
+// string values, so they are invisible to that inspection until they appear
+// here. isError is not read and not written: an error result stays an error.
 func withStructuredContentText(result json.RawMessage) json.RawMessage {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(result, &fields); err != nil || fields == nil {
