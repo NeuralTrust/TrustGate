@@ -170,8 +170,10 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	}
 
 	as := strings.TrimSpace(prm.AuthorizationServers[0])
-	if !authorizationServerListed(as, prm.AuthorizationServers) {
-		return nil, fmt.Errorf("oauth dcr: authorization server is not listed by the protected resource")
+	// as is authorization_servers[0], so testing membership in that list cannot
+	// fail. Refuse a value that is not an http(s) URL before it is fetched.
+	if appoauth.NormalizeIssuerURL(as) == "" {
+		return nil, fmt.Errorf("oauth dcr: bad authorization server %q", as)
 	}
 	asu, err := url.Parse(as)
 	if err != nil || asu.Host == "" {
@@ -396,19 +398,6 @@ func registeredIssuer(meta *appoauth.UpstreamAuthServer) string {
 		return validated
 	}
 	return appoauth.NormalizeIssuerURL(meta.Issuer)
-}
-
-func authorizationServerListed(as string, listed []string) bool {
-	want := appoauth.NormalizeIssuerURL(as)
-	if want == "" {
-		return false
-	}
-	for _, item := range listed {
-		if appoauth.NormalizeIssuerURL(item) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func registrationExpired(cached *appoauth.RegisteredClient, now time.Time) bool {
