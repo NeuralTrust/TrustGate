@@ -474,6 +474,7 @@ type configureServiceParams struct {
 	Gateways   gatewaydomain.Repository       `optional:"true"`
 	Revoker    appstore.CredentialRevoker     `optional:"true"`
 	Logger     *slog.Logger                   `optional:"true"`
+	Config     *config.Config
 }
 
 func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {

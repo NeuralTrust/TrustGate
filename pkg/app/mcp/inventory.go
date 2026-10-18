@@ -122,9 +122,9 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 	if err != nil {
 		return nil, err
 	}
-	// Exposed names are resolved across every reachable server at once, from the
-	// full upstream list, so the inventory advertises the names tools/call
-	// accepts even when the toolkit hides a sibling.
+	// Exposed names are resolved across every reachable server at once. v2
+	// within-server spellings still see a hidden sibling, so the inventory
+	// advertises the name tools/call accepts. Cross-server suffixes do not.
 	resolved := assignExposedNames(surfaces)
 
 	store := rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer)

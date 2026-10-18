@@ -1707,10 +1707,8 @@ func TestComposer_V2NameReachesUpstreamAndPolicyApplies(t *testing.T) {
 	t.Parallel()
 	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
 	docs.MCPTarget.Code = "com.devexpress/docs"
-	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
 	clickup.MCPTarget.Code = "com.clickup/mcp"
-	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 
 	upDocs := &fakeUpstream{tools: tools("devexpress_docs_search", "devexpress_docs_get_content"), result: json.RawMessage(`{"content":[]}`)}
 	upClickup := &fakeUpstream{tools: tools("get_task"), result: json.RawMessage(`{"content":[]}`)}
@@ -1768,7 +1766,6 @@ func TestComposer_ToolkitChangeDoesNotRebindV2Name(t *testing.T) {
 	t.Parallel()
 	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
 	clickup.MCPTarget.Code = "com.clickup/mcp"
-	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	up := &fakeUpstream{tools: tools("get_task", "clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://clickup.example/mcp": up,
@@ -1827,7 +1824,6 @@ func TestComposer_UpstreamSiblingRebindsV2Name(t *testing.T) {
 	t.Parallel()
 	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
 	clickup.MCPTarget.Code = "com.clickup/mcp"
-	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	up := &fakeUpstream{tools: tools("clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://clickup.example/mcp": up,
@@ -1878,7 +1874,6 @@ func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
 	t.Parallel()
 	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
 	docs.MCPTarget.Code = "com.devexpress/docs"
-	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://devexpress.example/mcp": {prompts: prompts("devexpress_docs_search")},
 	}})
@@ -1888,5 +1883,98 @@ func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "devexpress_docs_devexpress_docs_search" {
 		t.Fatalf("prompts = %v, want the original doubled spelling", got)
+	}
+}
+
+// Cross-server collision suffixes count published tools only. A tool the
+// toolkit does not expose does not change the published name. Calling a
+// spelling that is not published is unknown, not denied.
+func TestComposer_UnpublishedToolDoesNotSuffixAPublishedName(t *testing.T) {
+	t.Parallel()
+	assertHiddenCrossServerToolDoesNotSuffix(t)
+}
+
+func assertHiddenCrossServerToolDoesNotSuffix(t *testing.T) {
+	t.Helper()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	googleUp := &fakeUpstream{tools: tools("drive_list")}
+	driveUp := &fakeUpstream{tools: tools("list"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: drive.ID, Tool: "list"},
+		}},
+	}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "google_drive_list" {
+		t.Fatalf("tools = %v, want [google_drive_list]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "google_drive_list", nil); err != nil {
+		t.Fatalf("calling google_drive_list: %v", err)
+	}
+	if driveUp.lastCall != "list" {
+		t.Fatalf("upstream = %q, want list", driveUp.lastCall)
+	}
+	if googleUp.lastCall != "" {
+		t.Fatalf("hidden upstream was called with %q", googleUp.lastCall)
+	}
+	for _, reg := range []*registrydomain.Registry{google, drive} {
+		suffix := disambiguateCollision("google_drive_list", reg)
+		_, err := c.Resolve(context.Background(), rc, suffix)
+		var denied *ToolNotPermittedError
+		if errors.As(err, &denied) {
+			t.Fatalf("suffix %q: denied, want unknown", suffix)
+		}
+		if !errors.Is(err, ErrToolNotFound) {
+			t.Fatalf("suffix %q: %v, want unknown", suffix, err)
+		}
+	}
+}
+
+// Renaming find to search used to skip collision handling and publish a second
+// notion_search next to the tool that already had that name. tools/call then
+// could not choose either. The rename goes through resolveNames: both copies
+// take this registry's digest, and that shared suffix is withheld.
+func TestComposer_RenamedNameGoesThroughCollision(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	up := &fakeUpstream{tools: tools("find", "search", "pages"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "find", ExposeAs: "search"},
+			{RegistryID: notion.ID, Tool: "search"},
+			{RegistryID: notion.ID, Tool: "pages"},
+		}},
+	}, notion)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 1 || names[0] != "notion_pages" {
+		t.Fatalf("tools = %v, want [notion_pages]: the colliding rename is withheld, pages is not", names)
+	}
+	if _, err := c.Resolve(context.Background(), rc, "notion_search"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("Resolve notion_search = %v, want unknown", err)
+	}
+	if up.lastCall != "" {
+		t.Fatalf("upstream was called with %q", up.lastCall)
 	}
 }
