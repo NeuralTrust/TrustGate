@@ -815,6 +815,220 @@ func TestComposer_Resolve_FailClosedIgnoresUnrelatedUpstream(t *testing.T) {
 	}
 }
 
+// google's drive_list and google_drive's list spell the same exposed name.
+// The longer prefix used to own it, so a call of the tool google is serving
+// came back as google_drive's consent and minted google_drive a ticket.
+func TestComposer_Resolve_OverlappingSlugServesTheOwner(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	googleUp := &fakeUpstream{tools: tools("drive_list", "search"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  {tools: tools("list", "files")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://drive.example/mcp": &ConsentRequiredError{
+			Provider: "com.google_drive/mcp", Ticket: "drive-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 || names[0] != "google_drive_list" || names[1] != "google_search" {
+		t.Fatalf("tools = %v, want [google_drive_list google_search]", names)
+	}
+	mintedAfterList := len(creds.mintedURLs())
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "google_drive_list", nil); err != nil {
+		t.Fatalf("calling google's drive_list: %v", err)
+	}
+	if googleUp.lastCall != "drive_list" {
+		t.Fatalf("upstream call = %q, want drive_list", googleUp.lastCall)
+	}
+	if minted := creds.mintedURLs(); len(minted) != mintedAfterList {
+		t.Fatalf("resolve minted %v, want no new ticket", minted)
+	}
+}
+
+// The overlapping name is google_drive's tool when google does not serve it.
+// That server's consent, ticket included, is still the answer.
+func TestComposer_Resolve_OverlappingSlugConsentsTheUnservedOwner(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": {tools: tools("search")},
+		"https://drive.example/mcp":  {tools: tools("list")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://drive.example/mcp": &ConsentRequiredError{
+			Provider: "com.google_drive/mcp", Ticket: "drive-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, google, drive)
+
+	_, err := c.Resolve(context.Background(), rc, "google_drive_list")
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want Google Drive's consent", err)
+	}
+	if consent.Provider != "com.google_drive/mcp" || consent.Ticket != "drive-tk" {
+		t.Fatalf("consent = %+v, want Google Drive's ticket", consent)
+	}
+	if minted := creds.mintedURLs(); len(minted) != 1 || minted[0] != drive.MCPTarget.URL {
+		t.Fatalf("minted = %v, want only Google Drive", minted)
+	}
+}
+
+// When both servers really serve the shared spelling, list and call qualify
+// just those names. The tools that do not collide keep the names they had.
+func TestComposer_Resolve_OverlappingSlugDisambiguatesWhenBothServe(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	googleUp := &fakeUpstream{tools: tools("drive_list", "search"), result: json.RawMessage(`{"content":[]}`)}
+	driveUp := &fakeUpstream{tools: tools("list", "files"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	wantPlain := map[string]string{
+		"google_search":      "search",
+		"google_drive_files": "files",
+	}
+	var colliding []string
+	for _, name := range names {
+		if _, plain := wantPlain[name]; plain {
+			delete(wantPlain, name)
+			continue
+		}
+		colliding = append(colliding, name)
+	}
+	if len(wantPlain) != 0 {
+		t.Fatalf("tools = %v, missing %v", names, wantPlain)
+	}
+	if len(colliding) != 2 {
+		t.Fatalf("colliding names = %v, want the two overlapping tools", colliding)
+	}
+	for _, name := range colliding {
+		if !strings.HasPrefix(name, "google_drive_list_") || len(name) > 64 {
+			t.Fatalf("colliding name = %q, want a short suffix on google_drive_list", name)
+		}
+	}
+	if colliding[0] == colliding[1] {
+		t.Fatalf("both tools exposed as %q", colliding[0])
+	}
+
+	called := map[string]string{}
+	for _, name := range colliding {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve %q: %v", name, err)
+		}
+		if _, err := c.Invoke(context.Background(), rc, target, nil); err != nil {
+			t.Fatalf("Invoke %q: %v", name, err)
+		}
+		called[target.Registry.Name] = target.Tool.Name
+	}
+	if called["Google"] != "drive_list" || called["Google Drive"] != "list" {
+		t.Fatalf("calls = %v, want Google/drive_list and Google Drive/list", called)
+	}
+	if googleUp.lastCall != "drive_list" || driveUp.lastCall != "list" {
+		t.Fatalf("upstream calls = %q and %q", googleUp.lastCall, driveUp.lastCall)
+	}
+}
+
+// A slug of 55+ characters used to be sliced, so the prefix match missed and
+// every tool on that server was an unknown tool. List and call share the hash
+// of the slug instead. A tool that still fits keeps the slug.
+func TestComposer_Resolve_OverlongSlugStaysCallable(t *testing.T) {
+	t.Parallel()
+	slug := strings.Repeat("a", 55)
+	reg := mcpRegistry(t, "Long", "https://long.example/mcp")
+	reg.MCPTarget.Code = "com." + slug + "/mcp"
+	longTool := strings.Repeat("b", 20) + "_work"
+	up := &fakeUpstream{tools: tools(longTool, "ping"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://long.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 {
+		t.Fatalf("tools = %v, want the long tool and ping", names)
+	}
+	prefix := hashedSlug(slug) + "_"
+	var hashed, plain string
+	for _, name := range names {
+		switch {
+		case name == slug+"_ping":
+			plain = name
+		case strings.HasPrefix(name, prefix) && !strings.HasPrefix(name, slug):
+			hashed = name
+		default:
+			t.Fatalf("name = %q, want either %s_ping or %s…", name, slug, prefix)
+		}
+	}
+	if hashed == "" || plain == "" {
+		t.Fatalf("tools = %v, want one hashed name and one unchanged short name", names)
+	}
+	if len(hashed) > 64 {
+		t.Fatalf("hashed name length = %d, want at most 64", len(hashed))
+	}
+
+	called := map[string]string{}
+	for _, name := range []string{hashed, plain} {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve %q: %v", name, err)
+		}
+		if target.Registry != reg {
+			t.Fatalf("Resolve %q registry = %s, want Long", name, target.Registry.Name)
+		}
+		if _, err := c.Invoke(context.Background(), rc, target, nil); err != nil {
+			t.Fatalf("Invoke %q: %v", name, err)
+		}
+		called[name] = target.Tool.Name
+	}
+	if called[hashed] != longTool || called[plain] != "ping" {
+		t.Fatalf("calls = %v, want the hashed name to be %s and the short name to be ping", called, longTool)
+	}
+	if up.lastCall != "ping" {
+		t.Fatalf("last upstream call = %q, want ping", up.lastCall)
+	}
+}
+
 // Invoke dials the registry the target names and calls the tool by its native
 // name, whatever the exposed name was: a rewritten name can never reroute.
 func TestComposer_Invoke_UsesResolvedTarget(t *testing.T) {
