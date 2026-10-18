@@ -73,6 +73,10 @@ message Installation {
   string decision = 13;
   string decided_by = 14;
   int64 decided_at_unix = 15;
+  // naming_version is the tool-naming rules this install was created under.
+  // Zero is the original spelling (a row that predates the field). New installs
+  // send 2. A repeat upsert must not change the stored value.
+  int32 naming_version = 16;
 }
 
 message UpsertInstallationRequest {
