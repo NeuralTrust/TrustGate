@@ -205,20 +205,29 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 }
 
 func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
+	now := time.Now()
 	cached, cacheErr := r.clients.GetClient(ctx, key)
-	if cacheErr == nil && cached != nil && cached.RedirectURI == redirectURI && r.clientNameMatches(cached) {
+	if cacheErr == nil && cached != nil && r.clientReusable(cached, meta, redirectURI, now) {
 		return cached, nil
 	}
-	// A client is already registered but for a different redirect URI or under a
-	// different name. Replacing it is deliberate, and it invalidates every
+	// A client is already registered but no longer usable here: the redirect URI
+	// or client name changed, the authorization server differs, or the
+	// registration expired. Replacing it is deliberate, and it invalidates every
 	// refresh token the old client holds, so say so rather than losing those
 	// grants silently.
 	replacing := cacheErr == nil && cached != nil
 	if replacing {
+		newIssuer, newEndpoint := "", ""
+		if meta != nil {
+			newIssuer, newEndpoint = meta.Issuer, meta.RegistrationEndpoint
+		}
 		slog.Warn("oauth dcr: re-registering upstream client because its redirect URI or client name changed; grants held by the previous client can no longer be refreshed",
 			"key", key,
 			"old_redirect_uri", cached.RedirectURI, "new_redirect_uri", redirectURI,
-			"old_client_name", cached.ClientName, "new_client_name", r.clientName)
+			"old_client_name", cached.ClientName, "new_client_name", r.clientName,
+			"old_issuer", cached.Issuer, "new_issuer", newIssuer,
+			"old_registration_endpoint", cached.RegistrationEndpoint, "new_registration_endpoint", newEndpoint,
+			"registration_expired", registrationExpired(cached, now))
 	}
 	if meta.RegistrationEndpoint == "" {
 		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", appoauth.ErrUpstreamNotDiscoverable)
@@ -257,17 +266,21 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		return nil, fmt.Errorf("%w (status %d)", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode)
 	}
 	var doc struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
+		ClientID              string `json:"client_id"`
+		ClientSecret          string `json:"client_secret"`
+		ClientSecretExpiresAt int64  `json:"client_secret_expires_at"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil || doc.ClientID == "" {
 		return nil, fmt.Errorf("oauth dcr: registration response has no client_id")
 	}
 	client := &appoauth.RegisteredClient{
-		ClientID:     doc.ClientID,
-		ClientSecret: doc.ClientSecret,
-		RedirectURI:  redirectURI,
-		ClientName:   r.clientName,
+		ClientID:              doc.ClientID,
+		ClientSecret:          doc.ClientSecret,
+		RedirectURI:           redirectURI,
+		ClientName:            r.clientName,
+		Issuer:                meta.Issuer,
+		RegistrationEndpoint:  meta.RegistrationEndpoint,
+		ClientSecretExpiresAt: doc.ClientSecretExpiresAt,
 	}
 	if replacing {
 		if err := r.clients.SaveClient(ctx, key, *client); err != nil {
@@ -292,7 +305,60 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 }
 
 func (r *upstreamRegistrar) CachedClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
-	return r.clients.GetClient(ctx, key)
+	cached, err := r.clients.GetClient(ctx, key)
+	if err != nil || cached == nil || registrationExpired(cached, time.Now()) {
+		return nil, err
+	}
+	return cached, nil
+}
+
+// rejectedRegistrationExpiry is a client_secret_expires_at in the past. Dropping
+// a client stamps this on the stored row so the next EnsureClient takes the
+// replacing path (and its warning) instead of deleting the slot and racing a
+// fresh claim.
+const rejectedRegistrationExpiry int64 = 1
+
+// DropCachedClient marks the cached client expired. Callers that only read the
+// cache (refresh, credential usability) then see no client; the next
+// EnsureClient still finds the row and replaces it.
+func (r *upstreamRegistrar) DropCachedClient(ctx context.Context, key string) error {
+	cached, err := r.clients.GetClient(ctx, key)
+	if err != nil || cached == nil {
+		return err
+	}
+	cached.ClientSecretExpiresAt = rejectedRegistrationExpiry
+	return r.clients.SaveClient(ctx, key, *cached)
+}
+
+func (r *upstreamRegistrar) clientReusable(cached *appoauth.RegisteredClient, meta *appoauth.UpstreamAuthServer, redirectURI string, now time.Time) bool {
+	return cached.RedirectURI == redirectURI &&
+		r.clientNameMatches(cached) &&
+		authorizationServerMatches(cached, meta) &&
+		!registrationExpired(cached, now)
+}
+
+// authorizationServerMatches reports whether a cached registration was minted
+// for this authorization server. A field left empty was stored before the
+// binding existed and is not a mismatch: treating it as one would re-register
+// every existing client and strand its refresh tokens.
+func authorizationServerMatches(cached *appoauth.RegisteredClient, meta *appoauth.UpstreamAuthServer) bool {
+	if meta == nil {
+		return true
+	}
+	if cached.Issuer != "" && cached.Issuer != meta.Issuer {
+		return false
+	}
+	if cached.RegistrationEndpoint != "" && cached.RegistrationEndpoint != meta.RegistrationEndpoint {
+		return false
+	}
+	return true
+}
+
+func registrationExpired(cached *appoauth.RegisteredClient, now time.Time) bool {
+	if cached == nil || cached.ClientSecretExpiresAt <= 0 {
+		return false
+	}
+	return !now.Before(time.Unix(cached.ClientSecretExpiresAt, 0))
 }
 
 func (r *upstreamRegistrar) getJSON(ctx context.Context, rawurl string, out any) error {

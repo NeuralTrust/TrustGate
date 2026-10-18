@@ -19,6 +19,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -60,6 +61,26 @@ func (e *InvalidGrantError) Error() string { return ErrInvalidGrant.Error() }
 // Unwrap identifies the failure as ErrInvalidGrant.
 func (e *InvalidGrantError) Unwrap() error { return ErrInvalidGrant }
 
+// ErrInvalidClient is returned when a token endpoint rejects the client
+// itself (invalid_client or unauthorized_client), as opposed to the grant.
+var ErrInvalidClient = errors.New("oauth provider: client is not recognized")
+
+// InvalidClientError preserves the provider's client-rejection code while
+// supporting errors.Is.
+type InvalidClientError struct {
+	Code        string
+	Description string
+}
+
+// Error returns the token failure with the provider's client-rejection code.
+// The description is already capped and stripped of control characters.
+func (e *InvalidClientError) Error() string {
+	return "oauth provider: token exchange failed (" + e.Code + "): " + e.Description
+}
+
+// Unwrap identifies the failure as ErrInvalidClient.
+func (e *InvalidClientError) Unwrap() error { return ErrInvalidClient }
+
 type UpstreamAuthServer struct {
 	Issuer                string `json:"issuer"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
@@ -80,6 +101,15 @@ type RegisteredClient struct {
 	// ClientName is the client_name the client was registered with. Empty on
 	// rows written before the name became configurable (the default name).
 	ClientName string `json:"client_name,omitempty"`
+	// Issuer is the authorization server this client was registered with.
+	// Empty on rows written before the server was recorded.
+	Issuer string `json:"issuer,omitempty"`
+	// RegistrationEndpoint is the dynamic-registration URL this client was
+	// registered at. Empty on rows written before it was recorded.
+	RegistrationEndpoint string `json:"registration_endpoint,omitempty"`
+	// ClientSecretExpiresAt is the RFC 7591 client_secret_expires_at, in
+	// seconds since the epoch. Zero means the registration does not expire.
+	ClientSecretExpiresAt int64 `json:"client_secret_expires_at,omitempty"`
 }
 
 type ClientStore interface {
@@ -99,4 +129,14 @@ type UpstreamRegistrar interface {
 	Discover(ctx context.Context, upstreamURL string) (*UpstreamAuthServer, error)
 	EnsureClient(ctx context.Context, key string, meta *UpstreamAuthServer, redirectURI string) (*RegisteredClient, error)
 	CachedClient(ctx context.Context, key string) (*RegisteredClient, error)
+	// DropCachedClient marks a cached dynamic client unusable so the next
+	// EnsureClient replaces it. The stored row is kept, so that replacement
+	// overwrites it (and logs) instead of opening a fresh registration race.
+	DropCachedClient(ctx context.Context, key string) error
+}
+
+// RegisteredClientDropper forgets a dynamic client the authorization server
+// rejected. ConnectService implements it.
+type RegisteredClientDropper interface {
+	DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) error
 }

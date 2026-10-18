@@ -314,6 +314,29 @@ func (r *credentialResolver) Refresh(
 	return nil
 }
 
+func (r *credentialResolver) forgetRejectedDynamicClient(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	reg *registrydomain.Registry,
+	cause error,
+) {
+	if r == nil || r.connect == nil || !errors.Is(cause, appoauth.ErrInvalidClient) {
+		return
+	}
+	auth := reg.ForwardedAuth()
+	if auth == nil || auth.Registration != registrydomain.RegistrationAuto {
+		return
+	}
+	dropper, ok := r.connect.(appoauth.RegisteredClientDropper)
+	if !ok {
+		return
+	}
+	if err := dropper.DropRegisteredClient(ctx, gatewayID, reg); err != nil {
+		r.logger.Warn("mcp credentials: failed to drop a dynamic client the authorization server rejected",
+			"error", err, "gateway_id", gatewayID.String(), "provider", auth.Provider)
+	}
+}
+
 func (r *credentialResolver) refreshCredential(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
@@ -382,6 +405,7 @@ func (r *credentialResolver) refreshCredential(
 		}
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
 		if err != nil {
+			r.forgetRejectedDynamicClient(ctx, gatewayID, reg, err)
 			// Providers that rotate refresh tokens (Notion, and OAuth 2.1 in
 			// general) invalidate the previous one on every refresh, and
 			// singleflight only dedupes within this process. A sibling replica

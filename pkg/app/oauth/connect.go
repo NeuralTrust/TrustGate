@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -32,7 +33,10 @@ import (
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
-var _ ConnectService = (*connectService)(nil)
+var (
+	_ ConnectService          = (*connectService)(nil)
+	_ RegisteredClientDropper = (*connectService)(nil)
+)
 
 // registryLister finds a gateway's registries so the connect flow can attach the
 // installed registry a Store-scoped ticket points at (the synthetic Store
@@ -531,6 +535,9 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return "", oauthErr("invalid_request", "unknown or expired state")
 	}
 	if errCode != "" {
+		if authorizationServerRejectedClient(errCode, errDesc) {
+			s.dropRejectedDynamicClient(ctx, st)
+		}
 		return st.TicketID, oauthErr(errCode, errDesc)
 	}
 	gatewayID, data, rc, err := s.routable(ctx, &st.Ticket)
@@ -550,6 +557,9 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	}
 	token, err := s.provider.ExchangeCode(ctx, cfg, code, connectCallbackURL(baseURL, provider), st.Verifier)
 	if err != nil {
+		if errors.Is(err, ErrInvalidClient) {
+			s.rejectDynamicClient(ctx, gatewayID, reg)
+		}
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
@@ -567,6 +577,60 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		s.auditor.ProviderLinked(ctx, identity, cfg.Provider)
 	}
 	return st.TicketID, nil
+}
+
+func authorizationServerRejectedClient(errCode, errDesc string) bool {
+	switch errCode {
+	case "invalid_client", "unauthorized_client":
+		return true
+	case "invalid_request":
+		return mentionsRegisteredClient(errDesc)
+	default:
+		return false
+	}
+}
+
+func mentionsRegisteredClient(desc string) bool {
+	d := strings.ToLower(desc)
+	for _, needle := range []string{
+		"client_id",
+		"client id",
+		"unrecognized client",
+		"invalid client",
+		"unknown client",
+		"redirect_uri",
+		"redirect uri",
+		"redirect_url",
+		"redirect url",
+	} {
+		if strings.Contains(d, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *connectService) dropRejectedDynamicClient(ctx context.Context, st *ConnectState) {
+	if s == nil || st == nil {
+		return
+	}
+	gatewayID, data, rc, err := s.routable(ctx, &st.Ticket)
+	if err != nil || !connectProviderAllowed(&st.Ticket, data, rc, st.Provider) {
+		return
+	}
+	reg := connectRegistry(data.EffectiveRegistries(rc), st.Provider, st.Instance, st.Ticket.InstanceID)
+	s.rejectDynamicClient(ctx, gatewayID, reg)
+}
+
+func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto {
+		return
+	}
+	if err := s.DropRegisteredClient(ctx, gatewayID, reg); err != nil {
+		slog.Warn("oauth connect: failed to drop a dynamic client the authorization server rejected",
+			"error", err, "provider", cfg.Provider, "gateway_id", gatewayID.String())
+	}
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, instanceID string) error {
