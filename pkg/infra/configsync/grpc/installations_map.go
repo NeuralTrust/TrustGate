@@ -45,7 +45,7 @@ func installationToProto(in *installationdomain.Installation) *snapshotpb.Instal
 		RequesterGroups: append([]string(nil), in.RequesterGroups...),
 		Decision:        string(in.Decision),
 		DecidedBy:       in.DecidedBy,
-		NamingVersion:   int32(in.NamingVersion),
+		NamingVersion:   in.NamingVersion,
 	}
 	if !in.DecidedAt.IsZero() {
 		msg.DecidedAtUnix = in.DecidedAt.Unix()
@@ -113,7 +113,7 @@ func installationFromProto(msg *snapshotpb.Installation) (*installationdomain.In
 		Reason:        msg.GetReason(),
 		Decision:      installationdomain.Decision(msg.GetDecision()),
 		DecidedBy:     msg.GetDecidedBy(),
-		NamingVersion: int(msg.GetNamingVersion()),
+		NamingVersion: msg.GetNamingVersion(),
 	}
 	if groups := msg.GetRequesterGroups(); len(groups) > 0 {
 		out.RequesterGroups = append([]string(nil), groups...)
