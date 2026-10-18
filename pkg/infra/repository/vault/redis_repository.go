@@ -108,18 +108,24 @@ func (r *redisRepository) AcquireRefreshLock(
 }
 
 type storedCredential struct {
-	ID            ids.VaultID   `json:"id"`
-	GatewayID     ids.GatewayID `json:"gateway_id"`
-	PrincipalSub  string        `json:"principal_sub"`
-	Provider      string        `json:"provider"`
-	AccountRef    string        `json:"account_ref"`
-	OAuthClientID string        `json:"oauth_client_id,omitempty"`
-	AccessToken   string        `json:"access_token"`
-	RefreshToken  string        `json:"refresh_token"`
-	Scopes        []string      `json:"scopes"`
-	ExpiresAt     *time.Time    `json:"expires_at"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
+	ID           ids.VaultID   `json:"id"`
+	GatewayID    ids.GatewayID `json:"gateway_id"`
+	PrincipalSub string        `json:"principal_sub"`
+	Provider     string        `json:"provider"`
+	AccountRef   string        `json:"account_ref"`
+	// OAuthClientID is the dynamic client the grant was issued to. Empty means
+	// it was issued before the id was stored. A gateway replica that predates
+	// this field drops it when it re-marshals the JSON. That absence must not
+	// grow a fallback that picks a different client: refresh keeps the client
+	// the slot already selected. Every replica has to run this version before
+	// a redirect_uri swap can retain a legacy client (ENG-2190).
+	OAuthClientID string     `json:"oauth_client_id,omitempty"`
+	AccessToken   string     `json:"access_token"`
+	RefreshToken  string     `json:"refresh_token"`
+	Scopes        []string   `json:"scopes"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 func (s *storedCredential) matches(gatewayID ids.GatewayID, principalSub, provider string) bool {

@@ -32,7 +32,7 @@ func init() {
 
 // upAddVaultOAuthClientID adds an empty column. Existing rows are not updated:
 // an empty oauth_client_id means the grant was issued before the client was
-// recorded, and refresh keeps the legacy registration for that grant.
+// recorded. Refresh does not guess a registration from that absence.
 func upAddVaultOAuthClientID(ctx context.Context, tx pgx.Tx) error {
 	const ddl = llmStoreLockTimeout + `
 		ALTER TABLE vault_credentials ADD COLUMN IF NOT EXISTS oauth_client_id TEXT NOT NULL DEFAULT '';`
