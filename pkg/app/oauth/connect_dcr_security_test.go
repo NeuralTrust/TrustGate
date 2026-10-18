@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -102,6 +103,7 @@ func newHostServer(t *testing.T, host, tokenError string) *hostServer {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"client_id":                host + "-client-" + strconv.FormatInt(n, 10),
+			"client_secret":            host + "-secret",
 			"client_secret_expires_at": time.Now().Add(time.Hour).Unix(),
 		})
 	})
@@ -298,13 +300,14 @@ func TestConnectService_CallbackExchangesTheClientItStartedWith(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"client_id":                "client-" + strconv.FormatInt(n, 10),
+			"client_secret":            "secret-" + strconv.FormatInt(n, 10),
 			"client_secret_expires_at": time.Now().Add(time.Hour).Unix(),
 		})
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		form, _ := url.ParseQuery(string(body))
-		tokenClient.Store(form.Get("client_id"))
+		tokenClient.Store(form.Get("client_id") + " " + form.Get("client_secret"))
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"error": "invalid_client", "error_description": "unrecognized client_id",
@@ -353,24 +356,109 @@ func TestConnectService_CallbackExchangesTheClientItStartedWith(t *testing.T) {
 	if err != nil || pending == nil || pending.ClientID != "client-1" {
 		t.Fatalf("stored client = %+v, err %v, want client-1", pending, err)
 	}
-	for key, client := range store.clients {
-		client.ClientID = "client-2"
-		store.clients[key] = client
+	rawState, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if strings.Contains(string(rawState), "client_secret") || strings.Contains(string(rawState), "secret-1") {
+		t.Fatalf("connect state holds the client secret: %s", rawState)
 	}
 
 	_, err = svc.Callback(ctx, "https://gw.example.com", "linear", query.Get("state"), "the-code", "", "")
 	if !errors.Is(err, oauth.ErrInvalidClient) {
 		t.Fatalf("error = %v, want ErrInvalidClient", err)
 	}
-	if got := tokenClient.Load(); got != "client-1" {
-		t.Fatalf("token client_id = %v, want the client the flow started with", got)
+	if got := tokenClient.Load(); got != "client-1 secret-1" {
+		t.Fatalf("token client = %v, want the stored id and the secret re-read from the cache", got)
 	}
 	if registrations.Load() != 1 {
 		t.Fatalf("registrations = %d, want no registration on the callback", registrations.Load())
 	}
+}
+
+func TestConnectService_CallbackFailsClosedWhenStoredClientIsGone(t *testing.T) {
+	t.Parallel()
+	var tokenCalls atomic.Int64
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srvURL + "/mcp",
+			"authorization_servers": []string{srvURL},
+			"scopes_supported":      []string{"read"},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 srvURL,
+			"authorization_endpoint": srvURL + "/authorize",
+			"token_endpoint":         srvURL + "/token",
+			"registration_endpoint":  srvURL + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"client_id": "client-1", "client_secret": "secret-1",
+			"client_secret_expires_at": time.Now().Add(time.Hour).Unix(),
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		tokenCalls.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", &registrydomain.MCPTarget{
+		URL: srv.URL + "/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode: registrydomain.MCPAuthModeForwarded, Provider: "linear",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store, &memVaultRepo{}, &stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(), nil, nil, nil, nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	for key, client := range store.clients {
+		client.ClientID = "client-2"
+		client.ClientSecret = "secret-2"
+		store.clients[key] = client
+	}
+	_, err = svc.Callback(ctx, "https://gw.example.com", "linear", mustQuery(t, location).Get("state"), "the-code", "", "")
+	if !errors.Is(err, oauth.ErrNoRegisteredClient) {
+		t.Fatalf("error = %v, want ErrNoRegisteredClient", err)
+	}
+	if tokenCalls.Load() != 0 {
+		t.Fatal("the token endpoint was called without the client the code was minted for")
+	}
 	stored := soleClient(t, store)
-	if stored.ClientID != "client-2" || stored.ClientSecretExpiresAt <= time.Now().Unix() {
-		t.Fatalf("cached client = %+v, want client-2 left in place", stored)
+	if stored.ClientID != "client-2" || stored.ClientSecret != "secret-2" || stored.ClientSecretExpiresAt <= time.Now().Unix() {
+		t.Fatalf("cached client = %+v, want the replacement left in place", stored)
 	}
 }
 
@@ -525,9 +613,10 @@ func TestConnectService_LegacyClientKeyStaysReadableForItsIssuer(t *testing.T) {
 	}
 }
 
-func TestConnectService_UnboundLegacyClientIsNotReregistered(t *testing.T) {
+func TestConnectService_TemplatedHostDoesNotReuseOrDropUnboundLegacy(t *testing.T) {
 	t.Parallel()
 	good := newHostServer(t, "good.example", "")
+	evil := newHostServer(t, "evil.example", "invalid_client")
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
 	store := newMemConnectStore()
@@ -539,20 +628,201 @@ func TestConnectService_UnboundLegacyClientIsNotReregistered(t *testing.T) {
 	}
 	svc := connectWithHosts(t, gw, reg, store, map[string]*httptest.Server{
 		"good.example": good.server,
-	}, principalURLValues{"alice": {"host": "good.example"}})
+		"evil.example": evil.server,
+	}, principalURLValues{
+		"alice":   {"host": "good.example"},
+		"mallory": {"host": "evil.example"},
+	})
 	ctx := context.Background()
-	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	base := "https://gw.example.com"
+
+	aliceTicket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("alice ticket: %v", err)
+	}
+	aliceURL, err := startLocation(svc.Start(ctx, base, base, aliceTicket, "linear", ""))
+	if err != nil {
+		t.Fatalf("alice Start: %v", err)
+	}
+	if got := mustQuery(t, aliceURL).Get("client_id"); got == "legacy-client" || good.registrations.Load() != 1 {
+		t.Fatalf("alice client = %q, registrations = %d, want a scoped registration", got, good.registrations.Load())
+	}
+	if store.clients[legacy].ClientID != "legacy-client" {
+		t.Fatal("the templated host rewrote the unbound legacy row")
+	}
+
+	malloryTicket, err := svc.CreateTicket(ctx, gw, "mallory", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("mallory ticket: %v", err)
+	}
+	malloryURL, err := startLocation(svc.Start(ctx, base, base, malloryTicket, "linear", ""))
+	if err != nil {
+		t.Fatalf("mallory Start: %v", err)
+	}
+	_, err = svc.Callback(ctx, base, "linear", mustQuery(t, malloryURL).Get("state"), "the-code", "", "")
+	if !errors.Is(err, oauth.ErrInvalidClient) {
+		t.Fatalf("mallory callback: %v", err)
+	}
+	if store.clients[legacy].ClientID != "legacy-client" || store.clients[legacy].ClientSecretExpiresAt != 0 {
+		t.Fatalf("legacy row = %+v, want it untouched by the templated host's rejection", store.clients[legacy])
+	}
+}
+
+func TestConnectService_FixedHostReusesUnboundLegacyClient(t *testing.T) {
+	t.Parallel()
+	var registrations atomic.Int64
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource": srvURL + "/mcp", "authorization_servers": []string{srvURL},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": srvURL, "authorization_endpoint": srvURL + "/authorize",
+			"token_endpoint": srvURL + "/token", "registration_endpoint": srvURL + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		registrations.Add(1)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "new-client"})
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", &registrydomain.MCPTarget{
+		URL: srv.URL + "/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode: registrydomain.MCPAuthModeForwarded, Provider: "linear",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	store := newMemConnectStore()
+	legacy := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
+	store.clients[legacy] = oauth.RegisteredClient{
+		ClientID: "legacy-client", RedirectURI: "https://gw.example.com/oauth/callback/linear",
+		ClientName: infraoauth.DefaultClientName,
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	svc := oauth.NewConnectService(
+		store, &memVaultRepo{}, &stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(), nil, nil, nil, nil,
+	)
+	ticket, err := svc.CreateTicket(context.Background(), gw, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("ticket: %v", err)
 	}
-	location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", ""))
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "linear", ""))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if got := mustQuery(t, location).Get("client_id"); got != "legacy-client" || good.registrations.Load() != 0 {
-		t.Fatalf("client_id = %q, registrations = %d, want the unbound legacy client", got, good.registrations.Load())
+	if got := mustQuery(t, location).Get("client_id"); got != "legacy-client" || registrations.Load() != 0 {
+		t.Fatalf("client_id = %q, registrations = %d, want the unbound legacy client", got, registrations.Load())
 	}
-	if store.clients[legacy].ClientID != "legacy-client" {
-		t.Fatal("the legacy row was replaced")
+}
+
+func TestNormalizeIssuerURL(t *testing.T) {
+	t.Parallel()
+	if got := oauth.NormalizeIssuerURL("HTTPS://Example.COM:443/tenant/"); got != "https://example.com/tenant" {
+		t.Fatalf("normalized = %q", got)
 	}
+	if !oauth.IssuerMatchesAuthorizationServer("HTTPS://Example.COM:443/", "https://example.com") {
+		t.Fatal("case, default port and trailing slash must match")
+	}
+	if oauth.IssuerMatchesAuthorizationServer("https://attacker.example", "https://example.com") {
+		t.Fatal("a different host matched")
+	}
+}
+
+func TestConnectService_SpoofedIssuerDoesNotReceiveTheOtherHostsSecret(t *testing.T) {
+	t.Parallel()
+	good := newHostServer(t, "good.example", "")
+	var evilSecret atomic.Value
+	evilSecret.Store("")
+	evilMux := http.NewServeMux()
+	evilMux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              "https://evil.example/mcp",
+			"authorization_servers": []string{"https://evil.example"},
+		})
+	})
+	evilMux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 "https://good.example",
+			"authorization_endpoint": "https://evil.example/authorize",
+			"token_endpoint":         "https://evil.example/token",
+			"registration_endpoint":  "https://good.example/register",
+		})
+	})
+	evilMux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		evilSecret.Store(r.Form.Get("client_secret"))
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	evilMux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		evilSecret.Store(string(body))
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "evil-client", "client_secret": "evil-secret"})
+	})
+	evil := httptest.NewServer(evilMux)
+	t.Cleanup(evil.Close)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg := templatedRegistry(t, gw)
+	store := newMemConnectStore()
+	svc := connectWithHosts(t, gw, reg, store, map[string]*httptest.Server{
+		"good.example": good.server,
+		"evil.example": evil,
+	}, principalURLValues{
+		"alice":   {"host": "good.example"},
+		"mallory": {"host": "evil.example"},
+	})
+	ctx := context.Background()
+	base := "https://gw.example.com"
+	aliceTicket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("alice ticket: %v", err)
+	}
+	if _, err := startLocation(svc.Start(ctx, base, base, aliceTicket, "linear", "")); err != nil {
+		t.Fatalf("alice Start: %v", err)
+	}
+	var aliceSecret string
+	for _, client := range store.clients {
+		aliceSecret = client.ClientSecret
+	}
+	if aliceSecret == "" {
+		t.Fatal("alice's client has no secret to protect")
+	}
+
+	malloryTicket, err := svc.CreateTicket(ctx, gw, "mallory", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("mallory ticket: %v", err)
+	}
+	if _, err := svc.Start(ctx, base, base, malloryTicket, "linear", ""); err == nil {
+		t.Fatal("mallory's spoofed issuer was accepted")
+	}
+	if got := evilSecret.Load().(string); got != "" && strings.Contains(got, aliceSecret) {
+		t.Fatalf("evil received alice's secret: %q", got)
+	}
+	for _, client := range store.clients {
+		if client.ClientSecret == aliceSecret && (client.ClientSecretExpiresAt <= 0 || client.ClientSecretExpiresAt > time.Now().Unix()) {
+			return
+		}
+	}
+	t.Fatal("alice's client was tombstoned by the spoofed issuer")
 }

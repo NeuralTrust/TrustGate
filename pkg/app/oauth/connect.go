@@ -453,7 +453,6 @@ func (s *connectService) Start(
 	}
 	if forwarded := forwardedAuth(reg); forwarded != nil && forwarded.Registration == registrydomain.RegistrationAuto {
 		connectState.ClientID = cfg.ClientID
-		connectState.ClientSecret = cfg.ClientSecret
 	}
 	if err := s.store.SaveConnect(ctx, state, connectState); err != nil {
 		return nil, err
@@ -553,7 +552,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.exchangeAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg, st.ClientID, st.ClientSecret)
+	cfg, err := s.exchangeAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg, st.ClientID)
 	if err != nil {
 		return st.TicketID, err
 	}

@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
@@ -47,7 +48,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	slot, err := s.clientSlot(ctx, gatewayID, reg, meta)
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ func (s *connectService) exchangeAuth(
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
-	clientID, clientSecret string,
+	clientID string,
 ) (*registrydomain.MCPAuth, error) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil {
@@ -80,21 +81,18 @@ func (s *connectService) exchangeAuth(
 	if err != nil {
 		return nil, err
 	}
-	used := &RegisteredClient{ClientID: clientID, ClientSecret: clientSecret}
-	if clientSecret == "" {
-		slot, slotErr := s.clientSlot(ctx, gatewayID, reg, meta)
-		if slotErr != nil {
-			return nil, slotErr
-		}
-		cached, cacheErr := s.registrar.CachedClient(ctx, slot)
-		if cacheErr != nil {
-			return nil, cacheErr
-		}
-		if cached != nil && cached.ClientID == clientID {
-			used = cached
-		}
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, err
 	}
-	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, used)), nil
+	cached, err := s.registrar.CachedClient(ctx, slot)
+	if err != nil {
+		return nil, err
+	}
+	if cached == nil || cached.ClientID != clientID {
+		return nil, fmt.Errorf("%w: client %q", ErrNoRegisteredClient, clientID)
+	}
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -122,7 +120,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if err != nil {
 		return nil, err
 	}
-	slot, err := s.clientSlot(ctx, gatewayID, reg, meta)
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -276,26 +274,68 @@ func clientCacheKey(gatewayID ids.GatewayID, reg *registrydomain.Registry, meta 
 }
 
 func authorizationServerID(meta *UpstreamAuthServer) string {
-	identity := ""
-	if meta != nil {
-		identity = strings.TrimSpace(meta.Issuer)
-		if identity == "" {
-			identity = strings.TrimSpace(meta.RegistrationEndpoint)
-		}
-		if identity == "" {
-			identity = strings.TrimSpace(meta.AuthorizationEndpoint)
-		}
-	}
-	sum := sha256.Sum256([]byte(identity))
+	sum := sha256.Sum256([]byte(ValidatedIssuer(meta)))
 	return hex.EncodeToString(sum[:])
 }
 
-// clientSlot is the cache key a dynamic client is read and written under.
-// A live client on the issuer-scoped key wins. Otherwise a row still stored
-// under the legacy key is used when it was registered for this authorization
-// server — including a row that records no server, which predates the binding
-// and would strand every existing grant if it were treated as a mismatch.
-func (s *connectService) clientSlot(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, meta *UpstreamAuthServer) (string, error) {
+// NormalizeIssuerURL is the issuer identifier form used for RFC 8414 comparison
+// and for the dynamic-client cache key: lowercase scheme and host, default port
+// removed, trailing slash removed. An unparseable value returns "".
+func NormalizeIssuerURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https", "http":
+	default:
+		return ""
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	if port := parsed.Port(); port != "" {
+		defaultPort := (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80")
+		if !defaultPort {
+			host = host + ":" + port
+		}
+	}
+	parsed.Host = host
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String()
+}
+
+// IssuerMatchesAuthorizationServer reports whether the issuer a metadata
+// document declared is the authorization server URL that document was fetched
+// for (RFC 8414 §3.3). Comparison uses NormalizeIssuerURL.
+func IssuerMatchesAuthorizationServer(claimed, fetched string) bool {
+	want := NormalizeIssuerURL(fetched)
+	return want != "" && NormalizeIssuerURL(claimed) == want
+}
+
+// ValidatedIssuer is the authorization-server URL Discover accepted. It is the
+// fetched URL, not the issuer string the document claimed. Empty when Discover
+// has not accepted the server.
+func ValidatedIssuer(meta *UpstreamAuthServer) string {
+	if meta == nil {
+		return ""
+	}
+	return NormalizeIssuerURL(meta.ValidatedIssuer)
+}
+
+// ClientSlot is the cache key a dynamic client is read and written under.
+// A live client on the validated-server key wins. A row still stored under the
+// legacy key is used when it was registered for this server. A row that records
+// no server is used only for a fixed-host registry; a templated host registers
+// its own client instead of sharing that row.
+func (s *connectService) ClientSlot(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, meta *UpstreamAuthServer) (string, error) {
+	if ValidatedIssuer(meta) == "" {
+		return "", fmt.Errorf("oauth dcr: authorization server was not validated")
+	}
 	scoped := clientCacheKey(gatewayID, reg, meta)
 	client, err := s.registrar.CachedClient(ctx, scoped)
 	if err != nil || client != nil {
@@ -306,20 +346,25 @@ func (s *connectService) clientSlot(ctx context.Context, gatewayID ids.GatewayID
 	if err != nil {
 		return scoped, err
 	}
-	if legacyRegistrationFor(old, meta) {
+	if legacyRegistrationFor(old, meta, reg) {
 		return legacy, nil
 	}
 	return scoped, nil
 }
 
 // legacyRegistrationFor reports whether a client stored under the legacy key
-// belongs to this authorization server. An issuer or registration endpoint
-// left empty was stored before the binding existed and is not a mismatch.
-func legacyRegistrationFor(cached *RegisteredClient, meta *UpstreamAuthServer) bool {
+// belongs to this authorization server. An issuer left empty was stored before
+// the binding existed. That row stays readable for a fixed host. A templated
+// host does not reuse it: the template resolves to more than one server.
+func legacyRegistrationFor(cached *RegisteredClient, meta *UpstreamAuthServer, reg *registrydomain.Registry) bool {
 	if cached == nil || meta == nil {
 		return false
 	}
-	if cached.Issuer != "" && cached.Issuer != meta.Issuer {
+	if cached.Issuer == "" {
+		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
+			return false
+		}
+	} else if NormalizeIssuerURL(cached.Issuer) != ValidatedIssuer(meta) {
 		return false
 	}
 	if cached.RegistrationEndpoint != "" && cached.RegistrationEndpoint != meta.RegistrationEndpoint {
@@ -329,9 +374,9 @@ func legacyRegistrationFor(cached *RegisteredClient, meta *UpstreamAuthServer) b
 }
 
 // DropRegisteredClient marks the cached dynamic client the token endpoint
-// rejected unusable, when that client_id is still the one stored. The
-// issuer-scoped key and the legacy key are both considered; a row for a
-// different client is left alone.
+// rejected unusable, when that client_id is still the one stored. A templated
+// host drops only its own server's key. A fixed host may also drop the legacy
+// key. A row for a different client is left alone.
 func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID string) error {
 	if s == nil || s.registrar == nil || reg == nil || clientID == "" {
 		return nil
@@ -340,17 +385,19 @@ func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids
 	if p := identity.PrincipalFromContext(ctx); p != nil {
 		principalSub = p.Subject
 	}
-	var dropErr error
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
-		dropErr = err
-	} else if err := s.registrar.DropCachedClient(ctx, clientCacheKey(gatewayID, reg, meta), clientID); err != nil {
-		dropErr = err
+		return err
 	}
-	if err := s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg), clientID); err != nil && dropErr == nil {
-		dropErr = err
+	if err := s.registrar.DropCachedClient(ctx, clientCacheKey(gatewayID, reg, meta), clientID); err != nil {
+		return err
 	}
-	return dropErr
+	// A templated host must not tombstone the legacy row. That row is the
+	// fixed-host client, and this host's metadata was not its authorization server.
+	if reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
+		return nil
+	}
+	return s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg), clientID)
 }
 
 // CredentialUsable reports whether a credential stored for this registry can
@@ -390,7 +437,7 @@ func (s *connectService) credentialUsable(
 	if err != nil {
 		return true, err
 	}
-	slot, err := s.clientSlot(ctx, gatewayID, reg, meta)
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
 	if err != nil {
 		return true, err
 	}
