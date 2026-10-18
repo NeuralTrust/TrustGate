@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -65,6 +66,12 @@ type connectService struct {
 	// clients names the app a ticket's minter works in; nil names none.
 	clients GatewayClientReader
 	now     func() time.Time
+	// authorizeAccepted remembers a legacy authorize probe the server accepted.
+	// A healthy row is not probed again until that entry expires. The map is
+	// process-local: a restart probes once more, and nothing is written to the
+	// client row (ENG-2190, ENG-2189).
+	authorizeAccepted   map[string]time.Time
+	authorizeAcceptedMu sync.Mutex
 }
 
 // GatewayClientReader reads an OAuth client the gateway registered. FlowStore
@@ -108,6 +115,16 @@ func WithConnectHandoff(h ConnectHandoff) ConnectOption {
 	return func(s *connectService) { s.handoff = h }
 }
 
+// WithConnectClock overrides the clock connect uses for the legacy authorize
+// acceptance cache. Production leaves it unset.
+func WithConnectClock(now func() time.Time) ConnectOption {
+	return func(s *connectService) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 type authCatalog interface {
 	GetByCode(code string) (catalogdomain.MCPServer, bool)
 }
@@ -126,17 +143,18 @@ func NewConnectService(
 	opts ...ConnectOption,
 ) ConnectService {
 	s := &connectService{
-		store:       store,
-		vault:       vault,
-		consumers:   consumers,
-		provider:    provider,
-		registrar:   registrar,
-		auditor:     auditor,
-		sharedOAuth: sharedOAuth,
-		userinfo:    userinfo,
-		catalog:     catalog,
-		registries:  registries,
-		now:         time.Now,
+		store:             store,
+		vault:             vault,
+		consumers:         consumers,
+		provider:          provider,
+		registrar:         registrar,
+		auditor:           auditor,
+		sharedOAuth:       sharedOAuth,
+		userinfo:          userinfo,
+		catalog:           catalog,
+		registries:        registries,
+		now:               time.Now,
+		authorizeAccepted: map[string]time.Time{},
 	}
 	for _, opt := range opts {
 		if opt != nil {

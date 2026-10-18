@@ -414,15 +414,12 @@ const (
 
 // PreflightAuthorize GETs rawURL once, through the same guarded client
 // discovery uses, and returns that response without following a redirect.
-// allowedHost is the catalog authorize host for this server. Any other host
-// is refused before a dial.
-func (r *upstreamRegistrar) PreflightAuthorize(ctx context.Context, rawURL, allowedHost string) (appoauth.AuthorizePreflight, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Hostname() == "" || !authorizePreflightScheme(parsed.Scheme) {
+// allowedAuthorizeURL is the catalog authorize URL. The request must be https
+// and share that URL's scheme, host, and port. Anything else is refused
+// before a dial.
+func (r *upstreamRegistrar) PreflightAuthorize(ctx context.Context, rawURL, allowedAuthorizeURL string) (appoauth.AuthorizePreflight, error) {
+	if !appoauth.AuthorizeEndpointAllowed(rawURL, allowedAuthorizeURL) {
 		return appoauth.AuthorizePreflight{}, fmt.Errorf("oauth dcr: authorize preflight url is not allowed")
-	}
-	if allowedHost == "" || !strings.EqualFold(parsed.Hostname(), allowedHost) {
-		return appoauth.AuthorizePreflight{}, fmt.Errorf("oauth dcr: authorize preflight host is not allowed")
 	}
 	ctx, cancel := context.WithTimeout(ctx, authorizePreflightTimeout)
 	defer cancel()
@@ -448,15 +445,6 @@ func (r *upstreamRegistrar) PreflightAuthorize(ctx context.Context, rawURL, allo
 		Location: res.Header.Get("Location"),
 		Body:     string(raw),
 	}, nil
-}
-
-func authorizePreflightScheme(scheme string) bool {
-	switch strings.ToLower(scheme) {
-	case "https", "http":
-		return true
-	default:
-		return false
-	}
 }
 
 func refuseAuthorizeRedirect(*http.Request, []*http.Request) error {

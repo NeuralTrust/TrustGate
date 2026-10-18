@@ -508,6 +508,25 @@ func TestConnectStart_RejectedRegistrationIsBadGateway(t *testing.T) {
 	}
 }
 
+func TestConnectStart_RedirectURIRejectionLeavesAClearError(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{startErr: appoauth.ErrLegacyAuthorizeRedirectRejected}
+	h := newTestConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Post(ConnectStartPath, h.Start)
+	res, err := app.Test(ownPagePost("/oauth/connect/com.example/mcp?ticket=abc"))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "rejected the redirect URI") || !strings.Contains(string(body), "Existing connections were left in place") {
+		t.Fatalf("body does not explain the failure: %s", body)
+	}
+}
+
 // An upstream that refuses the sign-in redirects back with a bare RFC 6749 code
 // (Axiom sends error=invalid_target and nothing else). The page has to say what
 // happened and what to do, not echo the code on its own.

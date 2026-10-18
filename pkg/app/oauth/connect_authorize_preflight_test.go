@@ -136,7 +136,7 @@ func newLegacyGateway(t *testing.T, catalogURL string, withIssuer bool, authoriz
 		g.otherHits.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	})
-	g.srv = httptest.NewServer(mux)
+	g.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(g.srv.Close)
 
 	g.gw = ids.New[ids.GatewayKind]()
@@ -171,7 +171,7 @@ func newLegacyGateway(t *testing.T, catalogURL string, withIssuer bool, authoriz
 	if catalogURL != "" {
 		catalog = authorizeCatalog{code: legacyCode, url: catalogURL}
 	}
-	g.registrar = infraoauth.NewUpstreamRegistrar(g.store, nil)
+	g.registrar = infraoauth.NewUpstreamRegistrar(g.store, g.srv.Client())
 	data := appconsumer.NewData(g.gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID: ids.New[ids.ConsumerKind](), GatewayID: g.gw,
@@ -237,6 +237,16 @@ func rejectRedirectRequest(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func rejectInvalidClient(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_client"})
+}
+
+func rejectUnauthorizedClient(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": "unauthorized_client"})
+}
+
 func TestLegacyAuthorizePreflight_RejectionReplacesOnlyThatSlot(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -244,15 +254,10 @@ func TestLegacyAuthorizePreflight_RejectionReplacesOnlyThatSlot(t *testing.T) {
 		authorize http.HandlerFunc
 	}{
 		{name: "unrecognized client_id", authorize: rejectUnrecognized},
-		{name: "invalid_redirect_uri", authorize: rejectRedirectURI},
-		{name: "invalid_request redirect_uri", authorize: rejectRedirectRequest},
-		{name: "same origin redirect", authorize: func(w http.ResponseWriter, r *http.Request) {
-			loc := url.URL{Scheme: "http", Host: r.Host, Path: "/error"}
-			q := loc.Query()
-			q.Set("error", "invalid_request")
-			q.Set("error_description", "The redirect_uri parameter does not match")
-			loc.RawQuery = q.Encode()
-			w.Header().Set("Location", loc.String())
+		{name: "invalid_client", authorize: rejectInvalidClient},
+		{name: "unauthorized_client", authorize: rejectUnauthorizedClient},
+		{name: "same origin invalid_client", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", "/error?error=invalid_client&error_description=Unrecognized+client_id")
 			w.WriteHeader(http.StatusFound)
 		}},
 	}
@@ -318,7 +323,7 @@ func TestLegacyAuthorizePreflight_RejectionReplacesOnlyThatSlot(t *testing.T) {
 	}
 }
 
-func relinkCatalog(t *testing.T, g *legacyGateway, authorizeURL string) oauth.ConnectService {
+func relinkCatalog(t *testing.T, g *legacyGateway, authorizeURL string, opts ...oauth.ConnectOption) oauth.ConnectService {
 	t.Helper()
 	data := appconsumer.NewData(g.gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
@@ -331,6 +336,7 @@ func relinkCatalog(t *testing.T, g *legacyGateway, authorizeURL string) oauth.Co
 		g.store, &memVaultRepo{}, &stubDataFinder{data: data},
 		infraoauth.NewProviderClient(nil), g.registrar,
 		discardConnectAuditor(), nil, nil, authorizeCatalog{code: legacyCode, url: authorizeURL}, nil,
+		opts...,
 	)
 }
 
@@ -361,6 +367,26 @@ func TestLegacyAuthorizePreflight_AcceptanceOrAmbiguousKeepsTheSlot(t *testing.T
 		}},
 		{name: "upstream 500", authorize: func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
+		}},
+		{name: "403 html", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, "<html><body>Request blocked by WAF</body></html>")
+		}},
+		{name: "404 html unknown client", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, "<html><body>unknown client</body></html>")
+		}},
+		{name: "429 unknown client", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"invalid_client","message":"unknown client"}`)
+		}},
+		{name: "400 html unknown client", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, "<html><body>unknown client invalid_client</body></html>")
 		}},
 		{name: "timeout", timeout: true, authorize: func(w http.ResponseWriter, r *http.Request) {
 			select {
@@ -561,11 +587,151 @@ func TestLegacyAuthorizePreflight_RegistrationFailureStaysTheExistingError(t *te
 		t.Fatalf("authorize hits = %d, want one probe", g.authorizeHits.Load())
 	}
 	legacy := g.store.clients[g.legacyKey]
-	if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 1 {
-		t.Fatalf("legacy row = %+v, want it tombstoned", legacy)
+	if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 0 || legacy.Issuer != "" {
+		t.Fatalf("legacy row = %+v, want it untouched", legacy)
 	}
 	if _, ok := scopedOrNone(g); ok {
 		t.Fatal("a failed replacement was stored")
+	}
+}
+
+func TestLegacyAuthorizePreflight_RedirectURIIsNotReplaced(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		authorize http.HandlerFunc
+	}{
+		{name: "invalid_redirect_uri", authorize: rejectRedirectURI},
+		{name: "invalid_request redirect_uri", authorize: rejectRedirectRequest},
+		{name: "same origin redirect_uri", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", "/error?error=invalid_request&error_description=The+redirect_uri+parameter+does+not+match")
+			w.WriteHeader(http.StatusFound)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newLegacyGateway(t, "", false, tc.authorize)
+			g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize")
+			_, err := g.start(context.Background())
+			if !errors.Is(err, oauth.ErrLegacyAuthorizeRedirectRejected) {
+				t.Fatalf("Start error = %v, want the redirect URI rejection", err)
+			}
+			if g.authorizeHits.Load() != 1 || g.otherHits.Load() != 0 || g.registrations.Load() != 0 {
+				t.Fatalf("authorize = %d followed = %d registrations = %d, want one probe and no replacement", g.authorizeHits.Load(), g.otherHits.Load(), g.registrations.Load())
+			}
+			legacy := g.store.clients[g.legacyKey]
+			if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 0 || legacy.Issuer != "" {
+				t.Fatalf("legacy row = %+v, want it untouched", legacy)
+			}
+			if other := g.store.clients["other-slot"]; other.ClientID != "other-client" || other.ClientSecretExpiresAt != 0 {
+				t.Fatalf("other slot = %+v, want it untouched", other)
+			}
+			if _, ok := scopedOrNone(g); ok {
+				t.Fatal("a scoped client was registered")
+			}
+		})
+	}
+}
+
+func TestLegacyAuthorizePreflight_InsecureCatalogIsNotRequested(t *testing.T) {
+	t.Parallel()
+	g := newLegacyGateway(t, "", false, rejectUnrecognized)
+	parsed, err := url.Parse(g.srv.URL)
+	if err != nil {
+		t.Fatalf("server url: %v", err)
+	}
+	g.svc = relinkCatalog(t, g, "http://"+parsed.Host+"/authorize")
+	location, err := g.start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if g.authorizeHits.Load() != 0 || g.registrations.Load() != 0 {
+		t.Fatalf("authorize = %d registrations = %d, want no request", g.authorizeHits.Load(), g.registrations.Load())
+	}
+	if mustQuery(t, location).Get("client_id") != legacyClientID {
+		t.Fatalf("client_id = %q, want the cached client", mustQuery(t, location).Get("client_id"))
+	}
+}
+
+func TestLegacyAuthorizePreflight_WrongPortIsNotRequested(t *testing.T) {
+	t.Parallel()
+	g := newLegacyGateway(t, "", false, rejectUnrecognized)
+	parsed, err := url.Parse(g.srv.URL)
+	if err != nil {
+		t.Fatalf("server url: %v", err)
+	}
+	g.svc = relinkCatalog(t, g, "https://"+parsed.Hostname()+":1/authorize")
+	location, err := g.start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if g.authorizeHits.Load() != 0 || g.registrations.Load() != 0 {
+		t.Fatalf("authorize = %d registrations = %d, want no request", g.authorizeHits.Load(), g.registrations.Load())
+	}
+	if mustQuery(t, location).Get("client_id") != legacyClientID {
+		t.Fatalf("client_id = %q, want the cached client", mustQuery(t, location).Get("client_id"))
+	}
+}
+
+func TestLegacyAuthorizePreflight_AcceptedResultIsNotProbedAgainUntilTTL(t *testing.T) {
+	t.Parallel()
+	g := newLegacyGateway(t, "", false, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "/login")
+		w.WriteHeader(http.StatusFound)
+	})
+	current := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize", oauth.WithConnectClock(func() time.Time { return current }))
+	ctx := context.Background()
+	for range 2 {
+		location, err := g.start(ctx)
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if mustQuery(t, location).Get("client_id") != legacyClientID {
+			t.Fatalf("client_id = %q, want the cached client", mustQuery(t, location).Get("client_id"))
+		}
+	}
+	if g.authorizeHits.Load() != 1 || g.registrations.Load() != 0 {
+		t.Fatalf("authorize = %d registrations = %d, want one accepted probe", g.authorizeHits.Load(), g.registrations.Load())
+	}
+	current = current.Add(time.Hour + time.Second)
+	if _, err := g.start(ctx); err != nil {
+		t.Fatalf("Start after TTL: %v", err)
+	}
+	if g.authorizeHits.Load() != 2 {
+		t.Fatalf("authorize = %d, want a fresh probe after the acceptance expired", g.authorizeHits.Load())
+	}
+	legacy := g.store.clients[g.legacyKey]
+	if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 0 {
+		t.Fatalf("legacy row = %+v, want it untouched", legacy)
+	}
+}
+
+func TestLegacyAuthorizePreflight_AmbiguousResultIsProbedAgain(t *testing.T) {
+	t.Parallel()
+	g := newLegacyGateway(t, "", false, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, "<html><body>unknown client</body></html>")
+	})
+	g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize")
+	ctx := context.Background()
+	for range 2 {
+		location, err := g.start(ctx)
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if mustQuery(t, location).Get("client_id") != legacyClientID {
+			t.Fatalf("client_id = %q, want the cached client", mustQuery(t, location).Get("client_id"))
+		}
+	}
+	if g.authorizeHits.Load() != 2 || g.registrations.Load() != 0 {
+		t.Fatalf("authorize = %d registrations = %d, want each connect to probe and neither to replace", g.authorizeHits.Load(), g.registrations.Load())
+	}
+	legacy := g.store.clients[g.legacyKey]
+	if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 0 {
+		t.Fatalf("legacy row = %+v, want it untouched", legacy)
 	}
 }
 
@@ -574,7 +740,7 @@ func TestLegacyAuthorizePreflight_ConcurrentConnectsConverge(t *testing.T) {
 	g := newLegacyGateway(t, "", false, rejectUnrecognized)
 	locked := &lockedConnectStore{memConnectStore: g.store}
 	g.store = nil
-	g.registrar = infraoauth.NewUpstreamRegistrar(locked, nil)
+	g.registrar = infraoauth.NewUpstreamRegistrar(locked, g.srv.Client())
 	g.svc = oauth.NewConnectService(
 		locked, &memVaultRepo{}, &stubDataFinder{data: consumerData(g.gw, g.reg)},
 		infraoauth.NewProviderClient(nil), g.registrar,

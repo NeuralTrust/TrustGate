@@ -59,7 +59,7 @@ func TestPreflightAuthorize_DisallowedHostIsNotDialed(t *testing.T) {
 	prober := reg.(interface {
 		PreflightAuthorize(context.Context, string, string) (appoauth.AuthorizePreflight, error)
 	})
-	_, err := prober.PreflightAuthorize(context.Background(), "http://evil.example/authorize?client_id=abc", "api.vendor.example")
+	_, err := prober.PreflightAuthorize(context.Background(), "http://evil.example/authorize?client_id=abc", "https://api.vendor.example/oauth/authorize")
 	if err == nil {
 		t.Fatal("disallowed host was accepted")
 	}
@@ -81,7 +81,7 @@ func TestPreflightAuthorize_RedirectIsNotFollowed(t *testing.T) {
 	prober := reg.(interface {
 		PreflightAuthorize(context.Context, string, string) (appoauth.AuthorizePreflight, error)
 	})
-	got, err := prober.PreflightAuthorize(context.Background(), "https://api.vendor.example/authorize?client_id=abc", "api.vendor.example")
+	got, err := prober.PreflightAuthorize(context.Background(), "https://api.vendor.example/authorize?client_id=abc", "https://api.vendor.example/oauth/authorize")
 	if err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -93,5 +93,47 @@ func TestPreflightAuthorize_RedirectIsNotFollowed(t *testing.T) {
 	}
 	if len(got.Body) != 8<<10 {
 		t.Fatalf("body = %d bytes, want the 8KiB cap", len(got.Body))
+	}
+}
+
+func TestPreflightAuthorize_RefusesInsecureAndWrongPort(t *testing.T) {
+	t.Parallel()
+	allowed := "https://api.vendor.example/oauth/authorize"
+	cases := []string{
+		"http://api.vendor.example/authorize?client_id=abc",
+		"https://api.vendor.example:8443/authorize?client_id=abc",
+		"https://evil.example/authorize?client_id=abc",
+	}
+	for _, rawURL := range cases {
+		t.Run(rawURL, func(t *testing.T) {
+			t.Parallel()
+			transport := &preflightTransport{}
+			reg := infraoauth.NewUpstreamRegistrar(newClaimStore(), &http.Client{Transport: transport})
+			prober := reg.(interface {
+				PreflightAuthorize(context.Context, string, string) (appoauth.AuthorizePreflight, error)
+			})
+			if _, err := prober.PreflightAuthorize(context.Background(), rawURL, allowed); err == nil {
+				t.Fatal("url was accepted")
+			}
+			if transport.calls.Load() != 0 {
+				t.Fatalf("dials = %d, want the url refused before a request", transport.calls.Load())
+			}
+		})
+	}
+}
+
+func TestPreflightAuthorize_ExplicitDefaultPortMatches(t *testing.T) {
+	t.Parallel()
+	transport := &preflightTransport{}
+	reg := infraoauth.NewUpstreamRegistrar(newClaimStore(), &http.Client{Transport: transport})
+	prober := reg.(interface {
+		PreflightAuthorize(context.Context, string, string) (appoauth.AuthorizePreflight, error)
+	})
+	got, err := prober.PreflightAuthorize(context.Background(), "https://api.vendor.example:443/authorize?client_id=abc", "https://api.vendor.example/oauth/authorize")
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if transport.calls.Load() != 1 || got.Status != http.StatusFound {
+		t.Fatalf("dials = %d status = %d, want the default port treated as 443", transport.calls.Load(), got.Status)
 	}
 }
