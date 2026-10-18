@@ -115,33 +115,66 @@ func TestDiscoverRefusesAPrivateResolvedHost(t *testing.T) {
 	}
 }
 
-func TestWholeHostVariableNames(t *testing.T) {
+func TestUserChosenHostNames(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		raw   string
-		whole bool
-		name  string
+		raw    string
+		chosen bool
+		names  []string
 	}{
-		{raw: "https://{account_url}/mcp", whole: true, name: "account_url"},
-		{raw: "https://{workspace_host}/api/2.0/mcp/{path}", whole: true, name: "workspace_host"},
-		{raw: "https://{cube_host}/api/mcp", whole: true, name: "cube_host"},
-		{raw: "https://{account_url}:8443/mcp", whole: true, name: "account_url"},
-		{raw: "https://{domain}.aha.io/oauth/token", whole: false},
-		{raw: "https://{tenant}-be.glean.com/mcp/{server}", whole: false},
-		{raw: "https://aws-mcp.{region}.api.aws/mcp", whole: false},
-		{raw: "https://mcp.example.com/{org}/oauth/authorize?realm={org}", whole: false},
-		{raw: "https://mcp.example.com/oauth/token", whole: false},
+		{raw: "https://{account_url}/mcp", chosen: true, names: []string{"account_url"}},
+		{raw: "https://{workspace_host}/api/2.0/mcp/{path}", chosen: true, names: []string{"workspace_host"}},
+		{raw: "https://{cube_host}/api/mcp", chosen: true, names: []string{"cube_host"}},
+		{raw: "https://{account_url}:8443/mcp", chosen: true, names: []string{"account_url"}},
+		{raw: "https://mcp.{domain}/token", chosen: true, names: []string{"domain"}},
+		{raw: "https://api-{domain}/token", chosen: true, names: []string{"domain"}},
+		{raw: "https://{a}.{b}.com/token", chosen: true, names: []string{"a", "b"}},
+		{raw: "https://{tenant}.github.io/token", chosen: true, names: []string{"tenant"}},
+		{raw: "https://{tenant}.co.uk/token", chosen: true, names: []string{"tenant"}},
+		{raw: "https://{domain}.aha.io/oauth/token", chosen: false},
+		{raw: "https://{tenant}-be.glean.com/mcp/{server}", chosen: false},
+		{raw: "https://acme.{region}.vendor.com/token", chosen: false},
+		{raw: "https://mcp.example.com/{org}/oauth/authorize?realm={org}", chosen: false},
+		{raw: "https://mcp.example.com/oauth/token", chosen: false},
 	}
 	for _, tc := range cases {
-		names, whole := wholeHostVariableNames(tc.raw)
-		if whole != tc.whole {
-			t.Fatalf("%s whole = %v, want %v", tc.raw, whole, tc.whole)
+		names, chosen := userChosenHostNames(tc.raw)
+		if chosen != tc.chosen {
+			t.Fatalf("%s chosen = %v, want %v", tc.raw, chosen, tc.chosen)
 		}
-		if !tc.whole {
+		if !tc.chosen {
 			continue
 		}
-		if len(names) != 1 || names[0] != tc.name {
-			t.Fatalf("%s names = %v, want %s", tc.raw, names, tc.name)
+		if len(names) != len(tc.names) {
+			t.Fatalf("%s names = %v, want %v", tc.raw, names, tc.names)
+		}
+		for i := range names {
+			if names[i] != tc.names[i] {
+				t.Fatalf("%s names = %v, want %v", tc.raw, names, tc.names)
+			}
+		}
+	}
+}
+
+func TestNormalizeHostSuffix(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"*.snowflakecomputing.com": "snowflakecomputing.com",
+		" .Cloud.Databricks.com. ": "cloud.databricks.com",
+		"*.us1.dbt.com":            "us1.dbt.com",
+		"com":                      "",
+		"*.com":                    "",
+		"co.uk":                    "",
+		"*.co.uk":                  "",
+		"github.io":                "",
+		"localhost":                "",
+		"":                         "",
+		"*.{x}.com":                "",
+		"vendor.com/path":          "",
+	}
+	for raw, want := range cases {
+		if got := normalizeHostSuffix(raw); got != want {
+			t.Fatalf("normalizeHostSuffix(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }
@@ -172,7 +205,7 @@ func TestDeclaredSuffixMatches(t *testing.T) {
 	t.Parallel()
 	vars := []registrydomain.MCPURLVariable{{
 		Name:       "account_url",
-		HostSuffix: []string{"*.vendor.com", "*.other.example"},
+		HostSuffix: []string{"*.vendor.com", "com", "*.other.example"},
 	}}
 	if !declaredSuffixMatches("acme.vendor.com", []string{"account_url"}, vars) {
 		t.Fatal("expected a subdomain of the declared suffix")
@@ -183,7 +216,9 @@ func TestDeclaredSuffixMatches(t *testing.T) {
 	if !declaredSuffixMatches("acme.other.example", []string{"account_url"}, vars) {
 		t.Fatal("expected a later suffix in the list")
 	}
-	if declaredSuffixMatches("evilvendor.com", []string{"account_url"}, vars) || declaredSuffixMatches("evil.example", []string{"account_url"}, vars) {
+	if declaredSuffixMatches("evilvendor.com", []string{"account_url"}, vars) ||
+		declaredSuffixMatches("evil.example", []string{"account_url"}, vars) ||
+		declaredSuffixMatches("evil.com", []string{"account_url"}, vars) {
 		t.Fatal("suffix matched a host outside it")
 	}
 }
@@ -214,13 +249,13 @@ func TestHostBoundURLVariables_UsesCatalogWhenStoredSuffixIsEmpty(t *testing.T) 
 			Code: "com.snowflake/mcp",
 			URLVariables: []catalogdomain.MCPURLVariable{{
 				Name:       "account_url",
-				HostSuffix: []string{" *.snowflakecomputing.com ", "*.snowflakecomputing.cn"},
+				HostSuffix: []string{" *.snowflakecomputing.com ", "com"},
 			}},
 		},
 	}}
 
 	got := s.hostBoundURLVariables(reg)
-	if len(got) != 1 || len(got[0].HostSuffix) != 2 || got[0].HostSuffix[0] != "*.snowflakecomputing.com" {
+	if len(got) != 1 || len(got[0].HostSuffix) != 1 || got[0].HostSuffix[0] != "snowflakecomputing.com" {
 		t.Fatalf("fallback suffixes = %+v", got)
 	}
 	if len(reg.MCPTarget.URLVariables[0].HostSuffix) != 0 {
@@ -228,29 +263,94 @@ func TestHostBoundURLVariables_UsesCatalogWhenStoredSuffixIsEmpty(t *testing.T) 
 	}
 }
 
-func TestHostBoundURLVariables_KeepsStoredSuffix(t *testing.T) {
-	t.Parallel()
-	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{
-		Code: "com.snowflake/mcp",
-		URLVariables: []registrydomain.MCPURLVariable{{
-			Name:       "account_url",
-			HostSuffix: []string{"*.stored.example"},
-		}},
-	}}
-	s := &connectService{catalog: suffixCatalog{
+func snowflakeSuffixCatalog(suffixes ...string) suffixCatalog {
+	return suffixCatalog{
 		ok: true,
 		entry: catalogdomain.MCPServer{
 			Code: "com.snowflake/mcp",
 			URLVariables: []catalogdomain.MCPURLVariable{{
 				Name:       "account_url",
-				HostSuffix: []string{"*.snowflakecomputing.com"},
+				HostSuffix: suffixes,
 			}},
 		},
-	}}
+	}
+}
 
-	got := s.hostBoundURLVariables(reg)
-	if len(got) != 1 || len(got[0].HostSuffix) != 1 || got[0].HostSuffix[0] != "*.stored.example" {
-		t.Fatalf("stored suffix replaced: %+v", got)
+func storedSuffixRegistry(suffixes ...string) *registrydomain.Registry {
+	return &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{
+		Code: "com.snowflake/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{
+			Name:       "account_url",
+			HostSuffix: suffixes,
+		}},
+	}}
+}
+
+func TestHostBoundURLVariables_StoredSuffixCannotWiden(t *testing.T) {
+	t.Parallel()
+	s := &connectService{catalog: snowflakeSuffixCatalog("*.snowflakecomputing.com")}
+
+	got := s.hostBoundURLVariables(storedSuffixRegistry("*.stored.example", "*.snowflakecomputing.com"))
+	if len(got) != 1 || len(got[0].HostSuffix) != 1 || got[0].HostSuffix[0] != "snowflakecomputing.com" {
+		t.Fatalf("stored suffix widened the catalog: %+v", got)
+	}
+
+	got = s.hostBoundURLVariables(storedSuffixRegistry("*.stored.example"))
+	if len(got) != 1 || len(got[0].HostSuffix) != 0 {
+		t.Fatalf("a stored suffix outside the catalog must leave none: %+v", got)
+	}
+}
+
+func TestHostBoundURLVariables_StoredSuffixNarrows(t *testing.T) {
+	t.Parallel()
+	s := &connectService{catalog: snowflakeSuffixCatalog("*.snowflakecomputing.com")}
+
+	got := s.hostBoundURLVariables(storedSuffixRegistry("*.privatelink.snowflakecomputing.com"))
+	if len(got) != 1 || len(got[0].HostSuffix) != 1 || got[0].HostSuffix[0] != "privatelink.snowflakecomputing.com" {
+		t.Fatalf("narrower stored suffix = %+v", got)
+	}
+}
+
+func TestHostBoundURLVariables_CatalogWithoutSuffixIgnoresStored(t *testing.T) {
+	t.Parallel()
+	s := &connectService{catalog: snowflakeSuffixCatalog()}
+
+	got := s.hostBoundURLVariables(storedSuffixRegistry("*.snowflakecomputing.com"))
+	if len(got) != 1 || len(got[0].HostSuffix) != 0 {
+		t.Fatalf("stored suffix used without a catalog suffix: %+v", got)
+	}
+}
+
+type prmRegistrar struct {
+	recordingRegistrar
+	resource string
+}
+
+func (r *prmRegistrar) Discover(ctx context.Context, upstreamURL string) (*UpstreamAuthServer, error) {
+	_, _ = r.recordingRegistrar.Discover(ctx, upstreamURL)
+	return &UpstreamAuthServer{Resource: r.resource}, nil
+}
+
+func TestDiscoverDropsAMismatchedProtectedResource(t *testing.T) {
+	t.Parallel()
+	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{URL: "https://mcp.linear.app/mcp"}}
+
+	s := &connectService{registrar: &prmRegistrar{resource: "https://evil.example/mcp"}}
+	meta, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if meta.Resource != "" {
+		t.Fatalf("mismatched resource kept: %q", meta.Resource)
+	}
+
+	s = &connectService{registrar: &prmRegistrar{resource: "https://MCP.linear.app:443/mcp"}}
+	meta, err = s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if meta.Resource == "" {
+		t.Fatal("matching resource dropped")
 	}
 }
 
