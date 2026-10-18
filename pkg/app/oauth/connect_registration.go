@@ -33,13 +33,13 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if cfg.Registration != registrydomain.RegistrationAuto {
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			return effective, nil
+			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil)
 		}
 		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
 			return nil, err
 		}
-		return withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), nil
+		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), meta)
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -49,7 +49,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
+	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta)
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -65,13 +65,13 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if cfg.Registration != registrydomain.RegistrationAuto {
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			return effective, nil
+			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil)
 		}
 		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
 			return nil, err
 		}
-		return withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), nil
+		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), meta)
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if client == nil {
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
+	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta)
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
