@@ -393,7 +393,11 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	gateway = gateway.WithInventoryTool(inventory)
 
 	if p.Installs != nil && p.Registries != nil {
-		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
+		scoper, err := appstore.NewScoper(
+			p.Installs, p.Registries, grants,
+			appstore.WithScoperModes(modes),
+			appstore.WithScoperCatalog(catalog),
+		)
 		if err != nil {
 			return nil, err
 		}
