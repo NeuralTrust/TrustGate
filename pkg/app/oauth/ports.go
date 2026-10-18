@@ -150,6 +150,22 @@ type UpstreamRegistrar interface {
 	DropCachedClient(ctx context.Context, key, clientID string) error
 }
 
+// AuthorizePreflight is the status line of one GET that was not followed.
+// Body is capped by the caller. Location is the raw Location header of a 3xx.
+type AuthorizePreflight struct {
+	Status   int
+	Location string
+	Body     string
+}
+
+// AuthorizePreflighter is the discovery HTTP client. Connect uses it once,
+// for a cached dynamic client that records no issuer.
+type AuthorizePreflighter interface {
+	// PreflightAuthorize GETs rawURL when its host is allowedHost. It does not
+	// follow redirects. A disallowed host is refused before any dial.
+	PreflightAuthorize(ctx context.Context, rawURL, allowedHost string) (AuthorizePreflight, error)
+}
+
 // RegisteredClientDropper forgets a dynamic client the authorization server
 // rejected. ConnectService implements it. clientID is the client the token
 // endpoint refused; a cache row for a different client is left alone. slot is
