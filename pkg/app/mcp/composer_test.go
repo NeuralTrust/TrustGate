@@ -39,6 +39,7 @@ type fakeUpstream struct {
 	lastPrompt string
 	lastRead   string
 	result     json.RawMessage
+	callErr    error
 }
 
 func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
@@ -47,6 +48,9 @@ func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
 
 func (f *fakeUpstream) CallTool(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
 	f.lastCall = name
+	if f.callErr != nil {
+		return f.result, f.callErr
+	}
 	return f.result, nil
 }
 
