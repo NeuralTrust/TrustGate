@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
@@ -151,6 +152,112 @@ func TestRevocationMaterialRefusesAUserChosenHost(t *testing.T) {
 	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
 		t.Fatalf("material = %+v, err = %v; want host refusal", material, err)
 	}
+}
+
+// Dynamic registration skips the host check on connect and refresh: that
+// client was minted by the server discovery found. Revocation posts the cached
+// secret to the endpoint that document names, so an unbound user-chosen host
+// is refused and the secret is not returned.
+func TestRevocationMaterialRefusesDCRSecretOnUserChosenHost(t *testing.T) {
+	registrar := &revocationRegistrar{
+		meta: &UpstreamAuthServer{
+			AuthorizationEndpoint: "https://evil.example/authorize",
+			TokenEndpoint:         "https://evil.example/token",
+			RevocationEndpoint:    "https://evil.example/revoke",
+			ValidatedIssuer:       "https://evil.example",
+		},
+		cached: &RegisteredClient{ClientID: "dcr-id", ClientSecret: "dcr-secret"},
+	}
+	s := &connectService{registrar: registrar}
+	reg := wholeHostAutoRegistry("evil.example")
+
+	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
+		t.Fatalf("material = %+v, err = %v; want host refusal", material, err)
+	}
+	if strings.Contains(err.Error(), "dcr-secret") || strings.Contains(err.Error(), "evil.example") {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
+	}
+
+	auth, refreshErr := s.RefreshAuth(context.Background(), ids.New[ids.GatewayKind](), reg)
+	if refreshErr != nil {
+		t.Fatalf("RefreshAuth: %v", refreshErr)
+	}
+	if auth.ClientSecret != "dcr-secret" || auth.TokenURL != "https://evil.example/token" {
+		t.Fatalf("refresh auth = %+v", auth)
+	}
+}
+
+// A catalog suffix is a bound, so revocation of a dynamically registered
+// client on that vendor host still returns the secret and the endpoint.
+func TestRevocationMaterialAllowsDCROnCatalogSuffix(t *testing.T) {
+	const host = "acme.snowflakecomputing.com"
+	registrar := &revocationRegistrar{
+		meta: &UpstreamAuthServer{
+			AuthorizationEndpoint: "https://" + host + "/authorize",
+			TokenEndpoint:         "https://" + host + "/token",
+			RevocationEndpoint:    "https://" + host + "/revoke",
+			ValidatedIssuer:       "https://" + host,
+		},
+		cached: &RegisteredClient{ClientID: "dcr-id", ClientSecret: "dcr-secret"},
+	}
+	s := &connectService{registrar: registrar, catalog: snowflakeSuffixCatalog("*.snowflakecomputing.com")}
+	reg := wholeHostAutoRegistry(host)
+	reg.MCPTarget.Code = "com.snowflake/mcp"
+
+	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if err != nil {
+		t.Fatalf("RevocationMaterial: %v", err)
+	}
+	if material.ClientSecret != "dcr-secret" || material.RevocationEndpoint != "https://"+host+"/revoke" {
+		t.Fatalf("material = %+v", material)
+	}
+}
+
+// A literal registrable domain is not a user-chosen host, so revocation
+// proceeds on the scheme, host, and port check alone.
+func TestRevocationMaterialAllowsDCROnPinnedRegistrableDomain(t *testing.T) {
+	registrar := &revocationRegistrar{
+		meta: &UpstreamAuthServer{
+			AuthorizationEndpoint: "https://acme.aha.io/oauth/authorize",
+			TokenEndpoint:         "https://acme.aha.io/oauth/token",
+			RevocationEndpoint:    "https://acme.aha.io/oauth/revoke",
+			ValidatedIssuer:       "https://acme.aha.io",
+		},
+		cached: &RegisteredClient{ClientID: "dcr-id", ClientSecret: "dcr-secret"},
+	}
+	s := &connectService{registrar: registrar}
+	reg := &registrydomain.Registry{Type: registrydomain.TypeMCP, MCPTarget: &registrydomain.MCPTarget{
+		URL:            "https://{domain}.aha.io/api/v1/mcp",
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
+		InstanceConfig: map[string]string{"domain": "acme"},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "io.aha/mcp",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	}}
+
+	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	if err != nil {
+		t.Fatalf("RevocationMaterial: %v", err)
+	}
+	if material.RevocationEndpoint != "https://acme.aha.io/oauth/revoke" || material.ClientSecret != "dcr-secret" {
+		t.Fatalf("material = %+v", material)
+	}
+}
+
+func wholeHostAutoRegistry(host string) *registrydomain.Registry {
+	return &registrydomain.Registry{Type: registrydomain.TypeMCP, MCPTarget: &registrydomain.MCPTarget{
+		URL:            "https://{account_url}/mcp",
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "account_url", Required: true}},
+		InstanceConfig: map[string]string{"account_url": host},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.snowflake/mcp",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	}}
 }
 
 func TestRevocationMaterialAutoUsesCachedClientOnly(t *testing.T) {

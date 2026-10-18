@@ -216,7 +216,28 @@ func (s *connectService) refuseOpenWholeHostDiscovery(
 	meta *UpstreamAuthServer,
 	vars []registrydomain.MCPURLVariable,
 ) error {
+	// Dynamic registration mints its client at the authorization server
+	// discovery just found, so the connect and refresh paths may post that
+	// secret back to it. Revocation is not that case: the cached client is
+	// posted to whatever endpoint the document names, and RevocationMaterial
+	// applies refuseUnboundUserChosenHost before returning one.
 	if cfg.Registration == registrydomain.RegistrationAuto || meta == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	return s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, vars)
+}
+
+// refuseUnboundUserChosenHost returns ErrOAuthURLHost when a per-user value
+// picks the registrable domain and neither a closed variable nor a declared
+// suffix bounds it. The caller must not have sent a client secret yet.
+func (s *connectService) refuseUnboundUserChosenHost(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	vars []registrydomain.MCPURLVariable,
+) error {
+	if reg == nil || reg.MCPTarget == nil {
 		return nil
 	}
 	names, chosen := userChosenHostNames(reg.MCPTarget.URL)

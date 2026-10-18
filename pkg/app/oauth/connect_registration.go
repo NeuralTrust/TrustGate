@@ -131,6 +131,15 @@ func (s *connectService) RevocationMaterial(
 	if err != nil || auth == nil {
 		return nil, err
 	}
+	// refreshMaterial skips the host check for dynamic registration, because
+	// that client was minted by the discovered server. A revocation POST sends
+	// the same secret — admin or DCR — to the endpoint that document names, so
+	// an unbound user-chosen host is refused before either leaves.
+	if revocationEndpoint != "" {
+		if err := s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, s.hostBoundURLVariables(reg)); err != nil {
+			return nil, err
+		}
+	}
 	return &RevocationMaterial{
 		ClientID:                auth.ClientID,
 		ClientSecret:            auth.ClientSecret,
