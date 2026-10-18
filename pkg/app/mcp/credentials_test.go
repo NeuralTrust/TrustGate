@@ -126,6 +126,7 @@ type stubConnect struct {
 	// serverTicketCodes records the catalog codes CreateServerTicket was asked
 	// for, so a test can tell a server-scoped (Store) ticket from a plain one.
 	serverTicketCodes []string
+	droppedClients    int
 }
 
 func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -139,6 +140,14 @@ func (s *stubConnect) CreateServerTicket(_ context.Context, _ ids.GatewayID, _, 
 
 func (s *stubConnect) RefreshAuth(context.Context, ids.GatewayID, *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
 	return s.refreshCfg, s.refreshErr
+}
+
+func (s *stubConnect) DropRegisteredClient(_ context.Context, _ ids.GatewayID, _ *registrydomain.Registry, clientID string) error {
+	if clientID == "" {
+		return nil
+	}
+	s.droppedClients++
+	return nil
 }
 
 func principalCtx(p *identity.Principal) context.Context {
@@ -1149,4 +1158,63 @@ func TestCredentialResolver_SharedAccount(t *testing.T) {
 			t.Fatal("a shared instance forwarded the caller's own credential")
 		}
 	})
+}
+
+func TestCredentialResolver_InvalidClientDropsDynamicClient(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": "invalid_client", "error_description": "unrecognized client_id",
+		})
+	}))
+	t.Cleanup(idp.Close)
+
+	for _, tc := range []struct {
+		name         string
+		registration registrydomain.MCPClientRegistration
+		wantDrops    int
+	}{
+		{name: "dynamic client", registration: registrydomain.RegistrationAuto, wantDrops: 1},
+		{name: "manual client", registration: registrydomain.RegistrationManual, wantDrops: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			auth := &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     "supabase",
+				Registration: tc.registration,
+			}
+			if tc.registration == registrydomain.RegistrationManual {
+				auth.ClientID = "manual-client"
+			}
+			reg := regWithAuth(gw, auth)
+			vault := &memVault{}
+			cred, err := vaultdomain.NewCredential(
+				gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour),
+			)
+			if err != nil {
+				t.Fatalf("credential: %v", err)
+			}
+			if err := vault.Upsert(context.Background(), cred); err != nil {
+				t.Fatalf("vault: %v", err)
+			}
+			connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
+				Provider: "supabase", ClientID: "stale", TokenURL: idp.URL,
+			}}
+			r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+			err = r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), mcpConsumer(gw), reg, &Target{})
+			if !errors.Is(err, appoauth.ErrInvalidClient) {
+				t.Fatalf("error = %v, want ErrInvalidClient", err)
+			}
+			var consent *ConsentRequiredError
+			if errors.As(err, &consent) {
+				t.Fatal("the attempt that the server rejected must still surface that error")
+			}
+			if connect.droppedClients != tc.wantDrops {
+				t.Fatalf("dropped clients = %d, want %d", connect.droppedClients, tc.wantDrops)
+			}
+		})
+	}
 }
