@@ -156,11 +156,21 @@ func (w *Worker[T]) Run(ctx context.Context) error {
 func (w *Worker[T]) Converge(ctx context.Context) error {
 	w.convergeMu.Lock()
 	defer w.convergeMu.Unlock()
-	raw, version, notModified, err := w.fetcher.Fetch(ctx, w.store.Version())
+	sent := w.store.Version()
+	raw, version, notModified, err := w.fetcher.Fetch(ctx, sent)
 	if err != nil {
 		return fmt.Errorf("configsync: fetch snapshot: %w", err)
 	}
 	if notModified {
+		// The header confirms this snapshot only when its version is the etag
+		// we sent. A mismatch is not a converge, so LastConvergedAt stays put.
+		if version != sent {
+			w.logger.Warn("not-modified snapshot version does not match the etag sent",
+				slog.String("component", component),
+				slog.String("etag", sent),
+				slog.String("version", version))
+			return nil
+		}
 		w.status.ConfirmLive()
 		return nil
 	}

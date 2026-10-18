@@ -114,6 +114,33 @@ func TestSnapshotStatus_Transitions(t *testing.T) {
 		assert.Equal(t, "v1", info.Version)
 		age, _ := status.Age()
 		assert.Zero(t, age)
+		assert.False(t, info.LastConvergedAt.IsZero())
+	})
+
+	t.Run("not-modified refreshes converge without resetting age", func(t *testing.T) {
+		t.Parallel()
+		clock := newFakeClock()
+		status := NewSnapshotStatus(clock.Now)
+
+		status.MarkLive("v1")
+		applied := status.Info().AppliedAt
+		clock.Advance(10 * time.Minute)
+		status.ConfirmLive()
+
+		info := status.Info()
+		assert.Equal(t, SnapshotLive, info.State)
+		assert.Equal(t, "v1", info.Version)
+		assert.Equal(t, applied, info.AppliedAt)
+		assert.Equal(t, clock.Now(), info.LastConvergedAt)
+		age, ok := status.Age()
+		require.True(t, ok)
+		assert.Equal(t, 10*time.Minute, age)
+		assert.True(t, status.ConvergedWithin(2*time.Minute))
+
+		clock.Advance(3 * time.Minute)
+		assert.False(t, status.ConvergedWithin(2*time.Minute))
+		age, _ = status.Age()
+		assert.Equal(t, 13*time.Minute, age)
 	})
 }
 
@@ -203,7 +230,8 @@ func TestWorker_StatusLKGThenLiveOnConverge(t *testing.T) {
 func TestWorker_StatusNotModifiedConfirmsRestoredLKG(t *testing.T) {
 	t.Parallel()
 
-	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true}}}
+	version := stringCodec{}.Version([]byte("from-disk"))
+	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true, version: version}}}
 	status := NewSnapshotStatus(nil)
 	worker, store := newStatusWorker(t, fetcher, persistedLKG(t, "from-disk"), status)
 
@@ -213,6 +241,57 @@ func TestWorker_StatusNotModifiedConfirmsRestoredLKG(t *testing.T) {
 	info := status.Info()
 	assert.Equal(t, SnapshotLive, info.State)
 	assert.Equal(t, store.Version(), info.Version)
+}
+
+func TestWorker_NotModifiedRefreshesConvergeWithoutResettingAge(t *testing.T) {
+	t.Parallel()
+
+	clock := newFakeClock()
+	status := NewSnapshotStatus(clock.Now)
+	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true, version: "v1"}}}
+	worker, store := newStatusWorker(t, fetcher, nil, status)
+	store.Swap(&Versioned[string]{Version: "v1", Snapshot: "current", Raw: []byte("current")})
+	status.MarkLive("v1")
+	applied := status.Info().AppliedAt
+	clock.Advance(10 * time.Minute)
+
+	require.NoError(t, worker.Converge(context.Background()))
+
+	info := status.Info()
+	assert.Equal(t, SnapshotLive, info.State)
+	assert.Equal(t, "v1", info.Version)
+	assert.Equal(t, applied, info.AppliedAt)
+	assert.Equal(t, clock.Now(), info.LastConvergedAt)
+	age, ok := status.Age()
+	require.True(t, ok)
+	assert.Equal(t, 10*time.Minute, age)
+	assert.True(t, status.ConvergedWithin(2*time.Minute))
+}
+
+func TestWorker_NotModifiedVersionMismatchDoesNotConfirm(t *testing.T) {
+	t.Parallel()
+
+	clock := newFakeClock()
+	status := NewSnapshotStatus(clock.Now)
+	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true, version: "other"}}}
+	worker, store := newStatusWorker(t, fetcher, nil, status)
+	store.Swap(&Versioned[string]{Version: "v1", Snapshot: "current", Raw: []byte("current")})
+	status.MarkLive("v1")
+	converged := status.Info().LastConvergedAt
+	applied := status.Info().AppliedAt
+	clock.Advance(time.Minute)
+
+	require.NoError(t, worker.Converge(context.Background()))
+
+	info := status.Info()
+	assert.Equal(t, SnapshotLive, info.State)
+	assert.Equal(t, "v1", info.Version)
+	assert.Equal(t, applied, info.AppliedAt)
+	assert.Equal(t, converged, info.LastConvergedAt)
+	assert.False(t, status.ConvergedWithin(30*time.Second))
+	got, ok := store.Load()
+	require.True(t, ok)
+	assert.Equal(t, "current", got.Snapshot)
 }
 
 func TestWorker_StatusFailedConvergeKeepsLKG(t *testing.T) {
