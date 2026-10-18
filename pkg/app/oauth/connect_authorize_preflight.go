@@ -38,10 +38,10 @@ const legacyAuthorizeAcceptTTL = time.Hour
 
 // healLegacyAuthorizeClient replaces one cached dynamic client registered
 // before the issuer was recorded, when the authorize endpoint rejects it.
-// The replacement is registered first. The legacy row is tombstoned only after
-// that registration is stored, and the row is kept so a grant that names no
-// client can still be refreshed with it. A failed registration leaves the
-// legacy row untouched (ENG-2190, ENG-2189).
+// The replacement is registered first. A dead client is tombstoned only after
+// that registration is stored. A redirect_uri rejection keeps the same row
+// addressable for grants that were issued to it, and only that swap marks the
+// row. A failed registration leaves the legacy row untouched (ENG-2190, ENG-2189).
 func (s *connectService) healLegacyAuthorizeClient(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -81,16 +81,19 @@ func (s *connectService) healLegacyAuthorizeClient(
 			s.rememberLegacyAuthorizeAccepted(slot)
 		}
 		return client, nil
-	case authorizeDeadClient(reason), authorizeRedirectRejected(reason):
-		return s.swapLegacyClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI, reason)
+	case authorizeDeadClient(reason):
+		return s.swapLegacyClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI, reason, false)
+	case authorizeRedirectRejected(reason):
+		return s.swapLegacyClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI, reason, true)
 	default:
 		return client, nil
 	}
 }
 
-// swapLegacyClient registers the issuer-bound replacement before tombstoning
-// the legacy row. The tombstone hides that row from new connects. GetClient
-// still returns it, which is how an existing grant keeps its original client.
+// swapLegacyClient registers the issuer-bound replacement before hiding the
+// legacy row from new connects. retainForRefresh is set only for a
+// redirect_uri rejection: the row stays readable, with a marker no other
+// tombstone carries, so an existing grant can still refresh with it.
 func (s *connectService) swapLegacyClient(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -100,17 +103,24 @@ func (s *connectService) swapLegacyClient(
 	meta *UpstreamAuthServer,
 	client *RegisteredClient,
 	redirectURI, reason string,
+	retainForRefresh bool,
 ) (*RegisteredClient, error) {
 	fresh, err := s.registrar.EnsureClient(ctx, clientCacheKey(gatewayID, reg, meta), meta, redirectURI)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.registrar.DropCachedClient(ctx, slot, client.ClientID); err != nil {
+	var hideErr error
+	if retainForRefresh {
+		hideErr = s.retainLegacyClientForRefresh(ctx, slot, client)
+	} else {
+		hideErr = s.registrar.DropCachedClient(ctx, slot, client.ClientID)
+	}
+	if hideErr != nil {
 		slog.Warn("oauth dcr: replacement client is stored; the legacy row could not be tombstoned",
 			"code", catalogServerCode(reg, cfg),
 			"slot", slotHash(slot),
 			"reason", reason,
-			"error", err)
+			"error", hideErr)
 		return fresh, nil
 	}
 	slog.Warn("oauth dcr: authorization server rejected a legacy client at authorize; new connects use the replacement",
@@ -121,9 +131,12 @@ func (s *connectService) swapLegacyClient(
 }
 
 // clientForRefresh picks the dynamic client a stored grant was issued to.
-// A credential that records a client id uses that registration. One that
-// records none was issued before the id was stored, so it keeps the legacy
-// row when a newer registration is now the client new connects use.
+// A credential that records a client id uses that registration when it is the
+// client new connects use, or the legacy row when a redirect_uri swap kept
+// that row for it. A credential that records none keeps today's slot: the
+// legacy row is used only when that same swap marked it and it still belongs
+// to this authorization server. Any other legacy row, including a dead-client
+// tombstone, is ignored (ENG-2190).
 func (s *connectService) clientForRefresh(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -143,21 +156,65 @@ func (s *connectService) clientForRefresh(
 	if err != nil {
 		return nil, "", err
 	}
+	if issued != "" && current != nil && current.ClientID == issued {
+		return current, slot, nil
+	}
 	legacyKey := clientKey(gatewayID, reg)
-	legacy := s.retainedClient(ctx, legacyKey)
-	if issued != "" {
-		if current != nil && current.ClientID == issued {
-			return current, slot, nil
-		}
-		if legacy != nil && legacy.ClientID == issued {
+	if legacy := s.refreshRetainedClient(ctx, legacyKey, meta, reg); legacy != nil && legacy.ClientID != "" {
+		if issued == legacy.ClientID || (issued == "" && (current == nil || legacy.ClientID != current.ClientID)) {
 			return legacy, legacyKey, nil
 		}
+	}
+	if issued != "" {
 		return nil, "", fmt.Errorf("%w: client %q", ErrNoRegisteredClient, issued)
 	}
-	if legacy != nil && (current == nil || legacy.ClientID != current.ClientID) {
-		return legacy, legacyKey, nil
-	}
 	return current, slot, nil
+}
+
+// legacyRefreshRetainExpiry hides a retained legacy row from CachedClient the
+// same way a rejected registration does. The refresh marker, not this expiry,
+// is what a later refresh trusts. It matches the registrar's tombstone.
+const legacyRefreshRetainExpiry int64 = 1
+
+type legacyClientWriter interface {
+	ReplaceClientIfMatch(ctx context.Context, key, expectedClientID string, next RegisteredClient) (stored *RegisteredClient, swapped bool, err error)
+}
+
+// retainLegacyClientForRefresh tombstones the legacy row and marks it so a
+// grant that names no client can still refresh with it. The marker is not the
+// expiry: dead-client drops and natural expiry use the same expiry and must
+// not be refreshed.
+func (s *connectService) retainLegacyClientForRefresh(ctx context.Context, slot string, client *RegisteredClient) error {
+	if client == nil || client.ClientID == "" || slot == "" {
+		return nil
+	}
+	writer, ok := s.store.(legacyClientWriter)
+	if !ok {
+		return fmt.Errorf("oauth dcr: client store cannot retain a legacy registration")
+	}
+	next := *client
+	next.ClientSecretExpiresAt = legacyRefreshRetainExpiry
+	next.RefreshRetained = true
+	_, swapped, err := writer.ReplaceClientIfMatch(ctx, slot, client.ClientID, next)
+	if err != nil {
+		return err
+	}
+	if !swapped {
+		return fmt.Errorf("oauth dcr: legacy registration changed before it could be retained")
+	}
+	return nil
+}
+
+// refreshRetainedClient is the legacy row a redirect_uri swap kept. It has to
+// carry that marker and still belong to this authorization server.
+// legacyRegistrationFor does not look at expiry, so the tombstone that hides
+// the row from new connects does not hide it from refresh.
+func (s *connectService) refreshRetainedClient(ctx context.Context, key string, meta *UpstreamAuthServer, reg *registrydomain.Registry) *RegisteredClient {
+	client := s.retainedClient(ctx, key)
+	if client == nil || !client.RefreshRetained || !legacyRegistrationFor(client, meta, reg) {
+		return nil
+	}
+	return client
 }
 
 func (s *connectService) issuedOAuthClientID(ctx context.Context, gatewayID ids.GatewayID, subject string, reg *registrydomain.Registry) (string, error) {
@@ -410,7 +467,7 @@ func mentionsRedirectURI(s string) bool {
 
 func mentionsUnrecognizedClient(s string) bool {
 	s = strings.ToLower(s)
-	if !strings.Contains(s, "client") {
+	if !strings.Contains(s, "client_id") && !strings.Contains(s, "client id") {
 		return false
 	}
 	return strings.Contains(s, "unrecognized") || strings.Contains(s, "unknown")

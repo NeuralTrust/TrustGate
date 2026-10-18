@@ -118,6 +118,13 @@ type RegisteredClient struct {
 	// ClientSecretExpiresAt is the RFC 7591 client_secret_expires_at, in
 	// seconds since the epoch. Zero means the registration does not expire.
 	ClientSecretExpiresAt int64 `json:"client_secret_expires_at,omitempty"`
+	// RefreshRetained marks a legacy registration that a redirect_uri swap
+	// kept so grants issued to it can still refresh. Only that swap sets it.
+	// A dead-client drop and a naturally expired registration do not, and
+	// refresh ignores those rows. A replica that predates the field drops it
+	// when it rewrites the row, so every gateway replica must run this
+	// version before a swap can set it (ENG-2190).
+	RefreshRetained bool `json:"refresh_retained,omitempty"`
 }
 
 type ClientStore interface {
