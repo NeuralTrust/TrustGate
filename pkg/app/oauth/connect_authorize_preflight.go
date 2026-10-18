@@ -51,6 +51,7 @@ func (s *connectService) healLegacyAuthorizeClient(
 	meta *UpstreamAuthServer,
 	client *RegisteredClient,
 	redirectURI string,
+	res upstreamResolution,
 ) (*RegisteredClient, error) {
 	if client == nil || client.Issuer != "" || slot == "" || slot != clientKey(gatewayID, reg) {
 		return client, nil
@@ -66,7 +67,7 @@ func (s *connectService) healLegacyAuthorizeClient(
 		return client, nil
 	}
 	allowed := s.catalogAuthorizeURL(reg, cfg)
-	rawURL, err := s.legacyAuthorizeProbeURL(cfg, reg, meta, client, redirectURI)
+	rawURL, err := s.legacyAuthorizeProbeURL(cfg, reg, meta, client, redirectURI, res)
 	if err != nil || !AuthorizeEndpointAllowed(rawURL, allowed) {
 		return client, nil
 	}
@@ -235,6 +236,7 @@ func (s *connectService) legacyAuthorizeProbeURL(
 	meta *UpstreamAuthServer,
 	client *RegisteredClient,
 	redirectURI string,
+	res upstreamResolution,
 ) (string, error) {
 	state, err := randomToken()
 	if err != nil {
@@ -244,7 +246,7 @@ func (s *connectService) legacyAuthorizeProbeURL(
 	if err != nil {
 		return "", err
 	}
-	auth := withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client))
+	auth := withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog, res), meta, client))
 	return s.provider.AuthorizeURL(auth, redirectURI, state, s256(verifier)), nil
 }
 

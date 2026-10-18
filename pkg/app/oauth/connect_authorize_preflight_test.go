@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -48,8 +49,11 @@ const (
 )
 
 type authorizeCatalog struct {
-	code string
-	url  string
+	code      string
+	url       string
+	serverURL string
+	scopes    []string
+	resource  string
 }
 
 func (c authorizeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
@@ -57,8 +61,13 @@ func (c authorizeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool)
 		return catalogdomain.MCPServer{}, false
 	}
 	return catalogdomain.MCPServer{
-		Code:  c.code,
-		OAuth: &catalogdomain.MCPOAuth{AuthorizeURL: c.url},
+		Code: c.code,
+		URL:  c.serverURL,
+		OAuth: &catalogdomain.MCPOAuth{
+			AuthorizeURL: c.url,
+			Scopes:       c.scopes,
+			Resource:     c.resource,
+		},
 	}, true
 }
 
@@ -343,6 +352,11 @@ func TestLegacyAuthorizePreflight_RejectionReplacesOnlyThatSlot(t *testing.T) {
 
 func relinkCatalog(t *testing.T, g *legacyGateway, authorizeURL string, opts ...oauth.ConnectOption) oauth.ConnectService {
 	t.Helper()
+	return relinkCatalogEntry(t, g, authorizeCatalog{code: legacyCode, url: authorizeURL}, opts...)
+}
+
+func relinkCatalogEntry(t *testing.T, g *legacyGateway, cat authorizeCatalog, opts ...oauth.ConnectOption) oauth.ConnectService {
+	t.Helper()
 	data := appconsumer.NewData(g.gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID: ids.New[ids.ConsumerKind](), GatewayID: g.gw,
@@ -357,9 +371,161 @@ func relinkCatalog(t *testing.T, g *legacyGateway, authorizeURL string, opts ...
 	return oauth.NewConnectService(
 		g.store, vault, &stubDataFinder{data: data},
 		infraoauth.NewProviderClient(nil), g.registrar,
-		discardConnectAuditor(), nil, nil, authorizeCatalog{code: legacyCode, url: authorizeURL}, nil,
+		discardConnectAuditor(), nil, nil, cat, nil,
 		opts...,
 	)
+}
+
+// A self-hosted row shares the catalog code but not the catalog server URL.
+// Catalog scopes, resource, and authorize host stay off both the preflight
+// probe and the browser redirect. A row whose URL is the catalog server still
+// takes those values, and the probe matches that redirect.
+func TestLegacyAuthorizePreflight_CatalogFollowsResolvedUpstream(t *testing.T) {
+	t.Parallel()
+	const (
+		storedScope     = "stored-scope"
+		catalogScope    = "catalog-scope"
+		storedResource  = "https://self.example/audience"
+		catalogResource = "https://cubecloud.dev/mcp"
+		catalogAuth     = "https://auth.cubecloud.dev/oauth/authorize"
+	)
+
+	t.Run("self-hosted url", func(t *testing.T) {
+		t.Parallel()
+		g := newLegacyGateway(t, "", false, nil)
+		g.reg.MCPTarget.Auth.Scopes = []string{storedScope}
+		g.reg.MCPTarget.Auth.Resource = storedResource
+		rekeyLegacyClient(g)
+		seen := wrapRoundTrip(g.srv.Client())
+		g.svc = relinkCatalogEntry(t, g, authorizeCatalog{
+			code:      legacyCode,
+			url:       catalogAuth,
+			serverURL: "https://cubecloud.dev/mcp",
+			scopes:    []string{catalogScope},
+			resource:  catalogResource,
+		})
+		location, err := g.start(context.Background())
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if targetedHost(t, seen.urls(), "auth.cubecloud.dev") {
+			t.Fatalf("probe targeted the catalog authorize host: %v", seen.urls())
+		}
+		if g.authorizeHits.Load() != 0 {
+			t.Fatalf("authorize hits = %d, want the self-hosted probe held", g.authorizeHits.Load())
+		}
+		query := mustQuery(t, location)
+		if query.Get("scope") != storedScope || query.Get("resource") != storedResource {
+			t.Fatalf("redirect scope = %q resource = %q, want the stored values", query.Get("scope"), query.Get("resource"))
+		}
+		loc, err := url.Parse(location)
+		if err != nil {
+			t.Fatalf("location: %v", err)
+		}
+		upstream, err := url.Parse(g.srv.URL)
+		if err != nil {
+			t.Fatalf("upstream: %v", err)
+		}
+		if loc.Host != upstream.Host {
+			t.Fatalf("redirect host = %q, want the discovered host %q", loc.Host, upstream.Host)
+		}
+		if query.Get("client_id") != legacyClientID {
+			t.Fatalf("client_id = %q, want the legacy client left in place", query.Get("client_id"))
+		}
+	})
+
+	t.Run("matching url", func(t *testing.T) {
+		t.Parallel()
+		g := newLegacyGateway(t, "", false, nil)
+		g.reg.MCPTarget.Auth.Scopes = []string{storedScope}
+		g.reg.MCPTarget.Auth.Resource = storedResource
+		rekeyLegacyClient(g)
+		g.svc = relinkCatalogEntry(t, g, authorizeCatalog{
+			code:      legacyCode,
+			url:       g.srv.URL + "/authorize",
+			serverURL: g.srv.URL + "/mcp",
+			scopes:    []string{catalogScope},
+			resource:  catalogResource,
+		})
+		location, err := g.start(context.Background())
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if g.authorizeHits.Load() != 1 {
+			t.Fatalf("authorize hits = %d, want one probe of the matching authorize host", g.authorizeHits.Load())
+		}
+		probe := g.probeQuery()
+		redirect := mustQuery(t, location)
+		if probe.Get("scope") != catalogScope || probe.Get("resource") != catalogResource {
+			t.Fatalf("probe scope = %q resource = %q, want the catalog values", probe.Get("scope"), probe.Get("resource"))
+		}
+		if redirect.Get("scope") != probe.Get("scope") || redirect.Get("resource") != probe.Get("resource") {
+			t.Fatalf("redirect scope = %q resource = %q, want the probe values", redirect.Get("scope"), redirect.Get("resource"))
+		}
+		loc, err := url.Parse(location)
+		if err != nil {
+			t.Fatalf("location: %v", err)
+		}
+		probed, err := url.Parse(g.srv.URL + "/authorize")
+		if err != nil {
+			t.Fatalf("probe url: %v", err)
+		}
+		if loc.Host != probed.Host {
+			t.Fatalf("redirect host = %q, want the probed host %q", loc.Host, probed.Host)
+		}
+	})
+}
+
+type recordingRoundTripper struct {
+	base http.RoundTripper
+	mu   sync.Mutex
+	got  []string
+}
+
+func (r *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.got = append(r.got, req.URL.String())
+	r.mu.Unlock()
+	return r.base.RoundTrip(req)
+}
+
+func (r *recordingRoundTripper) urls() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.got))
+	copy(out, r.got)
+	return out
+}
+
+func rekeyLegacyClient(g *legacyGateway) {
+	cached := g.store.clients[g.legacyKey]
+	delete(g.store.clients, g.legacyKey)
+	g.legacyKey = g.gw.String() + "|" + registrydomain.ForwardedVaultProvider(g.reg)
+	g.store.clients[g.legacyKey] = cached
+}
+
+func wrapRoundTrip(client *http.Client) *recordingRoundTripper {
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	rt := &recordingRoundTripper{base: base}
+	client.Transport = rt
+	return rt
+}
+
+func targetedHost(t *testing.T, raws []string, host string) bool {
+	t.Helper()
+	for _, raw := range raws {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("recorded url %q: %v", raw, err)
+		}
+		if strings.EqualFold(u.Hostname(), host) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLegacyAuthorizePreflight_AcceptanceOrAmbiguousKeepsTheSlot(t *testing.T) {
