@@ -45,6 +45,7 @@ func installationToProto(in *installationdomain.Installation) *snapshotpb.Instal
 		RequesterGroups: append([]string(nil), in.RequesterGroups...),
 		Decision:        string(in.Decision),
 		DecidedBy:       in.DecidedBy,
+		NamingVersion:   int32(in.NamingVersion),
 	}
 	if !in.DecidedAt.IsZero() {
 		msg.DecidedAtUnix = in.DecidedAt.Unix()
@@ -102,16 +103,17 @@ func installationFromProto(msg *snapshotpb.Installation) (*installationdomain.In
 		}
 	}
 	out := &installationdomain.Installation{
-		ID:           id,
-		GatewayID:    gatewayID,
-		PrincipalSub: msg.GetPrincipalSub(),
-		CatalogCode:  msg.GetCatalogCode(),
-		Status:       installationdomain.Status(msg.GetStatus()),
-		InstalledBy:  msg.GetInstalledBy(),
-		Config:       config,
-		Reason:       msg.GetReason(),
-		Decision:     installationdomain.Decision(msg.GetDecision()),
-		DecidedBy:    msg.GetDecidedBy(),
+		ID:            id,
+		GatewayID:     gatewayID,
+		PrincipalSub:  msg.GetPrincipalSub(),
+		CatalogCode:   msg.GetCatalogCode(),
+		Status:        installationdomain.Status(msg.GetStatus()),
+		InstalledBy:   msg.GetInstalledBy(),
+		Config:        config,
+		Reason:        msg.GetReason(),
+		Decision:      installationdomain.Decision(msg.GetDecision()),
+		DecidedBy:     msg.GetDecidedBy(),
+		NamingVersion: int(msg.GetNamingVersion()),
 	}
 	if groups := msg.GetRequesterGroups(); len(groups) > 0 {
 		out.RequesterGroups = append([]string(nil), groups...)

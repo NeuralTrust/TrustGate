@@ -1696,3 +1696,63 @@ func TestComposer_InvokeNeedingAnAccountForgetsTheCachedLists(t *testing.T) {
 		t.Fatalf("ListTools after a refused call = %v, want ConsentRequiredError, not the cached tools", err)
 	}
 }
+
+// A v2 name is what tools/call routes on, and a toolkit entry keyed on that
+// name still allows the call through to the upstream tool.
+func TestComposer_V2NameReachesUpstreamAndPolicyApplies(t *testing.T) {
+	t.Parallel()
+	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
+	docs.MCPTarget.Code = "com.devexpress/docs"
+	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+
+	upDocs := &fakeUpstream{tools: tools("devexpress_docs_search", "devexpress_docs_get_content"), result: json.RawMessage(`{"content":[]}`)}
+	upClickup := &fakeUpstream{tools: tools("get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://devexpress.example/mcp": upDocs,
+		"https://clickup.example/mcp":    upClickup,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{
+			FailMode: consumerdomain.FailModeOpen,
+			Toolkit: consumerdomain.Toolkit{
+				{RegistryID: docs.ID, Tool: "devexpress_docs_search"},
+				{RegistryID: clickup.ID, Tool: "get_task"},
+			},
+		},
+	}, docs, clickup)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 || names[0] != "devexpress_docs_search" || names[1] != "clickup_get_task" {
+		t.Fatalf("tools = %v, want [devexpress_docs_search clickup_get_task]", names)
+	}
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "devexpress_docs_search", nil); err != nil {
+		t.Fatalf("calling the v2 name: %v", err)
+	}
+	if upDocs.lastCall != "devexpress_docs_search" {
+		t.Fatalf("upstream = %q, want devexpress_docs_search", upDocs.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("calling clickup_get_task: %v", err)
+	}
+	if upClickup.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", upClickup.lastCall)
+	}
+
+	_, err = c.Resolve(context.Background(), rc, "devexpress_docs_get_content")
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want the toolkit to refuse the v2 name it does not list", err)
+	}
+	if denied.Tool != "devexpress_docs_get_content" {
+		t.Fatalf("denied = %q, want devexpress_docs_get_content", denied.Tool)
+	}
+}

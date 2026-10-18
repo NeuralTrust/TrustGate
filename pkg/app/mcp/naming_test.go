@@ -452,3 +452,150 @@ func TestComposer_ListTools_ConfiglessStoreInstancesServeDistinctNames(t *testin
 		t.Fatalf("tools = %v, want both instances' two tools", names)
 	}
 }
+
+func v2Registry(t *testing.T, name, code string) *registrydomain.Registry {
+	t.Helper()
+	reg := mcpRegistry(t, name, "https://"+name+".example/mcp")
+	reg.MCPTarget.Code = code
+	reg.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	return reg
+}
+
+// Registries with no naming version keep the spellings clients and policies
+// already stored. v2 is a different registry, not a rewrite of these.
+func TestExposedName_V1GoldenNamesStayByteForByte(t *testing.T) {
+	t.Parallel()
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	if got := namedFor(clickup, "clickup_get_task"); got != "clickup_clickup_get_task" {
+		t.Fatalf("clickup = %q, want clickup_clickup_get_task", got)
+	}
+
+	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
+	docs.MCPTarget.Code = "com.devexpress/docs"
+	if got := namedFor(docs, "devexpress_docs_search"); got != "devexpress_docs_devexpress_docs_search" {
+		t.Fatalf("devexpress = %q, want devexpress_docs_devexpress_docs_search", got)
+	}
+	if got := namedFor(docs, "devexpress_docs_get_content"); got != "devexpress_docs_devexpress_docs_get_content" {
+		t.Fatalf("devexpress content = %q, want the doubled prefix", got)
+	}
+
+	elastic := mcpRegistry(t, "Elastic", "https://elastic.example/mcp")
+	elastic.MCPTarget.Code = "com.elastic_agent_builder_mcp/mcp"
+	elastic.MCPTarget.InstanceConfig = map[string]string{"project": "logs"}
+	elastic.InstanceOf = elastic.ID
+	got := namedFor(elastic, "search")
+	want := "elastic_agent_builder_mcp_" + registryDigest(elastic, 6) + "_search"
+	if got != want {
+		t.Fatalf("elastic = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_") || !strings.HasSuffix(got, "_search") {
+		t.Fatalf("elastic = %q, want elastic_agent_builder_mcp_<digest>_search", got)
+	}
+}
+
+func TestExposedName_V2DropsARepeatedServerPrefix(t *testing.T) {
+	t.Parallel()
+	docs := v2Registry(t, "DevExpress", "com.devexpress/docs")
+	if got := namedFor(docs, "devexpress_docs_search"); got != "devexpress_docs_search" {
+		t.Fatalf("search = %q, want devexpress_docs_search", got)
+	}
+	if got := namedFor(docs, "DevExpress_Docs_Get_Content"); got != "devexpress_docs_Get_Content" {
+		t.Fatalf("mixed case = %q, want the slug canonical and the rest untouched", got)
+	}
+
+	clickup := v2Registry(t, "ClickUp", "com.clickup/mcp")
+	if got := namedFor(clickup, "get_task"); got != "clickup_get_task" {
+		t.Fatalf("get_task = %q, want clickup_get_task", got)
+	}
+}
+
+// A partial overlap is not the server prefix. v2 leaves those doubled.
+func TestExposedName_V2LeavesPartialOverlapsDoubled(t *testing.T) {
+	t.Parallel()
+	vonage := v2Registry(t, "Vonage", "com.vonage/docs-mcp")
+	if got := namedFor(vonage, "vonage_docs_search"); got != "vonage_docs_mcp_vonage_docs_search" {
+		t.Fatalf("vonage = %q, want the slug prepended", got)
+	}
+	twilio := v2Registry(t, "Twilio", "com.twilio/docs")
+	if got := namedFor(twilio, "twilio__search"); got != "twilio_docs_twilio__search" {
+		t.Fatalf("twilio = %q, want the slug prepended", got)
+	}
+}
+
+func TestResolveNames_V2KeepsTheDoubledFormOnASameServerCollision(t *testing.T) {
+	t.Parallel()
+	clickup := v2Registry(t, "ClickUp", "com.clickup/mcp")
+	got := resolveNames([]binding{
+		{registry: clickup, tool: Tool{Name: "get_task"}, exposed: "get_task"},
+		{registry: clickup, tool: Tool{Name: "clickup_get_task"}, exposed: "clickup_get_task"},
+	}, nil)
+	byNative := map[string]string{}
+	for _, b := range got {
+		byNative[b.tool.Name] = b.exposed
+	}
+	if byNative["get_task"] != "clickup_get_task" {
+		t.Fatalf("get_task = %q, want clickup_get_task", byNative["get_task"])
+	}
+	if byNative["clickup_get_task"] != "clickup_clickup_get_task" {
+		t.Fatalf("prefixed tool = %q, want clickup_clickup_get_task", byNative["clickup_get_task"])
+	}
+}
+
+func TestExposedName_V2SingleInstanceOmitsDigest(t *testing.T) {
+	t.Parallel()
+	elastic := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	elastic.MCPTarget.InstanceConfig = map[string]string{"project": "logs"}
+	elastic.InstanceOf = elastic.ID
+	if got := namedFor(elastic, "search"); got != "elastic_agent_builder_mcp_search" {
+		t.Fatalf("single instance = %q, want elastic_agent_builder_mcp_search", got)
+	}
+}
+
+func TestExposedName_V2CollidingInstancesKeepTheDigest(t *testing.T) {
+	t.Parallel()
+	shelf := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	a := storeClone(shelf)
+	b := storeClone(shelf)
+	a.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	b.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	nameA, nameB := namedFor(a, "search"), namedFor(b, "search")
+	wantA := "elastic_agent_builder_mcp_" + registryDigest(a, 6) + "_search"
+	wantB := "elastic_agent_builder_mcp_" + registryDigest(b, 6) + "_search"
+	if nameA != wantA || nameB != wantB {
+		t.Fatalf("instances = %q and %q, want %q and %q", nameA, nameB, wantA, wantB)
+	}
+	if nameA == nameB {
+		t.Fatalf("two instances share %q", nameA)
+	}
+}
+
+func TestExposedName_V2TruncationKeepsTheTail(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	tool := strings.Repeat("a", 40) + "_list_indices"
+	got := namedFor(reg, tool)
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name %q is %d characters, want at most %d", got, len(got), maxExposedNameLength)
+	}
+	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_") {
+		t.Fatalf("name = %q, want the server prefix kept", got)
+	}
+	if !strings.HasSuffix(got, "_list_indices") {
+		t.Fatalf("name = %q, want the action words kept", got)
+	}
+	other := namedFor(reg, strings.Repeat("b", 40)+"_list_indices")
+	if other == got {
+		t.Fatalf("two long tools collapsed to %q", got)
+	}
+	if !strings.HasSuffix(other, "_list_indices") {
+		t.Fatalf("other = %q, want its tail kept too", other)
+	}
+	// The original rules still cut the tail off and end on the content hash.
+	v1 := mcpRegistry(t, "Elastic", "https://elastic-v1.example/mcp")
+	v1.MCPTarget.Code = reg.MCPTarget.Code
+	legacy := namedFor(v1, tool)
+	if strings.HasSuffix(legacy, "_list_indices") || len(legacy) > maxExposedNameLength {
+		t.Fatalf("v1 name = %q, want the tail replaced and the length capped", legacy)
+	}
+}
