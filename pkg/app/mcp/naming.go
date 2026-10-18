@@ -154,3 +154,33 @@ func slugFromCatalogCode(code string) string {
 	}
 	return strings.Trim(b.String(), "_")
 }
+
+// registriesForExposedName returns the registries that own an exposed tool
+// name. That name is always "<server>_<tool>", so the owner is known before
+// any upstream is dialed — a tools/call must not mint a connect ticket, or
+// surface a consent or discovery error, for a server that does not own it.
+// The longest server prefix wins, so a server named notion does not claim a
+// tool of notion_ai.
+func registriesForExposedName(registries []*registrydomain.Registry, name string) []*registrydomain.Registry {
+	var owners []*registrydomain.Registry
+	best := 0
+	for _, reg := range registries {
+		slug := serverSlug(reg)
+		if slug == "" {
+			continue
+		}
+		prefix := slug + "_"
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if len(prefix) > best {
+			owners = []*registrydomain.Registry{reg}
+			best = len(prefix)
+			continue
+		}
+		if len(prefix) == best {
+			owners = append(owners, reg)
+		}
+	}
+	return owners
+}

@@ -121,6 +121,7 @@ func (m *memVault) Delete(_ context.Context, gw ids.GatewayID, sub, provider str
 type stubConnect struct {
 	appoauth.ConnectService
 	ticket     string
+	tickets    int
 	refreshCfg *registrydomain.MCPAuth
 	refreshErr error
 	// serverTicketCodes records the catalog codes CreateServerTicket was asked
@@ -129,6 +130,7 @@ type stubConnect struct {
 }
 
 func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
+	s.tickets++
 	return s.ticket, nil
 }
 
@@ -365,6 +367,27 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}
 		if consent.Provider != "github" || consent.Ticket != "tckt" || consent.Path != "/dev/mcp" {
 			t.Fatalf("consent = %+v", consent)
+		}
+	})
+
+	// Resolving a tool that this server does not own still learns that the
+	// account is missing, but the ticket is only minted when that consent is
+	// the answer being returned.
+	t.Run("a resolve probe does not mint a connect ticket", func(t *testing.T) {
+		t.Parallel()
+		connect := &stubConnect{ticket: "tckt"}
+		r := NewCredentialResolver(nil, &memVault{}, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := withResolveProbe(principalCtx(&identity.Principal{Subject: "alice"}))
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &Target{})
+		var consent *ConsentRequiredError
+		if !errors.As(err, &consent) {
+			t.Fatalf("error = %v, want ConsentRequiredError", err)
+		}
+		if consent.Ticket != "" {
+			t.Fatalf("ticket = %q, want none on a probe", consent.Ticket)
+		}
+		if connect.tickets != 0 {
+			t.Fatalf("CreateTicket calls = %d, want 0", connect.tickets)
 		}
 	})
 
