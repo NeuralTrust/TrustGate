@@ -231,6 +231,7 @@ func (c *Client) connect(
 		if attempt.unauthorizedResponses.Load() > 0 {
 			err = fmt.Errorf("%w: %w", appmcp.ErrUpstreamUnauthorized, err)
 		}
+		err = attachNotedFailure(attempt, err)
 		return nil, attempt, err
 	}
 	return &Session{cs: cs, connection: captured.connection, url: redactURL(target.URL)}, attempt, nil
@@ -240,6 +241,23 @@ type capturedTransport struct {
 	sdk.Transport
 	connection sdk.Connection
 	stopClose  func() bool
+}
+
+// attachNotedFailure puts the classified dial failure back on the chain when
+// the SDK's error dropped it. A failure already in the chain is left as it is.
+func attachNotedFailure(attempt *handshakeRoundTripper, err error) error {
+	if attempt == nil || err == nil {
+		return err
+	}
+	noted := attempt.notedFailure.Load()
+	if noted == nil {
+		return err
+	}
+	var already *appmcp.UpstreamFailure
+	if errors.As(err, &already) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", noted, err)
 }
 
 func (t *capturedTransport) Connect(ctx context.Context) (sdk.Connection, error) {

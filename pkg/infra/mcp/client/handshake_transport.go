@@ -19,10 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -47,6 +47,10 @@ type handshakeRoundTripper struct {
 	discoverLegacyCandidate atomic.Bool
 	initializeBadRequest    atomic.Bool
 	unauthorizedResponses   atomic.Uint64
+	// notedFailure is the classified dial failure this attempt observed. The
+	// SDK's own error often drops the typed error RoundTrip returned, so
+	// Connect reads this and puts it back on the chain.
+	notedFailure atomic.Pointer[appmcp.UpstreamFailure]
 }
 
 func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -85,11 +89,38 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		if tracker, ok := req.Context().Value(unauthorizedTrackerKey{}).(*atomic.Bool); ok {
 			tracker.Store(true)
 		}
-		if resp.Body != nil {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHandshakeBody))
-			_ = resp.Body.Close()
+		failure := &appmcp.UpstreamFailure{Kind: appmcp.UpstreamFailureCredential, Status: resp.StatusCode}
+		t.notedFailure.Store(failure)
+		discardHandshakeBody(resp)
+		// 401 unwraps to ErrUpstreamUnauthorized, which is what the refresh
+		// retry keys on. The body is discarded so it cannot ride out in the
+		// error text.
+		return nil, failure
+	}
+	if err == nil && resp.StatusCode == http.StatusForbidden {
+		// 403 is a rejected credential, and it is not ErrUpstreamUnauthorized:
+		// that sentinel is the refresh retry's signal, which a 403 must not trip.
+		// The response itself is still returned so the SDK's handshake proceeds
+		// as before; only the body is dropped, so it cannot be copied into the
+		// error the composer logs.
+		failure := &appmcp.UpstreamFailure{Kind: appmcp.UpstreamFailureCredential, Status: resp.StatusCode}
+		t.notedFailure.Store(failure)
+		discardHandshakeBody(resp)
+		resp.Body = io.NopCloser(strings.NewReader(""))
+		resp.ContentLength = 0
+		return resp, nil
+	}
+	if err == nil && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		kind := appmcp.UpstreamFailureRedirect
+		if redirectToHTTP(req, resp.Header.Get("Location")) {
+			kind = appmcp.UpstreamFailureDowngrade
 		}
-		return nil, fmt.Errorf("%w: HTTP %d", appmcp.ErrUpstreamUnauthorized, resp.StatusCode)
+		failure := &appmcp.UpstreamFailure{Kind: kind, Status: resp.StatusCode}
+		t.notedFailure.Store(failure)
+		discardHandshakeBody(resp)
+		// The redirect is not followed. CheckRedirect refuses one that this
+		// branch did not already turn into an error.
+		return nil, failure
 	}
 	if err == nil && ok && method == methodServerDiscover && isLegacyDiscoverResponse(resp) {
 		t.discoverLegacyCandidate.Store(true)
@@ -102,6 +133,27 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 
 func rejectRedirect(*http.Request, []*http.Request) error {
 	return errors.New("MCP upstream redirects are not allowed")
+}
+
+func discardHandshakeBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHandshakeBody))
+	_ = resp.Body.Close()
+}
+
+// redirectToHTTP reports an https request whose Location is http. That
+// downgrade is named on its own; any other redirect is "not followed".
+func redirectToHTTP(req *http.Request, loc string) bool {
+	if req == nil || req.URL == nil || !strings.EqualFold(req.URL.Scheme, "https") {
+		return false
+	}
+	target, err := req.URL.Parse(loc)
+	if err != nil || target == nil {
+		return false
+	}
+	return strings.EqualFold(target.Scheme, "http")
 }
 
 func isLegacyDiscoverResponse(resp *http.Response) bool {
