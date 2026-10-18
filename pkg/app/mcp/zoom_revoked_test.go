@@ -42,7 +42,7 @@ func TestComposer_Invoke_Zoom4741ErrorIsAToolError(t *testing.T) {
 	t.Parallel()
 	const leaked = "secret-token-body"
 	reg := zoomRegistry(t)
-	up := &fakeUpstream{callErr: errors.New(`zoom upstream {"code":4741,"message":"` + leaked + `"}`)}
+	up := &fakeUpstream{callErr: errors.New(`{"code":4741,"message":"` + leaked + `"}`)}
 	res, err := invokeZoom(t, reg, up)
 	if err != nil {
 		t.Fatalf("4741 error must be a tool result, not an error: %v", err)
@@ -101,6 +101,58 @@ func TestComposer_Invoke_NonZoom4741Stays(t *testing.T) {
 	}
 	if string(res) != raw {
 		t.Fatalf("result = %s, want a non-zoom 4741 left alone", res)
+	}
+}
+
+func TestComposer_Invoke_ZoomSuccess4741InAStringStays(t *testing.T) {
+	t.Parallel()
+	reg := zoomRegistry(t)
+	raw := `{"content":[{"type":"text","text":"{\"topic\":\"weekly sync \\\"code\\\": 4741\"}"}]}`
+	up := &fakeUpstream{result: json.RawMessage(raw)}
+	res, err := invokeZoom(t, reg, up)
+	if err != nil {
+		t.Fatalf("success: %v", err)
+	}
+	if string(res) != raw {
+		t.Fatalf("result = %s, want a topic that quotes code 4741 left alone", res)
+	}
+}
+
+func TestComposer_Invoke_ZoomSuccessNested4741Stays(t *testing.T) {
+	t.Parallel()
+	reg := zoomRegistry(t)
+	raw := `{"content":[{"type":"text","text":"{\"meeting\":{\"code\":4741,\"message\":\"room\"}}"}]}`
+	up := &fakeUpstream{result: json.RawMessage(raw)}
+	res, err := invokeZoom(t, reg, up)
+	if err != nil {
+		t.Fatalf("success: %v", err)
+	}
+	if string(res) != raw {
+		t.Fatalf("result = %s, want a nested 4741 left alone", res)
+	}
+}
+
+func TestComposer_Invoke_ZoomSuccessStringCode4741Stays(t *testing.T) {
+	t.Parallel()
+	reg := zoomRegistry(t)
+	raw := `{"content":[{"type":"text","text":"{\"code\":\"4741\",\"message\":\"room\"}"}]}`
+	up := &fakeUpstream{result: json.RawMessage(raw)}
+	res, err := invokeZoom(t, reg, up)
+	if err != nil {
+		t.Fatalf("success: %v", err)
+	}
+	if string(res) != raw {
+		t.Fatalf("result = %s, want a string code left alone", res)
+	}
+}
+
+func TestComposer_Invoke_Zoom4741InsideAnErrorStringStays(t *testing.T) {
+	t.Parallel()
+	reg := zoomRegistry(t)
+	up := &fakeUpstream{callErr: errors.New(`zoom upstream {"code":4741,"message":"secret-token-body"}`)}
+	_, err := invokeZoom(t, reg, up)
+	if err == nil || strings.Contains(err.Error(), zoomRevokedConnectionText) {
+		t.Fatalf("error = %v, want the original error, not the reconnect tool error", err)
 	}
 }
 
