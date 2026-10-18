@@ -108,6 +108,32 @@ func TestCatalogRegistry_SecretURLVariableMapsToNoAuth(t *testing.T) {
 	}
 }
 
+// TestCatalogRegistry_OptionalPublicHeaderMaterialisesNone: a public server
+// with an optional key (Algolia) materialises with no auth so the shelf
+// validates. A required key still cannot.
+func TestCatalogRegistry_OptionalPublicHeaderMaterialisesNone(t *testing.T) {
+	reg, err := catalogRegistry(catalogdomain.MCPServer{
+		Code: "com.algolia/mcp", URL: "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp",
+		Transport: "streamable-http", AuthHint: "static", RequiresAuth: false, SelfService: true,
+		URLVariables: []catalogdomain.MCPURLVariable{
+			{Name: "app_id", Required: true},
+			{Name: "uniq_id", Required: true},
+		},
+		AuthHeaders: []catalogdomain.MCPAuthHeader{{
+			Name: "Authorization", Required: false, Secret: true, Scheme: "Bearer",
+		}},
+	}, ids.New[ids.GatewayKind]())
+	if err != nil {
+		t.Fatalf("catalogRegistry: %v", err)
+	}
+	if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeNone {
+		t.Fatalf("optional public key must materialise as auth none, got %+v", reg.MCPTarget.Auth)
+	}
+	if err := reg.MCPTarget.Validate(); err != nil {
+		t.Fatalf("materialised public target must validate: %v", err)
+	}
+}
+
 // TestCatalogRegistry_StaticHeaderOnlyDoesNotValidate documents why the installer
 // refuses to self-serve an API-key-only server: the catalog has no value for the
 // header, and a static auth without a value is invalid.
