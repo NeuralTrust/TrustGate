@@ -324,3 +324,26 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}
 }
+
+func TestCreator_Create_RecordsNamingVersionOnNewMCP(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	repo.EXPECT().Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.IsMCP() && b.MCPTarget != nil && b.MCPTarget.NamingVersion == domain.NamingVersionV2
+	})).Return(nil).Once()
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil)
+
+	got, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: gwID,
+		Name:      "docs",
+		Type:      domain.TypeMCP,
+		MCPTarget: &domain.MCPTarget{URL: "https://docs.example/mcp"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.MCPTarget.NamingVersion != domain.NamingVersionV2 {
+		t.Fatalf("naming version = %d, want %d", got.MCPTarget.NamingVersion, domain.NamingVersionV2)
+	}
+}

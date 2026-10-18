@@ -170,6 +170,10 @@ func applyMCPTargetUpdate(
 		// Origin is gateway-owned: an admin renaming or re-authing the default
 		// instance keeps it recognisable as the one the gateway materialised.
 		incoming.Origin = prev.Origin
+		// NamingVersion is gateway-owned too. The request DTO does not carry
+		// it, so taking the incoming value would drop it on the first edit and
+		// rename every tool of a registry created under the new rules.
+		incoming.NamingVersion = prev.NamingVersion
 		if incoming.OpenAPI == nil && !sourceChanged {
 			incoming.OpenAPI = prev.OpenAPI
 		}

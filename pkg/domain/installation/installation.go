@@ -91,6 +91,11 @@ type Installation struct {
 	// specialise the shared registry for this principal. Nil when the shared
 	// registry is used as-is.
 	Config map[string]string
+	// NamingVersion is the tool-naming rules this install was created under.
+	// Zero — a row written before the column existed, or any row the column
+	// leaves NULL — is the original spelling. New installs record
+	// registry.NamingVersionV2. A repeat install does not change it.
+	NamingVersion int
 	// RegistryID binds the install to one configured instance (registry) of its
 	// catalog code when the admin has connected several (e.g. "Snowflake
 	// (finance)" and "Snowflake (analytics)", each with its own credentials).
