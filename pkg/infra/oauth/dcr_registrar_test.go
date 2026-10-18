@@ -596,3 +596,27 @@ func TestDiscover_IssuerMatchIgnoresCaseAndTrailingSlash(t *testing.T) {
 	require.Equal(t, srv.URL, meta.ValidatedIssuer)
 	require.Equal(t, meta.ValidatedIssuer, meta.Issuer)
 }
+
+func TestDiscover_NonHTTPAuthorizationServerIsRefused(t *testing.T) {
+	t.Parallel()
+	var metadataHits atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              "https://evil.example/mcp",
+			"authorization_servers": []string{"ftp://evil.example"},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		metadataHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	_, err := r.Discover(context.Background(), srv.URL+"/mcp")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bad authorization server")
+	require.Zero(t, metadataHits.Load())
+}
