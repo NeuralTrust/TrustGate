@@ -17367,6 +17367,13 @@
         ],
         "resource": "https://mcp.zoom.us"
       },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Docs.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+      },
       "relevance": 90,
       "tools": [
         {
@@ -17446,6 +17453,13 @@
         ],
         "resource": "https://mcp.zoom.us"
       },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Team Chat.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+      },
       "relevance": 90,
       "tools": [
         {
@@ -17505,6 +17519,13 @@
           "whiteboard:read:list_collaborators"
         ],
         "resource": "https://mcp.zoom.us"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Whiteboard.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
       },
       "relevance": 90,
       "tools": [
@@ -17585,6 +17606,13 @@
           "ai_companion:read:search"
         ],
         "resource": "https://mcp.zoom.us"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Workspace.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
       },
       "relevance": 90,
       "tools": [
