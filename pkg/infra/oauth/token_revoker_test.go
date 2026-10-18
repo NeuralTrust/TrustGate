@@ -210,6 +210,53 @@ func TestTokenRevokerSkipsOriginMismatch(t *testing.T) {
 	if len(calls) != 0 {
 		t.Fatalf("origin mismatch posted %d revocations", len(calls))
 	}
+
+	t.Run("neither the issuer nor the token endpoint", func(t *testing.T) {
+		var missed []revokeCall
+		miss := revokeServer(t, http.StatusOK, &missed)
+		defer miss.Close()
+		auth := &stubRevocationAuth{material: &appoauth.RevocationMaterial{
+			ClientID:           "manual-client",
+			ClientSecret:       "manual-secret",
+			TokenURL:           "https://tokens.example/token",
+			ValidatedIssuer:    "https://issuer.example",
+			RevocationEndpoint: miss.URL + "/revoke",
+		}}
+		if err := NewTokenRevoker(auth, miss.Client()).Revoke(context.Background(), gw, "ana", revokeRegistry(), cred); err != nil {
+			t.Fatalf("foreign origin must be skipped: %v", err)
+		}
+		if len(missed) != 0 {
+			t.Fatalf("foreign origin posted %d revocations", len(missed))
+		}
+	})
+}
+
+func TestTokenRevokerAcceptsValidatedIssuerOrigin(t *testing.T) {
+	t.Parallel()
+	var calls []revokeCall
+	srv := revokeServer(t, http.StatusOK, &calls)
+	defer srv.Close()
+	gw := ids.New[ids.GatewayKind]()
+	cred, err := vaultdomain.NewCredential(gw, "ana", "com.airtable/mcp", "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := &stubRevocationAuth{material: &appoauth.RevocationMaterial{
+		ClientID:           "manual-client",
+		ClientSecret:       "manual-secret",
+		TokenURL:           "https://tokens.example/token",
+		ValidatedIssuer:    srv.URL,
+		RevocationEndpoint: srv.URL + "/revoke",
+	}}
+	if err := NewTokenRevoker(auth, srv.Client()).Revoke(context.Background(), gw, "ana", revokeRegistry(), cred); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("issuer-origin revocation posted %d calls", len(calls))
+	}
+	if calls[0].secret != "manual-secret" || calls[0].token != "refresh-token" {
+		t.Fatalf("refresh call = %+v", calls[0])
+	}
 }
 
 func TestTokenRevokerRejectsHTTPExceptAllowPrivate(t *testing.T) {

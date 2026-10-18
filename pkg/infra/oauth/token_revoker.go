@@ -47,8 +47,9 @@ type TokenRevoker struct {
 }
 
 // NewTokenRevoker builds a revoker. A nil client uses the guarded outbound
-// client. Revoke returns nil when the provider does not advertise a revocation
-// endpoint on the same https origin as its token endpoint.
+// client. Revoke returns nil when the provider does not advertise an https
+// revocation endpoint on the validated issuer's origin or the token
+// endpoint's origin.
 func NewTokenRevoker(auth RevocationAuthSource, client *http.Client) *TokenRevoker {
 	if client == nil {
 		client = netguard.NewHTTPClient(15 * time.Second)
@@ -58,8 +59,9 @@ func NewTokenRevoker(auth RevocationAuthSource, client *http.Client) *TokenRevok
 
 // Revoke revokes the credential's refresh token when it has one, and its
 // access token when that is a different value. It presents the client a
-// refresh would, and only to a revocation endpoint with the same origin as
-// that refresh's token endpoint. The error never includes token material.
+// refresh would, and only to a revocation endpoint whose origin is the
+// validated issuer or the token endpoint from that same discovery. The error
+// never includes token material.
 func (r *TokenRevoker) Revoke(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -96,9 +98,9 @@ func (r *TokenRevoker) Revoke(
 }
 
 // revocationEndpoint returns the URL to POST to. ok is false when there is
-// nothing to call (no endpoint configured, or it is not the token endpoint's
-// origin). http is refused unless the operator escape hatch allows private
-// networks.
+// nothing to call, or the endpoint's origin is neither the validated issuer
+// nor the token endpoint. http is refused unless the operator escape hatch
+// allows private networks.
 func revocationEndpoint(material *appoauth.RevocationMaterial) (endpoint string, ok bool, err error) {
 	if material == nil {
 		return "", false, nil
@@ -120,11 +122,18 @@ func revocationEndpoint(material *appoauth.RevocationMaterial) (endpoint string,
 	default:
 		return "", false, errors.New("oauth revoke: revocation endpoint is not an https url")
 	}
-	token, err := url.Parse(strings.TrimSpace(material.TokenURL))
-	if err != nil || token.Hostname() == "" || !sameOrigin(parsed, token) {
+	if !sameOriginRaw(parsed, material.ValidatedIssuer) && !sameOriginRaw(parsed, material.TokenURL) {
 		return "", false, nil
 	}
 	return endpoint, true, nil
+}
+
+func sameOriginRaw(endpoint *url.URL, raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	return sameOrigin(endpoint, parsed)
 }
 
 func sameOrigin(a, b *url.URL) bool {
