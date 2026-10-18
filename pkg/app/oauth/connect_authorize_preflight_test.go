@@ -32,8 +32,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 )
 
@@ -69,7 +71,10 @@ type legacyGateway struct {
 	probe          url.Values
 	rejectRegister bool
 	store          *memConnectStore
+	vault          *memVaultRepo
 	svc            oauth.ConnectService
+	tokenClient    string
+	tokenSecret    string
 	gw             ids.GatewayID
 	reg            *registrydomain.Registry
 	legacyKey      string
@@ -136,6 +141,18 @@ func newLegacyGateway(t *testing.T, catalogURL string, withIssuer bool, authoriz
 		g.otherHits.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		g.mu.Lock()
+		g.tokenClient = r.PostForm.Get("client_id")
+		g.tokenSecret = r.PostForm.Get("client_secret")
+		g.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"refreshed-access","token_type":"Bearer","expires_in":3600}`))
+	})
 	g.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(g.srv.Close)
 
@@ -171,6 +188,7 @@ func newLegacyGateway(t *testing.T, catalogURL string, withIssuer bool, authoriz
 	if catalogURL != "" {
 		catalog = authorizeCatalog{code: legacyCode, url: catalogURL}
 	}
+	g.vault = &memVaultRepo{}
 	g.registrar = infraoauth.NewUpstreamRegistrar(g.store, g.srv.Client())
 	data := appconsumer.NewData(g.gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
@@ -180,7 +198,7 @@ func newLegacyGateway(t *testing.T, catalogURL string, withIssuer bool, authoriz
 		Registries: []*registrydomain.Registry{g.reg},
 	}})
 	g.svc = oauth.NewConnectService(
-		g.store, &memVaultRepo{}, &stubDataFinder{data: data},
+		g.store, g.vault, &stubDataFinder{data: data},
 		infraoauth.NewProviderClient(nil), g.registrar,
 		discardConnectAuditor(), nil, nil, catalog, nil,
 	)
@@ -332,8 +350,12 @@ func relinkCatalog(t *testing.T, g *legacyGateway, authorizeURL string, opts ...
 		},
 		Registries: []*registrydomain.Registry{g.reg},
 	}})
+	vault := g.vault
+	if vault == nil {
+		vault = &memVaultRepo{}
+	}
 	return oauth.NewConnectService(
-		g.store, &memVaultRepo{}, &stubDataFinder{data: data},
+		g.store, vault, &stubDataFinder{data: data},
 		infraoauth.NewProviderClient(nil), g.registrar,
 		discardConnectAuditor(), nil, nil, authorizeCatalog{code: legacyCode, url: authorizeURL}, nil,
 		opts...,
@@ -595,7 +617,7 @@ func TestLegacyAuthorizePreflight_RegistrationFailureStaysTheExistingError(t *te
 	}
 }
 
-func TestLegacyAuthorizePreflight_RedirectURIIsNotReplaced(t *testing.T) {
+func TestLegacyAuthorizePreflight_RedirectURIKeepsExistingRefresh(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name      string
@@ -612,25 +634,102 @@ func TestLegacyAuthorizePreflight_RedirectURIIsNotReplaced(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			g := newLegacyGateway(t, "", false, tc.authorize)
-			g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize")
-			_, err := g.start(context.Background())
-			if !errors.Is(err, oauth.ErrLegacyAuthorizeRedirectRejected) {
-				t.Fatalf("Start error = %v, want the redirect URI rejection", err)
-			}
-			if g.authorizeHits.Load() != 1 || g.otherHits.Load() != 0 || g.registrations.Load() != 0 {
-				t.Fatalf("authorize = %d followed = %d registrations = %d, want one probe and no replacement", g.authorizeHits.Load(), g.otherHits.Load(), g.registrations.Load())
-			}
 			legacy := g.store.clients[g.legacyKey]
-			if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 0 || legacy.Issuer != "" {
-				t.Fatalf("legacy row = %+v, want it untouched", legacy)
+			legacy.ClientSecret = "legacy-secret"
+			g.store.clients[g.legacyKey] = legacy
+			g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize")
+			ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+			cred, err := vaultdomain.NewCredential(g.gw, "alice", registrydomain.ForwardedVaultProvider(g.reg), "acct", "old-access", "user-refresh", nil, time.Now().Add(-time.Hour))
+			if err != nil {
+				t.Fatalf("credential: %v", err)
 			}
-			if other := g.store.clients["other-slot"]; other.ClientID != "other-client" || other.ClientSecretExpiresAt != 0 {
+			if err := g.vault.Upsert(ctx, cred); err != nil {
+				t.Fatalf("vault: %v", err)
+			}
+			location, err := g.start(ctx)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if g.authorizeHits.Load() != 1 || g.otherHits.Load() != 0 || g.registrations.Load() != 1 {
+				t.Fatalf("authorize = %d followed = %d registrations = %d, want one probe and one replacement", g.authorizeHits.Load(), g.otherHits.Load(), g.registrations.Load())
+			}
+			freshID := mustQuery(t, location).Get("client_id")
+			if freshID == "" || freshID == legacyClientID {
+				t.Fatalf("authorize client_id = %q, want the replacement", freshID)
+			}
+			kept := g.store.clients[g.legacyKey]
+			if kept.ClientID != legacyClientID || kept.ClientSecret != "legacy-secret" || kept.ClientSecretExpiresAt != 1 {
+				t.Fatalf("legacy row = %+v, want the original client kept and tombstoned", kept)
+			}
+			if other := g.store.clients["other-slot"]; other.ClientID != "other-client" {
 				t.Fatalf("other slot = %+v, want it untouched", other)
 			}
-			if _, ok := scopedOrNone(g); ok {
-				t.Fatal("a scoped client was registered")
+			_, scoped := g.scopedClient(t)
+			if scoped.ClientID != freshID || scoped.Issuer == "" {
+				t.Fatalf("scoped client = %+v, want the replacement with an issuer", scoped)
+			}
+
+			auth, err := g.svc.RefreshAuth(ctx, g.gw, g.reg)
+			if err != nil {
+				t.Fatalf("RefreshAuth: %v", err)
+			}
+			if auth.ClientID != legacyClientID || auth.ClientSecret != "legacy-secret" {
+				t.Fatalf("refresh client = %q / %q, want the original client", auth.ClientID, auth.ClientSecret)
+			}
+			if _, err := infraoauth.NewProviderClient(g.srv.Client()).Refresh(ctx, auth, "user-refresh"); err != nil {
+				t.Fatalf("Refresh: %v", err)
+			}
+			g.mu.Lock()
+			tokenClient, tokenSecret := g.tokenClient, g.tokenSecret
+			g.mu.Unlock()
+			if tokenClient != legacyClientID || tokenSecret != "legacy-secret" {
+				t.Fatalf("token client = %q secret = %q, want the original client", tokenClient, tokenSecret)
+			}
+
+			cred.OAuthClientID = freshID
+			if err := g.vault.Upsert(ctx, cred); err != nil {
+				t.Fatalf("stamp vault: %v", err)
+			}
+			next, err := g.svc.RefreshAuth(ctx, g.gw, g.reg)
+			if err != nil {
+				t.Fatalf("RefreshAuth new grant: %v", err)
+			}
+			if next.ClientID != freshID {
+				t.Fatalf("new grant refresh client = %q, want %q", next.ClientID, freshID)
+			}
+
+			again, err := g.start(ctx)
+			if err != nil {
+				t.Fatalf("second Start: %v", err)
+			}
+			if g.authorizeHits.Load() != 1 || g.registrations.Load() != 1 {
+				t.Fatalf("after second connect authorize = %d registrations = %d, want the row left alone", g.authorizeHits.Load(), g.registrations.Load())
+			}
+			if mustQuery(t, again).Get("client_id") != freshID {
+				t.Fatalf("second client_id = %q, want %q", mustQuery(t, again).Get("client_id"), freshID)
 			}
 		})
+	}
+}
+
+func TestLegacyAuthorizePreflight_RedirectRegistrationFailureLeavesTheRow(t *testing.T) {
+	t.Parallel()
+	g := newLegacyGateway(t, "", false, rejectRedirectURI)
+	g.rejectRegister = true
+	g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize")
+	_, err := g.start(context.Background())
+	if !errors.Is(err, oauth.ErrUpstreamRegistrationRejected) {
+		t.Fatalf("Start error = %v, want registration rejected", err)
+	}
+	if g.authorizeHits.Load() != 1 || g.registrations.Load() != 0 {
+		t.Fatalf("authorize = %d registrations = %d, want one probe and no registration", g.authorizeHits.Load(), g.registrations.Load())
+	}
+	legacy := g.store.clients[g.legacyKey]
+	if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 0 || legacy.Issuer != "" {
+		t.Fatalf("legacy row = %+v, want it untouched", legacy)
+	}
+	if _, ok := scopedOrNone(g); ok {
+		t.Fatal("a failed replacement was stored")
 	}
 }
 

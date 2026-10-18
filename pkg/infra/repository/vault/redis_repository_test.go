@@ -58,6 +58,7 @@ func TestRedisRepository_UpsertFindRoundTrip(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 
 	cred := newTestCredential(t, gw, "user-1", "github", "access-token", "refresh-token")
+	cred.OAuthClientID = "client-issued"
 	if err := repo.Upsert(ctx, cred); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -68,6 +69,9 @@ func TestRedisRepository_UpsertFindRoundTrip(t *testing.T) {
 	}
 	if got.AccessToken != "access-token" || got.RefreshToken != "refresh-token" {
 		t.Fatalf("token mismatch: %+v", got)
+	}
+	if got.OAuthClientID != "client-issued" {
+		t.Fatalf("oauth client id = %q, want the issuing client", got.OAuthClientID)
 	}
 	if got.AccountRef != "acct-github" || got.Provider != "github" || got.PrincipalSub != "user-1" {
 		t.Fatalf("metadata mismatch: %+v", got)

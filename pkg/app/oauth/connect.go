@@ -589,6 +589,11 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err != nil {
 		return st.TicketID, err
 	}
+	// The grant was issued to this client. A later refresh has to present the
+	// same one, even after a newer registration becomes the client new connects use.
+	if cfg != nil {
+		cred.OAuthClientID = cfg.ClientID
+	}
 	if err := s.vault.Upsert(ctx, cred); err != nil {
 		return st.TicketID, err
 	}
