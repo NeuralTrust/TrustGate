@@ -20,6 +20,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 )
 
 type recordingVault struct {
+	mu        sync.Mutex
 	creds     map[string]*vaultdomain.Credential
 	calls     []string
 	deleteErr error
@@ -41,6 +43,8 @@ func credKey(sub, provider string) string { return sub + "\x00" + provider }
 func (v *recordingVault) Upsert(context.Context, *vaultdomain.Credential) error { return nil }
 
 func (v *recordingVault) Find(_ context.Context, _ ids.GatewayID, sub, provider string) (*vaultdomain.Credential, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.calls = append(v.calls, "find")
 	if v.findErr != nil {
 		return nil, v.findErr
@@ -57,6 +61,8 @@ func (v *recordingVault) ListByPrincipal(context.Context, ids.GatewayID, string)
 }
 
 func (v *recordingVault) Delete(_ context.Context, _ ids.GatewayID, sub, provider string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.calls = append(v.calls, "delete")
 	if v.deleteErr != nil {
 		return v.deleteErr
@@ -69,14 +75,39 @@ func (v *recordingVault) Delete(_ context.Context, _ ids.GatewayID, sub, provide
 	return nil
 }
 
+type lockingVault struct {
+	recordingVault
+	provider string
+	released bool
+}
+
+func (v *lockingVault) AcquireRefreshLock(_ context.Context, _ ids.GatewayID, _, provider string) (func(context.Context) error, error) {
+	v.mu.Lock()
+	v.provider = provider
+	v.mu.Unlock()
+	return func(context.Context) error {
+		v.mu.Lock()
+		v.released = true
+		v.mu.Unlock()
+		return nil
+	}, nil
+}
+
 type fakeRevoker struct {
+	mu     sync.Mutex
 	err    error
 	calls  int
 	tokens []string
+	ctxErr error
+	hasDL  bool
 }
 
-func (f *fakeRevoker) Revoke(_ context.Context, _ ids.GatewayID, _ string, _ *registrydomain.Registry, cred *vaultdomain.Credential) error {
+func (f *fakeRevoker) Revoke(ctx context.Context, _ ids.GatewayID, _ string, _ *registrydomain.Registry, cred *vaultdomain.Credential) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
+	f.ctxErr = ctx.Err()
+	_, f.hasDL = ctx.Deadline()
 	if cred != nil {
 		f.tokens = append(f.tokens, cred.AccessToken, cred.RefreshToken)
 	}
@@ -86,7 +117,7 @@ func (f *fakeRevoker) Revoke(_ context.Context, _ ids.GatewayID, _ string, _ *re
 func credentialInstaller(
 	t *testing.T,
 	regs *fakeRegistries,
-	installs *fakeInstalls,
+	installs installationdomain.Repository,
 	vault vaultdomain.Repository,
 	revoker CredentialRevoker,
 	logger *slog.Logger,
@@ -112,6 +143,7 @@ func installedRow(code string, reg ids.RegistryID) *installationdomain.Installat
 func oauthRegistry(code, name, provider, rawURL string) *registrydomain.Registry {
 	reg := forwardedRegistry(code, name, provider)
 	reg.MCPTarget.URL = rawURL
+	reg.MCPTarget.Origin = registrydomain.MCPOriginStore
 	return reg
 }
 
@@ -379,5 +411,210 @@ func TestUninstallCredentialAlreadyGoneIsSuccess(t *testing.T) {
 	}
 	if _, err := vault.Find(context.Background(), gw, "ana", provider); !errors.Is(err, vaultdomain.ErrNotFound) {
 		t.Fatalf("credential = %v", err)
+	}
+}
+
+func TestUninstallRevocationIgnoresCallerCancel(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := oauthRegistry("github", "GitHub", "github", "https://mcp.github.com/mcp")
+	provider := registrydomain.ForwardedVaultProvider(reg)
+	cred, err := vaultdomain.NewCredential(gw, "ana", provider, "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := &recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}
+	revoker := &fakeRevoker{}
+	row := installedRow("github", reg.ID)
+	rows := []*installationdomain.Installation{row}
+	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, &fakeInstalls{byCode: rows, byPrincipal: rows}, vault, revoker, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := inst.Uninstall(ctx, gw, "ana", "github", ""); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if revoker.ctxErr != nil {
+		t.Fatalf("revocation context was cancelled with the caller: %v", revoker.ctxErr)
+	}
+	if !revoker.hasDL {
+		t.Fatal("revocation context has no deadline")
+	}
+}
+
+func TestUninstallLocksThePerUserCredential(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := oauthRegistry("github", "GitHub", "github", "https://mcp.github.com/mcp")
+	provider := registrydomain.ForwardedVaultProvider(reg)
+	cred, err := vaultdomain.NewCredential(gw, "ana", provider, "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := &lockingVault{recordingVault: recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}}
+	row := installedRow("github", reg.ID)
+	rows := []*installationdomain.Installation{row}
+	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, &fakeInstalls{byCode: rows, byPrincipal: rows}, vault, &fakeRevoker{}, nil)
+
+	if err := inst.Uninstall(context.Background(), gw, "ana", "github", ""); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if vault.provider != provider || !vault.released {
+		t.Fatalf("lock provider=%q released=%v", vault.provider, vault.released)
+	}
+}
+
+func TestUninstallKeepsCredentialUsedByAdminRegistry(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	storeReg := oauthRegistry("github", "GitHub", "github", "https://mcp.github.com/mcp")
+	admin := oauthRegistry("github", "GitHub admin", "github", "https://mcp.github.com/mcp")
+	admin.MCPTarget.Origin = ""
+	if registrydomain.ForwardedVaultProvider(storeReg) != registrydomain.ForwardedVaultProvider(admin) {
+		t.Fatal("admin registry must share the store install's vault key")
+	}
+	provider := registrydomain.ForwardedVaultProvider(storeReg)
+	cred, err := vaultdomain.NewCredential(gw, "ana", provider, "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := &recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}
+	revoker := &fakeRevoker{}
+	row := installedRow("github", storeReg.ID)
+	rows := []*installationdomain.Installation{row}
+	inst := credentialInstaller(t,
+		&fakeRegistries{items: []*registrydomain.Registry{storeReg, admin}},
+		&fakeInstalls{byCode: rows, byPrincipal: rows},
+		vault, revoker, nil)
+
+	if err := inst.Uninstall(context.Background(), gw, "ana", "github", ""); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if revoker.calls != 0 {
+		t.Fatalf("revoker calls = %d, want 0 while an admin registry uses the key", revoker.calls)
+	}
+	if _, err := vault.Find(context.Background(), gw, "ana", provider); err != nil {
+		t.Fatalf("credential an admin registry still uses = %v", err)
+	}
+
+	t.Run("shared admin account is a different key", func(t *testing.T) {
+		sharedAdmin := oauthRegistry("github", "GitHub shared", "github", "https://mcp.github.com/mcp")
+		sharedAdmin.MCPTarget.Origin = ""
+		sharedAdmin.MCPTarget.Auth.Account = registrydomain.MCPAccountShared
+		cred, err := vaultdomain.NewCredential(gw, "ana", provider, "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		vault := &recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}
+		row := installedRow("github", storeReg.ID)
+		rows := []*installationdomain.Installation{row}
+		inst := credentialInstaller(t,
+			&fakeRegistries{items: []*registrydomain.Registry{storeReg, sharedAdmin}},
+			&fakeInstalls{byCode: rows, byPrincipal: rows},
+			vault, &fakeRevoker{}, nil)
+		if err := inst.Uninstall(context.Background(), gw, "ana", "github", ""); err != nil {
+			t.Fatalf("Uninstall: %v", err)
+		}
+		if _, err := vault.Find(context.Background(), gw, "ana", provider); !errors.Is(err, vaultdomain.ErrNotFound) {
+			t.Fatalf("per-user credential = %v, want gone", err)
+		}
+	})
+}
+
+type concurrentInstalls struct {
+	*fakeInstalls
+	mu      sync.Mutex
+	entered int
+	gate    chan struct{}
+}
+
+func (c *concurrentInstalls) FindByID(_ context.Context, _ ids.GatewayID, _ string, id ids.InstallationID) (*installationdomain.Installation, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, in := range c.byPrincipal {
+		if in != nil && in.ID == id {
+			cp := *in
+			return &cp, nil
+		}
+	}
+	return nil, installationdomain.ErrNotFound
+}
+
+func (c *concurrentInstalls) ListByPrincipal(context.Context, ids.GatewayID, string) ([]*installationdomain.Installation, error) {
+	c.mu.Lock()
+	c.entered++
+	n := c.entered
+	if n == 2 {
+		close(c.gate)
+	}
+	c.mu.Unlock()
+	if n <= 2 {
+		<-c.gate
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]*installationdomain.Installation, 0, len(c.byPrincipal))
+	for _, in := range c.byPrincipal {
+		if in == nil {
+			continue
+		}
+		cp := *in
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (c *concurrentInstalls) DeleteByID(_ context.Context, _ ids.GatewayID, _ string, id ids.InstallationID) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deleteByID++
+	for _, in := range c.byPrincipal {
+		if in != nil && in.ID == id {
+			in.Status = installationdomain.StatusRevoked
+		}
+	}
+	return nil
+}
+
+func TestConcurrentUninstallOfSharedCredentialLeavesNothing(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	full := oauthRegistry("github", "GitHub", "github", "https://mcp.github.com/mcp")
+	readOnly := oauthRegistry("github", "GitHub read-only", "github", "https://mcp.github.com/mcp/")
+	if registrydomain.ForwardedVaultProvider(full) != registrydomain.ForwardedVaultProvider(readOnly) {
+		t.Fatal("fixture registries must share one vault key")
+	}
+	provider := registrydomain.ForwardedVaultProvider(full)
+	cred, err := vaultdomain.NewCredential(gw, "ana", provider, "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := &recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}
+	one := installedRow("github", full.ID)
+	two := installedRow("github", readOnly.ID)
+	rows := []*installationdomain.Installation{one, two}
+	installs := &concurrentInstalls{
+		fakeInstalls: &fakeInstalls{byCode: rows, byPrincipal: rows},
+		gate:         make(chan struct{}),
+	}
+	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{full, readOnly}}, installs, vault, &fakeRevoker{}, nil)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, row := range rows {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			errs <- inst.Uninstall(context.Background(), gw, "ana", "github", id)
+		}(row.ID.String())
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Uninstall: %v", err)
+		}
+	}
+	if _, err := vault.Find(context.Background(), gw, "ana", provider); !errors.Is(err, vaultdomain.ErrNotFound) {
+		t.Fatalf("concurrent uninstall left the credential: %v", err)
+	}
+	if installs.deleteByID != 2 {
+		t.Fatalf("deleteByID = %d, want both installs removed", installs.deleteByID)
 	}
 }

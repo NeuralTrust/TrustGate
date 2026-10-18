@@ -115,8 +115,12 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(reg appoauth.UpstreamRegistrar) appstore.CredentialRevoker {
-		return infraoauth.NewTokenRevoker(reg, nil)
+	if err := c.Provide(func(connect appoauth.ConnectService) (appstore.CredentialRevoker, error) {
+		src, ok := connect.(infraoauth.RevocationAuthSource)
+		if !ok {
+			return nil, fmt.Errorf("mcp: connect service does not resolve revocation auth")
+		}
+		return infraoauth.NewTokenRevoker(src, nil), nil
 	}); err != nil {
 		return err
 	}

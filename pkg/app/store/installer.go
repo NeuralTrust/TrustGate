@@ -160,12 +160,15 @@ type InstallerOption func(*installer)
 // WithUninstallCredentials releases the principal's per-user vault credential
 // when Uninstall removes the last active installation that resolves to it. A
 // shared account is left in place, and so is a credential another active
-// installation of the same principal still uses. Vault ErrNotFound is success.
-// Any other vault error fails Uninstall before the installation row is removed,
-// so a retry can still release the credential. Vendor revocation is best-effort:
-// a failure or an unsupported provider is logged and never keeps the local
-// token or fails Uninstall. revoker may be nil, which skips the vendor call.
-// The cached dynamic client is not deleted.
+// installation of the same principal still uses. An admin-provisioned registry
+// (any origin other than the store) that resolves to the same per-user key
+// keeps it too: that registry reads the vault directly, with no installation
+// row. Vault ErrNotFound is success. Any other vault error fails Uninstall
+// before the installation row is removed, so a retry can still release the
+// credential. Vendor revocation is best-effort: a failure or an unsupported
+// provider is logged and never keeps the local token or fails Uninstall.
+// revoker may be nil, which skips the vendor call. The cached dynamic client
+// is not deleted.
 func WithUninstallCredentials(vault vaultdomain.Repository, revoker CredentialRevoker, logger *slog.Logger) InstallerOption {
 	return func(i *installer) {
 		i.vault = vault
@@ -769,10 +772,7 @@ func (i *installer) Uninstall(
 			return ErrAmbiguousInstance
 		}
 	}
-	if err := i.releasePerUserCredential(ctx, gatewayID, principalSub, target); err != nil {
-		return err
-	}
-	return i.installs.DeleteByID(ctx, gatewayID, principalSub, target.ID)
+	return i.uninstallActive(ctx, gatewayID, principalSub, target)
 }
 
 // sortRegistries orders instances deterministically: creation time, then id.
