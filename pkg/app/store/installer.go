@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -29,6 +30,7 @@ import (
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 var (
@@ -139,8 +141,39 @@ type Installer interface {
 	// Uninstall removes an install. When instanceID is set it removes that one
 	// instance (which must belong to code); otherwise it removes the sole
 	// instance, or returns ErrAmbiguousInstance when the principal holds several
-	// of that code.
+	// of that code. When credentials are wired, removing the last active
+	// installation that uses a per-user vault key also deletes that credential.
 	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code, instanceID string) error
+}
+
+// CredentialRevoker revokes the upstream OAuth token held in a per-user
+// credential. A nil error means the token was revoked or the provider does not
+// advertise revocation. Callers log a non-nil error and still delete the local
+// credential.
+type CredentialRevoker interface {
+	Revoke(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry, cred *vaultdomain.Credential) error
+}
+
+// InstallerOption configures optional installer dependencies.
+type InstallerOption func(*installer)
+
+// WithUninstallCredentials releases the principal's per-user vault credential
+// when Uninstall removes the last active installation that resolves to it. A
+// shared account is left in place, and so is a credential another active
+// installation of the same principal still uses. Vault ErrNotFound is success.
+// Any other vault error fails Uninstall before the installation row is removed,
+// so a retry can still release the credential. Vendor revocation is best-effort:
+// a failure or an unsupported provider is logged and never keeps the local
+// token or fails Uninstall. revoker may be nil, which skips the vendor call.
+// The cached dynamic client is not deleted.
+func WithUninstallCredentials(vault vaultdomain.Repository, revoker CredentialRevoker, logger *slog.Logger) InstallerOption {
+	return func(i *installer) {
+		i.vault = vault
+		i.revoker = revoker
+		if logger != nil {
+			i.logger = logger
+		}
+	}
 }
 
 // InstallRequest carries everything an install decision needs. Groups are the
@@ -179,6 +212,9 @@ type installer struct {
 	installs   installationdomain.Repository
 	grants     storeaccessdomain.Reader
 	ensurer    RegistryEnsurer
+	vault      vaultdomain.Repository
+	revoker    CredentialRevoker
+	logger     *slog.Logger
 }
 
 // NewInstaller wires the Store installer over the catalog, the gateway's
@@ -198,17 +234,25 @@ func NewInstaller(
 	installs installationdomain.Repository,
 	grants storeaccessdomain.Reader,
 	ensurer RegistryEnsurer,
+	opts ...InstallerOption,
 ) (Installer, error) {
 	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &installer{
+	inst := &installer{
 		catalog:    catalog,
 		registries: registries,
 		installs:   installs,
 		grants:     grants,
 		ensurer:    ensurer,
-	}, nil
+		logger:     slog.Default(),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(inst)
+		}
+	}
+	return inst, nil
 }
 
 func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
@@ -695,34 +739,40 @@ func (i *installer) Uninstall(
 	// A specific instance was named: remove exactly that one — and only if it is
 	// an instance of the named code, so a stray id cannot be used to revoke an
 	// unrelated server.
+	var target *installationdomain.Installation
 	if id := strings.TrimSpace(instanceID); id != "" {
 		installID, err := ids.Parse[ids.InstallationKind](id)
 		if err != nil {
 			return fmt.Errorf("%w: invalid instance id %q", installationdomain.ErrInvalidInstallation, id)
 		}
-		target, err := i.installs.FindByID(ctx, gatewayID, principalSub, installID)
+		found, err := i.installs.FindByID(ctx, gatewayID, principalSub, installID)
 		if err != nil {
 			return err
 		}
-		if target.CatalogCode != code {
+		if found.CatalogCode != code {
 			return fmt.Errorf("%w: instance %q is not an instance of %q", installationdomain.ErrNotFound, id, code)
 		}
-		return i.installs.DeleteByID(ctx, gatewayID, principalSub, installID)
+		target = found
+	} else {
+		// Otherwise remove the sole instance; refuse to guess when several exist.
+		active, err := i.Instances(ctx, gatewayID, principalSub, code)
+		if err != nil {
+			return err
+		}
+		switch len(active) {
+		case 0:
+			// Nothing active; fall back to clearing any inactive row for the code.
+			return i.installs.Delete(ctx, gatewayID, principalSub, code)
+		case 1:
+			target = active[0]
+		default:
+			return ErrAmbiguousInstance
+		}
 	}
-	// Otherwise remove the sole instance; refuse to guess when several exist.
-	active, err := i.Instances(ctx, gatewayID, principalSub, code)
-	if err != nil {
+	if err := i.releasePerUserCredential(ctx, gatewayID, principalSub, target); err != nil {
 		return err
 	}
-	switch len(active) {
-	case 0:
-		// Nothing active; fall back to clearing any inactive row for the code.
-		return i.installs.Delete(ctx, gatewayID, principalSub, code)
-	case 1:
-		return i.installs.DeleteByID(ctx, gatewayID, principalSub, active[0].ID)
-	default:
-		return ErrAmbiguousInstance
-	}
+	return i.installs.DeleteByID(ctx, gatewayID, principalSub, target.ID)
 }
 
 // sortRegistries orders instances deterministically: creation time, then id.

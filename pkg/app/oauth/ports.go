@@ -68,9 +68,12 @@ type UpstreamAuthServer struct {
 	// UserinfoEndpoint is where an OpenID provider answers who a token is for.
 	// Optional in the metadata; when present, it names the account a
 	// connection was made with (see resolveAccountRef).
-	UserinfoEndpoint string   `json:"userinfo_endpoint,omitempty"`
-	ScopesSupported  []string `json:"scopes_supported"`
-	Resource         string   `json:"resource"`
+	UserinfoEndpoint string `json:"userinfo_endpoint,omitempty"`
+	// RevocationEndpoint is the RFC 7009 endpoint the authorization server
+	// advertised. Empty when the provider does not support token revocation.
+	RevocationEndpoint string   `json:"revocation_endpoint,omitempty"`
+	ScopesSupported    []string `json:"scopes_supported"`
+	Resource           string   `json:"resource"`
 }
 
 type RegisteredClient struct {
