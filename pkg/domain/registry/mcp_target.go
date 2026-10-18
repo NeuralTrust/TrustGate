@@ -141,6 +141,10 @@ type MCPAuth struct {
 	// stored or accepted from a client: the gateway only calls an endpoint the
 	// upstream itself advertised, with the token that upstream just issued.
 	UserinfoURL string `json:"-"`
+	// ClientSlot is the cache key the dynamic client in ClientID was read
+	// from. Exchange and refresh set it so a later invalid_client drop
+	// tombstones that key and does not discover again. Never stored.
+	ClientSlot string `json:"-"`
 	// SecretUnreadable marks an auth read from storage whose value or client
 	// secret could not be decrypted and was returned empty. Validate does not
 	// require that secret, so unrelated edits still save; the repository keeps

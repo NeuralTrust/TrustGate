@@ -105,7 +105,12 @@ func (s *connectService) exchangeAuth(
 	if cached == nil || cached.ClientID != clientID {
 		return nil, fmt.Errorf("%w: client %q", ErrNoRegisteredClient, clientID)
 	}
-	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), meta, res)
+	auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), meta, res)
+	if err != nil || auth == nil {
+		return auth, err
+	}
+	auth.ClientSlot = slot
+	return auth, nil
 }
 
 // RevocationMaterial is the OAuth client a refresh would present, plus the
@@ -211,7 +216,11 @@ func (s *connectService) refreshMaterial(
 	if client == nil {
 		return nil, "", upstreamResolution{}, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta, res)
+	auth, endpoint, res, err := s.finalizedRefresh(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta, res)
+	if auth != nil {
+		auth.ClientSlot = slot
+	}
+	return auth, endpoint, res, err
 }
 
 func (s *connectService) finalizedRefresh(
@@ -477,30 +486,16 @@ func legacyRegistrationFor(cached *RegisteredClient, meta *UpstreamAuthServer, r
 }
 
 // DropRegisteredClient marks the cached dynamic client the token endpoint
-// rejected unusable, when that client_id is still the one stored. A templated
-// host drops only its own server's key. A fixed host may also drop the legacy
-// key. A row for a different client is left alone.
-func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID string) error {
-	if s == nil || s.registrar == nil || reg == nil || clientID == "" {
+// rejected unusable, when that client_id is still the one stored under slot.
+// slot is the ClientSlot key the failing exchange or refresh already used.
+// The install values are not read again: a later read can name another
+// authorization server, and dropping that server's key would force every user
+// of it to reconnect (ENG-2241). A row for a different client is left alone.
+func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID, slot string) error {
+	if s == nil || s.registrar == nil || reg == nil || clientID == "" || slot == "" {
 		return nil
 	}
-	principalSub := ""
-	if p := identity.PrincipalFromContext(ctx); p != nil {
-		principalSub = p.Subject
-	}
-	meta, err := s.discover(ctx, gatewayID, principalSub, reg, upstreamResolution{})
-	if err != nil {
-		return err
-	}
-	if err := s.registrar.DropCachedClient(ctx, clientCacheKey(gatewayID, reg, meta), clientID); err != nil {
-		return err
-	}
-	// A templated host must not tombstone the legacy row. That row is the
-	// fixed-host client, and this host's metadata was not its authorization server.
-	if reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
-		return nil
-	}
-	return s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg), clientID)
+	return s.registrar.DropCachedClient(ctx, slot, clientID)
 }
 
 // CredentialUsable reports whether a credential stored for this registry can
