@@ -44,6 +44,9 @@ func (r *recordingInstaller) Installed(context.Context, InstallRequest) (*Instal
 func (r *recordingInstaller) Uninstall(context.Context, ids.GatewayID, string, string, string) error {
 	return nil
 }
+func (r *recordingInstaller) InstalledCodes(context.Context, ids.GatewayID, string) (map[string]struct{}, error) {
+	return nil, nil
+}
 
 type fakeGateways struct{ gw *gatewaydomain.Gateway }
 

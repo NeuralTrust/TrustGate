@@ -287,11 +287,7 @@ func refreshDiscovery[T any](c *composer, ctx context.Context, key string, ask f
 	defer cancel()
 	items, err := ask(askCtx)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) && askCtx.Err() != nil {
-			rememberFailure[T](c, key, fmt.Errorf("%w: discovery timed out", ErrUnreachable))
-		} else {
-			rememberFailure[T](c, key, err)
-		}
+		rememberFailure[T](c, key, discoveryFailureError(askCtx, err))
 		return nil, err
 	}
 	now := time.Now()
@@ -415,6 +411,20 @@ func fixableByConnecting(err error) bool {
 	}
 	var notConnected *ApplicationNotConnectedError
 	return errors.As(err, &notConnected)
+}
+
+// discoveryFailureError is the error the negative cache stores. A discovery
+// whose own deadline fired is rewritten as a timeout the cache is allowed to
+// keep: the cache drops context.DeadlineExceeded, and the rewritten error is
+// what a later request classifies as "the request timed out".
+func discoveryFailureError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx != nil && ctx.Err() != nil {
+		return fmt.Errorf("%w: %w", ErrUnreachable, errDiscoveryTimedOut)
+	}
+	return err
 }
 
 func isContextError(err error) bool {
