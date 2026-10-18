@@ -3970,8 +3970,7 @@
         {
           "name": "cube_host",
           "description": "Your Cube MCP server host.",
-          "required": true,
-          "host_suffix": ["*.cubecloud.dev"]
+          "required": true
         }
       ],
       "requires_auth": true,
@@ -4111,12 +4110,8 @@
           "required": true,
           "host_suffix": [
             "*.cloud.databricks.com",
-            "*.cloud.databricks.us",
-            "*.cloud.databricks.mil",
-            "*.azuredatabricks.net",
-            "*.databricks.azure.us",
-            "*.databricks.azure.cn",
-            "*.gcp.databricks.com"
+            "*.gcp.databricks.com",
+            "*.azuredatabricks.net"
           ]
         },
         {
@@ -4428,7 +4423,20 @@
           "name": "dbt_host",
           "description": "dbt Cloud host, e.g. cloud.getdbt.com or <prefix>.us1.dbt.com.",
           "required": true,
-          "host_suffix": ["*.getdbt.com", "*.dbt.com"]
+          "host_suffix": [
+            "*.getdbt.com",
+            "*.us1.dbt.com",
+            "*.us2.dbt.com",
+            "*.us3.dbt.com",
+            "*.us5.dbt.com",
+            "*.eu1.dbt.com",
+            "*.eu2.dbt.com",
+            "*.eu3.dbt.com",
+            "*.eu4.dbt.com",
+            "*.au1.dbt.com",
+            "*.au2.dbt.com",
+            "*.jp1.dbt.com"
+          ]
         }
       ],
       "requires_auth": true,
@@ -5684,7 +5692,7 @@
           "name": "domain",
           "description": "Your Freshworks instance domain, e.g. yourco.freshservice.com.",
           "required": true,
-          "host_suffix": ["*.freshservice.com", "*.freshdesk.com"]
+          "host_suffix": ["*.freshservice.com"]
         }
       ],
       "requires_auth": true,
@@ -14514,7 +14522,7 @@
           "name": "account_url",
           "description": "Snowflake account URL host.",
           "required": true,
-          "host_suffix": ["*.snowflakecomputing.com", "*.snowflakecomputing.cn"]
+          "host_suffix": ["*.snowflakecomputing.com"]
         },
         {
           "name": "database",
