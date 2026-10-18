@@ -40,9 +40,9 @@ var ErrUnresolvedOAuthPlaceholder = fmt.Errorf(
 	commonerrors.ErrValidation)
 
 // ErrOAuthURLHost is returned when a per-user URL variable would send the
-// authorize redirect or the token request to a host other than the one already
-// resolved and validated for this server. The browser is not redirected, and
-// the client secret is not sent.
+// authorize redirect or the token request somewhere this server's declaration
+// does not allow. The browser is not redirected, and the client secret is not
+// sent. The rejected host is not included.
 var ErrOAuthURLHost = fmt.Errorf(
 	"oauth connect: the authorization URL does not match this server, so the browser was not redirected: %w",
 	commonerrors.ErrValidation)
@@ -120,14 +120,18 @@ func (s *connectService) principalURLValues(
 // placeholder, then refuses to redirect while one remains.
 //
 // A templated server stores the resource as the server template (catalog
-// resource_metadata copies the URL). Discovery already runs at the resolved
-// URL, so its protected-resource `resource` wins over that template. The
-// stored resource is left alone: the vault key fingerprints it as written.
+// resource_metadata copies the URL). A protected-resource `resource` replaces
+// that template only when its canonical form is the resolved upstream URL
+// (RFC 9728 §3.3). The stored resource is left alone: the vault key
+// fingerprints it as written.
 //
-// A placeholder in the host is a per-user value. The resulting host has to be
-// the one already resolved and validated for this server, so the value cannot
-// aim the redirect or the token request (where the client secret goes) at
-// another host.
+// A placeholder in a path or query is filled and sent. A placeholder that is
+// only part of the host must resolve to the same scheme, host, and port as
+// the upstream URL. A placeholder that is the whole host is a value the user
+// chose, so matching that host proves nothing: it is allowed only when every
+// such variable is closed (Options) or the resolved host matches a suffix the
+// variable declares. Otherwise the redirect and the token request — where the
+// client secret goes — are refused before either leaves.
 func (s *connectService) finalizeAuthURLs(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -136,17 +140,14 @@ func (s *connectService) finalizeAuthURLs(
 	cfg *registrydomain.MCPAuth,
 	meta *UpstreamAuthServer,
 ) (*registrydomain.MCPAuth, error) {
-	if cfg == nil || !hasOAuthPlaceholder(cfg) {
+	if cfg == nil {
+		return nil, nil
+	}
+	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta); err != nil {
+		return nil, err
+	}
+	if !hasOAuthPlaceholder(cfg) {
 		return cfg, nil
-	}
-	out := *cfg
-	if meta != nil && strings.ContainsAny(out.Resource, "{}") {
-		if prm := strings.TrimSpace(meta.Resource); prm != "" {
-			out.Resource = prm
-		}
-	}
-	if !hasOAuthPlaceholder(&out) {
-		return s.finishResolvedAuth(reg, &out)
 	}
 	if reg == nil || reg.MCPTarget == nil {
 		return nil, ErrUnresolvedOAuthPlaceholder
@@ -155,14 +156,22 @@ func (s *connectService) finalizeAuthURLs(
 	if err != nil {
 		return nil, err
 	}
+	out := *cfg
+	if meta != nil && strings.ContainsAny(out.Resource, "{}") {
+		if prm := strings.TrimSpace(meta.Resource); registrydomain.SameCanonicalResource(prm, resolved) {
+			out.Resource = prm
+		}
+	}
+	if !hasOAuthPlaceholder(&out) {
+		return s.finishResolvedAuth(reg, &out)
+	}
 	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return nil, err
 	}
 	vars := reg.MCPTarget.URLVariables
-	resolvedHost := normalizedHostname(resolved)
 	for _, field := range []*string{&out.AuthorizeURL, &out.TokenURL, &out.UserinfoURL} {
-		rewritten, err := substituteContactURL(*field, resolvedHost, vars, values)
+		rewritten, err := substituteContactURL(*field, resolved, vars, values)
 		if err != nil {
 			return nil, err
 		}
@@ -176,6 +185,40 @@ func (s *connectService) finalizeAuthURLs(
 		out.Resource = substituted
 	}
 	return s.finishResolvedAuth(reg, &out)
+}
+
+// refuseOpenWholeHostDiscovery applies the whole-host rule to a manual
+// registry whose token URL was not pinned. manualAuth fills that URL from
+// metadata discovered on the user-chosen host, and the client secret is posted
+// there. A closed variable or a declared host suffix is the only bound that
+// is not the user's own input.
+func (s *connectService) refuseOpenWholeHostDiscovery(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	meta *UpstreamAuthServer,
+) error {
+	if cfg.Registration == registrydomain.RegistrationAuto || meta == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	names, whole := wholeHostVariableNames(reg.MCPTarget.URL)
+	if !whole {
+		return nil
+	}
+	vars := reg.MCPTarget.URLVariables
+	if hostVariablesClosed(names, vars) {
+		return nil
+	}
+	resolved, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return err
+	}
+	if declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
+		return nil
+	}
+	return ErrOAuthURLHost
 }
 
 func (s *connectService) finishResolvedAuth(reg *registrydomain.Registry, cfg *registrydomain.MCPAuth) (*registrydomain.MCPAuth, error) {
@@ -194,9 +237,11 @@ func hasOAuthPlaceholder(cfg *registrydomain.MCPAuth) bool {
 }
 
 // substituteContactURL fills placeholders in a URL the gateway contacts.
-// When the host itself is templated, the filled host must be resolvedHost:
-// that is the host ValidateResolvedUpstreamHost already accepted.
-func substituteContactURL(raw, resolvedHost string, vars []registrydomain.MCPURLVariable, values map[string]string) (string, error) {
+// Path and query placeholders are filled as written. A templated host must
+// share the resolved upstream's scheme, host, and port. When the placeholder
+// is the whole host, that match is not enough: the variable has to be closed
+// or the host has to match a declared suffix.
+func substituteContactURL(raw, resolvedUpstream string, vars []registrydomain.MCPURLVariable, values map[string]string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || !strings.ContainsAny(raw, "{}") {
 		return raw, nil
@@ -209,8 +254,11 @@ func substituteContactURL(raw, resolvedHost string, vars []registrydomain.MCPURL
 	if !templatedHost {
 		return resolved, nil
 	}
-	parsed, err := url.Parse(resolved)
-	if err != nil || parsed == nil || parsed.User != nil || normalizedHostname(resolved) == "" || normalizedHostname(resolved) != resolvedHost {
+	names, whole := wholeHostVariableNames(raw)
+	if whole && !hostVariablesClosed(names, vars) && !declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
+		return "", ErrOAuthURLHost
+	}
+	if !sameContactOrigin(resolved, resolvedUpstream) {
 		return "", ErrOAuthURLHost
 	}
 	return resolved, nil
@@ -232,4 +280,175 @@ func normalizedHostname(raw string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+}
+
+// wholeHostVariableNames reports the placeholders that make up a URL's
+// hostname when that hostname has no literal label of its own (`{account_url}`,
+// `{workspace_host}`). A label the template writes (`{domain}.aha.io`) is not
+// a whole host: the user cannot choose the suffix.
+func wholeHostVariableNames(raw string) ([]string, bool) {
+	host, ok := templateHostname(raw)
+	if !ok || !strings.Contains(host, "{") {
+		return nil, false
+	}
+	names, rest := splitPlaceholders(host)
+	if len(names) == 0 || strings.Trim(rest, ".") != "" {
+		return nil, false
+	}
+	return names, true
+}
+
+// templateHostname is the hostname of a URL template. `{` in the host makes
+// url.Parse fail, so the host is taken from the text in that case. A literal
+// port is not part of the name.
+func templateHostname(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed != nil && parsed.Hostname() != "" && !strings.Contains(parsed.Hostname(), "{") {
+		return parsed.Hostname(), true
+	}
+	const schemeSep = "://"
+	i := strings.Index(raw, schemeSep)
+	if i < 0 {
+		return "", false
+	}
+	rest := raw[i+len(schemeSep):]
+	if at := strings.Index(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	end := len(rest)
+	for j, c := range rest {
+		if c == '/' || c == '?' || c == '#' {
+			end = j
+			break
+		}
+	}
+	hostport := rest[:end]
+	if hostport == "" {
+		return "", false
+	}
+	if colon := strings.LastIndex(hostport, ":"); colon >= 0 && !strings.Contains(hostport[colon:], "}") {
+		return hostport[:colon], true
+	}
+	return hostport, true
+}
+
+// splitPlaceholders returns the {name} tokens in host and the text that is
+// not one of those tokens.
+func splitPlaceholders(host string) ([]string, string) {
+	var names []string
+	var rest strings.Builder
+	for i := 0; i < len(host); {
+		if host[i] != '{' {
+			rest.WriteByte(host[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(host[i:], '}')
+		if end <= 1 {
+			rest.WriteByte(host[i])
+			i++
+			continue
+		}
+		name := host[i+1 : i+end]
+		if !placeholderName(name) {
+			rest.WriteString(host[i : i+end+1])
+			i += end + 1
+			continue
+		}
+		names = append(names, name)
+		i += end + 1
+	}
+	return names, rest.String()
+}
+
+func placeholderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func hostVariablesClosed(names []string, vars []registrydomain.MCPURLVariable) bool {
+	if len(names) == 0 {
+		return false
+	}
+	byName := variablesByName(vars)
+	for _, name := range names {
+		v, ok := byName[name]
+		if !ok || !v.HasOptions() {
+			return false
+		}
+	}
+	return true
+}
+
+func declaredSuffixMatches(host string, names []string, vars []registrydomain.MCPURLVariable) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" {
+		return false
+	}
+	byName := variablesByName(vars)
+	for _, name := range names {
+		v, ok := byName[name]
+		suffix := normalizeHostSuffix(v.HostSuffix)
+		if !ok || suffix == "" {
+			continue
+		}
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func variablesByName(vars []registrydomain.MCPURLVariable) map[string]registrydomain.MCPURLVariable {
+	out := make(map[string]registrydomain.MCPURLVariable, len(vars))
+	for _, v := range vars {
+		out[v.Name] = v
+	}
+	return out
+}
+
+func normalizeHostSuffix(raw string) string {
+	suffix := strings.ToLower(strings.TrimSpace(raw))
+	suffix = strings.TrimPrefix(suffix, "*.")
+	return strings.Trim(suffix, ".")
+}
+
+// sameContactOrigin compares scheme, hostname, and port. An empty port is the
+// scheme's default, so https://host and https://host:443 are the same origin.
+// A URL with userinfo is not an origin the gateway will contact.
+func sameContactOrigin(contact, upstream string) bool {
+	cs, ch, cp, okContact := contactOrigin(contact)
+	us, uh, up, okUpstream := contactOrigin(upstream)
+	return okContact && okUpstream && cs == us && ch == uh && cp == up
+}
+
+func contactOrigin(raw string) (scheme, host, port string, ok bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.User != nil {
+		return "", "", "", false
+	}
+	scheme = strings.ToLower(parsed.Scheme)
+	host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "" || (scheme != "http" && scheme != "https") {
+		return "", "", "", false
+	}
+	port = parsed.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return scheme, host, port, true
 }

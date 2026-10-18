@@ -156,3 +156,12 @@ func canonicalResource(raw string) string {
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String()
 }
+
+// SameCanonicalResource reports whether two resource identifiers name the same
+// protected resource. Comparison uses canonicalResource: scheme and host case,
+// a default port, a trailing slash, and any fragment. Empty values are not the
+// same resource.
+func SameCanonicalResource(a, b string) bool {
+	left, right := canonicalResource(a), canonicalResource(b)
+	return left != "" && left == right
+}

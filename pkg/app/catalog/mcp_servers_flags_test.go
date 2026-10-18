@@ -217,10 +217,11 @@ func optionValues(v domain.MCPURLVariable) []string {
 // seed guard runs the real rules rather than a copy of them.
 func asRegistryURLVariable(v domain.MCPURLVariable) registrydomain.MCPURLVariable {
 	out := registrydomain.MCPURLVariable{
-		Name:     v.Name,
-		Required: v.Required,
-		Secret:   v.Secret,
-		In:       v.In,
+		Name:       v.Name,
+		Required:   v.Required,
+		Secret:     v.Secret,
+		In:         v.In,
+		HostSuffix: v.HostSuffix,
 	}
 	for _, option := range v.Options {
 		out.Options = append(out.Options, registrydomain.MCPURLVariableOption{

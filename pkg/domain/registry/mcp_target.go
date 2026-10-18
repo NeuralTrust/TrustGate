@@ -205,6 +205,11 @@ type MCPURLVariable struct {
 	// every one of them instead of a near-duplicate entry each. Empty means the
 	// value is free text, validated by the charset rules alone.
 	Options []MCPURLVariableOption `json:"options,omitempty"`
+	// HostSuffix, when set, is the DNS suffix a whole-host value must stay under
+	// (`vendor.com` or `*.vendor.com`). OAuth connect sends an admin client
+	// secret only when a whole-host variable is closed by Options or the
+	// resolved host matches this suffix. Empty does not constrain the host.
+	HostSuffix string `json:"host_suffix,omitempty"`
 }
 
 // MCPURLVariableOption is one allowed value of a closed URL variable.
