@@ -85,16 +85,19 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		boundResponse(resp, req)
 	}
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		// Size first: an SSE-typed error body must not skip the response
+		// limit. A body that fits is then dropped so it cannot ride out in
+		// the error text. 401 unwraps to ErrUpstreamUnauthorized, which is
+		// what the refresh retry keys on.
+		if tooLarge := discardUpstreamBody(resp); tooLarge != nil {
+			return nil, tooLarge
+		}
 		t.unauthorizedResponses.Add(1)
 		if tracker, ok := req.Context().Value(unauthorizedTrackerKey{}).(*atomic.Bool); ok {
 			tracker.Store(true)
 		}
 		failure := &appmcp.UpstreamFailure{Kind: appmcp.UpstreamFailureCredential, Status: resp.StatusCode}
 		t.notedFailure.Store(failure)
-		discardHandshakeBody(resp)
-		// 401 unwraps to ErrUpstreamUnauthorized, which is what the refresh
-		// retry keys on. The body is discarded so it cannot ride out in the
-		// error text.
 		return nil, failure
 	}
 	if err == nil && resp.StatusCode == http.StatusForbidden {
@@ -102,10 +105,12 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		// that sentinel is the refresh retry's signal, which a 403 must not trip.
 		// The response itself is still returned so the SDK's handshake proceeds
 		// as before; only the body is dropped, so it cannot be copied into the
-		// error the composer logs.
+		// error the composer logs. An oversized body is still the size limit.
+		if tooLarge := discardUpstreamBody(resp); tooLarge != nil {
+			return nil, tooLarge
+		}
 		failure := &appmcp.UpstreamFailure{Kind: appmcp.UpstreamFailureCredential, Status: resp.StatusCode}
 		t.notedFailure.Store(failure)
-		discardHandshakeBody(resp)
 		resp.Body = io.NopCloser(strings.NewReader(""))
 		resp.ContentLength = 0
 		return resp, nil
@@ -115,11 +120,14 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		if redirectToHTTP(req, resp.Header.Get("Location")) {
 			kind = appmcp.UpstreamFailureDowngrade
 		}
+		// The redirect is not followed. CheckRedirect refuses one that this
+		// branch did not already turn into an error. The body is drained
+		// through the size limit and is not part of the error.
+		if tooLarge := discardUpstreamBody(resp); tooLarge != nil {
+			return nil, tooLarge
+		}
 		failure := &appmcp.UpstreamFailure{Kind: kind, Status: resp.StatusCode}
 		t.notedFailure.Store(failure)
-		discardHandshakeBody(resp)
-		// The redirect is not followed. CheckRedirect refuses one that this
-		// branch did not already turn into an error.
 		return nil, failure
 	}
 	if err == nil && ok && method == methodServerDiscover && isLegacyDiscoverResponse(resp) {
@@ -135,12 +143,21 @@ func rejectRedirect(*http.Request, []*http.Request) error {
 	return errors.New("MCP upstream redirects are not allowed")
 }
 
-func discardHandshakeBody(resp *http.Response) {
+// discardUpstreamBody drains resp.Body through the response size limit and
+// closes it. ErrResponseTooLarge is returned so an error response cannot
+// skip that limit by wearing an SSE content type. Any other read error is
+// dropped: the status is what the caller acts on, and the body must not be
+// copied into that error.
+func discardUpstreamBody(resp *http.Response) error {
 	if resp == nil || resp.Body == nil {
-		return
+		return nil
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHandshakeBody))
+	_, err := io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
+	if errors.Is(err, ErrResponseTooLarge) {
+		return ErrResponseTooLarge
+	}
+	return nil
 }
 
 // redirectToHTTP reports an https request whose Location is http. That
