@@ -114,9 +114,12 @@ type Retention struct {
 }
 
 type MCP struct {
-	Method            string `json:"method"`
-	Operation         string `json:"operation,omitempty"`
-	ServerName        string `json:"server_name,omitempty"`
+	Method     string `json:"method"`
+	Operation  string `json:"operation,omitempty"`
+	ServerName string `json:"server_name,omitempty"`
+	// RegistryID is the upstream registry. During the Store stand-in window,
+	// before the snapshot carries the registry a first install just created,
+	// it is the installation id; catalog_code still names the server.
 	RegistryID        string `json:"registry_id,omitempty"`
 	Host              string `json:"host,omitempty"`
 	CatalogCode       string `json:"catalog_code,omitempty"`

@@ -418,9 +418,12 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 }
 
 // snapshotStandInAllowed reports whether a missing registry may be served from
-// the catalog. A nil status is not a snapshot plane. Last-known-good, and a
-// live snapshot older than the stand-in window, are not: the database may
-// already hold the registry, including one an administrator turned off.
+// the catalog. A nil status is not a snapshot plane. Last-known-good is not,
+// and neither is a live snapshot whose last successful converge is older than
+// the stand-in window: the database may already hold the registry, including
+// one an administrator turned off. Age is the wrong clock here. It counts from
+// the apply, and a not-modified converge of an already-live snapshot does not
+// reset it, so a quiet gateway would stop bridging a first install.
 func snapshotStandInAllowed(status *configsync.SnapshotStatus, maxAge time.Duration) bool {
 	if status == nil {
 		return true
@@ -428,8 +431,7 @@ func snapshotStandInAllowed(status *configsync.SnapshotStatus, maxAge time.Durat
 	if status.Info().State != configsync.SnapshotLive {
 		return false
 	}
-	age, ok := status.Age()
-	return ok && age <= maxAge
+	return status.ConvergedWithin(maxAge)
 }
 
 // configureServiceParams wires the MCP-Store per-user configure flow. Every dep

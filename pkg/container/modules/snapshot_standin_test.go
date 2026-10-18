@@ -53,6 +53,19 @@ func TestSnapshotStandInAllowed(t *testing.T) {
 	stale.MarkLive("v3")
 	at = now
 	if snapshotStandInAllowed(stale, window) {
-		t.Fatal("a live snapshot older than the window is stale")
+		t.Fatal("a live snapshot whose last converge is older than the window must not be bridged")
+	}
+
+	at = now.Add(-10 * time.Minute)
+	quiet := configsync.NewSnapshotStatus(func() time.Time { return at })
+	quiet.MarkLive("v4")
+	at = now
+	quiet.ConfirmLive()
+	if !snapshotStandInAllowed(quiet, window) {
+		t.Fatal("a live snapshot converged just now may be bridged even though it was applied long ago")
+	}
+	age, ok := quiet.Age()
+	if !ok || age < 10*time.Minute {
+		t.Fatalf("a not-modified converge reset snapshot age to %s", age)
 	}
 }
