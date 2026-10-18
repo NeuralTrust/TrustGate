@@ -28,6 +28,7 @@ type revocationRegistrar struct {
 	meta       *UpstreamAuthServer
 	cached     *RegisteredClient
 	discovered []string
+	keys       []string
 	ensured    int
 }
 
@@ -41,7 +42,8 @@ func (r *revocationRegistrar) EnsureClient(context.Context, string, *UpstreamAut
 	return nil, errors.New("revocation must not register a client")
 }
 
-func (r *revocationRegistrar) CachedClient(context.Context, string) (*RegisteredClient, error) {
+func (r *revocationRegistrar) CachedClient(_ context.Context, key string) (*RegisteredClient, error) {
+	r.keys = append(r.keys, key)
 	return r.cached, nil
 }
 
@@ -100,6 +102,7 @@ func TestRevocationMaterialWithholdsSharedSecret(t *testing.T) {
 		AuthorizationEndpoint: "https://evil.example/authorize",
 		TokenEndpoint:         "https://evil.example/token",
 		RevocationEndpoint:    "https://evil.example/revoke",
+		ValidatedIssuer:       "https://evil.example",
 	}}
 	s := &connectService{registrar: registrar, sharedOAuth: mcpoauth.NewGoogleWorkspace("platform-id", "platform-secret")}
 	reg := gmailRegistry(&registrydomain.MCPAuth{
@@ -120,8 +123,11 @@ func TestRevocationMaterialWithholdsSharedSecret(t *testing.T) {
 	if material.ClientID != "platform-id" {
 		t.Fatalf("client id = %q", material.ClientID)
 	}
-	if material.TokenURL != "https://evil.example/token" || material.RevocationEndpoint != "https://evil.example/revoke" {
-		t.Fatalf("material = %+v", material)
+	if material.TokenURL != registrar.meta.TokenEndpoint || material.RevocationEndpoint != registrar.meta.RevocationEndpoint {
+		t.Fatalf("endpoints = %s %s, want the discovery document", material.TokenURL, material.RevocationEndpoint)
+	}
+	if material.ValidatedIssuer != ValidatedIssuer(registrar.meta) {
+		t.Fatalf("issuer = %q, want %q", material.ValidatedIssuer, ValidatedIssuer(registrar.meta))
 	}
 }
 
@@ -156,6 +162,18 @@ func TestRevocationMaterialAutoUsesCachedClientOnly(t *testing.T) {
 	}
 	if material.ClientSecret == "admin-secret" {
 		t.Fatal("admin client secret was used")
+	}
+	if material.TokenURL != registrar.meta.TokenEndpoint || material.RevocationEndpoint != registrar.meta.RevocationEndpoint || material.ValidatedIssuer != ValidatedIssuer(registrar.meta) {
+		t.Fatalf("material endpoints = %+v, want the validated discovery document", material)
+	}
+	slot := clientCacheKey(gw, reg, registrar.meta)
+	if len(registrar.keys) == 0 {
+		t.Fatal("dynamic client was not looked up")
+	}
+	for _, key := range registrar.keys {
+		if key != slot {
+			t.Fatalf("cache key %q, want ClientSlot %q", key, slot)
+		}
 	}
 
 	registrar.cached = nil
