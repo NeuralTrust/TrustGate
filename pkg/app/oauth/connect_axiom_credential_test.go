@@ -113,7 +113,7 @@ func TestConnectService_AxiomCredentialIsFoundOnTheDialPath(t *testing.T) {
 		discardConnectAuditor(),
 		nil,
 		nil,
-		stubScopeCatalog{code: "co.axiom/mcp", resource: origin},
+		stubScopeCatalog{code: "co.axiom/mcp", url: mcpURL, resource: origin},
 		nil,
 	)
 	ctx := context.Background()
