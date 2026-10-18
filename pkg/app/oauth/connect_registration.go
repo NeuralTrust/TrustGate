@@ -218,6 +218,15 @@ func clientKey(gatewayID ids.GatewayID, reg *registrydomain.Registry) string {
 	return gatewayID.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
 }
 
+// DropRegisteredClient marks the cached dynamic client for this registry
+// unusable so the next connect registers a replacement.
+func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) error {
+	if s == nil || s.registrar == nil || reg == nil {
+		return nil
+	}
+	return s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg))
+}
+
 // CredentialUsable reports whether a credential stored for this registry can
 // still be redeemed — everything the refresh needs beyond the credential
 // itself.
