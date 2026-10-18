@@ -53,10 +53,10 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 }
 
 // RevocationMaterial is the OAuth client a refresh would present, plus the
-// revocation endpoint from the same authorization-server document that supplied
-// TokenURL. RevocationEndpoint is empty when AuthorizeURL and TokenURL are
-// pinned and no revocation URL is configured: the caller must not ask a host
-// discovered from the upstream to revoke the token.
+// revocation endpoint from the authorization-server document that supplied
+// TokenURL. RevocationEndpoint is empty for a pinned registry (AuthorizeURL
+// and TokenURL both configured). Those registries do not revoke: nothing on
+// the registry stores a revocation URL, and uninstall does not discover one.
 type RevocationMaterial struct {
 	ClientID                string
 	ClientSecret            string
@@ -75,9 +75,8 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	return auth, err
 }
 
-// RevocationMaterial builds the client RefreshAuth would use. The revocation
-// endpoint comes only from the metadata that filled TokenURL, so a pinned
-// authorize/token pair never discovers one.
+// RevocationMaterial builds the client RefreshAuth would use. A pinned
+// authorize/token pair does not revoke and is not discovered.
 func (s *connectService) RevocationMaterial(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -99,7 +98,7 @@ func (s *connectService) RevocationMaterial(
 
 // refreshMaterial is the auth RefreshAuth returns, and the revocation endpoint
 // from that same discovery. The endpoint is empty when the authorize and token
-// URLs are already configured.
+// URLs are already configured: a pinned registry does not revoke.
 func (s *connectService) refreshMaterial(
 	ctx context.Context,
 	gatewayID ids.GatewayID,

@@ -165,8 +165,11 @@ type InstallerOption func(*installer)
 // keeps it too: that registry reads the vault directly, with no installation
 // row. Vault ErrNotFound is success. Any other vault error fails Uninstall
 // before the installation row is removed, so a retry can still release the
-// credential. Vendor revocation is best-effort: a failure or an unsupported
+// credential. Vendor revocation runs only after that local delete and after
+// the per-key lock is released. It is best-effort: a failure or an unsupported
 // provider is logged and never keeps the local token or fails Uninstall.
+// A pinned registry (authorize and token URLs both configured) does not
+// revoke; the registry has no revocation URL.
 // revoker may be nil, which skips the vendor call. The cached dynamic client
 // is not deleted.
 func WithUninstallCredentials(vault vaultdomain.Repository, revoker CredentialRevoker, logger *slog.Logger) InstallerOption {

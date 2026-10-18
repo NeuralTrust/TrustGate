@@ -56,6 +56,8 @@ func gmailRegistry(auth *registrydomain.MCPAuth) *registrydomain.Registry {
 	}
 }
 
+// Pinned registries do not revoke. The registry config has no revocation URL,
+// and uninstall does not discover one from the upstream.
 func TestRevocationMaterialPinnedEndpointsSkipDiscovery(t *testing.T) {
 	registrar := &revocationRegistrar{meta: &UpstreamAuthServer{
 		TokenEndpoint:      "https://evil.example/token",
