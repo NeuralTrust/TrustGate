@@ -44,10 +44,14 @@ type ResolvedTool struct {
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
 type Composer interface {
 	ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error)
-	// Resolve binds an exposed tool name to its upstream with a single
-	// composition pass. A name nobody serves answers ErrToolNotFound, one the
-	// toolkit turned away *ToolNotPermittedError, and one that may live behind an
-	// unconnected upstream *ConsentRequiredError, in that order of precedence.
+	// Resolve binds an exposed tool name to the registry that owns it. Ownership
+	// is the server prefix of the name, decided before other registries are
+	// dialed, so their consent and discovery errors cannot answer the call and
+	// a connect ticket is minted only for the owner. A name nobody owns answers
+	// *UnknownToolError (ErrToolNotFound). One the toolkit turned away answers
+	// *ToolNotPermittedError. One whose server is waiting on an account answers
+	// that server's *ConsentRequiredError or *ApplicationNotConnectedError. One
+	// whose server is installed but unreachable answers *ServerNotServingError.
 	Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error)
 	// Invoke calls a resolved tool on its owning upstream with the given
 	// arguments.
@@ -131,25 +135,84 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 }
 
 func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error) {
-	comp, err := c.compose(ctx, rc)
+	registries := mcpRegistries(rc)
+	if len(registries) == 0 {
+		return nil, ErrNoMCPRegistries
+	}
+	// The exposed name carries its server, so the owner is known before anyone
+	// else is dialed. Discovering the others here is what minted a connect
+	// ticket for whichever installed server lacked a credential, and then
+	// handed that server's consent back for a name it does not serve (ENG-2178).
+	owners := registriesForExposedName(registries, name)
+	probe := false
+	if len(owners) == 0 {
+		// No server prefix. The name can still be an upstream's own name that
+		// the toolkit turned away, which is recorded under that own name, so
+		// the servers that answer are asked. A server that needs an account is
+		// not this name's owner: the ask is a probe and must not mint a ticket.
+		owners = registries
+		probe = true
+	}
+	if probe {
+		ctx = withResolveProbe(ctx)
+	}
+	surfaces, err := c.serverSurfaces(ctx, rc, owners)
 	if err != nil {
 		return nil, err
 	}
-	for _, b := range comp.bindings {
+	var candidates []binding
+	for _, surface := range surfaces {
+		if surface.serves() {
+			candidates = append(candidates, surface.bindings...)
+		}
+	}
+	for _, b := range resolveNames(candidates, owners) {
 		if b.exposed == name {
 			return &ResolvedTool{Registry: b.registry, Tool: b.tool, Exposed: b.exposed}, nil
 		}
 	}
-	if _, forbidden := comp.denied[name]; forbidden {
-		return nil, &ToolNotPermittedError{Tool: name}
+	// A toolkit denial outranks a pending consent: connecting an account cannot
+	// grant a tool the consumer is not allowed to use.
+	for _, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		for _, native := range surface.denied {
+			if native == name || exposedNameFor(native, surface.registry).String() == name {
+				return nil, &ToolNotPermittedError{Tool: name}
+			}
+		}
 	}
-	if comp.consent != nil {
-		return nil, comp.consent
+	// A name with no server prefix named nobody. Denial was the only answer
+	// another server could owe it; consent and discovery errors are not.
+	if probe {
+		return nil, &UnknownToolError{Name: name}
 	}
-	if comp.notConnected != nil {
-		return nil, comp.notConnected
+	// Only the owning server's account state. Another registry's consent must
+	// not answer a call it does not own.
+	var unavailable *ServerNotServingError
+	for _, surface := range surfaces {
+		if surface.consent != nil {
+			return nil, surface.consent
+		}
+		if surface.notConnected != nil {
+			return nil, surface.notConnected
+		}
+		if surface.err != nil && unavailable == nil {
+			// The dial error stays in the log. It can name a URL, and the
+			// caller is told which server and which state, not that detail.
+			c.logger.Warn("mcp composer: owning upstream unavailable",
+				"registry", surface.registry.Name, "error", surface.err)
+			unavailable = &ServerNotServingError{
+				Server: inventoryServerName(surface.registry),
+				State:  InventoryStateUnavailable,
+			}
+		}
 	}
-	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
+	if unavailable != nil {
+		return nil, unavailable
+	}
+	return nil, &UnknownToolError{Name: name}
 }
 
 func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool, arguments json.RawMessage) (json.RawMessage, error) {

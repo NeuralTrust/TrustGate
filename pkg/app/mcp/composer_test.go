@@ -108,15 +108,50 @@ type fakeCreds struct {
 	err error
 	// errByURL optionally returns a per-upstream error keyed by MCPTarget.URL.
 	errByURL map[string]error
+	mu       sync.Mutex
+	applied  []string
+	// minted records consent errors returned outside a resolve probe. A probe
+	// must not count: that is the connect ticket the probe exists to avoid.
+	minted []string
 }
 
-func (f *fakeCreds) Apply(_ context.Context, _ *appconsumer.RoutableConsumer, reg *registrydomain.Registry, _ *Target) error {
-	if f.errByURL != nil && reg != nil && reg.MCPTarget != nil {
-		if err, ok := f.errByURL[reg.MCPTarget.URL]; ok {
-			return err
+func (f *fakeCreds) Apply(ctx context.Context, _ *appconsumer.RoutableConsumer, reg *registrydomain.Registry, _ *Target) error {
+	decided := f.err
+	url := ""
+	if reg != nil && reg.MCPTarget != nil {
+		url = reg.MCPTarget.URL
+		if f.errByURL != nil {
+			if err, ok := f.errByURL[url]; ok {
+				decided = err
+			}
 		}
 	}
-	return f.err
+	if url != "" {
+		f.mu.Lock()
+		f.applied = append(f.applied, url)
+		var consent *ConsentRequiredError
+		if !resolveProbe(ctx) && errors.As(decided, &consent) {
+			f.minted = append(f.minted, url)
+		}
+		f.mu.Unlock()
+	}
+	return decided
+}
+
+func (f *fakeCreds) appliedURLs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.applied))
+	copy(out, f.applied)
+	return out
+}
+
+func (f *fakeCreds) mintedURLs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.minted))
+	copy(out, f.minted)
+	return out
 }
 
 func mcpRegistry(t *testing.T, name, url string) *registrydomain.Registry {
@@ -589,6 +624,194 @@ func TestComposer_Resolve_UnknownToolSurfacesPendingConsent(t *testing.T) {
 	}
 	if consentErr.Provider != "com.notion/mcp" {
 		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+}
+
+// An unknown name is not hiding on whichever installed server lacks a
+// credential. Resolving it must answer -32602's tool error and must not enter
+// that server's consent flow, which is what mints a connect ticket (ENG-2178).
+func TestComposer_Resolve_UnknownNameDoesNotConsentAnotherServer(t *testing.T) {
+	t.Parallel()
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	graphite := mcpRegistry(t, "Graphite", "https://graphite.example.com/mcp")
+	graphite.MCPTarget.Code = "com.graphite/mcp"
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+		"https://graphite.example.com/mcp":  {tools: tools("list_diffs")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, atlassian, graphite)
+
+	_, err := c.Resolve(context.Background(), rc, "does-not-exist")
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("error = %v, want UnknownToolError", err)
+	}
+	if unknown.Error() != "Unknown tool: does-not-exist" {
+		t.Fatalf("error = %q, want the unknown-tool message", unknown.Error())
+	}
+	if !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want it to be ErrToolNotFound so the handler answers -32602", err)
+	}
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatalf("unknown name returned a consent error for %q", consent.Provider)
+	}
+	if minted := creds.mintedURLs(); len(minted) != 0 {
+		t.Fatalf("connect tickets minted for %v", minted)
+	}
+}
+
+// A tool of an unconnected server still asks that server's user to connect.
+// A second unconnected server must not be the one named, and must not have a
+// ticket minted for it.
+func TestComposer_Resolve_UnconnectedToolConsentsItsOwner(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example.com/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp":    {tools: tools("search")},
+		"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "notion-tk", Path: "/p/mcp",
+		},
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "atl-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, atlassian)
+
+	_, err := c.Resolve(context.Background(), rc, namedFor(atlassian, "searchJira"))
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want ConsentRequiredError for Atlassian", err)
+	}
+	if consent.Provider != "com.atlassian/mcp" {
+		t.Fatalf("provider = %q, want com.atlassian/mcp", consent.Provider)
+	}
+	if consent.Ticket != "atl-tk" {
+		t.Fatalf("ticket = %q, want the Atlassian consent, not another server's", consent.Ticket)
+	}
+	applied := creds.appliedURLs()
+	if len(applied) != 1 || applied[0] != atlassian.MCPTarget.URL {
+		t.Fatalf("credential checks = %v, want only Atlassian", applied)
+	}
+}
+
+// A tool of a server that is installed but unreachable names that server and
+// its state. It must not come back as another server's consent prompt.
+func TestComposer_Resolve_UnavailableOwnerNamesThatServer(t *testing.T) {
+	t.Parallel()
+	linear := mcpRegistry(t, "Linear", "https://linear.example.com/mcp")
+	linear.MCPTarget.Code = "com.linear/mcp"
+	graphite := mcpRegistry(t, "Graphite", "https://graphite.example.com/mcp")
+	graphite.MCPTarget.Code = "com.graphite/mcp"
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	dialer := &fakeDialer{
+		upstreams: map[string]*fakeUpstream{
+			"https://linear.example.com/mcp":    {tools: tools("list_issues")},
+			"https://graphite.example.com/mcp":  {tools: tools("list_diffs")},
+			"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+		},
+		dialErr: map[string]error{
+			"https://graphite.example.com/mcp": ErrUnreachable,
+		},
+	}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, linear, graphite, atlassian)
+
+	_, err := c.Resolve(context.Background(), rc, namedFor(graphite, "list_diffs"))
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatalf("unavailable tool returned consent for %q", consent.Provider)
+	}
+	var down *ServerNotServingError
+	if !errors.As(err, &down) {
+		t.Fatalf("error = %v, want ServerNotServingError", err)
+	}
+	if down.Server != "Graphite" || down.State != InventoryStateUnavailable {
+		t.Fatalf("error = %+v, want Graphite unavailable", down)
+	}
+	if strings.Contains(err.Error(), "atlassian") || strings.Contains(err.Error(), "Atlassian") {
+		t.Fatalf("error = %q names the wrong server", err.Error())
+	}
+	for _, url := range creds.appliedURLs() {
+		if url == atlassian.MCPTarget.URL {
+			t.Fatal("resolving Graphite's tool minted a connect attempt for Atlassian")
+		}
+	}
+}
+
+// tools/list on a fail-closed consumer still refuses when any upstream is down
+// (TestComposer_FailMode). Resolving a name does not use another registry's
+// discovery or consent error as the answer, which is also what used to mint a
+// connect ticket for a server the call does not target.
+func TestComposer_Resolve_FailClosedIgnoresUnrelatedUpstream(t *testing.T) {
+	t.Parallel()
+	linear := mcpRegistry(t, "Linear", "https://linear.example.com/mcp")
+	linear.MCPTarget.Code = "com.linear/mcp"
+	graphite := mcpRegistry(t, "Graphite", "https://graphite.example.com/mcp")
+	graphite.MCPTarget.Code = "com.graphite/mcp"
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	up := &fakeUpstream{tools: tools("list_issues"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{
+		upstreams: map[string]*fakeUpstream{
+			"https://linear.example.com/mcp":    up,
+			"https://graphite.example.com/mcp":  {tools: tools("list_diffs")},
+			"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+		},
+		dialErr: map[string]error{
+			"https://graphite.example.com/mcp": ErrUnreachable,
+		},
+	}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed},
+	}, linear, graphite, atlassian)
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, namedFor(linear, "list_issues"), nil); err != nil {
+		t.Fatalf("call to the healthy owner = %v, want it to ignore the other servers", err)
+	}
+	if up.lastCall != "list_issues" {
+		t.Fatalf("upstream call = %q, want list_issues", up.lastCall)
+	}
+	for _, url := range creds.appliedURLs() {
+		if url == atlassian.MCPTarget.URL || url == graphite.MCPTarget.URL {
+			t.Fatalf("calling Linear dialed %s", url)
+		}
 	}
 }
 

@@ -75,6 +75,28 @@ func TestExposedName_CarriesItsServerWhateverElseIsBound(t *testing.T) {
 	}
 }
 
+// The longest server prefix owns the name, so notion does not take a tool of
+// notion_ai and a name with no server prefix belongs to nobody.
+func TestRegistriesForExposedName_LongestPrefixOwnsIt(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	notionAI := mcpRegistry(t, "Notion AI", "https://notion-ai.example/mcp")
+	notionAI.MCPTarget.Code = "com.notion_ai/mcp"
+
+	owners := registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "notion_ai_search")
+	if len(owners) != 1 || owners[0] != notionAI {
+		t.Fatalf("owners = %v, want Notion AI", owners)
+	}
+	owners = registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "notion_search")
+	if len(owners) != 1 || owners[0] != notion {
+		t.Fatalf("owners = %v, want Notion", owners)
+	}
+	if got := registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "does-not-exist"); len(got) != 0 {
+		t.Fatalf("owners = %v, want none", got)
+	}
+}
+
 // An admin renames an instance; the tools keep their names. The catalog code is
 // what identifies a server, and that is not the admin's to edit.
 func TestExposedName_SurvivesARename(t *testing.T) {

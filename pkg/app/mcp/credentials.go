@@ -566,6 +566,20 @@ var errCredentialRefreshUnsupported = errors.New("mcp credentials: auth mode can
 
 var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected credential was refreshed too recently")
 
+// resolveProbeKey marks a discovery that is only classifying a tool name, not
+// asking the user to connect. Consent still fails the dial; it just does not
+// mint a ticket.
+type resolveProbeKey struct{}
+
+func withResolveProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, resolveProbeKey{}, true)
+}
+
+func resolveProbe(ctx context.Context) bool {
+	probed, _ := ctx.Value(resolveProbeKey{}).(bool)
+	return probed
+}
+
 // consentRequired is the single funnel through which a downstream call asks the
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
@@ -600,6 +614,14 @@ func (r *credentialResolver) consentRequired(
 		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg)}
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	// A resolve probe is deciding whether some other name could be this
+	// server's. The answer is still "consent required", but the caller will
+	// discard it unless this server owns the name, and the owning path does
+	// not probe — so minting a ticket here would hand out a connect link
+	// nobody is going to see (ENG-2178).
+	if resolveProbe(ctx) {
+		return &ConsentRequiredError{Provider: provider, Path: consumerPath, Cause: cause}
+	}
 	var ticket string
 	var err error
 	if code := storeServerCode(rc, reg); code != "" {
