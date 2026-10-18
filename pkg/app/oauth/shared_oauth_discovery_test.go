@@ -49,6 +49,8 @@ func (discoveringRegistrar) CachedClient(context.Context, string) (*oauth.Regist
 	return nil, nil
 }
 
+func (discoveringRegistrar) DropCachedClient(context.Context, string, string) error { return nil }
+
 func sharedGmailWithDiscovery(t *testing.T, meta oauth.UpstreamAuthServer, client *http.Client) (oauth.ConnectService, ids.GatewayID, *registrydomain.Registry) {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()

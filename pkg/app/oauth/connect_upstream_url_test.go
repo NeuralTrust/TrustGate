@@ -39,6 +39,8 @@ func (r *recordingRegistrar) CachedClient(context.Context, string) (*RegisteredC
 	return nil, nil
 }
 
+func (r *recordingRegistrar) DropCachedClient(context.Context, string, string) error { return nil }
+
 type staticURLValues map[string]map[string]string
 
 func (v staticURLValues) Values(_ context.Context, _ ids.GatewayID, principalSub string, _ *registrydomain.Registry) (map[string]string, error) {
