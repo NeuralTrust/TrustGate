@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -530,4 +531,68 @@ func TestDropAndReplace_ConcurrentClientsStayConsistent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "client-b", got.ClientID)
 	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+}
+
+func TestDiscover_SpoofedIssuerIsRefused(t *testing.T) {
+	t.Parallel()
+	var tokenHits atomic.Int64
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srvURL + "/mcp",
+			"authorization_servers": []string{srvURL},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 "https://victim.example",
+			"authorization_endpoint": srvURL + "/authorize",
+			"token_endpoint":         srvURL + "/token",
+			"registration_endpoint":  "https://victim.example/register",
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		tokenHits.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	_, err := r.Discover(context.Background(), srv.URL+"/mcp")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "issuer does not match")
+	require.Zero(t, tokenHits.Load())
+}
+
+func TestDiscover_IssuerMatchIgnoresCaseAndTrailingSlash(t *testing.T) {
+	t.Parallel()
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srvURL + "/mcp",
+			"authorization_servers": []string{srvURL + "/"},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		issuer := "HTTP://" + strings.TrimPrefix(srvURL, "http://") + "/"
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 issuer,
+			"authorization_endpoint": srvURL + "/authorize",
+			"token_endpoint":         srvURL + "/token",
+			"registration_endpoint":  srvURL + "/register",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	meta, err := r.Discover(context.Background(), srv.URL+"/mcp")
+	require.NoError(t, err)
+	require.Equal(t, srv.URL, meta.ValidatedIssuer)
+	require.Equal(t, meta.ValidatedIssuer, meta.Issuer)
 }

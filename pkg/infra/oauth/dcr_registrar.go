@@ -169,31 +169,52 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 		return nil, fmt.Errorf("%w (%s)", appoauth.ErrUpstreamNotDiscoverable, upstreamURL)
 	}
 
-	as := strings.TrimSuffix(prm.AuthorizationServers[0], "/")
-	var doc appoauth.UpstreamAuthServer
+	as := strings.TrimSpace(prm.AuthorizationServers[0])
+	if !authorizationServerListed(as, prm.AuthorizationServers) {
+		return nil, fmt.Errorf("oauth dcr: authorization server is not listed by the protected resource")
+	}
 	asu, err := url.Parse(as)
 	if err != nil || asu.Host == "" {
 		return nil, fmt.Errorf("oauth dcr: bad authorization server %q", as)
 	}
 	asOrigin := asu.Scheme + "://" + asu.Host
 	asPath := strings.TrimSuffix(asu.Path, "/")
+	asBase := strings.TrimSuffix(as, "/")
 	asCandidates := []string{
 		asOrigin + "/.well-known/oauth-authorization-server" + asPath,
 		asOrigin + "/.well-known/openid-configuration" + asPath,
-		as + "/.well-known/openid-configuration",
+		asBase + "/.well-known/openid-configuration",
 	}
+	var doc appoauth.UpstreamAuthServer
 	ok := false
+	mismatch := false
 	for _, c := range asCandidates {
 		var attempt appoauth.UpstreamAuthServer
-		if err := r.getJSON(ctx, c, &attempt); err == nil && attempt.AuthorizationEndpoint != "" && attempt.TokenEndpoint != "" {
-			doc = attempt
-			ok = true
-			break
+		if err := r.getJSON(ctx, c, &attempt); err != nil || attempt.AuthorizationEndpoint == "" || attempt.TokenEndpoint == "" {
+			continue
 		}
+		// RFC 8414 §3.3: the issuer is the URL the well-known path was inserted
+		// into, not a value the document may choose. A mismatch is discarded
+		// before any client secret is sent to the endpoints it names.
+		if !appoauth.IssuerMatchesAuthorizationServer(attempt.Issuer, as) {
+			mismatch = true
+			slog.Warn("oauth dcr: discarding authorization server metadata because its issuer does not match the URL that was fetched",
+				"authorization_server", appoauth.NormalizeIssuerURL(as),
+				"issuer", strutil.SanitizeUpstream(attempt.Issuer, 200))
+			continue
+		}
+		doc = attempt
+		ok = true
+		break
 	}
 	if !ok {
+		if mismatch {
+			return nil, fmt.Errorf("oauth dcr: authorization server issuer does not match the metadata URL")
+		}
 		return nil, fmt.Errorf("oauth dcr: no authorization-server metadata at %s", as)
 	}
+	doc.ValidatedIssuer = appoauth.NormalizeIssuerURL(as)
+	doc.Issuer = doc.ValidatedIssuer
 	if len(doc.ScopesSupported) == 0 {
 		doc.ScopesSupported = prm.ScopesSupported
 	}
@@ -219,7 +240,7 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 	if replacing {
 		newIssuer, newEndpoint := "", ""
 		if meta != nil {
-			newIssuer, newEndpoint = meta.Issuer, meta.RegistrationEndpoint
+			newIssuer, newEndpoint = registeredIssuer(meta), meta.RegistrationEndpoint
 		}
 		slog.Warn("oauth dcr: re-registering upstream client because its redirect URI or client name changed; grants held by the previous client can no longer be refreshed",
 			"key", key,
@@ -278,7 +299,7 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		ClientSecret:          doc.ClientSecret,
 		RedirectURI:           redirectURI,
 		ClientName:            r.clientName,
-		Issuer:                meta.Issuer,
+		Issuer:                registeredIssuer(meta),
 		RegistrationEndpoint:  meta.RegistrationEndpoint,
 		ClientSecretExpiresAt: doc.ClientSecretExpiresAt,
 	}
@@ -358,13 +379,36 @@ func authorizationServerMatches(cached *appoauth.RegisteredClient, meta *appoaut
 	if meta == nil {
 		return true
 	}
-	if cached.Issuer != "" && cached.Issuer != meta.Issuer {
+	if cached.Issuer != "" && appoauth.NormalizeIssuerURL(cached.Issuer) != appoauth.NormalizeIssuerURL(registeredIssuer(meta)) {
 		return false
 	}
 	if cached.RegistrationEndpoint != "" && cached.RegistrationEndpoint != meta.RegistrationEndpoint {
 		return false
 	}
 	return true
+}
+
+func registeredIssuer(meta *appoauth.UpstreamAuthServer) string {
+	if meta == nil {
+		return ""
+	}
+	if validated := appoauth.ValidatedIssuer(meta); validated != "" {
+		return validated
+	}
+	return appoauth.NormalizeIssuerURL(meta.Issuer)
+}
+
+func authorizationServerListed(as string, listed []string) bool {
+	want := appoauth.NormalizeIssuerURL(as)
+	if want == "" {
+		return false
+	}
+	for _, item := range listed {
+		if appoauth.NormalizeIssuerURL(item) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func registrationExpired(cached *appoauth.RegisteredClient, now time.Time) bool {

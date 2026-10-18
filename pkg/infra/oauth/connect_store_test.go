@@ -255,3 +255,28 @@ func TestConnectStore_ConcurrentDropAndReplace(t *testing.T) {
 	require.Equal(t, "client-b", stored.ClientID)
 	require.Greater(t, stored.ClientSecretExpiresAt, time.Now().Unix())
 }
+
+func TestConnectStore_ReplaceClientIfMatchDecodesClientID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _ := newConnectStore(t)
+	storedID := `say "client-a"`
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:     storedID,
+		ClientSecret: `prefix "client_id":"other" suffix`,
+		RedirectURI:  "https://gw.example/callback",
+	}))
+
+	other := appoauth.RegisteredClient{ClientID: "other", ClientSecretExpiresAt: 1}
+	got, swapped, err := store.ReplaceClientIfMatch(ctx, "gw|reg", "other", other)
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Equal(t, storedID, got.ClientID)
+
+	replacement := appoauth.RegisteredClient{ClientID: "next", ClientSecret: "kept"}
+	got, swapped, err = store.ReplaceClientIfMatch(ctx, "gw|reg", storedID, replacement)
+	require.NoError(t, err)
+	require.True(t, swapped)
+	require.Equal(t, "next", got.ClientID)
+	require.Equal(t, "kept", got.ClientSecret)
+}

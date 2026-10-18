@@ -89,9 +89,14 @@ type UpstreamAuthServer struct {
 	// UserinfoEndpoint is where an OpenID provider answers who a token is for.
 	// Optional in the metadata; when present, it names the account a
 	// connection was made with (see resolveAccountRef).
-	UserinfoEndpoint string   `json:"userinfo_endpoint,omitempty"`
-	ScopesSupported  []string `json:"scopes_supported"`
-	Resource         string   `json:"resource"`
+	UserinfoEndpoint string `json:"userinfo_endpoint,omitempty"`
+	// ValidatedIssuer is the authorization-server URL the metadata was fetched
+	// from, after that URL matched the document's issuer. It is not copied from
+	// the document. Empty when Discover has not accepted the server. Cache keys
+	// and revocation use it.
+	ValidatedIssuer string   `json:"-"`
+	ScopesSupported []string `json:"scopes_supported"`
+	Resource        string   `json:"resource"`
 }
 
 type RegisteredClient struct {
