@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -542,6 +543,50 @@ func TestResolveNames_V2KeepsTheDoubledFormOnASameServerCollision(t *testing.T) 
 	}
 }
 
+// x, clickup_x and clickup_clickup_x each have to keep a name. Stopping the
+// prefix bump at the first collision used to give two of them one spelling
+// and then drop both.
+func TestResolveNames_V2PrefixChainStaysInjective(t *testing.T) {
+	t.Parallel()
+	clickup := v2Registry(t, "ClickUp", "com.clickup/mcp")
+	got := resolveNames([]binding{
+		{registry: clickup, tool: Tool{Name: "x"}, exposed: "x"},
+		{registry: clickup, tool: Tool{Name: "clickup_x"}, exposed: "clickup_x"},
+		{registry: clickup, tool: Tool{Name: "clickup_clickup_x"}, exposed: "clickup_clickup_x"},
+	}, nil)
+	byNative := map[string]string{}
+	seen := map[string]string{}
+	for _, b := range got {
+		byNative[b.tool.Name] = b.exposed
+		if prev, ok := seen[b.exposed]; ok {
+			t.Fatalf("%s and %s both publish %q", prev, b.tool.Name, b.exposed)
+		}
+		seen[b.exposed] = b.tool.Name
+	}
+	if len(byNative) != 3 {
+		t.Fatalf("published %d tools, want all 3: %v", len(byNative), byNative)
+	}
+	if byNative["x"] != "clickup_x" || byNative["clickup_x"] != "clickup_clickup_x" || byNative["clickup_clickup_x"] != "clickup_clickup_clickup_x" {
+		t.Fatalf("names = %v", byNative)
+	}
+}
+
+func TestSuffixWithin_DoesNotSplitARune(t *testing.T) {
+	t.Parallel()
+	// "é" is two bytes. A 4-byte window ends on the continuation byte.
+	s := "aaébbb"
+	got := suffixWithin(s, 4)
+	if !utf8.ValidString(got) {
+		t.Fatalf("suffix %q is not UTF-8", got)
+	}
+	if got != "bbb" {
+		t.Fatalf("suffix = %q, want bbb", got)
+	}
+	if len(suffixWithin(s, len(s))) != len(s) {
+		t.Fatal("a string that fits must be returned whole")
+	}
+}
+
 func TestExposedName_V2SingleInstanceOmitsDigest(t *testing.T) {
 	t.Parallel()
 	elastic := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
@@ -597,5 +642,22 @@ func TestExposedName_V2TruncationKeepsTheTail(t *testing.T) {
 	legacy := namedFor(v1, tool)
 	if strings.HasSuffix(legacy, "_list_indices") || len(legacy) > maxExposedNameLength {
 		t.Fatalf("v1 name = %q, want the tail replaced and the length capped", legacy)
+	}
+}
+
+func TestExposedName_V2TruncationDoesNotSplitARune(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	// The cut falls on the continuation byte of "é" (c3 a9).
+	tool := strings.Repeat("x", 20) + "é" + strings.Repeat("y", 28)
+	got := namedFor(reg, tool)
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name %q is %d bytes, want at most %d", got, len(got), maxExposedNameLength)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("name %q is not UTF-8", got)
+	}
+	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_") || !strings.HasSuffix(got, "y") {
+		t.Fatalf("name = %q, want the server prefix and a rune-aligned tail", got)
 	}
 }

@@ -117,17 +117,10 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 	if err != nil {
 		return nil, err
 	}
-	// Exposed names are resolved across every reachable server at once — a name
-	// two servers both serve gets qualified — so the inventory has to resolve
-	// them the same way tools/list does, or it would advertise names tools/call
-	// rejects.
-	var candidates []binding
-	for _, surface := range surfaces {
-		if surface.serves() {
-			candidates = append(candidates, surface.bindings...)
-		}
-	}
-	resolved := resolveNames(candidates, registries)
+	// Exposed names are resolved across every reachable server at once, from the
+	// full upstream list, so the inventory advertises the names tools/call
+	// accepts even when the toolkit hides a sibling.
+	resolved := assignExposedNames(surfaces)
 
 	store := rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
 	out := &ToolInventory{Servers: make([]InventoryServer, 0, len(surfaces))}
