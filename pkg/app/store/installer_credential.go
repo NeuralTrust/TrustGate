@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -31,19 +32,37 @@ const (
 	auditProviderUnlinked = "mcp_provider_unlinked"
 	auditRevocationFailed = "mcp_token_revocation_failed"
 	uninstallAuditSource  = "store_uninstall"
+	// credentialRevokeTimeout bounds the vendor call after the caller has gone
+	// away. It matches the revoker's outbound client.
+	credentialRevokeTimeout = 15 * time.Second
+	// credentialLockReleaseTimeout bounds releasing the per-key lock once the
+	// uninstall context is done.
+	credentialLockReleaseTimeout = 5 * time.Second
 )
 
-// releasePerUserCredential deletes the principal's vault credential when this
-// uninstall removes the last active installation that resolves to its key.
-// The installation row is left in place when the vault delete fails.
-func (i *installer) releasePerUserCredential(
+// credentialReleaseLocker is the vault's per-key refresh lock
+// (gateway|subject|provider). Redis takes it with SETNX; Postgres uses an
+// advisory lock. Vaults without it still re-check after the row is gone.
+type credentialReleaseLocker interface {
+	AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+}
+
+// uninstallActive removes one installation and, when this was the last active
+// install of a per-user credential, the vault row. The credential delete is
+// attempted before the row is removed and again after, so two concurrent
+// uninstalls that both observed the other row cannot leave the credential
+// behind.
+func (i *installer) uninstallActive(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	removed *installationdomain.Installation,
 ) error {
-	if i == nil || i.vault == nil || removed == nil || !removed.IsActive() {
+	if removed == nil {
 		return nil
+	}
+	if i.vault == nil || !removed.IsActive() {
+		return i.installs.DeleteByID(ctx, gatewayID, principalSub, removed.ID)
 	}
 	cache := map[string][]*registrydomain.Registry{}
 	bound, err := i.boundRegistry(ctx, gatewayID, removed, cache)
@@ -52,11 +71,77 @@ func (i *installer) releasePerUserCredential(
 	}
 	provider := registrydomain.ForwardedVaultProvider(bound)
 	if provider == "" || registrydomain.CredentialSubject(bound, principalSub) != principalSub {
-		return nil
+		return i.installs.DeleteByID(ctx, gatewayID, principalSub, removed.ID)
 	}
+	unlock, err := i.lockPerUserCredential(ctx, gatewayID, principalSub, provider)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// A vault delete that fails after the vendor has revoked the token leaves
+	// this installation in place. That is fail-closed: the upstream grant is
+	// already revoked, and the row stays so a retry can finish the local delete.
+	if err := i.deleteCredentialIfUnused(ctx, gatewayID, principalSub, bound, removed, provider, cache); err != nil {
+		return err
+	}
+	if err := i.installs.DeleteByID(ctx, gatewayID, principalSub, removed.ID); err != nil {
+		return err
+	}
+	return i.deleteCredentialIfUnused(ctx, gatewayID, principalSub, bound, removed, provider, cache)
+}
+
+func (i *installer) lockPerUserCredential(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, provider string,
+) (func(), error) {
+	locker, ok := i.vault.(credentialReleaseLocker)
+	if !ok {
+		return func() {}, nil
+	}
+	unlock, err := locker.AcquireRefreshLock(ctx, gatewayID, principalSub, provider)
+	if err != nil {
+		return nil, fmt.Errorf("store: lock credential for uninstall: %w", err)
+	}
+	return func() {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialLockReleaseTimeout)
+		defer cancel()
+		if err := unlock(releaseCtx); err != nil && i.logger != nil {
+			i.logger.Warn("store: failed to release credential lock", "error", err)
+		}
+	}, nil
+}
+
+// deleteCredentialIfUnused revokes and deletes the vault credential when no
+// other active install and no admin-provisioned registry still resolve to it.
+func (i *installer) deleteCredentialIfUnused(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	bound *registrydomain.Registry,
+	removed *installationdomain.Installation,
+	provider string,
+	cache map[string][]*registrydomain.Registry,
+) error {
+	used, err := i.credentialStillUsed(ctx, gatewayID, principalSub, bound, removed, provider, cache)
+	if err != nil || used {
+		return err
+	}
+	return i.revokeAndDeleteCredential(ctx, gatewayID, principalSub, bound, removed, provider)
+}
+
+func (i *installer) credentialStillUsed(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	bound *registrydomain.Registry,
+	removed *installationdomain.Installation,
+	provider string,
+	cache map[string][]*registrydomain.Registry,
+) (bool, error) {
 	holds, err := i.installs.ListByPrincipal(ctx, gatewayID, principalSub)
 	if err != nil {
-		return fmt.Errorf("store: list installs: %w", err)
+		return false, fmt.Errorf("store: list installs: %w", err)
 	}
 	for _, other := range holds {
 		if other == nil || other.ID == removed.ID || !other.IsActive() {
@@ -64,7 +149,7 @@ func (i *installer) releasePerUserCredential(
 		}
 		otherReg, err := i.boundRegistry(ctx, gatewayID, other, cache)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if registrydomain.ForwardedVaultProvider(otherReg) != provider {
 			continue
@@ -72,24 +157,64 @@ func (i *installer) releasePerUserCredential(
 		if registrydomain.CredentialSubject(otherReg, principalSub) != principalSub {
 			continue
 		}
-		return nil
+		return true, nil
 	}
+	return i.perUserKeyHeldByAdminRegistry(ctx, gatewayID, principalSub, provider, bound)
+}
 
+// perUserKeyHeldByAdminRegistry reports whether an admin-provisioned registry
+// — origin empty, or anything other than a store materialisation — forwards
+// this principal's own credential under the same vault key. Those registries
+// are dialed from the consumer they are bound to, with no installation row, so
+// an install list cannot see them. The registry this install is bound to does
+// not count: uninstall is disconnecting that one.
+func (i *installer) perUserKeyHeldByAdminRegistry(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, provider string,
+	bound *registrydomain.Registry,
+) (bool, error) {
+	regs, err := listRegistriesByGateway(ctx, i.registries, gatewayID)
+	if err != nil {
+		return false, err
+	}
+	for _, reg := range regs {
+		if reg == nil || (bound != nil && reg.ID == bound.ID) {
+			continue
+		}
+		if reg.MCPTarget != nil && reg.MCPTarget.Origin == registrydomain.MCPOriginStore {
+			continue
+		}
+		if registrydomain.ForwardedVaultProvider(reg) != provider {
+			continue
+		}
+		if registrydomain.CredentialSubject(reg, principalSub) != principalSub {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func (i *installer) revokeAndDeleteCredential(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	bound *registrydomain.Registry,
+	removed *installationdomain.Installation,
+	provider string,
+) error {
 	cred, err := i.vault.Find(ctx, gatewayID, principalSub, provider)
 	switch {
 	case errors.Is(err, vaultdomain.ErrNotFound):
-		cred = nil
+		return nil
 	case errors.Is(err, vaultdomain.ErrUndecryptable):
 		i.logRevocationFailure(ctx, gatewayID, bound, err)
 		cred = nil
 	case err != nil:
 		return fmt.Errorf("store: read credential for uninstall: %w", err)
 	}
-	if cred != nil && i.revoker != nil {
-		if rerr := i.revoker.Revoke(ctx, gatewayID, principalSub, registryForRevoke(bound, removed), cred); rerr != nil {
-			i.logRevocationFailure(ctx, gatewayID, bound, rerr)
-		}
-	}
+	i.revokeBestEffort(ctx, gatewayID, principalSub, bound, removed, cred)
 	switch err := i.vault.Delete(ctx, gatewayID, principalSub, provider); {
 	case errors.Is(err, vaultdomain.ErrNotFound):
 		return nil
@@ -98,6 +223,27 @@ func (i *installer) releasePerUserCredential(
 	}
 	i.logUnlinked(ctx, gatewayID, bound)
 	return nil
+}
+
+// revokeBestEffort asks the vendor to revoke the token on a context that
+// outlives the caller. A failure is logged and does not keep the local
+// credential.
+func (i *installer) revokeBestEffort(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	bound *registrydomain.Registry,
+	removed *installationdomain.Installation,
+	cred *vaultdomain.Credential,
+) {
+	if i.revoker == nil || cred == nil {
+		return
+	}
+	revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialRevokeTimeout)
+	defer cancel()
+	if err := i.revoker.Revoke(revokeCtx, gatewayID, principalSub, registryForRevoke(bound, removed), cred); err != nil {
+		i.logRevocationFailure(ctx, gatewayID, bound, err)
+	}
 }
 
 func (i *installer) boundRegistry(
