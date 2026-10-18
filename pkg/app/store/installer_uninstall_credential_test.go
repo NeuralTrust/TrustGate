@@ -78,15 +78,22 @@ func (v *recordingVault) Delete(_ context.Context, _ ids.GatewayID, sub, provide
 type lockingVault struct {
 	recordingVault
 	provider string
+	held     bool
 	released bool
+	lockErr  error
+	lockDL   bool
 }
 
-func (v *lockingVault) AcquireRefreshLock(_ context.Context, _ ids.GatewayID, _, provider string) (func(context.Context) error, error) {
+func (v *lockingVault) AcquireRefreshLock(ctx context.Context, _ ids.GatewayID, _, provider string) (func(context.Context) error, error) {
 	v.mu.Lock()
 	v.provider = provider
+	v.held = true
+	v.lockErr = ctx.Err()
+	_, v.lockDL = ctx.Deadline()
 	v.mu.Unlock()
 	return func(context.Context) error {
 		v.mu.Lock()
+		v.held = false
 		v.released = true
 		v.mu.Unlock()
 		return nil
@@ -94,15 +101,19 @@ func (v *lockingVault) AcquireRefreshLock(_ context.Context, _ ids.GatewayID, _,
 }
 
 type fakeRevoker struct {
-	mu     sync.Mutex
-	err    error
-	calls  int
-	tokens []string
-	ctxErr error
-	hasDL  bool
+	mu       sync.Mutex
+	err      error
+	calls    int
+	tokens   []string
+	ctxErr   error
+	hasDL    bool
+	onRevoke func()
 }
 
 func (f *fakeRevoker) Revoke(ctx context.Context, _ ids.GatewayID, _ string, _ *registrydomain.Registry, cred *vaultdomain.Credential) error {
+	if f.onRevoke != nil {
+		f.onRevoke()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -369,7 +380,8 @@ func TestUninstallVaultDeleteErrorKeepsTheInstallation(t *testing.T) {
 	row := installedRow("github", reg.ID)
 	rows := []*installationdomain.Installation{row}
 	installs := &fakeInstalls{byCode: rows, byPrincipal: rows}
-	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, installs, vault, &fakeRevoker{}, nil)
+	revoker := &fakeRevoker{}
+	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, installs, vault, revoker, nil)
 
 	err = inst.Uninstall(context.Background(), gw, "ana", "github", "")
 	if err == nil || !strings.Contains(err.Error(), "vault unavailable") {
@@ -380,6 +392,9 @@ func TestUninstallVaultDeleteErrorKeepsTheInstallation(t *testing.T) {
 	}
 	if _, err := vault.Find(context.Background(), gw, "ana", provider); err != nil {
 		t.Fatalf("credential must stay when delete fails: %v", err)
+	}
+	if revoker.calls != 0 {
+		t.Fatalf("revoker calls = %d, want 0 when the local delete fails", revoker.calls)
 	}
 }
 
@@ -422,7 +437,7 @@ func TestUninstallRevocationIgnoresCallerCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vault := &recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}
+	vault := &lockingVault{recordingVault: recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}}
 	revoker := &fakeRevoker{}
 	row := installedRow("github", reg.ID)
 	rows := []*installationdomain.Installation{row}
@@ -432,6 +447,9 @@ func TestUninstallRevocationIgnoresCallerCancel(t *testing.T) {
 	cancel()
 	if err := inst.Uninstall(ctx, gw, "ana", "github", ""); err != nil {
 		t.Fatalf("Uninstall: %v", err)
+	}
+	if vault.lockErr != nil || !vault.lockDL {
+		t.Fatalf("lock context err=%v deadline=%v", vault.lockErr, vault.lockDL)
 	}
 	if revoker.ctxErr != nil {
 		t.Fatalf("revocation context was cancelled with the caller: %v", revoker.ctxErr)
@@ -450,15 +468,26 @@ func TestUninstallLocksThePerUserCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	vault := &lockingVault{recordingVault: recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}}
+	revoker := &fakeRevoker{onRevoke: func() {
+		vault.mu.Lock()
+		held := vault.held
+		vault.mu.Unlock()
+		if held {
+			t.Errorf("vendor revoke ran while the credential lock was held")
+		}
+	}}
 	row := installedRow("github", reg.ID)
 	rows := []*installationdomain.Installation{row}
-	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, &fakeInstalls{byCode: rows, byPrincipal: rows}, vault, &fakeRevoker{}, nil)
+	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, &fakeInstalls{byCode: rows, byPrincipal: rows}, vault, revoker, nil)
 
 	if err := inst.Uninstall(context.Background(), gw, "ana", "github", ""); err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}
-	if vault.provider != provider || !vault.released {
-		t.Fatalf("lock provider=%q released=%v", vault.provider, vault.released)
+	if vault.provider != provider || !vault.released || vault.held {
+		t.Fatalf("lock provider=%q released=%v held=%v", vault.provider, vault.released, vault.held)
+	}
+	if revoker.calls != 1 {
+		t.Fatalf("revoker calls = %d, want 1 after the lock is released", revoker.calls)
 	}
 }
 
