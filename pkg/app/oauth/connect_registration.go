@@ -16,6 +16,8 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -45,11 +47,54 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.registrar.EnsureClient(ctx, clientKey(gatewayID, reg), meta, connectCallbackURL(baseURL, cfg.Provider))
+	slot, err := s.clientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.registrar.EnsureClient(ctx, slot, meta, connectCallbackURL(baseURL, cfg.Provider))
 	if err != nil {
 		return nil, err
 	}
 	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
+}
+
+// exchangeAuth builds the token-endpoint configuration for a code that was
+// minted for clientID. It does not register a client: an in-flight callback
+// must redeem the code with the client that started the flow.
+func (s *connectService) exchangeAuth(
+	ctx context.Context,
+	baseURL string,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	clientID, clientSecret string,
+) (*registrydomain.MCPAuth, error) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil {
+		return nil, ErrProviderNotFound
+	}
+	if cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
+		return s.effectiveAuth(ctx, baseURL, gatewayID, principalSub, reg)
+	}
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return nil, err
+	}
+	used := &RegisteredClient{ClientID: clientID, ClientSecret: clientSecret}
+	if clientSecret == "" {
+		slot, slotErr := s.clientSlot(ctx, gatewayID, reg, meta)
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		cached, cacheErr := s.registrar.CachedClient(ctx, slot)
+		if cacheErr != nil {
+			return nil, cacheErr
+		}
+		if cached != nil && cached.ClientID == clientID {
+			used = cached
+		}
+	}
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, used)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -77,7 +122,11 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
+	slot, err := s.clientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.registrar.CachedClient(ctx, slot)
 	if err != nil {
 		return nil, err
 	}
@@ -204,9 +253,8 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 	return &out
 }
 
-// clientKey caches a dynamically registered OAuth client under the same key the
-// credential it mints is stored under (registrydomain.ForwardedVaultProvider),
-// never under the registry id.
+// clientKey is the legacy cache key: the gateway plus the credential fingerprint
+// (registrydomain.ForwardedVaultProvider), never the registry id.
 //
 // A refresh token can only be redeemed by the client it was issued to. Keyed by
 // registry, two instances of one catalog code — the same provider, so one shared
@@ -214,17 +262,95 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 // arrived through refreshed the other's token with the wrong client_id: the
 // upstream answered invalid_grant and the user was told their session had
 // expired while the connect page still said connected.
+//
+// The fingerprint is the URL template as written, so two principals who resolve
+// it to different hosts would share one client. clientCacheKey adds the
+// authorization server. Rows already stored under clientKey stay readable for
+// the server they were registered with.
 func clientKey(gatewayID ids.GatewayID, reg *registrydomain.Registry) string {
 	return gatewayID.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
 }
 
-// DropRegisteredClient marks the cached dynamic client for this registry
-// unusable so the next connect registers a replacement.
-func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) error {
-	if s == nil || s.registrar == nil || reg == nil {
+func clientCacheKey(gatewayID ids.GatewayID, reg *registrydomain.Registry, meta *UpstreamAuthServer) string {
+	return clientKey(gatewayID, reg) + "|" + authorizationServerID(meta)
+}
+
+func authorizationServerID(meta *UpstreamAuthServer) string {
+	identity := ""
+	if meta != nil {
+		identity = strings.TrimSpace(meta.Issuer)
+		if identity == "" {
+			identity = strings.TrimSpace(meta.RegistrationEndpoint)
+		}
+		if identity == "" {
+			identity = strings.TrimSpace(meta.AuthorizationEndpoint)
+		}
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return hex.EncodeToString(sum[:])
+}
+
+// clientSlot is the cache key a dynamic client is read and written under.
+// A live client on the issuer-scoped key wins. Otherwise a row still stored
+// under the legacy key is used when it was registered for this authorization
+// server — including a row that records no server, which predates the binding
+// and would strand every existing grant if it were treated as a mismatch.
+func (s *connectService) clientSlot(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, meta *UpstreamAuthServer) (string, error) {
+	scoped := clientCacheKey(gatewayID, reg, meta)
+	client, err := s.registrar.CachedClient(ctx, scoped)
+	if err != nil || client != nil {
+		return scoped, err
+	}
+	legacy := clientKey(gatewayID, reg)
+	old, err := s.registrar.CachedClient(ctx, legacy)
+	if err != nil {
+		return scoped, err
+	}
+	if legacyRegistrationFor(old, meta) {
+		return legacy, nil
+	}
+	return scoped, nil
+}
+
+// legacyRegistrationFor reports whether a client stored under the legacy key
+// belongs to this authorization server. An issuer or registration endpoint
+// left empty was stored before the binding existed and is not a mismatch.
+func legacyRegistrationFor(cached *RegisteredClient, meta *UpstreamAuthServer) bool {
+	if cached == nil || meta == nil {
+		return false
+	}
+	if cached.Issuer != "" && cached.Issuer != meta.Issuer {
+		return false
+	}
+	if cached.RegistrationEndpoint != "" && cached.RegistrationEndpoint != meta.RegistrationEndpoint {
+		return false
+	}
+	return true
+}
+
+// DropRegisteredClient marks the cached dynamic client the token endpoint
+// rejected unusable, when that client_id is still the one stored. The
+// issuer-scoped key and the legacy key are both considered; a row for a
+// different client is left alone.
+func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID string) error {
+	if s == nil || s.registrar == nil || reg == nil || clientID == "" {
 		return nil
 	}
-	return s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg))
+	principalSub := ""
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		principalSub = p.Subject
+	}
+	var dropErr error
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		dropErr = err
+	} else if err := s.registrar.DropCachedClient(ctx, clientCacheKey(gatewayID, reg, meta), clientID); err != nil {
+		dropErr = err
+	}
+	if err := s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg), clientID); err != nil && dropErr == nil {
+		dropErr = err
+	}
+	return dropErr
 }
 
 // CredentialUsable reports whether a credential stored for this registry can
@@ -247,13 +373,37 @@ func (s *connectService) CredentialUsable(
 	gatewayID ids.GatewayID,
 	reg *registrydomain.Registry,
 ) (bool, error) {
+	return s.credentialUsable(ctx, gatewayID, principalFromContext(ctx), reg)
+}
+
+func (s *connectService) credentialUsable(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+) (bool, error) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || s.registrar == nil {
 		return true, nil
 	}
-	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return true, err
+	}
+	slot, err := s.clientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return true, err
+	}
+	client, err := s.registrar.CachedClient(ctx, slot)
 	if err != nil {
 		return true, err
 	}
 	return client != nil, nil
+}
+
+func principalFromContext(ctx context.Context) string {
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		return p.Subject
+	}
+	return ""
 }

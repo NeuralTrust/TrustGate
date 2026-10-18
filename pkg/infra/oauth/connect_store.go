@@ -183,6 +183,84 @@ func (s *ConnectStore) SaveClientIfAbsent(ctx context.Context, key string, c app
 	return incumbent, nil
 }
 
+// replaceClientScript writes ARGV[2] only when the stored JSON still contains
+// the client_id ARGV[1] (a JSON string, quotes included). Returns {1, written}
+// or {0, previous} — previous is empty when the slot is empty.
+const replaceClientScript = `
+local raw = redis.call('GET', KEYS[1])
+if not raw or raw == '' then
+  return {0, ''}
+end
+local needle = '"client_id":' .. ARGV[1]
+if string.find(raw, needle, 1, true) == nil then
+  return {0, raw}
+end
+redis.call('SET', KEYS[1], ARGV[2])
+return {1, ARGV[2]}
+`
+
+func (s *ConnectStore) ReplaceClientIfMatch(ctx context.Context, key, expectedClientID string, next appoauth.RegisteredClient) (*appoauth.RegisteredClient, bool, error) {
+	quotedID, err := json.Marshal(expectedClientID)
+	if err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: encode client id: %w", err)
+	}
+	rawNext, err := json.Marshal(next)
+	if err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: encode client: %w", err)
+	}
+	res, err := s.rdb.Eval(ctx, replaceClientScript, []string{clientPrefix + key}, string(quotedID), string(rawNext)).Result()
+	if err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: replace client: %w", err)
+	}
+	swapped, raw, err := replaceClientResult(res)
+	if err != nil {
+		return nil, false, err
+	}
+	if swapped {
+		return &next, true, nil
+	}
+	if raw == "" {
+		return nil, false, nil
+	}
+	var current appoauth.RegisteredClient
+	if err := json.Unmarshal([]byte(raw), &current); err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: decode client: %w", err)
+	}
+	return &current, false, nil
+}
+
+func replaceClientResult(res any) (bool, string, error) {
+	vals, ok := res.([]any)
+	if !ok || len(vals) != 2 {
+		return false, "", fmt.Errorf("oauth connect store: replace client: unexpected reply")
+	}
+	swapped, ok := redisFlag(vals[0])
+	if !ok {
+		return false, "", fmt.Errorf("oauth connect store: replace client: unexpected flag")
+	}
+	switch raw := vals[1].(type) {
+	case string:
+		return swapped, raw, nil
+	case []byte:
+		return swapped, string(raw), nil
+	case nil:
+		return swapped, "", nil
+	default:
+		return false, "", fmt.Errorf("oauth connect store: replace client: unexpected value")
+	}
+}
+
+func redisFlag(v any) (bool, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n == 1, true
+	case int:
+		return n == 1, true
+	default:
+		return false, false
+	}
+}
+
 func (s *ConnectStore) GetClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
 	raw, err := s.rdb.Get(ctx, clientPrefix+key).Bytes()
 	if errors.Is(err, redis.Nil) {
