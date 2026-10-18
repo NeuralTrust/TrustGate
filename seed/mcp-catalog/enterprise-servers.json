@@ -368,7 +368,8 @@
         "authorize_url": "https://mcp.amplitude.com/authorize",
         "token_url": "https://mcp.amplitude.com/token",
         "scopes": [
-          "all:read"
+          "all:read",
+          "offline_access"
         ],
         "resource": "https://mcp.amplitude.com"
       },
@@ -13146,7 +13147,8 @@
         "authorize_url": "https://backboard.railway.com/oauth/auth?resource=https%3A%2F%2Fbackboard.railway.com",
         "token_url": "https://backboard.railway.com/oauth/token",
         "scopes": [
-          "workspace:member"
+          "workspace:member",
+          "offline_access"
         ],
         "resource": "https://mcp.railway.com"
       },

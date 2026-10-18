@@ -468,3 +468,64 @@ func TestCanonicalizeMCPAuthFromCatalog_SharedOAuthBindsTheClientIDOnly(t *testi
 	require.Equal(t, "nt-client", unbound.Auth.ClientID, "the shared client id is bound; its secret is only ever presented to the provider's own endpoints")
 	require.Empty(t, unbound.Auth.ClientSecret)
 }
+
+// Dropbox and Jotform moved from manual registration to dynamic registration.
+// A registry that already stores a client id must stay manual on re-save:
+// auto registration rejects client_id, so the edit would fail until somebody
+// cleared it. A save with no client id still becomes auto.
+func TestCanonicalizeMCPAuthFromCatalog_StoredClientIDStaysManualWhenCatalogIsAuto(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{"com.dropbox/mcp", "com.jotform/mcp"} {
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			cat := stubCatalog{entries: map[string]catalogdomain.MCPServer{
+				code: {
+					Code: code,
+					URL:  "https://mcp.example.com/mcp",
+					OAuth: &catalogdomain.MCPOAuth{
+						Required:     true,
+						Registration: "auto",
+						AuthorizeURL: "https://auth.example.com/authorize",
+						TokenURL:     "https://auth.example.com/token",
+						Scopes:       []string{"read"},
+						Resource:     "https://mcp.example.com/mcp",
+					},
+				},
+			}}
+			target := &domain.MCPTarget{
+				Code: code,
+				URL:  "https://mcp.example.com/mcp",
+				Auth: &domain.MCPAuth{
+					Mode:         domain.MCPAuthModeForwarded,
+					Registration: domain.RegistrationManual,
+					ClientID:     "stored-client",
+					ClientSecret: "stored-secret",
+					AuthorizeURL: "https://auth.example.com/authorize",
+					TokenURL:     "https://auth.example.com/token",
+				},
+			}
+			require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+			require.Equal(t, domain.RegistrationManual, target.Auth.Registration)
+			require.Equal(t, "stored-client", target.Auth.ClientID)
+			require.Equal(t, "stored-secret", target.Auth.ClientSecret)
+			require.Equal(t, []string{"read"}, target.Auth.Scopes)
+			require.NoError(t, target.Validate())
+
+			target.Auth.ClientID = "edited-client"
+			require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+			require.Equal(t, domain.RegistrationManual, target.Auth.Registration)
+			require.Equal(t, "edited-client", target.Auth.ClientID)
+			require.NoError(t, target.Validate())
+
+			fresh := &domain.MCPTarget{
+				Code: code,
+				URL:  "https://mcp.example.com/mcp",
+				Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeForwarded},
+			}
+			require.NoError(t, CanonicalizeMCPAuthFromCatalog(fresh, cat))
+			require.Equal(t, domain.RegistrationAuto, fresh.Auth.Registration)
+			require.Empty(t, fresh.Auth.ClientID)
+			require.NoError(t, fresh.Validate())
+		})
+	}
+}
