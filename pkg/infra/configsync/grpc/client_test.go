@@ -145,12 +145,15 @@ func TestClient_FetchNotModified(t *testing.T) {
 	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
 	client := dialClient(t, lis, "dp-1")
 
-	_, _, notModified, err := client.Fetch(context.Background(), "v1")
+	_, version, notModified, err := client.Fetch(context.Background(), "v1")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if !notModified {
 		t.Fatal("notModified = false, want true when applied == current")
+	}
+	if version != "v1" {
+		t.Fatalf("version = %q, want the not-modified header version", version)
 	}
 }
 
