@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"unicode/utf8"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -97,8 +98,12 @@ func chooseExposed(upstream string, reg *registrydomain.Registry) exposedChoice 
 }
 
 // restoreDoubledPrefix switches a stripped v2 name to its doubled form when
-// another tool of the same server publishes that stripped spelling. It reports
-// whether any name changed.
+// another tool of the same server publishes that stripped spelling, and keeps
+// going while a doubled form lands on yet another tool of that server. One
+// pass used to stop at the first collision, so x, clickup_x and
+// clickup_clickup_x left two tools with one spelling and both were dropped.
+// Each tool moves at most once, so the result is a unique name per upstream
+// tool and does not depend on the order the tools were given.
 func restoreDoubledPrefix(chosen []exposedChoice, named []binding) bool {
 	stripped := false
 	for _, c := range chosen {
@@ -110,24 +115,39 @@ func restoreDoubledPrefix(chosen []exposedChoice, named []binding) bool {
 	if !stripped {
 		return false
 	}
-	type serverName struct {
-		reg  *registrydomain.Registry
-		name string
+	changed := false
+	for range chosen {
+		if !bumpStrippedCollision(chosen, named) {
+			break
+		}
+		changed = true
 	}
+	return changed
+}
+
+type serverName struct {
+	reg  *registrydomain.Registry
+	name string
+}
+
+// bumpStrippedCollision moves every stripped tool whose current spelling is
+// shared on its server to the doubled form. Tools that were not stripped keep
+// the short spelling. It reports whether anything moved.
+func bumpStrippedCollision(chosen []exposedChoice, named []binding) bool {
 	hits := make(map[serverName]int, len(chosen))
 	for i, c := range chosen {
 		hits[serverName{reg: named[i].registry, name: c.name}]++
 	}
-	changed := false
+	moved := false
 	for i, c := range chosen {
 		if !c.stripped || hits[serverName{reg: named[i].registry, name: c.name}] < 2 {
 			continue
 		}
 		chosen[i].name = c.doubled
 		chosen[i].stripped = false
-		changed = true
+		moved = true
 	}
-	return changed
+	return moved
 }
 
 // withholdCopiedNames drops a final name that more than one binding ended up
@@ -192,11 +212,7 @@ func fitCollisionV2(server, base, suffix string) string {
 			return suffix[len(suffix)-maxExposedNameLength:]
 		}
 	}
-	tail := body
-	if len(tail) > room {
-		tail = tail[len(tail)-room:]
-	}
-	return prefix + hash + "_" + tail
+	return prefix + hash + "_" + suffixWithin(body, room)
 }
 
 // exposedName is a tool as the caller sees it: the server it came from, and
@@ -346,11 +362,27 @@ func cutMiddleV2(server, full, suffix string, rehashed bool) string {
 		prefix = ""
 		body = full
 	}
-	tail := body
-	if len(tail) > room {
-		tail = tail[len(tail)-room:]
+	return prefix + hash + "_" + suffixWithin(body, room)
+}
+
+// suffixWithin returns the tail of s that fits in room bytes and starts on a
+// rune boundary. A byte slice of that length can begin on a continuation
+// byte, and an MCP client would then be handed a name that is not UTF-8.
+func suffixWithin(s string, room int) string {
+	if room < 1 || s == "" {
+		return ""
 	}
-	return prefix + hash + "_" + tail
+	if len(s) <= room {
+		return s
+	}
+	start := len(s) - room
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	if start >= len(s) {
+		return ""
+	}
+	return s[start:]
 }
 
 func splitServerPrefix(server, full string) (prefix, body string) {

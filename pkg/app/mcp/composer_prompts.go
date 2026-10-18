@@ -149,9 +149,20 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
 	for i, b := range candidates {
-		candidates[i].exposed = exposedNameFor(b.exposed, b.registry).String()
+		// Prompts stay on the original spelling. Version 2 drops a repeated
+		// server prefix from tools only.
+		candidates[i].exposed = exposedPromptName(b.exposed, b.registry)
 	}
 	return &promptComposition{bindings: candidates, pending: pendingAccount}, nil
+}
+
+// exposedPromptName is the original <server>_<prompt> spelling. Tool naming
+// version 2 does not apply to prompts.
+func exposedPromptName(name string, reg *registrydomain.Registry) string {
+	e := exposedNameFor(name, reg)
+	e.version = 0
+	e.keepPrefix = false
+	return e.String()
 }
 
 func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []Prompt) []promptBinding {
