@@ -112,6 +112,73 @@ func TestDiscoverRefusesAPrivateResolvedHost(t *testing.T) {
 	}
 }
 
+func TestWholeHostVariableNames(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw   string
+		whole bool
+		name  string
+	}{
+		{raw: "https://{account_url}/mcp", whole: true, name: "account_url"},
+		{raw: "https://{workspace_host}/api/2.0/mcp/{path}", whole: true, name: "workspace_host"},
+		{raw: "https://{cube_host}/api/mcp", whole: true, name: "cube_host"},
+		{raw: "https://{account_url}:8443/mcp", whole: true, name: "account_url"},
+		{raw: "https://{domain}.aha.io/oauth/token", whole: false},
+		{raw: "https://{tenant}-be.glean.com/mcp/{server}", whole: false},
+		{raw: "https://aws-mcp.{region}.api.aws/mcp", whole: false},
+		{raw: "https://mcp.example.com/{org}/oauth/authorize?realm={org}", whole: false},
+		{raw: "https://mcp.example.com/oauth/token", whole: false},
+	}
+	for _, tc := range cases {
+		names, whole := wholeHostVariableNames(tc.raw)
+		if whole != tc.whole {
+			t.Fatalf("%s whole = %v, want %v", tc.raw, whole, tc.whole)
+		}
+		if !tc.whole {
+			continue
+		}
+		if len(names) != 1 || names[0] != tc.name {
+			t.Fatalf("%s names = %v, want %s", tc.raw, names, tc.name)
+		}
+	}
+}
+
+func TestSameContactOrigin(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		contact  string
+		upstream string
+		same     bool
+	}{
+		{contact: "https://acme.aha.io/oauth/token", upstream: "https://acme.aha.io/api/v1/mcp", same: true},
+		{contact: "https://acme.aha.io:443/oauth/token", upstream: "https://acme.aha.io/api/v1/mcp", same: true},
+		{contact: "https://ACME.aha.io/oauth/token", upstream: "https://acme.aha.io/mcp", same: true},
+		{contact: "https://acme.aha.io:8443/oauth/token", upstream: "https://acme.aha.io/api/v1/mcp", same: false},
+		{contact: "http://acme.aha.io/oauth/token", upstream: "https://acme.aha.io/api/v1/mcp", same: false},
+		{contact: "https://evil.test/oauth/token", upstream: "https://acme.aha.io/mcp", same: false},
+		{contact: "https://user:pass@acme.aha.io/oauth/token", upstream: "https://acme.aha.io/mcp", same: false},
+	}
+	for _, tc := range cases {
+		if got := sameContactOrigin(tc.contact, tc.upstream); got != tc.same {
+			t.Fatalf("sameContactOrigin(%q, %q) = %v, want %v", tc.contact, tc.upstream, got, tc.same)
+		}
+	}
+}
+
+func TestDeclaredSuffixMatches(t *testing.T) {
+	t.Parallel()
+	vars := []registrydomain.MCPURLVariable{{Name: "account_url", HostSuffix: "*.vendor.com"}}
+	if !declaredSuffixMatches("acme.vendor.com", []string{"account_url"}, vars) {
+		t.Fatal("expected a subdomain of the declared suffix")
+	}
+	if !declaredSuffixMatches("vendor.com", []string{"account_url"}, vars) {
+		t.Fatal("expected the suffix itself")
+	}
+	if declaredSuffixMatches("evilvendor.com", []string{"account_url"}, vars) || declaredSuffixMatches("evil.example", []string{"account_url"}, vars) {
+		t.Fatal("suffix matched a host outside it")
+	}
+}
+
 func TestDiscoverLeavesAFixedURLAlone(t *testing.T) {
 	registrar := &recordingRegistrar{}
 	s := &connectService{registrar: registrar}

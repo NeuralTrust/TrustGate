@@ -91,6 +91,7 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 			Secret:      v.Secret,
 			In:          strings.TrimSpace(v.In),
 			Options:     registryURLVarOptions(v.Options),
+			HostSuffix:  strings.TrimSpace(v.HostSuffix),
 		})
 	}
 	return out

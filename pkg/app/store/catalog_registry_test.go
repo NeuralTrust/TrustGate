@@ -116,3 +116,14 @@ func TestCatalogRegistry_ClientCredentials(t *testing.T) {
 		t.Fatalf("client secret must not be materialised from the catalog, got %q", reg.MCPTarget.Auth.ClientSecret)
 	}
 }
+
+func TestCatalogURLVariables_CopiesHostSuffix(t *testing.T) {
+	got := catalogURLVariables([]catalogdomain.MCPURLVariable{{
+		Name:       "account_url",
+		Required:   true,
+		HostSuffix: "*.vendor.com",
+	}})
+	if len(got) != 1 || got[0].HostSuffix != "*.vendor.com" {
+		t.Fatalf("host suffix dropped: %+v", got)
+	}
+}

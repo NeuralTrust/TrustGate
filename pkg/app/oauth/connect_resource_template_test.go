@@ -197,10 +197,9 @@ func TestConnectService_TemplatedServerSendsResolvedResource(t *testing.T) {
 	}
 }
 
-// The protected-resource metadata discovered at the resolved URL wins over the
-// template copied onto the registry, even when substituting that template
-// would produce a different path.
-func TestConnectService_TemplatedResourcePrefersDiscoveredPRM(t *testing.T) {
+// RFC 9728 §3.3: a protected-resource `resource` is this server's resource only
+// when it is the URL that was queried. A different path is the template, resolved.
+func TestConnectService_TemplatedResourceIgnoresMismatchedPRM(t *testing.T) {
 	t.Parallel()
 	const prm = "https://acme.aha.io/mcp"
 	reg := ahaRegistry(t, ahaTemplate, ahaAuthorizeT, "https://{domain}.aha.io/oauth/token")
@@ -226,8 +225,41 @@ func TestConnectService_TemplatedResourcePrefersDiscoveredPRM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("location: %v", err)
 	}
+	if got := u.Query().Get("resource"); got != ahaResolved {
+		t.Fatalf("authorize resource = %q, want substituted template %q", got, ahaResolved)
+	}
+}
+
+// A PRM resource that is the resolved upstream URL is accepted, including when
+// only its canonical form matches (case, default port, trailing slash).
+func TestConnectService_TemplatedResourceAcceptsCanonicalPRM(t *testing.T) {
+	t.Parallel()
+	const prm = "https://ACME.aha.io:443/api/v1/mcp/"
+	reg := ahaRegistry(t, ahaTemplate, ahaAuthorize, "https://acme.aha.io/oauth/token")
+	registrar := &fixedRegistrar{
+		meta: &oauth.UpstreamAuthServer{
+			AuthorizationEndpoint: ahaAuthorize,
+			TokenEndpoint:         "https://acme.aha.io/oauth/token",
+			Resource:              prm,
+		},
+		client: &oauth.RegisteredClient{ClientID: "dcr-aha"},
+	}
+	svc := templatedConnect(t, reg, map[string]string{"domain": "acme"}, registrar)
+
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "io.aha/mcp", ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("location: %v", err)
+	}
 	if got := u.Query().Get("resource"); got != prm {
-		t.Fatalf("authorize resource = %q, want discovered PRM %q", got, prm)
+		t.Fatalf("authorize resource = %q, want canonical-equal PRM %q", got, prm)
 	}
 }
 
@@ -345,5 +377,226 @@ func TestConnectService_FixedServerResourceAndVaultKeyUnchanged(t *testing.T) {
 	}
 	if registrydomain.ForwardedCredentialResource(reg) != resource {
 		t.Fatalf("vault resource = %q, want %q", registrydomain.ForwardedCredentialResource(reg), resource)
+	}
+}
+
+// An open whole-host placeholder in a pinned authorize/token URL matches the
+// resolved host only because the user chose that host. The admin client secret
+// must not be sent there.
+func TestConnectService_WholeHostPinnedSecretRefused(t *testing.T) {
+	t.Parallel()
+	reg := wholeHostManualRegistry(t, "", nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	assertWholeHostSecretStays(t, reg, map[string]string{"account_url": "evil.example"}, nil)
+}
+
+// A declared suffix is the bound a whole-host pin is allowed to use.
+func TestConnectService_WholeHostPinnedSecretAllowedBySuffix(t *testing.T) {
+	t.Parallel()
+	reg := wholeHostManualRegistry(t, "*.vendor.com", nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	svc := templatedConnect(t, reg, map[string]string{"account_url": "acme.vendor.com"}, &fixedRegistrar{})
+
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.snowflake/mcp", ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://acme.vendor.com/oauth/authorize?") {
+		t.Fatalf("redirect = %q, want the suffix-matching host", location)
+	}
+}
+
+// A manual registry with no pinned token URL takes the token URL from metadata
+// discovered on the host the user typed. That host is not a bound.
+func TestConnectService_ManualWholeHostDiscoveredTokenRefused(t *testing.T) {
+	t.Parallel()
+	var tokenHits int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	reg := wholeHostManualRegistry(t, "", nil, "", "")
+	registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
+		AuthorizationEndpoint: tokenSrv.URL + "/authorize",
+		TokenEndpoint:         tokenSrv.URL + "/token",
+	}}
+	assertWholeHostSecretStays(t, reg, map[string]string{"account_url": "evil.example"}, registrar)
+	if tokenHits != 0 {
+		t.Fatalf("token server was called %d times", tokenHits)
+	}
+}
+
+// A closed whole-host variable is a vendor-published host, so discovery may
+// fill the token URL.
+func TestConnectService_ManualWholeHostDiscoveryAllowedWhenClosed(t *testing.T) {
+	t.Parallel()
+	const host = "mcp.vendor.com"
+	reg := wholeHostManualRegistry(t, "", []registrydomain.MCPURLVariableOption{{
+		Value: host, Label: "Vendor",
+	}}, "", "")
+	registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
+		AuthorizationEndpoint: "https://" + host + "/oauth/authorize",
+		TokenEndpoint:         "https://" + host + "/oauth/token",
+	}}
+	svc := templatedConnect(t, reg, map[string]string{"account_url": host}, registrar)
+
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.snowflake/mcp", ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://"+host+"/oauth/authorize?") {
+		t.Fatalf("redirect = %q", location)
+	}
+}
+
+func TestConnectService_TemplatedOAuthURLPortMustMatch(t *testing.T) {
+	t.Parallel()
+	reg := ahaRegistry(t, ahaResolved, ahaAuthorize, "https://{domain}.aha.io/oauth/token")
+	pinManual(reg, ahaAuthorize, "https://{domain}.aha.io:8443/oauth/token", "admin-secret")
+	assertNoRedirect(t, reg, map[string]string{"domain": "acme"}, &fixedRegistrar{}, oauth.ErrOAuthURLHost)
+}
+
+func TestConnectService_TemplatedOAuthURLSchemeMustMatch(t *testing.T) {
+	t.Parallel()
+	reg := ahaRegistry(t, ahaResolved, ahaAuthorize, "https://{domain}.aha.io/oauth/token")
+	pinManual(reg, ahaAuthorize, "http://{domain}.aha.io/oauth/token", "admin-secret")
+	assertNoRedirect(t, reg, map[string]string{"domain": "acme"}, &fixedRegistrar{}, oauth.ErrOAuthURLHost)
+}
+
+// Placeholders in the path and query do not choose the host, so a pinned
+// secret still goes to the host the template writes.
+func TestConnectService_PathAndQueryPlaceholdersStayAllowed(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "org", "", &registrydomain.MCPTarget{
+		Code: "com.example/mcp",
+		URL:  "https://mcp.example.com/{org}/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{
+			{Name: "org", Required: true},
+		},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.example/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			ClientSecret: "admin-secret",
+			AuthorizeURL: "https://mcp.example.com/{org}/oauth/authorize?realm={org}",
+			TokenURL:     "https://mcp.example.com/oauth/token",
+			Resource:     "https://mcp.example.com/{org}/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	svc := templatedConnect(t, reg, map[string]string{"org": "acme"}, &fixedRegistrar{})
+
+	ticket, err := svc.CreateTicket(context.Background(), gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.example/mcp", ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://mcp.example.com/acme/oauth/authorize?") {
+		t.Fatalf("redirect = %q", location)
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("location: %v", err)
+	}
+	if u.Query().Get("realm") != "acme" {
+		t.Fatalf("realm = %q", u.Query().Get("realm"))
+	}
+	if u.Query().Get("resource") != "https://mcp.example.com/acme/mcp" {
+		t.Fatalf("resource = %q", u.Query().Get("resource"))
+	}
+}
+
+func wholeHostManualRegistry(t *testing.T, suffix string, options []registrydomain.MCPURLVariableOption, authorize, token string) *registrydomain.Registry {
+	t.Helper()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "snowflake", "", &registrydomain.MCPTarget{
+		Code: "com.snowflake/mcp",
+		URL:  "https://{account_url}/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{
+			Name:       "account_url",
+			Required:   true,
+			HostSuffix: suffix,
+			Options:    options,
+		}},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.snowflake/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			ClientSecret: "admin-secret",
+			Resource:     "https://{account_url}/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	pinManual(reg, authorize, token, "admin-secret")
+	return reg
+}
+
+func pinManual(reg *registrydomain.Registry, authorize, token, secret string) {
+	reg.MCPTarget.Auth.Registration = registrydomain.RegistrationManual
+	reg.MCPTarget.Auth.ClientID = "cid"
+	reg.MCPTarget.Auth.ClientSecret = secret
+	reg.MCPTarget.Auth.AuthorizeURL = authorize
+	reg.MCPTarget.Auth.TokenURL = token
+}
+
+func assertWholeHostSecretStays(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar) {
+	t.Helper()
+	if registrar == nil {
+		registrar = &fixedRegistrar{}
+	}
+	assertNoRedirect(t, reg, values, registrar, oauth.ErrOAuthURLHost)
+
+	refreshCtx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	svc := templatedConnect(t, reg, values, registrar)
+	refreshed, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg)
+	if err == nil || refreshed != nil {
+		t.Fatalf("RefreshAuth = %+v, err = %v; want no config", refreshed, err)
+	}
+	if !errors.Is(err, oauth.ErrOAuthURLHost) {
+		t.Fatalf("RefreshAuth err = %v, want host refusal", err)
+	}
+	if strings.Contains(err.Error(), "admin-secret") || strings.Contains(err.Error(), "evil.example") {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
+	}
+}
+
+func assertNoRedirect(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, want error) {
+	t.Helper()
+	svc := templatedConnect(t, reg, values, registrar)
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	started, err := svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, reg.MCPTarget.Auth.Provider, "")
+	if err == nil || started != nil {
+		loc := ""
+		if started != nil {
+			loc = started.Location
+		}
+		t.Fatalf("Start = %q, err = %v; want no redirect", loc, err)
+	}
+	if !errors.Is(err, want) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if strings.Contains(err.Error(), "admin-secret") || strings.Contains(err.Error(), "evil.example") || strings.Contains(err.Error(), "evil.test") {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
 	}
 }
