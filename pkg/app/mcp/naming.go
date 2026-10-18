@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"unicode/utf8"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -41,20 +42,29 @@ const collisionSuffixLen = 4
 // so installing an unrelated server cannot rename it.
 func resolveNames(candidates []binding, _ []*registrydomain.Registry) []binding {
 	out := make([]binding, len(candidates))
-	base := make([]string, len(candidates))
+	chosen := make([]exposedChoice, len(candidates))
 	count := make(map[string]int, len(candidates))
 	for i, b := range candidates {
-		name := exposedNameFor(b.exposed, b.registry).String()
-		base[i] = name
-		count[name]++
+		chosen[i] = chooseExposed(b.exposed, b.registry)
+		count[chosen[i].name]++
 		out[i] = b
+	}
+	// A v2 tool whose upstream name already started with the server slug is
+	// published without a second copy of that slug. When that spelling is also
+	// the name of another tool on the same server, the one that arrived
+	// already prefixed keeps the doubled form and the other keeps the short one.
+	if restoreDoubledPrefix(chosen, out) {
+		count = make(map[string]int, len(chosen))
+		for _, c := range chosen {
+			count[c.name]++
+		}
 	}
 	// fromSuffix marks a name produced by the collision digest. That binding is
 	// the original owner of the spelling. A later plain name that copies it
 	// (list_<that digest> on the other server) is not.
 	fromSuffix := make([]bool, len(out))
 	for i := range out {
-		name := base[i]
+		name := chosen[i].name
 		if count[name] > 1 {
 			name = disambiguateCollision(name, out[i].registry)
 			fromSuffix[i] = true
@@ -62,6 +72,82 @@ func resolveNames(candidates []binding, _ []*registrydomain.Registry) []binding 
 		out[i].exposed = name
 	}
 	return withholdCopiedNames(out, fromSuffix)
+}
+
+// exposedChoice is one tool's published spelling before cross-server collisions
+// are suffixed. stripped is set when v2 dropped a repeated server prefix;
+// doubled is the spelling with that prefix kept, used only if stripped collides
+// with another tool of the same server.
+type exposedChoice struct {
+	name     string
+	doubled  string
+	stripped bool
+}
+
+func chooseExposed(upstream string, reg *registrydomain.Registry) exposedChoice {
+	plain := exposedNameFor(upstream, reg).String()
+	if namingVersion(reg) != registrydomain.NamingVersionV2 {
+		return exposedChoice{name: plain}
+	}
+	slug := serverSlug(reg)
+	if slug == "" || !hasSlugPrefix(upstream, slug) {
+		return exposedChoice{name: plain}
+	}
+	doubled := exposedName{name: upstream, server: slug, version: registrydomain.NamingVersionV2, keepPrefix: true}.String()
+	return exposedChoice{name: plain, doubled: doubled, stripped: plain != doubled}
+}
+
+// restoreDoubledPrefix switches a stripped v2 name to its doubled form when
+// another tool of the same server publishes that stripped spelling, and keeps
+// going while a doubled form lands on yet another tool of that server. One
+// pass used to stop at the first collision, so x, clickup_x and
+// clickup_clickup_x left two tools with one spelling and both were dropped.
+// Each tool moves at most once, so the result is a unique name per upstream
+// tool and does not depend on the order the tools were given.
+func restoreDoubledPrefix(chosen []exposedChoice, named []binding) bool {
+	stripped := false
+	for _, c := range chosen {
+		if c.stripped {
+			stripped = true
+			break
+		}
+	}
+	if !stripped {
+		return false
+	}
+	changed := false
+	for range chosen {
+		if !bumpStrippedCollision(chosen, named) {
+			break
+		}
+		changed = true
+	}
+	return changed
+}
+
+type serverName struct {
+	reg  *registrydomain.Registry
+	name string
+}
+
+// bumpStrippedCollision moves every stripped tool whose current spelling is
+// shared on its server to the doubled form. Tools that were not stripped keep
+// the short spelling. It reports whether anything moved.
+func bumpStrippedCollision(chosen []exposedChoice, named []binding) bool {
+	hits := make(map[serverName]int, len(chosen))
+	for i, c := range chosen {
+		hits[serverName{reg: named[i].registry, name: c.name}]++
+	}
+	moved := false
+	for i, c := range chosen {
+		if !c.stripped || hits[serverName{reg: named[i].registry, name: c.name}] < 2 {
+			continue
+		}
+		chosen[i].name = c.doubled
+		chosen[i].stripped = false
+		moved = true
+	}
+	return moved
 }
 
 // withholdCopiedNames drops a final name that more than one binding ended up
@@ -96,6 +182,9 @@ func disambiguateCollision(base string, reg *registrydomain.Registry) string {
 	if len(base)+len(suffix) <= maxExposedNameLength {
 		return base + suffix
 	}
+	if namingVersion(reg) == registrydomain.NamingVersionV2 {
+		return fitCollisionV2(serverSlug(reg), base, suffix)
+	}
 	keep := maxExposedNameLength - len(suffix)
 	if keep < 1 {
 		return suffix[len(suffix)-maxExposedNameLength:]
@@ -103,18 +192,61 @@ func disambiguateCollision(base string, reg *registrydomain.Registry) string {
 	return base[:keep] + suffix
 }
 
+// fitCollisionV2 keeps the server prefix and the tail of base, and puts the
+// collision digest between them, so a name that no longer fits does not lose
+// the action words at the end.
+func fitCollisionV2(server, base, suffix string) string {
+	hash := strings.TrimPrefix(suffix, "_")
+	prefix, body := splitServerPrefix(server, base)
+	room := maxExposedNameLength - len(prefix) - len(hash) - 1
+	if room < 1 && server != "" && server != hashedSlug(server) {
+		hashed := hashedSlug(server)
+		rebuilt := hashed + "_" + body
+		return fitCollisionV2(hashed, rebuilt, suffix)
+	}
+	if room < 1 {
+		room = maxExposedNameLength - len(hash) - 1
+		prefix = ""
+		body = base
+		if room < 1 {
+			return suffix[len(suffix)-maxExposedNameLength:]
+		}
+	}
+	return prefix + hash + "_" + suffixWithin(body, room)
+}
+
 // exposedName is a tool as the caller sees it: the server it came from, and
 // the name that server gave it.
 type exposedName struct {
-	name   string
-	server string
+	name       string
+	server     string
+	version    int
+	keepPrefix bool
 }
 
 func exposedNameFor(name string, reg *registrydomain.Registry) exposedName {
-	return exposedName{name: name, server: serverSlug(reg)}
+	return exposedName{name: name, server: serverSlug(reg), version: namingVersion(reg)}
 }
 
-// String is the name the caller calls the tool by: <server>_<tool>.
+func namingVersion(reg *registrydomain.Registry) int {
+	if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.NamingVersion != registrydomain.NamingVersionV2 {
+		return 0
+	}
+	return registrydomain.NamingVersionV2
+}
+
+// String is the name the caller calls the tool by. Version 0 is the original
+// spelling; NamingVersionV2 is the spelling recorded on registries and
+// installs created after it.
+func (e exposedName) String() string {
+	if e.version == registrydomain.NamingVersionV2 {
+		return e.stringV2()
+	}
+	return e.stringV1()
+}
+
+// stringV1 is <server>_<tool>, the spelling every registry written before
+// NamingVersionV2 still publishes.
 //
 // Every tool carries its server, always — with one server bound or twenty.
 // The prefix used to appear only once a second server showed up, which made a
@@ -127,8 +259,9 @@ func exposedNameFor(name string, reg *registrydomain.Registry) exposedName {
 // time.
 //
 // It also says something a bare "search" does not: which of the caller's
-// servers is about to be searched.
-func (e exposedName) String() string {
+// servers is about to be searched. A name that does not fit loses the tail of
+// the tool to the content hash.
+func (e exposedName) stringV1() string {
 	full := e.server + "_" + e.name
 	if e.server == "" {
 		full = e.name
@@ -159,6 +292,108 @@ func (e exposedName) String() string {
 		return full[:maxExposedNameLength-len(suffix)] + suffix
 	}
 	return server + "_" + e.name[:keep] + suffix
+}
+
+// stringV2 is the spelling of a registry created with NamingVersionV2.
+// An upstream name that already begins with "<slug>_" is published as that
+// name, unless keepPrefix is set because another tool of the same server
+// would otherwise take it. A name that still does not fit loses its middle
+// and keeps the tail — the action words — plus the content hash.
+func (e exposedName) stringV2() string {
+	server := e.server
+	tool := e.name
+	var full string
+	switch {
+	case server == "" || e.keepPrefix || !hasSlugPrefix(tool, server):
+		if server == "" {
+			full = tool
+		} else {
+			full = server + "_" + tool
+		}
+	default:
+		full = withCanonicalSlugPrefix(tool, server)
+	}
+	if len(full) <= maxExposedNameLength {
+		return full
+	}
+	return cutMiddleV2(server, full, contentSuffix(full), false)
+}
+
+// hasSlugPrefix reports whether tool begins with "<slug>_", ignoring case.
+func hasSlugPrefix(tool, slug string) bool {
+	if slug == "" {
+		return false
+	}
+	prefix := slug + "_"
+	return len(tool) >= len(prefix) && strings.EqualFold(tool[:len(prefix)], prefix)
+}
+
+// withCanonicalSlugPrefix returns tool unchanged when its slug prefix already
+// matches byte for byte, and rewrites only that prefix when the case differs,
+// so tools/call can find the server by the slug it knows.
+func withCanonicalSlugPrefix(tool, slug string) string {
+	prefix := slug + "_"
+	if strings.HasPrefix(tool, prefix) {
+		return tool
+	}
+	return prefix + tool[len(prefix):]
+}
+
+// cutMiddleV2 keeps server_ (when full starts with it) and the tail of the
+// rest, with the content hash between them. rehashed stops a slug that still
+// crowds the tool out from hashing itself again.
+func cutMiddleV2(server, full, suffix string, rehashed bool) string {
+	hash := strings.TrimPrefix(suffix, "_")
+	prefix, body := splitServerPrefix(server, full)
+	room := maxExposedNameLength - len(prefix) - len(hash) - 1
+	if room < 1 && !rehashed && server != "" {
+		hashed := hashedSlug(server)
+		rebuilt := hashed + "_" + body
+		if len(rebuilt) <= maxExposedNameLength {
+			return rebuilt
+		}
+		return cutMiddleV2(hashed, rebuilt, suffix, true)
+	}
+	if room < 1 {
+		room = maxExposedNameLength - len(hash) - 1
+		if room < 1 {
+			return suffix[len(suffix)-maxExposedNameLength:]
+		}
+		prefix = ""
+		body = full
+	}
+	return prefix + hash + "_" + suffixWithin(body, room)
+}
+
+// suffixWithin returns the tail of s that fits in room bytes and starts on a
+// rune boundary. A byte slice of that length can begin on a continuation
+// byte, and an MCP client would then be handed a name that is not UTF-8.
+func suffixWithin(s string, room int) string {
+	if room < 1 || s == "" {
+		return ""
+	}
+	if len(s) <= room {
+		return s
+	}
+	start := len(s) - room
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	if start >= len(s) {
+		return ""
+	}
+	return s[start:]
+}
+
+func splitServerPrefix(server, full string) (prefix, body string) {
+	if server == "" {
+		return "", full
+	}
+	want := server + "_"
+	if len(full) >= len(want) && strings.EqualFold(full[:len(want)], want) {
+		return full[:len(want)], full[len(want):]
+	}
+	return "", full
 }
 
 func contentSuffix(full string) string {
@@ -210,6 +445,13 @@ func serverSlug(reg *registrydomain.Registry) string {
 	slug := slugFromCatalogCode(code)
 	if slug == "" {
 		return "s" + registryDigest(reg, 8)
+	}
+	// v2 omits the per-instance digest unless this registry is one of several
+	// active instances of the code (its id differs from the shelf it clones).
+	// A single configured instance keeps the readable slug. v1 still digests
+	// every per-instance view, including one that only carries config.
+	if namingVersion(reg) == registrydomain.NamingVersionV2 {
+		perInstance = !reg.InstanceOf.IsNil() && reg.ID != reg.InstanceOf
 	}
 	if perInstance {
 		return slug + "_" + registryDigest(reg, 6)

@@ -39,6 +39,13 @@ var (
 	// ErrNotInstalled: the principal holds no installed instance of the code
 	// (or of the instance named), or holds several and named none.
 	ErrNotInstalled = errors.New("store: not installed")
+	// ErrNothingInstalled is uninstall of a code the principal has no row for.
+	// Removing nothing is an idempotent answer, not a fault in the gateway.
+	ErrNothingInstalled = errors.New("store: nothing installed")
+	// ErrSSEUnsupported is an install of a catalog server whose only transport
+	// is SSE. The gateway dials streamable HTTP and has no SSE client; the
+	// install stops before a registry is materialised.
+	ErrSSEUnsupported = errors.New("SSE transport is not supported by the gateway yet")
 	// ErrRoleNotAllowed is returned when a server is on the shelf but the
 	// principal's roles are not permitted to install it.
 	ErrRoleNotAllowed = errors.New("store: your role is not allowed to install this server")
@@ -143,7 +150,12 @@ type Installer interface {
 	// instance, or returns ErrAmbiguousInstance when the principal holds several
 	// of that code. When credentials are wired, removing the last active
 	// installation that uses a per-user vault key also deletes that credential.
+	// ErrNothingInstalled when the principal has no row for the code.
 	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code, instanceID string) error
+	// InstalledCodes is the set of catalog codes the principal has an active
+	// install of. A lookup failure is returned to the caller; search treats that
+	// as "unknown" and does not fail the browse.
+	InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error)
 }
 
 // CredentialRevoker revokes the upstream OAuth token held in a per-user
@@ -352,6 +364,13 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 
 	// Materialise the registry only once the install is certain to be recorded.
 	if decision.materialise {
+		// SSE is the one catalog transport the gateway cannot dial. Refuse it
+		// here, before Ensure, so the failure is this sentence rather than a
+		// registry-validation error, and so a registry that already exists is
+		// left alone.
+		if strings.EqualFold(strings.TrimSpace(entry.Transport), "sse") {
+			return nil, ErrSSEUnsupported
+		}
 		if err := i.ensurer.Ensure(ctx, in.GatewayID, code); err != nil {
 			return nil, err
 		}
@@ -375,6 +394,11 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
 		record.RegistryID = sameInstance.RegistryID
+		// The naming rules are fixed when the row is first written. A repeat
+		// install keeps them, including a row that has none (the original rules).
+		record.NamingVersion = sameInstance.NamingVersion
+	} else {
+		record.NamingVersion = registrydomain.NamingVersionV2
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err
@@ -718,6 +742,27 @@ func (i *installer) Installed(ctx context.Context, in InstallRequest) (*InstallR
 	}, nil
 }
 
+// InstalledCodes returns the catalog codes this principal has an active
+// install of. Pending and revoked rows are not installed.
+func (i *installer) InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error) {
+	rows, err := i.installs.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row == nil || !row.IsActive() {
+			continue
+		}
+		code := strings.TrimSpace(row.CatalogCode)
+		if code == "" {
+			continue
+		}
+		out[code] = struct{}{}
+	}
+	return out, nil
+}
+
 func (i *installer) Instances(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -768,7 +813,13 @@ func (i *installer) Uninstall(
 		switch len(active) {
 		case 0:
 			// Nothing active; fall back to clearing any inactive row for the code.
-			return i.installs.Delete(ctx, gatewayID, principalSub, code)
+			// A missing row is "nothing was installed", which the caller answers
+			// idempotently. Any other delete failure still fails the call.
+			err := i.installs.Delete(ctx, gatewayID, principalSub, code)
+			if errors.Is(err, installationdomain.ErrNotFound) {
+				return ErrNothingInstalled
+			}
+			return err
 		case 1:
 			target = active[0]
 		default:

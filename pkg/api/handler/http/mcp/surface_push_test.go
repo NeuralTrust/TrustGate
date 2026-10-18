@@ -330,8 +330,67 @@ func TestInstallAnnouncesOnItsOwnReply(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := changesTheSurface(tc.method, json.RawMessage(tc.params)); got != tc.want {
+			if got := changesTheSurface(tc.method, json.RawMessage(tc.params), nil); got != tc.want {
 				t.Fatalf("changesTheSurface(%q, %s) = %v, want %v", tc.method, tc.params, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestChangesTheSurface_SkipsInstallsThatRecordedNothing(t *testing.T) {
+	t.Parallel()
+	const method = "tools/call"
+	install := json.RawMessage(`{"name":"trustgate_store_install"}`)
+	uninstall := json.RawMessage(`{"name":"trustgate_store_uninstall"}`)
+	cases := []struct {
+		name   string
+		params json.RawMessage
+		result json.RawMessage
+		want   bool
+	}{
+		{
+			name:   "admin setup records nothing",
+			params: install,
+			result: json.RawMessage(`{"structuredContent":{"requires_admin_setup":true,"requires_config":false}}`),
+		},
+		{
+			name:   "required config with no instance records nothing",
+			params: install,
+			result: json.RawMessage(`{"structuredContent":{"requires_config":true}}`),
+		},
+		{
+			name:   "a tool error records nothing",
+			params: install,
+			result: json.RawMessage(`{"isError":true,"structuredContent":{"code":"nope"}}`),
+		},
+		{
+			name:   "a real install",
+			params: install,
+			result: json.RawMessage(`{"structuredContent":{"code":"github","instance":"inst-1"}}`),
+			want:   true,
+		},
+		{
+			name:   "required secret config still recorded an instance",
+			params: install,
+			result: json.RawMessage(`{"structuredContent":{"requires_config":true,"instance":"inst-1"}}`),
+			want:   true,
+		},
+		{
+			name:   "uninstall of a code that was not installed",
+			params: uninstall,
+			result: json.RawMessage(`{"structuredContent":{"uninstalled":false,"was_installed":false}}`),
+		},
+		{
+			name:   "uninstall of an installed code",
+			params: uninstall,
+			result: json.RawMessage(`{"structuredContent":{"uninstalled":true,"was_installed":true}}`),
+			want:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := changesTheSurface(method, tc.params, tc.result); got != tc.want {
+				t.Fatalf("changesTheSurface = %v, want %v", got, tc.want)
 			}
 		})
 	}

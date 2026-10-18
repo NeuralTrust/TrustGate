@@ -88,7 +88,8 @@ func openTestSchema(t *testing.T) (context.Context, *pgxpool.Pool, ids.GatewayID
 			decided_by TEXT NOT NULL DEFAULT '',
 			decided_at TIMESTAMPTZ NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
+			updated_at TIMESTAMPTZ NOT NULL,
+			naming_version SMALLINT NULL
 		);
 		CREATE UNIQUE INDEX uq_store_installations_logical_instance
 			ON store_installations (
@@ -160,6 +161,56 @@ func TestRepositoryConcurrentUpsertIsIdempotent(t *testing.T) {
 	}
 	if !found.SameConfig(map[string]string{"host": "acme"}) {
 		t.Fatalf("stored config = %v", found.Config)
+	}
+}
+
+func TestRepositoryUpsertLeavesAnExistingNamingVersion(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
+	repo := NewRepository(&database.Connection{Pool: pool})
+	original, err := domain.New(gatewayID, "alice", "com.clickup/mcp", "alice", nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	if err := repo.Upsert(ctx, original); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if original.NamingVersion != 0 {
+		t.Fatalf("stored version = %d, want the original rules as NULL", original.NamingVersion)
+	}
+
+	again, err := domain.New(gatewayID, "alice", "com.clickup/mcp", "alice", nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	again.NamingVersion = 2
+	if err := repo.Upsert(ctx, again); err != nil {
+		t.Fatalf("repeat Upsert: %v", err)
+	}
+	if again.NamingVersion != 0 || again.ID != original.ID {
+		t.Fatalf("repeat upsert = id %s version %d, want the original row left at version 0", again.ID, again.NamingVersion)
+	}
+	var stored *int
+	if err := pool.QueryRow(ctx, `SELECT naming_version FROM store_installations`).Scan(&stored); err != nil {
+		t.Fatalf("read naming_version: %v", err)
+	}
+	if stored != nil {
+		t.Fatalf("naming_version = %d, want NULL", *stored)
+	}
+
+	fresh, err := domain.New(gatewayID, "bob", "com.clickup/mcp", "bob", nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	fresh.NamingVersion = 2
+	if err := repo.Upsert(ctx, fresh); err != nil {
+		t.Fatalf("Upsert new: %v", err)
+	}
+	found, err := repo.FindByID(ctx, gatewayID, "bob", fresh.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if found.NamingVersion != 2 {
+		t.Fatalf("new row version = %d, want 2", found.NamingVersion)
 	}
 }
 

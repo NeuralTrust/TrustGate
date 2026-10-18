@@ -291,10 +291,13 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	// and announcing a change on it asks for another list of what was just sent.
 	// The surface is re-read either way, so the announcement is recorded against
 	// the snapshot the next request will compare with.
-	result = stampResultEnvelope(req.Method, result)
+	// Read the tool result before the envelope is stamped: an install that
+	// recorded nothing, and an uninstall of a code that was not installed,
+	// must not announce a tool-list change.
 	moved := h.surfaceMoved(c, rc)
 	listChanged := req.Method != "tools/list" &&
-		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params)))
+		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params, result)))
+	result = stampResultEnvelope(req.Method, result)
 	if raw, ok := result.(json.RawMessage); ok {
 		return writeRPCBody(c, rawRPCResponse(req.ID, raw), listChanged)
 	}

@@ -349,6 +349,12 @@ func previewTools(previews map[string][]catalogdomain.MCPTool, server InventoryS
 	if server.Code == "" || len(previews) == 0 {
 		return nil
 	}
+	// An unavailable server's preview is the name the caller would call once
+	// the server answered. Without a slug that name cannot be formed, and the
+	// catalog's own name is not a substitute: tools/call would not find it.
+	if server.State == InventoryStateUnavailable && server.slug == "" {
+		return nil
+	}
 	snapshot, ok := previews[server.Code]
 	if !ok {
 		return nil
@@ -360,7 +366,11 @@ func previewTools(previews map[string][]catalogdomain.MCPTool, server InventoryS
 		if !server.Permits(tool.Name) {
 			continue
 		}
-		out = append(out, InventoryEntry{Name: tool.Name, Description: tool.Description})
+		name := tool.Name
+		if server.State == InventoryStateUnavailable {
+			name = exposedName{name: tool.Name, server: server.slug}.String()
+		}
+		out = append(out, InventoryEntry{Name: name, Description: tool.Description})
 	}
 	return out
 }
@@ -461,6 +471,26 @@ func writeInstallable(b *strings.Builder, installable []map[string]any, storeMod
 	}
 }
 
+// unavailablePhrase is the cause half of an unavailable server's status.
+// Unrecognised causes keep the generic sentence. The phrase never includes a
+// host, a redirect target, or an upstream body.
+func unavailablePhrase(cause string) string {
+	switch {
+	case strings.HasPrefix(cause, "credential_rejected_"):
+		return "the server rejected the credential (HTTP " + strings.TrimPrefix(cause, "credential_rejected_") + ")"
+	case strings.HasPrefix(cause, "redirect_not_followed_"):
+		return "upstream redirected (HTTP " + strings.TrimPrefix(cause, "redirect_not_followed_") + ") — not followed"
+	case cause == "redirect_http_refused":
+		return "redirect to http:// refused"
+	case cause == "dns":
+		return "DNS or connect failure"
+	case cause == "timeout":
+		return "the request timed out"
+	default:
+		return "the gateway could not reach it"
+	}
+}
+
 func inventoryStateText(server map[string]any) string {
 	switch displayString(server["state"]) {
 	case InventoryStateReady:
@@ -484,7 +514,7 @@ func inventoryStateText(server map[string]any) string {
 		}
 		return text
 	case InventoryStateUnavailable:
-		return "unavailable: the gateway could not reach it, so its tools cannot be called right now"
+		return "unavailable: " + unavailablePhrase(displayString(server["cause"])) + ", so its tools cannot be called right now"
 	case InventoryStateNoTools:
 		return "no tools available to this connection"
 	default:

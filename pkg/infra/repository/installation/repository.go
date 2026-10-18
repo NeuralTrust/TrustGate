@@ -35,7 +35,8 @@ const (
 
 const selectColumns = `
 	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
-	       reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at
+	       reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at,
+	       naming_version
 	  FROM store_installations`
 
 var _ domain.Repository = (*Repository)(nil)
@@ -66,8 +67,9 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 	const query = `
 		INSERT INTO store_installations
 			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
-			 reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			 reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at,
+			 naming_version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (
 			gateway_id,
 			principal_sub,
@@ -89,12 +91,17 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 			    decided_by   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_by ELSE store_installations.decided_by END,
 			    decided_at   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_at ELSE store_installations.decided_at END,
 			    updated_at   = EXCLUDED.updated_at
-		RETURNING id, reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at`
+			    -- naming_version is set once, at insert. A repeat install must
+			    -- not move an existing row onto the new rules.
+		RETURNING id, reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at,
+		          naming_version`
+	var storedVersion *int32
 	if err := r.conn.Pool.QueryRow(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
 		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.Reason, groupArray(in.RequesterGroups),
 		string(in.Decision), in.DecidedBy, nullableTime(in.DecidedAt), in.CreatedAt, in.UpdatedAt,
-	).Scan(&in.ID, &in.Reason, &in.RequesterGroups, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt); err != nil {
+		nullableNamingVersion(in.NamingVersion),
+	).Scan(&in.ID, &in.Reason, &in.RequesterGroups, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt, &storedVersion); err != nil {
 		return mapPgError(err)
 	}
 	in.Decision = domain.Decision(decision)
@@ -102,6 +109,10 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 		in.DecidedAt = *decidedAt
 	} else {
 		in.DecidedAt = time.Time{}
+	}
+	in.NamingVersion = 0
+	if storedVersion != nil {
+		in.NamingVersion = *storedVersion
 	}
 	return nil
 }
@@ -335,17 +346,19 @@ type scannable interface {
 
 func scanInstallation(row scannable) (*domain.Installation, error) {
 	var (
-		in         domain.Installation
-		status     string
-		decision   string
-		decidedAt  *time.Time
-		configJSON []byte
-		registryID *ids.RegistryID
+		in            domain.Installation
+		status        string
+		decision      string
+		decidedAt     *time.Time
+		configJSON    []byte
+		registryID    *ids.RegistryID
+		namingVersion *int32
 	)
 	if err := row.Scan(
 		&in.ID, &in.GatewayID, &in.PrincipalSub, &in.CatalogCode, &status,
 		&in.InstalledBy, &configJSON, &registryID, &in.Reason, &in.RequesterGroups,
 		&decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt,
+		&namingVersion,
 	); err != nil {
 		return nil, err
 	}
@@ -356,6 +369,9 @@ func scanInstallation(row scannable) (*domain.Installation, error) {
 	}
 	if registryID != nil {
 		in.RegistryID = *registryID
+	}
+	if namingVersion != nil {
+		in.NamingVersion = *namingVersion
 	}
 	config, err := unmarshalConfig(configJSON)
 	if err != nil {
@@ -371,6 +387,16 @@ func nullableTime(t time.Time) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// nullableNamingVersion stores the original rules as SQL NULL. A row written
+// before the column existed reads back as NULL, and a new row records the
+// version it was created under. Nothing updates the column later.
+func nullableNamingVersion(version int32) *int32 {
+	if version == 0 {
+		return nil
+	}
+	return &version
 }
 
 // nullableRegistryID stores the nil id as SQL NULL ("the code's canonical

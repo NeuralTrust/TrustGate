@@ -39,6 +39,7 @@ type fakeUpstream struct {
 	lastPrompt string
 	lastRead   string
 	result     json.RawMessage
+	callErr    error
 }
 
 func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
@@ -47,6 +48,9 @@ func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
 
 func (f *fakeUpstream) CallTool(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
 	f.lastCall = name
+	if f.callErr != nil {
+		return f.result, f.callErr
+	}
 	return f.result, nil
 }
 
@@ -1694,5 +1698,195 @@ func TestComposer_InvokeNeedingAnAccountForgetsTheCachedLists(t *testing.T) {
 	}
 	if _, err := c.ListTools(ctx, rc); !errors.As(err, &consentErr) {
 		t.Fatalf("ListTools after a refused call = %v, want ConsentRequiredError, not the cached tools", err)
+	}
+}
+
+// A v2 name is what tools/call routes on, and a toolkit entry keyed on that
+// name still allows the call through to the upstream tool.
+func TestComposer_V2NameReachesUpstreamAndPolicyApplies(t *testing.T) {
+	t.Parallel()
+	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
+	docs.MCPTarget.Code = "com.devexpress/docs"
+	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+
+	upDocs := &fakeUpstream{tools: tools("devexpress_docs_search", "devexpress_docs_get_content"), result: json.RawMessage(`{"content":[]}`)}
+	upClickup := &fakeUpstream{tools: tools("get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://devexpress.example/mcp": upDocs,
+		"https://clickup.example/mcp":    upClickup,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{
+			FailMode: consumerdomain.FailModeOpen,
+			Toolkit: consumerdomain.Toolkit{
+				{RegistryID: docs.ID, Tool: "devexpress_docs_search"},
+				{RegistryID: clickup.ID, Tool: "get_task"},
+			},
+		},
+	}, docs, clickup)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 || names[0] != "devexpress_docs_search" || names[1] != "clickup_get_task" {
+		t.Fatalf("tools = %v, want [devexpress_docs_search clickup_get_task]", names)
+	}
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "devexpress_docs_search", nil); err != nil {
+		t.Fatalf("calling the v2 name: %v", err)
+	}
+	if upDocs.lastCall != "devexpress_docs_search" {
+		t.Fatalf("upstream = %q, want devexpress_docs_search", upDocs.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("calling clickup_get_task: %v", err)
+	}
+	if upClickup.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", upClickup.lastCall)
+	}
+
+	_, err = c.Resolve(context.Background(), rc, "devexpress_docs_get_content")
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want the toolkit to refuse the v2 name it does not list", err)
+	}
+	if denied.Tool != "devexpress_docs_get_content" {
+		t.Fatalf("denied = %q, want devexpress_docs_get_content", denied.Tool)
+	}
+}
+
+// Allowing get_task must not move clickup_clickup_get_task onto get_task.
+// The sibling is part of the upstream list either way, so the spelling is
+// fixed before the toolkit chooses what to publish.
+func TestComposer_ToolkitChangeDoesNotRebindV2Name(t *testing.T) {
+	t.Parallel()
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	up := &fakeUpstream{tools: tools("get_task", "clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://clickup.example/mcp": up,
+	}})
+	onlyPrefixed := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: clickup.ID, Tool: "clickup_get_task"},
+		}},
+	}, clickup)
+	listed, err := c.ListTools(context.Background(), onlyPrefixed)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "clickup_clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, onlyPrefixed, "clickup_clickup_get_task", nil); err != nil {
+		t.Fatalf("calling the prefixed tool: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task", up.lastCall)
+	}
+
+	both := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: clickup.ID, Tool: "get_task"},
+			{RegistryID: clickup.ID, Tool: "clickup_get_task"},
+		}},
+	}, clickup)
+	listed, err = c.ListTools(context.Background(), both)
+	if err != nil {
+		t.Fatalf("ListTools with both tools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 2 || names[0] != "clickup_get_task" || names[1] != "clickup_clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_get_task clickup_clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, both, "clickup_clickup_get_task", nil); err != nil {
+		t.Fatalf("prefixed name after the toolkit grew: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task still", up.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, both, "clickup_get_task", nil); err != nil {
+		t.Fatalf("short name: %v", err)
+	}
+	if up.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", up.lastCall)
+	}
+}
+
+// Adding the unprefixed sibling upstream is what moves the names. A toolkit
+// change must not, and this is the change that does.
+func TestComposer_UpstreamSiblingRebindsV2Name(t *testing.T) {
+	t.Parallel()
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	up := &fakeUpstream{tools: tools("clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://clickup.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, clickup)
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("calling clickup_get_task: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task", up.lastCall)
+	}
+
+	// Discovery caches the first list. A fresh composer is what the gateway
+	// serves once that cache is gone and the upstream now also offers get_task.
+	up.tools = tools("get_task", "clickup_get_task")
+	c = newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://clickup.example/mcp": up,
+	}})
+	listed, err = c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools after the sibling appeared: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 2 || names[0] != "clickup_get_task" || names[1] != "clickup_clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_get_task clickup_clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("short name after the sibling appeared: %v", err)
+	}
+	if up.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", up.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_clickup_get_task", nil); err != nil {
+		t.Fatalf("prefixed name after the sibling appeared: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task", up.lastCall)
+	}
+}
+
+func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
+	t.Parallel()
+	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
+	docs.MCPTarget.Code = "com.devexpress/docs"
+	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://devexpress.example/mcp": {prompts: prompts("devexpress_docs_search")},
+	}})
+	got, err := c.ListPrompts(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, docs))
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "devexpress_docs_devexpress_docs_search" {
+		t.Fatalf("prompts = %v, want the original doubled spelling", got)
 	}
 }

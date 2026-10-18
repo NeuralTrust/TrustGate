@@ -154,6 +154,13 @@ func catalogAuth(entry catalogdomain.MCPServer) *registrydomain.MCPAuth {
 	case oauth:
 		return catalogOAuth(entry.Code, entry.OAuth)
 	case static && len(entry.AuthHeaders) > 0:
+		// A public server may still document an optional key (Algolia). Mapping
+		// that to static auth would store a header with no value, which cannot
+		// validate, so the shared shelf would never come up. None leaves the
+		// public endpoint reachable; an admin who fills the key uses static.
+		if !entry.RequiresAuth && !authHeaderRequired(entry.AuthHeaders) {
+			return &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeNone}
+		}
 		return &registrydomain.MCPAuth{
 			Mode:   registrydomain.MCPAuthModeStatic,
 			Header: strings.TrimSpace(entry.AuthHeaders[0].Name),
@@ -166,6 +173,15 @@ func catalogAuth(entry catalogdomain.MCPServer) *registrydomain.MCPAuth {
 // catalogAuthMethods is the catalog entry's declared install methods.
 func catalogAuthMethods(entry catalogdomain.MCPServer) (static, oauth bool) {
 	return entry.SupportedAuthMethods()
+}
+
+func authHeaderRequired(headers []catalogdomain.MCPAuthHeader) bool {
+	for _, header := range headers {
+		if header.Required {
+			return true
+		}
+	}
+	return false
 }
 
 // catalogNeedsAdminCredential reports whether a catalog entry cannot be

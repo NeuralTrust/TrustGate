@@ -105,6 +105,7 @@ type fakeInstalls struct {
 	pending     []*installationdomain.Installation
 	rebinds     []ids.RegistryID
 	rebindErr   error
+	deleteErr   error
 }
 
 // installsForCode is the set a code-scoped read returns: an explicit byCode list
@@ -158,6 +159,9 @@ func (f *fakeInstalls) ListByPrincipalAndCode(context.Context, ids.GatewayID, st
 
 func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) error {
 	f.deletes++
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	return nil
 }
 
@@ -250,6 +254,13 @@ func testCatalog() fakeCatalog {
 			URLVariables: []catalogdomain.MCPURLVariable{
 				{Name: "token", Required: true, Secret: true, In: "query"},
 			},
+			SelfService: true,
+		},
+		"com.replicate/mcp": {
+			Code:        "com.replicate/mcp",
+			DisplayName: "Replicate",
+			URL:         "https://mcp.replicate.com/sse",
+			Transport:   "sse",
 			SelfService: true,
 		},
 	}}

@@ -347,9 +347,9 @@ func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
 
 // AWS publishes region-specific OAuth endpoints through protected-resource
 // metadata, so the seed carries no authorize_url/token_url/resource of its own:
-// discovery resolves them against the region the operator picked. Connecting
-// also depends on AWS Sign-In allowlisting the deployment's redirect URI for
-// dynamic client registration, which is why the guide calls that out.
+// discovery resolves them against the region the operator picked. Dynamic
+// client registration is rejected for this gateway's redirect URI, so an admin
+// registers the OAuth app and the guide names the callback.
 func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	t.Parallel()
 
@@ -365,10 +365,11 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.Len(t, server.URLVariables, 1)
 	require.Equal(t, "region", server.URLVariables[0].Name)
 	require.True(t, server.URLVariables[0].Required)
+	require.False(t, server.SelfService)
 	require.NotNil(t, server.OAuth)
-	require.Equal(t, "auto", server.OAuth.Registration)
+	require.Equal(t, "manual", server.OAuth.Registration)
 	require.NotNil(t, server.OAuth.DCR)
-	require.True(t, *server.OAuth.DCR)
+	require.False(t, *server.OAuth.DCR)
 	require.NotNil(t, server.OAuth.PKCE)
 	require.True(t, *server.OAuth.PKCE)
 	require.Empty(t, server.OAuth.AuthorizeURL)
@@ -376,6 +377,7 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.Empty(t, server.OAuth.Resource)
 	require.NotNil(t, server.ConfigGuide)
 	require.Contains(t, server.ConfigGuide.Steps[0], "AWSMCPSignInOAuthAccessPolicy")
+	require.Contains(t, server.ConfigGuide.Note, "/oauth/callback/com.amazon.aws/mcp")
 }
 
 // A templated oauth.resource never reaches substitution: the registry
@@ -465,14 +467,14 @@ func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 	}{
 		{
 			code:           "com.jotform/mcp",
-			url:            "https://mcp.jotform.com",
+			url:            "https://mcp.jotform.com/mcp",
 			authorizeURL:   "https://oauth2.jotform.com/authorize",
 			tokenURL:       "https://oauth2.jotform.com/token",
 			resource:       "https://mcp.jotform.com/mcp",
-			registration:   "manual",
-			dcr:            false,
-			requiresConfig: true,
-			scopes:         []string{"full"},
+			registration:   "auto",
+			dcr:            true,
+			requiresConfig: false,
+			scopes:         []string{"readOnly"},
 			tools:          []string{"form_list", "create_form", "edit_form", "create_submission", "get_submissions"},
 			assertTools:    true,
 		},
