@@ -156,10 +156,6 @@ const (
 	defaultMCPConnectRateLimitConsumer = 100
 	defaultMCPConnectRateLimitWindow   = time.Minute
 
-	// defaultMCPNamingV2 stays off until every replica can read naming_version.
-	// Turning it on earlier flips tool names between v1 and v2 during rollout.
-	defaultMCPNamingV2 = false
-
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
 	defaultConfigSyncGRPCKeepaliveTimeout       = 10 * time.Second
@@ -358,19 +354,6 @@ type ServerConfig struct {
 	// Signed with SecretKey, like ConsoleEventsURL. Empty: the Store offers no
 	// request tool, and users ask from the Portal.
 	ConsoleModelRequestsURL string
-	// MCPNamingV2 stamps NamingVersionV2 on new MCP registries and new Store
-	// installs (MCP_NAMING_V2). Off by default. Turn it on only after every
-	// control-plane replica and every data plane is running a build that reads
-	// naming_version, and turn it off before any rollback. While it is off, new
-	// rows stay on the original names (version 0 / NULL) and publish the same
-	// spellings as before naming v2. Rows already stamped 2 are still read as 2.
-	// An old control-plane snapshot omits naming_version from registry JSON and
-	// sends install version 0, so a replica that has not picked up this build
-	// would publish v1 names for a row this build publishes as v2. On a server
-	// that has both x and slug_x that flip rebinds the name. The down migration
-	// drops store_installations.naming_version permanently; do not run it while
-	// any row still needs version 2.
-	MCPNamingV2 bool
 }
 
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
@@ -728,7 +711,6 @@ func getServerConfig() ServerConfig {
 		StoredSecretsEncryptionEnabled: getEnvBool("STORED_SECRETS_ENCRYPTION_ENABLED", defaultStoredSecretsEncryptionEnabled),
 		ConsoleEventsURL:               strings.TrimSpace(getEnv("CONSOLE_EVENTS_URL", "")),
 		ConsoleModelRequestsURL:        strings.TrimSpace(getEnv("CONSOLE_MODEL_REQUESTS_URL", "")),
-		MCPNamingV2:                    getEnvBool("MCP_NAMING_V2", defaultMCPNamingV2),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),

@@ -1707,10 +1707,8 @@ func TestComposer_V2NameReachesUpstreamAndPolicyApplies(t *testing.T) {
 	t.Parallel()
 	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
 	docs.MCPTarget.Code = "com.devexpress/docs"
-	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
 	clickup.MCPTarget.Code = "com.clickup/mcp"
-	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 
 	upDocs := &fakeUpstream{tools: tools("devexpress_docs_search", "devexpress_docs_get_content"), result: json.RawMessage(`{"content":[]}`)}
 	upClickup := &fakeUpstream{tools: tools("get_task"), result: json.RawMessage(`{"content":[]}`)}
@@ -1768,7 +1766,6 @@ func TestComposer_ToolkitChangeDoesNotRebindV2Name(t *testing.T) {
 	t.Parallel()
 	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
 	clickup.MCPTarget.Code = "com.clickup/mcp"
-	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	up := &fakeUpstream{tools: tools("get_task", "clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://clickup.example/mcp": up,
@@ -1827,7 +1824,6 @@ func TestComposer_UpstreamSiblingRebindsV2Name(t *testing.T) {
 	t.Parallel()
 	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
 	clickup.MCPTarget.Code = "com.clickup/mcp"
-	clickup.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	up := &fakeUpstream{tools: tools("clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://clickup.example/mcp": up,
@@ -1878,7 +1874,6 @@ func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
 	t.Parallel()
 	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
 	docs.MCPTarget.Code = "com.devexpress/docs"
-	docs.MCPTarget.NamingVersion = registrydomain.NamingVersionV2
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://devexpress.example/mcp": {prompts: prompts("devexpress_docs_search")},
 	}})
@@ -1891,31 +1886,20 @@ func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
 	}
 }
 
-// google's drive_list is hidden and google_drive's list is visible. Both spell
-// google_drive_list. Pre-#1101 counted only published tools, so the visible
-// name stayed google_drive_list. Counting the hidden tool suffixes it and
-// tells the client the hidden tool exists.
-func TestComposer_V1HiddenToolLeavesTheVisibleNameUnsuffixed(t *testing.T) {
+// Cross-server collision suffixes count published tools only. A tool the
+// toolkit does not expose does not change the published name. Calling a
+// spelling that is not published is unknown, not denied.
+func TestComposer_UnpublishedToolDoesNotSuffixAPublishedName(t *testing.T) {
 	t.Parallel()
-	assertHiddenCrossServerToolDoesNotSuffix(t, 0)
+	assertHiddenCrossServerToolDoesNotSuffix(t)
 }
 
-// The same overlap on v2. A cross-server suffix computed from the hidden tool
-// would publish google_drive_list_<digest> or deny that digest, which is how
-// the hidden tool leaks. The visible name stays google_drive_list.
-func TestComposer_V2HiddenToolDoesNotLeakThroughACrossServerSuffix(t *testing.T) {
-	t.Parallel()
-	assertHiddenCrossServerToolDoesNotSuffix(t, registrydomain.NamingVersionV2)
-}
-
-func assertHiddenCrossServerToolDoesNotSuffix(t *testing.T, version int) {
+func assertHiddenCrossServerToolDoesNotSuffix(t *testing.T) {
 	t.Helper()
 	google := mcpRegistry(t, "Google", "https://google.example/mcp")
 	google.MCPTarget.Code = "com.google/mcp"
-	google.MCPTarget.NamingVersion = version
 	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
 	drive.MCPTarget.Code = "com.google_drive/mcp"
-	drive.MCPTarget.NamingVersion = version
 	googleUp := &fakeUpstream{tools: tools("drive_list")}
 	driveUp := &fakeUpstream{tools: tools("list"), result: json.RawMessage(`{"content":[]}`)}
 	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
@@ -1946,14 +1930,14 @@ func assertHiddenCrossServerToolDoesNotSuffix(t *testing.T, version int) {
 		t.Fatalf("hidden upstream was called with %q", googleUp.lastCall)
 	}
 	for _, reg := range []*registrydomain.Registry{google, drive} {
-		leaked := disambiguateCollision("google_drive_list", reg)
-		_, err := c.Resolve(context.Background(), rc, leaked)
+		suffix := disambiguateCollision("google_drive_list", reg)
+		_, err := c.Resolve(context.Background(), rc, suffix)
 		var denied *ToolNotPermittedError
 		if errors.As(err, &denied) {
-			t.Fatalf("suffix %q is denied, which reveals the hidden tool", leaked)
+			t.Fatalf("suffix %q: denied, want unknown", suffix)
 		}
 		if !errors.Is(err, ErrToolNotFound) {
-			t.Fatalf("suffix %q: %v, want unknown", leaked, err)
+			t.Fatalf("suffix %q: %v, want unknown", suffix, err)
 		}
 	}
 }

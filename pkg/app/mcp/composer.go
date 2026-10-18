@@ -165,7 +165,7 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if err != nil {
 		return nil, err
 	}
-	// v2 within-server spellings are fixed from every tool the dialed servers
+	// Within-server spellings are fixed from every tool the dialed servers
 	// returned, including ones the toolkit will not publish, so hiding a
 	// sibling cannot point an existing name at a different upstream tool.
 	// Cross-server suffixes count published tools only.
@@ -553,14 +553,12 @@ func (p toolPolicy) permits(tool string) bool {
 }
 
 // assignExposedNames publishes the name each selected tool is called by.
-// v2 within-server prefix stripping runs over every tool the reachable
-// servers returned, so hiding a sibling cannot point an existing name at a
-// different upstream tool. Cross-server suffixes count published tools only:
-// a hidden tool must not change a v1 name, withhold a visible tool, or reveal
-// itself through a digest. A toolkit ExposeAs is the name resolveNames sees
-// for that tool, so the rename goes through the same collision handling.
-// Tools the resolution withholds are omitted. The denied spellings of hidden
-// tools are recorded on the surfaces for tools/call.
+// Prefix stripping runs over every tool the reachable servers returned, so
+// hiding a sibling cannot point an existing name at a different upstream
+// tool. Cross-server suffixes count published tools only. A toolkit ExposeAs
+// is the name resolveNames sees for that tool, so the rename goes through the
+// same collision handling. Tools the resolution withholds are omitted. The
+// spellings of unpublished tools are recorded on the surfaces for tools/call.
 func assignExposedNames(surfaces []serverSurface) []binding {
 	var published []binding
 	var background []binding
