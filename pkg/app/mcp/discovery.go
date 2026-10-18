@@ -38,10 +38,11 @@ const (
 )
 
 // discoveryFreshFor is how long a discovery is served as is. Past it the result
-// is still served, but a refresh starts behind it (RUN-1633): every tools/call
-// composes all of the consumer's upstreams to resolve the exposed name, and
-// waiting on that refresh put a cold session or token refresh of the slowest
-// upstream in front of every call made after a few minutes idle.
+// is still served, but a refresh starts behind it (RUN-1633). tools/list still
+// composes every upstream, and a tools/call used to as well just to find which
+// server owned the name; waiting on that refresh put a cold session or token
+// refresh of the slowest upstream in front of every call made after a few
+// minutes idle.
 const discoveryFreshFor = 5 * time.Minute
 
 // discoveryMaxAge bounds how stale a served discovery can be, so an upstream
@@ -236,8 +237,9 @@ func discoverCached[T any](
 	// entry expires all dials the same upstream, which is exactly when it is
 	// least able to take it. The flight runs detached from the caller that
 	// started it, so one client going away does not fail the others waiting on
-	// the same key.
-	result := c.flight.DoChan(key, func() (any, error) {
+	// the same key. A resolve probe flies separately: it must not hand a
+	// ticket-less consent to a listing that is waiting on the real key.
+	result := c.flight.DoChan(flightKeyFor(ctx, key), func() (any, error) {
 		if items, hit, stale, err := cachedDiscovery[T](c, key, time.Now()); hit && !stale {
 			return items, err
 		}
@@ -261,11 +263,18 @@ func discoverCached[T any](
 	}
 }
 
+func flightKeyFor(ctx context.Context, key string) string {
+	if resolveProbe(ctx) {
+		return key + ":probe"
+	}
+	return key
+}
+
 // revalidate refreshes a stale discovery in the background while the caller is
 // served the snapshot it already has. The flight key deduplicates it against
 // any other refresh of the same key.
 func revalidate[T any](c *composer, ctx context.Context, key string, ask func(context.Context) ([]T, error)) {
-	c.flight.DoChan(key, func() (any, error) {
+	c.flight.DoChan(flightKeyFor(ctx, key), func() (any, error) {
 		if items, hit, stale, err := cachedDiscovery[T](c, key, time.Now()); hit && !stale {
 			return items, err
 		}

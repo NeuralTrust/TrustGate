@@ -395,6 +395,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		consentErr    *appmcp.ConsentRequiredError
 		notPermitted  *appmcp.ToolNotPermittedError
 		appNotLinked  *appmcp.ApplicationNotConnectedError
+		notServing    *appmcp.ServerNotServingError
 		invalidParams *InvalidParamsError
 	)
 	switch {
@@ -501,6 +502,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
+	case errors.As(err, &notServing):
+		// The owning server is installed but not reachable. Name that server and
+		// its state; the discovery error itself can carry an upstream URL, so it
+		// stays out of the message the caller reads.
+		return writeRPCError(c, id, codeInternalError, notServing.Error())
 	case errors.Is(err, appmcp.ErrUnreachable), errors.Is(err, appmcp.ErrUpstreamUnavailable):
 		slog.Default().Warn("mcp handler: upstream MCP server unreachable",
 			"method", c.Method(), "path", c.Path(), "error", err)

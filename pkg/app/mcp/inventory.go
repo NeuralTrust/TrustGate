@@ -160,10 +160,10 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 			// carries hosts and transport detail the caller cannot act on.
 			server.State = InventoryStateUnavailable
 		default:
-			for range surface.bindings {
-				if cursor >= len(resolved) {
-					break
-				}
+			// resolveNames withholds a tool whose final name copied another
+			// server's, so the resolved list is a subsequence of this server's
+			// bindings, still in order and still grouped by registry.
+			for cursor < len(resolved) && resolved[cursor].registry == surface.registry {
 				b := resolved[cursor]
 				cursor++
 				server.Tools = append(server.Tools, InventoryEntry{
