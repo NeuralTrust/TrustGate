@@ -165,16 +165,10 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if err != nil {
 		return nil, err
 	}
-	var candidates []binding
-	for _, surface := range surfaces {
-		if surface.serves() {
-			candidates = append(candidates, surface.bindings...)
-		}
-	}
-	// More than one published binding for this name is not a choice between
-	// them. The first one used to win, which is how a copied suffix was
-	// invoked. The call is refused before any consent ticket is minted.
-	chosen, ok, err := matchExposed(resolveNames(candidates, owners), name)
+	// Names are assigned from every tool the dialed servers returned, including
+	// ones the toolkit will not publish, so a toolkit change cannot point an
+	// existing name at a different upstream tool.
+	chosen, ok, err := matchExposed(assignExposedNames(surfaces), name)
 	if err != nil {
 		return nil, err
 	}
@@ -254,6 +248,11 @@ func denied(surfaces []serverSurface, name string) bool {
 				return true
 			}
 		}
+		for _, exposed := range surface.deniedExposed {
+			if exposed == name {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -321,6 +320,10 @@ func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	if fixableByConnecting(err) {
 		c.forgetDiscovery(ctx, target.Registry)
 	}
+	// After the unauthorized retry above, so a revoked Zoom token is still
+	// refreshed once. Only error 4741 is rewritten; every other failure,
+	// including a 401 that is not 4741, is returned as it was.
+	out, err = rewriteZoomRevokedCall(target.Registry, out, err)
 	if err != nil || ClientAcceptsTypedOutput(ctx) {
 		return out, err
 	}
@@ -378,7 +381,14 @@ func hostFromURL(raw string) string {
 type serverSurface struct {
 	registry *registrydomain.Registry
 	bindings []binding
+	// upstream is every tool the server returned, before the toolkit. Name
+	// resolution reads this, so hiding a tool cannot hand its spelling to
+	// another tool of the same server.
+	upstream []Tool
 	denied   []string
+	// deniedExposed is the spelling a toolkit-hidden tool would have been
+	// published under. It is filled when names are assigned.
+	deniedExposed []string
 	// policy is what the consumer's toolkit permits on this server. It is known
 	// whether or not the server answered, which is what lets a caller be told
 	// what an unreachable server would offer without overstating it.
@@ -423,6 +433,7 @@ func (c *composer) serverSurfaces(
 			out = append(out, surface)
 			continue
 		}
+		surface.upstream = tools
 		surface.bindings = selectTools(toolkit, reg, tools)
 		if toolkit != nil {
 			allowed := make(map[string]struct{}, len(surface.bindings))
@@ -451,12 +462,10 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	}
 	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 
-	var candidates []binding
 	var pendingConsent *ConsentRequiredError
 	var pendingNotConnected *ApplicationNotConnectedError
 
 	var firstSkipped error
-	denied := make(map[string]struct{})
 	reachable := 0
 	for _, surface := range surfaces {
 		reg := surface.registry
@@ -487,11 +496,6 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			continue
 		}
 		reachable++
-		candidates = append(candidates, surface.bindings...)
-		for _, name := range surface.denied {
-			denied[name] = struct{}{}
-			denied[exposedNameFor(name, reg).String()] = struct{}{}
-		}
 	}
 	if reachable == 0 {
 		if pendingConsent != nil {
@@ -505,7 +509,22 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	bindings := resolveNames(candidates, registries)
+	// Stripping and collisions are decided from the full upstream list. The
+	// toolkit then only chooses which of those names are published.
+	bindings := assignExposedNames(surfaces)
+	denied := make(map[string]struct{})
+	for _, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		for _, name := range surface.denied {
+			denied[name] = struct{}{}
+			denied[exposedNameFor(name, surface.registry).String()] = struct{}{}
+		}
+		for _, name := range surface.deniedExposed {
+			denied[name] = struct{}{}
+		}
+	}
 	// A name that another registry ends up exposing was never really denied.
 	for _, b := range bindings {
 		delete(denied, b.exposed)
@@ -530,6 +549,65 @@ func (p toolPolicy) permits(tool string) bool {
 		return true
 	}
 	return slices.Contains(p.names, tool)
+}
+
+// toolKey identifies one upstream tool on the registry that served it.
+type toolKey struct {
+	reg  *registrydomain.Registry
+	name string
+}
+
+// assignExposedNames publishes the name each selected tool is called by.
+// Stripping and collisions are resolved against every tool the reachable
+// servers returned, and only then is the toolkit applied, so allowing or
+// hiding a tool never points an existing name at a different upstream tool.
+// A toolkit ExposeAs still renames just that one tool. Tools the resolution
+// withholds are omitted. The denied spellings of hidden tools are recorded
+// on the surfaces for tools/call.
+func assignExposedNames(surfaces []serverSurface) []binding {
+	var all []binding
+	for _, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		for _, tool := range surface.upstream {
+			all = append(all, binding{registry: surface.registry, tool: tool, exposed: tool.Name})
+		}
+	}
+	named := resolveNames(all, nil)
+	byNative := make(map[toolKey]string, len(named))
+	for _, b := range named {
+		byNative[toolKey{reg: b.registry, name: b.tool.Name}] = b.exposed
+	}
+	var out []binding
+	for i, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		selected := make(map[string]struct{}, len(surface.bindings))
+		for _, sel := range surface.bindings {
+			selected[sel.tool.Name] = struct{}{}
+			exposed, ok := byNative[toolKey{reg: surface.registry, name: sel.tool.Name}]
+			if !ok {
+				continue
+			}
+			if sel.exposed != sel.tool.Name {
+				exposed = exposedNameFor(sel.exposed, surface.registry).String()
+			}
+			out = append(out, binding{registry: surface.registry, tool: sel.tool, exposed: exposed})
+		}
+		for _, tool := range surface.upstream {
+			if _, allowed := selected[tool.Name]; allowed {
+				continue
+			}
+			exposed, ok := byNative[toolKey{reg: surface.registry, name: tool.Name}]
+			if !ok {
+				exposed = exposedNameFor(tool.Name, surface.registry).String()
+			}
+			surfaces[i].deniedExposed = append(surfaces[i].deniedExposed, exposed)
+		}
+	}
+	return out
 }
 
 // toolkitPolicy reads off what the toolkit allows on one server, by the same

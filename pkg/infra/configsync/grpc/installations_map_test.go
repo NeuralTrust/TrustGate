@@ -46,6 +46,7 @@ func TestInstallationProto_CarriesEverythingARequestIsMadeOf(t *testing.T) {
 		DecidedAt:       decidedAt,
 		CreatedAt:       decidedAt,
 		UpdatedAt:       decidedAt,
+		NamingVersion:   2,
 	}
 
 	out, err := installationFromProto(installationToProto(in))
@@ -65,6 +66,9 @@ func TestInstallationProto_CarriesEverythingARequestIsMadeOf(t *testing.T) {
 	}
 	if !out.DecidedAt.Equal(decidedAt) {
 		t.Fatalf("decided at = %v, want %v", out.DecidedAt, decidedAt)
+	}
+	if out.NamingVersion != 2 {
+		t.Fatalf("naming version = %d, want 2", out.NamingVersion)
 	}
 }
 
@@ -86,6 +90,9 @@ func TestInstallationProto_AnInstallStaysEmptyWhereARequestWouldNotBe(t *testing
 		t.Fatalf("round trip: %v", err)
 	}
 
+	if out.NamingVersion != 0 {
+		t.Fatalf("naming version = %d, want the original rules", out.NamingVersion)
+	}
 	if out.Reason != "" || len(out.RequesterGroups) != 0 {
 		t.Fatalf("an install must carry neither, got %q / %v", out.Reason, out.RequesterGroups)
 	}

@@ -73,6 +73,33 @@ func TestInstallSameConfigRefreshesTheInstance(t *testing.T) {
 	}
 }
 
+func TestInstallRecordsNamingVersionOnANewRow(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	installs := &fakeInstalls{}
+	if _, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github")); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != registrydomain.NamingVersionV2 {
+		t.Fatalf("new install = %+v, want naming version %d", installs.upserts, registrydomain.NamingVersionV2)
+	}
+}
+
+func TestInstallRefreshKeepsTheOriginalNamingVersion(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
+	rows := liveRows("snowflake", 1, installationdomain.StatusInstalled)
+	installs := &fakeInstalls{byCode: rows}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "db0"}
+	if _, err := newInstaller(t, regs, installs).Install(context.Background(), in); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != 0 {
+		t.Fatalf("refresh of an original install = %+v, want naming version 0", installs.upserts)
+	}
+}
+
 func apiKeyOnlyCatalog() fakeCatalog {
 	return fakeCatalog{entries: map[string]catalogdomain.MCPServer{
 		"com.semrush/mcp": {

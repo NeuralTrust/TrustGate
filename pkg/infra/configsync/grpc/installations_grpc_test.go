@@ -496,6 +496,33 @@ func TestInstallationsService_UpsertValidatesWireRecord(t *testing.T) {
 	}
 }
 
+func TestInstallationsService_UpsertKeepsOnlyKnownNamingVersions(t *testing.T) {
+	gw := tenantGateway(t, "acme")
+	repo := newMemInstallations()
+	svc := NewInstallationsService(repo, nil, &fakeGateways{
+		byID: map[ids.GatewayID]*gatewaydomain.Gateway{gw.ID: gw},
+	}, discardLogger())
+	ctx := WithScope(context.Background(), gw.ID.String())
+
+	unknown := protoInstall(t, gw.ID, "alice", "github")
+	unknown.NamingVersion = 9
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: unknown}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if got := repo.rows[key(gw.ID, "alice", "github")].NamingVersion; got != 0 {
+		t.Fatalf("naming version = %d, want an unknown version stored as the original rules", got)
+	}
+
+	current := protoInstall(t, gw.ID, "bob", "github")
+	current.NamingVersion = 2
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: current}); err != nil {
+		t.Fatalf("Upsert version 2: %v", err)
+	}
+	if got := repo.rows[key(gw.ID, "bob", "github")].NamingVersion; got != 2 {
+		t.Fatalf("naming version = %d, want 2", got)
+	}
+}
+
 // RUN-1652: a Portal install is recorded by the console with the caller's email
 // as installed_by, and the configure page on the data plane then merges the
 // user's values into that same row. Rewriting the config of a row that already

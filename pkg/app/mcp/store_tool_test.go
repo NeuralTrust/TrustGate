@@ -497,6 +497,9 @@ type fakeInstaller struct {
 	// held answers Installed: the instance the principal already has.
 	held          *appstore.InstallResult
 	installedCall int
+	// installedCodes is what search reports as store_state installed.
+	installedCodes    map[string]struct{}
+	installedCodesErr error
 }
 
 func (f *fakeInstaller) Installed(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
@@ -545,6 +548,13 @@ func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code, i
 	f.uninstalled = append(f.uninstalled, code)
 	f.lastInstance = instance
 	return nil
+}
+
+func (f *fakeInstaller) InstalledCodes(context.Context, ids.GatewayID, string) (map[string]struct{}, error) {
+	if f.installedCodesErr != nil {
+		return nil, f.installedCodesErr
+	}
+	return f.installedCodes, nil
 }
 
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {

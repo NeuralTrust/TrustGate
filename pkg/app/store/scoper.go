@@ -272,15 +272,16 @@ func (s *scoper) installedRegistries(
 		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, principal.Subject) {
 			continue
 		}
+		version := int(in.NamingVersion)
 		if countByCode[in.CatalogCode] <= 1 {
 			if len(in.Config) == 0 {
-				out = append(out, shelf)
+				out = append(out, registryAtNamingVersion(shelf, version))
 				continue
 			}
-			out = append(out, configuredRegistry(shelf, in))
+			out = append(out, stampNamingVersion(configuredRegistry(shelf, in), version))
 			continue
 		}
-		out = append(out, instanceRegistry(shelf, in))
+		out = append(out, stampNamingVersion(instanceRegistry(shelf, in), version))
 	}
 	return out, nil
 }
@@ -433,6 +434,43 @@ func pendingShelfFresh(now, updated time.Time) bool {
 		return false
 	}
 	return !updated.Before(now.Add(-pendingShelfWindow))
+}
+
+// registryAtNamingVersion returns shelf when it already carries version. A
+// different version is stamped on a shallow copy: shelf is the shared snapshot
+// registry, and writing a principal's version onto it would rename every other
+// principal's tools.
+func registryAtNamingVersion(shelf *registrydomain.Registry, version int) *registrydomain.Registry {
+	if shelf == nil || registryNamingVersion(shelf) == version {
+		return shelf
+	}
+	clone := *shelf
+	if shelf.MCPTarget == nil {
+		return &clone
+	}
+	target := *shelf.MCPTarget
+	target.NamingVersion = version
+	clone.MCPTarget = &target
+	return &clone
+}
+
+func registryNamingVersion(reg *registrydomain.Registry) int {
+	if reg == nil || reg.MCPTarget == nil {
+		return 0
+	}
+	return reg.MCPTarget.NamingVersion
+}
+
+// stampNamingVersion records the install's naming rules on a registry clone.
+// The clone already owns its target; the shared shelf is not modified.
+func stampNamingVersion(reg *registrydomain.Registry, version int) *registrydomain.Registry {
+	if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.NamingVersion == version {
+		return reg
+	}
+	target := *reg.MCPTarget
+	target.NamingVersion = version
+	reg.MCPTarget = &target
+	return reg
 }
 
 // configuredRegistry is the single-instance exposure of an install that carries

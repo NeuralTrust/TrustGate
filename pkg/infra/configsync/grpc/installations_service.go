@@ -23,6 +23,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -385,6 +386,12 @@ func authorizeGatewayScope(
 // the stored row exactly — the data plane moves the config, never the
 // provenance or the decision (RUN-1652).
 func (s *InstallationsService) validateDataPlaneInstallation(ctx context.Context, in *installationdomain.Installation) error {
+	// A data plane only ever records the original rules or version 2. Anything
+	// else is treated as the original rules rather than a spelling this plane
+	// does not know.
+	if in.NamingVersion != 0 && in.NamingVersion != registrydomain.NamingVersionV2 {
+		in.NamingVersion = 0
+	}
 	if err := in.Validate(); err != nil {
 		return status.Errorf(codes.InvalidArgument, "store installations: upsert: %v", err)
 	}
