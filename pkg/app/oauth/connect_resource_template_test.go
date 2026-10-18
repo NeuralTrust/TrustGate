@@ -55,7 +55,17 @@ type fixedRegistrar struct {
 
 func (r *fixedRegistrar) Discover(_ context.Context, upstreamURL string) (*oauth.UpstreamAuthServer, error) {
 	r.discovered = append(r.discovered, upstreamURL)
-	return r.meta, nil
+	if r.meta == nil {
+		return nil, nil
+	}
+	meta := *r.meta
+	if oauth.ValidatedIssuer(&meta) == "" {
+		meta.ValidatedIssuer = "https://auth.example.test"
+		if u, err := url.Parse(meta.AuthorizationEndpoint); err == nil && u.Host != "" && !strings.ContainsAny(u.Host, "{}") {
+			meta.ValidatedIssuer = u.Scheme + "://" + u.Host
+		}
+	}
+	return &meta, nil
 }
 
 func (r *fixedRegistrar) EnsureClient(context.Context, string, *oauth.UpstreamAuthServer, string) (*oauth.RegisteredClient, error) {
@@ -65,6 +75,8 @@ func (r *fixedRegistrar) EnsureClient(context.Context, string, *oauth.UpstreamAu
 func (r *fixedRegistrar) CachedClient(context.Context, string) (*oauth.RegisteredClient, error) {
 	return r.client, nil
 }
+
+func (r *fixedRegistrar) DropCachedClient(context.Context, string, string) error { return nil }
 
 func templatedConnect(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar) oauth.ConnectService {
 	t.Helper()
