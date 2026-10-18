@@ -61,7 +61,12 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.registrar.EnsureClient(ctx, slot, meta, connectCallbackURL(baseURL, cfg.Provider))
+	redirectURI := connectCallbackURL(baseURL, cfg.Provider)
+	client, err := s.registrar.EnsureClient(ctx, slot, meta, redirectURI)
+	if err != nil {
+		return nil, err
+	}
+	client, err = s.healLegacyAuthorizeClient(ctx, gatewayID, reg, cfg, slot, meta, client, redirectURI)
 	if err != nil {
 		return nil, err
 	}
@@ -205,11 +210,7 @@ func (s *connectService) refreshMaterial(
 	if err != nil {
 		return nil, "", upstreamResolution{}, err
 	}
-	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
-	if err != nil {
-		return nil, "", upstreamResolution{}, err
-	}
-	client, err := s.registrar.CachedClient(ctx, slot)
+	client, slot, err := s.clientForRefresh(ctx, gatewayID, principalSub, reg, meta)
 	if err != nil {
 		return nil, "", upstreamResolution{}, err
 	}
