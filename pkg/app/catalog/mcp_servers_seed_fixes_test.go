@@ -344,6 +344,18 @@ func TestCuratedCatalog_SeedFixesLeaveUnchangedEntries(t *testing.T) {
 		require.Equal(t, scopes, server.OAuth.Scopes, code)
 	}
 
+	// ENG-2237: Zoom keeps one token per OAuth app. The four servers an admin
+	// installs side by side say so in the setup note. Scopes stay as seeded.
+	const zoomAppHint = "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+	for _, code := range []string{"us.zoom/docs", "us.zoom/workspace", "us.zoom/team-chat", "us.zoom/whiteboard"} {
+		server := mustCatalogServer(t, cat, code)
+		require.NotNil(t, server.ConfigGuide, code)
+		require.Equal(t, zoomAppHint, server.ConfigGuide.Note, code)
+		require.Equal(t, []string{"Add TrustGate's OAuth callback URL, then enter the client ID."}, server.ConfigGuide.Steps, code)
+	}
+	revenue := mustCatalogServer(t, cat, "us.zoom/revenue-accelerator")
+	require.Empty(t, revenue.ConfigGuide.Note)
+
 	vanta := mustCatalogServer(t, cat, "com.vanta/mcp")
 	require.Equal(t, []string{"mcp.vanta.com", "mcp.eu.vanta.com", "mcp.aus.vanta.com"},
 		optionValues(variableByName(t, vanta, "host")))
