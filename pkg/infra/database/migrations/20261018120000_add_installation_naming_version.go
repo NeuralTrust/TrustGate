@@ -33,7 +33,8 @@ func init() {
 // upAddInstallationNamingVersion adds a nullable column and does not backfill.
 // On Postgres 11+ ADD COLUMN of a nullable column with no default is a catalog
 // change: existing rows stay NULL, which the reader treats as the original
-// tool names. New inserts write 2. Nothing in this migration UPDATEs a row.
+// tool names. New inserts write 2 only while MCP_NAMING_V2 is on; otherwise
+// they write NULL. Nothing in this migration UPDATEs a row.
 func upAddInstallationNamingVersion(ctx context.Context, tx pgx.Tx) error {
 	const ddl = llmStoreLockTimeout + `
 		ALTER TABLE store_installations
@@ -42,6 +43,9 @@ func upAddInstallationNamingVersion(ctx context.Context, tx pgx.Tx) error {
 	return err
 }
 
+// downAddInstallationNamingVersion drops the column. The versions it held are
+// gone for good: a later up adds the column empty, and every install reads as
+// the original names. Do not run it while a row still needs version 2.
 func downAddInstallationNamingVersion(ctx context.Context, tx pgx.Tx) error {
 	const ddl = llmStoreLockTimeout + `
 		ALTER TABLE store_installations DROP COLUMN IF EXISTS naming_version;`

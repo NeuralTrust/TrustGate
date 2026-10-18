@@ -20,6 +20,7 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -155,6 +156,7 @@ type storePrincipalParams struct {
 	// Revoker asks the vendor to revoke a per-user token on uninstall. Absent,
 	// uninstall still deletes the local credential when Vault is set.
 	Revoker appstore.CredentialRevoker `optional:"true"`
+	Config  *config.Config
 }
 
 // provideStorePrincipalHandler serves the Portal's admin preview of one user's
@@ -169,7 +171,8 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 		return nil, err
 	}
 	installer, err := appstore.NewInstaller(p.Catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-		appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
+		appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger),
+		appstore.WithNamingV2(p.Config.Server.MCPNamingV2))
 	if err != nil {
 		return nil, err
 	}

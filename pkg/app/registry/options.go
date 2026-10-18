@@ -35,8 +35,9 @@ type AuthLookup interface {
 type Option func(*options)
 
 type options struct {
-	openapi appopenapi.Compiler
-	auths   AuthLookup
+	openapi  appopenapi.Compiler
+	auths    AuthLookup
+	namingV2 bool
 }
 
 // WithOpenAPICompiler compiles OpenAPI-sourced MCP targets on save.
@@ -48,6 +49,12 @@ func WithOpenAPICompiler(c appopenapi.Compiler) Option {
 // mcp_target.auth.identity_id. Without it such a target is refused.
 func WithAuthLookup(l AuthLookup) Option {
 	return func(o *options) { o.auths = l }
+}
+
+// WithNamingV2 stamps NamingVersionV2 on MCP registries this creator saves.
+// Off by default: new rows stay on the original names until MCP_NAMING_V2 is on.
+func WithNamingV2(enabled bool) Option {
+	return func(o *options) { o.namingV2 = enabled }
 }
 
 func applyOptions(opts []Option) options {

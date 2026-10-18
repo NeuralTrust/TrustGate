@@ -85,6 +85,22 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.Server.MCPOAuthPublicBaseURL != "" {
 		t.Errorf("MCPOAuthPublicBaseURL default = %q, want empty", cfg.Server.MCPOAuthPublicBaseURL)
 	}
+	if cfg.Server.MCPNamingV2 {
+		t.Error("MCPNamingV2 must default to off")
+	}
+}
+
+func TestLoadConfig_MCPNamingV2(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_NAMING_V2", "true")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.Server.MCPNamingV2 {
+		t.Fatal("MCPNamingV2 = false, want true")
+	}
 }
 
 func TestLoadConfig_MCPOAuthPublicBaseURL(t *testing.T) {

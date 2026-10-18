@@ -73,11 +73,27 @@ func TestInstallSameConfigRefreshesTheInstance(t *testing.T) {
 	}
 }
 
-func TestInstallRecordsNamingVersionOnANewRow(t *testing.T) {
+func TestInstallLeavesNamingVersionUnsetUntilEnabled(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	installs := &fakeInstalls{}
 	if _, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github")); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != 0 {
+		t.Fatalf("new install = %+v, want naming version 0 while MCP_NAMING_V2 is off", installs.upserts)
+	}
+}
+
+func TestInstallRecordsNamingVersionOnANewRow(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	installs := &fakeInstalls{}
+	inst, err := NewInstaller(testCatalog(), regs, installs, nil, nil, WithNamingV2(true))
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	if _, err := inst.Install(context.Background(), openReq(gw, "github")); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != registrydomain.NamingVersionV2 {
@@ -97,6 +113,41 @@ func TestInstallRefreshKeepsTheOriginalNamingVersion(t *testing.T) {
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != 0 {
 		t.Fatalf("refresh of an original install = %+v, want naming version 0", installs.upserts)
+	}
+}
+
+func TestInstallRefreshKeepsAStampedNamingVersion(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
+	rows := liveRows("snowflake", 1, installationdomain.StatusInstalled)
+	rows[0].NamingVersion = registrydomain.NamingVersionV2
+	installs := &fakeInstalls{byCode: rows}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "db0"}
+	if _, err := newInstaller(t, regs, installs).Install(context.Background(), in); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != registrydomain.NamingVersionV2 {
+		t.Fatalf("refresh = %+v, want the stamped version kept while the flag is off", installs.upserts)
+	}
+}
+
+func TestInstallRefreshDoesNotUpgradeTheOriginalNamingVersion(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
+	rows := liveRows("snowflake", 1, installationdomain.StatusInstalled)
+	installs := &fakeInstalls{byCode: rows}
+	inst, err := NewInstaller(testCatalog(), regs, installs, nil, nil, WithNamingV2(true))
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "db0"}
+	if _, err := inst.Install(context.Background(), in); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].NamingVersion != 0 {
+		t.Fatalf("refresh = %+v, want version 0 kept when the flag is on", installs.upserts)
 	}
 }
 

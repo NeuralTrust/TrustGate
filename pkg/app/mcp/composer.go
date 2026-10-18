@@ -165,9 +165,10 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if err != nil {
 		return nil, err
 	}
-	// Names are assigned from every tool the dialed servers returned, including
-	// ones the toolkit will not publish, so a toolkit change cannot point an
-	// existing name at a different upstream tool.
+	// v2 within-server spellings are fixed from every tool the dialed servers
+	// returned, including ones the toolkit will not publish, so hiding a
+	// sibling cannot point an existing name at a different upstream tool.
+	// Cross-server suffixes count published tools only.
 	chosen, ok, err := matchExposed(assignExposedNames(surfaces), name)
 	if err != nil {
 		return nil, err
@@ -509,8 +510,8 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	// Stripping and collisions are decided from the full upstream list. The
-	// toolkit then only chooses which of those names are published.
+	// v2 prefix stripping sees the full upstream list. Cross-server suffixes
+	// are decided from the tools the toolkit publishes.
 	bindings := assignExposedNames(surfaces)
 	denied := make(map[string]struct{})
 	for _, surface := range surfaces {
@@ -551,35 +552,19 @@ func (p toolPolicy) permits(tool string) bool {
 	return slices.Contains(p.names, tool)
 }
 
-// toolKey identifies one upstream tool on the registry that served it.
-type toolKey struct {
-	reg  *registrydomain.Registry
-	name string
-}
-
 // assignExposedNames publishes the name each selected tool is called by.
-// Stripping and collisions are resolved against every tool the reachable
-// servers returned, and only then is the toolkit applied, so allowing or
-// hiding a tool never points an existing name at a different upstream tool.
-// A toolkit ExposeAs still renames just that one tool. Tools the resolution
-// withholds are omitted. The denied spellings of hidden tools are recorded
-// on the surfaces for tools/call.
+// v2 within-server prefix stripping runs over every tool the reachable
+// servers returned, so hiding a sibling cannot point an existing name at a
+// different upstream tool. Cross-server suffixes count published tools only:
+// a hidden tool must not change a v1 name, withhold a visible tool, or reveal
+// itself through a digest. A toolkit ExposeAs is the name resolveNames sees
+// for that tool, so the rename goes through the same collision handling.
+// Tools the resolution withholds are omitted. The denied spellings of hidden
+// tools are recorded on the surfaces for tools/call.
 func assignExposedNames(surfaces []serverSurface) []binding {
-	var all []binding
-	for _, surface := range surfaces {
-		if !surface.serves() {
-			continue
-		}
-		for _, tool := range surface.upstream {
-			all = append(all, binding{registry: surface.registry, tool: tool, exposed: tool.Name})
-		}
-	}
-	named := resolveNames(all, nil)
-	byNative := make(map[toolKey]string, len(named))
-	for _, b := range named {
-		byNative[toolKey{reg: b.registry, name: b.tool.Name}] = b.exposed
-	}
-	var out []binding
+	var published []binding
+	var background []binding
+	hiddenAt := make([]int, 0)
 	for i, surface := range surfaces {
 		if !surface.serves() {
 			continue
@@ -587,27 +572,21 @@ func assignExposedNames(surfaces []serverSurface) []binding {
 		selected := make(map[string]struct{}, len(surface.bindings))
 		for _, sel := range surface.bindings {
 			selected[sel.tool.Name] = struct{}{}
-			exposed, ok := byNative[toolKey{reg: surface.registry, name: sel.tool.Name}]
-			if !ok {
-				continue
-			}
-			if sel.exposed != sel.tool.Name {
-				exposed = exposedNameFor(sel.exposed, surface.registry).String()
-			}
-			out = append(out, binding{registry: surface.registry, tool: sel.tool, exposed: exposed})
+			published = append(published, sel)
 		}
 		for _, tool := range surface.upstream {
 			if _, allowed := selected[tool.Name]; allowed {
 				continue
 			}
-			exposed, ok := byNative[toolKey{reg: surface.registry, name: tool.Name}]
-			if !ok {
-				exposed = exposedNameFor(tool.Name, surface.registry).String()
-			}
-			surfaces[i].deniedExposed = append(surfaces[i].deniedExposed, exposed)
+			background = append(background, binding{registry: surface.registry, tool: tool, exposed: tool.Name})
+			hiddenAt = append(hiddenAt, i)
 		}
 	}
-	return out
+	named, hidden := resolveNamesSeen(published, background)
+	for i, h := range hidden {
+		surfaces[hiddenAt[i]].deniedExposed = append(surfaces[hiddenAt[i]].deniedExposed, h.exposed)
+	}
+	return named
 }
 
 // toolkitPolicy reads off what the toolkit allows on one server, by the same

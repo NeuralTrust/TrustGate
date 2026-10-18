@@ -123,8 +123,10 @@ func (l registryAuthParams) options(compiler appopenapi.Compiler) []appregistry.
 }
 
 func provideRegistryServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, auths registryAuthParams) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, auths.options(compiler)...)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, auths registryAuthParams, cfg *config.Config) appregistry.Creator {
+		opts := auths.options(compiler)
+		opts = append(opts, appregistry.WithNamingV2(cfg.Server.MCPNamingV2))
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, opts...)
 	}); err != nil {
 		return err
 	}
