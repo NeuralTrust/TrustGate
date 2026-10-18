@@ -363,7 +363,8 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
 		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger),
+			appstore.WithNamingV2(p.Cfg.Server.MCPNamingV2))
 		if err != nil {
 			return nil, err
 		}
@@ -474,6 +475,7 @@ type configureServiceParams struct {
 	Gateways   gatewaydomain.Repository       `optional:"true"`
 	Revoker    appstore.CredentialRevoker     `optional:"true"`
 	Logger     *slog.Logger                   `optional:"true"`
+	Config     *config.Config
 }
 
 func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
@@ -491,7 +493,8 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 	var opts []appoauth.ConfigureOption
 	if p.Registries != nil {
 		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger),
+			appstore.WithNamingV2(p.Config.Server.MCPNamingV2))
 		if err != nil {
 			return nil, err
 		}

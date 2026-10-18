@@ -1890,3 +1890,107 @@ func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
 		t.Fatalf("prompts = %v, want the original doubled spelling", got)
 	}
 }
+
+// google's drive_list is hidden and google_drive's list is visible. Both spell
+// google_drive_list. Pre-#1101 counted only published tools, so the visible
+// name stayed google_drive_list. Counting the hidden tool suffixes it and
+// tells the client the hidden tool exists.
+func TestComposer_V1HiddenToolLeavesTheVisibleNameUnsuffixed(t *testing.T) {
+	t.Parallel()
+	assertHiddenCrossServerToolDoesNotSuffix(t, 0)
+}
+
+// The same overlap on v2. A cross-server suffix computed from the hidden tool
+// would publish google_drive_list_<digest> or deny that digest, which is how
+// the hidden tool leaks. The visible name stays google_drive_list.
+func TestComposer_V2HiddenToolDoesNotLeakThroughACrossServerSuffix(t *testing.T) {
+	t.Parallel()
+	assertHiddenCrossServerToolDoesNotSuffix(t, registrydomain.NamingVersionV2)
+}
+
+func assertHiddenCrossServerToolDoesNotSuffix(t *testing.T, version int) {
+	t.Helper()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	google.MCPTarget.NamingVersion = version
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	drive.MCPTarget.NamingVersion = version
+	googleUp := &fakeUpstream{tools: tools("drive_list")}
+	driveUp := &fakeUpstream{tools: tools("list"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: drive.ID, Tool: "list"},
+		}},
+	}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "google_drive_list" {
+		t.Fatalf("tools = %v, want [google_drive_list]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "google_drive_list", nil); err != nil {
+		t.Fatalf("calling google_drive_list: %v", err)
+	}
+	if driveUp.lastCall != "list" {
+		t.Fatalf("upstream = %q, want list", driveUp.lastCall)
+	}
+	if googleUp.lastCall != "" {
+		t.Fatalf("hidden upstream was called with %q", googleUp.lastCall)
+	}
+	for _, reg := range []*registrydomain.Registry{google, drive} {
+		leaked := disambiguateCollision("google_drive_list", reg)
+		_, err := c.Resolve(context.Background(), rc, leaked)
+		var denied *ToolNotPermittedError
+		if errors.As(err, &denied) {
+			t.Fatalf("suffix %q is denied, which reveals the hidden tool", leaked)
+		}
+		if !errors.Is(err, ErrToolNotFound) {
+			t.Fatalf("suffix %q: %v, want unknown", leaked, err)
+		}
+	}
+}
+
+// Renaming find to search used to skip collision handling and publish a second
+// notion_search next to the tool that already had that name. tools/call then
+// could not choose either. The rename goes through resolveNames: both copies
+// take this registry's digest, and that shared suffix is withheld.
+func TestComposer_RenamedNameGoesThroughCollision(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	up := &fakeUpstream{tools: tools("find", "search", "pages"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "find", ExposeAs: "search"},
+			{RegistryID: notion.ID, Tool: "search"},
+			{RegistryID: notion.ID, Tool: "pages"},
+		}},
+	}, notion)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 1 || names[0] != "notion_pages" {
+		t.Fatalf("tools = %v, want [notion_pages]: the colliding rename is withheld, pages is not", names)
+	}
+	if _, err := c.Resolve(context.Background(), rc, "notion_search"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("Resolve notion_search = %v, want unknown", err)
+	}
+	if up.lastCall != "" {
+		t.Fatalf("upstream was called with %q", up.lastCall)
+	}
+}

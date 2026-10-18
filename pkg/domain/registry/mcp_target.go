@@ -183,9 +183,10 @@ type MCPTarget struct {
 	// determined (the common case). See ResolveURL.
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
 	// NamingVersion is the tool-naming rules this registry was created under.
-	// Zero — the value every row written before the field existed — is the
-	// original spelling. NamingVersionV2 is recorded only when the registry is
-	// created; an edit preserves it (see appregistry.applyMCPTargetUpdate) and
+	// Zero — the value every row written before the field existed, and the
+	// value written while MCP_NAMING_V2 is off — is the original spelling.
+	// NamingVersionV2 is recorded only when the registry is created with that
+	// flag on; an edit preserves it (see appregistry.applyMCPTargetUpdate) and
 	// nothing backfills existing rows.
 	NamingVersion int `json:"naming_version,omitempty"`
 	// InstanceConfig carries one instance's resolved plain URL-variable values when

@@ -41,37 +41,56 @@ const collisionSuffixLen = 4
 // of the registry that serves it. A name nobody else serves is left as it was,
 // so installing an unrelated server cannot rename it.
 func resolveNames(candidates []binding, _ []*registrydomain.Registry) []binding {
-	out := make([]binding, len(candidates))
-	chosen := make([]exposedChoice, len(candidates))
-	count := make(map[string]int, len(candidates))
-	for i, b := range candidates {
+	published, _ := resolveNamesSeen(candidates, nil)
+	return published
+}
+
+// resolveNamesSeen publishes candidates. background is the rest of the upstream
+// list: tools the toolkit will not publish. They take part in v2 within-server
+// prefix stripping, so hiding a sibling cannot point an existing name at a
+// different tool, and they are returned with that spelling so tools/call can
+// deny it. They do not count toward a cross-server suffix and they are not
+// published. A hidden tool must not rename a visible one, withhold it, or
+// reveal itself through a digest.
+func resolveNamesSeen(candidates, background []binding) (published, hidden []binding) {
+	all := make([]binding, 0, len(background)+len(candidates))
+	all = append(all, background...)
+	all = append(all, candidates...)
+	chosen := make([]exposedChoice, len(all))
+	for i, b := range all {
 		chosen[i] = chooseExposed(b.exposed, b.registry)
-		count[chosen[i].name]++
-		out[i] = b
 	}
 	// A v2 tool whose upstream name already started with the server slug is
 	// published without a second copy of that slug. When that spelling is also
 	// the name of another tool on the same server, the one that arrived
 	// already prefixed keeps the doubled form and the other keeps the short one.
-	if restoreDoubledPrefix(chosen, out) {
-		count = make(map[string]int, len(chosen))
-		for _, c := range chosen {
-			count[c.name]++
-		}
+	restoreDoubledPrefix(chosen, all)
+
+	nBack := len(background)
+	count := make(map[string]int, len(candidates))
+	for i := nBack; i < len(all); i++ {
+		count[chosen[i].name]++
 	}
 	// fromSuffix marks a name produced by the collision digest. That binding is
 	// the original owner of the spelling. A later plain name that copies it
 	// (list_<that digest> on the other server) is not.
-	fromSuffix := make([]bool, len(out))
-	for i := range out {
-		name := chosen[i].name
+	out := make([]binding, len(candidates))
+	fromSuffix := make([]bool, len(candidates))
+	for i := range candidates {
+		name := chosen[nBack+i].name
 		if count[name] > 1 {
-			name = disambiguateCollision(name, out[i].registry)
+			name = disambiguateCollision(name, candidates[i].registry)
 			fromSuffix[i] = true
 		}
+		out[i] = candidates[i]
 		out[i].exposed = name
 	}
-	return withholdCopiedNames(out, fromSuffix)
+	hidden = make([]binding, len(background))
+	for i := range background {
+		hidden[i] = background[i]
+		hidden[i].exposed = chosen[i].name
+	}
+	return withholdCopiedNames(out, fromSuffix), hidden
 }
 
 // exposedChoice is one tool's published spelling before cross-server collisions
