@@ -52,39 +52,93 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
 }
 
+// RevocationMaterial is the OAuth client a refresh would present, plus the
+// revocation endpoint from the authorization-server document that supplied
+// TokenURL. RevocationEndpoint is empty for a pinned registry (AuthorizeURL
+// and TokenURL both configured). Those registries do not revoke: nothing on
+// the registry stores a revocation URL, and uninstall does not discover one.
+type RevocationMaterial struct {
+	ClientID                string
+	ClientSecret            string
+	TokenEndpointAuthMethod string
+	TokenURL                string
+	RevocationEndpoint      string
+}
+
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
-	cfg := forwardedAuth(reg)
-	if cfg == nil {
-		return nil, ErrProviderNotFound
-	}
 	// A refresh runs on the dial path, as the principal the call is for.
 	principalSub := ""
 	if p := identity.PrincipalFromContext(ctx); p != nil {
 		principalSub = p.Subject
 	}
+	auth, _, err := s.refreshMaterial(ctx, gatewayID, principalSub, reg)
+	return auth, err
+}
+
+// RevocationMaterial builds the client RefreshAuth would use. A pinned
+// authorize/token pair does not revoke and is not discovered.
+func (s *connectService) RevocationMaterial(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+) (*RevocationMaterial, error) {
+	auth, revocationEndpoint, err := s.refreshMaterial(ctx, gatewayID, principalSub, reg)
+	if err != nil || auth == nil {
+		return nil, err
+	}
+	return &RevocationMaterial{
+		ClientID:                auth.ClientID,
+		ClientSecret:            auth.ClientSecret,
+		TokenEndpointAuthMethod: auth.TokenEndpointAuthMethod,
+		TokenURL:                auth.TokenURL,
+		RevocationEndpoint:      revocationEndpoint,
+	}, nil
+}
+
+// refreshMaterial is the auth RefreshAuth returns, and the revocation endpoint
+// from that same discovery. The endpoint is empty when the authorize and token
+// URLs are already configured: a pinned registry does not revoke.
+func (s *connectService) refreshMaterial(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+) (*registrydomain.MCPAuth, string, error) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil {
+		return nil, "", ErrProviderNotFound
+	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			return effective, nil
+			return effective, "", nil
 		}
 		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), nil
+		return withholdSharedSecret(manualAuth(effective, meta), reg, s.sharedOAuth), revocationEndpointOf(meta), nil
 	}
 	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if client == nil {
-		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
+		return nil, "", fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), revocationEndpointOf(meta), nil
+}
+
+func revocationEndpointOf(meta *UpstreamAuthServer) string {
+	if meta == nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.RevocationEndpoint)
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {

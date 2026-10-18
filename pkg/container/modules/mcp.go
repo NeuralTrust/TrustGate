@@ -117,6 +117,15 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(connect appoauth.ConnectService) (appstore.CredentialRevoker, error) {
+		src, ok := connect.(infraoauth.RevocationAuthSource)
+		if !ok {
+			return nil, fmt.Errorf("mcp: connect service does not resolve revocation auth")
+		}
+		return infraoauth.NewTokenRevoker(src, nil), nil
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(provideConnectAttemptLimiter); err != nil {
 		return err
 	}
@@ -311,7 +320,13 @@ type rpcGatewayParams struct {
 	// person writes their reason on. Either absent, the tool stays dark.
 	ModelAccess   appoauth.ModelAccessConsole `optional:"true"`
 	ModelRequests appoauth.ModelRequestPages  `optional:"true"`
-	Cfg           *config.Config
+	// Vault, Revoker and Logger release a per-user OAuth credential when
+	// uninstall removes the last installation that uses it. Absent, uninstall
+	// only removes the installation row.
+	Vault   vaultdomain.Repository     `optional:"true"`
+	Revoker appstore.CredentialRevoker `optional:"true"`
+	Logger  *slog.Logger               `optional:"true"`
+	Cfg     *config.Config
 	// Snapshot is how this pod's registry list was loaded. On the data plane a
 	// last-known-good or stale list must not be bridged from the catalog.
 	Snapshot *configsync.SnapshotStatus `optional:"true"`
@@ -347,7 +362,8 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 		if err != nil {
 			return nil, err
 		}
@@ -456,6 +472,8 @@ type configureServiceParams struct {
 	Policies   storeaccessdomain.PolicyReader `optional:"true"`
 	Ensurer    appstore.RegistryEnsurer       `optional:"true"`
 	Gateways   gatewaydomain.Repository       `optional:"true"`
+	Revoker    appstore.CredentialRevoker     `optional:"true"`
+	Logger     *slog.Logger                   `optional:"true"`
 }
 
 func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
@@ -472,7 +490,8 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 	}
 	var opts []appoauth.ConfigureOption
 	if p.Registries != nil {
-		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 		if err != nil {
 			return nil, err
 		}
