@@ -115,6 +115,10 @@ type ConnectState struct {
 	// StartOrigin is the origin the connection was started from, where the
 	// callback sends the browser to finish it.
 	StartOrigin string `json:"start_origin,omitempty"`
+	// ClientID is the dynamic client the authorization code was minted for.
+	// The callback exchanges the code with this client. The secret stays in the
+	// client cache and is read back by this id; it is not copied onto the state.
+	ClientID string `json:"client_id,omitempty"`
 }
 
 // ConnectStart is a started authorization: Location is the provider's

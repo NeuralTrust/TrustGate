@@ -94,6 +94,37 @@ func TestProviderClient_SlackTokenResponse(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid_client is recognizable", func(t *testing.T) {
+		t.Parallel()
+		for _, code := range []string{"invalid_client", "unauthorized_client"} {
+			srv := tokenServer(t, map[string]any{
+				"error":             code,
+				"error_description": "client " + code + " was rejected",
+			})
+			_, err := NewProviderClient(srv.Client()).ExchangeCode(
+				context.Background(),
+				&registrydomain.MCPAuth{ClientID: "id", TokenURL: srv.URL},
+				"code", "https://cb", "verifier",
+			)
+			if !errors.Is(err, appoauth.ErrInvalidClient) {
+				t.Fatalf("ExchangeCode(%s) error = %v, want ErrInvalidClient", code, err)
+			}
+			var rejected *appoauth.InvalidClientError
+			if !errors.As(err, &rejected) || rejected.Code != code {
+				t.Fatalf("diagnostics = %+v, want code %s", rejected, code)
+			}
+		}
+		srv := tokenServer(t, map[string]any{"error": "unauthorized_client"})
+		_, err := NewProviderClient(srv.Client()).Refresh(
+			context.Background(),
+			&registrydomain.MCPAuth{ClientID: "id", TokenURL: srv.URL},
+			"refresh",
+		)
+		if !errors.Is(err, appoauth.ErrInvalidClient) {
+			t.Fatalf("Refresh error = %v, want ErrInvalidClient", err)
+		}
+	})
+
 	t.Run("invalid refresh token requires consent", func(t *testing.T) {
 		t.Parallel()
 		srv := tokenServer(t, map[string]any{

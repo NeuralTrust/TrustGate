@@ -101,10 +101,11 @@ func ForwardedCredentialResource(reg *Registry) string {
 // OAuth credential is stored under: the provider name plus a fingerprint of the
 // resource ForwardedCredentialResource resolves.
 //
-// Every reader and writer of such a credential derives its key here, and the
-// dynamically registered OAuth client is cached under the same key (see
-// appoauth.clientKey): a refresh token can only be redeemed by the client it
-// was issued to, so the credential and that client must never be keyed apart.
+// Every reader and writer of such a credential derives its key here. The
+// dynamically registered OAuth client is cached under this same fingerprint
+// plus the authorization server it was registered with (see appoauth.clientKey):
+// a refresh token can only be redeemed by the client it was issued to, and two
+// hosts that resolve one template must not share that client.
 //
 // Empty when the registry forwards nothing, or names no provider.
 func ForwardedVaultProvider(reg *Registry) string {

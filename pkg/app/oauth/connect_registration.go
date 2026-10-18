@@ -16,7 +16,10 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
@@ -45,11 +48,51 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.registrar.EnsureClient(ctx, clientKey(gatewayID, reg), meta, connectCallbackURL(baseURL, cfg.Provider))
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.registrar.EnsureClient(ctx, slot, meta, connectCallbackURL(baseURL, cfg.Provider))
 	if err != nil {
 		return nil, err
 	}
 	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta)
+}
+
+// exchangeAuth builds the token-endpoint configuration for a code that was
+// minted for clientID. It does not register a client: an in-flight callback
+// must redeem the code with the client that started the flow.
+func (s *connectService) exchangeAuth(
+	ctx context.Context,
+	baseURL string,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	clientID string,
+) (*registrydomain.MCPAuth, error) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil {
+		return nil, ErrProviderNotFound
+	}
+	if cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
+		return s.effectiveAuth(ctx, baseURL, gatewayID, principalSub, reg)
+	}
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return nil, err
+	}
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, err
+	}
+	cached, err := s.registrar.CachedClient(ctx, slot)
+	if err != nil {
+		return nil, err
+	}
+	if cached == nil || cached.ClientID != clientID {
+		return nil, fmt.Errorf("%w: client %q", ErrNoRegisteredClient, clientID)
+	}
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -77,7 +120,11 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.registrar.CachedClient(ctx, slot)
 	if err != nil {
 		return nil, err
 	}
@@ -204,9 +251,8 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 	return &out
 }
 
-// clientKey caches a dynamically registered OAuth client under the same key the
-// credential it mints is stored under (registrydomain.ForwardedVaultProvider),
-// never under the registry id.
+// clientKey is the legacy cache key: the gateway plus the credential fingerprint
+// (registrydomain.ForwardedVaultProvider), never the registry id.
 //
 // A refresh token can only be redeemed by the client it was issued to. Keyed by
 // registry, two instances of one catalog code — the same provider, so one shared
@@ -214,8 +260,144 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 // arrived through refreshed the other's token with the wrong client_id: the
 // upstream answered invalid_grant and the user was told their session had
 // expired while the connect page still said connected.
+//
+// The fingerprint is the URL template as written, so two principals who resolve
+// it to different hosts would share one client. clientCacheKey adds the
+// authorization server. Rows already stored under clientKey stay readable for
+// the server they were registered with.
 func clientKey(gatewayID ids.GatewayID, reg *registrydomain.Registry) string {
 	return gatewayID.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
+}
+
+func clientCacheKey(gatewayID ids.GatewayID, reg *registrydomain.Registry, meta *UpstreamAuthServer) string {
+	return clientKey(gatewayID, reg) + "|" + authorizationServerID(meta)
+}
+
+func authorizationServerID(meta *UpstreamAuthServer) string {
+	sum := sha256.Sum256([]byte(ValidatedIssuer(meta)))
+	return hex.EncodeToString(sum[:])
+}
+
+// NormalizeIssuerURL is the issuer identifier form used for RFC 8414 comparison
+// and for the dynamic-client cache key: lowercase scheme and host, default port
+// removed, trailing slash removed. An unparseable value returns "".
+func NormalizeIssuerURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https", "http":
+	default:
+		return ""
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	if port := parsed.Port(); port != "" {
+		defaultPort := (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80")
+		if !defaultPort {
+			host = host + ":" + port
+		}
+	}
+	parsed.Host = host
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String()
+}
+
+// IssuerMatchesAuthorizationServer reports whether the issuer a metadata
+// document declared is the authorization server URL that document was fetched
+// for (RFC 8414 §3.3). Comparison uses NormalizeIssuerURL.
+func IssuerMatchesAuthorizationServer(claimed, fetched string) bool {
+	want := NormalizeIssuerURL(fetched)
+	return want != "" && NormalizeIssuerURL(claimed) == want
+}
+
+// ValidatedIssuer is the authorization-server URL Discover accepted. It is the
+// fetched URL, not the issuer string the document claimed. Empty when Discover
+// has not accepted the server.
+func ValidatedIssuer(meta *UpstreamAuthServer) string {
+	if meta == nil {
+		return ""
+	}
+	return NormalizeIssuerURL(meta.ValidatedIssuer)
+}
+
+// ClientSlot is the cache key a dynamic client is read and written under.
+// A live client on the validated-server key wins. A row still stored under the
+// legacy key is used when it was registered for this server. A row that records
+// no server is used only for a fixed-host registry; a templated host registers
+// its own client instead of sharing that row.
+func (s *connectService) ClientSlot(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, meta *UpstreamAuthServer) (string, error) {
+	if ValidatedIssuer(meta) == "" {
+		return "", fmt.Errorf("oauth dcr: authorization server was not validated")
+	}
+	scoped := clientCacheKey(gatewayID, reg, meta)
+	client, err := s.registrar.CachedClient(ctx, scoped)
+	if err != nil || client != nil {
+		return scoped, err
+	}
+	legacy := clientKey(gatewayID, reg)
+	old, err := s.registrar.CachedClient(ctx, legacy)
+	if err != nil {
+		return scoped, err
+	}
+	if legacyRegistrationFor(old, meta, reg) {
+		return legacy, nil
+	}
+	return scoped, nil
+}
+
+// legacyRegistrationFor reports whether a client stored under the legacy key
+// belongs to this authorization server. An issuer left empty was stored before
+// the binding existed. That row stays readable for a fixed host. A templated
+// host does not reuse it: the template resolves to more than one server.
+func legacyRegistrationFor(cached *RegisteredClient, meta *UpstreamAuthServer, reg *registrydomain.Registry) bool {
+	if cached == nil || meta == nil {
+		return false
+	}
+	if cached.Issuer == "" {
+		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
+			return false
+		}
+	} else if NormalizeIssuerURL(cached.Issuer) != ValidatedIssuer(meta) {
+		return false
+	}
+	if cached.RegistrationEndpoint != "" && cached.RegistrationEndpoint != meta.RegistrationEndpoint {
+		return false
+	}
+	return true
+}
+
+// DropRegisteredClient marks the cached dynamic client the token endpoint
+// rejected unusable, when that client_id is still the one stored. A templated
+// host drops only its own server's key. A fixed host may also drop the legacy
+// key. A row for a different client is left alone.
+func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID string) error {
+	if s == nil || s.registrar == nil || reg == nil || clientID == "" {
+		return nil
+	}
+	principalSub := ""
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		principalSub = p.Subject
+	}
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return err
+	}
+	if err := s.registrar.DropCachedClient(ctx, clientCacheKey(gatewayID, reg, meta), clientID); err != nil {
+		return err
+	}
+	// A templated host must not tombstone the legacy row. That row is the
+	// fixed-host client, and this host's metadata was not its authorization server.
+	if reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
+		return nil
+	}
+	return s.registrar.DropCachedClient(ctx, clientKey(gatewayID, reg), clientID)
 }
 
 // CredentialUsable reports whether a credential stored for this registry can
@@ -238,13 +420,37 @@ func (s *connectService) CredentialUsable(
 	gatewayID ids.GatewayID,
 	reg *registrydomain.Registry,
 ) (bool, error) {
+	return s.credentialUsable(ctx, gatewayID, principalFromContext(ctx), reg)
+}
+
+func (s *connectService) credentialUsable(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+) (bool, error) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || s.registrar == nil {
 		return true, nil
 	}
-	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return true, err
+	}
+	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
+	if err != nil {
+		return true, err
+	}
+	client, err := s.registrar.CachedClient(ctx, slot)
 	if err != nil {
 		return true, err
 	}
 	return client != nil, nil
+}
+
+func principalFromContext(ctx context.Context) string {
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		return p.Subject
+	}
+	return ""
 }
