@@ -90,6 +90,9 @@ type UpstreamAuthServer struct {
 	// Optional in the metadata; when present, it names the account a
 	// connection was made with (see resolveAccountRef).
 	UserinfoEndpoint string `json:"userinfo_endpoint,omitempty"`
+	// RevocationEndpoint is the RFC 7009 endpoint the authorization server
+	// advertised. Empty when the provider does not support token revocation.
+	RevocationEndpoint string `json:"revocation_endpoint,omitempty"`
 	// ValidatedIssuer is the authorization-server URL the metadata was fetched
 	// from, after that URL matched the document's issuer. It is not copied from
 	// the document. Empty when Discover has not accepted the server. Cache keys
