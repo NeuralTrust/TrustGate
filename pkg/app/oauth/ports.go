@@ -44,6 +44,12 @@ type ProviderClient interface {
 // fault, so callers report it as a bad gateway rather than a 500.
 var ErrUpstreamRegistrationRejected = errors.New("oauth dcr: registration rejected")
 
+// ErrLegacyAuthorizeRedirectRejected means the authorization server rejected
+// the cached dynamic client's redirect URI. The cached registration is left
+// in place so refresh grants already issued to it keep a client to redeem with.
+var ErrLegacyAuthorizeRedirectRejected = errors.New(
+	"oauth connect: the provider rejected the redirect URI of the cached OAuth client; the existing registration was left in place")
+
 var ErrUpstreamNotDiscoverable = errors.New(
 	"oauth dcr: upstream does not publish OAuth protected-resource metadata; configure registration: manual with a pre-registered OAuth app")
 
@@ -158,12 +164,13 @@ type AuthorizePreflight struct {
 	Body     string
 }
 
-// AuthorizePreflighter is the discovery HTTP client. Connect uses it once,
-// for a cached dynamic client that records no issuer.
+// AuthorizePreflighter is the discovery HTTP client. Connect uses it for a
+// cached dynamic client that records no issuer.
 type AuthorizePreflighter interface {
-	// PreflightAuthorize GETs rawURL when its host is allowedHost. It does not
-	// follow redirects. A disallowed host is refused before any dial.
-	PreflightAuthorize(ctx context.Context, rawURL, allowedHost string) (AuthorizePreflight, error)
+	// PreflightAuthorize GETs rawURL when it is https and its scheme, host, and
+	// port are those of allowedAuthorizeURL (the catalog authorize URL). It does
+	// not follow redirects. Any other URL is refused before a dial.
+	PreflightAuthorize(ctx context.Context, rawURL, allowedAuthorizeURL string) (AuthorizePreflight, error)
 }
 
 // RegisteredClientDropper forgets a dynamic client the authorization server
