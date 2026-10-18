@@ -16,6 +16,8 @@ package oauth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -310,8 +312,8 @@ func TestLegacyAuthorizePreflight_RejectionReplacesOnlyThatSlot(t *testing.T) {
 				t.Fatal("the browser authorize URL reused the probe state or challenge")
 			}
 			legacy := g.store.clients[g.legacyKey]
-			if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 1 {
-				t.Fatalf("legacy row = %+v, want the same client tombstoned", legacy)
+			if legacy.ClientID != legacyClientID || legacy.ClientSecretExpiresAt != 1 || legacy.RefreshRetained {
+				t.Fatalf("legacy row = %+v, want the same client tombstoned without a refresh marker", legacy)
 			}
 			if other := g.store.clients["other-slot"]; other.ClientID != "other-client" || other.ClientSecretExpiresAt != 0 {
 				t.Fatalf("other slot = %+v, want it untouched", other)
@@ -409,6 +411,11 @@ func TestLegacyAuthorizePreflight_AcceptanceOrAmbiguousKeepsTheSlot(t *testing.T
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, "<html><body>unknown client invalid_client</body></html>")
+		}},
+		{name: "401 unknown client ip", authorize: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Unknown client IP address"})
 		}},
 		{name: "timeout", timeout: true, authorize: func(w http.ResponseWriter, r *http.Request) {
 			select {
@@ -658,8 +665,8 @@ func TestLegacyAuthorizePreflight_RedirectURIKeepsExistingRefresh(t *testing.T) 
 				t.Fatalf("authorize client_id = %q, want the replacement", freshID)
 			}
 			kept := g.store.clients[g.legacyKey]
-			if kept.ClientID != legacyClientID || kept.ClientSecret != "legacy-secret" || kept.ClientSecretExpiresAt != 1 {
-				t.Fatalf("legacy row = %+v, want the original client kept and tombstoned", kept)
+			if kept.ClientID != legacyClientID || kept.ClientSecret != "legacy-secret" || kept.ClientSecretExpiresAt != 1 || !kept.RefreshRetained {
+				t.Fatalf("legacy row = %+v, want the original client kept, tombstoned, and marked for refresh", kept)
 			}
 			if other := g.store.clients["other-slot"]; other.ClientID != "other-client" {
 				t.Fatalf("other slot = %+v, want it untouched", other)
@@ -709,6 +716,238 @@ func TestLegacyAuthorizePreflight_RedirectURIKeepsExistingRefresh(t *testing.T) 
 				t.Fatalf("second client_id = %q, want %q", mustQuery(t, again).Get("client_id"), freshID)
 			}
 		})
+	}
+}
+
+func TestLegacyAuthorizePreflight_DeadClientRefreshUsesTheReplacement(t *testing.T) {
+	t.Parallel()
+	g := newLegacyGateway(t, "", false, rejectInvalidClient)
+	legacy := g.store.clients[g.legacyKey]
+	legacy.ClientSecret = "legacy-secret"
+	g.store.clients[g.legacyKey] = legacy
+	g.svc = relinkCatalog(t, g, g.srv.URL+"/authorize")
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	if err := g.vault.Upsert(ctx, legacyGrant(t, g)); err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	location, err := g.start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	freshID := mustQuery(t, location).Get("client_id")
+	kept := g.store.clients[g.legacyKey]
+	if kept.RefreshRetained || kept.ClientSecretExpiresAt != 1 || kept.ClientSecret != "legacy-secret" {
+		t.Fatalf("legacy row = %+v, want a dead-client tombstone with no refresh marker", kept)
+	}
+	assertRefreshUses(t, g, ctx, freshID, "secret-1")
+}
+
+func TestLegacyRefresh_ExpiredTombstoneUsesTheCurrentClient(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		expiry int64
+	}{
+		{name: "natural expiry", expiry: time.Now().Add(-time.Hour).Unix()},
+		{name: "dead-client tombstone", expiry: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newLegacyGateway(t, "", false, nil)
+			g.store.clients[g.legacyKey] = oauth.RegisteredClient{
+				ClientID:              legacyClientID,
+				ClientSecret:          "legacy-secret",
+				RedirectURI:           legacyRedirect,
+				ClientName:            infraoauth.DefaultClientName,
+				ClientSecretExpiresAt: tc.expiry,
+			}
+			seedCurrentClient(g, g.srv.URL, g.srv.URL+"/register")
+			ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+			if err := g.vault.Upsert(ctx, legacyGrant(t, g)); err != nil {
+				t.Fatalf("vault: %v", err)
+			}
+			assertRefreshUses(t, g, ctx, "current-client", "current-secret")
+		})
+	}
+}
+
+func TestLegacyRefresh_MismatchUsesTheCurrentClient(t *testing.T) {
+	t.Parallel()
+	t.Run("issuer mismatch", func(t *testing.T) {
+		t.Parallel()
+		g := newLegacyGateway(t, "", false, nil)
+		g.store.clients[g.legacyKey] = markedLegacy(oauth.RegisteredClient{
+			Issuer: "https://other.example",
+		})
+		seedCurrentClient(g, g.srv.URL, g.srv.URL+"/register")
+		ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+		if err := g.vault.Upsert(ctx, legacyGrant(t, g)); err != nil {
+			t.Fatalf("vault: %v", err)
+		}
+		assertRefreshUses(t, g, ctx, "current-client", "current-secret")
+	})
+	t.Run("registration endpoint mismatch", func(t *testing.T) {
+		t.Parallel()
+		g := newLegacyGateway(t, "", false, nil)
+		g.store.clients[g.legacyKey] = markedLegacy(oauth.RegisteredClient{
+			RegistrationEndpoint: "https://other.example/register",
+		})
+		seedCurrentClient(g, g.srv.URL, g.srv.URL+"/register")
+		ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+		if err := g.vault.Upsert(ctx, legacyGrant(t, g)); err != nil {
+			t.Fatalf("vault: %v", err)
+		}
+		assertRefreshUses(t, g, ctx, "current-client", "current-secret")
+	})
+	t.Run("templated host mismatch", func(t *testing.T) {
+		t.Parallel()
+		assertTemplatedMismatchUsesCurrent(t)
+	})
+}
+
+func markedLegacy(extra oauth.RegisteredClient) oauth.RegisteredClient {
+	extra.ClientID = legacyClientID
+	extra.ClientSecret = "legacy-secret"
+	extra.RedirectURI = legacyRedirect
+	extra.ClientName = infraoauth.DefaultClientName
+	extra.ClientSecretExpiresAt = 1
+	extra.RefreshRetained = true
+	return extra
+}
+
+func legacyGrant(t *testing.T, g *legacyGateway) *vaultdomain.Credential {
+	t.Helper()
+	cred, err := vaultdomain.NewCredential(g.gw, "alice", registrydomain.ForwardedVaultProvider(g.reg), "acct", "old-access", "user-refresh", nil, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	return cred
+}
+
+func seedCurrentClient(g *legacyGateway, issuer, registrationEndpoint string) {
+	g.store.clients[issuerCacheKey(g.legacyKey, issuer)] = oauth.RegisteredClient{
+		ClientID:             "current-client",
+		ClientSecret:         "current-secret",
+		RedirectURI:          legacyRedirect,
+		ClientName:           infraoauth.DefaultClientName,
+		Issuer:               oauth.NormalizeIssuerURL(issuer),
+		RegistrationEndpoint: registrationEndpoint,
+	}
+}
+
+func issuerCacheKey(legacyKey, issuer string) string {
+	sum := sha256.Sum256([]byte(oauth.NormalizeIssuerURL(issuer)))
+	return legacyKey + "|" + hex.EncodeToString(sum[:])
+}
+
+func assertRefreshUses(t *testing.T, g *legacyGateway, ctx context.Context, clientID, secret string) {
+	t.Helper()
+	auth, err := g.svc.RefreshAuth(ctx, g.gw, g.reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if auth.ClientID != clientID || auth.ClientSecret != secret || auth.ClientSecret == "legacy-secret" {
+		t.Fatalf("refresh client = %q / %q, want %q / %q and never the legacy secret", auth.ClientID, auth.ClientSecret, clientID, secret)
+	}
+	if _, err := infraoauth.NewProviderClient(g.srv.Client()).Refresh(ctx, auth, "user-refresh"); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	g.mu.Lock()
+	tokenClient, tokenSecret := g.tokenClient, g.tokenSecret
+	g.mu.Unlock()
+	if tokenClient != clientID || tokenSecret != secret || tokenSecret == "legacy-secret" {
+		t.Fatalf("token client = %q secret = %q, want %q / %q and never the legacy secret", tokenClient, tokenSecret, clientID, secret)
+	}
+}
+
+func assertTemplatedMismatchUsesCurrent(t *testing.T) {
+	t.Helper()
+	var tokenClient, tokenSecret string
+	var mu sync.Mutex
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              "https://good.example/mcp",
+			"authorization_servers": []string{"https://good.example"},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 "https://good.example",
+			"authorization_endpoint": "https://good.example/authorize",
+			"token_endpoint":         srvURL + "/token",
+			"registration_endpoint":  srvURL + "/register",
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		tokenClient = r.PostForm.Get("client_id")
+		tokenSecret = r.PostForm.Get("client_secret")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"refreshed-access","token_type":"Bearer","expires_in":3600}`))
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg := templatedRegistry(t, gw)
+	store := newMemConnectStore()
+	legacyKey := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
+	store.clients[legacyKey] = markedLegacy(oauth.RegisteredClient{})
+	store.clients[issuerCacheKey(legacyKey, "https://good.example")] = oauth.RegisteredClient{
+		ClientID:             "current-client",
+		ClientSecret:         "current-secret",
+		RedirectURI:          legacyRedirect,
+		ClientName:           infraoauth.DefaultClientName,
+		Issuer:               "https://good.example",
+		RegistrationEndpoint: srv.URL + "/register",
+	}
+	vault := &memVaultRepo{}
+	cred, err := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "acct", "old-access", "user-refresh", nil, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	if err := vault.Upsert(ctx, cred); err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	svc := oauth.NewConnectService(
+		store, vault, &stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, &http.Client{Transport: hostRewrite{targets: map[string]*httptest.Server{"good.example": srv}}}),
+		discardConnectAuditor(), nil, nil, nil, nil,
+		oauth.WithConnectURLValues(principalURLValues{"alice": {"host": "good.example"}}),
+	)
+	auth, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if auth.ClientID != "current-client" || auth.ClientSecret != "current-secret" {
+		t.Fatalf("refresh client = %q / %q, want the current client", auth.ClientID, auth.ClientSecret)
+	}
+	if _, err := infraoauth.NewProviderClient(nil).Refresh(ctx, auth, "user-refresh"); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	mu.Lock()
+	gotClient, gotSecret := tokenClient, tokenSecret
+	mu.Unlock()
+	if gotClient != "current-client" || gotSecret != "current-secret" || gotSecret == "legacy-secret" {
+		t.Fatalf("token client = %q secret = %q, want the current client and never the legacy secret", gotClient, gotSecret)
 	}
 }
 

@@ -362,6 +362,9 @@ func (r *upstreamRegistrar) DropCachedClient(ctx context.Context, key, clientID 
 		return err
 	}
 	cached.ClientSecretExpiresAt = rejectedRegistrationExpiry
+	// The refresh marker belongs only to a redirect_uri swap. Clearing it here
+	// stops a later dead-client drop of that row from posting its secret.
+	cached.RefreshRetained = false
 	_, _, err = r.clients.ReplaceClientIfMatch(ctx, key, clientID, *cached)
 	return err
 }

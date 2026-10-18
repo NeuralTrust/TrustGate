@@ -104,21 +104,23 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 
 		// self_service: true on a server whose credential is a static one is
 		// only possible when that credential is per user — a secret URL variable
-		// each user enters for themselves, never a shared header.
+		// each user enters for themselves, or an optional header on a public
+		// server (Algolia). A required shared header is an admin's to add.
 		if static, oauth := s.SupportedAuthMethods(); s.SelfService && static && !oauth {
-			require.Empty(t, s.AuthHeaders, "%s: a shared header is an admin's to add", s.Code)
+			for _, header := range s.AuthHeaders {
+				require.Falsef(t, header.Required, "%s: a required shared header is an admin's to add", s.Code)
+			}
 			require.True(t, staticCredentialSlot(s), "%s: nothing for a user to enter", s.Code)
 		}
 	}
 
 	// Canary: a change in this count means entries moved between the two
 	// answers, which is worth looking at deliberately. 114 since Dropbox moved
-	// to manual registration: it refuses dynamic client registration outright
-	// ("only pre-registered MCP trusted partners"), so an operator's client is
-	// the only way in (RUN-1641). 113 since Canva followed: its DCR server only
-	// authorizes allowlisted redirect URIs, so an operator's Developer Portal
-	// app is the only way in (RUN-1639).
-	require.Equal(t, 113, self, "self_service count changed")
+	// to manual registration (RUN-1641). 113 since Canva followed (RUN-1639).
+	// 109 after the catalog seed fixes: ten DCR failures left self-service
+	// (nine manual OAuth apps, Firecrawl an admin API key) and six admin-gated
+	// entries became self-service (Algolia, Teamwork, Plaid, Cube, Dropbox, Jotform).
+	require.Equal(t, 109, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
@@ -206,10 +208,9 @@ func TestCuratedCatalog_VantaIsOneEntryPerRegionChoice(t *testing.T) {
 	require.True(t, entry.OAuth.ResourceMetadata)
 }
 
-// These five entries template the whole host. The suffix list is the bound
-// that lets an existing install keep connecting on the vendor's domains. Each
-// suffix is a vendor-run zone that does not serve tenant content; Cube has no
-// such zone, so it declares none and stays refused.
+// These entries template the whole host. The suffix list is the bound that
+// lets an existing install keep connecting on the vendor's domains. Each
+// suffix is a vendor-run zone that does not serve tenant content.
 func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
 	t.Parallel()
 	cat, err := NewMCPServerCatalog(nil)
@@ -219,9 +220,6 @@ func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
 		variable string
 		suffixes []string
 	}{
-		"dev.cube/mcp": {
-			variable: "cube_host",
-		},
 		"com.databricks/mcp": {
 			variable: "workspace_host",
 			suffixes: []string{
