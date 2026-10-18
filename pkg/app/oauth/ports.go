@@ -122,6 +122,11 @@ type ClientStore interface {
 	// concurrently mint two client_ids, and the one that loses a last-write-wins
 	// save takes every refresh token issued to it down with it.
 	SaveClientIfAbsent(ctx context.Context, key string, c RegisteredClient) (*RegisteredClient, error)
+	// ReplaceClientIfMatch stores next only when the client currently stored
+	// under key has client_id expected. A missing row or a different client_id
+	// is left as it is. swapped is false when nothing was written; stored is
+	// the client left in the slot, or nil when the slot is empty.
+	ReplaceClientIfMatch(ctx context.Context, key, expectedClientID string, next RegisteredClient) (stored *RegisteredClient, swapped bool, err error)
 }
 
 //go:generate mockery --name=UpstreamRegistrar --dir=. --output=./mocks --filename=oauth_upstream_registrar_mock.go --case=underscore --with-expecter
@@ -130,13 +135,16 @@ type UpstreamRegistrar interface {
 	EnsureClient(ctx context.Context, key string, meta *UpstreamAuthServer, redirectURI string) (*RegisteredClient, error)
 	CachedClient(ctx context.Context, key string) (*RegisteredClient, error)
 	// DropCachedClient marks a cached dynamic client unusable so the next
-	// EnsureClient replaces it. The stored row is kept, so that replacement
-	// overwrites it (and logs) instead of opening a fresh registration race.
-	DropCachedClient(ctx context.Context, key string) error
+	// EnsureClient replaces it, but only when the stored client_id is still
+	// clientID. A row that has already been replaced is left alone. The stored
+	// row is kept, so that replacement overwrites it (and logs) instead of
+	// opening a fresh registration race.
+	DropCachedClient(ctx context.Context, key, clientID string) error
 }
 
 // RegisteredClientDropper forgets a dynamic client the authorization server
-// rejected. ConnectService implements it.
+// rejected. ConnectService implements it. clientID is the client the token
+// endpoint refused; a cache row for a different client is left alone.
 type RegisteredClientDropper interface {
-	DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) error
+	DropRegisteredClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID string) error
 }

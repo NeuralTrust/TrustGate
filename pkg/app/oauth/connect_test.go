@@ -83,6 +83,19 @@ func (m *memConnectStore) SaveClientIfAbsent(_ context.Context, key string, c oa
 	return &c, nil
 }
 
+func (m *memConnectStore) ReplaceClientIfMatch(_ context.Context, key, expectedClientID string, next oauth.RegisteredClient) (*oauth.RegisteredClient, bool, error) {
+	current, ok := m.clients[key]
+	if !ok || current.ClientID != expectedClientID {
+		if !ok {
+			return nil, false, nil
+		}
+		return &current, false, nil
+	}
+	m.clients[key] = next
+	stored := next
+	return &stored, true, nil
+}
+
 // SaveTicket keeps the ticket as the real store does — as JSON — so a field
 // whose zero value does not survive the round trip fails here and not only in
 // Redis. `providers` was exactly that: an empty snapshot came back as nil,
@@ -1860,16 +1873,6 @@ func TestConnectService_RejectedDynamicClientIsRegisteredAgain(t *testing.T) {
 	}{
 		{name: "token invalid_client", tokenError: "invalid_client", drop: true},
 		{name: "token unauthorized_client", tokenError: "unauthorized_client", drop: true},
-		{name: "callback invalid_client", errCode: "invalid_client", errDesc: "Unrecognized client_id", drop: true},
-		{name: "callback unauthorized_client", errCode: "unauthorized_client", drop: true},
-		{
-			name:    "callback invalid_request redirect_uri",
-			errCode: "invalid_request",
-			errDesc: "The 'redirect_uri' parameter does not match any of the OAuth 2.0 Client's pre-registered redirect urls.",
-			drop:    true,
-		},
-		{name: "callback invalid_request unrelated", errCode: "invalid_request", errDesc: "code_challenge required", drop: false},
-		{name: "callback access_denied", errCode: "access_denied", errDesc: "user said no", drop: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

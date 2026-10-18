@@ -37,6 +37,7 @@ type claimStore struct {
 	clients map[string]appoauth.RegisteredClient
 	saves   int
 	claims  int
+	swaps   int
 }
 
 func newClaimStore() *claimStore {
@@ -72,10 +73,25 @@ func (s *claimStore) SaveClientIfAbsent(_ context.Context, key string, c appoaut
 	return &c, nil
 }
 
-func (s *claimStore) counts() (saves, claims int) {
+func (s *claimStore) ReplaceClientIfMatch(_ context.Context, key, expectedClientID string, next appoauth.RegisteredClient) (*appoauth.RegisteredClient, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.saves, s.claims
+	existing, ok := s.clients[key]
+	if !ok || existing.ClientID != expectedClientID {
+		if !ok {
+			return nil, false, nil
+		}
+		return &existing, false, nil
+	}
+	s.clients[key] = next
+	s.swaps++
+	return &next, true, nil
+}
+
+func (s *claimStore) counts() (saves, claims, swaps int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves, s.claims, s.swaps
 }
 
 // Dynamic client registration is not idempotent: every call mints a fresh
@@ -296,8 +312,8 @@ func seedClient(t *testing.T, store *claimStore, c appoauth.RegisteredClient) {
 }
 
 // A cached client registered at another authorization server is not reusable,
-// even when the redirect URI and client name still match. Replacement overwrites
-// the stored row (SaveClient) rather than racing a fresh claim.
+// even when the redirect URI and client name still match. Replacement swaps the
+// stored row only while it is still that client, rather than racing a fresh claim.
 func TestEnsureClient_DifferentIssuerReregisters(t *testing.T) {
 	t.Parallel()
 	var issued atomic.Int64
@@ -321,9 +337,10 @@ func TestEnsureClient_DifferentIssuerReregisters(t *testing.T) {
 	require.NotEqual(t, "stale", got.ClientID)
 	require.Equal(t, "https://new.example", got.Issuer)
 	require.EqualValues(t, 1, issued.Load())
-	saves, claims := store.counts()
-	require.Equal(t, 2, saves, "replacement must overwrite the stored client")
+	saves, claims, swaps := store.counts()
+	require.Equal(t, 1, saves, "seeding the row is the only blind write")
 	require.Equal(t, 0, claims, "replacement must not open a fresh registration race")
+	require.Equal(t, 1, swaps, "replacement must swap the stored client")
 }
 
 func TestEnsureClient_DifferentRegistrationEndpointReregisters(t *testing.T) {
@@ -348,8 +365,9 @@ func TestEnsureClient_DifferentRegistrationEndpointReregisters(t *testing.T) {
 	require.NotEqual(t, "stale", got.ClientID)
 	require.Equal(t, idp.URL, got.RegistrationEndpoint)
 	require.EqualValues(t, 1, issued.Load())
-	_, claims := store.counts()
+	_, claims, swaps := store.counts()
 	require.Equal(t, 0, claims)
+	require.Equal(t, 1, swaps)
 }
 
 func TestEnsureClient_ExpiredRegistrationReregisters(t *testing.T) {
@@ -372,9 +390,10 @@ func TestEnsureClient_ExpiredRegistrationReregisters(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, "stale", got.ClientID)
 	require.EqualValues(t, 1, issued.Load())
-	saves, claims := store.counts()
-	require.Equal(t, 2, saves)
+	saves, claims, swaps := store.counts()
+	require.Equal(t, 1, saves)
 	require.Equal(t, 0, claims)
+	require.Equal(t, 1, swaps)
 }
 
 // A client bound to this server, with a registration that has not expired, is
@@ -424,7 +443,7 @@ func TestDropCachedClient_NextEnsureClientReplaces(t *testing.T) {
 
 	first, err := r.EnsureClient(ctx, "gw|reg", meta, redirect)
 	require.NoError(t, err)
-	require.NoError(t, r.DropCachedClient(ctx, "gw|reg"))
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", first.ClientID))
 
 	cached, err := r.CachedClient(ctx, "gw|reg")
 	require.NoError(t, err)
@@ -440,7 +459,75 @@ func TestDropCachedClient_NextEnsureClientReplaces(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, first.ClientID, second.ClientID)
 	require.EqualValues(t, 2, issued.Load())
-	saves, claims := store.counts()
-	require.Equal(t, 2, saves, "drop and the following EnsureClient both overwrite")
+	_, claims, swaps := store.counts()
+	require.Equal(t, 2, swaps, "drop and the following EnsureClient both swap the stored client")
 	require.Equal(t, 1, claims, "the replacement must not claim a fresh slot")
+}
+
+func TestDropCachedClient_StaleClientIDIsIgnored(t *testing.T) {
+	t.Parallel()
+	store := newClaimStore()
+	ctx := context.Background()
+	current := appoauth.RegisteredClient{
+		ClientID:              "client-b",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", current))
+	r := infraoauth.NewUpstreamRegistrar(store, nil)
+
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", "client-a"))
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, "client-b", got.ClientID)
+	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+}
+
+func TestDropAndReplace_ConcurrentClientsStayConsistent(t *testing.T) {
+	t.Parallel()
+	store := newClaimStore()
+	ctx := context.Background()
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:              "client-a",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}))
+	replacement := appoauth.RegisteredClient{
+		ClientID:              "client-b",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	r := infraoauth.NewUpstreamRegistrar(store, nil)
+
+	var wg sync.WaitGroup
+	const n = 32
+	for range n {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = r.DropCachedClient(ctx, "gw|reg", "client-a")
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, _ = store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", replacement)
+		}()
+	}
+	wg.Wait()
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	switch got.ClientID {
+	case "client-a":
+		require.LessOrEqual(t, got.ClientSecretExpiresAt, time.Now().Unix())
+	case "client-b":
+		require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+	default:
+		t.Fatalf("client_id = %q", got.ClientID)
+	}
+
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", replacement))
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", "client-a"))
+	got, err = store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, "client-b", got.ClientID)
+	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
 }

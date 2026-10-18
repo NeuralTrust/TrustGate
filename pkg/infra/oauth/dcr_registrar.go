@@ -283,10 +283,17 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		ClientSecretExpiresAt: doc.ClientSecretExpiresAt,
 	}
 	if replacing {
-		if err := r.clients.SaveClient(ctx, key, *client); err != nil {
+		stored, swapped, err := r.clients.ReplaceClientIfMatch(ctx, key, cached.ClientID, *client)
+		if err != nil {
 			return nil, err
 		}
-		return client, nil
+		if swapped {
+			return client, nil
+		}
+		if stored != nil && r.clientReusable(stored, meta, redirectURI, time.Now()) {
+			return stored, nil
+		}
+		return nil, fmt.Errorf("oauth dcr: cached client changed while registering a replacement")
 	}
 	// First registration for this upstream. Other replicas may be registering
 	// at the same moment; claim the slot atomically so all of them converge on a
@@ -318,16 +325,22 @@ func (r *upstreamRegistrar) CachedClient(ctx context.Context, key string) (*appo
 // fresh claim.
 const rejectedRegistrationExpiry int64 = 1
 
-// DropCachedClient marks the cached client expired. Callers that only read the
-// cache (refresh, credential usability) then see no client; the next
-// EnsureClient still finds the row and replaces it.
-func (r *upstreamRegistrar) DropCachedClient(ctx context.Context, key string) error {
+// DropCachedClient marks the cached client expired when it is still clientID.
+// A row that has already been replaced is left alone, so a rejection of an
+// older client cannot tombstone the one a concurrent registration just stored.
+// Callers that only read the cache then see no client; the next EnsureClient
+// still finds the row and replaces it.
+func (r *upstreamRegistrar) DropCachedClient(ctx context.Context, key, clientID string) error {
+	if clientID == "" {
+		return nil
+	}
 	cached, err := r.clients.GetClient(ctx, key)
-	if err != nil || cached == nil {
+	if err != nil || cached == nil || cached.ClientID != clientID {
 		return err
 	}
 	cached.ClientSecretExpiresAt = rejectedRegistrationExpiry
-	return r.clients.SaveClient(ctx, key, *cached)
+	_, _, err = r.clients.ReplaceClientIfMatch(ctx, key, clientID, *cached)
+	return err
 }
 
 func (r *upstreamRegistrar) clientReusable(cached *appoauth.RegisteredClient, meta *appoauth.UpstreamAuthServer, redirectURI string, now time.Time) bool {

@@ -391,7 +391,7 @@ func (s *connectService) providerStatuses(
 			if !status.NeedsReconnect {
 				// A lookup failure answers "usable" (see CredentialUsable), so a
 				// cache blip cannot tell every user to reconnect.
-				usable, _ := s.CredentialUsable(ctx, gatewayID, reg)
+				usable, _ := s.credentialUsable(ctx, gatewayID, ticket.PrincipalSub, reg)
 				status.NeedsReconnect = !usable
 			}
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
@@ -443,14 +443,19 @@ func (s *connectService) Start(
 	// started from, so the instance travels in the state and is not re-derived
 	// there: two instances of one provider are otherwise indistinguishable on
 	// the way back, and the first one always won.
-	if err := s.store.SaveConnect(ctx, state, ConnectState{
+	connectState := ConnectState{
 		Ticket:      *ticket,
 		TicketID:    ticketID,
 		Provider:    provider,
 		Instance:    reg.ID.String(),
 		Verifier:    verifier,
 		StartOrigin: startOrigin,
-	}); err != nil {
+	}
+	if forwarded := forwardedAuth(reg); forwarded != nil && forwarded.Registration == registrydomain.RegistrationAuto {
+		connectState.ClientID = cfg.ClientID
+		connectState.ClientSecret = cfg.ClientSecret
+	}
+	if err := s.store.SaveConnect(ctx, state, connectState); err != nil {
 		return nil, err
 	}
 	return &ConnectStart{
@@ -535,9 +540,6 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return "", oauthErr("invalid_request", "unknown or expired state")
 	}
 	if errCode != "" {
-		if authorizationServerRejectedClient(errCode, errDesc) {
-			s.dropRejectedDynamicClient(ctx, st)
-		}
 		return st.TicketID, oauthErr(errCode, errDesc)
 	}
 	gatewayID, data, rc, err := s.routable(ctx, &st.Ticket)
@@ -551,14 +553,14 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg)
+	cfg, err := s.exchangeAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg, st.ClientID, st.ClientSecret)
 	if err != nil {
 		return st.TicketID, err
 	}
 	token, err := s.provider.ExchangeCode(ctx, cfg, code, connectCallbackURL(baseURL, provider), st.Verifier)
 	if err != nil {
 		if errors.Is(err, ErrInvalidClient) {
-			s.rejectDynamicClient(ctx, gatewayID, reg)
+			s.rejectDynamicClient(ctx, gatewayID, st.Ticket.PrincipalSub, reg, cfg.ClientID)
 		}
 		return st.TicketID, err
 	}
@@ -579,55 +581,15 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	return st.TicketID, nil
 }
 
-func authorizationServerRejectedClient(errCode, errDesc string) bool {
-	switch errCode {
-	case "invalid_client", "unauthorized_client":
-		return true
-	case "invalid_request":
-		return mentionsRegisteredClient(errDesc)
-	default:
-		return false
-	}
-}
-
-func mentionsRegisteredClient(desc string) bool {
-	d := strings.ToLower(desc)
-	for _, needle := range []string{
-		"client_id",
-		"client id",
-		"unrecognized client",
-		"invalid client",
-		"unknown client",
-		"redirect_uri",
-		"redirect uri",
-		"redirect_url",
-		"redirect url",
-	} {
-		if strings.Contains(d, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *connectService) dropRejectedDynamicClient(ctx context.Context, st *ConnectState) {
-	if s == nil || st == nil {
-		return
-	}
-	gatewayID, data, rc, err := s.routable(ctx, &st.Ticket)
-	if err != nil || !connectProviderAllowed(&st.Ticket, data, rc, st.Provider) {
-		return
-	}
-	reg := connectRegistry(data.EffectiveRegistries(rc), st.Provider, st.Instance, st.Ticket.InstanceID)
-	s.rejectDynamicClient(ctx, gatewayID, reg)
-}
-
-func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) {
+func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry, clientID string) {
 	cfg := forwardedAuth(reg)
-	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto {
+	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
 		return
 	}
-	if err := s.DropRegisteredClient(ctx, gatewayID, reg); err != nil {
+	if principalSub != "" {
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: principalSub})
+	}
+	if err := s.DropRegisteredClient(ctx, gatewayID, reg, clientID); err != nil {
 		slog.Warn("oauth connect: failed to drop a dynamic client the authorization server rejected",
 			"error", err, "provider", cfg.Provider, "gateway_id", gatewayID.String())
 	}

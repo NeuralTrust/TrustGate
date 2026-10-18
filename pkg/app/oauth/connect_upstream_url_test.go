@@ -39,7 +39,7 @@ func (r *recordingRegistrar) CachedClient(context.Context, string) (*RegisteredC
 	return nil, nil
 }
 
-func (r *recordingRegistrar) DropCachedClient(context.Context, string) error { return nil }
+func (r *recordingRegistrar) DropCachedClient(context.Context, string, string) error { return nil }
 
 type staticURLValues map[string]map[string]string
 

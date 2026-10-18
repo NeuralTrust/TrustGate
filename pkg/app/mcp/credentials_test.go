@@ -142,7 +142,10 @@ func (s *stubConnect) RefreshAuth(context.Context, ids.GatewayID, *registrydomai
 	return s.refreshCfg, s.refreshErr
 }
 
-func (s *stubConnect) DropRegisteredClient(context.Context, ids.GatewayID, *registrydomain.Registry) error {
+func (s *stubConnect) DropRegisteredClient(_ context.Context, _ ids.GatewayID, _ *registrydomain.Registry, clientID string) error {
+	if clientID == "" {
+		return nil
+	}
 	s.droppedClients++
 	return nil
 }
