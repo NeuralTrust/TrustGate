@@ -63,16 +63,20 @@ func (s *connectService) discover(
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
+	res upstreamResolution,
 ) (*UpstreamAuthServer, error) {
-	upstream, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
-	if err != nil {
-		return nil, err
+	if !res.ready {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return nil, err
+		}
 	}
-	meta, err := s.registrar.Discover(ctx, upstream)
+	meta, err := s.registrar.Discover(ctx, res.url)
 	if err != nil || meta == nil {
 		return meta, err
 	}
-	if prm := strings.TrimSpace(meta.Resource); prm != "" && !registrydomain.SameCanonicalResource(prm, upstream) {
+	if prm := strings.TrimSpace(meta.Resource); prm != "" && !registrydomain.SameCanonicalResource(prm, res.url) {
 		out := *meta
 		out.Resource = ""
 		return &out, nil
@@ -80,35 +84,48 @@ func (s *connectService) discover(
 	return meta, nil
 }
 
-// upstreamURL resolves a registry's URL for one principal with the values the
-// dial path uses, and holds the result to the dial path's SSRF gate: discovery
-// fetches from that host, so a URL assembled from per-user values must be public
-// here as well. A URL with no placeholders is returned unchanged.
-func (s *connectService) upstreamURL(
+// upstreamResolution is one read of this principal's install values and the
+// upstream URL those values produce. A flow resolves once and passes the same
+// value to discovery and every host check. A later read can see a value the
+// user changed in between, and a token URL discovered on the first host would
+// then be checked against the second (ENG-2238).
+type upstreamResolution struct {
+	url    string
+	values map[string]string
+	ready  bool
+}
+
+// resolveUpstream is the one read a flow takes of this principal's install
+// values and the upstream URL those values produce. Discovery fetches from
+// that host, so a URL assembled from per-user values is held to the dial
+// path's SSRF gate here. A URL with no placeholders is returned unchanged.
+// Callers that already hold a ready resolution must not call it again: pass
+// that resolution through.
+func (s *connectService) resolveUpstream(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
-) (string, error) {
-	target := reg.MCPTarget
-	if target == nil || !target.HasURLVariables() {
-		if target == nil {
-			return "", nil
+) (upstreamResolution, error) {
+	if reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
+		raw := ""
+		if reg != nil && reg.MCPTarget != nil {
+			raw = reg.MCPTarget.URL
 		}
-		return target.URL, nil
+		return upstreamResolution{url: raw, ready: true}, nil
 	}
 	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
 	if err != nil {
-		return "", err
+		return upstreamResolution{}, err
 	}
-	resolved, err := registrydomain.ResolveURL(target.URL, target.URLVariables, values)
+	resolved, err := registrydomain.ResolveURL(reg.MCPTarget.URL, reg.MCPTarget.URLVariables, values)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUpstreamSetupRequired, err)
+		return upstreamResolution{}, fmt.Errorf("%w: %v", ErrUpstreamSetupRequired, err)
 	}
 	if err := registrydomain.ValidateResolvedUpstreamHost(resolved); err != nil {
-		return "", err
+		return upstreamResolution{}, err
 	}
-	return resolved, nil
+	return upstreamResolution{url: resolved, values: values, ready: true}, nil
 }
 
 // principalURLValues is the per-user placeholder map the dial path uses:
@@ -155,15 +172,23 @@ func (s *connectService) finalizeAuthURLs(
 	reg *registrydomain.Registry,
 	cfg *registrydomain.MCPAuth,
 	meta *UpstreamAuthServer,
+	res upstreamResolution,
 ) (*registrydomain.MCPAuth, error) {
 	if cfg == nil {
 		return nil, nil
 	}
+	if !res.ready && (meta != nil || hasOAuthPlaceholder(cfg)) {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return nil, err
+		}
+	}
 	vars := s.hostBoundURLVariables(reg)
-	if err := s.refusePublicSuffixHosts(ctx, gatewayID, principalSub, reg, cfg, meta); err != nil {
+	if err := s.refusePublicSuffixHosts(ctx, gatewayID, principalSub, reg, cfg, meta, res); err != nil {
 		return nil, err
 	}
-	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta, vars); err != nil {
+	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta, vars, res); err != nil {
 		return nil, err
 	}
 	if !hasOAuthPlaceholder(cfg) {
@@ -171,10 +196,6 @@ func (s *connectService) finalizeAuthURLs(
 	}
 	if reg == nil || reg.MCPTarget == nil {
 		return nil, ErrUnresolvedOAuthPlaceholder
-	}
-	resolved, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
-	if err != nil {
-		return nil, err
 	}
 	out := *cfg
 	if meta != nil && strings.ContainsAny(out.Resource, "{}") {
@@ -185,19 +206,15 @@ func (s *connectService) finalizeAuthURLs(
 	if !hasOAuthPlaceholder(&out) {
 		return s.finishResolvedAuth(reg, &out)
 	}
-	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
-	if err != nil {
-		return nil, err
-	}
 	for _, field := range []*string{&out.AuthorizeURL, &out.TokenURL, &out.UserinfoURL} {
-		rewritten, err := substituteContactURL(*field, resolved, vars, values)
+		rewritten, err := substituteContactURL(*field, res.url, vars, res.values)
 		if err != nil {
 			return nil, err
 		}
 		*field = rewritten
 	}
 	if strings.ContainsAny(out.Resource, "{}") {
-		substituted, err := registrydomain.ResolveURL(out.Resource, vars, values)
+		substituted, err := registrydomain.ResolveURL(out.Resource, vars, res.values)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrUnresolvedOAuthPlaceholder, err)
 		}
@@ -219,6 +236,7 @@ func (s *connectService) refuseOpenWholeHostDiscovery(
 	cfg *registrydomain.MCPAuth,
 	meta *UpstreamAuthServer,
 	vars []registrydomain.MCPURLVariable,
+	res upstreamResolution,
 ) error {
 	// Dynamic registration mints its client at the authorization server
 	// discovery just found, so the connect and refresh paths may post that
@@ -228,7 +246,7 @@ func (s *connectService) refuseOpenWholeHostDiscovery(
 	if cfg.Registration == registrydomain.RegistrationAuto || meta == nil || reg == nil || reg.MCPTarget == nil {
 		return nil
 	}
-	return s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, vars)
+	return s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, vars, res)
 }
 
 // refuseUnboundUserChosenHost returns ErrOAuthURLHost when a per-user value
@@ -240,6 +258,7 @@ func (s *connectService) refuseUnboundUserChosenHost(
 	principalSub string,
 	reg *registrydomain.Registry,
 	vars []registrydomain.MCPURLVariable,
+	res upstreamResolution,
 ) error {
 	if reg == nil || reg.MCPTarget == nil {
 		return nil
@@ -248,17 +267,20 @@ func (s *connectService) refuseUnboundUserChosenHost(
 	if !chosen {
 		return nil
 	}
-	resolved, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
-	if err != nil {
-		return err
+	if !res.ready {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return err
+		}
 	}
-	if publicSuffixHost(normalizedHostname(resolved)) {
+	if publicSuffixHost(normalizedHostname(res.url)) {
 		return ErrOAuthURLHost
 	}
 	if hostVariablesClosed(names, vars) {
 		return nil
 	}
-	if declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
+	if declaredSuffixMatches(normalizedHostname(res.url), names, vars) {
 		return nil
 	}
 	return ErrOAuthURLHost
@@ -275,6 +297,7 @@ func (s *connectService) refusePublicSuffixHosts(
 	reg *registrydomain.Registry,
 	cfg *registrydomain.MCPAuth,
 	meta *UpstreamAuthServer,
+	res upstreamResolution,
 ) error {
 	if cfg != nil {
 		for _, raw := range []string{cfg.AuthorizeURL, cfg.TokenURL, cfg.UserinfoURL} {
@@ -289,11 +312,14 @@ func (s *connectService) refusePublicSuffixHosts(
 	if meta == nil || reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
 		return nil
 	}
-	resolved, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
-	if err != nil {
-		return err
+	if !res.ready {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return err
+		}
 	}
-	if publicSuffixHost(normalizedHostname(resolved)) {
+	if publicSuffixHost(normalizedHostname(res.url)) {
 		return ErrOAuthURLHost
 	}
 	return nil

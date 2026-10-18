@@ -63,7 +63,7 @@ func TestDiscoverResolvesTheTemplateForThePrincipal(t *testing.T) {
 	registrar := &recordingRegistrar{}
 	s := &connectService{registrar: registrar, urlValues: staticURLValues{"ana": {"region": "eu-west-1"}}}
 
-	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", awsRegistry()); err != nil {
+	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", awsRegistry(), upstreamResolution{}); err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 	if len(registrar.discovered) != 1 || registrar.discovered[0] != "https://aws-mcp.eu-west-1.api.aws/mcp" {
@@ -77,7 +77,7 @@ func TestDiscoverReadsARegistryThatCarriesItsOwnValues(t *testing.T) {
 	reg := awsRegistry()
 	reg.MCPTarget.InstanceConfig = map[string]string{"region": "us-east-1"}
 
-	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg); err != nil {
+	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg, upstreamResolution{}); err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 	if registrar.discovered[0] != "https://aws-mcp.us-east-1.api.aws/mcp" {
@@ -89,7 +89,7 @@ func TestDiscoverAsksForSetupWhenAValueIsMissing(t *testing.T) {
 	registrar := &recordingRegistrar{}
 	s := &connectService{registrar: registrar, urlValues: staticURLValues{}}
 
-	_, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", awsRegistry())
+	_, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", awsRegistry(), upstreamResolution{})
 	if !errors.Is(err, ErrUpstreamSetupRequired) || !errors.Is(err, commonerrors.ErrValidation) {
 		t.Fatalf("want ErrUpstreamSetupRequired (validation), got %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDiscoverRefusesAPrivateResolvedHost(t *testing.T) {
 		URLVariables: []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
 	}}
 
-	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg); err == nil {
+	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg, upstreamResolution{}); err == nil {
 		t.Fatal("want the resolved host refused")
 	}
 	if len(registrar.discovered) != 0 {
@@ -378,7 +378,7 @@ func TestDiscoverDropsAMismatchedProtectedResource(t *testing.T) {
 	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{URL: "https://mcp.linear.app/mcp"}}
 
 	s := &connectService{registrar: &prmRegistrar{resource: "https://evil.example/mcp"}}
-	meta, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	meta, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg, upstreamResolution{})
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestDiscoverDropsAMismatchedProtectedResource(t *testing.T) {
 	}
 
 	s = &connectService{registrar: &prmRegistrar{resource: "https://MCP.linear.app:443/mcp"}}
-	meta, err = s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg)
+	meta, err = s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg, upstreamResolution{})
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestDiscoverLeavesAFixedURLAlone(t *testing.T) {
 	s := &connectService{registrar: registrar}
 	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{URL: "https://mcp.linear.app/mcp"}}
 
-	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg); err != nil {
+	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "", reg, upstreamResolution{}); err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 	if registrar.discovered[0] != "https://mcp.linear.app/mcp" {
