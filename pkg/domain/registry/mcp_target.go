@@ -209,9 +209,11 @@ type MCPURLVariable struct {
 	// (`vendor.com` or `*.vendor.com`). OAuth connect sends an admin client
 	// secret only when a whole-host variable is closed by Options or the
 	// resolved host matches one of these suffixes. Empty does not constrain
-	// the host. A registry materialised before the catalog declared suffixes
-	// stores an empty list; connect then uses the catalog's current list for
-	// that variable when this target's code is a catalog code.
+	// the host. A public suffix (`com`, `co.uk`) or a single label is ignored.
+	// When this target's code is a catalog code, the catalog entry for that
+	// code is the bound: an empty list (a registry materialised before the
+	// catalog declared suffixes) takes the catalog's list, and a stored list
+	// can only narrow it.
 	HostSuffix []string `json:"host_suffix,omitempty"`
 }
 

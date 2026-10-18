@@ -428,7 +428,9 @@ func TestConnectService_WholeHostPinnedSecretRefused(t *testing.T) {
 func TestConnectService_WholeHostPinnedSecretAllowedBySuffix(t *testing.T) {
 	t.Parallel()
 	reg := wholeHostManualRegistry(t, []string{"*.vendor.com"}, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
-	svc := templatedConnect(t, reg, map[string]string{"account_url": "acme.vendor.com"}, &fixedRegistrar{})
+	svc := templatedConnectCatalog(t, reg, map[string]string{"account_url": "acme.vendor.com"}, &fixedRegistrar{}, legacySuffixCatalog{
+		suffixes: []string{"*.vendor.com"},
+	})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -443,6 +445,84 @@ func TestConnectService_WholeHostPinnedSecretAllowedBySuffix(t *testing.T) {
 	}
 }
 
+// A suffix stored on the row cannot widen the catalog entry for its code.
+func TestConnectService_StoredSuffixCannotWidenCatalog(t *testing.T) {
+	t.Parallel()
+	reg := wholeHostManualRegistry(t, []string{"*.vendor.com"}, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
+	values := map[string]string{"account_url": "acme.vendor.com"}
+	svc := templatedConnectCatalog(t, reg, values, &fixedRegistrar{}, legacySuffixCatalog{
+		suffixes: []string{"*.snowflakecomputing.com"},
+	})
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	started, err := svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, "com.snowflake/mcp", "")
+	if err == nil || started != nil {
+		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
+	}
+	if !errors.Is(err, oauth.ErrOAuthURLHost) {
+		t.Fatalf("err = %v, want host refusal", err)
+	}
+}
+
+// A literal label next to the placeholder does not pin the registrable domain:
+// `mcp.{domain}` and `api-{domain}` with domain=evil.com go to evil.com.
+func TestConnectService_PartialHostWithoutRegistrableDomainRefused(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, host string }{
+		{name: "label before", host: "mcp.{domain}"},
+		{name: "text before", host: "api-{domain}"},
+	} {
+		t.Run(tc.name+" pinned", func(t *testing.T) {
+			t.Parallel()
+			reg := partialHostManualRegistry(t, tc.host)
+			pinManual(reg, "https://"+tc.host+"/oauth/authorize", "https://"+tc.host+"/oauth/token", "admin-secret")
+			assertNoRedirect(t, reg, map[string]string{"domain": "evil.com"}, &fixedRegistrar{}, oauth.ErrOAuthURLHost)
+		})
+		t.Run(tc.name+" discovered", func(t *testing.T) {
+			t.Parallel()
+			var tokenHits int
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tokenHits++
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(tokenSrv.Close)
+			reg := partialHostManualRegistry(t, tc.host)
+			registrar := &fixedRegistrar{meta: &oauth.UpstreamAuthServer{
+				AuthorizationEndpoint: tokenSrv.URL + "/authorize",
+				TokenEndpoint:         tokenSrv.URL + "/token",
+			}}
+			assertNoRedirect(t, reg, map[string]string{"domain": "evil.com"}, registrar, oauth.ErrOAuthURLHost)
+			if tokenHits != 0 {
+				t.Fatalf("token server was called %d times", tokenHits)
+			}
+		})
+	}
+}
+
+func partialHostManualRegistry(t *testing.T, host string) *registrydomain.Registry {
+	t.Helper()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "partial", "", &registrydomain.MCPTarget{
+		Code:         "com.example.partial/mcp",
+		URL:          "https://" + host + "/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.example.partial/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			ClientSecret: "admin-secret",
+			Resource:     "https://" + host + "/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	return reg
+}
+
 // A registry row written before host_suffix existed has an empty list. Connect
 // still allows a vendor host because the catalog code supplies the current
 // suffixes, and it does not write that list back onto the row.
@@ -451,7 +531,7 @@ func TestConnectService_LegacyWholeHostUsesCatalogSuffix(t *testing.T) {
 	const host = "xy12345.us-west-2.privatelink.snowflakecomputing.com"
 	reg := wholeHostManualRegistry(t, nil, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
 	svc := templatedConnectCatalog(t, reg, map[string]string{"account_url": host}, &fixedRegistrar{}, legacySuffixCatalog{
-		suffixes: []string{"*.snowflakecomputing.com", "*.snowflakecomputing.cn"},
+		suffixes: []string{"*.snowflakecomputing.com"},
 	})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
@@ -503,7 +583,7 @@ func TestConnectService_LegacyWholeHostRefusesNonVendorHost(t *testing.T) {
 	}}
 	values := map[string]string{"account_url": "evil.example"}
 	svc := templatedConnectCatalog(t, reg, values, registrar, legacySuffixCatalog{
-		suffixes: []string{"*.snowflakecomputing.com", "*.snowflakecomputing.cn"},
+		suffixes: []string{"*.snowflakecomputing.com"},
 	})
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {

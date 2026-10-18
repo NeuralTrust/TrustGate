@@ -20,6 +20,8 @@ import (
 	"net/url"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -51,6 +53,10 @@ var ErrOAuthURLHost = fmt.Errorf(
 // actually dial. A templated URL was handed to discovery as-is, so every
 // {variable} server failed with "bad upstream url" even after its values were
 // given (RUN-1636).
+//
+// A protected-resource `resource` is kept only when its canonical form is the
+// URL discovery was made for (RFC 9728 §3.3). Every caller reads it from here,
+// so an empty stored resource never adopts another one.
 func (s *connectService) discover(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -61,7 +67,16 @@ func (s *connectService) discover(
 	if err != nil {
 		return nil, err
 	}
-	return s.registrar.Discover(ctx, upstream)
+	meta, err := s.registrar.Discover(ctx, upstream)
+	if err != nil || meta == nil {
+		return meta, err
+	}
+	if prm := strings.TrimSpace(meta.Resource); prm != "" && !registrydomain.SameCanonicalResource(prm, upstream) {
+		out := *meta
+		out.Resource = ""
+		return &out, nil
+	}
+	return meta, nil
 }
 
 // upstreamURL resolves a registry's URL for one principal with the values the
@@ -159,7 +174,7 @@ func (s *connectService) finalizeAuthURLs(
 	}
 	out := *cfg
 	if meta != nil && strings.ContainsAny(out.Resource, "{}") {
-		if prm := strings.TrimSpace(meta.Resource); registrydomain.SameCanonicalResource(prm, resolved) {
+		if prm := strings.TrimSpace(meta.Resource); prm != "" {
 			out.Resource = prm
 		}
 	}
@@ -204,8 +219,8 @@ func (s *connectService) refuseOpenWholeHostDiscovery(
 	if cfg.Registration == registrydomain.RegistrationAuto || meta == nil || reg == nil || reg.MCPTarget == nil {
 		return nil
 	}
-	names, whole := wholeHostVariableNames(reg.MCPTarget.URL)
-	if !whole {
+	names, chosen := userChosenHostNames(reg.MCPTarget.URL)
+	if !chosen {
 		return nil
 	}
 	if hostVariablesClosed(names, vars) {
@@ -254,8 +269,8 @@ func substituteContactURL(raw, resolvedUpstream string, vars []registrydomain.MC
 	if !templatedHost {
 		return resolved, nil
 	}
-	names, whole := wholeHostVariableNames(raw)
-	if whole && !hostVariablesClosed(names, vars) && !declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
+	names, chosen := userChosenHostNames(raw)
+	if chosen && !hostVariablesClosed(names, vars) && !declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
 		return "", ErrOAuthURLHost
 	}
 	if !sameContactOrigin(resolved, resolvedUpstream) {
@@ -282,20 +297,44 @@ func normalizedHostname(raw string) string {
 	return strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
 }
 
-// wholeHostVariableNames reports the placeholders that make up a URL's
-// hostname when that hostname has no literal label of its own (`{account_url}`,
-// `{workspace_host}`). A label the template writes (`{domain}.aha.io`) is not
-// a whole host: the user cannot choose the suffix.
-func wholeHostVariableNames(raw string) ([]string, bool) {
+// userChosenHostNames reports the placeholders in a URL's hostname when a
+// per-user value can pick the registrable domain. The host is pinned only
+// when the labels to the right of the last placeholder are literal and hold a
+// registrable domain (`{domain}.aha.io`, `{tenant}-be.glean.com`). A value
+// that is the whole host, or that sits next to the public suffix
+// (`mcp.{domain}`, `api-{domain}`, `{a}.{b}.com`), chooses where the request
+// goes.
+func userChosenHostNames(raw string) ([]string, bool) {
 	host, ok := templateHostname(raw)
 	if !ok || !strings.Contains(host, "{") {
 		return nil, false
 	}
-	names, rest := splitPlaceholders(host)
-	if len(names) == 0 || strings.Trim(rest, ".") != "" {
+	names, _ := splitPlaceholders(host)
+	if len(names) == 0 {
 		return nil, false
 	}
-	return names, true
+	return names, !literalRegistrableSuffix(host)
+}
+
+// literalRegistrableSuffix reports whether the complete labels after the
+// last placeholder contain a registrable domain. The label that holds the
+// placeholder is skipped even when it has literal text after it.
+func literalRegistrableSuffix(host string) bool {
+	end := strings.LastIndex(host, "}")
+	if end < 0 {
+		return false
+	}
+	rest := host[end+1:]
+	dot := strings.IndexByte(rest, '.')
+	if dot < 0 {
+		return false
+	}
+	literal := strings.ToLower(strings.Trim(rest[dot+1:], "."))
+	if literal == "" || strings.ContainsAny(literal, "{}") {
+		return false
+	}
+	_, err := publicsuffix.EffectiveTLDPlusOne(literal)
+	return err == nil
 }
 
 // templateHostname is the hostname of a URL template. `{` in the host makes
@@ -401,12 +440,8 @@ func declaredSuffixMatches(host string, names []string, vars []registrydomain.MC
 		if !ok {
 			continue
 		}
-		for _, raw := range v.HostSuffix {
-			suffix := normalizeHostSuffix(raw)
-			if suffix == "" {
-				continue
-			}
-			if host == suffix || strings.HasSuffix(host, "."+suffix) {
+		for _, suffix := range validHostSuffixes(v.HostSuffix) {
+			if hostUnderSuffix(host, suffix) {
 				return true
 			}
 		}
@@ -414,74 +449,98 @@ func declaredSuffixMatches(host string, names []string, vars []registrydomain.MC
 	return false
 }
 
-// hostBoundURLVariables is the variable list the host check uses. A stored
-// registry copied from the catalog before host_suffix existed has an empty
-// list; when its code is still a catalog code, the catalog's current suffixes
-// for that variable name fill the gap. A suffix the registry already stores
-// is left as written. The stored registry is not modified, so this is not a
-// write to the database.
+// hostBoundURLVariables is the variable list the host check uses. When the
+// registry's code is a catalog code, the catalog entry for that code is the
+// bound: a registry copied before host_suffix existed stores an empty list
+// and gets the catalog's, and a stored list can only narrow the catalog's,
+// never widen it. A variable the catalog gives no suffix has none here,
+// whatever the row stores. A registry whose code is not in the catalog keeps
+// its stored list. The stored registry is not modified.
 func (s *connectService) hostBoundURLVariables(reg *registrydomain.Registry) []registrydomain.MCPURLVariable {
 	if reg == nil || reg.MCPTarget == nil {
 		return nil
 	}
 	vars := reg.MCPTarget.URLVariables
-	fromCatalog := s.catalogHostSuffixes(reg)
-	if len(fromCatalog) == 0 {
+	fromCatalog, ok := s.catalogHostSuffixes(reg)
+	if !ok || len(vars) == 0 {
 		return vars
 	}
 	out := make([]registrydomain.MCPURLVariable, len(vars))
 	copy(out, vars)
-	filled := false
 	for i := range out {
-		if !hostSuffixUnset(out[i].HostSuffix) {
-			continue
-		}
-		suffixes, ok := fromCatalog[out[i].Name]
-		if !ok {
-			continue
-		}
-		out[i].HostSuffix = suffixes
-		filled = true
-	}
-	if !filled {
-		return vars
+		out[i].HostSuffix = narrowHostSuffixes(fromCatalog[out[i].Name], out[i].HostSuffix)
 	}
 	return out
 }
 
-func (s *connectService) catalogHostSuffixes(reg *registrydomain.Registry) map[string][]string {
+// catalogHostSuffixes returns the catalog entry's suffixes by variable name,
+// read only from the entry for the registry's own code. ok is false when the
+// code is empty or not a catalog code.
+func (s *connectService) catalogHostSuffixes(reg *registrydomain.Registry) (map[string][]string, bool) {
 	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil {
-		return nil
+		return nil, false
 	}
 	code := strings.TrimSpace(reg.MCPTarget.Code)
 	if code == "" {
-		return nil
+		return nil, false
 	}
 	entry, ok := s.catalog.GetByCode(code)
 	if !ok {
+		return nil, false
+	}
+	out := make(map[string][]string, len(entry.URLVariables))
+	for _, v := range entry.URLVariables {
+		if suffixes := validHostSuffixes(v.HostSuffix); len(suffixes) > 0 {
+			out[v.Name] = suffixes
+		}
+	}
+	return out, true
+}
+
+// narrowHostSuffixes is the set of hosts both lists allow. An empty stored
+// list takes the catalog's. A stored suffix outside every catalog suffix is
+// dropped; a catalog suffix under a stored one is kept.
+func narrowHostSuffixes(catalog, stored []string) []string {
+	if len(catalog) == 0 {
 		return nil
 	}
-	var out map[string][]string
-	for _, v := range entry.URLVariables {
-		suffixes := cloneHostSuffixes(v.HostSuffix)
-		if len(suffixes) == 0 {
-			continue
+	stored = validHostSuffixes(stored)
+	if len(stored) == 0 {
+		return catalog
+	}
+	var out []string
+	seen := make(map[string]struct{})
+	add := func(suffix string) {
+		if _, dup := seen[suffix]; !dup {
+			seen[suffix] = struct{}{}
+			out = append(out, suffix)
 		}
-		if out == nil {
-			out = make(map[string][]string, len(entry.URLVariables))
+	}
+	for _, st := range stored {
+		for _, c := range catalog {
+			switch {
+			case hostUnderSuffix(st, c):
+				add(st)
+			case hostUnderSuffix(c, st):
+				add(c)
+			}
 		}
-		out[v.Name] = suffixes
 	}
 	return out
 }
 
-func hostSuffixUnset(suffixes []string) bool {
-	for _, suffix := range suffixes {
-		if normalizeHostSuffix(suffix) != "" {
-			return false
+func validHostSuffixes(in []string) []string {
+	var out []string
+	for _, raw := range in {
+		if suffix := normalizeHostSuffix(raw); suffix != "" {
+			out = append(out, suffix)
 		}
 	}
-	return true
+	return out
+}
+
+func hostUnderSuffix(host, suffix string) bool {
+	return host == suffix || strings.HasSuffix(host, "."+suffix)
 }
 
 func cloneHostSuffixes(in []string) []string {
@@ -510,10 +569,20 @@ func variablesByName(vars []registrydomain.MCPURLVariable) map[string]registrydo
 	return out
 }
 
+// normalizeHostSuffix returns the suffix to match against, or "" when it is
+// not a usable bound: fewer than two labels, or a public suffix (`com`,
+// `co.uk`, `github.io`) under which anyone can register a host.
 func normalizeHostSuffix(raw string) string {
 	suffix := strings.ToLower(strings.TrimSpace(raw))
 	suffix = strings.TrimPrefix(suffix, "*.")
-	return strings.Trim(suffix, ".")
+	suffix = strings.Trim(suffix, ".")
+	if suffix == "" || strings.ContainsAny(suffix, "*{}/:@ ") || strings.Count(suffix, ".") < 1 {
+		return ""
+	}
+	if ps, _ := publicsuffix.PublicSuffix(suffix); ps == suffix {
+		return ""
+	}
+	return suffix
 }
 
 // sameContactOrigin compares scheme, hostname, and port. An empty port is the
