@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
@@ -55,6 +56,7 @@ import (
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
 )
 
@@ -112,6 +114,15 @@ func MCP(c *container.Container) error {
 	}
 	if err := c.Provide(func(clients appoauth.ClientStore, cfg *config.Config) appoauth.UpstreamRegistrar {
 		return infraoauth.NewUpstreamRegistrar(clients, nil, infraoauth.WithClientName(cfg.Server.MCPOAuthClientName))
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(connect appoauth.ConnectService) (appstore.CredentialRevoker, error) {
+		src, ok := connect.(infraoauth.RevocationAuthSource)
+		if !ok {
+			return nil, fmt.Errorf("mcp: connect service does not resolve revocation auth")
+		}
+		return infraoauth.NewTokenRevoker(src, nil), nil
 	}); err != nil {
 		return err
 	}
@@ -309,7 +320,16 @@ type rpcGatewayParams struct {
 	// person writes their reason on. Either absent, the tool stays dark.
 	ModelAccess   appoauth.ModelAccessConsole `optional:"true"`
 	ModelRequests appoauth.ModelRequestPages  `optional:"true"`
-	Cfg           *config.Config
+	// Vault, Revoker and Logger release a per-user OAuth credential when
+	// uninstall removes the last installation that uses it. Absent, uninstall
+	// only removes the installation row.
+	Vault   vaultdomain.Repository     `optional:"true"`
+	Revoker appstore.CredentialRevoker `optional:"true"`
+	Logger  *slog.Logger               `optional:"true"`
+	Cfg     *config.Config
+	// Snapshot is how this pod's registry list was loaded. On the data plane a
+	// last-known-good or stale list must not be bridged from the catalog.
+	Snapshot *configsync.SnapshotStatus `optional:"true"`
 }
 
 // storeModelsAdapter answers the Store's models tool with the proxy's own
@@ -342,7 +362,8 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 		if err != nil {
 			return nil, err
 		}
@@ -393,13 +414,40 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	gateway = gateway.WithInventoryTool(inventory)
 
 	if p.Installs != nil && p.Registries != nil {
-		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
+		scoperOpts := []appstore.ScoperOption{
+			appstore.WithScoperModes(modes),
+			appstore.WithScoperCatalog(catalog),
+		}
+		if p.Snapshot != nil {
+			status := p.Snapshot
+			scoperOpts = append(scoperOpts, appstore.WithScoperSnapshot(func(maxAge time.Duration) bool {
+				return snapshotStandInAllowed(status, maxAge)
+			}))
+		}
+		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, scoperOpts...)
 		if err != nil {
 			return nil, err
 		}
 		gateway = gateway.WithStoreScoper(scoper)
 	}
 	return gateway, nil
+}
+
+// snapshotStandInAllowed reports whether a missing registry may be served from
+// the catalog. A nil status is not a snapshot plane. Last-known-good is not,
+// and neither is a live snapshot whose last successful converge is older than
+// the stand-in window: the database may already hold the registry, including
+// one an administrator turned off. Age is the wrong clock here. It counts from
+// the apply, and a not-modified converge of an already-live snapshot does not
+// reset it, so a quiet gateway would stop bridging a first install.
+func snapshotStandInAllowed(status *configsync.SnapshotStatus, maxAge time.Duration) bool {
+	if status == nil {
+		return true
+	}
+	if status.Info().State != configsync.SnapshotLive {
+		return false
+	}
+	return status.ConvergedWithin(maxAge)
 }
 
 // configureServiceParams wires the MCP-Store per-user configure flow. Every dep
@@ -424,6 +472,8 @@ type configureServiceParams struct {
 	Policies   storeaccessdomain.PolicyReader `optional:"true"`
 	Ensurer    appstore.RegistryEnsurer       `optional:"true"`
 	Gateways   gatewaydomain.Repository       `optional:"true"`
+	Revoker    appstore.CredentialRevoker     `optional:"true"`
+	Logger     *slog.Logger                   `optional:"true"`
 }
 
 func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
@@ -440,7 +490,8 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 	}
 	var opts []appoauth.ConfigureOption
 	if p.Registries != nil {
-		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
+			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
 		if err != nil {
 			return nil, err
 		}

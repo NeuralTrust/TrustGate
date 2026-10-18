@@ -20,6 +20,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -53,7 +54,40 @@ type scoper struct {
 	registries RegistryLister
 	grants     storeaccessdomain.Reader
 	modes      ModeResolver
+	// catalog is the embedded MCP catalog. On the data plane a first install
+	// writes the installation immediately, but the registry it materialises
+	// reaches this process only with the next config snapshot. The catalog is
+	// already on every replica, so a just-written install can be served from it
+	// until that snapshot arrives. Nil leaves the snapshot as the only source.
+	catalog CatalogReader
+	now     func() time.Time
+	// snapshot reports whether the registry list is a live converge recent
+	// enough to bridge. Nil means there is no snapshot (the control plane's
+	// database, or a test) and a just-written install may still be served
+	// from the catalog.
+	snapshot SnapshotStandIn
 }
+
+// pendingShelfWindow is how long a just-written install may be served from the
+// catalog while its registry is still absent from the config snapshot. The lag
+// on dev is a few seconds (recompile debounce plus compile and push). Two
+// minutes leaves room for a slow compile and for the installing data plane's
+// clock to sit ahead of this replica. Past the window an install whose
+// registry is still absent stays dormant, the same as a registry that was
+// deleted.
+const pendingShelfWindow = 2 * time.Minute
+
+// pendingShelfSkew is how far UpdatedAt may sit in the future and still count
+// as just written. The data plane stamps it when it records the install
+// (installationForStatus); another replica only reads the row.
+const pendingShelfSkew = 30 * time.Second
+
+// SnapshotStandIn reports whether the registry list just read may be bridged
+// from the catalog. maxAge is the stand-in window. False when that list is a
+// restored last-known-good snapshot or a live one older than maxAge: the
+// database may already hold the registry, including one an administrator
+// turned off, and a re-install must not bring it back.
+type SnapshotStandIn func(maxAge time.Duration) bool
 
 // ScoperOption tunes NewScoper.
 type ScoperOption func(*scoper)
@@ -64,6 +98,33 @@ func WithScoperModes(r ModeResolver) ScoperOption {
 	return func(s *scoper) { s.modes = r }
 }
 
+// WithScoperCatalog lets a just-installed server be served from the embedded
+// catalog until the config snapshot carries the registry the install
+// materialised. Without it the snapshot is the only registry source.
+func WithScoperCatalog(r CatalogReader) ScoperOption {
+	return func(s *scoper) { s.catalog = r }
+}
+
+// WithScoperSnapshot stops the stand-in when the registry list is stale or
+// restored from last-known-good. Without it the list is treated as current.
+func WithScoperSnapshot(allow SnapshotStandIn) ScoperOption {
+	return func(s *scoper) {
+		if allow != nil {
+			s.snapshot = allow
+		}
+	}
+}
+
+// withScoperClock overrides the clock the pending-shelf window is measured
+// against. Tests use it; production leaves the wall clock.
+func withScoperClock(now func() time.Time) ScoperOption {
+	return func(s *scoper) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 // NewScoper wires the CatalogScoper over the installation store, the gateway
 // registry list and the Store access grants. grants may be nil on a plane
 // without them, which fails closed under Selected access (no install is
@@ -72,7 +133,7 @@ func NewScoper(installs InstallLister, registries RegistryLister, grants storeac
 	if installs == nil || registries == nil {
 		return nil, ErrUnavailable
 	}
-	s := &scoper{installs: installs, registries: registries, grants: grants}
+	s := &scoper{installs: installs, registries: registries, grants: grants, now: time.Now}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(s)
@@ -141,8 +202,11 @@ func (s *scoper) Scope(
 // installedRegistries maps a principal's active installs onto the gateway's
 // configured instances (registries). An install bound to a registry exposes
 // that registry; an unbound one exposes the code's canonical instance (the
-// oldest registry carrying the code). A code with a single active install
-// exposes the registry under its own id and name; when that install carries
+// oldest registry carrying the code). When the snapshot has no instance yet
+// and the install was just written, that instance is built from the catalog
+// until the snapshot catches up (see fillPendingShelves). A code with a
+// single active install exposes the registry under its own id and name; when
+// that install carries
 // per-user config the exposure is a shallow clone carrying the config as a
 // request-scoped overlay (MCPTarget.InstanceConfig) so the dial-time URL
 // resolver reads this exact instance's values. A code with several active
@@ -177,6 +241,7 @@ func (s *scoper) installedRegistries(
 		code := registrydomain.StoreCode(reg)
 		byCode[code] = append(byCode[code], reg)
 	}
+	s.fillPendingShelves(gatewayID, active, byCode)
 	for _, regs := range byCode {
 		sortRegistries(regs)
 	}
@@ -284,6 +349,90 @@ func resolveInstance(
 		return regs[0]
 	}
 	return nil
+}
+
+// fillPendingShelves adds a catalog-shaped registry for an active install whose
+// server is not in the snapshot yet. The data plane reads registries from the
+// config snapshot, which is compiled and pushed after the control plane
+// persists the registry a first install materialises. The installation row and
+// the embedded catalog are already on every replica, so the next tools/list —
+// whichever pod takes it — can dial the server the install just recorded.
+//
+// Only an unbound install qualifies. A binding names one registry id, and a
+// missing id stays dormant rather than being replaced by another instance.
+// A snapshot entry for the code, including one an administrator turned off,
+// is left alone. The stand-in is the same shape Ensure persists (URL,
+// transport, auth). Its id is the installation's, so every replica agrees and
+// audit's registry id joins the call to that row; a later snapshot registry
+// replaces it once instead of sitting beside it. A server that is not
+// self-service is skipped: its credential lives on the admin's registry, which
+// the catalog does not carry. A registry read that failed never reaches here.
+func (s *scoper) fillPendingShelves(
+	gatewayID ids.GatewayID,
+	active []*installationdomain.Installation,
+	byCode map[string][]*registrydomain.Registry,
+) {
+	if s == nil || s.catalog == nil {
+		return
+	}
+	// A stale or last-known-good snapshot is missing registries the database
+	// already has. Serving the catalog then would override a later disable.
+	// Only a live snapshot younger than the window is the first-install lag.
+	if s.snapshot != nil && !s.snapshot(pendingShelfWindow) {
+		return
+	}
+	now := s.clock()
+	filled := make(map[string]struct{}, len(active))
+	for _, in := range active {
+		if in == nil || !in.RegistryID.IsNil() || in.CatalogCode == "" {
+			continue
+		}
+		if _, ok := filled[in.CatalogCode]; ok {
+			continue
+		}
+		if len(byCode[in.CatalogCode]) > 0 || !pendingShelfFresh(now, in.UpdatedAt) {
+			continue
+		}
+		entry, ok := s.catalog.GetByCode(in.CatalogCode)
+		if !ok || catalogNeedsAdminCredential(entry) {
+			continue
+		}
+		reg, err := catalogRegistry(entry, gatewayID)
+		if err != nil {
+			continue
+		}
+		// The id audit already stores is the registry id. Using the install's
+		// id there joins the call to this row, and the catalog code joins that
+		// row to the real registry once the snapshot arrives. Origin marks the
+		// stand-in; it is not persisted.
+		reg.ID = ids.From[ids.RegistryKind](in.ID.UUID())
+		if reg.MCPTarget != nil {
+			reg.MCPTarget.Origin = registrydomain.MCPOriginPending
+		}
+		// Pin the timestamps to the install so discovery caches one entry for
+		// the window instead of a new one on every list.
+		reg.CreatedAt = in.UpdatedAt
+		reg.UpdatedAt = in.UpdatedAt
+		byCode[in.CatalogCode] = []*registrydomain.Registry{reg}
+		filled[in.CatalogCode] = struct{}{}
+	}
+}
+
+func (s *scoper) clock() time.Time {
+	if s != nil && s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+func pendingShelfFresh(now, updated time.Time) bool {
+	if updated.IsZero() {
+		return false
+	}
+	if updated.After(now.Add(pendingShelfSkew)) {
+		return false
+	}
+	return !updated.Before(now.Add(-pendingShelfWindow))
 }
 
 // configuredRegistry is the single-instance exposure of an install that carries

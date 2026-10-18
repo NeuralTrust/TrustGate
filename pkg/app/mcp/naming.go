@@ -29,13 +29,78 @@ const maxExposedNameLength = 64
 // truncated to the same stem stay apart.
 const nameHashLength = 8
 
+// collisionSuffixLen is the hex appended when two servers genuinely expose one
+// name. It stays off every other name: a client that stored those must not see
+// them change because some other server happened to spell one tool the same way.
+const collisionSuffixLen = 4
+
+// resolveNames publishes the name tools/list and tools/call share. Two servers
+// can spell different tools the same way — google's drive_list and
+// google_drive's list are both google_drive_list — and then each takes a digest
+// of the registry that serves it. A name nobody else serves is left as it was,
+// so installing an unrelated server cannot rename it.
 func resolveNames(candidates []binding, _ []*registrydomain.Registry) []binding {
-	out := make([]binding, 0, len(candidates))
-	for _, b := range candidates {
-		b.exposed = exposedNameFor(b.exposed, b.registry).String()
-		out = append(out, b)
+	out := make([]binding, len(candidates))
+	base := make([]string, len(candidates))
+	count := make(map[string]int, len(candidates))
+	for i, b := range candidates {
+		name := exposedNameFor(b.exposed, b.registry).String()
+		base[i] = name
+		count[name]++
+		out[i] = b
+	}
+	// fromSuffix marks a name produced by the collision digest. That binding is
+	// the original owner of the spelling. A later plain name that copies it
+	// (list_<that digest> on the other server) is not.
+	fromSuffix := make([]bool, len(out))
+	for i := range out {
+		name := base[i]
+		if count[name] > 1 {
+			name = disambiguateCollision(name, out[i].registry)
+			fromSuffix[i] = true
+		}
+		out[i].exposed = name
+	}
+	return withholdCopiedNames(out, fromSuffix)
+}
+
+// withholdCopiedNames drops a final name that more than one binding ended up
+// with. The binding whose collision suffix produced the spelling stays; every
+// other copy is withheld, so a server cannot publish list_<victim digest> and
+// take the victim's name. When no single suffix owns the spelling, every copy
+// is withheld. Order of the names that remain is the order they were given.
+func withholdCopiedNames(named []binding, fromSuffix []bool) []binding {
+	finalCount := make(map[string]int, len(named))
+	ownerCount := make(map[string]int, len(named))
+	for i, b := range named {
+		finalCount[b.exposed]++
+		if fromSuffix[i] {
+			ownerCount[b.exposed]++
+		}
+	}
+	out := make([]binding, 0, len(named))
+	for i, b := range named {
+		if finalCount[b.exposed] < 2 {
+			out = append(out, b)
+			continue
+		}
+		if fromSuffix[i] && ownerCount[b.exposed] == 1 {
+			out = append(out, b)
+		}
 	}
 	return out
+}
+
+func disambiguateCollision(base string, reg *registrydomain.Registry) string {
+	suffix := "_" + registryDigest(reg, collisionSuffixLen)
+	if len(base)+len(suffix) <= maxExposedNameLength {
+		return base + suffix
+	}
+	keep := maxExposedNameLength - len(suffix)
+	if keep < 1 {
+		return suffix[len(suffix)-maxExposedNameLength:]
+	}
+	return base[:keep] + suffix
 }
 
 // exposedName is a tool as the caller sees it: the server it came from, and
@@ -74,14 +139,46 @@ func (e exposedName) String() string {
 	// Too long for the client to accept. The server stays whole — it is what
 	// tells two same-named tools apart — and the tool's name gives up its tail
 	// to a digest of the whole thing, which depends on nothing else either.
-	digest := sha256.Sum256([]byte(full))
-	suffix := "_" + hex.EncodeToString(digest[:nameHashLength/2])
-	keep := maxExposedNameLength - len(e.server) - 1 - len(suffix)
+	server := e.server
+	suffix := contentSuffix(full)
+	keep := maxExposedNameLength - len(server) - 1 - len(suffix)
+	if keep < 1 && server != "" {
+		// The slug crowds the tool out entirely. Cutting the slug instead
+		// makes the prefix match miss, so every tool on that server answers
+		// "Unknown tool". A short hash of the slug is still a prefix list and
+		// call both know, and it leaves the tool room.
+		server = hashedSlug(server)
+		full = server + "_" + e.name
+		if len(full) <= maxExposedNameLength {
+			return full
+		}
+		suffix = contentSuffix(full)
+		keep = maxExposedNameLength - len(server) - 1 - len(suffix)
+	}
 	if keep < 1 {
-		// A server name long enough to crowd out the tool entirely: hash the lot.
 		return full[:maxExposedNameLength-len(suffix)] + suffix
 	}
-	return e.server + "_" + e.name[:keep] + suffix
+	return server + "_" + e.name[:keep] + suffix
+}
+
+func contentSuffix(full string) string {
+	digest := sha256.Sum256([]byte(full))
+	return "_" + hex.EncodeToString(digest[:nameHashLength/2])
+}
+
+// hashedSlug is the server prefix used when the slug itself is too long to
+// leave a tool character. It is a property of the slug alone, so every tool on
+// that server shares it and a call can find the server without being shown the
+// list first.
+func hashedSlug(slug string) string {
+	digest := sha256.Sum256([]byte(slug))
+	return hex.EncodeToString(digest[:nameHashLength/2])
+}
+
+// slugCrowdsOutTool reports that reserving the content-hash suffix would leave
+// the tool with nothing, which is when String replaces the slug with hashedSlug.
+func slugCrowdsOutTool(slug string) bool {
+	return maxExposedNameLength-len(slug)-1-(1+nameHashLength) < 1
 }
 
 // serverSlug names the server a tool came from, in a way that survives
@@ -153,4 +250,50 @@ func slugFromCatalogCode(code string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
+}
+
+// registriesForExposedName returns every registry whose server prefix fits an
+// exposed tool name. That name is "<server>_<tool>", so a tools/call does not
+// dial a server that does not fit — dialing those minted a connect ticket for
+// a server the call does not target.
+//
+// More than one prefix can fit. google_drive_list is google's drive_list and
+// google_drive's list, and keeping only the longest used to make the shorter
+// server's tool unreachable and answer with the longer server's consent. Every
+// fit is returned; the caller keeps the one that serves the exact name.
+func registriesForExposedName(registries []*registrydomain.Registry, name string) []*registrydomain.Registry {
+	var owners []*registrydomain.Registry
+	for _, reg := range registries {
+		if matchedPrefixLen(reg, name) == 0 {
+			continue
+		}
+		owners = append(owners, reg)
+	}
+	return owners
+}
+
+// matchedPrefixLen is the longest server prefix of reg that fits name, or 0
+// when none does. A slug long enough to have been hashed also matches that hash.
+func matchedPrefixLen(reg *registrydomain.Registry, name string) int {
+	best := 0
+	for _, prefix := range exposurePrefixes(serverSlug(reg)) {
+		if strings.HasPrefix(name, prefix) && len(prefix) > best {
+			best = len(prefix)
+		}
+	}
+	return best
+}
+
+func exposurePrefixes(slug string) []string {
+	if slug == "" {
+		return nil
+	}
+	prefixes := []string{slug + "_"}
+	if slugCrowdsOutTool(slug) {
+		hashed := hashedSlug(slug) + "_"
+		if hashed != prefixes[0] {
+			prefixes = append(prefixes, hashed)
+		}
+	}
+	return prefixes
 }
