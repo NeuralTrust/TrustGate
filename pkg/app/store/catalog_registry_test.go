@@ -116,3 +116,19 @@ func TestCatalogRegistry_ClientCredentials(t *testing.T) {
 		t.Fatalf("client secret must not be materialised from the catalog, got %q", reg.MCPTarget.Auth.ClientSecret)
 	}
 }
+
+func TestCatalogURLVariables_CopiesHostSuffix(t *testing.T) {
+	src := []string{" *.vendor.com ", "*.other.example"}
+	got := catalogURLVariables([]catalogdomain.MCPURLVariable{{
+		Name:       "account_url",
+		Required:   true,
+		HostSuffix: src,
+	}})
+	if len(got) != 1 || len(got[0].HostSuffix) != 2 || got[0].HostSuffix[0] != "*.vendor.com" || got[0].HostSuffix[1] != "*.other.example" {
+		t.Fatalf("host suffixes dropped: %+v", got)
+	}
+	got[0].HostSuffix[0] = "mutated"
+	if src[0] != " *.vendor.com " {
+		t.Fatalf("catalog suffix slice was aliased: %q", src[0])
+	}
+}

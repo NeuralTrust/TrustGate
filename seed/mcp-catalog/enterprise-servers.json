@@ -4107,7 +4107,12 @@
         {
           "name": "workspace_host",
           "description": "Databricks workspace host.",
-          "required": true
+          "required": true,
+          "host_suffix": [
+            "*.cloud.databricks.com",
+            "*.gcp.databricks.com",
+            "*.azuredatabricks.net"
+          ]
         },
         {
           "name": "path",
@@ -4417,7 +4422,21 @@
         {
           "name": "dbt_host",
           "description": "dbt Cloud host, e.g. cloud.getdbt.com or <prefix>.us1.dbt.com.",
-          "required": true
+          "required": true,
+          "host_suffix": [
+            "*.getdbt.com",
+            "*.us1.dbt.com",
+            "*.us2.dbt.com",
+            "*.us3.dbt.com",
+            "*.us5.dbt.com",
+            "*.eu1.dbt.com",
+            "*.eu2.dbt.com",
+            "*.eu3.dbt.com",
+            "*.eu4.dbt.com",
+            "*.au1.dbt.com",
+            "*.au2.dbt.com",
+            "*.jp1.dbt.com"
+          ]
         }
       ],
       "requires_auth": true,
@@ -5672,7 +5691,8 @@
         {
           "name": "domain",
           "description": "Your Freshworks instance domain, e.g. yourco.freshservice.com.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.freshservice.com"]
         }
       ],
       "requires_auth": true,
@@ -14501,7 +14521,8 @@
         {
           "name": "account_url",
           "description": "Snowflake account URL host.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.snowflakecomputing.com"]
         },
         {
           "name": "database",
