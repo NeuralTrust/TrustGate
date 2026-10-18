@@ -39,7 +39,12 @@ type SnapshotInfo struct {
 	Version string
 	// AppliedAt is when the snapshot was applied: for lkg, when the last-known-good
 	// file was written; for live, when the converge applied or confirmed it.
+	// A later not-modified converge of an already-live snapshot does not move it.
 	AppliedAt time.Time
+	// LastConvergedAt is when a converge last succeeded, including a not-modified
+	// one. Zero until the first success, and again after an LKG restore replaces
+	// the tracker: restoring a file is not a converge.
+	LastConvergedAt time.Time
 }
 
 // SnapshotStatus tracks the source of the served snapshot so /readyz and the
@@ -48,7 +53,8 @@ type SnapshotInfo struct {
 //
 // Age counts from when the snapshot was applied (or, for a restored LKG that a
 // converge found unchanged, from that confirmation), never from the last poll
-// or control-plane contact: a pod that lost the control plane keeps ageing.
+// or from LastConvergedAt: a not-modified converge of an already-live snapshot
+// does not reset it, so a pod that lost the control plane keeps ageing.
 // live means "applied by a successful converge", not "connected right now".
 type SnapshotStatus struct {
 	mu    sync.RWMutex
@@ -79,19 +85,24 @@ func (s *SnapshotStatus) MarkLKG(version string, age time.Duration) {
 func (s *SnapshotStatus) MarkLive(version string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.info = SnapshotInfo{State: SnapshotLive, Version: version, AppliedAt: s.clock()}
+	now := s.clock()
+	s.info = SnapshotInfo{State: SnapshotLive, Version: version, AppliedAt: now, LastConvergedAt: now}
 }
 
-// ConfirmLive promotes a restored snapshot to live when the control plane
-// answered a converge with not-modified, proving the restored version is the
-// current one. It is a no-op in any other state.
+// ConfirmLive records a not-modified converge. A restored snapshot is promoted
+// to live, which resets AppliedAt, because the control plane just proved that
+// version current. An already-live snapshot keeps its AppliedAt, so Age still
+// counts from the apply; only LastConvergedAt moves. With nothing loaded the
+// state stays none and only LastConvergedAt moves.
 func (s *SnapshotStatus) ConfirmLive() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.info.State != SnapshotLKG {
+	now := s.clock()
+	if s.info.State == SnapshotLKG {
+		s.info = SnapshotInfo{State: SnapshotLive, Version: s.info.Version, AppliedAt: now, LastConvergedAt: now}
 		return
 	}
-	s.info = SnapshotInfo{State: SnapshotLive, Version: s.info.Version, AppliedAt: s.clock()}
+	s.info.LastConvergedAt = now
 }
 
 // Info returns the current state.
@@ -113,4 +124,19 @@ func (s *SnapshotStatus) Age() (time.Duration, bool) {
 		age = 0
 	}
 	return age, true
+}
+
+// ConvergedWithin reports whether a converge succeeded within max. False when
+// none has, and when the last one is older than max.
+func (s *SnapshotStatus) ConvergedWithin(max time.Duration) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.info.LastConvergedAt.IsZero() {
+		return false
+	}
+	age := s.clock().Sub(s.info.LastConvergedAt)
+	if age < 0 {
+		age = 0
+	}
+	return age <= max
 }

@@ -114,6 +114,33 @@ func TestSnapshotStatus_Transitions(t *testing.T) {
 		assert.Equal(t, "v1", info.Version)
 		age, _ := status.Age()
 		assert.Zero(t, age)
+		assert.False(t, info.LastConvergedAt.IsZero())
+	})
+
+	t.Run("not-modified refreshes converge without resetting age", func(t *testing.T) {
+		t.Parallel()
+		clock := newFakeClock()
+		status := NewSnapshotStatus(clock.Now)
+
+		status.MarkLive("v1")
+		applied := status.Info().AppliedAt
+		clock.Advance(10 * time.Minute)
+		status.ConfirmLive()
+
+		info := status.Info()
+		assert.Equal(t, SnapshotLive, info.State)
+		assert.Equal(t, "v1", info.Version)
+		assert.Equal(t, applied, info.AppliedAt)
+		assert.Equal(t, clock.Now(), info.LastConvergedAt)
+		age, ok := status.Age()
+		require.True(t, ok)
+		assert.Equal(t, 10*time.Minute, age)
+		assert.True(t, status.ConvergedWithin(2*time.Minute))
+
+		clock.Advance(3 * time.Minute)
+		assert.False(t, status.ConvergedWithin(2*time.Minute))
+		age, _ = status.Age()
+		assert.Equal(t, 13*time.Minute, age)
 	})
 }
 
@@ -213,6 +240,30 @@ func TestWorker_StatusNotModifiedConfirmsRestoredLKG(t *testing.T) {
 	info := status.Info()
 	assert.Equal(t, SnapshotLive, info.State)
 	assert.Equal(t, store.Version(), info.Version)
+}
+
+func TestWorker_NotModifiedRefreshesConvergeWithoutResettingAge(t *testing.T) {
+	t.Parallel()
+
+	clock := newFakeClock()
+	status := NewSnapshotStatus(clock.Now)
+	status.MarkLive("v1")
+	applied := status.Info().AppliedAt
+	clock.Advance(10 * time.Minute)
+
+	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true}}}
+	worker, _ := newStatusWorker(t, fetcher, nil, status)
+	require.NoError(t, worker.Converge(context.Background()))
+
+	info := status.Info()
+	assert.Equal(t, SnapshotLive, info.State)
+	assert.Equal(t, "v1", info.Version)
+	assert.Equal(t, applied, info.AppliedAt)
+	assert.Equal(t, clock.Now(), info.LastConvergedAt)
+	age, ok := status.Age()
+	require.True(t, ok)
+	assert.Equal(t, 10*time.Minute, age)
+	assert.True(t, status.ConvergedWithin(2*time.Minute))
 }
 
 func TestWorker_StatusFailedConvergeKeepsLKG(t *testing.T) {
