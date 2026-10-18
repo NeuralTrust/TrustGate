@@ -36,16 +36,24 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if cfg.Registration != registrydomain.RegistrationAuto {
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil)
+			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, upstreamResolution{})
 		}
-		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+		res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return nil, err
+		}
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
 		if err != nil {
 			return nil, err
 		}
 		// withholdSharedSecret runs inside finalizeAuthURLs, after substitution.
-		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta)
+		return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta, res)
 	}
-	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +65,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta)
+	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta, res)
 }
 
 // exchangeAuth builds the token-endpoint configuration for a code that was
@@ -78,7 +86,11 @@ func (s *connectService) exchangeAuth(
 	if cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
 		return s.effectiveAuth(ctx, baseURL, gatewayID, principalSub, reg)
 	}
-	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +105,7 @@ func (s *connectService) exchangeAuth(
 	if cached == nil || cached.ClientID != clientID {
 		return nil, fmt.Errorf("%w: client %q", ErrNoRegisteredClient, clientID)
 	}
-	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), meta)
+	return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, cached)), meta, res)
 }
 
 // RevocationMaterial is the OAuth client a refresh would present, plus the
@@ -115,7 +127,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if p := identity.PrincipalFromContext(ctx); p != nil {
 		principalSub = p.Subject
 	}
-	auth, _, err := s.refreshMaterial(ctx, gatewayID, principalSub, reg)
+	auth, _, _, err := s.refreshMaterial(ctx, gatewayID, principalSub, reg)
 	return auth, err
 }
 
@@ -127,16 +139,17 @@ func (s *connectService) RevocationMaterial(
 	principalSub string,
 	reg *registrydomain.Registry,
 ) (*RevocationMaterial, error) {
-	auth, revocationEndpoint, err := s.refreshMaterial(ctx, gatewayID, principalSub, reg)
+	auth, revocationEndpoint, res, err := s.refreshMaterial(ctx, gatewayID, principalSub, reg)
 	if err != nil || auth == nil {
 		return nil, err
 	}
 	// refreshMaterial skips the host check for dynamic registration, because
 	// that client was minted by the discovered server. A revocation POST sends
 	// the same secret — admin or DCR — to the endpoint that document names, so
-	// an unbound user-chosen host is refused before either leaves.
+	// an unbound user-chosen host is refused before either leaves. The check
+	// uses the resolution discovery used, not a second read of the install.
 	if revocationEndpoint != "" {
-		if err := s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, s.hostBoundURLVariables(reg)); err != nil {
+		if err := s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, s.hostBoundURLVariables(reg), res); err != nil {
 			return nil, err
 		}
 	}
@@ -157,40 +170,48 @@ func (s *connectService) refreshMaterial(
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
-) (*registrydomain.MCPAuth, string, error) {
+) (*registrydomain.MCPAuth, string, upstreamResolution, error) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil {
-		return nil, "", ErrProviderNotFound
+		return nil, "", upstreamResolution{}, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
-			auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil)
-			return auth, "", err
+			auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, upstreamResolution{})
+			return auth, "", upstreamResolution{}, err
 		}
-		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+		res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
 		if err != nil {
-			return nil, "", err
+			return nil, "", upstreamResolution{}, err
+		}
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
+		if err != nil {
+			return nil, "", upstreamResolution{}, err
 		}
 		// withholdSharedSecret runs inside finalizeAuthURLs, after substitution.
-		return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta)
+		return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, manualAuth(effective, meta), meta, res)
 	}
-	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	res, err := s.resolveUpstream(ctx, gatewayID, principalSub, reg)
 	if err != nil {
-		return nil, "", err
+		return nil, "", upstreamResolution{}, err
+	}
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg, res)
+	if err != nil {
+		return nil, "", upstreamResolution{}, err
 	}
 	slot, err := s.ClientSlot(ctx, gatewayID, reg, meta)
 	if err != nil {
-		return nil, "", err
+		return nil, "", upstreamResolution{}, err
 	}
 	client, err := s.registrar.CachedClient(ctx, slot)
 	if err != nil {
-		return nil, "", err
+		return nil, "", upstreamResolution{}, err
 	}
 	if client == nil {
-		return nil, "", fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
+		return nil, "", upstreamResolution{}, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta)
+	return s.finalizedRefresh(ctx, gatewayID, principalSub, reg, withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), meta, res)
 }
 
 func (s *connectService) finalizedRefresh(
@@ -200,12 +221,13 @@ func (s *connectService) finalizedRefresh(
 	reg *registrydomain.Registry,
 	cfg *registrydomain.MCPAuth,
 	meta *UpstreamAuthServer,
-) (*registrydomain.MCPAuth, string, error) {
-	auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, cfg, meta)
+	res upstreamResolution,
+) (*registrydomain.MCPAuth, string, upstreamResolution, error) {
+	auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, cfg, meta, res)
 	if err != nil {
-		return nil, "", err
+		return nil, "", upstreamResolution{}, err
 	}
-	return auth, revocationEndpointOf(meta), nil
+	return auth, revocationEndpointOf(meta), res, nil
 }
 
 func revocationEndpointOf(meta *UpstreamAuthServer) string {
@@ -466,7 +488,7 @@ func (s *connectService) DropRegisteredClient(ctx context.Context, gatewayID ids
 	if p := identity.PrincipalFromContext(ctx); p != nil {
 		principalSub = p.Subject
 	}
-	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg, upstreamResolution{})
 	if err != nil {
 		return err
 	}
@@ -514,7 +536,7 @@ func (s *connectService) credentialUsable(
 	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || s.registrar == nil {
 		return true, nil
 	}
-	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg, upstreamResolution{})
 	if err != nil {
 		return true, err
 	}
