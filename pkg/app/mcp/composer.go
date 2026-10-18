@@ -47,11 +47,13 @@ type Composer interface {
 	// Resolve binds an exposed tool name to the registry that owns it. Ownership
 	// is the server prefix of the name, decided before other registries are
 	// dialed, so their consent and discovery errors cannot answer the call and
-	// a connect ticket is minted only for the owner. A name nobody owns answers
-	// *UnknownToolError (ErrToolNotFound). One the toolkit turned away answers
-	// *ToolNotPermittedError. One whose server is waiting on an account answers
-	// that server's *ConsentRequiredError or *ApplicationNotConnectedError. One
-	// whose server is installed but unreachable answers *ServerNotServingError.
+	// a connect ticket is minted only for the owner. Where two prefixes fit,
+	// the owner is the one that serves the exact name tools/list publishes.
+	// A name nobody owns answers *UnknownToolError (ErrToolNotFound). One the
+	// toolkit turned away answers *ToolNotPermittedError. One whose server is
+	// waiting on an account answers that server's *ConsentRequiredError or
+	// *ApplicationNotConnectedError. One whose server is installed but
+	// unreachable answers *ServerNotServingError.
 	Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error)
 	// Invoke calls a resolved tool on its owning upstream with the given
 	// arguments.
@@ -139,24 +141,27 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
-	// The exposed name carries its server, so the owner is known before anyone
-	// else is dialed. Discovering the others here is what minted a connect
-	// ticket for whichever installed server lacked a credential, and then
-	// handed that server's consent back for a name it does not serve (ENG-2178).
+	// The exposed name carries its server. Servers that do not fit its prefix
+	// are not dialed: dialing them minted a connect ticket for whichever
+	// installed server lacked a credential (ENG-2178).
 	owners := registriesForExposedName(registries, name)
-	probe := false
-	if len(owners) == 0 {
-		// No server prefix. The name can still be an upstream's own name that
-		// the toolkit turned away, which is recorded under that own name, so
-		// the servers that answer are asked. A server that needs an account is
-		// not this name's owner: the ask is a probe and must not mint a ticket.
+	// No server prefix. The name can still be an upstream's own name that the
+	// toolkit turned away, recorded under that own name, so the servers that
+	// answer are asked. A server that needs an account is not this name's
+	// owner: the ask is a probe and must not mint a ticket.
+	unscoped := len(owners) == 0
+	if unscoped {
 		owners = registries
-		probe = true
 	}
+	// Several prefixes can fit one name. Discover every candidate without
+	// minting, then keep the one whose tools/list name is exactly this. A
+	// ticket is minted only once that owner is known, and only for them.
+	probe := unscoped || len(owners) > 1
+	discoverCtx := ctx
 	if probe {
-		ctx = withResolveProbe(ctx)
+		discoverCtx = withResolveProbe(ctx)
 	}
-	surfaces, err := c.serverSurfaces(ctx, rc, owners)
+	surfaces, err := c.serverSurfaces(discoverCtx, rc, owners)
 	if err != nil {
 		return nil, err
 	}
@@ -171,28 +176,25 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 			return &ResolvedTool{Registry: b.registry, Tool: b.tool, Exposed: b.exposed}, nil
 		}
 	}
-	// A toolkit denial outranks a pending consent: connecting an account cannot
-	// grant a tool the consumer is not allowed to use.
-	for _, surface := range surfaces {
-		if !surface.serves() {
-			continue
+	if unscoped {
+		if denied(surfaces, name) {
+			return nil, &ToolNotPermittedError{Tool: name}
 		}
-		for _, native := range surface.denied {
-			if native == name || exposedNameFor(native, surface.registry).String() == name {
-				return nil, &ToolNotPermittedError{Tool: name}
-			}
-		}
-	}
-	// A name with no server prefix named nobody. Denial was the only answer
-	// another server could owe it; consent and discovery errors are not.
-	if probe {
 		return nil, &UnknownToolError{Name: name}
 	}
-	// Only the owning server's account state. Another registry's consent must
-	// not answer a call it does not own.
+	// Nobody who answered serves this exact name. The longest prefix is the
+	// server the name was written for; a shorter one that answered without the
+	// tool does not take its denial or its consent.
+	longest := longestPrefixSurfaces(surfaces, name)
+	if denied(longest, name) {
+		return nil, &ToolNotPermittedError{Tool: name}
+	}
 	var unavailable *ServerNotServingError
-	for _, surface := range surfaces {
+	for _, surface := range longest {
 		if surface.consent != nil {
+			if probe {
+				return nil, c.mintedConsent(ctx, rc, surface.registry, name)
+			}
 			return nil, surface.consent
 		}
 		if surface.notConnected != nil {
@@ -213,6 +215,71 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 		return nil, unavailable
 	}
 	return nil, &UnknownToolError{Name: name}
+}
+
+// denied reports whether a serving surface turned this exact name away. A
+// toolkit denial outranks a pending consent: connecting an account cannot
+// grant a tool the consumer is not allowed to use.
+func denied(surfaces []serverSurface, name string) bool {
+	for _, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		for _, native := range surface.denied {
+			if native == name || exposedNameFor(native, surface.registry).String() == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// longestPrefixSurfaces keeps the surfaces whose server prefix is the longest
+// fit for name. Equal lengths all stay, in the order the registries were given.
+func longestPrefixSurfaces(surfaces []serverSurface, name string) []serverSurface {
+	best := 0
+	var out []serverSurface
+	for _, surface := range surfaces {
+		n := matchedPrefixLen(surface.registry, name)
+		if n == 0 || n < best {
+			continue
+		}
+		if n > best {
+			out = nil
+			best = n
+		}
+		out = append(out, surface)
+	}
+	return out
+}
+
+// mintedConsent repeats discovery of one owner outside a resolve probe, so the
+// consent the probe withheld grows the connect ticket the caller is about to
+// be shown. The probe itself must not mint: a longer prefix that does not
+// serve the name is asked only to be ruled out.
+func (c *composer) mintedConsent(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, name string) error {
+	again, err := c.serverSurfaces(ctx, rc, []*registrydomain.Registry{reg})
+	if err != nil {
+		return err
+	}
+	if len(again) == 1 {
+		surface := again[0]
+		if surface.consent != nil {
+			return surface.consent
+		}
+		if surface.notConnected != nil {
+			return surface.notConnected
+		}
+		if surface.err != nil {
+			c.logger.Warn("mcp composer: owning upstream unavailable",
+				"registry", surface.registry.Name, "error", surface.err)
+			return &ServerNotServingError{
+				Server: inventoryServerName(surface.registry),
+				State:  InventoryStateUnavailable,
+			}
+		}
+	}
+	return &UnknownToolError{Name: name}
 }
 
 func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool, arguments json.RawMessage) (json.RawMessage, error) {
