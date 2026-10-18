@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
-	"regexp"
 	"strings"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -33,10 +32,6 @@ const zoomRevokedErrorCode = 4741
 // zoomRevokedConnectionText is the tool error a caller can act on. The
 // upstream body is not included: it can carry the rejected token.
 const zoomRevokedConnectionText = "Zoom revoked this connection because another Zoom server was authorized with the same Zoom app. Use a separate Zoom app per Zoom server, then reconnect."
-
-// zoomErrorCodeField matches a JSON "code" field whose value is exactly 4741,
-// not a longer number that merely starts with those digits.
-var zoomErrorCodeField = regexp.MustCompile(`"code"\s*:\s*4741([^0-9]|$)`)
 
 func rewriteZoomRevokedCall(reg *registrydomain.Registry, result json.RawMessage, err error) (json.RawMessage, error) {
 	if !isZoomUpstream(reg) || !zoomCallFailedWith(result, err, zoomRevokedErrorCode) {
@@ -67,32 +62,32 @@ func isZoomUpstream(reg *registrydomain.Registry) bool {
 	return strings.EqualFold(parsed.Hostname(), "mcp.zoom.us")
 }
 
-// zoomCallFailedWith reports a failed Zoom call whose payload names this Zoom
-// error code. A successful result that merely quotes the number is not a
-// failure, and no other code is recognized.
+// zoomCallFailedWith reports a failed Zoom call whose payload is the Zoom
+// error object. A successful result that mentions the number is not a failure,
+// and no other code is recognized.
 func zoomCallFailedWith(result json.RawMessage, err error, code int) bool {
 	if code != zoomRevokedErrorCode {
 		return false
 	}
 	if err != nil {
-		return payloadHasZoomCode(result) || errorHasZoomCode(err)
+		return zoomRevokedPayload(result) || contentIsZoomRevoked(result) || errorIsZoomRevoked(err)
 	}
-	if !toolResultIsError(result) && !contentIsZoomError(result) {
+	if !toolResultIsError(result) && !contentIsZoomRevoked(result) {
 		return false
 	}
-	return payloadHasZoomCode(result)
+	return zoomRevokedPayload(result) || contentIsZoomRevoked(result)
 }
 
-func errorHasZoomCode(err error) bool {
+func errorIsZoomRevoked(err error) bool {
 	if err == nil {
 		return false
 	}
-	if payloadHasZoomCode([]byte(err.Error())) {
+	if zoomRevokedPayload([]byte(err.Error())) {
 		return true
 	}
 	var rpc *RPCError
 	if errors.As(err, &rpc) {
-		return payloadHasZoomCode([]byte(rpc.Message)) || payloadHasZoomCode(rpc.Data)
+		return zoomRevokedPayload([]byte(rpc.Message)) || zoomRevokedPayload(rpc.Data)
 	}
 	return false
 }
@@ -104,10 +99,10 @@ func toolResultIsError(result json.RawMessage) bool {
 	return json.Unmarshal(result, &envelope) == nil && envelope.IsError
 }
 
-// contentIsZoomError reports a tool result whose text is the Zoom error
-// object itself, which is how the call fails when the server does not set
-// isError.
-func contentIsZoomError(result json.RawMessage) bool {
+// contentIsZoomRevoked reports a tool result whose single text block is the
+// Zoom error object, which is how the call fails when the server does not
+// set isError.
+func contentIsZoomRevoked(result json.RawMessage) bool {
 	var envelope struct {
 		Content []struct {
 			Text string `json:"text"`
@@ -116,64 +111,31 @@ func contentIsZoomError(result json.RawMessage) bool {
 	if json.Unmarshal(result, &envelope) != nil || len(envelope.Content) != 1 {
 		return false
 	}
-	text := strings.TrimSpace(envelope.Content[0].Text)
-	return payloadHasZoomCode([]byte(text)) && json.Valid([]byte(text))
+	return zoomRevokedPayload([]byte(envelope.Content[0].Text))
 }
 
-func payloadHasZoomCode(raw []byte) bool {
-	return payloadHasZoomCodeAt(raw, 0)
-}
-
-func payloadHasZoomCodeAt(raw []byte, depth int) bool {
-	if depth > 6 || len(bytes.TrimSpace(raw)) == 0 {
+// zoomRevokedPayload reports a Zoom error object: JSON whose own code field
+// is the number 4741. Nested fields, values inside strings, and the string
+// "4741" are not that object. Zoom pairs the code with a message.
+func zoomRevokedPayload(raw []byte) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
 		return false
 	}
-	if zoomErrorCodeField.Match(raw) {
-		return true
-	}
-	var parsed any
-	if json.Unmarshal(raw, &parsed) != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var obj map[string]any
+	if err := dec.Decode(&obj); err != nil || dec.More() {
 		return false
 	}
-	return valueHasZoomCode(parsed, depth)
-}
-
-func valueHasZoomCode(v any, depth int) bool {
-	if depth > 6 {
+	number, ok := obj["code"].(json.Number)
+	if !ok {
 		return false
 	}
-	switch typed := v.(type) {
-	case map[string]any:
-		if code, ok := zoomCodeValue(typed["code"]); ok && code == zoomRevokedErrorCode {
-			return true
-		}
-		for _, child := range typed {
-			if valueHasZoomCode(child, depth+1) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if valueHasZoomCode(child, depth+1) {
-				return true
-			}
-		}
-	case string:
-		return payloadHasZoomCodeAt([]byte(typed), depth+1)
+	code, err := number.Int64()
+	if err != nil || code != int64(zoomRevokedErrorCode) {
+		return false
 	}
-	return false
-}
-
-func zoomCodeValue(v any) (int, bool) {
-	switch n := v.(type) {
-	case float64:
-		if n == float64(int(n)) {
-			return int(n), true
-		}
-	case string:
-		if n == "4741" {
-			return zoomRevokedErrorCode, true
-		}
-	}
-	return 0, false
+	_, ok = obj["message"].(string)
+	return ok
 }
