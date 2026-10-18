@@ -52,6 +52,13 @@ type MCPOrigin string
 // server's default instance rather than something an operator configured.
 const MCPOriginStore MCPOrigin = "store"
 
+// MCPOriginPending marks a request-scoped stand-in served while the registry
+// a first install just created is still absent from the config snapshot. It is
+// never persisted. The stand-in's id is the installation id, which is what
+// audit already records as the registry id, so those calls join to the install
+// and from there to the real registry once the snapshot arrives.
+const MCPOriginPending MCPOrigin = "pending"
+
 type OpenAPITarget struct {
 	SpecURL string `json:"spec_url"`
 }

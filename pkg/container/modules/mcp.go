@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
@@ -55,6 +56,7 @@ import (
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
 )
 
@@ -325,6 +327,9 @@ type rpcGatewayParams struct {
 	Revoker appstore.CredentialRevoker `optional:"true"`
 	Logger  *slog.Logger               `optional:"true"`
 	Cfg     *config.Config
+	// Snapshot is how this pod's registry list was loaded. On the data plane a
+	// last-known-good or stale list must not be bridged from the catalog.
+	Snapshot *configsync.SnapshotStatus `optional:"true"`
 }
 
 // storeModelsAdapter answers the Store's models tool with the proxy's own
@@ -409,13 +414,40 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	gateway = gateway.WithInventoryTool(inventory)
 
 	if p.Installs != nil && p.Registries != nil {
-		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
+		scoperOpts := []appstore.ScoperOption{
+			appstore.WithScoperModes(modes),
+			appstore.WithScoperCatalog(catalog),
+		}
+		if p.Snapshot != nil {
+			status := p.Snapshot
+			scoperOpts = append(scoperOpts, appstore.WithScoperSnapshot(func(maxAge time.Duration) bool {
+				return snapshotStandInAllowed(status, maxAge)
+			}))
+		}
+		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, scoperOpts...)
 		if err != nil {
 			return nil, err
 		}
 		gateway = gateway.WithStoreScoper(scoper)
 	}
 	return gateway, nil
+}
+
+// snapshotStandInAllowed reports whether a missing registry may be served from
+// the catalog. A nil status is not a snapshot plane. Last-known-good is not,
+// and neither is a live snapshot whose last successful converge is older than
+// the stand-in window: the database may already hold the registry, including
+// one an administrator turned off. Age is the wrong clock here. It counts from
+// the apply, and a not-modified converge of an already-live snapshot does not
+// reset it, so a quiet gateway would stop bridging a first install.
+func snapshotStandInAllowed(status *configsync.SnapshotStatus, maxAge time.Duration) bool {
+	if status == nil {
+		return true
+	}
+	if status.Info().State != configsync.SnapshotLive {
+		return false
+	}
+	return status.ConvergedWithin(maxAge)
 }
 
 // configureServiceParams wires the MCP-Store per-user configure flow. Every dep
