@@ -240,6 +240,39 @@ func TestInstall_AdminOnlyURLVariableEntriesRequireAdminSetup(t *testing.T) {
 		})
 	}
 
+	// A store-origin row left over with the catalog template still in its URL
+	// still needs admin setup. The install reports the same result and does
+	// not rewrite the row.
+	for _, code := range codes {
+		t.Run(code+" placeholder registry", func(t *testing.T) {
+			entry, ok := cat.GetByCode(code)
+			if !ok {
+				t.Fatalf("catalog missing %s", code)
+			}
+			gw := ids.New[ids.GatewayKind]()
+			reg := shelfRegistry(code)
+			reg.MCPTarget.URL = entry.URL
+			reg.MCPTarget.Origin = registrydomain.MCPOriginStore
+			regs := &fakeRegistries{items: []*registrydomain.Registry{reg}}
+			ensurer := &fakeEnsurer{addTo: regs}
+			installs := &fakeInstalls{}
+			inst, err := NewInstaller(cat, regs, installs, nil, ensurer)
+			if err != nil {
+				t.Fatalf("NewInstaller: %v", err)
+			}
+			res, err := inst.Install(context.Background(), openReq(gw, code))
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			if !res.RequiresAdminSetup || res.Status != "" || res.InstanceID != "" || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
+				t.Fatalf("want requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
+			}
+			if regs.items[0].MCPTarget.URL != entry.URL {
+				t.Fatalf("registry URL = %q, want the placeholder left as stored", regs.items[0].MCPTarget.URL)
+			}
+		})
+	}
+
 	gw := ids.New[ids.GatewayKind]()
 	inst, err := NewInstaller(cat, &fakeRegistries{}, &fakeInstalls{}, nil, &fakeEnsurer{})
 	if err != nil {
@@ -250,6 +283,27 @@ func TestInstall_AdminOnlyURLVariableEntriesRequireAdminSetup(t *testing.T) {
 	_, err = inst.Install(context.Background(), in)
 	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
 		t.Fatalf("employee shop must be rejected, got %v", err)
+	}
+
+	// The same variable written into the registry URL is admin setup, so the
+	// install proceeds.
+	filled := shelfRegistry("com.shopify/storefront")
+	filled.MCPTarget.URL = "https://allbirds.myshopify.com/api/mcp"
+	filledRegs := &fakeRegistries{items: []*registrydomain.Registry{filled}}
+	filledInstalls := &fakeInstalls{}
+	filledInst, err := NewInstaller(cat, filledRegs, filledInstalls, nil, &fakeEnsurer{})
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	res, err := filledInst.Install(context.Background(), openReq(ids.New[ids.GatewayKind](), "com.shopify/storefront"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.RequiresAdminSetup || res.Status != installationdomain.StatusInstalled || len(filledInstalls.upserts) != 1 {
+		t.Fatalf("a filled shop must install, got %+v upserts=%d", res, len(filledInstalls.upserts))
+	}
+	if filled.MCPTarget.URL != "https://allbirds.myshopify.com/api/mcp" {
+		t.Fatalf("filled registry URL rewritten to %q", filled.MCPTarget.URL)
 	}
 }
 
