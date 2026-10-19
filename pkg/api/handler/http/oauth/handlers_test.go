@@ -72,6 +72,10 @@ func (s *memFlowStore) TakePending(context.Context, string) (*appoauth.PendingAu
 
 func (s *memFlowStore) SaveCode(context.Context, string, appoauth.CodeGrant) error { return nil }
 
+func (s *memFlowStore) GetCode(context.Context, string) (*appoauth.CodeGrant, error) {
+	return nil, nil
+}
+
 func (s *memFlowStore) TakeCode(context.Context, string) (*appoauth.CodeGrant, error) {
 	return nil, nil
 }
