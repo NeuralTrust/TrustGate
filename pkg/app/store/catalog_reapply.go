@@ -137,6 +137,30 @@ func (r *CatalogReapply) reapplyOne(ctx context.Context, reg *registrydomain.Reg
 	if !ok || r.saver == nil {
 		return
 	}
+	// decide already probed. A vault token, dynamic client, or installation can
+	// arrive before the row lock, and a forwarded-to-static write would leave
+	// that token unused. Probe the row we read once more, then swap.
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if blocked, err := r.installationBlocks(ctx, reg.GatewayID, code); err != nil || blocked {
+		if err != nil {
+			r.logger.Warn("store: catalog reapply installation check failed",
+				slog.String("catalog_code", code),
+				slog.String("registry_id", reg.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+		return
+	}
+	if blocked, err := credentialsBlock(ctx, r.vault, r.dcr, reg); err != nil || blocked {
+		if err != nil {
+			r.logger.Warn("store: catalog reapply credential check failed",
+				slog.String("catalog_code", code),
+				slog.String("registry_id", reg.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+		return
+	}
 	updated := *reg
 	updated.MCPTarget = next
 	updated.UpdatedAt = time.Now().UTC()
