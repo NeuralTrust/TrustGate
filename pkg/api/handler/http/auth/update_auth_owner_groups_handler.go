@@ -15,30 +15,47 @@
 package auth
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 // UpdateAuthOwnerGroupsHandler records the directory groups of a personal
-// key's owner.
+// key's owner, then the same list on that owner's default-IdP sessions.
 type UpdateAuthOwnerGroupsHandler struct {
-	setter appauth.OwnerGroupsSetter
-	reach  appconsumer.AuthConsumers
+	setter   appauth.OwnerGroupsSetter
+	reach    appconsumer.AuthConsumers
+	gateways appgateway.Finder
+	sessions appoauth.SessionGroups
+	logger   *slog.Logger
 }
 
 // NewUpdateAuthOwnerGroupsHandler returns the handler; reach lists the
 // consumers the key holds, which the response carries like every admin auth
-// response.
-func NewUpdateAuthOwnerGroupsHandler(setter appauth.OwnerGroupsSetter, reach appconsumer.AuthConsumers) *UpdateAuthOwnerGroupsHandler {
-	return &UpdateAuthOwnerGroupsHandler{setter: setter, reach: reach}
+// response. gateways and sessions carry the same list onto default-IdP
+// refresh records. A nil sessions skips that step.
+func NewUpdateAuthOwnerGroupsHandler(
+	setter appauth.OwnerGroupsSetter,
+	reach appconsumer.AuthConsumers,
+	gateways appgateway.Finder,
+	sessions appoauth.SessionGroups,
+	logger *slog.Logger,
+) *UpdateAuthOwnerGroupsHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &UpdateAuthOwnerGroupsHandler{setter: setter, reach: reach, gateways: gateways, sessions: sessions, logger: logger}
 }
 
 // Handle godoc
@@ -80,5 +97,29 @@ func (h *UpdateAuthOwnerGroupsHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
+	// The key row is already stored. A session update that fails is logged
+	// and left as it was; it does not fail this write and it does not undo it.
+	h.syncSessions(c.UserContext(), gatewayID, a.OwnerID, a.OwnerGroups)
 	return httpio.WriteOK(c, response.FromAuthWithConsumers(a, held[a.ID]))
+}
+
+func (h *UpdateAuthOwnerGroupsHandler) syncSessions(ctx context.Context, gatewayID ids.GatewayID, owner string, groups []string) {
+	if h.sessions == nil || h.gateways == nil || owner == "" {
+		return
+	}
+	gw, err := h.gateways.FindByID(ctx, gatewayID)
+	if err != nil || gw == nil || gw.TenantID() == "" {
+		h.logger.WarnContext(ctx, "owner groups: session update skipped",
+			slog.String("gateway_id", gatewayID.String()),
+			slog.String("subject", owner),
+		)
+		return
+	}
+	if _, err := h.sessions.ApplyDirectoryGroups(ctx, gw.TenantID(), gatewayID.String(), owner, groups); err != nil {
+		h.logger.WarnContext(ctx, "owner groups: session update failed",
+			slog.String("gateway_id", gatewayID.String()),
+			slog.String("org", gw.TenantID()),
+			slog.String("subject", owner),
+		)
+	}
 }
