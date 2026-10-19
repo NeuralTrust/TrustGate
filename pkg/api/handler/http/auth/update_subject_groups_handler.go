@@ -28,9 +28,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// maxSubjectIDLen matches the bound on a session subject taken from the IdP.
-const maxSubjectIDLen = 256
-
 // UpdateSubjectGroupsHandler records directory groups on the default-IdP
 // refresh records of one subject. It does not create a personal key.
 type UpdateSubjectGroupsHandler struct {

@@ -112,8 +112,9 @@ func TestConnectService_AdminOAuthAppsUseClientIDAndPKCE(t *testing.T) {
 			assertAdminClientRejected(t, cat, tc.code, "   ")
 			for _, secret := range []string{"", "admin-secret"} {
 				reg := adminAppRegistry(t, cat, tc.code, "admin-client", secret)
+				useAdminURL(t, reg, tc.values)
 				registrar := &fixedRegistrar{}
-				svc := templatedConnectCatalog(t, reg, tc.values, registrar, cat)
+				svc := templatedConnectCatalog(t, reg, nil, registrar, cat)
 				ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 				if err != nil {
 					t.Fatalf("CreateTicket: %v", err)

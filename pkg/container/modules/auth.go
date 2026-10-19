@@ -167,6 +167,9 @@ func provideAuthServices(c *container.Container) error {
 	if err := c.Provide(authhttp.NewUpdateSubjectGroupsHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(authhttp.NewDeleteSubjectSessionsHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(authhttp.NewUpdateAuthBudgetHandler); err != nil {
 		return err
 	}
