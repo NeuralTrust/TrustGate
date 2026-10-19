@@ -54,8 +54,8 @@ const (
 // request (unconfigured catalog, or an unknown meta-tool name).
 var ErrStoreToolUnavailable = errors.New("mcp: store tool unavailable")
 
-// ErrStoreInstallDisabled: the caller's Store access is None, so nothing new
-// can be installed. A server they already have still answers with its connect
+// ErrStoreInstallDisabled: the caller's Store access is None, so nothing can
+// be installed and a server they already have does not answer with a connect
 // link. It is a refusal the caller can read, not a fault.
 var ErrStoreInstallDisabled = fmt.Errorf(
 	"%w: installing from the Store is turned off for you on this gateway; an administrator changes that in Access",
@@ -271,38 +271,23 @@ func (t *storeTool) install(
 		registryID = parsed
 	}
 	mode := t.effectiveStoreMode(ctx, rc)
-	var res *appstore.InstallResult
-	var err error
 	if mode == gatewaydomain.StoreModeNone {
-		// Installing is off for this person, but installing again is also how a
-		// server they already have gets its connect link, and connecting what
-		// they have is not installing. Answer it as the instance they hold;
-		// refuse only what would be new.
-		res, err = t.installer.Installed(ctx, appstore.InstallRequest{
-			GatewayID:    rc.Consumer.GatewayID,
-			PrincipalSub: principal.Subject,
-			Code:         args.Code,
-			RegistryID:   registryID,
-		})
-		if errors.Is(err, appstore.ErrNotInstalled) {
-			return nil, ErrStoreInstallDisabled
-		}
-	} else {
-		res, err = t.installer.Install(ctx, appstore.InstallRequest{
-			GatewayID:    rc.Consumer.GatewayID,
-			PrincipalSub: principal.Subject,
-			Code:         args.Code,
-			InstalledBy:  principal.Subject,
-			Groups:       principal.Groups(),
-			OpenMode:     mode == gatewaydomain.StoreModeOpen,
-			Config:       args.Config,
-			RegistryID:   registryID,
-		})
-		if errors.Is(err, appstore.ErrReasonRequired) {
-			// Not an error the caller can only report: what is missing is the
-			// requester's own words, so hand them the form that asks for them.
-			return t.reasonRequired(ctx, rc, baseURL, args.Code, registryID, principal)
-		}
+		return nil, ErrStoreInstallDisabled
+	}
+	res, err := t.installer.Install(ctx, appstore.InstallRequest{
+		GatewayID:    rc.Consumer.GatewayID,
+		PrincipalSub: principal.Subject,
+		Code:         args.Code,
+		InstalledBy:  principal.Subject,
+		Groups:       principal.Groups(),
+		OpenMode:     mode == gatewaydomain.StoreModeOpen,
+		Config:       args.Config,
+		RegistryID:   registryID,
+	})
+	if errors.Is(err, appstore.ErrReasonRequired) {
+		// Not an error the caller can only report: what is missing is the
+		// requester's own words, so hand them the form that asks for them.
+		return t.reasonRequired(ctx, rc, baseURL, args.Code, registryID, principal)
 	}
 	if errors.Is(err, appstore.ErrServerDisabled) {
 		return serverDisabled(args.Code, t.displayNameFor(args.Code))
