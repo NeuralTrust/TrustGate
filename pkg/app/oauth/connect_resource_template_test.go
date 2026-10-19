@@ -870,9 +870,10 @@ func TestConnectService_SharedLabelRefusesSplitTenantPlaceholder(t *testing.T) {
 			{Name: "org", Required: true},
 		},
 		OAuth: &catalogdomain.MCPOAuth{
-			Required:     true,
-			AuthorizeURL: "https://{org}.myfreshworks.com/org/oauth/v2/authorize",
-			TokenURL:     "https://{org}.myfreshworks.com/org/oauth/v2/token",
+			Required:           true,
+			CrossDomainContact: true,
+			AuthorizeURL:       "https://{org}.myfreshworks.com/org/oauth/v2/authorize",
+			TokenURL:           "https://{org}.myfreshworks.com/org/oauth/v2/token",
 		},
 	}
 	reg := manualTenantRegistry(t, entry.URL, code, entry.OAuth.AuthorizeURL, entry.OAuth.TokenURL)

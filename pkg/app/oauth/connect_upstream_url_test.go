@@ -17,9 +17,12 @@ package oauth
 import (
 	"context"
 	"errors"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -427,5 +430,25 @@ func TestDiscoverLeavesAFixedURLAlone(t *testing.T) {
 	}
 	if registrar.discovered[0] != "https://mcp.linear.app/mcp" {
 		t.Fatalf("discovered %v", registrar.discovered)
+	}
+}
+
+// TestCrossDomainContactEligibleIsFreshworksOnly walks the real seed catalog.
+// A new entry needs a security review before it is added to this set.
+func TestCrossDomainContactEligibleIsFreshworksOnly(t *testing.T) {
+	cat, err := catalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	var got []string
+	for _, entry := range cat.ListMCPServers() {
+		if crossDomainContactEligible(entry) {
+			got = append(got, entry.Code)
+		}
+	}
+	sort.Strings(got)
+	want := []string{"com.freshworks/mcp"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("cross-domain contact hosts = %v, want %v", got, want)
 	}
 }

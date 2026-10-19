@@ -176,6 +176,11 @@ type MCPOAuth struct {
 	// TokenEndpointAuthMethod is used with client_credentials:
 	// client_secret_basic (default) or client_secret_post.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+	// CrossDomainContact opts this entry into a catalog-pinned authorize or
+	// token host on a different literal domain from the MCP host, when both
+	// share the tenant label. Seed only. A new entry needs a security review
+	// before this is set.
+	CrossDomainContact bool `json:"cross_domain_contact,omitempty"`
 }
 
 // SupportedAuthMethods reports which install methods the entry offers: an

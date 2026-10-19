@@ -5738,7 +5738,7 @@
       "url_variables": [
         {
           "name": "domain",
-          "description": "Your Freshservice subdomain, e.g. yourco.",
+          "description": "Subdomain label only, e.g. yourco, not yourco.freshservice.com.",
           "required": true
         }
       ],
@@ -5750,6 +5750,7 @@
         "registration": "manual",
         "dcr": false,
         "pkce": true,
+        "cross_domain_contact": true,
         "authorize_url": "https://{domain}.myfreshworks.com/org/oauth/v2/authorize",
         "token_url": "https://{domain}.myfreshworks.com/org/oauth/v2/token",
         "scopes": [
@@ -5789,7 +5790,7 @@
           "Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp.",
           "Enter the client ID and client secret."
         ],
-        "note": "Dynamic client registration is not available for this gateway. An admin must create an OAuth app in Freshworks. Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp."
+        "note": "{domain} is the subdomain label only, for example yourco, not yourco.freshservice.com. An admin must create an OAuth app in Freshworks. Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp."
       },
       "relevance": 60
     },
