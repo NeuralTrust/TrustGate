@@ -16,6 +16,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -208,6 +210,11 @@ func (s *connectService) finalizeAuthURLs(
 	}
 	for _, field := range []*string{&out.AuthorizeURL, &out.TokenURL, &out.UserinfoURL} {
 		rewritten, err := substituteContactURL(*field, res.url, vars, res.values)
+		if err != nil && errors.Is(err, ErrOAuthURLHost) {
+			if template, pinned := s.catalogSharedLabelContact(reg, *field, res); pinned {
+				rewritten, err = substituteSharedLabelContact(*field, vars, res.values, template)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -369,6 +376,107 @@ func substituteContactURL(raw, resolvedUpstream string, vars []registrydomain.MC
 		return "", ErrOAuthURLHost
 	}
 	return resolved, nil
+}
+
+// catalogSharedLabelContact reports the catalog server template when raw is
+// exactly that entry's authorize or token URL and this instance's upstream is
+// that server. The caller may then fill a contact host on a different literal
+// domain, as long as the tenant label is one the server template also uses.
+// A pinned registry uses these URLs as configured.
+func (s *connectService) catalogSharedLabelContact(reg *registrydomain.Registry, raw string, res upstreamResolution) (string, bool) {
+	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil || !res.ready {
+		return "", false
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" {
+		return "", false
+	}
+	entry, ok := s.catalog.GetByCode(code)
+	if !ok || !crossDomainContactEligible(entry) || !catalogServerMatches(entry, res) {
+		return "", false
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	if raw != strings.TrimSpace(entry.OAuth.AuthorizeURL) && raw != strings.TrimSpace(entry.OAuth.TokenURL) {
+		return "", false
+	}
+	return entry.URL, true
+}
+
+// crossDomainContactEligible reports whether the catalog entry is allowed to
+// pin authorize or token on a different literal domain from its MCP host.
+// The seed opts in with oauth.cross_domain_contact, and the templates must
+// share a tenant label that does not choose the registrable domain.
+func crossDomainContactEligible(entry catalogdomain.MCPServer) bool {
+	if entry.OAuth == nil || !entry.OAuth.CrossDomainContact {
+		return false
+	}
+	return contactHostCrossesDomain(entry.URL, entry.OAuth.AuthorizeURL) ||
+		contactHostCrossesDomain(entry.URL, entry.OAuth.TokenURL)
+}
+
+func contactHostCrossesDomain(serverURL, contactURL string) bool {
+	serverURL = strings.TrimSpace(serverURL)
+	contactURL = strings.TrimSpace(contactURL)
+	if serverURL == "" || contactURL == "" || !hostHasPlaceholder(contactURL) {
+		return false
+	}
+	names, chosen := userChosenHostNames(contactURL)
+	if chosen || len(names) == 0 {
+		return false
+	}
+	upNames, upChosen := userChosenHostNames(serverURL)
+	if upChosen || !hostPlaceholdersCovered(names, upNames) {
+		return false
+	}
+	contactHost, okContact := templateHostname(contactURL)
+	serverHost, okServer := templateHostname(serverURL)
+	if !okContact || !okServer {
+		return false
+	}
+	return !strings.EqualFold(contactHost, serverHost)
+}
+
+// substituteSharedLabelContact fills a catalog-pinned contact URL whose host
+// is a different literal domain from the MCP host. The placeholder must not
+// choose the registrable domain, and every placeholder in the contact host
+// must also be in the server template, so the tenant label cannot be split.
+func substituteSharedLabelContact(raw string, vars []registrydomain.MCPURLVariable, values map[string]string, upstreamTemplate string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	names, chosen := userChosenHostNames(raw)
+	if chosen || len(names) == 0 {
+		return "", ErrOAuthURLHost
+	}
+	upNames, upChosen := userChosenHostNames(upstreamTemplate)
+	if upChosen || !hostPlaceholdersCovered(names, upNames) {
+		return "", ErrOAuthURLHost
+	}
+	resolved, err := registrydomain.ResolveURL(raw, vars, values)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnresolvedOAuthPlaceholder, err)
+	}
+	if publicSuffixHost(normalizedHostname(resolved)) {
+		return "", ErrOAuthURLHost
+	}
+	return resolved, nil
+}
+
+func hostPlaceholdersCovered(contact, upstream []string) bool {
+	if len(contact) == 0 {
+		return false
+	}
+	have := make(map[string]struct{}, len(upstream))
+	for _, name := range upstream {
+		have[name] = struct{}{}
+	}
+	for _, name := range contact {
+		if _, ok := have[name]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // hostHasPlaceholder reports whether a per-user value chooses the host.

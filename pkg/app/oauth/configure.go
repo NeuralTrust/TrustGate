@@ -131,9 +131,12 @@ type ConfigureTicketRequest struct {
 }
 
 // ConfigureInstaller is the governed install path the configure flow records a
-// first-time configuration through. appstore.Installer satisfies it.
+// first-time configuration through. appstore.Installer satisfies it. PinTarget
+// is the instance that path would bind, so the form leaves out only the
+// variables that instance fixes.
 type ConfigureInstaller interface {
 	Install(ctx context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error)
+	PinTarget(ctx context.Context, in appstore.InstallRequest) (*registrydomain.MCPTarget, error)
 }
 
 //go:generate mockery --name=ConfigureService --dir=. --output=./mocks --filename=oauth_configure_service_mock.go --case=underscore --with-expecter
@@ -265,11 +268,13 @@ func (s *configureService) Submit(
 	}
 	// Nothing to fill and nothing to ask: the submit cannot store or file
 	// anything, so it must say so rather than confirm a write that never happened.
-	if len(entry.URLVariables) == 0 && !ticket.AskReason {
+	bound := s.servingTarget(ctx, gatewayID, ticket)
+	collected := unpinnedVariables(entry.URLVariables, bound)
+	if len(collected) == 0 && !ticket.AskReason {
 		return nil, ErrConfigureNothingToCollect
 	}
-	byName := make(map[string]catalogdomain.MCPURLVariable, len(entry.URLVariables))
-	for _, v := range entry.URLVariables {
+	byName := make(map[string]catalogdomain.MCPURLVariable, len(collected))
+	for _, v := range collected {
 		byName[strings.TrimSpace(v.Name)] = v
 	}
 	plain := map[string]string{}
@@ -280,6 +285,9 @@ func (s *configureService) Submit(
 		}
 		val := strings.TrimSpace(raw)
 		if val == "" {
+			continue
+		}
+		if bound.PinsURLVariable(k) && declares(entry.URLVariables, k) {
 			continue
 		}
 		v, ok := byName[k]
@@ -352,8 +360,9 @@ func (s *configureService) page(
 		config = inst.Config
 		pending = pending || inst.Status == installationdomain.StatusPendingApproval
 	}
-	vars := make([]ConfigureVariable, 0, len(entry.URLVariables))
-	for _, v := range entry.URLVariables {
+	collected := unpinnedVariables(entry.URLVariables, s.servingTarget(ctx, gatewayID, ticket))
+	vars := make([]ConfigureVariable, 0, len(collected))
+	for _, v := range collected {
 		name := strings.TrimSpace(v.Name)
 		vars = append(vars, ConfigureVariable{
 			Name:        name,
@@ -378,6 +387,62 @@ func (s *configureService) page(
 		// did and not what happened.
 		AskReason: ticket.AskReason,
 	}, nil
+}
+
+// servingTarget is the target Install would bind this ticket to. Nil when that
+// install would not resolve to one instance, or the lookup fails: the form
+// then asks for every variable the catalog declares rather than hiding one the
+// install still needs.
+func (s *configureService) servingTarget(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	ticket *ConnectTicket,
+) *registrydomain.MCPTarget {
+	if s.installer == nil {
+		return nil
+	}
+	req := appstore.InstallRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: ticket.PrincipalSub,
+		Code:         ticket.Code,
+		Groups:       ticket.Groups,
+	}
+	if s.openMode != nil {
+		req.OpenMode = s.openMode(ctx, gatewayID, ticket.PrincipalSub, ticket.Groups)
+	}
+	// An existing row is written in place. Name its instance so the pins are
+	// that row's, which is the one Install binds when the instance is named.
+	inst, err := s.instance(ctx, gatewayID, ticket)
+	if err != nil {
+		return nil
+	}
+	if inst != nil {
+		req.RegistryID = inst.RegistryID
+	}
+	target, err := s.installer.PinTarget(ctx, req)
+	if err != nil {
+		return nil
+	}
+	return target
+}
+
+func unpinnedVariables(vars []catalogdomain.MCPURLVariable, bound *registrydomain.MCPTarget) []catalogdomain.MCPURLVariable {
+	out := make([]catalogdomain.MCPURLVariable, 0, len(vars))
+	for _, v := range vars {
+		if !bound.PinsURLVariable(v.Name) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func declares(vars []catalogdomain.MCPURLVariable, name string) bool {
+	for _, v := range vars {
+		if strings.TrimSpace(v.Name) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *configureService) isSet(

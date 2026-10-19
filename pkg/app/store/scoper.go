@@ -319,7 +319,10 @@ func distinctInstalls(
 			continue
 		}
 		if slices.ContainsFunc(out, func(e installedInstance) bool {
-			return e.shelf.ID == shelf.ID && e.install.SameConfig(in.Config)
+			// A key the serving URL already fixes is not config: rows that
+			// differ only by a value pinned since they were written reach the
+			// same server, and exposing both renames the tools of each.
+			return e.shelf.ID == shelf.ID && sameConfigIgnoringPins(e.install, in.Config, shelf.MCPTarget)
 		}) {
 			continue
 		}

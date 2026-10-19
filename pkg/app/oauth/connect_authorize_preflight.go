@@ -222,7 +222,7 @@ func (s *connectService) issuedOAuthClientID(ctx context.Context, gatewayID ids.
 	if s == nil || s.vault == nil || subject == "" || reg == nil {
 		return "", nil
 	}
-	cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+	cred, err := s.vault.Find(ctx, gatewayID, subject, s.forwardedVaultProvider(ctx, gatewayID, subject, reg))
 	if errors.Is(err, vaultdomain.ErrNotFound) || cred == nil {
 		return "", nil
 	}

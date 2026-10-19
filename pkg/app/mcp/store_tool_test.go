@@ -557,6 +557,10 @@ func (f *fakeInstaller) InstalledCodes(context.Context, ids.GatewayID, string) (
 	return f.installedCodes, nil
 }
 
+func (f *fakeInstaller) PinTarget(context.Context, appstore.InstallRequest) (*registrydomain.MCPTarget, error) {
+	return nil, nil
+}
+
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
 	t.Helper()
 	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil, nil, nil)
