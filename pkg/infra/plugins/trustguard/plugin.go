@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
@@ -132,6 +133,9 @@ const (
 // unrecognizedStatusLog is the warn a blocking policy emits for a status
 // outside that set. The status value is a log attribute. The payload is not.
 const unrecognizedStatusLog = "trustguard unrecognized status in blocking mode, blocking"
+
+// maxLoggedStatusBytes is how much of an unrecognized status the warn keeps.
+const maxLoggedStatusBytes = 64
 
 const (
 	reasonTransformNoPayload    = "transform_no_payload"
@@ -865,12 +869,25 @@ func (p *Plugin) warnUnrecognizedStatus(ctx context.Context, stage policy.Stage,
 		slog.String("stage", string(stage)),
 		slog.String("mode", string(mode)),
 		slog.String("direction", direction),
-		slog.String("status", status),
+		slog.String("status", loggedStatus(status)),
 	}
 	if seq != nil {
 		attrs = append(attrs, slog.Int("seq", *seq))
 	}
 	p.warn(ctx, unrecognizedStatusLog, attrs...)
+}
+
+// loggedStatus bounds the status token written to the warn. The cut stays on
+// a rune boundary at or under maxLoggedStatusBytes.
+func loggedStatus(status string) string {
+	if len(status) <= maxLoggedStatusBytes {
+		return status
+	}
+	cut := maxLoggedStatusBytes
+	for cut > 0 && !utf8.RuneStart(status[cut]) {
+		cut--
+	}
+	return status[:cut]
 }
 
 func (p *Plugin) config(settings map[string]any) (Settings, error) {

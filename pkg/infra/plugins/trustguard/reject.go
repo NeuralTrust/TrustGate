@@ -78,7 +78,9 @@ func blockBody(resp *GuardResponse, message, direction string) []byte {
 		Direction: direction,
 	}
 	if resp != nil {
-		if resp.Status != "" {
+		// An unrecognized status is fail-closed as a block. The client body
+		// keeps "block" or "ask"; the raw token stays in the warn log.
+		if resp.Status == statusBlock || resp.Status == statusAsk {
 			body.Status = resp.Status
 		}
 		body.TraceID = resp.TraceID

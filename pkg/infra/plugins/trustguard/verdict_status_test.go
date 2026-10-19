@@ -16,6 +16,7 @@ package trustguard
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -81,7 +82,7 @@ func TestKnownVerdictsUnchangedInBlockingMode(t *testing.T) {
 					resp = transformResponse("be safe\nhello [MASKED_PII]")
 					req = requestContext()
 				}
-				logs, res, err, decision := executeVerdict(t, policy.ModeEnforce, req, resp)
+				logs, res, decision, err := executeVerdict(t, policy.ModeEnforce, req, resp)
 				assert.NotContains(t, logs, unrecognizedStatusLog)
 				assert.NotContains(t, logs, payloadMarker)
 				assert.NotContains(t, logs, "hello world")
@@ -149,11 +150,12 @@ func TestUnknownStatusBlockingModeBlocksAndWarns(t *testing.T) {
 
 	t.Run("buffered", func(t *testing.T) {
 		t.Parallel()
-		logs, res, err, decision := executeVerdict(t, policy.ModeEnforce, requestWithPayloadMarker(), GuardResponse{Status: unknown})
+		logs, res, decision, err := executeVerdict(t, policy.ModeEnforce, requestWithPayloadMarker(), GuardResponse{Status: unknown})
 		assertExplicitBlock(t, res, err)
 		assert.Equal(t, decisionBlocked, decision)
 		assertUnrecognizedWarn(t, logs, unknown)
 		assert.NotContains(t, logs, payloadMarker)
+		assertBlockBodyStatus(t, err, statusBlock)
 	})
 
 	t.Run("stream", func(t *testing.T) {
@@ -175,7 +177,7 @@ func TestUnknownStatusNonBlockingModeForwards(t *testing.T) {
 
 	t.Run("buffered", func(t *testing.T) {
 		t.Parallel()
-		logs, res, err, decision := executeVerdict(t, policy.ModeObserve, requestWithPayloadMarker(), GuardResponse{Status: unknown})
+		logs, res, decision, err := executeVerdict(t, policy.ModeObserve, requestWithPayloadMarker(), GuardResponse{Status: unknown})
 		require.NoError(t, err)
 		require.NotNil(t, res)
 		assert.Equal(t, http.StatusOK, res.StatusCode)
@@ -197,7 +199,7 @@ func TestUnknownStatusNonBlockingModeForwards(t *testing.T) {
 	})
 }
 
-func executeVerdict(t *testing.T, mode policy.Mode, req *infracontext.RequestContext, resp GuardResponse) (string, *appplugins.Result, error, string) {
+func executeVerdict(t *testing.T, mode policy.Mode, req *infracontext.RequestContext, resp GuardResponse) (string, *appplugins.Result, string, error) {
 	t.Helper()
 	f := &fakeGuard{response: resp}
 	var logs strings.Builder
@@ -208,7 +210,7 @@ func executeVerdict(t *testing.T, mode policy.Mode, req *infracontext.RequestCon
 	if extras, ok := span.PluginAttrsCopy().Extras.(guardData); ok {
 		decision = extras.Decision
 	}
-	return logs.String(), res, err, decision
+	return logs.String(), res, decision, err
 }
 
 func inspectVerdict(t *testing.T, mode policy.Mode, seg appplugins.StreamSegment, resp GuardResponse) (string, *appplugins.SegmentVerdict) {
@@ -223,6 +225,22 @@ func inspectVerdict(t *testing.T, mode policy.Mode, seg appplugins.StreamSegment
 	return logs.String(), verdict
 }
 
+func TestUnrecognizedStatusLogIsTruncated(t *testing.T) {
+	t.Parallel()
+
+	unknown := "unknown-" + strings.Repeat("x", 80)
+	logs, res, decision, err := executeVerdict(t, policy.ModeEnforce, requestWithPayloadMarker(), GuardResponse{Status: unknown})
+	assertExplicitBlock(t, res, err)
+	assert.Equal(t, decisionBlocked, decision)
+	assertBlockBodyStatus(t, err, statusBlock)
+	logged := loggedStatus(unknown)
+	require.LessOrEqual(t, len(logged), maxLoggedStatusBytes)
+	require.NotEqual(t, unknown, logged)
+	assert.Contains(t, logs, "status="+logged)
+	assert.NotContains(t, logs, unknown)
+	assert.NotContains(t, logs, payloadMarker)
+}
+
 func assertExplicitBlock(t *testing.T, res *appplugins.Result, err error) {
 	t.Helper()
 	assert.Nil(t, res)
@@ -231,6 +249,17 @@ func assertExplicitBlock(t *testing.T, res *appplugins.Result, err error) {
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 	assert.Equal(t, typeBlocked, pe.Type)
 	assert.Equal(t, blockMessage, pe.Message)
+}
+
+func assertBlockBodyStatus(t *testing.T, err error, want string) {
+	t.Helper()
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "got %v", err)
+	var body struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal(pe.Body, &body))
+	assert.Equal(t, want, body.Status)
 }
 
 func assertUnrecognizedWarn(t *testing.T, logs, status string) {
