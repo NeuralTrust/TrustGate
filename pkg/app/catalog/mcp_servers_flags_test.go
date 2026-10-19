@@ -122,7 +122,9 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// entries became self-service (Algolia, Teamwork, Plaid, Cube, Dropbox, Jotform).
 	// 107 after Storyblok left self-service (vendor redirect allowlist, ENG-2189)
 	// and Replicate was hidden as SSE-unsupported, so it no longer loads.
-	require.Equal(t, 107, self, "self_service count changed")
+	// 106 after Vimeo left self-service (vendor rejects the gateway callback
+	// for any dynamic client, ENG-2189).
+	require.Equal(t, 106, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
