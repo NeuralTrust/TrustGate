@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -41,6 +42,12 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 			catalogRes = resolved
 		}
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog, catalogRes))
+		// A catalog correction can persist manual registration before an admin
+		// has entered a client id. Continuing with an empty client id sends the
+		// user to a provider that cannot complete the grant.
+		if strings.TrimSpace(effective.ClientID) == "" {
+			return nil, fmt.Errorf("%w: forwarded manual registration has no client id", commonerrors.ErrValidation)
+		}
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, catalogRes)
 		}
@@ -197,6 +204,12 @@ func (s *connectService) refreshMaterial(
 			catalogRes = resolved
 		}
 		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog, catalogRes))
+		// A catalog correction can persist manual registration before an admin
+		// has entered a client id. Continuing with an empty client id sends the
+		// user to a provider that cannot complete the grant.
+		if strings.TrimSpace(effective.ClientID) == "" {
+			return nil, "", upstreamResolution{}, fmt.Errorf("%w: forwarded manual registration has no client id", commonerrors.ErrValidation)
+		}
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			auth, err := s.finalizeAuthURLs(ctx, gatewayID, principalSub, reg, effective, nil, catalogRes)
 			return auth, "", upstreamResolution{}, err

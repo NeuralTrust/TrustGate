@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -187,6 +188,63 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		}
 		return nil
 	})
+}
+
+// CompareAndSwapMCPTarget writes next's catalog fields onto one registry only
+// when match accepts the row locked by this transaction. Name, description,
+// enabled, and the registry-level auth column are left as they are. match runs
+// while the row lock is held and must not use the database. A match that
+// declines commits nothing and appends no snapshot marker, so an admin edit
+// that landed after the caller read the row is kept.
+func (r *Repository) CompareAndSwapMCPTarget(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	id ids.RegistryID,
+	updatedAt time.Time,
+	match func(current *domain.MCPTarget) (next *domain.MCPTarget, ok bool),
+) (bool, error) {
+	if match == nil {
+		return false, errors.New("registry repository: nil catalog match")
+	}
+	var applied bool
+	err := database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		stored, err := lockStoredMCPTarget(ctx, tx, id, gatewayID)
+		if err != nil {
+			return err
+		}
+		if stored == nil {
+			return domain.ErrNotFound
+		}
+		next, ok := match(stored)
+		if !ok || next == nil {
+			return nil
+		}
+		mcpTargetBytes, err := r.encodeMCPTargetForUpdate(ctx, tx, id, gatewayID, next)
+		if err != nil {
+			return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
+		}
+		const query = `
+			UPDATE registries
+			   SET mcp_target = $3,
+			       updated_at = $4
+			 WHERE id = $1 AND gateway_id = $2`
+		cmd, err := tx.Exec(ctx, query, id, gatewayID, mcpTargetBytes, updatedAt)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		if err := r.outbox.AppendTx(ctx, tx); err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
 }
 
 // RUN-1501: a registry delete prunes every routing reference; it never refuses
