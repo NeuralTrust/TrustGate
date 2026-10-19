@@ -118,7 +118,7 @@ func TestDeleteSubjectSessions_RevokesAndRepeatsAsZero(t *testing.T) {
 
 	status, raw := deleteSubjectSessions(t, app, gw.String(), "user-1")
 	require.Equal(t, http.StatusOK, status, raw)
-	require.JSONEq(t, `{"revoked":2}`, raw)
+	require.JSONEq(t, `{"revoked":2,"recorded":true}`, raw)
 	require.Equal(t, 1, sessions.calls)
 	require.Equal(t, "org-1", sessions.org)
 	require.Equal(t, gw.String(), sessions.gateway)
@@ -129,7 +129,7 @@ func TestDeleteSubjectSessions_RevokesAndRepeatsAsZero(t *testing.T) {
 	sessions.revoked = 0
 	status, raw = deleteSubjectSessions(t, app, gw.String(), "user-1")
 	require.Equal(t, http.StatusOK, status, raw)
-	require.JSONEq(t, `{"revoked":0}`, raw)
+	require.JSONEq(t, `{"revoked":0,"recorded":true}`, raw)
 	require.Equal(t, 2, revocations.calls)
 	require.Equal(t, 2, signaler.Count())
 }
@@ -145,6 +145,7 @@ func TestDeleteSubjectSessions_DurableWriteFailureIs500(t *testing.T) {
 	status, raw := deleteSubjectSessions(t, app, gw.String(), "user-1")
 	require.Equal(t, http.StatusInternalServerError, status, raw)
 	require.Contains(t, raw, `"error":"internal_error"`)
+	require.NotContains(t, raw, `"recorded"`)
 	require.Equal(t, 1, revocations.calls)
 	require.Equal(t, 0, sessions.calls, "redis is not touched when the durable write fails")
 	require.Equal(t, 0, signaler.Count())
