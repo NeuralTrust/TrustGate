@@ -26,7 +26,7 @@ import (
 // `self_service`, and the seed is checked against every entry's own facts in
 // pkg/app/catalog. All that is left here is that the Store reads the entry's
 // answer rather than guessing at its auth shape — the table of shapes this test
-// used to carry is what the seed check now covers, over the real 198 entries
+// used to carry is what the seed check now covers, over the real 199 entries
 // instead of invented ones.
 func TestCatalogNeedsAdminCredential(t *testing.T) {
 	for _, tc := range []struct {
