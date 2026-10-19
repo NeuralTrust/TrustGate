@@ -48,10 +48,7 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 	if err != nil {
 		return nil, err
 	}
-	for _, b := range comp.bindings {
-		if b.exposed != name {
-			continue
-		}
+	if b, ok := findPrompt(comp.bindings, name); ok {
 		stop := annotateUpstream(ctx, b.registry, b.prompt.Name)
 		defer stop()
 		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
@@ -64,6 +61,29 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 		return nil, comp.pending
 	}
 	return nil, fmt.Errorf("%w: %s", ErrPromptNotFound, name)
+}
+
+// findPrompt returns the first binding published under name, else the single
+// binding whose v0.66.0 spelling is name, as Resolve does for tools.
+func findPrompt(bindings []promptBinding, name string) (promptBinding, bool) {
+	for _, b := range bindings {
+		if b.exposed == name {
+			return b, true
+		}
+	}
+	var found promptBinding
+	seen := false
+	for _, b := range bindings {
+		if legacyExposedName(b.prompt.Name, b.registry) != name {
+			continue
+		}
+		if seen {
+			return promptBinding{}, false
+		}
+		found = b
+		seen = true
+	}
+	return found, seen
 }
 
 type promptBinding struct {

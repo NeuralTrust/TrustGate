@@ -169,12 +169,18 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	// returned, including ones the toolkit will not publish, so hiding a
 	// sibling cannot point an existing name at a different upstream tool.
 	// Cross-server suffixes count published tools only.
-	chosen, ok, err := matchExposed(assignExposedNames(surfaces), name)
+	published := assignExposedNames(surfaces)
+	chosen, ok, err := matchExposed(published, name)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
 		return &ResolvedTool{Registry: chosen.registry, Tool: chosen.tool, Exposed: chosen.exposed}, nil
+	}
+	if legacy, ok := matchLegacyExposed(published, name); ok && !denied(surfaces, name) {
+		c.logger.Info("mcp composer: resolved a pre-v2 tool name",
+			"registry", legacy.registry.Name, "name", name, "exposed", legacy.exposed)
+		return &ResolvedTool{Registry: legacy.registry, Tool: legacy.tool, Exposed: legacy.exposed}, nil
 	}
 	if unscoped {
 		if denied(surfaces, name) {
@@ -234,6 +240,26 @@ func matchExposed(bindings []binding, name string) (binding, bool, error) {
 		seen = true
 	}
 	return found, seen, nil
+}
+
+// matchLegacyExposed returns the single published binding whose v0.66.0
+// spelling is name. It runs only after no current name matched, so a v2 name
+// always wins, a spelling two bindings share resolves to neither, and Resolve
+// skips it when a toolkit turned that exact name away.
+func matchLegacyExposed(bindings []binding, name string) (binding, bool) {
+	var found binding
+	seen := false
+	for _, b := range bindings {
+		if legacyExposedName(b.tool.Name, b.registry) != name {
+			continue
+		}
+		if seen {
+			return binding{}, false
+		}
+		found = b
+		seen = true
+	}
+	return found, seen
 }
 
 // denied reports whether a serving surface turned this exact name away. A
