@@ -100,6 +100,16 @@ func (c legacySuffixCatalog) GetByCode(code string) (catalogdomain.MCPServer, bo
 	}, true
 }
 
+// useAdminURL writes values into the registry URL the way the admin form
+// does. Tests that assert a resolved host call it explicitly. The connect
+// helpers do not.
+func useAdminURL(t *testing.T, reg *registrydomain.Registry, values map[string]string) {
+	t.Helper()
+	if _, ok := bindAdminURL(reg, values); !ok {
+		t.Fatalf("admin URL was not written from %v into %s", values, reg.MCPTarget.URL)
+	}
+}
+
 // bindAdminURL writes values into the registry URL the way the admin form
 // does, and returns the template those values replaced. A URL that is already
 // concrete, or that the values do not fill, is left alone.
@@ -178,14 +188,35 @@ type catalogByCode interface {
 
 func templatedConnectCatalog(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog catalogByCode) oauth.ConnectService {
 	t.Helper()
-	return connectWithValues(t, reg, values, registrar, catalog, true)
+	return connectWithValues(t, reg, values, registrar, catalog, false)
 }
 
 // connectWithValues builds a connect service whose values map is the
-// principal's install config. bind writes that map into the registry URL the
-// way the admin form does. Security cases that still pass an employee host
-// leave bind false: the template stays open and the employee value is not a
-// source.
+// principal's install config. bind writes that map into the registry URL and
+// remembers the template so connect can read it back. The default helpers
+// leave bind false: a value in the map stays an employee value.
+//
+// connectAsAdminRow is the explicit admin-saved case. Tests that check a
+// resolved host call it themselves.
+func connectAsAdminRow(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog catalogByCode) oauth.ConnectService {
+	t.Helper()
+	template, ok := bindAdminURL(reg, values)
+	if !ok {
+		url := ""
+		if reg != nil && reg.MCPTarget != nil {
+			url = reg.MCPTarget.URL
+		}
+		t.Fatalf("admin URL was not written from %v into %s", values, url)
+	}
+	catalog = adminBoundCatalog{
+		inner:    catalog,
+		code:     reg.MCPTarget.Code,
+		template: template,
+		vars:     catalogVarsFromRegistry(reg),
+	}
+	return connectWithValues(t, reg, nil, registrar, catalog, false)
+}
+
 func connectWithValues(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog catalogByCode, bind bool) oauth.ConnectService {
 	t.Helper()
 	if bind {
@@ -205,6 +236,10 @@ func connectWithValues(t *testing.T, reg *registrydomain.Registry, values map[st
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}})
+	employee := values
+	if bind {
+		employee = nil
+	}
 	return oauth.NewConnectService(
 		newMemConnectStore(),
 		&memVaultRepo{},
@@ -213,7 +248,7 @@ func connectWithValues(t *testing.T, reg *registrydomain.Registry, values map[st
 		registrar,
 		discardConnectAuditor(),
 		nil, nil, catalog, nil,
-		oauth.WithConnectURLValues(mapURLValues{"alice": values}),
+		oauth.WithConnectURLValues(mapURLValues{"alice": employee}),
 	)
 }
 
@@ -270,7 +305,7 @@ func TestConnectService_TemplatedServerSendsResolvedResource(t *testing.T) {
 		},
 		client: &oauth.RegisteredClient{ClientID: "dcr-aha"},
 	}
-	svc := templatedConnect(t, reg, map[string]string{"domain": "acme"}, registrar)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "acme"}, registrar, legacySuffixCatalog{})
 	ctx := context.Background()
 
 	ticket, err := svc.CreateTicket(ctx, reg.GatewayID, "alice", "/dev/mcp")
@@ -341,7 +376,7 @@ func TestConnectService_TemplatedResourceIgnoresMismatchedPRM(t *testing.T) {
 		},
 		client: &oauth.RegisteredClient{ClientID: "dcr-aha"},
 	}
-	svc := templatedConnect(t, reg, map[string]string{"domain": "acme"}, registrar)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "acme"}, registrar, legacySuffixCatalog{})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -374,7 +409,7 @@ func TestConnectService_TemplatedResourceAcceptsCanonicalPRM(t *testing.T) {
 		},
 		client: &oauth.RegisteredClient{ClientID: "dcr-aha"},
 	}
-	svc := templatedConnect(t, reg, map[string]string{"domain": "acme"}, registrar)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "acme"}, registrar, legacySuffixCatalog{})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -405,7 +440,7 @@ func TestConnectService_UnresolvedOAuthPlaceholderDoesNotRedirect(t *testing.T) 
 		},
 		client: &oauth.RegisteredClient{ClientID: "dcr-aha"},
 	}
-	svc := templatedConnect(t, reg, map[string]string{"domain": "acme"}, registrar)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "acme"}, registrar, legacySuffixCatalog{})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -438,7 +473,7 @@ func TestConnectService_TemplatedOAuthURLCannotRetargetSecrets(t *testing.T) {
 		},
 		client: &oauth.RegisteredClient{ClientID: "dcr-aha", ClientSecret: "admin-secret"},
 	}
-	svc := templatedConnect(t, reg, map[string]string{"domain": "acme"}, registrar)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "acme"}, registrar, legacySuffixCatalog{})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -523,7 +558,7 @@ func TestConnectService_WholeHostPinnedSecretRefused(t *testing.T) {
 func TestConnectService_WholeHostPinnedSecretAllowedBySuffix(t *testing.T) {
 	t.Parallel()
 	reg := wholeHostManualRegistry(t, []string{"*.vendor.com"}, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
-	svc := templatedConnectCatalog(t, reg, map[string]string{"account_url": "acme.vendor.com"}, &fixedRegistrar{}, legacySuffixCatalog{
+	svc := connectAsAdminRow(t, reg, map[string]string{"account_url": "acme.vendor.com"}, &fixedRegistrar{}, legacySuffixCatalog{
 		suffixes: []string{"*.vendor.com"},
 	})
 
@@ -545,7 +580,7 @@ func TestConnectService_StoredSuffixCannotWidenCatalog(t *testing.T) {
 	t.Parallel()
 	reg := wholeHostManualRegistry(t, []string{"*.vendor.com"}, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
 	values := map[string]string{"account_url": "acme.vendor.com"}
-	svc := templatedConnectCatalog(t, reg, values, &fixedRegistrar{}, legacySuffixCatalog{
+	svc := connectAsAdminRow(t, reg, values, &fixedRegistrar{}, legacySuffixCatalog{
 		suffixes: []string{"*.snowflakecomputing.com"},
 	})
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
@@ -625,7 +660,7 @@ func TestConnectService_LegacyWholeHostUsesCatalogSuffix(t *testing.T) {
 	t.Parallel()
 	const host = "xy12345.us-west-2.privatelink.snowflakecomputing.com"
 	reg := wholeHostManualRegistry(t, nil, nil, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token")
-	svc := templatedConnectCatalog(t, reg, map[string]string{"account_url": host}, &fixedRegistrar{}, legacySuffixCatalog{
+	svc := connectAsAdminRow(t, reg, map[string]string{"account_url": host}, &fixedRegistrar{}, legacySuffixCatalog{
 		suffixes: []string{"*.snowflakecomputing.com"},
 	})
 
@@ -738,7 +773,7 @@ func TestConnectService_ManualWholeHostDiscoveryAllowedWhenClosed(t *testing.T) 
 		AuthorizationEndpoint: "https://" + host + "/oauth/authorize",
 		TokenEndpoint:         "https://" + host + "/oauth/token",
 	}}
-	svc := templatedConnect(t, reg, map[string]string{"account_url": host}, registrar)
+	svc := connectAsAdminRow(t, reg, map[string]string{"account_url": host}, registrar, legacySuffixCatalog{})
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -822,7 +857,7 @@ func TestConnectService_PathAndQueryPlaceholdersStayAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
-	svc := templatedConnect(t, reg, map[string]string{"org": "acme"}, &fixedRegistrar{})
+	svc := connectAsAdminRow(t, reg, map[string]string{"org": "acme"}, &fixedRegistrar{}, legacySuffixCatalog{})
 
 	ticket, err := svc.CreateTicket(context.Background(), gw, "alice", "/dev/mcp")
 	if err != nil {
@@ -859,7 +894,7 @@ func TestConnectService_FreshworksManualUsesOrgHost(t *testing.T) {
 	}
 	reg := manualTenantRegistry(t, entry.URL, entry.Code, entry.OAuth.AuthorizeURL, entry.OAuth.TokenURL)
 	registrar := &fixedRegistrar{}
-	svc := templatedConnectCatalog(t, reg, map[string]string{"domain": "yourco"}, registrar, cat)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "yourco"}, registrar, cat)
 
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -908,7 +943,7 @@ func TestConnectService_FreshworksRejectsAuthorizeHostOutsideCatalog(t *testing.
 	}
 	reg := manualTenantRegistry(t, entry.URL, entry.Code, "https://{domain}.evil.com/oauth/authorize", "https://{domain}.evil.com/oauth/token")
 	registrar := &fixedRegistrar{}
-	svc := templatedConnectCatalog(t, reg, map[string]string{"domain": "yourco"}, registrar, cat)
+	svc := connectAsAdminRow(t, reg, map[string]string{"domain": "yourco"}, registrar, cat)
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
@@ -1010,6 +1045,8 @@ func manualTenantRegistry(t *testing.T, urlTemplate, code, authorize, token stri
 func assertCatalogStartRefused(t *testing.T, reg *registrydomain.Registry, cat catalogByCode, values map[string]string) {
 	t.Helper()
 	registrar := &fixedRegistrar{}
+	// values is the employee's attempt. The row URL stays the template, so
+	// connect never resolves that host and does not discover on it.
 	svc := templatedConnectCatalog(t, reg, values, registrar, cat)
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
@@ -1019,9 +1056,7 @@ func assertCatalogStartRefused(t *testing.T, reg *registrydomain.Registry, cat c
 	if err == nil || started != nil {
 		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
 	}
-	// The employee map is not a source. A host the catalog template does not
-	// name, or a contact label the server URL does not carry, stays unresolved.
-	if !errors.Is(err, oauth.ErrUnresolvedOAuthPlaceholder) {
+	if !errors.Is(err, oauth.ErrUpstreamSetupRequired) {
 		t.Fatalf("err = %v, want the employee host left unused", err)
 	}
 	if len(registrar.discovered) != 0 {
@@ -1101,7 +1136,7 @@ func assertWholeHostSecretStays(t *testing.T, reg *registrydomain.Registry, valu
 	assertNoRedirect(t, reg, values, registrar, oauth.ErrOAuthURLHost)
 
 	refreshCtx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
-	svc := templatedConnect(t, reg, values, registrar)
+	svc := templatedConnect(t, reg, nil, registrar)
 	refreshed, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg)
 	if err == nil || refreshed != nil {
 		t.Fatalf("RefreshAuth = %+v, err = %v; want no config", refreshed, err)
@@ -1116,7 +1151,9 @@ func assertWholeHostSecretStays(t *testing.T, reg *registrydomain.Registry, valu
 
 func assertNoRedirect(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, want error) {
 	t.Helper()
-	svc := templatedConnect(t, reg, values, registrar)
+	// The host under test is the one the admin saved. An employee map is not
+	// what connect reads.
+	svc := connectAsAdminRow(t, reg, values, registrar, legacySuffixCatalog{})
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)

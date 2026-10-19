@@ -98,14 +98,15 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 		if !s.SelfService {
 			require.True(t,
 				staticCredentialSlot(s) || clientCredentials(s) || operatorRegistersClient(s) ||
-					(s.OAuth != nil && s.OAuth.Required && strings.TrimSpace(s.OAuth.Registration) == ""),
+					(s.OAuth != nil && s.OAuth.Required && strings.TrimSpace(s.OAuth.Registration) == "") ||
+					requiredNonSecretURLVariable(s),
 				"%s: nothing here needs an admin, so a user could install it", s.Code)
 		}
 
 		// self_service: true on a server whose credential is a static one is
 		// only possible when that credential is per user — a secret URL variable
 		// each user enters for themselves, or an optional header on a public
-		// server (Algolia). A required shared header is an admin's to add.
+		// server. A required shared header is an admin's to add.
 		if static, oauth := s.SupportedAuthMethods(); s.SelfService && static && !oauth {
 			for _, header := range s.AuthHeaders {
 				require.Falsef(t, header.Required, "%s: a required shared header is an admin's to add", s.Code)
@@ -132,7 +133,56 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// count stayed 106.
 	// 105 after New Relic left self-service. Dynamic registration returns one
 	// shared client that only allows localhost redirect URIs (ENG-2189).
-	require.Equal(t, 105, self, "self_service count changed")
+	// 99 after Aha, Algolia, Gorgias, n8n, Shopify and Vanta left self-service.
+	// Each one needs a non-secret URL variable the admin sets, one registry
+	// row per value.
+	require.Equal(t, 99, self, "self_service count changed")
+}
+
+// requiredNonSecretURLVariable reports a host, path or other placeholder an
+// admin fills on the registry. A secret URL variable is the user's credential.
+func requiredNonSecretURLVariable(s domain.MCPServer) bool {
+	for _, variable := range s.URLVariables {
+		if variable.Required && !variable.Secret {
+			return true
+		}
+	}
+	return false
+}
+
+// A non-secret URL variable is one admin row per value. These six were
+// self-service and are admin-only for that reason. The catalog has 33 such
+// entries after com.salesforce/mcp-sandbox joined com.salesforce/mcp.
+func TestCuratedCatalog_NonSecretURLVariablesAreAdminRows(t *testing.T) {
+	t.Parallel()
+	servers, err := loadCuratedMCPServers()
+	require.NoError(t, err)
+
+	adminOnly := []string{
+		"io.aha/mcp",
+		"com.algolia/mcp",
+		"com.gorgias/mcp",
+		"io.n8n/mcp",
+		"com.shopify/storefront",
+		"com.vanta/mcp",
+	}
+	byCode := make(map[string]domain.MCPServer, len(servers))
+	n := 0
+	for _, server := range servers {
+		byCode[server.Code] = server
+		if requiredNonSecretURLVariable(server) {
+			n++
+		}
+	}
+	require.Equal(t, 33, n, "non-secret URL variable entries, including com.salesforce/mcp-sandbox")
+	_, ok := byCode["com.salesforce/mcp-sandbox"]
+	require.True(t, ok, "com.salesforce/mcp-sandbox")
+	for _, code := range adminOnly {
+		server, found := byCode[code]
+		require.True(t, found, code)
+		require.False(t, server.SelfService, code)
+		require.True(t, requiredNonSecretURLVariable(server), code)
+	}
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
