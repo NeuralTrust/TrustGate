@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -416,12 +417,15 @@ func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
 	}
 	// No OAuth metadata is the upstream's shape, not a fault in this request.
 	// A plain error falls through to a text/plain 500; answer 502 with the
-	// same {error, message} body the JSON error responses use.
+	// same {error, message} body the JSON error responses use. The error
+	// text includes the resolved upstream URL, so it stays in the log.
 	if errors.Is(err, appoauth.ErrUpstreamNotDiscoverable) {
+		slog.Default().Warn("oauth connect: upstream has no OAuth metadata",
+			"method", c.Method(), "path", c.Path(), "error", err)
 		return c.Status(fiber.StatusBadGateway).JSON(httpio.ErrorBody{
 			Error: "upstream_not_discoverable",
 			Message: "The provider does not publish OAuth metadata, so the account cannot be connected yet. " +
-				"Ask your administrator to configure a pre-registered OAuth app. Details: " + err.Error(),
+				"Ask your administrator to configure a pre-registered OAuth app.",
 		})
 	}
 	return err

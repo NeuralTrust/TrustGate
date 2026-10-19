@@ -514,7 +514,7 @@ func TestConnectStart_RejectedRegistrationIsBadGateway(t *testing.T) {
 // surface as a plain-text 500; the body is the JSON error shape.
 func TestConnectStart_UndiscoverableUpstreamIsJSONBadGateway(t *testing.T) {
 	t.Parallel()
-	stub := &stubConnectService{startErr: fmt.Errorf("%w (https://mcp.example/mcp)", appoauth.ErrUpstreamNotDiscoverable)}
+	stub := &stubConnectService{startErr: fmt.Errorf("%w (https://mcp.example/mcp?db=analytics)", appoauth.ErrUpstreamNotDiscoverable)}
 	h := newTestConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Post(ConnectStartPath, h.Start)
@@ -528,8 +528,12 @@ func TestConnectStart_UndiscoverableUpstreamIsJSONBadGateway(t *testing.T) {
 	if ct := res.Header.Get(fiber.HeaderContentType); !strings.Contains(ct, fiber.MIMEApplicationJSON) {
 		t.Fatalf("content-type = %q, want json", ct)
 	}
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
 	var body httpio.ErrorBody
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("body is not the JSON error shape: %v", err)
 	}
 	if body.Error != "upstream_not_discoverable" {
@@ -538,8 +542,8 @@ func TestConnectStart_UndiscoverableUpstreamIsJSONBadGateway(t *testing.T) {
 	if !strings.Contains(body.Message, "does not publish OAuth metadata") {
 		t.Fatalf("message = %q", body.Message)
 	}
-	if !strings.Contains(body.Message, "https://mcp.example/mcp") {
-		t.Fatalf("message = %q, want the upstream detail", body.Message)
+	if strings.Contains(string(raw), "/mcp") || strings.Contains(string(raw), "db=analytics") {
+		t.Fatalf("body echoed the upstream URL path or query: %s", raw)
 	}
 }
 
