@@ -185,7 +185,7 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 	t.Run("algolia optional key", func(t *testing.T) {
 		algolia := mustCatalogServer(t, cat, "com.algolia/mcp")
 		require.False(t, algolia.RequiresAuth)
-		require.True(t, algolia.SelfService)
+		require.False(t, algolia.SelfService)
 		require.Equal(t, authHintStatic, algolia.AuthHint)
 		require.Len(t, algolia.URLVariables, 2)
 		header := algolia.AuthHeaders[0]

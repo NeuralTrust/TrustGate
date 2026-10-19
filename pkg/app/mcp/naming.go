@@ -444,16 +444,18 @@ func serverSlug(reg *registrydomain.Registry) string {
 	return slug
 }
 
-// legacyExposedName is the spelling v0.66.0 published: the server slug always
-// in front, a digest for every configured instance, and an overlong name cut at
-// the tail. Resolve still accepts it, so a client that listed tools before the
-// v2 names keeps calling them, and pods on the old release and the new one
-// answer the same call during a rollout.
-func legacyExposedName(upstream string, reg *registrydomain.Registry) string {
+// legacyExposedName is the spelling v0.66.0 published for local. local is the
+// toolkit ExposeAs when one was set, and the upstream name otherwise: that
+// release prefixed whichever of those it was about to publish. The server slug
+// is always in front, a 6-char digest marks every configured instance, and an
+// overlong name is cut at the tail. Resolve still accepts the result, so a
+// client that listed tools before the v2 names keeps calling them, and pods on
+// the old release and the new one answer the same call during a rollout.
+func legacyExposedName(local string, reg *registrydomain.Registry) string {
 	server := legacyServerSlug(reg)
-	full := server + "_" + upstream
+	full := server + "_" + local
 	if server == "" {
-		full = upstream
+		full = local
 	}
 	if len(full) <= maxExposedNameLength {
 		return full
@@ -463,7 +465,7 @@ func legacyExposedName(upstream string, reg *registrydomain.Registry) string {
 	if keep < 1 {
 		return full[:maxExposedNameLength-len(suffix)] + suffix
 	}
-	return server + "_" + upstream[:keep] + suffix
+	return server + "_" + local[:keep] + suffix
 }
 
 func legacyServerSlug(reg *registrydomain.Registry) string {

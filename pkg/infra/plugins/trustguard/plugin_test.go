@@ -800,6 +800,112 @@ func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 	}
 }
 
+func TestExecuteSkipStatusRecordsAllowedAndForwards(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{
+		Status:  statusSkip,
+		TraceID: "trace-skip",
+		Findings: []GuardFinding{{
+			Source:  &GuardFindingSource{Kind: "gate", GateName: "skip_pii"},
+			Signal:  &GuardFindingSignal{Type: "gate_skip", Confidence: 1},
+			Outcome: &GuardFindingOutcome{Action: "skip"},
+		}},
+	}}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	req := requestContext()
+	original := string(req.Body)
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream || res.RequestBody != nil || res.Body != nil {
+		t.Fatalf("expected untouched pass-through, got %+v", res)
+	}
+	if string(req.Body) != original {
+		t.Fatal("request body was rewritten")
+	}
+	attrs := span.PluginAttrsCopy()
+	if attrs.Decision != decisionAllowed {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionAllowed)
+	}
+	if attrs.Score != nil || attrs.ScoreLabel != "" {
+		t.Fatalf("score = %v label = %q, want none", attrs.Score, attrs.ScoreLabel)
+	}
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if extras.Decision != decisionAllowed || extras.Status != statusSkip {
+		t.Fatalf("extras = %+v, want decision %q status %q", extras, decisionAllowed, statusSkip)
+	}
+	if extras.FailedOpen || extras.FailedClosed {
+		t.Fatalf("skip must not fail open or closed: %+v", extras)
+	}
+}
+
+func TestExecuteUnknownStatusBlocksInEnforce(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{
+		Status:  "something-new",
+		TraceID: "trace-unknown",
+		Findings: []GuardFinding{{
+			Source:  &GuardFindingSource{Kind: "detector", DetectorName: "Toxicity"},
+			Signal:  &GuardFindingSignal{Type: "toxicity", Confidence: 0.8},
+			Outcome: &GuardFindingOutcome{Action: "block"},
+		}},
+	}}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	req := requestContext()
+	original := string(req.Body)
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on an unrecognized status, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusForbidden || pe.Type != typeBlocked {
+		t.Fatalf("plugin error = status %d type %q, want 403 %q", pe.StatusCode, pe.Type, typeBlocked)
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(pe.Body, &body); err != nil {
+		t.Fatalf("block body: %v", err)
+	}
+	if body.Status != statusBlock {
+		t.Fatalf("client body status = %q, want %q", body.Status, statusBlock)
+	}
+	if string(req.Body) != original {
+		t.Fatal("request body was rewritten")
+	}
+	attrs := span.PluginAttrsCopy()
+	if attrs.Decision != "block" {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, "block")
+	}
+	if attrs.ScoreLabel != "toxicity" {
+		t.Fatalf("ScoreLabel = %q, want toxicity", attrs.ScoreLabel)
+	}
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if extras.Decision != decisionBlocked || extras.FailedOpen || extras.FailedClosed {
+		t.Fatalf("extras = %+v, want blocked without fail-open or fail-closed", extras)
+	}
+}
+
 func TestExecuteAllowedRecordsAllowedSpanDecision(t *testing.T) {
 	t.Parallel()
 

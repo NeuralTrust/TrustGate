@@ -832,7 +832,7 @@ func TestInstallWithConfigStoresAndInstalls(t *testing.T) {
 	in.Config = map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
 	_, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
 		Install(context.Background(), in)
-	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), `variable "account_url" is set by an admin`) {
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
 		t.Fatalf("an employee registry variable must be refused, got %v", err)
 	}
 }

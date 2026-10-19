@@ -67,7 +67,7 @@ func TestKnownVerdictsUnchangedInBlockingMode(t *testing.T) {
 			{name: "allow", status: statusAllow, wantDecision: decisionAllowed},
 			{name: "empty", status: "", wantDecision: decisionAllowed},
 			{name: "report", status: statusReport, wantDecision: decisionReported},
-			{name: "skip", status: statusSkip, wantDecision: decisionReported},
+			{name: "skip", status: statusSkip, wantDecision: decisionAllowed},
 			{name: "error", status: statusError, wantDecision: decisionReported},
 			{name: "transform", status: statusTransform, transform: true, wantDecision: decisionTransformed},
 			{name: "ask", status: statusAsk, wantDecision: decisionBlocked, wantBlock: true},
