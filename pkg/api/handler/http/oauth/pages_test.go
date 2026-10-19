@@ -637,6 +637,76 @@ func TestSingleConnectPage_UnconnectedStateDoesNotSendThemBack(t *testing.T) {
 	}
 }
 
+// An unconnected shared account is not this ticket's to connect. Start refuses
+// the write; the page says who connects it instead of posting a connect that
+// only fails. A connected shared account, and a caller's own unconnected
+// account, keep the states they already had.
+func TestSingleConnectPage_UnconnectedSharedAccountWaitsForAdmin(t *testing.T) {
+	t.Parallel()
+	page := func(linked, shared bool) *appoauth.ConnectPage {
+		return &appoauth.ConnectPage{
+			ConsumerPath: "/store/mcp",
+			Code:         "app.linear/mcp",
+			ResumeURL:    "https://portal.example/back",
+			Principal:    appoauth.ConnectPrincipal{Subject: "user-1", Email: "employee@example.com"},
+			Providers: []appoauth.ProviderStatus{{
+				Provider:   "app.linear/mcp",
+				Code:       "app.linear/mcp",
+				Registry:   "linear-shared",
+				Instance:   "reg-shared",
+				Linked:     linked,
+				Shared:     shared,
+				AccountRef: "team@example.com",
+			}},
+		}
+	}
+	render := func(linked, shared bool) string {
+		return renderToString(t, func(c *fiber.Ctx) error {
+			return renderConnectPage(c, page(linked, shared), "tk", "", mustMCPCatalog(t))
+		})
+	}
+
+	waiting := render(false, true)
+	for _, want := range []string{
+		`<h1 class="title">Waiting for your admin</h1>`,
+		"uses one shared account for every caller and nobody has connected it",
+		"An administrator connects it in the console",
+		`href="https://portal.example/back"`,
+	} {
+		if !strings.Contains(waiting, want) {
+			t.Fatalf("waiting page missing %q, body:\n%s", want, waiting)
+		}
+	}
+	for _, unwanted := range []string{
+		"Connect account",
+		"Connect your Linear account",
+		`/oauth/connect/`,
+		"Linked to",
+		"employee@example.com",
+		"Access requested",
+	} {
+		if strings.Contains(waiting, unwanted) {
+			t.Fatalf("waiting page must not offer %q, body:\n%s", unwanted, waiting)
+		}
+	}
+
+	own := render(false, false)
+	if !strings.Contains(own, `<h1 class="title">Connect your Linear account</h1>`) ||
+		!strings.Contains(own, `<form method="post" action="/oauth/connect/app.linear/mcp?ticket=tk&amp;instance=reg-shared">`) ||
+		!strings.Contains(own, "Connect account") {
+		t.Fatalf("an unconnected account this ticket owns must still offer connect, body:\n%s", own)
+	}
+	if strings.Contains(own, "Waiting for your admin") {
+		t.Fatalf("a caller's own account must not wait on an admin, body:\n%s", own)
+	}
+
+	connected := render(true, true)
+	if !strings.Contains(connected, `<h1 class="title">Linear is connected</h1>`) ||
+		strings.Contains(connected, "Waiting for your admin") {
+		t.Fatalf("a connected shared account stays connected, body:\n%s", connected)
+	}
+}
+
 // Without an account to name, the old pill said only "Connected" — the same
 // thing the headline and the done panel already say, in the quietest of the
 // three. It is shown now only when it carries the account it connected as.
