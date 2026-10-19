@@ -81,18 +81,17 @@ func (i *installer) uninstallActive(
 		return i.installs.DeleteByID(releaseCtx, gatewayID, principalSub, removed.ID)
 	}
 	cred, err := i.releasePerUserCredential(releaseCtx, gatewayID, principalSub, bound, removed, provider, cache)
-	if err != nil {
-		return err
-	}
 	i.revokeBestEffort(ctx, gatewayID, principalSub, bound, removed, cred)
-	return nil
+	return err
 }
 
 // releasePerUserCredential holds the per-key lock while it deletes the local
 // credential and re-checks after the installation row is gone. The returned
 // credential was removed and may be revoked only after the lock is released.
 // If the delete fails before the row is removed, the error is returned with
-// the installation still in place and the vendor is not called.
+// the installation still in place and no credential. Once the local copy is
+// gone the credential is returned even with an error: a retry finds nothing
+// left to revoke.
 func (i *installer) releasePerUserCredential(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -112,11 +111,11 @@ func (i *installer) releasePerUserCredential(
 		return nil, err
 	}
 	if err := i.installs.DeleteByID(ctx, gatewayID, principalSub, removed.ID); err != nil {
-		return nil, err
+		return cred, err
 	}
 	leftover, err := i.deleteCredentialIfUnused(ctx, gatewayID, principalSub, bound, removed, provider, cache)
 	if err != nil {
-		return nil, err
+		return cred, err
 	}
 	if leftover != nil {
 		return leftover, nil
