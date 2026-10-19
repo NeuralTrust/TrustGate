@@ -319,9 +319,19 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	}
 	// A choice or a request has not picked the row it will dial. The admin URL
 	// is required only when this call records an install against one instance.
+	// A non-self-service server whose existing row still has that placeholder
+	// is the same state as no row: report admin setup and leave the row alone.
 	if len(decision.choices) == 0 && !decision.requiresAdminSetup &&
 		decision.status != installationdomain.StatusPendingApproval {
 		if err := rejectUnfilledAdminVariables(entry.URL, catalogURLVariables(entry.URLVariables), boundTarget(decision.bound)); err != nil {
+			if catalogNeedsAdminCredential(entry) {
+				return &InstallResult{
+					Code:               code,
+					Name:               displayName(entry, code),
+					RequiresAuth:       entry.RequiresAuth,
+					RequiresAdminSetup: true,
+				}, nil
+			}
 			return nil, err
 		}
 	}
