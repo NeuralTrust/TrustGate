@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -101,7 +102,11 @@ func templatedConnect(t *testing.T, reg *registrydomain.Registry, values map[str
 	return templatedConnectCatalog(t, reg, values, registrar, legacySuffixCatalog{})
 }
 
-func templatedConnectCatalog(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog legacySuffixCatalog) oauth.ConnectService {
+type catalogByCode interface {
+	GetByCode(code string) (catalogdomain.MCPServer, bool)
+}
+
+func templatedConnectCatalog(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog catalogByCode) oauth.ConnectService {
 	t.Helper()
 	data := appconsumer.NewData(reg.GatewayID, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
@@ -748,6 +753,185 @@ func TestConnectService_PathAndQueryPlaceholdersStayAllowed(t *testing.T) {
 	}
 	if u.Query().Get("resource") != "https://mcp.example.com/acme/mcp" {
 		t.Fatalf("resource = %q", u.Query().Get("resource"))
+	}
+}
+
+func TestConnectService_FreshworksManualUsesOrgHost(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	entry, ok := cat.GetByCode("com.freshworks/mcp")
+	if !ok || entry.OAuth == nil {
+		t.Fatal("freshworks catalog entry")
+	}
+	reg := manualTenantRegistry(t, entry.URL, entry.Code, entry.OAuth.AuthorizeURL, entry.OAuth.TokenURL)
+	registrar := &fixedRegistrar{}
+	svc := templatedConnectCatalog(t, reg, map[string]string{"domain": "yourco"}, registrar, cat)
+
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := startLocation(svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, entry.Code, ""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://yourco.myfreshworks.com/org/oauth/v2/authorize?") {
+		t.Fatalf("redirect = %q", location)
+	}
+	if len(registrar.discovered) != 0 {
+		t.Fatalf("manual registration discovered %v", registrar.discovered)
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("location: %v", err)
+	}
+	if u.Query().Get("resource") != "https://yourco.freshservice.com/mcp" {
+		t.Fatalf("resource = %q", u.Query().Get("resource"))
+	}
+
+	refreshCtx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+	refreshed, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshed.TokenURL != "https://yourco.myfreshworks.com/org/oauth/v2/token" {
+		t.Fatalf("token url = %q", refreshed.TokenURL)
+	}
+	if len(registrar.discovered) != 0 {
+		t.Fatalf("refresh discovered %v", registrar.discovered)
+	}
+}
+
+func TestConnectService_FreshworksRejectsAuthorizeHostOutsideCatalog(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	entry, ok := cat.GetByCode("com.freshworks/mcp")
+	if !ok || entry.OAuth == nil {
+		t.Fatal("freshworks catalog entry")
+	}
+	reg := manualTenantRegistry(t, entry.URL, entry.Code, "https://{domain}.evil.com/oauth/authorize", "https://{domain}.evil.com/oauth/token")
+	registrar := &fixedRegistrar{}
+	svc := templatedConnectCatalog(t, reg, map[string]string{"domain": "yourco"}, registrar, cat)
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	started, err := svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, entry.Code, "")
+	if err == nil || started != nil {
+		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
+	}
+	if !errors.Is(err, oauth.ErrOAuthURLHost) {
+		t.Fatalf("err = %v, want host refusal", err)
+	}
+	if len(registrar.discovered) != 0 {
+		t.Fatalf("discovery ran: %v", registrar.discovered)
+	}
+}
+
+func TestConnectService_FreshworksRejectsMCPHostOutsideCatalog(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	entry, ok := cat.GetByCode("com.freshworks/mcp")
+	if !ok || entry.OAuth == nil {
+		t.Fatal("freshworks catalog entry")
+	}
+	reg := manualTenantRegistry(t, "https://{domain}.evil.com/mcp", entry.Code, entry.OAuth.AuthorizeURL, entry.OAuth.TokenURL)
+	assertCatalogStartRefused(t, reg, cat, map[string]string{"domain": "yourco"})
+}
+
+func TestConnectService_SharedLabelWithoutCatalogIsRefused(t *testing.T) {
+	t.Parallel()
+	reg := manualTenantRegistry(t,
+		"https://{domain}.freshservice.com/mcp",
+		"com.freshworks/mcp",
+		"https://{domain}.myfreshworks.com/org/oauth/v2/authorize",
+		"https://{domain}.myfreshworks.com/org/oauth/v2/token",
+	)
+	assertNoRedirect(t, reg, map[string]string{"domain": "yourco"}, &fixedRegistrar{}, oauth.ErrOAuthURLHost)
+}
+
+func TestConnectService_SharedLabelRefusesSplitTenantPlaceholder(t *testing.T) {
+	t.Parallel()
+	const code = "com.example.split/mcp"
+	entry := catalogdomain.MCPServer{
+		Code: code,
+		URL:  "https://{domain}.freshservice.com/mcp",
+		URLVariables: []catalogdomain.MCPURLVariable{
+			{Name: "domain", Required: true},
+			{Name: "org", Required: true},
+		},
+		OAuth: &catalogdomain.MCPOAuth{
+			Required:     true,
+			AuthorizeURL: "https://{org}.myfreshworks.com/org/oauth/v2/authorize",
+			TokenURL:     "https://{org}.myfreshworks.com/org/oauth/v2/token",
+		},
+	}
+	reg := manualTenantRegistry(t, entry.URL, code, entry.OAuth.AuthorizeURL, entry.OAuth.TokenURL)
+	reg.MCPTarget.URLVariables = append(reg.MCPTarget.URLVariables, registrydomain.MCPURLVariable{Name: "org", Required: true})
+	assertCatalogStartRefused(t, reg, staticCatalog{entry: entry}, map[string]string{"domain": "yourco", "org": "other"})
+}
+
+type staticCatalog struct {
+	entry catalogdomain.MCPServer
+}
+
+func (c staticCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
+	if code != c.entry.Code {
+		return catalogdomain.MCPServer{}, false
+	}
+	return c.entry, true
+}
+
+func manualTenantRegistry(t *testing.T, urlTemplate, code, authorize, token string) *registrydomain.Registry {
+	t.Helper()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "tenant", "", &registrydomain.MCPTarget{
+		Code:         code,
+		URL:          urlTemplate,
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     code,
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			ClientSecret: "admin-secret",
+			AuthorizeURL: authorize,
+			TokenURL:     token,
+			Resource:     urlTemplate,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	return reg
+}
+
+func assertCatalogStartRefused(t *testing.T, reg *registrydomain.Registry, cat catalogByCode, values map[string]string) {
+	t.Helper()
+	registrar := &fixedRegistrar{}
+	svc := templatedConnectCatalog(t, reg, values, registrar, cat)
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	started, err := svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, reg.MCPTarget.Auth.Provider, "")
+	if err == nil || started != nil {
+		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
+	}
+	if !errors.Is(err, oauth.ErrOAuthURLHost) {
+		t.Fatalf("err = %v, want host refusal", err)
+	}
+	if len(registrar.discovered) != 0 {
+		t.Fatalf("discovery ran: %v", registrar.discovered)
 	}
 }
 
