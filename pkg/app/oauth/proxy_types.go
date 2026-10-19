@@ -166,6 +166,14 @@ type FlowStore interface {
 	// either into invalid_grant — killing the whole session. It must only ever
 	// shorten the TTL, so replaying an old token cannot keep it alive.
 	RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error
+	// SubjectRevokedAt is the instant this subject's default-IdP sessions were
+	// revoked, or the zero time when no marker is stored. A store error is
+	// returned rather than the zero time, so the caller can fail the refresh
+	// the same way a failed session load fails it.
+	SubjectRevokedAt(ctx context.Context, gatewayID, org, subject string) (time.Time, error)
+	// DeleteSession removes one refresh record and its owner-index entry.
+	// A token that is already gone is success.
+	DeleteSession(ctx context.Context, refreshToken string) error
 }
 
 // SubjectSessions revokes the default identity provider's refresh records for

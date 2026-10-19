@@ -16,16 +16,20 @@ package oauth_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
+	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestRevokeSubjectSessionsDeletesOnlyTheTarget(t *testing.T) {
@@ -172,6 +176,250 @@ func TestRefreshAfterRevokeIsInvalidGrant(t *testing.T) {
 	}
 	if resp["token_type"] != "Bearer" {
 		t.Fatalf("other subject refresh response: %v", resp)
+	}
+}
+
+// A record written before the owner index existed is invisible to the delete.
+// The marker still refuses it, including when LoginAt was never stored.
+func TestPreIndexRecordIsRefusedAfterRevoke(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	token := "gwrt_preindex"
+	rec := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := mr.Set(digestSessionKey(token), string(raw)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if ownerIndexSize(t, mr, "gw-1", "user-1") != 0 {
+		t.Fatal("a pre-index record must not be in the owner index")
+	}
+
+	revoked, err := store.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1")
+	if err != nil || revoked != 0 {
+		t.Fatalf("revoked %d err %v, want 0", revoked, err)
+	}
+	ttl := mr.TTL("oauth:sessions-revoked:gw-1:org-1:user-1")
+	if ttl <= 29*24*time.Hour || ttl > 30*24*time.Hour {
+		t.Fatalf("revocation marker ttl = %v, want 30 days", ttl)
+	}
+
+	_, err = newRevokeProxy(t, store).Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: token,
+	})
+	requireInvalidGrant(t, err)
+	if got, err := store.GetSession(ctx, token); err != nil || got != nil {
+		t.Fatalf("pre-index record survived refresh: %+v err %v", got, err)
+	}
+}
+
+// RetireSession drops the owner-index entry while the token is still inside
+// the grace window. The marker has to refuse that token too.
+func TestGracePeriodTokenIsRefusedAfterRevoke(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	token := "gwrt_grace"
+	rec := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	rec.LoginAt = time.Now().Add(-time.Minute).UTC()
+	if err := store.SaveSession(ctx, token, rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := store.RetireSession(ctx, token, 60*time.Second); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	if ownerIndexSize(t, mr, "gw-1", "user-1") != 0 {
+		t.Fatal("a retired token must leave the owner index")
+	}
+	if got, err := store.GetSession(ctx, token); err != nil || got == nil {
+		t.Fatalf("grace token must still resolve before revoke: %+v err %v", got, err)
+	}
+
+	revoked, err := store.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1")
+	if err != nil || revoked != 0 {
+		t.Fatalf("revoked %d err %v, want 0", revoked, err)
+	}
+	_, err = newRevokeProxy(t, store).Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: token,
+	})
+	requireInvalidGrant(t, err)
+	if got, err := store.GetSession(ctx, token); err != nil || got != nil {
+		t.Fatalf("grace token survived refresh: %+v err %v", got, err)
+	}
+}
+
+// SaveSession is the point where an in-flight refresh writes the rotated
+// record. Revoking there is the race: the new record is saved after the
+// marker, and both it and the presented token have to be gone afterwards.
+func TestInFlightRefreshRaceLeavesNoLiveRecord(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	token := "gwrt_live"
+	rec := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	rec.LoginAt = time.Now().Add(-time.Hour).UTC()
+	if err := store.SaveSession(ctx, token, rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	proxy := newRevokeProxy(t, &revokeDuringSave{Store: store})
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: token,
+	})
+	requireInvalidGrant(t, err)
+	if got, err := store.GetSession(ctx, token); err != nil || got != nil {
+		t.Fatalf("presented token survived the race: %+v err %v", got, err)
+	}
+	for _, key := range mr.Keys() {
+		if strings.HasPrefix(key, "oauth:session:") {
+			t.Fatalf("live session key %s", key)
+		}
+	}
+	if !mr.Exists("oauth:sessions-revoked:gw-1:org-1:user-1") {
+		t.Fatal("revocation marker missing")
+	}
+}
+
+// A login newer than the marker keeps its refresh token, and rotating that
+// token keeps working. A login at the marker does not. An operator-IdP
+// session for the same subject is not covered by the marker.
+func TestLoginAfterRevocationKeepsRefreshing(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	if _, err := store.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	markerRaw, err := mr.Get("oauth:sessions-revoked:gw-1:org-1:user-1")
+	if err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+	marker, err := time.Parse(time.RFC3339Nano, markerRaw)
+	if err != nil {
+		t.Fatalf("marker time: %v", err)
+	}
+	fresh := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(2*time.Hour).UTC())
+	fresh.LoginAt = marker.Add(time.Second)
+	if err := store.SaveSession(ctx, "gwrt_fresh", fresh); err != nil {
+		t.Fatalf("save fresh: %v", err)
+	}
+	equal := fresh
+	equal.LoginAt = marker
+	if err := store.SaveSession(ctx, "gwrt_equal", equal); err != nil {
+		t.Fatalf("save equal: %v", err)
+	}
+	operator := fresh
+	operator.AuthID = "auth-operator"
+	operator.LoginAt = marker.Add(-time.Hour)
+	if err := store.SaveSession(ctx, "gwrt_operator", operator); err != nil {
+		t.Fatalf("save operator: %v", err)
+	}
+
+	proxy := newRevokeProxy(t, store)
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_fresh",
+	})
+	if err != nil {
+		t.Fatalf("fresh login refresh: %v", err)
+	}
+	next, _ := resp["refresh_token"].(string)
+	if next == "" || resp["token_type"] != "Bearer" {
+		t.Fatalf("fresh login response: %v", resp)
+	}
+	again, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: next,
+	})
+	if err != nil || again["token_type"] != "Bearer" {
+		t.Fatalf("second refresh: %v resp %v", err, again)
+	}
+
+	_, err = proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_equal",
+	})
+	requireInvalidGrant(t, err)
+
+	op, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_operator",
+	})
+	if err != nil || op["token_type"] != "Bearer" {
+		t.Fatalf("operator session refresh: %v resp %v", err, op)
+	}
+}
+
+// A marker that cannot be read must not be treated as "not revoked", and must
+// not be treated as invalid_grant. The refresh fails and the record stays.
+func TestRefreshWhenMarkerIsUnreadableFailsClosed(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	token := "gwrt_target"
+	rec := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	rec.LoginAt = time.Now().Add(-time.Minute).UTC()
+	if err := store.SaveSession(ctx, token, rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := mr.Set("oauth:sessions-revoked:gw-1:org-1:user-1", "not-a-time"); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+
+	_, err := newRevokeProxy(t, store).Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: token,
+	})
+	var oauthErr *appoauth.OAuthError
+	if err == nil || errors.As(err, &oauthErr) {
+		t.Fatalf("unreadable marker = %v, want a store error", err)
+	}
+	got, err := store.GetSession(ctx, token)
+	if err != nil || got == nil {
+		t.Fatalf("record after failed marker read: %+v err %v", got, err)
+	}
+}
+
+func TestSubjectRevokedAtRedisError(t *testing.T) {
+	t.Parallel()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1",
+		DialTimeout: 100 * time.Millisecond,
+		MaxRetries:  0,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+	_, err := infraoauth.NewStore(rdb).SubjectRevokedAt(context.Background(), "gw-1", "org-1", "user-1")
+	if err == nil {
+		t.Fatal("a failed marker read must be an error, not a missing marker")
+	}
+}
+
+type revokeDuringSave struct {
+	*infraoauth.Store
+	fired bool
+}
+
+func (r *revokeDuringSave) SaveSession(ctx context.Context, token string, rec appoauth.SessionRecord) error {
+	if !r.fired {
+		r.fired = true
+		if _, err := r.RevokeSubjectSessions(ctx, rec.Org, rec.GatewayID, rec.Subject); err != nil {
+			return err
+		}
+	}
+	return r.Store.SaveSession(ctx, token, rec)
+}
+
+func newRevokeProxy(t *testing.T, store appoauth.FlowStore) appoauth.AuthProxy {
+	t.Helper()
+	signer, err := infrasts.NewSigner("https://gw.example.com/sts", "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+	return appoauth.NewAuthProxy(nil, nil, nil, store, nil, signer, nil)
+}
+
+func requireInvalidGrant(t *testing.T, err error) {
+	t.Helper()
+	var oauthErr *appoauth.OAuthError
+	if !errors.As(err, &oauthErr) || oauthErr.Code != "invalid_grant" {
+		t.Fatalf("got %v, want invalid_grant", err)
 	}
 }
 

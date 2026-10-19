@@ -87,6 +87,17 @@ func (s *memFlowStore) RetireSession(_ context.Context, refreshToken string, _ t
 	return nil
 }
 
+func (s *memFlowStore) SubjectRevokedAt(context.Context, string, string, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+func (s *memFlowStore) DeleteSession(_ context.Context, refreshToken string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, refreshToken)
+	return nil
+}
+
 func (s *memFlowStore) peekSession(refreshToken string) *SessionRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
