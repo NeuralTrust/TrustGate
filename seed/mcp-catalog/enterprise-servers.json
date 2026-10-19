@@ -4457,7 +4457,7 @@
       "name": "com.getdbt/mcp",
       "vendor": "dbt Labs",
       "category": "Data & Analytics",
-      "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta).",
+      "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta). An admin registers an OAuth app; dbt issues a client ID and no client secret.",
       "capabilities": [
         "Query semantic layer",
         "Query model metadata",
@@ -4490,7 +4490,28 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{dbt_host}/oauth/authorize",
+        "token_url": "https://{dbt_host}/oauth/token",
+        "scopes": [
+          "offline_access",
+          "account:read",
+          "projects:query",
+          "catalog:read"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in dbt.",
+        "steps": [
+          "In Account settings, Integrations, App integrations, add a manual integration.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.getdbt/mcp.",
+          "Enter the client ID. dbt does not issue a client secret."
+        ],
+        "docs_url": "https://docs.getdbt.com/docs/platform/manage-access/connect-apps-oauth",
+        "note": "{dbt_host} is the account host, for example cloud.getdbt.com or prefix.us1.dbt.com. The client must use PKCE. Register the callback https://<gateway-mcp host>/oauth/callback/com.getdbt/mcp."
       },
       "relevance": 70,
       "tools": [
@@ -13731,7 +13752,7 @@
       "name": "com.salesforce/mcp",
       "vendor": "Salesforce",
       "category": "Sales & CRM",
-      "description": "Hosted Salesforce MCP servers (append a server name, e.g. platform/sobject-all). Sandbox uses /v1/sandbox/.",
+      "description": "Hosted Salesforce MCP servers (append a server name, e.g. platform/sobject-all). An admin must create an External Client App. Sandbox MCP paths use /v1/sandbox/.",
       "capabilities": [
         "Query Salesforce records",
         "Update CRM objects",
@@ -13750,7 +13771,27 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://login.salesforce.com/services/oauth2/authorize",
+        "token_url": "https://login.salesforce.com/services/oauth2/token",
+        "scopes": [
+          "mcp_api",
+          "refresh_token"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an External Client App in Salesforce.",
+        "steps": [
+          "Create an External Client App with OAuth, PKCE, and JWT-based access tokens.",
+          "Add the scopes Access MCP servers (mcp_api) and Perform requests at any time (refresh_token).",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp.",
+          "Enter the consumer key as the client ID and the consumer secret as the client secret."
+        ],
+        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
+        "note": "Production orgs use https://login.salesforce.com. Sandbox and scratch orgs authorize at https://test.salesforce.com, which this entry does not pin. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp."
       },
       "relevance": 100
     },
@@ -14237,7 +14278,7 @@
       "name": "com.servicenow/mcp",
       "vendor": "ServiceNow",
       "category": "ITSM",
-      "description": "Per-instance ServiceNow MCP server (Zurich+); append your registered server name.",
+      "description": "Per-instance ServiceNow MCP server (Zurich+); append your registered server name. An admin must create an OAuth app on the instance.",
       "capabilities": [
         "Manage incidents and requests",
         "Search the knowledge base",
@@ -14261,7 +14302,25 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{instance}.service-now.com/oauth_auth.do",
+        "token_url": "https://{instance}.service-now.com/oauth_token.do",
+        "scopes": [
+          "useraccount"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app on the ServiceNow instance.",
+        "steps": [
+          "Create an OAuth authorization-code inbound integration for the MCP client.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.servicenow/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "docs_url": "https://www.servicenow.com/docs/r/zurich/intelligent-experiences/create-oauth-inbound-integration-mcp-client.html",
+        "note": "{instance} is the instance name only, for example acme, not acme.service-now.com. Use the useraccount scope and leave the integration broadly scoped so MCP tools stay visible. Register the callback https://<gateway-mcp host>/oauth/callback/com.servicenow/mcp."
       },
       "relevance": 85
     },
@@ -14752,7 +14811,7 @@
       "name": "com.snowflake/mcp",
       "vendor": "Snowflake",
       "category": "Data & Analytics",
-      "description": "Snowflake-managed Cortex MCP server scoped to a database/schema.",
+      "description": "Snowflake-managed Cortex MCP server scoped to a database/schema. An admin must create a Snowflake OAuth security integration.",
       "capabilities": [
         "Query Cortex data",
         "Explore database schemas",
@@ -14787,7 +14846,26 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{account_url}/oauth/authorize",
+        "token_url": "https://{account_url}/oauth/token-request",
+        "scopes": [
+          "refresh_token",
+          "session:role:all"
+        ]
+      },
+      "config_guide": {
+        "summary": "Create a Snowflake OAuth security integration for TrustGate.",
+        "steps": [
+          "Create a custom OAuth security integration (confidential, or public with PKCE).",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
+        "note": "{account_url} is the account host, for example org-account.snowflakecomputing.com. The session uses the user's default role (session:role:all) and refresh_token keeps the grant refreshable. Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp."
       },
       "relevance": 95
     },
