@@ -95,6 +95,25 @@ func usageMessage(snapshot usagedomain.Snapshot) *snapshotpb.ServerMessage {
 	return &snapshotpb.ServerMessage{Msg: &snapshotpb.ServerMessage_Usage{Usage: msg}}
 }
 
+func usageSnapshotFromProto(msg *snapshotpb.UsageSnapshot) usagedomain.Snapshot {
+	out := usagedomain.Snapshot{AsOfVersion: msg.GetAsOfVersion()}
+	for _, entry := range msg.GetExhausted() {
+		state, err := usagedomain.NewTenantState(entry.GetTenantId(), usagedomain.StatusExhausted, usageReasonFromProto(entry.GetReason()), entry.GetVersion())
+		if err != nil {
+			continue
+		}
+		out.Exhausted = append(out.Exhausted, state)
+	}
+	return out
+}
+
+func usageReasonFromProto(reason snapshotpb.UsageReason) usagedomain.Reason {
+	if reason == snapshotpb.UsageReason_USAGE_REASON_FREE_LIMIT_REACHED {
+		return usagedomain.ReasonFreeLimitReached
+	}
+	return usagedomain.ReasonWalletEmpty
+}
+
 func usageReasonToProto(reason usagedomain.Reason) snapshotpb.UsageReason {
 	switch reason {
 	case usagedomain.ReasonFreeLimitReached:

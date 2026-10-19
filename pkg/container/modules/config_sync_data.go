@@ -22,6 +22,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -37,6 +38,9 @@ import (
 // last-known-good, the gRPC client that dials the control plane and serves as both the snapshot
 // fetcher and the change-notice stream transport, the LKG store, and the convergence worker.
 func ConfigSyncData(c *container.Container) error {
+	if err := provideDataPlaneUsage(c); err != nil {
+		return err
+	}
 	if err := c.Provide(func() configsync.ConfigStore[*readmodel.Snapshot] {
 		return configsync.NewMemoryStore[*readmodel.Snapshot]()
 	}); err != nil {
@@ -61,8 +65,13 @@ func ConfigSyncData(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (*configsyncgrpc.Client, error) {
-		return configsyncgrpc.NewClient(cfg.ConfigSync, logger)
+	if err := c.Provide(func(cfg *config.Config, enforcement *appusage.Enforcement, logger *slog.Logger) (*configsyncgrpc.Client, error) {
+		client, err := configsyncgrpc.NewClient(cfg.ConfigSync, logger)
+		if err != nil {
+			return nil, err
+		}
+		client.SetUsageSink(enforcement)
+		return client, nil
 	}); err != nil {
 		return err
 	}
