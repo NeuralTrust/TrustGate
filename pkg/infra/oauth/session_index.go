@@ -147,12 +147,21 @@ func (s *Store) ApplyDirectoryGroups(ctx context.Context, org, gatewayID, subjec
 	if err := s.rdb.Set(ctx, directoryGroupsKey(gatewayID, org, subject), body, ttl).Err(); err != nil {
 		return 0, fmt.Errorf("oauth flow store: save directory groups: %w", err)
 	}
+	written := 0
 	for _, update := range updates {
-		if err := s.rdb.Set(ctx, update.key, update.raw, redis.KeepTTL).Err(); err != nil {
+		// XX refuses to create the key. A refresh that retired the record
+		// between the read and this write, or whose grace TTL has already
+		// elapsed, must not come back with no expiry.
+		err := s.rdb.SetArgs(ctx, update.key, update.raw, redis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
 			return 0, fmt.Errorf("oauth flow store: update session groups: %w", err)
 		}
+		written++
 	}
-	return len(updates), nil
+	return written, nil
 }
 
 // LookupDirectoryGroups returns the last directory list pushed for this
