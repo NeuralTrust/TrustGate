@@ -256,6 +256,16 @@ func testCatalog() fakeCatalog {
 			},
 			SelfService: true,
 		},
+		"kibana": {
+			Code:        "kibana",
+			DisplayName: "Kibana",
+			URL:         "https://{host}/s/{space}/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "host", Required: true},
+				{Name: "space", Required: true},
+			},
+			SelfService: true,
+		},
 		"com.replicate/mcp": {
 			Code:        "com.replicate/mcp",
 			DisplayName: "Replicate",
