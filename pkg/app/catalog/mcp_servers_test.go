@@ -384,12 +384,12 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.Contains(t, server.ConfigGuide.Note, "/oauth/callback/com.amazon.aws/mcp")
 }
 
-// The registry canonicalizer copies oauth.resource verbatim. Connect fills a
-// template (applyCatalog, then finalizeAuthURLs) only from the row's URL
-// values, or from a closed option inferred for a fixed URL. An open
-// placeholder has nothing to fill it, so the authorization server would
-// receive a literal "{name}". A templated resource is allowed only when every
-// placeholder is a closed variable that also appears in the server URL.
+// A templated oauth.resource is stored as the concrete audience when the row
+// URL matches one closed option, and a per-user template is fingerprinted
+// from that caller's instance config. An open placeholder has nothing safe
+// to fill it, so the authorization server would receive a literal "{name}".
+// A template is allowed only when every placeholder is a closed variable
+// that also appears in the server URL.
 func TestCuratedCatalog_TemplatedOAuthResourceIsClosed(t *testing.T) {
 	t.Parallel()
 

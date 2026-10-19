@@ -218,7 +218,10 @@ func catalogOAuth(code string, o *catalogdomain.MCPOAuth) *registrydomain.MCPAut
 		AuthorizeURL: strings.TrimSpace(o.AuthorizeURL),
 		TokenURL:     strings.TrimSpace(o.TokenURL),
 		Scopes:       o.Scopes,
-		Resource:     strings.TrimSpace(o.Resource),
+		// A closed-option template stays on this shared shelf. The vault key
+		// fills it from the caller's instance config; pinning one region here
+		// would make every other region dial that audience.
+		Resource: strings.TrimSpace(o.Resource),
 	}
 	if strings.EqualFold(strings.TrimSpace(o.Registration), "manual") {
 		auth.Registration = registrydomain.RegistrationManual

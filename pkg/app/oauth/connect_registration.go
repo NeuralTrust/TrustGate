@@ -380,99 +380,14 @@ func catalogServerMatches(entry catalogdomain.MCPServer, res upstreamResolution)
 }
 
 // catalogMatchValues returns the placeholder values that make the catalog
-// server URL the row's resolved upstream URL. The row's values are used as
-// given. A missing value for a closed variable is filled by trying each listed
-// option, and the match holds only when exactly one such filling resolves to
-// res.url. The returned map is a copy.
+// server URL the row's resolved upstream URL. Closed-option inference is
+// registrydomain.ClosedOptionMatch, which the registry canonicalizer uses
+// when it stores a concrete resource for the same row.
 func catalogMatchValues(entry catalogdomain.MCPServer, res upstreamResolution) (map[string]string, bool) {
 	if !res.ready {
 		return nil, false
 	}
-	raw := strings.TrimSpace(entry.URL)
-	if raw == "" {
-		return nil, false
-	}
-	if !strings.Contains(raw, "{") {
-		if !registrydomain.SameCanonicalResource(res.url, raw) {
-			return nil, false
-		}
-		return cloneStringMap(res.values), true
-	}
-	vars := catalogRegistryURLVars(entry)
-	declared := make(map[string]registrydomain.MCPURLVariable, len(vars))
-	for _, variable := range vars {
-		declared[variable.Name] = variable
-	}
-	values := cloneStringMap(res.values)
-	var missing []registrydomain.MCPURLVariable
-	for _, name := range registrydomain.TemplateVariableNames(raw) {
-		if strings.TrimSpace(values[name]) != "" {
-			continue
-		}
-		variable, known := declared[name]
-		if !known || !variable.HasOptions() {
-			return nil, false
-		}
-		missing = append(missing, variable)
-	}
-	if len(missing) == 0 {
-		resolved, ok := resolveCatalogServerURL(entry, values)
-		if !ok || !registrydomain.SameCanonicalResource(res.url, resolved) {
-			return nil, false
-		}
-		return values, true
-	}
-	return matchClosedOptions(entry, values, missing, res.url)
-}
-
-// matchClosedOptions tries each combination of the missing closed variables.
-// It returns those values only when exactly one combination resolves to want.
-func matchClosedOptions(entry catalogdomain.MCPServer, base map[string]string, missing []registrydomain.MCPURLVariable, want string) (map[string]string, bool) {
-	if base == nil {
-		base = map[string]string{}
-	}
-	var matched map[string]string
-	matches := 0
-	var walk func(i int)
-	walk = func(i int) {
-		if matches > 1 {
-			return
-		}
-		if i == len(missing) {
-			resolved, ok := resolveCatalogServerURL(entry, base)
-			if !ok || !registrydomain.SameCanonicalResource(want, resolved) {
-				return
-			}
-			matches++
-			if matches == 1 {
-				matched = cloneStringMap(base)
-			}
-			return
-		}
-		name := missing[i].Name
-		previous, had := base[name]
-		for _, option := range missing[i].Options {
-			base[name] = option.Value
-			walk(i + 1)
-			if matches > 1 {
-				break
-			}
-		}
-		if had {
-			base[name] = previous
-		} else {
-			delete(base, name)
-		}
-	}
-	walk(0)
-	if matches != 1 {
-		return nil, false
-	}
-	return matched, true
-}
-
-func resolveCatalogServerURL(entry catalogdomain.MCPServer, values map[string]string) (string, bool) {
-	return resolveCatalogTemplate(entry, entry.URL, values)
+	return registrydomain.ClosedOptionMatch(entry.URL, catalogRegistryURLVars(entry), res.values, res.url)
 }
 
 func resolveCatalogTemplate(entry catalogdomain.MCPServer, raw string, values map[string]string) (string, bool) {
@@ -496,17 +411,6 @@ func catalogRegistryURLVars(entry catalogdomain.MCPServer) []registrydomain.MCPU
 		vars = append(vars, toRegistryURLVar(variable))
 	}
 	return vars
-}
-
-func cloneStringMap(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
 }
 
 func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *RegisteredClient) *registrydomain.MCPAuth {

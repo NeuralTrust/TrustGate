@@ -90,6 +90,132 @@ func TestForwardedVaultProvider_IgnoresWhatDoesNotForward(t *testing.T) {
 	require.Nil(t, reg.ForwardedAuth())
 }
 
+func pagerDutyHostOptions() []domain.MCPURLVariable {
+	return []domain.MCPURLVariable{{
+		Name:     "host",
+		Required: true,
+		Options: []domain.MCPURLVariableOption{
+			{Value: "mcp.pagerduty.com", Label: "United States"},
+			{Value: "mcp.eu.pagerduty.com", Label: "Europe"},
+		},
+	}}
+}
+
+func pagerDutyTemplated(t *testing.T, gw ids.GatewayID, name string, config map[string]string) *domain.Registry {
+	t.Helper()
+	reg, err := domain.NewMCPRegistry(gw, name, "", &domain.MCPTarget{
+		Code:         "com.pagerduty/mcp",
+		URL:          "https://{host}/mcp",
+		URLVariables: pagerDutyHostOptions(),
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     "com.pagerduty/mcp",
+			Registration: domain.RegistrationManual,
+			ClientID:     "pagerduty-client",
+			AuthorizeURL: "https://app.pagerduty.com/global/oauth/authorize",
+			TokenURL:     "https://app.pagerduty.com/global/oauth/token",
+			Resource:     "https://{host}/mcp",
+		},
+	})
+	require.NoError(t, err)
+	reg.MCPTarget.InstanceConfig = config
+	return reg
+}
+
+// Per-user installs keep the catalog template on the shelf. The vault key
+// fills the closed host from instance config, so US and EU in one gateway
+// do not overwrite each other's token.
+func TestForwardedVaultProvider_PagerDutyTemplatedRegionsDoNotOverwrite(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	us := pagerDutyTemplated(t, gw, "PagerDuty US", map[string]string{"host": "mcp.pagerduty.com"})
+	eu := pagerDutyTemplated(t, gw, "PagerDuty EU", map[string]string{"host": "mcp.eu.pagerduty.com"})
+	bare := pagerDutyTemplated(t, gw, "PagerDuty", nil)
+
+	usKey := domain.ForwardedVaultProvider(us)
+	euKey := domain.ForwardedVaultProvider(eu)
+	require.NotEqual(t, usKey, euKey)
+	require.NotEqual(t, usKey, domain.ForwardedVaultProvider(bare))
+	require.Equal(t, "https://mcp.pagerduty.com/mcp", domain.ForwardedCredentialResource(us))
+	require.Equal(t, "https://mcp.eu.pagerduty.com/mcp", domain.ForwardedCredentialResource(eu))
+	require.Equal(t, "https://{host}/mcp", domain.ForwardedCredentialResource(bare))
+
+	tokens := map[string]string{usKey: "us-token"}
+	tokens[euKey] = "eu-token"
+	require.Equal(t, "us-token", tokens[domain.ForwardedVaultProvider(us)])
+	require.Equal(t, "eu-token", tokens[domain.ForwardedVaultProvider(eu)])
+	require.Equal(t, usKey, domain.ForwardedVaultProvider(us))
+}
+
+// An open placeholder, a dynamic client, and an empty resource keep the
+// fingerprint they were stored under. Filling those from instance config
+// would orphan existing tokens.
+func TestForwardedVaultProvider_ClosedOptionResolutionStaysNarrow(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+
+	open, err := domain.NewMCPRegistry(gw, "Aha", "", &domain.MCPTarget{
+		URL:          "https://{domain}.aha.io/api/v1/mcp",
+		URLVariables: []domain.MCPURLVariable{{Name: "domain", Required: true}},
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     "io.aha/mcp",
+			Registration: domain.RegistrationManual,
+			ClientID:     "aha-client",
+			AuthorizeURL: "https://acme.aha.io/oauth/authorize",
+			TokenURL:     "https://acme.aha.io/oauth/token",
+			Resource:     "https://{domain}.aha.io/api/v1/mcp",
+		},
+	})
+	require.NoError(t, err)
+	openKey := domain.ForwardedVaultProvider(open)
+	open.MCPTarget.InstanceConfig = map[string]string{"domain": "acme"}
+	require.Equal(t, openKey, domain.ForwardedVaultProvider(open))
+	require.Contains(t, domain.ForwardedCredentialResource(open), "{domain}")
+
+	auto, err := domain.NewMCPRegistry(gw, "New Relic", "", &domain.MCPTarget{
+		URL:          "https://{host}/mcp/",
+		URLVariables: pagerDutyHostOptions(),
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     "com.newrelic/mcp",
+			Registration: domain.RegistrationAuto,
+			Resource:     "https://{host}/mcp/",
+		},
+	})
+	require.NoError(t, err)
+	auto.MCPTarget.URLVariables[0].Options = []domain.MCPURLVariableOption{
+		{Value: "mcp.newrelic.com"},
+		{Value: "mcp.eu.newrelic.com"},
+	}
+	autoKey := domain.ForwardedVaultProvider(auto)
+	auto.MCPTarget.InstanceConfig = map[string]string{"host": "mcp.newrelic.com"}
+	require.Equal(t, autoKey, domain.ForwardedVaultProvider(auto))
+	require.Equal(t, "https://{host}/mcp", domain.ForwardedCredentialResource(auto))
+
+	shelf, err := domain.NewMCPRegistry(gw, "Vanta", "", &domain.MCPTarget{
+		URL: "https://{host}/mcp",
+		URLVariables: []domain.MCPURLVariable{{
+			Name:     "host",
+			Required: true,
+			Options: []domain.MCPURLVariableOption{
+				{Value: "mcp.vanta.com", Label: "United States"},
+				{Value: "mcp.eu.vanta.com", Label: "Europe"},
+			},
+		}},
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     "com.vanta/mcp",
+			Registration: domain.RegistrationAuto,
+		},
+	})
+	require.NoError(t, err)
+	shelfKey := domain.ForwardedVaultProvider(shelf)
+	shelf.MCPTarget.InstanceConfig = map[string]string{"host": "mcp.vanta.com"}
+	require.Equal(t, shelfKey, domain.ForwardedVaultProvider(shelf))
+	require.Contains(t, domain.ForwardedCredentialResource(shelf), "{host}")
+}
+
 func TestForwardedVaultProviderName_LeavesAPlainKeyAlone(t *testing.T) {
 	t.Parallel()
 	// A URL-variable key carries no fingerprint and must not be truncated into
