@@ -49,6 +49,8 @@ type Store struct {
 // SetDefaultIDPSessionMaxAge records MCP_DEFAULT_IDP_SESSION_MAX_AGE. A
 // revocation marker lives for the longer of the idle session lifetime and
 // this absolute cap. A non-positive value leaves the idle lifetime in place.
+// The DELETE that writes the marker runs in the admin process, so the cap is
+// the one configured there, not only on MCP.
 func (s *Store) SetDefaultIDPSessionMaxAge(d time.Duration) {
 	if d > 0 {
 		s.sessionMaxAge = d
