@@ -144,7 +144,7 @@ func TestConnect_PagerDutyInstancesBindTheirOwnRegion(t *testing.T) {
 
 	gw := eu.GatewayID
 	vault := &memVaultRepo{}
-	cred, err := vaultdomain.NewCredential(gw, "alice", euKey, "Europe-PQ2SEO8", "eu-access", "eu-refresh", []string{"read"}, time.Now().Add(time.Hour))
+	cred, err := vaultdomain.NewCredential(gw, "alice", euKey, "europe-user", "eu-access", "eu-refresh", []string{"read"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
