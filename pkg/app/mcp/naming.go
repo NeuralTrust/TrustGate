@@ -444,6 +444,39 @@ func serverSlug(reg *registrydomain.Registry) string {
 	return slug
 }
 
+// legacyExposedName is the spelling v0.66.0 published: the server slug always
+// in front, a digest for every configured instance, and an overlong name cut at
+// the tail. Resolve still accepts it, so a client that listed tools before the
+// v2 names keeps calling them, and pods on the old release and the new one
+// answer the same call during a rollout.
+func legacyExposedName(upstream string, reg *registrydomain.Registry) string {
+	server := legacyServerSlug(reg)
+	full := server + "_" + upstream
+	if server == "" {
+		full = upstream
+	}
+	if len(full) <= maxExposedNameLength {
+		return full
+	}
+	suffix := contentSuffix(full)
+	keep := maxExposedNameLength - len(server) - 1 - len(suffix)
+	if keep < 1 {
+		return full[:maxExposedNameLength-len(suffix)] + suffix
+	}
+	return server + "_" + upstream[:keep] + suffix
+}
+
+func legacyServerSlug(reg *registrydomain.Registry) string {
+	if reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) == 0 {
+		return serverSlug(reg)
+	}
+	slug := slugFromCatalogCode(reg.MCPTarget.Code)
+	if slug == "" {
+		return serverSlug(reg)
+	}
+	return slug + "_" + registryDigest(reg, 6)
+}
+
 // promptName is the spelling prompts keep: <server>_<prompt>. A repeated
 // server prefix is not dropped the way a tool name is, and a name that does
 // not fit loses the tail of the prompt to the content hash.
