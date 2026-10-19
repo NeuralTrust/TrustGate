@@ -458,6 +458,66 @@ func TestCuratedCatalog_SeedFixesLeaveUnchangedEntries(t *testing.T) {
 	require.Contains(t, halo.AuthHeaders[0].Description, "(we add 'Bearer')")
 }
 
+// Admin OAuth apps that previously left registration unset. The manual
+// registration, endpoints, and scopes are what the registry form and
+// canonicalizeAuthorizationCode copy onto a new instance.
+func TestCuratedCatalog_AdminOAuthApps(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	salesforce := mustCatalogServer(t, cat, "com.salesforce/mcp")
+	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/{server}", salesforce.URL)
+	require.False(t, salesforce.SelfService)
+	require.True(t, salesforce.RequiresConfig)
+	requireOAuth(t, salesforce, "manual", false, []string{"mcp_api", "refresh_token"})
+	requireAdminOAuthApp(t, salesforce, "https://login.salesforce.com/services/oauth2/authorize", "https://login.salesforce.com/services/oauth2/token")
+	require.Contains(t, salesforce.ConfigGuide.Note, "https://test.salesforce.com")
+
+	servicenow := mustCatalogServer(t, cat, "com.servicenow/mcp")
+	require.Equal(t, "https://{instance}.service-now.com/sncapps/mcp-server/mcp/{server}", servicenow.URL)
+	require.False(t, servicenow.SelfService)
+	require.True(t, servicenow.RequiresConfig)
+	requireOAuth(t, servicenow, "manual", false, []string{"useraccount"})
+	requireAdminOAuthApp(t, servicenow, "https://{instance}.service-now.com/oauth_auth.do", "https://{instance}.service-now.com/oauth_token.do")
+
+	snowflake := mustCatalogServer(t, cat, "com.snowflake/mcp")
+	require.Equal(t, "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{name}", snowflake.URL)
+	require.Equal(t, []string{"*.snowflakecomputing.com"}, variableByName(t, snowflake, "account_url").HostSuffix)
+	require.False(t, snowflake.SelfService)
+	require.True(t, snowflake.RequiresConfig)
+	requireOAuth(t, snowflake, "manual", false, []string{"refresh_token", "session:role:all"})
+	requireAdminOAuthApp(t, snowflake, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token-request")
+
+	dbt := mustCatalogServer(t, cat, "com.getdbt/mcp")
+	require.Equal(t, "https://{dbt_host}/api/ai/v1/mcp/", dbt.URL)
+	require.NotEmpty(t, variableByName(t, dbt, "dbt_host").HostSuffix)
+	require.False(t, dbt.SelfService)
+	require.True(t, dbt.RequiresConfig)
+	requireOAuth(t, dbt, "manual", false, []string{"offline_access", "account:read", "projects:query", "catalog:read"})
+	requireAdminOAuthApp(t, dbt, "https://{dbt_host}/oauth/authorize", "https://{dbt_host}/oauth/token")
+	require.Contains(t, dbt.ConfigGuide.Steps[2], "does not issue a client secret")
+}
+
+func requireAdminOAuthApp(t *testing.T, server domain.MCPServer, authorize, token string) {
+	t.Helper()
+	require.NotNil(t, server.OAuth.PKCE, server.Code)
+	require.True(t, *server.OAuth.PKCE, server.Code)
+	require.False(t, server.OAuth.CrossDomainContact, server.Code)
+	require.Empty(t, server.OAuth.Resource, server.Code)
+	require.True(t, server.OAuth.ResourceMetadata, server.Code)
+	require.Equal(t, authorize, server.OAuth.AuthorizeURL, server.Code)
+	require.Equal(t, token, server.OAuth.TokenURL, server.Code)
+	require.NotNil(t, server.ConfigGuide, server.Code)
+	callback := "https://<gateway-mcp host>/oauth/callback/" + server.Code
+	require.Contains(t, server.ConfigGuide.Note, callback, server.Code)
+	var steps string
+	for _, step := range server.ConfigGuide.Steps {
+		steps += step + "\n"
+	}
+	require.Contains(t, steps, callback, server.Code)
+}
+
 // Header placeholders name the secret the operator types. The gateway adds
 // the scheme, so the description must not also start with that scheme.
 func TestCuratedCatalog_HeaderPlaceholdersDoNotRepeatTheScheme(t *testing.T) {
