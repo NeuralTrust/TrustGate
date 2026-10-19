@@ -63,6 +63,7 @@ type healthParams struct {
 	Store                  configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
 	Status                 *configsync.SnapshotStatus                  `optional:"true"`
 	AdminSnapshotReadiness adminSnapshotReadiness                      `optional:"true"`
+	AdminUsageReadiness    adminUsageReadiness                         `optional:"true"`
 	// Provider is only a dependency: it guarantees the SDK has installed the
 	// global MeterProvider before the snapshot gauges are registered.
 	Provider *o11y.Provider
@@ -75,9 +76,12 @@ func adminReadiness(plane string) container.Module {
 		if plane != "admin" && plane != "run" {
 			return nil
 		}
-		return c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
+		if err := c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
 			return d.Readiness
-		})
+		}); err != nil {
+			return err
+		}
+		return c.Provide(provideAdminUsageReadiness)
 	}
 }
 
@@ -137,6 +141,9 @@ func API(c *container.Container) error {
 		}
 		if p.AdminSnapshotReadiness != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "compiled_snapshot", Ping: p.AdminSnapshotReadiness})
+		}
+		if p.AdminUsageReadiness != nil {
+			checks = append(checks, apihandler.ReadinessCheck{Name: "usage_list", Ping: p.AdminUsageReadiness})
 		}
 		h := apihandler.NewHealthHandler(checks...)
 		if p.Status != nil {

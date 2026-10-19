@@ -63,6 +63,9 @@ type Data struct {
 	// one with none, is not a revocation. A data plane that does not know the
 	// field skips it.
 	SessionRevocations []SessionRevocation
+	// UsageEnforcement tells the data plane to block exhausted tenants and to
+	// wait for the list of them before it reports ready.
+	UsageEnforcement bool
 }
 
 // SessionRevocation is one default-IdP subject revoked at RevokedAt.
@@ -382,6 +385,9 @@ func (s *Snapshot) Version() string { return s.data.Version }
 func (s *Snapshot) PlaygroundTokenKeys() []VerificationKey { return s.data.PlaygroundTokenKeys }
 
 func (s *Snapshot) Data() Data { return s.data }
+
+// UsageEnforcement reports whether the control plane enforces usage states.
+func (s *Snapshot) UsageEnforcement() bool { return s.data.UsageEnforcement }
 
 // TenantCapsByTenantID returns the plan caps stored for the tenant. The second
 // result is false when the snapshot has none, which is every tenant in a
