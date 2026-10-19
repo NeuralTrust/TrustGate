@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -200,6 +201,55 @@ func TestInstallSelectedCodeGrantStaticOnlyRequiresAdminSetup(t *testing.T) {
 	}
 	if !res.RequiresAdminSetup || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
 		t.Fatalf("expected requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
+	}
+}
+
+// These six catalog entries carry a non-secret URL variable. An employee
+// install with no admin row asks for that setup instead of failing as bad
+// config. Sending the variable is still refused: the admin writes it.
+func TestInstall_AdminOnlyURLVariableEntriesRequireAdminSetup(t *testing.T) {
+	cat, err := appcatalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	codes := []string{
+		"io.aha/mcp",
+		"com.algolia/mcp",
+		"com.gorgias/mcp",
+		"io.n8n/mcp",
+		"com.shopify/storefront",
+		"com.vanta/mcp",
+	}
+	for _, code := range codes {
+		t.Run(code, func(t *testing.T) {
+			gw := ids.New[ids.GatewayKind]()
+			regs := &fakeRegistries{}
+			ensurer := &fakeEnsurer{addTo: regs}
+			installs := &fakeInstalls{}
+			inst, err := NewInstaller(cat, regs, installs, nil, ensurer)
+			if err != nil {
+				t.Fatalf("NewInstaller: %v", err)
+			}
+			res, err := inst.Install(context.Background(), openReq(gw, code))
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			if !res.RequiresAdminSetup || res.Status != "" || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
+				t.Fatalf("want requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
+			}
+		})
+	}
+
+	gw := ids.New[ids.GatewayKind]()
+	inst, err := NewInstaller(cat, &fakeRegistries{}, &fakeInstalls{}, nil, &fakeEnsurer{})
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	in := openReq(gw, "com.shopify/storefront")
+	in.Config = map[string]string{"shop": "allbirds"}
+	_, err = inst.Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("employee shop must be rejected, got %v", err)
 	}
 }
 
