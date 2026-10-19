@@ -85,7 +85,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 199, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 198, "the seed grew or shrank; re-audit the flags")
 
 	self := 0
 	for _, s := range servers {
@@ -120,9 +120,11 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// 109 after the catalog seed fixes: ten DCR failures left self-service
 	// (nine manual OAuth apps, Firecrawl an admin API key) and six admin-gated
 	// entries became self-service (Algolia, Teamwork, Plaid, Cube, Dropbox, Jotform).
+	// 107 after Storyblok left self-service (vendor redirect allowlist, ENG-2189)
+	// and Replicate was hidden as SSE-unsupported, so it no longer loads.
 	// Freshworks (ENG-2261) was already not self-service and stays that way as a
 	// manual OAuth app, so this count does not move.
-	require.Equal(t, 109, self, "self_service count changed")
+	require.Equal(t, 107, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth

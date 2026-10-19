@@ -16,6 +16,7 @@ package registry
 
 import (
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -224,5 +225,146 @@ func TestValidateURLValues_OpenVariableStillTakesAnyWellFormedValue(t *testing.T
 		if err := ValidateURLValues(vars, map[string]string{"domain": val}); err != nil {
 			t.Fatalf("%q was refused: %v", val, err)
 		}
+	}
+}
+
+// Algolia uniq ids are path segments and the vendor's ids can start with '-'.
+// The value is substituted into the URL, so the hyphen cannot inject a host,
+// a scheme or a process argument. The resolved URL must keep the fixed host
+// and put the id in that one path segment.
+func TestResolveURL_AlgoliaUniqIDMayStartWithHyphen(t *testing.T) {
+	const tmpl = "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp"
+	vars := []MCPURLVariable{
+		{Name: "app_id", Required: true},
+		{Name: "uniq_id", Required: true},
+	}
+	for _, uniq := range []string{"-7f3a9c2e", "--7f3a9c2e_b", "-a"} {
+		values := map[string]string{"app_id": "latency", "uniq_id": uniq}
+		if err := ValidateURLValues(vars, values); err != nil {
+			t.Fatalf("uniq_id %q rejected at install: %v", uniq, err)
+		}
+		got, err := ResolveURL(tmpl, vars, values)
+		if err != nil {
+			t.Fatalf("uniq_id %q rejected at resolve: %v", uniq, err)
+		}
+		want := "https://latency.algolia.net/mcp/1/" + uniq + "/mcp"
+		if got != want {
+			t.Fatalf("uniq_id %q: got %q, want %q", uniq, got, want)
+		}
+		parsed, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("resolved url: %v", err)
+		}
+		if parsed.Scheme != "https" || parsed.Host != "latency.algolia.net" || parsed.Path != "/mcp/1/"+uniq+"/mcp" || parsed.User != nil {
+			t.Fatalf("uniq_id %q changed url structure: %#v", uniq, parsed)
+		}
+	}
+
+	// A host label may start with '-' too. It stays inside the fixed suffix.
+	got, err := ResolveURL(tmpl, vars, map[string]string{"app_id": "-app", "uniq_id": "abc"})
+	if err != nil {
+		t.Fatalf("host label with a leading hyphen: %v", err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.Host != "-app.algolia.net" || parsed.Path != "/mcp/1/abc/mcp" {
+		t.Fatalf("host label escaped its suffix: %#v", parsed)
+	}
+}
+
+func TestValidateURLValues_AlgoliaStillRejectsInjection(t *testing.T) {
+	const tmpl = "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp"
+	vars := []MCPURLVariable{
+		{Name: "app_id", Required: true},
+		{Name: "uniq_id", Required: true},
+	}
+	rejected := []string{
+		"..",
+		"-..",
+		"../etc",
+		"a/b",
+		"/",
+		"a..b",
+		"foo/../bar",
+		"evil.com/",
+		"user@evil.com",
+		"evil.com:443",
+		"https://evil.com",
+		"http://evil.com",
+		"evil.com#frag",
+		"evil.com?x=1",
+		"has space",
+		"pct%2f",
+		"%2e%2e",
+		".hidden",
+		"_id",
+		"abc-",
+		"abc.",
+		"abc_",
+		"-",
+		"--",
+		"-.",
+		"a\nb",
+		"a\x00b",
+	}
+	for _, bad := range rejected {
+		values := map[string]string{"app_id": "latency", "uniq_id": bad}
+		if err := ValidateURLValues(vars, values); !errors.Is(err, ErrURLTemplate) {
+			t.Fatalf("uniq_id %q must be rejected at install, got %v", bad, err)
+		}
+		got, err := ResolveURL(tmpl, vars, values)
+		if !errors.Is(err, ErrURLTemplate) || got != "" {
+			t.Fatalf("uniq_id %q must fail closed, got %q, %v", bad, got, err)
+		}
+	}
+
+	if err := ValidateURLValues(vars, map[string]string{"app_id": "latency", "uniq_id": ""}); !errors.Is(err, ErrURLTemplate) {
+		t.Fatalf("empty uniq_id must be rejected, got %v", err)
+	}
+	if err := ValidateURLValues(vars, map[string]string{"app_id": "latency", "uniq_id": "   "}); !errors.Is(err, ErrURLTemplate) {
+		t.Fatalf("blank uniq_id must be rejected, got %v", err)
+	}
+	if err := ValidateURLValue(MCPURLVariable{Name: "uniq_id"}, ""); !errors.Is(err, ErrURLTemplate) {
+		t.Fatalf("empty segment must be rejected, got %v", err)
+	}
+}
+
+// An explicit path placement is the same kind as the default (empty) one.
+// A placement that is not a URL segment keeps the old rule: a leading '-' is
+// rejected, because that value is not known to be confined to a URL.
+func TestValidateURLValue_LeadingHyphenDependsOnPlacement(t *testing.T) {
+	if err := ValidateURLValue(MCPURLVariable{Name: "uniq_id", In: URLVariableInPath}, "-7f3a9c2e"); err != nil {
+		t.Fatalf("path segment must accept a leading hyphen: %v", err)
+	}
+	for _, in := range []string{"argument", "header", "flag"} {
+		err := ValidateURLValue(MCPURLVariable{Name: "flag", In: in}, "-n")
+		if !errors.Is(err, ErrURLTemplate) {
+			t.Fatalf("placement %q must still reject a leading hyphen, got %v", in, err)
+		}
+		if !strings.Contains(err.Error(), "start and end with a letter or digit") {
+			t.Fatalf("placement %q error should describe the strict shape, got %q", in, err)
+		}
+		if err := ValidateURLValue(MCPURLVariable{Name: "flag", In: in}, "name"); err != nil {
+			t.Fatalf("placement %q rejected a plain value: %v", in, err)
+		}
+	}
+}
+
+// Query values are a different kind. A leading '-' stays accepted because the
+// value is percent-escaped, and the segment charset is not applied to them.
+func TestResolveURL_QueryValueUnchangedBySegmentRule(t *testing.T) {
+	got, err := ResolveURL("https://mcp.example.com/mcp?token={token}",
+		[]MCPURLVariable{{Name: "token", Required: true, In: URLVariableInQuery}},
+		map[string]string{"token": "-sk/../x"})
+	if err != nil {
+		t.Fatalf("query value rejected: %v", err)
+	}
+	if got != "https://mcp.example.com/mcp?token=-sk%2F..%2Fx" {
+		t.Fatalf("query escaping changed: %q", got)
+	}
+	if err := ValidateURLValue(MCPURLVariable{Name: "token", In: URLVariableInQuery}, "a\nb"); !errors.Is(err, ErrURLTemplate) {
+		t.Fatalf("query control characters must stay rejected, got %v", err)
 	}
 }
