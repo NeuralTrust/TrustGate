@@ -58,7 +58,11 @@ type authProxy struct {
 	// through the built-in default identity provider. Zero (the default) means
 	// none: the session is renewed by use, see sessionIdleLifetime.
 	defaultIdPSessionMaxAge time.Duration
-	now                     func() time.Time
+	// snapshotRevocations is the marker from the config snapshot this process
+	// is serving. Nil on a process that has no snapshot. The Redis marker and
+	// this one are both consulted; the later instant wins.
+	snapshotRevocations SnapshotRevocations
+	now                 func() time.Time
 }
 
 // operatorSessionLifetime is the absolute lifetime of a session brokered
@@ -91,6 +95,17 @@ func WithDefaultIdPSessionMaxAge(d time.Duration) ProxyOption {
 	return func(p *authProxy) {
 		if d > 0 {
 			p.defaultIdPSessionMaxAge = d
+		}
+	}
+}
+
+// WithSnapshotRevocations consults the config snapshot's revocation marker as
+// well as the Redis marker. The later instant wins. A nil lookup leaves the
+// Redis marker as the only one.
+func WithSnapshotRevocations(r SnapshotRevocations) ProxyOption {
+	return func(p *authProxy) {
+		if r != nil {
+			p.snapshotRevocations = r
 		}
 	}
 }
@@ -1038,9 +1053,12 @@ func (p *authProxy) refuseRevokedSession(ctx context.Context, refreshToken strin
 }
 
 // loginRevoked reports whether a default-IdP login at loginAt is covered by
-// the subject's revocation marker. A missing marker is not a revocation. A
-// zero loginAt is covered whenever a marker exists. A Redis error is returned
-// so the caller fails the request instead of treating the login as allowed.
+// the subject's revocation marker. The Redis marker and, when this process
+// serves a config snapshot, the snapshot marker are both read; the later
+// instant wins. A missing marker is not a revocation. A zero loginAt is
+// covered whenever a marker exists. A Redis error is returned so the caller
+// fails the request instead of treating the login as allowed. A snapshot that
+// is absent or has no row is not an error.
 func (p *authProxy) loginRevoked(ctx context.Context, authID, gatewayID, org, subject string, loginAt time.Time) (bool, error) {
 	if authID != appauth.DefaultIdPAuthID().String() {
 		return false, nil
@@ -1048,6 +1066,11 @@ func (p *authProxy) loginRevoked(ctx context.Context, authID, gatewayID, org, su
 	revokedAt, err := p.store.SubjectRevokedAt(ctx, gatewayID, org, subject)
 	if err != nil {
 		return false, fmt.Errorf("oauth: load session revocation: %w", err)
+	}
+	if p.snapshotRevocations != nil {
+		if at, ok := p.snapshotRevocations.RevokedAt(gatewayID, org, subject); ok && at.After(revokedAt) {
+			revokedAt = at
+		}
 	}
 	if revokedAt.IsZero() || loginAt.After(revokedAt) {
 		return false, nil

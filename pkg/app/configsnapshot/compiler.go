@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -33,6 +34,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	sessionrevocation "github.com/NeuralTrust/TrustGate/pkg/domain/sessionrevocation"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"golang.org/x/sync/errgroup"
@@ -76,6 +78,15 @@ type Compiler struct {
 	// never mutated, so readers can use it without holding the lock.
 	capsMu   sync.Mutex
 	lastCaps map[string]ratelimitdomain.TenantCaps
+
+	// revocations lists default-IdP session revocations. sessionMaxAge is
+	// MCP_DEFAULT_IDP_SESSION_MAX_AGE; the marker window is the longer of that
+	// and the 30-day idle session lifetime, the same bound the Redis marker uses.
+	revocations   sessionrevocation.Store
+	sessionMaxAge time.Duration
+	// lastRevocations is the last listing that succeeded, replaced whole.
+	revMu           sync.Mutex
+	lastRevocations []readmodel.SessionRevocation
 }
 
 // StoreGrantReader is the read side the compiler needs for MCP Store grants.
@@ -126,6 +137,32 @@ func WithPlaygroundTokenKeys(keys []readmodel.VerificationKey) CompilerOption {
 // gateways it carries.
 func WithTenantCaps(r ratelimitdomain.TenantCapsLister) CompilerOption {
 	return func(c *Compiler) { c.tenantCaps = r }
+}
+
+// sessionIdleLifetime is how long a default-IdP session with no absolute cap
+// stays refreshable. The revocation marker has to outlive it. It matches
+// pkg/app/oauth sessionIdleLifetime and pkg/infra/oauth sessionTTL.
+const sessionIdleLifetime = 30 * 24 * time.Hour
+
+// markerTTL is how long a revocation stays in the snapshot: the longer of the
+// idle session lifetime and MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+func markerTTL(sessionMaxAge time.Duration) time.Duration {
+	if sessionMaxAge > sessionIdleLifetime {
+		return sessionMaxAge
+	}
+	return sessionIdleLifetime
+}
+
+// WithSessionRevocations stamps each snapshot with the default-IdP revocations
+// of the gateways it carries, limited to the marker lifetime. sessionMaxAge is
+// MCP_DEFAULT_IDP_SESSION_MAX_AGE; non-positive leaves the window at 30 days.
+func WithSessionRevocations(r sessionrevocation.Store, sessionMaxAge time.Duration) CompilerOption {
+	return func(c *Compiler) {
+		c.revocations = r
+		if sessionMaxAge > 0 {
+			c.sessionMaxAge = sessionMaxAge
+		}
+	}
 }
 
 func NewCompiler(
@@ -208,6 +245,7 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	mergeCatalog(&data, cat)
 	data.PlaygroundTokenKeys = c.playgroundTokenKeys
 	stampTenantCaps(&data, c.listTenantCaps(ctx))
+	stampSessionRevocations(&data, c.listSessionRevocations(ctx))
 
 	sortData(&data)
 	return readmodel.Build(data), nil
@@ -269,8 +307,11 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 	// the tenants of the gateways it carries, and a scoped one only its own.
 	caps := c.listTenantCaps(ctx)
 	stampTenantCaps(&global, caps)
+	revocations := c.listSessionRevocations(ctx)
+	stampSessionRevocations(&global, revocations)
 	for _, bucket := range buckets {
 		stampTenantCaps(bucket, caps)
+		stampSessionRevocations(bucket, revocations)
 	}
 
 	cat, err := c.collectCatalogData(ctx)
@@ -342,6 +383,83 @@ func stampTenantCaps(data *readmodel.Data, caps map[string]ratelimitdomain.Tenan
 		if c, ok := caps[tenantID]; ok {
 			data.TenantCaps = append(data.TenantCaps, c)
 		}
+	}
+}
+
+// listSessionRevocations reads revocations still inside the marker lifetime.
+// A failed read reuses the last listing that succeeded: publishing a snapshot
+// that dropped the markers would tell a data plane the subject is not revoked.
+// A compiler that has never listed them publishes none, the same as a snapshot
+// from before the table existed. The dispatcher's backstop retries the read.
+func (c *Compiler) listSessionRevocations(ctx context.Context) []readmodel.SessionRevocation {
+	if c.revocations == nil {
+		return nil
+	}
+	since := time.Now().Add(-markerTTL(c.sessionMaxAge))
+	list, err := c.revocations.ListActive(ctx, since)
+	if err != nil {
+		c.revMu.Lock()
+		last := c.lastRevocations
+		c.revMu.Unlock()
+		c.logger.Warn("configsnapshot: failed to list session revocations; reusing the last listing, or none if there is not one",
+			slog.String("component", component),
+			slog.Bool("reusing_last", last != nil),
+			slog.Any("error", err))
+		return filterRevokedAfter(last, since)
+	}
+	rows := filterRevokedAfter(toSessionRevocations(list), since)
+	c.revMu.Lock()
+	c.lastRevocations = rows
+	c.revMu.Unlock()
+	return rows
+}
+
+func toSessionRevocations(rows []sessionrevocation.Record) []readmodel.SessionRevocation {
+	out := make([]readmodel.SessionRevocation, 0, len(rows))
+	for _, row := range rows {
+		if row.GatewayID == "" || row.Org == "" || row.Subject == "" || row.RevokedAt.IsZero() {
+			continue
+		}
+		out = append(out, readmodel.SessionRevocation{
+			GatewayID: row.GatewayID,
+			Org:       row.Org,
+			Subject:   row.Subject,
+			RevokedAt: row.RevokedAt.UTC(),
+		})
+	}
+	return out
+}
+
+func filterRevokedAfter(rows []readmodel.SessionRevocation, since time.Time) []readmodel.SessionRevocation {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]readmodel.SessionRevocation, 0, len(rows))
+	for _, row := range rows {
+		if row.RevokedAt.After(since) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// stampSessionRevocations keeps the revocations of the gateways in data. A
+// scoped snapshot is what a data plane for one gateway serves, and it must not
+// learn another gateway's subjects. The global snapshot has already dropped
+// hybrid gateways, so their markers travel only in the scoped snapshot.
+func stampSessionRevocations(data *readmodel.Data, rows []readmodel.SessionRevocation) {
+	if len(rows) == 0 || len(data.Gateways) == 0 {
+		return
+	}
+	present := make(map[string]struct{}, len(data.Gateways))
+	for i := range data.Gateways {
+		present[data.Gateways[i].ID.String()] = struct{}{}
+	}
+	for _, row := range rows {
+		if _, ok := present[row.GatewayID]; !ok {
+			continue
+		}
+		data.SessionRevocations = append(data.SessionRevocations, row)
 	}
 }
 
@@ -839,6 +957,16 @@ func (c *Compiler) collectCatalog(ctx context.Context, data *readmodel.Data) err
 
 func sortData(data *readmodel.Data) {
 	sort.SliceStable(data.TenantCaps, func(i, j int) bool { return data.TenantCaps[i].TenantID < data.TenantCaps[j].TenantID })
+	sort.SliceStable(data.SessionRevocations, func(i, j int) bool {
+		a, b := data.SessionRevocations[i], data.SessionRevocations[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID < b.GatewayID
+		}
+		if a.Org != b.Org {
+			return a.Org < b.Org
+		}
+		return a.Subject < b.Subject
+	})
 	sort.SliceStable(data.Gateways, func(i, j int) bool { return data.Gateways[i].ID.String() < data.Gateways[j].ID.String() })
 	sort.SliceStable(data.Consumers, func(i, j int) bool { return data.Consumers[i].ID.String() < data.Consumers[j].ID.String() })
 	sort.SliceStable(data.Registries, func(i, j int) bool { return data.Registries[i].ID.String() < data.Registries[j].ID.String() })
