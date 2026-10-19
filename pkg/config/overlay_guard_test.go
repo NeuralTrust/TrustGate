@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSaaSOverlaysKeepOutboundGuard loads each SaaS overlay's config.env the way
@@ -64,6 +65,27 @@ func TestSaaSOverlaysRequireExplicitPlatformClaim(t *testing.T) {
 
 			if !getAdminM2MConfig().PlatformClaimRequired {
 				t.Error("shared admin plane treats a console token without tenant_id as platform admin")
+			}
+		})
+	}
+}
+
+// TestSaaSOverlaysBoundDefaultIdPSession checks that every hosted overlay gives
+// a default-IdP MCP session a 24h absolute lifetime. The code default is zero,
+// which renews the session on every refresh for 30 idle days, so dropping this
+// line silently restores that.
+func TestSaaSOverlaysBoundDefaultIdPSession(t *testing.T) {
+	overlays, err := filepath.Glob(filepath.Join("..", "..", "k8s", "overlays", "*", "config.env"))
+	if err != nil || len(overlays) == 0 {
+		t.Fatalf("no overlay config.env found (err=%v)", err)
+	}
+	for _, path := range overlays {
+		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+			t.Setenv("MCP_DEFAULT_IDP_SESSION_MAX_AGE", "")
+			loadOverlayEnv(t, path)
+
+			if got := getServerConfig().MCPDefaultIdP.SessionMaxAge; got != 24*time.Hour {
+				t.Errorf("MCP_DEFAULT_IDP_SESSION_MAX_AGE = %v, want 24h", got)
 			}
 		})
 	}
