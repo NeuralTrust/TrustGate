@@ -1,0 +1,60 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copy of the contract owned by the private event-schemas repository
+// (proto/usage/v1). TrustGate is public and cannot depend on that module, so it
+// carries the same package and field numbers; `make check-usagesync-contract`
+// checks that the copy has not drifted.
+
+syntax = "proto3";
+
+package usage.v1;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/usage/v1;usagev1";
+
+import "billing/v1/plan.proto";
+import "google/protobuf/timestamp.proto";
+
+// UsageStatus decides whether data planes serve a tenant's requests.
+enum UsageStatus {
+  USAGE_STATUS_UNSPECIFIED = 0;
+  USAGE_STATUS_HEALTHY = 1;
+  // USAGE_STATUS_EXHAUSTED blocks the tenant's next request on every data
+  // plane.
+  USAGE_STATUS_EXHAUSTED = 2;
+}
+
+// ExhaustionReason explains an EXHAUSTED status; unspecified when HEALTHY.
+enum ExhaustionReason {
+  EXHAUSTION_REASON_UNSPECIFIED = 0;
+  // EXHAUSTION_REASON_FREE_LIMIT_REACHED: a Free tenant reached a monthly
+  // limit.
+  EXHAUSTION_REASON_FREE_LIMIT_REACHED = 1;
+  // EXHAUSTION_REASON_WALLET_EMPTY: a Standard tenant's balance reached zero.
+  EXHAUSTION_REASON_WALLET_EMPTY = 2;
+}
+
+// UsageState is the usage status of one tenant. Every hop (Usage System,
+// control plane, its Redis cache, data plane) keeps the highest version it
+// has seen and drops anything older. A tenant with no state is HEALTHY.
+message UsageState {
+  string tenant_id = 1;
+  billing.v1.Plan plan = 2;
+  UsageStatus status = 3;
+  ExhaustionReason reason = 4;
+  // version comes from a global sequence in Usage System that never resets.
+  int64 version = 5;
+  // as_of is when Usage System committed this state.
+  google.protobuf.Timestamp as_of = 6;
+}
