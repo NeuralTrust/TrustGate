@@ -140,10 +140,9 @@ type Installer interface {
 	Instances(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) ([]*installationdomain.Installation, error)
 	// Installed answers an install of a server the principal already has,
 	// without writing anything or deciding access again: the instance they
-	// hold, as an install result, so its connect link can be handed out. It is
-	// how an installed server gets connected where installing is not open to
-	// the principal (Store access None): connecting what they already have is
-	// not installing. ErrNotInstalled when there is no single such instance.
+	// hold, as an install result. ErrNotInstalled when there is no single
+	// such instance. Store access None does not use it: that mode refuses
+	// the install tool before a connect link is minted.
 	Installed(ctx context.Context, in InstallRequest) (*InstallResult, error)
 	// Uninstall removes an install. When instanceID is set it removes that one
 	// instance (which must belong to code); otherwise it removes the sole

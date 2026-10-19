@@ -120,7 +120,8 @@ func normalizeMode(mode string) string {
 //   - open ("All"): every catalog server installs instantly;
 //   - curated ("Selected"): what is granted to the principal installs
 //     instantly, anything else becomes an approval request;
-//   - none: nothing is browsable or installable.
+//   - none: nothing is browsable or installable, and servers already
+//     installed or granted are not served.
 func EffectiveStoreMode(ctx context.Context) string {
 	switch identity.PrincipalFromContext(ctx).StoreAccess() {
 	case gatewaydomain.StoreModeOpen:
