@@ -168,6 +168,17 @@ type FlowStore interface {
 	RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error
 }
 
+// SubjectSessions revokes the default identity provider's refresh records for
+// one subject. Personal keys, grants and other identity providers are not its
+// concern.
+type SubjectSessions interface {
+	// RevokeSubjectSessions removes the default-IdP refresh records for org,
+	// gatewayID and subject and drops their owner-index entries. Records for
+	// another org, gateway, subject or identity provider stay. No matching
+	// record is success and returns 0.
+	RevokeSubjectSessions(ctx context.Context, org, gatewayID, subject string) (int, error)
+}
+
 type AuthorizeRequest struct {
 	ResponseType        string
 	ClientID            string
