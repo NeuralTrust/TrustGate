@@ -295,6 +295,64 @@ func TestRestoreSeedsSessionRevocations(t *testing.T) {
 	assert.Equal(t, []string{"user-2"}, subjects(scoped.Data().SessionRevocations), "a hybrid gateway's marker is only in its scoped snapshot, so the seed has to come from that row")
 }
 
+func TestRestoreDoesNotSeedRevocationsWhenAScopedRowIsRejected(t *testing.T) {
+	t.Parallel()
+	listing := &revocationsReader{rows: revocationRows(time.Now())}
+	store := newFakeLKGStore()
+	sealer, err := infrasnapshot.NewLKGSealer(lkgTestSecret(t))
+	require.NoError(t, err)
+	codec := infrasnapshot.NewCodec()
+
+	firstHolder := appsnapshot.NewHolder()
+	first := appsnapshot.NewDispatcher(
+		compilerWithRevocations(t, listing, 0),
+		codec,
+		firstHolder,
+		&fakeBroadcaster{},
+		&fakeOutbox{},
+		nil,
+		appsnapshot.DispatcherConfig{},
+		appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{}),
+	)
+	require.NoError(t, first.Dispatch(context.Background()))
+	scopedRaw, _, ok := firstHolder.SnapshotFor(capsGlobex)
+	require.True(t, ok)
+	scoped, err := codec.Decode(scopedRaw)
+	require.NoError(t, err)
+	require.Equal(t, []string{"user-2"}, subjects(scoped.Data().SessionRevocations))
+
+	bad := store.row(capsGlobex)
+	bad.KeyID = "0000000000000000"
+	store.put(bad)
+
+	failing := &revocationsReader{err: errors.New("db down")}
+	holder := appsnapshot.NewHolder()
+	restarted := appsnapshot.NewDispatcher(
+		compilerWithRevocations(t, failing, 0),
+		codec,
+		holder,
+		&fakeBroadcaster{},
+		&fakeOutbox{},
+		nil,
+		appsnapshot.DispatcherConfig{},
+		appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{}),
+	)
+	restarted.Restore(context.Background())
+	_, _, globexRestored := holder.SnapshotFor(capsGlobex)
+	require.False(t, globexRestored)
+
+	dispatchErr := restarted.Dispatch(context.Background())
+	require.NotZero(t, failing.calls)
+	raw, _, served := holder.SnapshotFor(capsGlobex)
+	if served {
+		republished, decErr := codec.Decode(raw)
+		require.NoError(t, decErr)
+		assert.Contains(t, subjects(republished.Data().SessionRevocations), "user-2")
+	}
+	require.Error(t, dispatchErr)
+	assert.False(t, served, "a rejected hybrid row must not be republished without its markers")
+}
+
 func sessionRevocationErrors(t *testing.T, reader *sdkmetric.ManualReader, result string) int64 {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
