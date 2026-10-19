@@ -857,6 +857,9 @@ func TestInstallRejectsSecretSuppliedInline(t *testing.T) {
 	if !errors.Is(err, ErrConfigInvalid) {
 		t.Fatalf("a secret supplied inline must be rejected, got %v", err)
 	}
+	if strings.Contains(err.Error(), "sk-secret") {
+		t.Fatalf("config error must name the variable, not the secret: %v", err)
+	}
 }
 
 func TestInstallSecretVariableRecordsAndRequiresConnect(t *testing.T) {
