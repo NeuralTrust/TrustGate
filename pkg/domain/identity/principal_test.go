@@ -15,7 +15,11 @@
 package identity
 
 import (
+	"bytes"
+	"log/slog"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +103,101 @@ func TestGroupsFromClaim(t *testing.T) {
 				t.Fatalf("GroupsFromClaim() = %#v, want %#v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestGroupsFromClaims(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		claims map[string]any
+		want   []string
+	}{
+		{name: "string", claims: map[string]any{ClaimGroups: " eng  sre eng "}, want: []string{"eng", "sre"}},
+		{name: "case sensitive", claims: map[string]any{ClaimGroups: "Eng eng"}, want: []string{"Eng", "eng"}},
+		{name: "string slice", claims: map[string]any{ClaimGroups: []string{" eng ", "", "sre", "eng"}}, want: []string{"eng", "sre"}},
+		{name: "mixed array", claims: map[string]any{ClaimGroups: []any{" eng ", 42, "sre", "eng", map[string]any{"name": "dropped"}}}, want: []string{"eng", "sre"}},
+		{name: "object", claims: map[string]any{ClaimGroups: map[string]any{"name": "eng"}}},
+		{name: "nil claim", claims: map[string]any{ClaimGroups: nil}},
+		{name: "absent", claims: map[string]any{}},
+		{name: "nil map"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := GroupsFromClaims(test.claims); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("GroupsFromClaims() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// Not parallel: it replaces slog.Default for the duration of the test.
+func TestGroupsFromClaimsDropWarns(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const group = "eng-secret"
+	const email = "ada@example.com"
+
+	got := GroupsFromClaims(map[string]any{ClaimGroups: []any{group, map[string]any{"mail": email}, false}})
+	if !reflect.DeepEqual(got, []string{group}) {
+		t.Fatalf("GroupsFromClaims() = %#v, want [%q]", got, group)
+	}
+	assertGroupsDropLog(t, buf.String(), "[]interface {}", 2, group, email)
+
+	buf.Reset()
+	if got := GroupsFromClaims(map[string]any{ClaimGroups: map[string]any{"name": group, "mail": email}}); got != nil {
+		t.Fatalf("GroupsFromClaims(object) = %#v, want nil", got)
+	}
+	assertGroupsDropLog(t, buf.String(), "map[string]interface {}", 1, group, email)
+
+	buf.Reset()
+	GroupsFromClaims(map[string]any{ClaimGroups: 42})
+	GroupsFromClaims(map[string]any{ClaimGroups: 42})
+	if strings.Count(buf.String(), `"msg":"identity: groups claim dropped unsupported values"`) != 2 {
+		t.Fatalf("each dropped claim logs once, got %s", buf.String())
+	}
+
+	buf.Reset()
+	if got := GroupsFromClaims(map[string]any{ClaimGroups: " eng  sre "}); !reflect.DeepEqual(got, []string{"eng", "sre"}) {
+		t.Fatalf("GroupsFromClaims(string) = %#v", got)
+	}
+	if got := GroupsFromClaims(map[string]any{ClaimGroups: []string{"eng", "sre"}}); !reflect.DeepEqual(got, []string{"eng", "sre"}) {
+		t.Fatalf("GroupsFromClaims(slice) = %#v", got)
+	}
+	if got := GroupsFromClaims(nil); got != nil {
+		t.Fatalf("GroupsFromClaims(nil) = %#v, want nil", got)
+	}
+	if got := GroupsFromClaims(map[string]any{}); got != nil {
+		t.Fatalf("GroupsFromClaims(absent) = %#v, want nil", got)
+	}
+	if got := GroupsFromClaims(map[string]any{ClaimGroups: nil}); got != nil {
+		t.Fatalf("GroupsFromClaims(nil claim) = %#v, want nil", got)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("supported and absent claims must not warn, got %s", buf.String())
+	}
+}
+
+func assertGroupsDropLog(t *testing.T, out, typ string, dropped int, absent ...string) {
+	t.Helper()
+	if !strings.Contains(out, `"level":"WARN"`) || !strings.Contains(out, `"claim":"groups"`) {
+		t.Fatalf("expected a warning naming the groups claim, got %s", out)
+	}
+	if !strings.Contains(out, `"type":"`+typ+`"`) {
+		t.Fatalf("type %s missing from %s", typ, out)
+	}
+	if !strings.Contains(out, `"dropped":`+strconv.Itoa(dropped)) {
+		t.Fatalf("dropped %d missing from %s", dropped, out)
+	}
+	for _, s := range absent {
+		if strings.Contains(out, s) {
+			t.Fatalf("log contains %q: %s", s, out)
+		}
 	}
 }
 
