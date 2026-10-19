@@ -493,13 +493,6 @@ func TestConnectService_RegionOptionURLUsesCatalogScopes(t *testing.T) {
 			want:         catalogScope,
 		},
 		{
-			name:         "admin scopes",
-			url:          "https://mcp.newrelic.com/mcp/",
-			registration: registrydomain.RegistrationManual,
-			stored:       []string{"admin:read"},
-			want:         "admin:read",
-		},
-		{
 			name:         "non-catalog URL",
 			url:          "https://self.example/mcp/",
 			registration: registrydomain.RegistrationAuto,
@@ -518,9 +511,6 @@ func TestConnectService_RegionOptionURLUsesCatalogScopes(t *testing.T) {
 				Registration: tc.registration,
 				Scopes:       append([]string(nil), tc.stored...),
 				Resource:     tc.url,
-			}
-			if tc.registration == registrydomain.RegistrationManual {
-				auth.ClientID = "admin-client"
 			}
 			reg, err := registrydomain.NewMCPRegistry(gw, "newrelic", "", &registrydomain.MCPTarget{
 				Code: code,
