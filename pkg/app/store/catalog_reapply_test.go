@@ -100,6 +100,17 @@ type fakeBound struct {
 	calls int
 }
 
+// appearBound is clear on the first probe and reports a token after that, so
+// a credential that arrives between decide and the swap is visible.
+type appearBound struct {
+	calls int
+}
+
+func (f *appearBound) ExistsBound(context.Context, ids.GatewayID, string) (bool, error) {
+	f.calls++
+	return f.calls > 1, nil
+}
+
 func (f *fakeBound) ExistsBound(context.Context, ids.GatewayID, string) (bool, error) {
 	f.calls++
 	return f.found, f.err
@@ -432,6 +443,33 @@ func TestInstallRefreshUsesCurrentAuth(t *testing.T) {
 	}
 	if reg.MCPTarget.URL != "https://mcp.globalping.dev/mcp" {
 		t.Fatalf("url = %s", reg.MCPTarget.URL)
+	}
+}
+
+func TestReapplyTokenBetweenProbeAndSwapLeavesRowUntouched(t *testing.T) {
+	catalog := testReapplyCatalog(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	reg := previousRegistry(t, gatewayID, "com.chargebee/mcp")
+	beforeURL := reg.MCPTarget.URL
+	before, err := catalogFingerprint(reg.MCPTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saver := &countingSaver{}
+	reapply := newTestReapply(t, catalog, saver, slog.New(slog.DiscardHandler))
+	bound := &appearBound{}
+	reapply.vault = bound
+	reapply.dcr = &fakeDCR{}
+	reapply.Reapply(context.Background(), gatewayID, []*registrydomain.Registry{reg})
+	after, err := catalogFingerprint(reg.MCPTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saver.calls != 0 || after != before || reg.MCPTarget.URL != beforeURL {
+		t.Fatalf("token between probe and swap changed the row: saves=%d url=%s", saver.calls, reg.MCPTarget.URL)
+	}
+	if bound.calls < 2 {
+		t.Fatalf("vault probes = %d, want the check repeated before the swap", bound.calls)
 	}
 }
 
