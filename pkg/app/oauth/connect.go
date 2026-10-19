@@ -26,6 +26,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -61,6 +62,8 @@ type connectService struct {
 	catalog     authCatalog
 	registries  RegistryLister
 	urlValues   URLValueSource
+	ensurer     appstore.RegistryEnsurer
+	catalogView appstore.CatalogViewer
 	// handoff decides where a connection may be started from.
 	handoff ConnectHandoff
 	// clients names the app a ticket's minter works in; nil names none.
@@ -113,6 +116,18 @@ func WithConnectURLValues(v URLValueSource) ConnectOption {
 // origin.
 func WithConnectHandoff(h ConnectHandoff) ConnectOption {
 	return func(s *connectService) { s.handoff = h }
+}
+
+// WithCatalogInstanceRefresh reconciles an existing catalog instance before
+// this connect uses it, then reads the current catalog shape for the request.
+// The shared snapshot is not mutated. Ensure errors are logged and do not
+// fail the connect. Disconnect uses the same shape, which stays the stored
+// row whenever a credential is present.
+func WithCatalogInstanceRefresh(ensurer appstore.RegistryEnsurer, viewer appstore.CatalogViewer) ConnectOption {
+	return func(s *connectService) {
+		s.ensurer = ensurer
+		s.catalogView = viewer
+	}
 }
 
 // WithConnectClock overrides the clock connect uses for the legacy authorize
@@ -438,7 +453,7 @@ func (s *connectService) Start(
 	if !connectProviderAllowed(ticket, data, rc, provider) {
 		return nil, ErrProviderNotFound
 	}
-	reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)
+	reg := s.refreshCatalogInstance(ctx, gatewayID, connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID))
 	if reg == nil {
 		return nil, ErrProviderNotFound
 	}
@@ -566,7 +581,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if !connectProviderAllowed(&st.Ticket, data, rc, provider) {
 		return st.TicketID, ErrProviderNotFound
 	}
-	reg := connectRegistry(data.EffectiveRegistries(rc), provider, st.Instance, st.Ticket.InstanceID)
+	reg := s.refreshCatalogInstance(ctx, gatewayID, connectRegistry(data.EffectiveRegistries(rc), provider, st.Instance, st.Ticket.InstanceID))
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
@@ -626,7 +641,7 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, ins
 	// once it is not: a ticket pinned to a provider whose registry the admin has
 	// since removed must still be able to clear the stored credential, or the
 	// user is left holding an account they cannot revoke.
-	if reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID); reg != nil {
+	if reg := s.refreshCatalogInstance(ctx, gatewayID, connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)); reg != nil {
 		if !ownsSharedAccount(reg, ticket.PrincipalSub) {
 			return ErrSharedAccountNotYours
 		}
@@ -769,17 +784,47 @@ func (s *connectService) storeRegistry(
 	if instanceID != "" {
 		for _, reg := range items {
 			if reg != nil && reg.ID.String() == instanceID {
-				return reg
+				return s.refreshCatalogInstance(ctx, gatewayID, reg)
 			}
 		}
 		return nil
 	}
 	for _, reg := range items {
 		if reg != nil && reg.MCPTarget != nil && registrydomain.StoreCode(reg) == code {
-			return reg
+			return s.refreshCatalogInstance(ctx, gatewayID, reg)
 		}
 	}
 	return nil
+}
+
+// refreshCatalogInstance asks the control plane to persist a safe catalog
+// correction, then returns the shape this request should use. The registry
+// argument is not mutated. A missing catalog code, a nil viewer, or an Ensure
+// error leaves the stored row in place.
+func (s *connectService) refreshCatalogInstance(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) *registrydomain.Registry {
+	if s == nil || s.catalogView == nil || reg == nil || reg.MCPTarget == nil {
+		return reg
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" || s.catalog == nil {
+		return reg
+	}
+	if _, ok := s.catalog.GetByCode(code); !ok {
+		return reg
+	}
+	if s.ensurer != nil {
+		if err := s.ensurer.Ensure(ctx, gatewayID, code); err != nil {
+			slog.Warn("oauth connect: catalog reapply",
+				slog.String("code", code),
+				slog.String("registry_id", reg.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+	if viewed := s.catalogView.ViewCurrentCatalog(ctx, reg); viewed != nil {
+		return viewed
+	}
+	return reg
 }
 
 func appConnectTicket(ticket *ConnectTicket) bool {
