@@ -483,6 +483,41 @@ func TestExchangeCodeStampsSessionDeadline(t *testing.T) {
 	}
 }
 
+func TestExchangeUsesCodeIssueTimeAsLoginAt(t *testing.T) {
+	t.Parallel()
+	store := newMemFlowStore()
+	issued := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, nil, store, nil, newTestSigner(t), nil).(*authProxy)
+	proxy.now = fixedClock(issued.Add(4 * time.Minute))
+	if err := store.SaveCode(context.Background(), "gw-code", CodeGrant{
+		RedirectURI:   "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeChallenge: s256("client-verifier"),
+		Subject:       "user-42",
+		AuthID:        appauth.DefaultIdPAuthID().String(),
+		SessionMode:   true,
+		IssuedAt:      issued,
+	}); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	resp, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "authorization_code",
+		Code:         "gw-code",
+		RedirectURI:  "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeVerifier: "client-verifier",
+	})
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	rec := store.peekSession(resp["refresh_token"].(string))
+	if rec == nil {
+		t.Fatal("session record must be persisted")
+		return
+	}
+	if !rec.LoginAt.Equal(issued) || !rec.ExpiresAt.Equal(issued.Add(sessionIdleLifetime)) {
+		t.Fatalf("login=%v expires=%v, want the code issue time", rec.LoginAt, rec.ExpiresAt)
+	}
+}
+
 func seedDefaultIdPSession(t *testing.T, store *memFlowStore, refresh string, loginAt time.Time, lifetime time.Duration) {
 	t.Helper()
 	if err := store.SaveSession(context.Background(), refresh, SessionRecord{

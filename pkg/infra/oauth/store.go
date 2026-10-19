@@ -42,6 +42,17 @@ var _ appoauth.FlowStore = (*Store)(nil)
 
 type Store struct {
 	rdb *redis.Client
+	// sessionMaxAge is MCP_DEFAULT_IDP_SESSION_MAX_AGE. Zero means unset.
+	sessionMaxAge time.Duration
+}
+
+// SetDefaultIDPSessionMaxAge records MCP_DEFAULT_IDP_SESSION_MAX_AGE. A
+// revocation marker lives for the longer of the idle session lifetime and
+// this absolute cap. A non-positive value leaves the idle lifetime in place.
+func (s *Store) SetDefaultIDPSessionMaxAge(d time.Duration) {
+	if d > 0 {
+		s.sessionMaxAge = d
+	}
 }
 
 func NewStore(rdb *redis.Client) *Store {
