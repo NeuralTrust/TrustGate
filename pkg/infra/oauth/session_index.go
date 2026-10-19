@@ -31,13 +31,33 @@ const (
 	// and subject. Default-IdP sessions are the only members. The org is not
 	// part of the key: a record is revoked only when its stored org matches.
 	ownerIndexPrefix = "oauth:session-by-owner:"
+	// directoryGroupsPrefix holds the last directory list pushed for one
+	// org, gateway and subject, so a refresh that read the record earlier
+	// still mints that list.
+	directoryGroupsPrefix = "oauth:directory-groups:"
 	// sessionsRevokedPrefix holds the instant a subject's default-IdP sessions
 	// were revoked. The value is RFC3339Nano. The TTL is the max session
 	// lifetime, so a record issued before the marker cannot outlive it.
 	sessionsRevokedPrefix = "oauth:sessions-revoked:"
 )
 
-var _ appoauth.SubjectSessions = (*Store)(nil)
+// Index, directory-list and revocation-marker maintenance for default-IdP
+// refresh records.
+var (
+	_ appoauth.SessionGroups         = (*Store)(nil)
+	_ appoauth.DirectoryGroupsLookup = (*Store)(nil)
+	_ appoauth.SubjectSessions       = (*Store)(nil)
+)
+
+type directoryGroupsValue struct {
+	Groups []string  `json:"groups"`
+	At     time.Time `json:"at"`
+}
+
+type sessionUpdate struct {
+	key string
+	raw []byte
+}
 
 func (s *Store) indexSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord, ttl time.Duration) error {
 	if !indexableSession(rec) {
@@ -68,6 +88,118 @@ func (s *Store) unindexSession(ctx context.Context, refreshToken, gatewayID, sub
 		}
 	}
 	return nil
+}
+
+// ApplyDirectoryGroups adds directory to the login claim on default-IdP
+// refresh records for org, gatewayID and subject. No matching record is a
+// success that writes nothing past the index lookup. A failure returns before
+// the first session write when it happens on the read.
+func (s *Store) ApplyDirectoryGroups(ctx context.Context, org, gatewayID, subject string, directory []string) (int, error) {
+	if org == "" || gatewayID == "" || subject == "" {
+		return 0, nil
+	}
+	index := ownerIndexKey(gatewayID, subject)
+	digests, err := s.rdb.SMembers(ctx, index).Result()
+	if err != nil {
+		return 0, fmt.Errorf("oauth flow store: list sessions: %w", err)
+	}
+	if len(digests) == 0 {
+		return 0, nil
+	}
+
+	var updates []sessionUpdate
+	var indexTTL time.Duration
+	for _, digest := range digests {
+		key := sessionPrefix + digest
+		raw, err := s.rdb.Get(ctx, key).Bytes()
+		if errors.Is(err, redis.Nil) {
+			if err := s.rdb.SRem(ctx, index, digest).Err(); err != nil {
+				return 0, fmt.Errorf("oauth flow store: drop expired session: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("oauth flow store: load session: %w", err)
+		}
+		var rec appoauth.SessionRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return 0, fmt.Errorf("oauth flow store: decode session: %w", err)
+		}
+		if rec.Org != org || rec.GatewayID != gatewayID || rec.Subject != subject || rec.AuthID != appauth.DefaultIdPAuthID().String() {
+			continue
+		}
+		expiresAt := rec.ExpiresAt
+		appoauth.ApplyDirectoryGroupsToRecord(&rec, directory)
+		rec.ExpiresAt = expiresAt
+		encoded, err := json.Marshal(rec)
+		if err != nil {
+			return 0, fmt.Errorf("oauth flow store: encode session: %w", err)
+		}
+		updates = append(updates, sessionUpdate{key: key, raw: encoded})
+		if ttl, err := s.rdb.TTL(ctx, key).Result(); err == nil && ttl > indexTTL {
+			indexTTL = ttl
+		}
+	}
+	if len(updates) == 0 {
+		return s.dropIndexIfEmpty(ctx, index)
+	}
+	body, err := json.Marshal(directoryGroupsValue{Groups: directory, At: time.Now().UTC()})
+	if err != nil {
+		return 0, fmt.Errorf("oauth flow store: encode directory groups: %w", err)
+	}
+	ttl := indexTTL
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	if err := s.rdb.Set(ctx, directoryGroupsKey(gatewayID, org, subject), body, ttl).Err(); err != nil {
+		return 0, fmt.Errorf("oauth flow store: save directory groups: %w", err)
+	}
+	written := 0
+	for _, update := range updates {
+		// XX refuses to create the key. A refresh that retired the record
+		// between the read and this write, or whose grace TTL has already
+		// elapsed, must not come back with no expiry.
+		err := s.rdb.SetArgs(ctx, update.key, update.raw, redis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("oauth flow store: update session groups: %w", err)
+		}
+		written++
+	}
+	return written, nil
+}
+
+// LookupDirectoryGroups returns the last directory list pushed for this
+// subject. ok is false when none has been pushed; an empty list with ok true
+// is a push that named no groups.
+func (s *Store) LookupDirectoryGroups(ctx context.Context, gatewayID, org, subject string) ([]string, time.Time, bool, error) {
+	raw, err := s.rdb.Get(ctx, directoryGroupsKey(gatewayID, org, subject)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, time.Time{}, false, nil
+	}
+	if err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("oauth flow store: load directory groups: %w", err)
+	}
+	var value directoryGroupsValue
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("oauth flow store: decode directory groups: %w", err)
+	}
+	return value.Groups, value.At, true, nil
+}
+
+func (s *Store) dropIndexIfEmpty(ctx context.Context, index string) (int, error) {
+	n, err := s.rdb.SCard(ctx, index).Result()
+	if err != nil {
+		return 0, fmt.Errorf("oauth flow store: list sessions: %w", err)
+	}
+	if n == 0 {
+		if err := s.rdb.Del(ctx, index).Err(); err != nil {
+			return 0, fmt.Errorf("oauth flow store: list sessions: %w", err)
+		}
+	}
+	return 0, nil
 }
 
 // RevokeSubjectSessions marks the subject revoked, then deletes the default-IdP
@@ -211,6 +343,10 @@ func indexableSession(rec appoauth.SessionRecord) bool {
 
 func ownerIndexKey(gatewayID, subject string) string {
 	return ownerIndexPrefix + gatewayID + ":" + subject
+}
+
+func directoryGroupsKey(gatewayID, org, subject string) string {
+	return directoryGroupsPrefix + gatewayID + ":" + org + ":" + subject
 }
 
 func sessionDigest(refreshToken string) string {
