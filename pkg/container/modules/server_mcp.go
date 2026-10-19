@@ -40,6 +40,7 @@ type mcpMiddlewares struct {
 	Auth               *middleware.MCPAuthMiddleware
 	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
 	Metrics            *middleware.MCPMetricsMiddleware
+	UsageGuard         *middleware.UsageGuardMiddleware
 }
 
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
@@ -60,6 +61,7 @@ func mcpAuthTransport(m mcpMiddlewares) *middleware.Transport {
 		m.Auth,
 		m.HybridGatewayGuard,
 		m.Metrics,
+		m.UsageGuard.ForMCP(),
 	)
 }
 

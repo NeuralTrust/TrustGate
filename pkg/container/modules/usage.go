@@ -19,12 +19,15 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrausage "github.com/NeuralTrust/TrustGate/pkg/infra/usage"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
 )
 
@@ -72,4 +75,46 @@ func provideAdminUsageReadiness(cfg *config.Config, reader appusage.Reader, logg
 		return nil
 	}
 	return appusage.ReadinessCheck(reader.Ready, cfg.Usage.ReadyTimeout, logger)
+}
+
+type usageGuardParams struct {
+	dig.In
+	Enforcement *appusage.Enforcement                       `optional:"true"`
+	Store       configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+}
+
+// provideUsageGuard builds the request guard. Only a DB-less data plane has
+// both an enforcement list and a snapshot carrying the control plane's flag;
+// everywhere else the guard lets every request through.
+func provideUsageGuard(p usageGuardParams) *middleware.UsageGuardMiddleware {
+	if p.Enforcement == nil || p.Store == nil {
+		return middleware.NewUsageGuardMiddleware(nil, nil)
+	}
+	return middleware.NewUsageGuardMiddleware(p.Enforcement, usageEnforcementFlag(p.Store))
+}
+
+// provideDataPlaneUsage registers the data plane's enforcement list, which the
+// config-sync client feeds with the control plane's usage snapshots.
+func provideDataPlaneUsage(c *container.Container) error {
+	if err := c.Provide(appusage.NewEnforcement); err != nil {
+		return err
+	}
+	return c.Provide(func(e *appusage.Enforcement) appusage.ExhaustionChecker { return e })
+}
+
+func usageEnforcementFlag(store configsync.ConfigStore[*readmodel.Snapshot]) func() bool {
+	return func() bool {
+		current, ok := store.Load()
+		return ok && current.Snapshot != nil && current.Snapshot.UsageEnforcement()
+	}
+}
+
+// dataPlaneUsageReadiness keeps a data plane not ready while its snapshot says
+// usage is enforced and no usage list has arrived, bounded by
+// USAGE_READY_TIMEOUT.
+func dataPlaneUsageReadiness(store configsync.ConfigStore[*readmodel.Snapshot], enforcement *appusage.Enforcement, cfg *config.Config, logger *slog.Logger) func(context.Context) error {
+	enforced := usageEnforcementFlag(store)
+	return appusage.ReadinessCheck(func() bool {
+		return !enforced() || enforcement.Received()
+	}, cfg.Usage.ReadyTimeout, logger)
 }
