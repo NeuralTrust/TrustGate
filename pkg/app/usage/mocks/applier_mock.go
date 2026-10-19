@@ -69,6 +69,99 @@ func (_c *Applier_Apply_Call) RunAndReturn(run func(context.Context, []usage.Ten
 	return _c
 }
 
+// ApplySnapshot provides a mock function with given fields: ctx, exhausted, asOfVersion
+func (_m *Applier) ApplySnapshot(ctx context.Context, exhausted []usage.TenantState, asOfVersion int64) error {
+	ret := _m.Called(ctx, exhausted, asOfVersion)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ApplySnapshot")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, []usage.TenantState, int64) error); ok {
+		r0 = rf(ctx, exhausted, asOfVersion)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Applier_ApplySnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ApplySnapshot'
+type Applier_ApplySnapshot_Call struct {
+	*mock.Call
+}
+
+// ApplySnapshot is a helper method to define mock.On call
+//   - ctx context.Context
+//   - exhausted []usage.TenantState
+//   - asOfVersion int64
+func (_e *Applier_Expecter) ApplySnapshot(ctx interface{}, exhausted interface{}, asOfVersion interface{}) *Applier_ApplySnapshot_Call {
+	return &Applier_ApplySnapshot_Call{Call: _e.mock.On("ApplySnapshot", ctx, exhausted, asOfVersion)}
+}
+
+func (_c *Applier_ApplySnapshot_Call) Run(run func(ctx context.Context, exhausted []usage.TenantState, asOfVersion int64)) *Applier_ApplySnapshot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]usage.TenantState), args[2].(int64))
+	})
+	return _c
+}
+
+func (_c *Applier_ApplySnapshot_Call) Return(_a0 error) *Applier_ApplySnapshot_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Applier_ApplySnapshot_Call) RunAndReturn(run func(context.Context, []usage.TenantState, int64) error) *Applier_ApplySnapshot_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Watermark provides a mock function with no fields
+func (_m *Applier) Watermark() int64 {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Watermark")
+	}
+
+	var r0 int64
+	if rf, ok := ret.Get(0).(func() int64); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	return r0
+}
+
+// Applier_Watermark_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Watermark'
+type Applier_Watermark_Call struct {
+	*mock.Call
+}
+
+// Watermark is a helper method to define mock.On call
+func (_e *Applier_Expecter) Watermark() *Applier_Watermark_Call {
+	return &Applier_Watermark_Call{Call: _e.mock.On("Watermark")}
+}
+
+func (_c *Applier_Watermark_Call) Run(run func()) *Applier_Watermark_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Applier_Watermark_Call) Return(_a0 int64) *Applier_Watermark_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Applier_Watermark_Call) RunAndReturn(run func() int64) *Applier_Watermark_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewApplier creates a new instance of Applier. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewApplier(t interface {
