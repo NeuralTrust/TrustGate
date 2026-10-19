@@ -16,6 +16,8 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -703,5 +705,96 @@ func TestExposedName_V2TruncationKeepsMultibyteRunesWhole(t *testing.T) {
 	}
 	if len(got) > maxExposedNameLength || !utf8.ValidString(got) || strings.Contains(got, "__") {
 		t.Fatalf("name = %q is %d bytes", got, len(got))
+	}
+}
+
+func TestLegacyExposedName_MatchesTheV0660Spelling(t *testing.T) {
+	t.Parallel()
+	linear := v2Registry(t, "Linear", "app.linear/mcp")
+	if got := legacyExposedName("linear_save_issue", linear); got != "linear_linear_save_issue" {
+		t.Fatalf("prefixed tool = %q, want linear_linear_save_issue", got)
+	}
+	if got := legacyExposedName("save_issue", linear); got != "linear_save_issue" {
+		t.Fatalf("plain tool = %q, want linear_save_issue", got)
+	}
+
+	elastic := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	elastic.MCPTarget.InstanceConfig = map[string]string{"project": "logs"}
+	elastic.InstanceOf = elastic.ID
+	want := "elastic_agent_builder_mcp_" + registryDigest(elastic, 6) + "_search"
+	if got := legacyExposedName("search", elastic); got != want {
+		t.Fatalf("configured instance = %q, want %q", got, want)
+	}
+
+	long := strings.Repeat("a", 30) + "_" + strings.Repeat("z", 40)
+	got := legacyExposedName(long, linear)
+	if len(got) != maxExposedNameLength || !strings.HasPrefix(got, "linear_"+long[:48]+"_") {
+		t.Fatalf("overlong = %q, want linear_ plus the first 48 bytes and a digest", got)
+	}
+	if got == namedFor(linear, long) {
+		t.Fatalf("overlong legacy and v2 names should differ, both %q", got)
+	}
+}
+
+func TestComposer_Resolve_AcceptsTheLegacySpelling(t *testing.T) {
+	t.Parallel()
+	linear := v2Registry(t, "Linear", "app.linear/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		linear.MCPTarget.URL: {tools: tools("linear_save_issue", "list_teams")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, linear)
+
+	for _, name := range []string{"linear_save_issue", "linear_linear_save_issue"} {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", name, err)
+		}
+		if target.Tool.Name != "linear_save_issue" || target.Exposed != "linear_save_issue" {
+			t.Fatalf("Resolve(%q) = %q exposed as %q, want linear_save_issue", name, target.Tool.Name, target.Exposed)
+		}
+	}
+	if _, err := c.Resolve(context.Background(), rc, "linear_linear_list_teams"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("a name neither scheme published: err = %v, want ErrToolNotFound", err)
+	}
+}
+
+func TestComposer_Resolve_LegacySpellingSkipsDeniedTools(t *testing.T) {
+	t.Parallel()
+	linear := v2Registry(t, "Linear", "app.linear/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		linear.MCPTarget.URL: {tools: tools("linear_save_issue", "list_teams")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: linear.ID, Tool: "list_teams"},
+		}},
+	}, linear)
+
+	if _, err := c.Resolve(context.Background(), rc, "linear_linear_save_issue"); err == nil {
+		t.Fatal("the legacy spelling of a tool the toolkit denies resolved")
+	}
+}
+
+func TestComposer_GetPrompt_AcceptsTheLegacySpelling(t *testing.T) {
+	t.Parallel()
+	elastic := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	elastic.MCPTarget.InstanceConfig = map[string]string{"project": "logs"}
+	elastic.InstanceOf = elastic.ID
+	up := &fakeUpstream{prompts: prompts("summarize"), result: json.RawMessage(`{"messages":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{elastic.MCPTarget.URL: up}})
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, elastic)
+
+	legacy := "elastic_agent_builder_mcp_" + registryDigest(elastic, 6) + "_summarize"
+	for _, name := range []string{promptName("summarize", elastic), legacy} {
+		up.lastPrompt = ""
+		if _, err := c.GetPrompt(context.Background(), rc, name, nil); err != nil {
+			t.Fatalf("GetPrompt(%q): %v", name, err)
+		}
+		if up.lastPrompt != "summarize" {
+			t.Fatalf("GetPrompt(%q) reached %q, want summarize", name, up.lastPrompt)
+		}
 	}
 }
