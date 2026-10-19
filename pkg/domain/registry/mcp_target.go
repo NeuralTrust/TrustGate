@@ -285,6 +285,40 @@ func (t *MCPTarget) RequiredURLVariables() []string {
 	return out
 }
 
+// PinsURLVariable reports whether this target fixes the named URL variable
+// itself, so no per-user value is ever substituted for it. It is pinned only
+// when the MCP URL is set and the name is absent from every template the dial
+// and the connect path fill: the MCP URL, and the OAuth authorize, token,
+// userinfo and resource URLs. An admin instance copies the catalog's authorize
+// and token templates even after its MCP URL is written out, and a variable
+// those templates still name has to be collected or the connect fails closed.
+func (t *MCPTarget) PinsURLVariable(name string) bool {
+	if t == nil || strings.TrimSpace(t.URL) == "" {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	if templateHasVariable(t.URL, name) {
+		return false
+	}
+	if t.Auth != nil {
+		for _, raw := range []string{t.Auth.AuthorizeURL, t.Auth.TokenURL, t.Auth.UserinfoURL, t.Auth.Resource} {
+			if templateHasVariable(raw, name) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func templateHasVariable(raw, name string) bool {
+	for _, token := range TemplateVariableNames(raw) {
+		if token == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *MCPTarget) Normalize() {
 	if t == nil {
 		return

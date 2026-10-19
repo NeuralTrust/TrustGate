@@ -23,6 +23,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
@@ -45,6 +46,9 @@ func (r *recordingInstaller) Uninstall(context.Context, ids.GatewayID, string, s
 	return nil
 }
 func (r *recordingInstaller) InstalledCodes(context.Context, ids.GatewayID, string) (map[string]struct{}, error) {
+	return nil, nil
+}
+func (r *recordingInstaller) PinTarget(context.Context, InstallRequest) (*registrydomain.MCPTarget, error) {
 	return nil, nil
 }
 
