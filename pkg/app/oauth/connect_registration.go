@@ -361,7 +361,10 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 		return cfg
 	}
 	out := *cfg
-	if len(entry.OAuth.Scopes) > 0 {
+	// #1114 fills a templated catalog resource from the matched option and
+	// replaces stored scopes with it. An entry with no resource only corrects
+	// scopes, and a manual registration that already lists scopes keeps them.
+	if len(entry.OAuth.Scopes) > 0 && (resource != "" || !explicitAdminScopes(cfg)) {
 		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
 	}
 	if resource != "" {
@@ -376,6 +379,22 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 		out.Resource = resolved
 	}
 	return &out
+}
+
+// explicitAdminScopes reports a manual OAuth app whose scope list was set on
+// the registry. That list wins over a scopes-only catalog correction. The
+// registry row is not written.
+func explicitAdminScopes(cfg *registrydomain.MCPAuth) bool {
+	return cfg != nil && cfg.Registration == registrydomain.RegistrationManual && hasScope(cfg.Scopes)
+}
+
+func hasScope(scopes []string) bool {
+	for _, scope := range scopes {
+		if strings.TrimSpace(scope) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // catalogServerMatches reports whether the row's resolved upstream URL is the
