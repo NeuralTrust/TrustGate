@@ -25,6 +25,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -391,7 +392,7 @@ func (s *connectService) catalogSharedLabelContact(reg *registrydomain.Registry,
 		return "", false
 	}
 	entry, ok := s.catalog.GetByCode(code)
-	if !ok || entry.OAuth == nil || !catalogServerMatches(entry, res) {
+	if !ok || !crossDomainContactEligible(entry) || !catalogServerMatches(entry, res) {
 		return "", false
 	}
 	raw = strings.TrimSpace(raw)
@@ -402,6 +403,40 @@ func (s *connectService) catalogSharedLabelContact(reg *registrydomain.Registry,
 		return "", false
 	}
 	return entry.URL, true
+}
+
+// crossDomainContactEligible reports whether the catalog entry is allowed to
+// pin authorize or token on a different literal domain from its MCP host.
+// The seed opts in with oauth.cross_domain_contact, and the templates must
+// share a tenant label that does not choose the registrable domain.
+func crossDomainContactEligible(entry catalogdomain.MCPServer) bool {
+	if entry.OAuth == nil || !entry.OAuth.CrossDomainContact {
+		return false
+	}
+	return contactHostCrossesDomain(entry.URL, entry.OAuth.AuthorizeURL) ||
+		contactHostCrossesDomain(entry.URL, entry.OAuth.TokenURL)
+}
+
+func contactHostCrossesDomain(serverURL, contactURL string) bool {
+	serverURL = strings.TrimSpace(serverURL)
+	contactURL = strings.TrimSpace(contactURL)
+	if serverURL == "" || contactURL == "" || !hostHasPlaceholder(contactURL) {
+		return false
+	}
+	names, chosen := userChosenHostNames(contactURL)
+	if chosen || len(names) == 0 {
+		return false
+	}
+	upNames, upChosen := userChosenHostNames(serverURL)
+	if upChosen || !hostPlaceholdersCovered(names, upNames) {
+		return false
+	}
+	contactHost, okContact := templateHostname(contactURL)
+	serverHost, okServer := templateHostname(serverURL)
+	if !okContact || !okServer {
+		return false
+	}
+	return !strings.EqualFold(contactHost, serverHost)
 }
 
 // substituteSharedLabelContact fills a catalog-pinned contact URL whose host

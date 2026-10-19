@@ -298,7 +298,9 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		require.Equal(t, "https://yourco.freshservice.com/mcp", resolveCatalogURL(t, freshworks, map[string]string{"domain": "yourco"}))
 		domain := variableByName(t, freshworks, "domain")
 		require.Empty(t, domain.HostSuffix)
-		require.Equal(t, "Your Freshservice subdomain, e.g. yourco.", domain.Description)
+		require.Equal(t, "Subdomain label only, e.g. yourco, not yourco.freshservice.com.", domain.Description)
+		require.Contains(t, freshworks.ConfigGuide.Note, "{domain} is the subdomain label only")
+		require.Contains(t, freshworks.ConfigGuide.Note, "not yourco.freshservice.com")
 		require.False(t, freshworks.SelfService)
 		require.True(t, freshworks.RequiresConfig)
 		requireOAuth(t, freshworks, "manual", false, []string{
@@ -332,6 +334,7 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		})
 		require.NotNil(t, freshworks.OAuth.PKCE)
 		require.True(t, *freshworks.OAuth.PKCE)
+		require.True(t, freshworks.OAuth.CrossDomainContact)
 		require.Equal(t, "https://{domain}.myfreshworks.com/org/oauth/v2/authorize", freshworks.OAuth.AuthorizeURL)
 		require.Equal(t, "https://{domain}.myfreshworks.com/org/oauth/v2/token", freshworks.OAuth.TokenURL)
 		require.Empty(t, freshworks.OAuth.Resource)
