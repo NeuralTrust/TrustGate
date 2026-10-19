@@ -16,6 +16,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -28,6 +29,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -40,7 +42,7 @@ import (
 func ownerGroupsApp(repo domain.Repository, publisher cache.EventPublisher, signaler *configsynctest.FakeSignaler) *fiber.App {
 	setter := appauth.NewOwnerGroupsSetter(repo, cache.NewTTLMapManager(time.Hour), publisher, slog.New(slog.DiscardHandler), signaler, nil)
 	app := fiber.New()
-	app.Put("/gateways/:gateway_id/auths/:id/groups", authhttp.NewUpdateAuthOwnerGroupsHandler(setter, unreached{}).Handle)
+	app.Put("/gateways/:gateway_id/auths/:id/groups", authhttp.NewUpdateAuthOwnerGroupsHandler(setter, unreached{}, nil, nil, slog.New(slog.DiscardHandler)).Handle)
 	return app
 }
 
@@ -169,4 +171,68 @@ func TestUpdateAuthOwnerGroups_RefusesWithoutWriting(t *testing.T) {
 			require.Zero(t, signaler.Count())
 		})
 	}
+}
+
+func TestUpdateAuthOwnerGroups_SessionErrorLeavesTheKeyAndSucceeds(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	owned := testAPIKeyAuth(t, gwID, "personal-alice", "alice")
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, owned.ID).Return(owned, nil).Once()
+	repo.EXPECT().UpdateOwner(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+		return slices.Equal(a.OwnerGroups, []string{"engineering"})
+	})).RunAndReturn(func(_ context.Context, a *domain.Auth) (*domain.Auth, error) { return a, nil }).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+	sessions := &recordingSessions{err: errors.New("redis down")}
+	app := fiber.New()
+	app.Put("/gateways/:gateway_id/auths/:id/groups", authhttp.NewUpdateAuthOwnerGroupsHandler(
+		appauth.NewOwnerGroupsSetter(repo, cache.NewTTLMapManager(time.Hour), publisher, slog.New(slog.DiscardHandler), &configsynctest.FakeSignaler{}, nil),
+		unreached{}, tenantGateway{tenant: "team-1"}, sessions, slog.New(slog.DiscardHandler),
+	).Handle)
+
+	status, raw := doJSON(t, app, http.MethodPut, ownerGroupsURL(gwID, owned.ID.String()), `{"groups":["engineering"]}`)
+	require.Equal(t, http.StatusOK, status, raw)
+	require.Contains(t, raw, `"owner_groups":["engineering"]`)
+	require.Equal(t, 1, sessions.calls)
+	require.False(t, sessions.wrote)
+	require.Equal(t, "team-1", sessions.org)
+	require.Equal(t, gwID.String(), sessions.gateway)
+	require.Equal(t, "alice", sessions.subject)
+}
+
+type recordingSessions struct {
+	err     error
+	calls   int
+	wrote   bool
+	updated int
+	org     string
+	gateway string
+	subject string
+	groups  []string
+}
+
+func (r *recordingSessions) ApplyDirectoryGroups(_ context.Context, org, gatewayID, subject string, directory []string) (int, error) {
+	r.calls++
+	r.org, r.gateway, r.subject = org, gatewayID, subject
+	r.groups = append([]string(nil), directory...)
+	if r.err != nil {
+		return 0, r.err
+	}
+	r.wrote = true
+	return r.updated, nil
+}
+
+type tenantGateway struct{ tenant string }
+
+func (t tenantGateway) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	return &gatewaydomain.Gateway{ID: id, Metadata: map[string]string{gatewaydomain.MetadataTenantIDKey: t.tenant}}, nil
+}
+
+func (tenantGateway) FindBySlug(context.Context, string) (*gatewaydomain.Gateway, error) {
+	return nil, gatewaydomain.ErrNotFound
+}
+
+func (tenantGateway) List(context.Context, gatewaydomain.ListFilter) ([]*gatewaydomain.Gateway, int, error) {
+	return nil, 0, nil
 }

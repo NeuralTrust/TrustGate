@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"net/url"
 	"strings"
@@ -175,11 +174,7 @@ func adminURLValues(fromPrincipal map[string]string, declared []registrydomain.M
 			plain[variable.Name] = struct{}{}
 		}
 	}
-	capHint := 0
-	if len(fromPrincipal) <= math.MaxInt-len(admin) {
-		capHint = len(fromPrincipal) + len(admin)
-	}
-	out := make(map[string]string, capHint)
+	out := make(map[string]string, len(fromPrincipal))
 	for name, value := range fromPrincipal {
 		if _, drop := plain[name]; drop {
 			continue

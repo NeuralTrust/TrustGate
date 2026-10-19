@@ -115,16 +115,27 @@ type CodeGrant struct {
 type SessionRecord struct {
 	// ClientID is the OAuth client the session was issued to, carried into
 	// every refreshed token so the app it names survives a refresh.
-	ClientID    string   `json:"client_id,omitempty"`
-	Subject     string   `json:"subject"`
-	Email       string   `json:"email,omitempty"`
-	Scopes      []string `json:"scopes,omitempty"`
-	GatewayID   string   `json:"gateway_id"`
-	AuthID      string   `json:"auth_id"`
-	Org         string   `json:"org,omitempty"`
-	Groups      []string `json:"groups,omitempty"`
-	StoreAccess string   `json:"store_access,omitempty"`
-	Audiences   []string `json:"audiences,omitempty"`
+	ClientID  string   `json:"client_id,omitempty"`
+	Subject   string   `json:"subject"`
+	Email     string   `json:"email,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	GatewayID string   `json:"gateway_id"`
+	AuthID    string   `json:"auth_id"`
+	Org       string   `json:"org,omitempty"`
+	// Groups is the effective membership minted into the session: the login
+	// claim union the directory list last pushed for this subject. Until the
+	// first push it is the login snapshot. A push never removes a name that
+	// was in that claim; such a name stays until the next login.
+	Groups []string `json:"groups,omitempty"`
+	// ClaimGroups is the platform token's groups claim, copied once at the
+	// code exchange. It is not rewritten by a directory push.
+	ClaimGroups []string `json:"claim_groups,omitempty"`
+	// ClaimSnapshot reports that ClaimGroups was recorded at login. A record
+	// from before that field existed has it false, and the first directory
+	// push treats Groups as that snapshot.
+	ClaimSnapshot bool     `json:"claim_snapshot,omitempty"`
+	StoreAccess   string   `json:"store_access,omitempty"`
+	Audiences     []string `json:"audiences,omitempty"`
 	// LoginAt is when the user last authenticated at the identity provider. The
 	// claims above are a snapshot taken at that moment; a refresh re-mints them
 	// without consulting the IdP.
