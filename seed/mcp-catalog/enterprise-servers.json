@@ -16970,7 +16970,7 @@
       "name": "com.vimeo/mcp",
       "vendor": "Vimeo",
       "category": "Media & Video",
-      "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse).",
+      "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse). An admin must register an OAuth app with Vimeo that accepts the gateway callback URL (https://<gateway>/oauth/callback/com.vimeo/mcp). If Vimeo does not allow that callback, the connector cannot be used.",
       "capabilities": [
         "Manage videos",
         "Query the video library",
@@ -16979,12 +16979,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.vimeo.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.vimeo.com/oauth/authorize",
         "token_url": "https://mcp.vimeo.com/oauth/token",
@@ -16997,6 +16997,15 @@
           "create"
         ],
         "resource": "https://mcp.vimeo.com"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Vimeo.",
+        "steps": [
+          "Create an OAuth app in Vimeo.",
+          "Register the callback https://<gateway>/oauth/callback/com.vimeo/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Vimeo rejects the gateway callback URI at authorize (400 'redirect_uri not allowed') for any dynamic client, so dynamic client registration cannot work. Registration is manual. An admin must register an OAuth app with Vimeo that accepts https://<gateway>/oauth/callback/com.vimeo/mcp. If Vimeo does not allow that callback, the connector cannot be used."
       }
     },
     {
