@@ -95,7 +95,7 @@ func (s *sharedAccountService) Status(
 		return nil, err
 	}
 	out := &SharedAccount{Provider: cfg.Provider}
-	cred, err := s.vault.Find(ctx, gatewayID, domain.SharedAccountSubject(reg.ID), domain.ForwardedVaultProvider(reg))
+	cred, err := s.vault.Find(ctx, gatewayID, domain.SharedAccountSubject(reg.ID), domain.ForwardedVaultProviderFor(reg, nil))
 	switch {
 	case err == nil:
 		out.Connected = true
@@ -158,7 +158,7 @@ func (s *sharedAccountService) Disconnect(
 	if err != nil {
 		return err
 	}
-	err = s.vault.Delete(ctx, gatewayID, domain.SharedAccountSubject(reg.ID), domain.ForwardedVaultProvider(reg))
+	err = s.vault.Delete(ctx, gatewayID, domain.SharedAccountSubject(reg.ID), domain.ForwardedVaultProviderFor(reg, nil))
 	if errors.Is(err, vaultdomain.ErrNotFound) {
 		return nil
 	}

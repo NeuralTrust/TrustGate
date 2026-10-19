@@ -153,6 +153,33 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		require.Equal(t, "https://mcp.eu.newrelic.com/mcp/", resolveCatalogURL(t, nr, map[string]string{"host": "mcp.eu.newrelic.com"}))
 	})
 
+	t.Run("pagerduty region", func(t *testing.T) {
+		pagerduty := mustCatalogServer(t, cat, "com.pagerduty/mcp")
+		require.Equal(t, "https://{host}/mcp", pagerduty.URL)
+		host := variableByName(t, pagerduty, "host")
+		require.True(t, host.Required)
+		require.Equal(t, "PagerDuty service region.", host.Description)
+		require.Equal(t, []string{"mcp.pagerduty.com", "mcp.eu.pagerduty.com"}, optionValues(host))
+		require.Equal(t, "United States", host.Options[0].Label)
+		require.Equal(t, "Europe", host.Options[1].Label)
+		require.Equal(t, "manual", pagerduty.OAuth.Registration)
+		require.NotNil(t, pagerduty.OAuth.DCR)
+		require.False(t, *pagerduty.OAuth.DCR)
+		require.NotNil(t, pagerduty.OAuth.PKCE)
+		require.True(t, *pagerduty.OAuth.PKCE)
+		require.Equal(t, "https://{host}/mcp", pagerduty.OAuth.Resource)
+		require.Equal(t, "https://app.pagerduty.com/global/oauth/authorize", pagerduty.OAuth.AuthorizeURL)
+		require.Equal(t, "https://app.pagerduty.com/global/oauth/token", pagerduty.OAuth.TokenURL)
+		require.Equal(t, []string{
+			"read", "incidents.read", "oncalls.read", "services.read", "users.read", "openid",
+		}, pagerduty.OAuth.Scopes)
+		require.NotContains(t, pagerduty.OAuth.Scopes, "write")
+		require.Equal(t, "https://mcp.pagerduty.com/mcp",
+			resolveCatalogURL(t, pagerduty, map[string]string{"host": "mcp.pagerduty.com"}))
+		require.Equal(t, "https://mcp.eu.pagerduty.com/mcp",
+			resolveCatalogURL(t, pagerduty, map[string]string{"host": "mcp.eu.pagerduty.com"}))
+	})
+
 	t.Run("algolia optional key", func(t *testing.T) {
 		algolia := mustCatalogServer(t, cat, "com.algolia/mcp")
 		require.False(t, algolia.RequiresAuth)
@@ -316,8 +343,7 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 
 // TestCuratedCatalog_SeedFixesLeaveUnchangedEntries locks the entries this
 // pass deliberately did not rewrite: Zoom scopes, Vanta's existing region
-// options, AssemblyAI's docs URL, Halo's static token, and PagerDuty's
-// single US host.
+// options, AssemblyAI's docs URL, and Halo's static token.
 func TestCuratedCatalog_SeedFixesLeaveUnchangedEntries(t *testing.T) {
 	t.Parallel()
 	cat, err := NewMCPServerCatalog(nil)
@@ -378,14 +404,6 @@ func TestCuratedCatalog_SeedFixesLeaveUnchangedEntries(t *testing.T) {
 	require.Equal(t, "https://{instance}/api/mcp", halo.URL)
 	require.Equal(t, "Bearer", halo.AuthHeaders[0].Scheme)
 	require.Contains(t, halo.AuthHeaders[0].Description, "(we add 'Bearer')")
-
-	pagerduty := mustCatalogServer(t, cat, "com.pagerduty/mcp")
-	require.Equal(t, "https://mcp.pagerduty.com/mcp", pagerduty.URL)
-	require.Equal(t, "https://mcp.pagerduty.com/mcp", pagerduty.OAuth.Resource)
-	require.Equal(t, "https://app.pagerduty.com/global/oauth/authorize", pagerduty.OAuth.AuthorizeURL)
-	require.Equal(t, "https://app.pagerduty.com/global/oauth/token", pagerduty.OAuth.TokenURL)
-	require.Empty(t, pagerduty.URLVariables)
-	require.NotContains(t, pagerduty.OAuth.Scopes, "write")
 }
 
 // Header placeholders name the secret the operator types. The gateway adds

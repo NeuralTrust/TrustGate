@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -351,5 +352,77 @@ func TestPrincipalPreview_ARevokedRowNeedsNothing(t *testing.T) {
 	}
 	if got := state.Installs[0].NeedsConfig; len(got) != 0 {
 		t.Fatalf("a revoked row needs nothing, got %v", got)
+	}
+}
+
+func pagerDutyShelf(t *testing.T, gw ids.GatewayID) *registrydomain.Registry {
+	t.Helper()
+	reg, err := registrydomain.NewMCPRegistry(gw, "PagerDuty", "", &registrydomain.MCPTarget{
+		Code: "com.pagerduty/mcp",
+		URL:  "https://{host}/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{
+			Name:     "host",
+			Required: true,
+			Options: []registrydomain.MCPURLVariableOption{
+				{Value: "mcp.pagerduty.com", Label: "United States"},
+				{Value: "mcp.eu.pagerduty.com", Label: "Europe"},
+			},
+		}},
+		Auth: &registrydomain.MCPAuth{
+			Mode:                registrydomain.MCPAuthModeForwarded,
+			Provider:            "com.pagerduty/mcp",
+			Registration:        registrydomain.RegistrationManual,
+			ClientID:            "pagerduty-client",
+			AuthorizeURL:        "https://app.pagerduty.com/global/oauth/authorize",
+			TokenURL:            "https://app.pagerduty.com/global/oauth/token",
+			Resource:            "https://{host}/mcp",
+			ResourcePerInstance: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	return reg
+}
+
+// The Portal reads the same key connect stored: the EU host, not the template.
+func TestPrincipalPreview_PerUserRegionShowsConnected(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := pagerDutyShelf(t, gw)
+	eu := map[string]string{"host": "mcp.eu.pagerduty.com"}
+	key := registrydomain.ForwardedVaultProviderFor(reg, eu)
+	if !strings.Contains(key, "|b35ba3004532") {
+		t.Fatalf("eu key = %s", key)
+	}
+	in := mustInstall(t, gw, "alice", "com.pagerduty/mcp")
+	in.RegistryID = reg.ID
+	in.Config = eu
+	vault := &fakeVault{creds: map[string]*vaultdomain.Credential{
+		key: {Provider: key, AccountRef: "alice@pagerduty", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)},
+	}}
+	p := newPreviewT(t, &fakeInstalls{byPrincipal: []*installationdomain.Installation{in}}, &fakeRegistries{items: []*registrydomain.Registry{reg}}, vault)
+	state, err := p.Preview(context.Background(), gw, "alice")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if len(state.Connections) != 1 || !state.Connections[0].Linked || state.Connections[0].NeedsReconnect {
+		t.Fatalf("connection = %+v, want the EU token linked", state.Connections)
+	}
+}
+
+func TestCatalogOAuth_PerInstanceOnlyForATemplatedCatalogResource(t *testing.T) {
+	pagerDuty := catalogOAuth("com.pagerduty/mcp", &catalogdomain.MCPOAuth{
+		Resource:     "https://{host}/mcp",
+		Registration: "manual",
+	})
+	if !pagerDuty.ResourcePerInstance || pagerDuty.Resource != "https://{host}/mcp" {
+		t.Fatalf("pagerduty auth = %+v", pagerDuty)
+	}
+	newRelic := catalogOAuth("com.newrelic/mcp", &catalogdomain.MCPOAuth{
+		ResourceMetadata: true,
+		Registration:     "auto",
+	})
+	if newRelic.ResourcePerInstance || newRelic.Resource != "" {
+		t.Fatalf("new relic auth = %+v", newRelic)
 	}
 }

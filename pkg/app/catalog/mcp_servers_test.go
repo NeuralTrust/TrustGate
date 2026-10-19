@@ -16,10 +16,13 @@ package catalog
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	mcpcatalog "github.com/NeuralTrust/TrustGate/seed/mcp-catalog"
 	"github.com/stretchr/testify/require"
 )
@@ -382,25 +385,122 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.Contains(t, server.ConfigGuide.Note, "/oauth/callback/com.amazon.aws/mcp")
 }
 
-// A templated oauth.resource never reaches substitution: the registry
-// canonicalizer copies it verbatim and the provider client sends it as the
-// RFC 8707 resource indicator, so the authorization server would receive a
-// literal "{placeholder}" and reject the grant. Entries that need a
-// per-instance audience set resource_metadata instead, which resolves to the
-// registry's own URL after URL variables are applied.
-func TestCuratedCatalog_HasNoTemplatedOAuthResource(t *testing.T) {
+// A templated oauth.resource is stored as the concrete audience when the row
+// URL matches one closed option, and a per-user template is fingerprinted
+// from that caller's instance config. An open placeholder has nothing safe
+// to fill it, so the authorization server would receive a literal "{name}".
+// A template is allowed only when every placeholder is a closed variable
+// that also appears in the server URL.
+func TestCuratedCatalog_TemplatedOAuthResourceIsClosed(t *testing.T) {
 	t.Parallel()
 
 	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 
 	for _, server := range cat.ListMCPServers() {
-		if server.OAuth == nil {
+		if server.OAuth == nil || !strings.Contains(server.OAuth.Resource, "{") {
 			continue
 		}
-		require.NotContains(t, server.OAuth.Resource, "{",
-			"catalog entry %q declares a templated oauth.resource", server.Code)
+		names := registrydomain.TemplateVariableNames(server.OAuth.Resource)
+		require.NotEmptyf(t, names, "catalog entry %q resource has a brace but no placeholder", server.Code)
+		declared := make(map[string]domain.MCPURLVariable, len(server.URLVariables))
+		for _, variable := range server.URLVariables {
+			declared[variable.Name] = variable
+		}
+		for _, name := range names {
+			variable, ok := declared[name]
+			require.Truef(t, ok && variable.HasOptions(),
+				"catalog entry %q oauth.resource placeholder %q is not a closed url variable", server.Code, name)
+			require.Containsf(t, server.URL, "{"+name+"}",
+				"catalog entry %q oauth.resource placeholder %q is not in the server URL", server.Code, name)
+		}
 	}
+}
+
+// Own-client rows (manual registration, resource copied from a templated
+// URL) keep the template vault key for every catalog entry except one whose
+// oauth.resource is itself a template. That is PagerDuty, and only PagerDuty.
+func TestCuratedCatalog_VaultKeyStableExceptPagerDutyRegion(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	var perInstance []string
+	for _, server := range cat.ListMCPServers() {
+		if server.OAuth == nil || server.OAuth.GrantType == "client_credentials" {
+			continue
+		}
+		if strings.Contains(server.OAuth.Resource, "{") {
+			perInstance = append(perInstance, server.Code)
+		}
+		reg := catalogVaultRegistry(t, server)
+		if reg == nil {
+			continue
+		}
+		plain := registrydomain.ForwardedVaultProvider(reg)
+		reg.MCPTarget.InstanceConfig = firstClosedOptions(server)
+		filled := registrydomain.ForwardedVaultProvider(reg)
+		if strings.Contains(server.OAuth.Resource, "{") {
+			require.NotEqual(t, plain, filled, server.Code)
+			continue
+		}
+		require.Equalf(t, plain, filled, "catalog entry %q changed vault key %s -> %s", server.Code, plain, filled)
+	}
+	require.Equal(t, []string{"com.pagerduty/mcp"}, perInstance)
+}
+
+func catalogVaultRegistry(t *testing.T, server domain.MCPServer) *registrydomain.Registry {
+	t.Helper()
+	resource := strings.TrimSpace(server.OAuth.Resource)
+	if resource == "" && server.OAuth.ResourceMetadata {
+		resource = strings.TrimSpace(server.URL)
+	}
+	authorize := strings.TrimSpace(server.OAuth.AuthorizeURL)
+	token := strings.TrimSpace(server.OAuth.TokenURL)
+	if authorize == "" || token == "" || strings.Contains(authorize, "{") || strings.Contains(token, "{") {
+		authorize = "https://auth.example.com/authorize"
+		token = "https://auth.example.com/token"
+	}
+	reg, err := registrydomain.NewMCPRegistry(ids.New[ids.GatewayKind](), server.Code, "", &registrydomain.MCPTarget{
+		Code:         server.Code,
+		URL:          server.URL,
+		URLVariables: catalogVaultVars(server.URLVariables),
+		Auth: &registrydomain.MCPAuth{
+			Mode:                registrydomain.MCPAuthModeForwarded,
+			Provider:            server.Code,
+			Registration:        registrydomain.RegistrationManual,
+			ClientID:            "own-client",
+			AuthorizeURL:        authorize,
+			TokenURL:            token,
+			Resource:            resource,
+			ResourcePerInstance: strings.Contains(server.OAuth.Resource, "{"),
+		},
+	})
+	require.NoError(t, err)
+	return reg
+}
+
+func catalogVaultVars(vars []domain.MCPURLVariable) []registrydomain.MCPURLVariable {
+	out := make([]registrydomain.MCPURLVariable, 0, len(vars))
+	for _, variable := range vars {
+		converted := registrydomain.MCPURLVariable{Name: variable.Name, Required: variable.Required}
+		for _, option := range variable.Options {
+			converted.Options = append(converted.Options, registrydomain.MCPURLVariableOption{Value: option.Value, Label: option.Label})
+		}
+		out = append(out, converted)
+	}
+	return out
+}
+
+func firstClosedOptions(server domain.MCPServer) map[string]string {
+	values := map[string]string{}
+	for _, variable := range server.URLVariables {
+		if len(variable.Options) == 0 {
+			continue
+		}
+		values[variable.Name] = variable.Options[0].Value
+	}
+	return values
 }
 
 func TestCuratedCatalog_ConfigurableServersHaveSetupGuides(t *testing.T) {

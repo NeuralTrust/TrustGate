@@ -320,7 +320,10 @@ func registryCode(reg *registrydomain.Registry) string {
 // Cube row whose {cube_host} resolves somewhere other than cubecloud.dev) keeps
 // the resource and scopes it stored. Sending the hosted resource to that
 // authorization server fails with invalid_target. res is the resolution this
-// flow already computed; a not-ready resolution does not match.
+// flow already computed; a not-ready resolution does not match. A fixed URL
+// with no install values matches a templated catalog server when exactly one
+// closed option resolves to it, and the catalog resource is filled with that
+// option before it is returned.
 func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog, res upstreamResolution) *registrydomain.MCPAuth {
 	if cfg == nil || cat == nil {
 		return cfg
@@ -340,7 +343,8 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 	if len(entry.OAuth.Scopes) == 0 && resource == "" {
 		return cfg
 	}
-	if !catalogServerMatches(entry, res) {
+	values, ok := catalogMatchValues(entry, res)
+	if !ok {
 		return cfg
 	}
 	out := *cfg
@@ -348,44 +352,65 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
 	}
 	if resource != "" {
-		out.Resource = resource
+		// Fill a templated catalog resource with the values that matched the
+		// server URL, including a closed option inferred for a fixed-URL row.
+		// The unresolved template must not be assigned: finalizeAuthURLs would
+		// refuse the redirect with ErrUnresolvedOAuthPlaceholder.
+		resolved, resolvedOK := resolveCatalogTemplate(entry, resource, values)
+		if !resolvedOK || strings.ContainsAny(resolved, "{}") {
+			return cfg
+		}
+		out.Resource = resolved
 	}
 	return &out
 }
 
 // catalogServerMatches reports whether the row's resolved upstream URL is the
 // catalog entry's server URL. A templated catalog URL is filled with the same
-// values that produced the row URL. Comparison is SameCanonicalResource, so a
-// trailing slash or default port does not hide a match. An empty catalog URL,
-// or a template that these values cannot fill, does not match.
+// values that produced the row URL. When the row has no value for a closed
+// (options) variable, each listed option is tried, and the row matches only
+// when exactly one option resolves to that URL. An open variable is never
+// guessed, so a self-hosted install keeps the resource and scopes it stored.
+// Comparison is SameCanonicalResource, so a trailing slash or default port
+// does not hide a match. An empty catalog URL, or a template that these
+// values cannot fill, does not match.
 func catalogServerMatches(entry catalogdomain.MCPServer, res upstreamResolution) bool {
-	if !res.ready {
-		return false
-	}
-	catalogURL, ok := resolveCatalogServerURL(entry, res.values)
-	if !ok {
-		return false
-	}
-	return registrydomain.SameCanonicalResource(res.url, catalogURL)
+	_, ok := catalogMatchValues(entry, res)
+	return ok
 }
 
-func resolveCatalogServerURL(entry catalogdomain.MCPServer, values map[string]string) (string, bool) {
-	raw := strings.TrimSpace(entry.URL)
+// catalogMatchValues returns the placeholder values that make the catalog
+// server URL the row's resolved upstream URL. Closed-option inference is
+// registrydomain.ClosedOptionMatch, which the registry canonicalizer uses
+// when it stores a concrete resource for the same row.
+func catalogMatchValues(entry catalogdomain.MCPServer, res upstreamResolution) (map[string]string, bool) {
+	if !res.ready {
+		return nil, false
+	}
+	return registrydomain.ClosedOptionMatch(entry.URL, catalogRegistryURLVars(entry), res.values, res.url)
+}
+
+func resolveCatalogTemplate(entry catalogdomain.MCPServer, raw string, values map[string]string) (string, bool) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", false
 	}
 	if !strings.Contains(raw, "{") {
 		return raw, true
 	}
-	vars := make([]registrydomain.MCPURLVariable, 0, len(entry.URLVariables))
-	for _, v := range entry.URLVariables {
-		vars = append(vars, toRegistryURLVar(v))
-	}
-	resolved, err := registrydomain.ResolveURL(raw, vars, values)
+	resolved, err := registrydomain.ResolveURL(raw, catalogRegistryURLVars(entry), values)
 	if err != nil {
 		return "", false
 	}
 	return resolved, true
+}
+
+func catalogRegistryURLVars(entry catalogdomain.MCPServer) []registrydomain.MCPURLVariable {
+	vars := make([]registrydomain.MCPURLVariable, 0, len(entry.URLVariables))
+	for _, variable := range entry.URLVariables {
+		vars = append(vars, toRegistryURLVar(variable))
+	}
+	return vars
 }
 
 func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *RegisteredClient) *registrydomain.MCPAuth {

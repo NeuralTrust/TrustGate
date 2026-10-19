@@ -21,6 +21,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	vaultmocks "github.com/NeuralTrust/TrustGate/pkg/domain/vault/mocks"
@@ -93,6 +94,28 @@ func TestPrincipalDisconnect_RefusesWithoutDeleting(t *testing.T) {
 		require.True(t, errors.Is(err, tc.want), "%s: err = %v, want %v", name, err, tc.want)
 	}
 	require.ErrorIs(t, ErrSharedConnection, commonerrors.ErrConflict)
+}
+
+// Disconnect deletes the EU token connect stored, not the template key.
+func TestPrincipalDisconnect_PerUserRegionDeletesTheStoredToken(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := pagerDutyShelf(t, gw)
+	eu := map[string]string{"host": "mcp.eu.pagerduty.com"}
+	key := registrydomain.ForwardedVaultProviderFor(reg, eu)
+	require.Contains(t, key, "|b35ba3004532")
+	in := mustInstall(t, gw, "alice", "com.pagerduty/mcp")
+	in.RegistryID = reg.ID
+	in.Config = eu
+	vault := vaultmocks.NewRepository(t)
+	vault.EXPECT().Delete(mock.Anything, gw, "alice", key).Return(nil).Once()
+	d, err := NewPrincipalDisconnector(
+		registriesByID{reg.ID: reg}, vault, nil,
+		WithDisconnectorInstalls(&fakeInstalls{byPrincipal: []*installationdomain.Installation{in}}),
+	)
+	require.NoError(t, err)
+	require.NoError(t, d.Disconnect(context.Background(), PrincipalDisconnectRequest{
+		GatewayID: gw, PrincipalSub: "alice", RegistryID: reg.ID,
+	}))
 }
 
 func TestNewPrincipalDisconnector_NeedsAVault(t *testing.T) {

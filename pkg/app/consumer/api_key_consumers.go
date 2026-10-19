@@ -293,7 +293,7 @@ func (s *apiKeyConsumers) upstreamOf(
 	cred, err := s.vault.Find(
 		ctx, gatewayID,
 		registrydomain.SharedAccountSubject(reg.ID),
-		registrydomain.ForwardedVaultProvider(reg),
+		registrydomain.ForwardedVaultProviderFor(reg, nil),
 	)
 	switch {
 	case err == nil:
