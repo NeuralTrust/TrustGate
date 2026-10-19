@@ -379,3 +379,26 @@ func TestMCPAuth_Validate_IdentityID(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPTarget_PinsURLVariable(t *testing.T) {
+	cases := []struct {
+		name   string
+		target *MCPTarget
+		v      string
+		want   bool
+	}{
+		{"nil target", nil, "host", false},
+		{"empty url", &MCPTarget{}, "host", false},
+		{"template keeps the token", &MCPTarget{URL: "https://{host}/mcp"}, "host", false},
+		{"concrete url pins it", &MCPTarget{URL: "https://cloud.langfuse.com/mcp"}, "host", true},
+		{"partial template pins the other", &MCPTarget{URL: "https://eu.example.com/s/{space}/mcp"}, "host", true},
+		{"partial template keeps its own", &MCPTarget{URL: "https://eu.example.com/s/{space}/mcp"}, "space", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.target.PinsURLVariable(tc.v); got != tc.want {
+				t.Fatalf("PinsURLVariable(%q) = %v, want %v", tc.v, got, tc.want)
+			}
+		})
+	}
+}
