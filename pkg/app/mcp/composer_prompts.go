@@ -64,7 +64,8 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 }
 
 // findPrompt returns the first binding published under name, else the single
-// binding whose v0.66.0 spelling is name, as Resolve does for tools.
+// binding whose v0.66.0 spelling is name, as Resolve does for tools. That
+// spelling uses the toolkit ExposeAs when the prompt was renamed.
 func findPrompt(bindings []promptBinding, name string) (promptBinding, bool) {
 	for _, b := range bindings {
 		if b.exposed == name {
@@ -74,7 +75,7 @@ func findPrompt(bindings []promptBinding, name string) (promptBinding, bool) {
 	var found promptBinding
 	seen := false
 	for _, b := range bindings {
-		if legacyExposedName(b.prompt.Name, b.registry) != name {
+		if b.legacyLocal == "" || legacyExposedName(b.legacyLocal, b.registry) != name {
 			continue
 		}
 		if seen {
@@ -90,6 +91,9 @@ type promptBinding struct {
 	registry *registrydomain.Registry
 	prompt   Prompt
 	exposed  string
+	// legacyLocal is the name v0.66.0 prefixed: the toolkit ExposeAs when one
+	// was set, otherwise the upstream prompt name.
+	legacyLocal string
 }
 
 // promptComposition is the prompts the reachable upstreams offer and, when an
@@ -170,7 +174,9 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	}
 	for i, b := range candidates {
 		// Prompts keep <server>_<prompt>. Tool names drop a repeated server
-		// prefix; prompts do not.
+		// prefix; prompts do not. exposed is still the toolkit's local name
+		// here: ExposeAs when set, otherwise the upstream prompt name.
+		candidates[i].legacyLocal = b.exposed
 		candidates[i].exposed = promptName(b.exposed, b.registry)
 	}
 	return &promptComposition{bindings: candidates, pending: pendingAccount}, nil
