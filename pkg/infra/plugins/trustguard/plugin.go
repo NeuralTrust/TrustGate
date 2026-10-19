@@ -120,6 +120,7 @@ const (
 	statusTransform     = "transform"
 	statusAsk           = "ask"
 	statusAllow         = "allow"
+	statusSkip          = "skip"
 )
 
 const (
@@ -785,6 +786,8 @@ func guardOutcomeDecision(status string, mode policy.Mode) string {
 	case statusReport:
 		return decisionReported
 	case statusAllow, "":
+		return decisionAllowed
+	case statusSkip:
 		return decisionAllowed
 	default:
 		return decisionReported
