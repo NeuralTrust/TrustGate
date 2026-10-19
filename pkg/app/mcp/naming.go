@@ -26,7 +26,7 @@ import (
 // maxExposedNameLength is what an MCP client will accept for a tool name.
 const maxExposedNameLength = 64
 
-// nameHashLength is the hex a truncated name ends in, enough that two tools
+// nameHashLength is the hex a truncated name carries, enough that two tools
 // truncated to the same stem stay apart.
 const nameHashLength = 8
 
@@ -237,8 +237,8 @@ func exposedNameFor(name string, reg *registrydomain.Registry) exposedName {
 // String is the name the caller calls the tool by. An upstream name that
 // already begins with "<slug>_" is published as that name, unless keepPrefix
 // is set because another tool of the same server would otherwise take it. A
-// name that still does not fit loses its middle and keeps the tail — the
-// action words — plus the content hash.
+// name that still does not fit keeps the server prefix and equal shares of
+// the tool's start and end, with the content hash between them.
 func (e exposedName) String() string {
 	server := e.server
 	tool := e.name
@@ -279,9 +279,9 @@ func withCanonicalSlugPrefix(tool, slug string) string {
 	return prefix + tool[len(prefix):]
 }
 
-// cutMiddleV2 keeps server_ (when full starts with it) and the tail of the
-// rest, with the content hash between them. rehashed stops a slug that still
-// crowds the tool out from hashing itself again.
+// cutMiddleV2 keeps server_ (when full starts with it) and cuts the tool from
+// the middle, so action words at either end survive. rehashed stops a slug
+// that still crowds the tool out from hashing itself again.
 func cutMiddleV2(server, full, suffix string, rehashed bool) string {
 	hash := strings.TrimPrefix(suffix, "_")
 	prefix, body := splitServerPrefix(server, full)
@@ -302,7 +302,58 @@ func cutMiddleV2(server, full, suffix string, rehashed bool) string {
 		prefix = ""
 		body = full
 	}
-	return prefix + hash + "_" + suffixWithin(body, room)
+	return joinMiddleCut(prefix, hash, body, room)
+}
+
+// joinMiddleCut publishes prefix + head + "_" + hash + "_" + tail. room is the
+// bytes a one-separator tail would have had; both sides spend one of those
+// bytes on the second underscore. The two sides take equal shares (the odd
+// byte goes to the tail). Cuts stay on rune boundaries, and an underscore
+// sitting against the hash is dropped — a tail that began with '_' used to
+// publish a double underscore.
+func joinMiddleCut(prefix, hash, body string, room int) string {
+	if room < 1 || body == "" {
+		return prefix + hash
+	}
+	var head, tail string
+	shared := room - 1
+	if shared < 2 {
+		tail = strings.TrimLeft(suffixWithin(body, room), "_")
+	} else {
+		head = prefixWithin(body, shared/2)
+		tail = suffixWithin(body, shared-shared/2)
+		if strings.HasSuffix(prefix, "_") {
+			head = strings.TrimLeft(head, "_")
+		}
+		head = strings.TrimRight(head, "_")
+		tail = strings.TrimLeft(tail, "_")
+	}
+	out := prefix + head
+	if head != "" {
+		out += "_"
+	}
+	out += hash
+	if tail != "" {
+		out += "_" + tail
+	}
+	return out
+}
+
+// prefixWithin returns the head of s that fits in room bytes and ends on a
+// rune boundary. A byte slice of that length can end on the first byte of a
+// rune, and an MCP client would then be handed a name that is not UTF-8.
+func prefixWithin(s string, room int) string {
+	if room < 1 || s == "" {
+		return ""
+	}
+	if len(s) <= room {
+		return s
+	}
+	end := room
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end]
 }
 
 // suffixWithin returns the tail of s that fits in room bytes and starts on a
