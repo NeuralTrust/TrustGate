@@ -33,7 +33,7 @@ import (
 type emptyStateCache struct{}
 
 func (emptyStateCache) Save(context.Context, usagedomain.TenantState) (bool, error) { return true, nil }
-func (emptyStateCache) LoadAll(context.Context) ([]usagedomain.TenantState, error) { return nil, nil }
+func (emptyStateCache) LoadAll(context.Context) ([]usagedomain.TenantState, error)  { return nil, nil }
 
 func TestAdminUsageReadinessFollowsTheFlag(t *testing.T) {
 	t.Parallel()
