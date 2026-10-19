@@ -72,9 +72,10 @@ const (
 	// everyone to what an admin has granted them, rather than opening the whole
 	// catalog to an org that has not decided anything.
 	StoreModeCurated = "curated"
-	// StoreModeNone ("None"): the Store offers nothing — nothing new is browsable
-	// and self-service install is disabled. Per-group/per-user grants on a registry
-	// are a separate, additive layer and are unaffected.
+	// StoreModeNone ("None"): this principal has no MCP Store access. Nothing is
+	// browsable or installable, and a server they already installed — or hold
+	// through a direct or group grant — is not listed or callable. The install
+	// and grant rows stay, so a later mode that is not None restores them.
 	StoreModeNone = "none"
 )
 

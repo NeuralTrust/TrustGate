@@ -419,11 +419,10 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 	}
 }
 
-// Installing is off for the person, but installing again is also how a server
-// they already have gets its connect link: that still answers, without
-// running the installer. Only something new is refused, with a reason they
-// can read.
-func TestStoreInstallPrincipalNoneStillConnectsAServerTheyHave(t *testing.T) {
+// None refuses the install tool even when the principal already holds the
+// server. The same refusal a new install gets is returned, and no connect
+// link is minted.
+func TestStoreInstallPrincipalNoneRefusesAServerTheyHave(t *testing.T) {
 	sandbox := ids.New[ids.RegistryKind]()
 	inst := &fakeInstaller{held: &appstore.InstallResult{
 		Code: "github", Name: "GitHub", Status: "installed", InstanceID: "row-1",
@@ -437,24 +436,17 @@ func TestStoreInstallPrincipalNoneStillConnectsAServerTheyHave(t *testing.T) {
 	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
 
 	raw, err := tool.Call(ctx, storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
-
-	if err != nil {
-		t.Fatalf("connecting a server they have must answer, got %v", err)
-	}
-	if len(inst.installed) != 0 || inst.installedCall != 1 {
-		t.Fatalf("the installer must not run; installed=%v installedCall=%d", inst.installed, inst.installedCall)
-	}
-	sc := decodeStructured(t, raw)
-	if sc["already_installed"] != true || sc["connect_url"] == nil {
-		t.Fatalf("result must carry the connect link, got %+v", sc)
-	}
-	if connect.code != "github" || connect.instanceID != sandbox.String() {
-		t.Fatalf("the link must be pinned to the held instance's server, got %+v", connect)
-	}
-
-	_, err = storeToolWithInstaller(t, &fakeInstaller{}).Call(ctx, storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
 	if !errors.Is(err, ErrStoreInstallDisabled) {
-		t.Fatalf("a server they do not have is refused as disabled, got %v", err)
+		t.Fatalf("a held server under None must be refused as disabled, got %v", err)
+	}
+	if raw != nil {
+		t.Fatalf("refusal must not carry a result, got %s", raw)
+	}
+	if inst.installedCall != 0 || len(inst.installed) != 0 {
+		t.Fatalf("neither Installed nor Install may run, installedCall=%d installed=%v", inst.installedCall, inst.installed)
+	}
+	if connect.code != "" || connect.instanceID != "" {
+		t.Fatalf("no connect link may be minted, got %+v", connect)
 	}
 }
 
