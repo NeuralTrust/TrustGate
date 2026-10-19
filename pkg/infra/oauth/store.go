@@ -115,7 +115,10 @@ func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoau
 			return errors.New("oauth flow store: session already expired")
 		}
 	}
-	return s.save(ctx, sessionKey(refreshToken), rec, ttl)
+	if err := s.save(ctx, sessionKey(refreshToken), rec, ttl); err != nil {
+		return err
+	}
+	return s.indexSession(ctx, refreshToken, rec, ttl)
 }
 
 func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
@@ -134,12 +137,21 @@ func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.
 }
 
 func (s *Store) RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error {
+	// Read before shortening the TTL: a zero grace can drop the key, and the
+	// owner index is addressed by the gateway and subject stored on it.
+	rec, err := s.GetSession(ctx, refreshToken)
+	if err != nil {
+		return err
+	}
 	// EXPIRE LT only ever shortens the remaining TTL: replaying an already
 	// retired token cannot push its expiry out again.
 	if err := s.rdb.ExpireLT(ctx, sessionKey(refreshToken), grace).Err(); err != nil {
 		return fmt.Errorf("oauth flow store: retire session: %w", err)
 	}
-	return nil
+	if rec == nil {
+		return nil
+	}
+	return s.unindexSession(ctx, refreshToken, rec.GatewayID, rec.Subject)
 }
 
 func sessionKey(refreshToken string) string {

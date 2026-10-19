@@ -108,6 +108,7 @@ type AdminRouterDeps struct {
 	RotateAuth              *authhttp.RotateAuthHandler
 	UpdateAuthBudget        *authhttp.UpdateAuthBudgetHandler
 	UpdateAuthOwnerGroups   *authhttp.UpdateAuthOwnerGroupsHandler
+	UpdateSubjectGroups     *authhttp.UpdateSubjectGroupsHandler
 	DeleteAuth              *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
@@ -273,6 +274,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		auths.Put("/:id/groups", r.deps.UpdateAuthOwnerGroups.Handle)
 	}
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
+	// Same admin credential as PUT .../auths/{id}/groups. The subject has no
+	// personal-key row; the call only updates default-IdP refresh records.
+	if r.deps.UpdateSubjectGroups != nil {
+		subjects := gw.Group("/:gateway_id/subjects", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
+		subjects.Put("/:user_id/groups", r.deps.UpdateSubjectGroups.Handle)
+	}
 
 	// Routes that carry no gateway scope are console-only: a machine credential
 	// is bound to one gateway and has no business reading platform-wide data.
