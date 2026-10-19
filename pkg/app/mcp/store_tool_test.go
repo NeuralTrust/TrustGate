@@ -272,8 +272,45 @@ func TestStoreSearchSurfacesGrantReadError(t *testing.T) {
 
 func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	if _, err := tool.Call(context.Background(), storeRC(), "", "trustgate_store_bogus", nil); err == nil {
-		t.Fatal("unknown store tool must error")
+	_, err := tool.Call(context.Background(), storeRC(), "", "trustgate_store_bogus", nil)
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) || unknown.Error() != "Unknown tool: trustgate_store_bogus" {
+		t.Fatalf("err = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrStoreToolUnavailable) {
+		t.Fatal("an unknown name must not be reported as an unavailable Store")
+	}
+	_, err = tool.Call(context.Background(), nil, "", StoreSearchToolName, nil)
+	if !errors.Is(err, ErrStoreToolUnavailable) || errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("missing caller = %v, want ErrStoreToolUnavailable", err)
+	}
+}
+
+func TestEmptyStoreCallIsUnknownToolAndStoreSearchStillRuns(t *testing.T) {
+	tool := newStoreToolForTest(t)
+	d := NewRPCDispatcher(newTestComposer(&fakeDialer{}), NewPluginRunner(nil, nil), nil, nil, tool)
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+	ctx := selfServiceCtx()
+
+	_, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"ghost"}`))
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) || unknown.Error() != "Unknown tool: ghost" {
+		t.Fatalf("empty Store tools/call = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrNoMCPRegistries) {
+		t.Fatal("empty Store tools/call must not be no MCP registries")
+	}
+
+	if _, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"trustgate_store_search","arguments":{"query":"git"}}`)); err != nil {
+		t.Fatalf("store search on an empty Store: %v", err)
+	}
+
+	plain := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP, Active: true,
+	}}
+	_, err = d.Dispatch(ctx, plain, "", "tools/call", json.RawMessage(`{"name":"ghost"}`))
+	if !errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("consumer with no registries = %v, want ErrNoMCPRegistries", err)
 	}
 }
 
