@@ -16,6 +16,8 @@ package oauth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -388,6 +390,105 @@ func TestSubjectRevokedAtRedisError(t *testing.T) {
 	_, err := infraoauth.NewStore(rdb).SubjectRevokedAt(context.Background(), "gw-1", "org-1", "user-1")
 	if err == nil {
 		t.Fatal("a failed marker read must be an error, not a missing marker")
+	}
+}
+
+// A code issued before the revoke must not become a session. Exchange is
+// refused, rather than minting a session whose refresh would then fail.
+func TestCodeIssuedBeforeRevokeIsRefusedAtExchange(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	issued := time.Now().Add(-time.Minute).UTC()
+	if err := store.SaveCode(ctx, "pre-revoke", sessionCode("user-1", issued)); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	if _, err := store.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	proxy := newRevokeProxy(t, store)
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType:    "authorization_code",
+		Code:         "pre-revoke",
+		RedirectURI:  "https://app.example/cb",
+		CodeVerifier: "client-verifier",
+	})
+	requireInvalidGrant(t, err)
+	for _, key := range mr.Keys() {
+		if strings.HasPrefix(key, "oauth:session:") {
+			t.Fatalf("exchange minted a session: %s", key)
+		}
+	}
+
+	markerRaw, err := mr.Get("oauth:sessions-revoked:gw-1:org-1:user-1")
+	if err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+	marker, err := time.Parse(time.RFC3339Nano, markerRaw)
+	if err != nil {
+		t.Fatalf("marker time: %v", err)
+	}
+	if err := store.SaveCode(ctx, "post-revoke", sessionCode("user-1", marker.Add(time.Second))); err != nil {
+		t.Fatalf("save later code: %v", err)
+	}
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType:    "authorization_code",
+		Code:         "post-revoke",
+		RedirectURI:  "https://app.example/cb",
+		CodeVerifier: "client-verifier",
+	})
+	if err != nil {
+		t.Fatalf("code issued after the marker must exchange: %v", err)
+	}
+	refresh, _ := resp["refresh_token"].(string)
+	saved, err := store.GetSession(ctx, refresh)
+	if err != nil || saved == nil || !saved.LoginAt.Equal(marker.Add(time.Second)) {
+		t.Fatalf("session login = %+v err %v, want the code issue time", saved, err)
+	}
+	again, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: refresh,
+	})
+	if err != nil || again["token_type"] != "Bearer" {
+		t.Fatalf("refresh of a later login: %v resp %v", err, again)
+	}
+}
+
+func TestRevocationMarkerTTLIsTheLongerSessionLifetime(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	longLived, longRedis := newSessionStore(t)
+	longLived.SetDefaultIDPSessionMaxAge(90 * 24 * time.Hour)
+	if _, err := longLived.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1"); err != nil {
+		t.Fatalf("revoke long: %v", err)
+	}
+	if ttl := longRedis.TTL(revocationMarkerKey); ttl <= 89*24*time.Hour || ttl > 90*24*time.Hour {
+		t.Fatalf("marker ttl with a 90d cap = %v", ttl)
+	}
+
+	shorter, shortRedis := newSessionStore(t)
+	shorter.SetDefaultIDPSessionMaxAge(time.Hour)
+	if _, err := shorter.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1"); err != nil {
+		t.Fatalf("revoke short: %v", err)
+	}
+	if ttl := shortRedis.TTL(revocationMarkerKey); ttl <= 29*24*time.Hour || ttl > 30*24*time.Hour {
+		t.Fatalf("marker ttl with a 1h cap = %v, want the 30d idle lifetime", ttl)
+	}
+}
+
+const revocationMarkerKey = "oauth:sessions-revoked:gw-1:org-1:user-1"
+
+func sessionCode(subject string, issued time.Time) appoauth.CodeGrant {
+	sum := sha256.Sum256([]byte("client-verifier"))
+	return appoauth.CodeGrant{
+		RedirectURI:   "https://app.example/cb",
+		CodeChallenge: base64.RawURLEncoding.EncodeToString(sum[:]),
+		Subject:       subject,
+		AuthID:        appauth.DefaultIdPAuthID().String(),
+		GatewayID:     "gw-1",
+		Org:           "org-1",
+		Scopes:        []string{"mcp.access"},
+		SessionMode:   true,
+		IssuedAt:      issued,
 	}
 }
 

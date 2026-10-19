@@ -316,8 +316,10 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cc cache.Client) *infraoauth.Store {
-		return infraoauth.NewStore(cc.RedisClient())
+	if err := c.Provide(func(cc cache.Client, cfg *config.Config) *infraoauth.Store {
+		store := infraoauth.NewStore(cc.RedisClient())
+		store.SetDefaultIDPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge)
+		return store
 	}); err != nil {
 		return err
 	}

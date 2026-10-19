@@ -105,6 +105,11 @@ type CodeGrant struct {
 	// names who signed in for one of the gateway's own pages, and the token
 	// endpoint never exchanges it.
 	BrowserSignIn bool `json:"browser_sign_in,omitempty"`
+	// IssuedAt is when this code was issued, which is the login. Exchange
+	// copies it onto the session as LoginAt, so a revocation recorded after
+	// the login still covers the code. Zero is a code stored before the field
+	// existed; a marker then treats the login as missing and refuses it.
+	IssuedAt time.Time `json:"issued_at,omitempty"`
 }
 
 type SessionRecord struct {

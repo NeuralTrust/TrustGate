@@ -36,8 +36,9 @@ const (
 	// still mints that list.
 	directoryGroupsPrefix = "oauth:directory-groups:"
 	// sessionsRevokedPrefix holds the instant a subject's default-IdP sessions
-	// were revoked. The value is RFC3339Nano. The TTL is the max session
-	// lifetime, so a record issued before the marker cannot outlive it.
+	// were revoked. The value is RFC3339Nano. Its TTL is the longer of the
+	// idle session lifetime and MCP_DEFAULT_IDP_SESSION_MAX_AGE, so a record
+	// issued before the marker cannot outlive it.
 	sessionsRevokedPrefix = "oauth:sessions-revoked:"
 )
 
@@ -290,10 +291,17 @@ func (s *Store) extendIndexTTL(ctx context.Context, key string, ttl time.Duratio
 }
 
 func (s *Store) markSessionsRevoked(ctx context.Context, gatewayID, org, subject string, at time.Time) error {
-	if err := s.rdb.Set(ctx, sessionsRevokedKey(gatewayID, org, subject), at.UTC().Format(time.RFC3339Nano), sessionTTL).Err(); err != nil {
+	if err := s.rdb.Set(ctx, sessionsRevokedKey(gatewayID, org, subject), at.UTC().Format(time.RFC3339Nano), s.revocationTTL()).Err(); err != nil {
 		return fmt.Errorf("oauth flow store: mark sessions revoked: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) revocationTTL() time.Duration {
+	if s.sessionMaxAge > sessionTTL {
+		return s.sessionMaxAge
+	}
+	return sessionTTL
 }
 
 // SubjectRevokedAt reads the revocation marker. A missing key is the zero
