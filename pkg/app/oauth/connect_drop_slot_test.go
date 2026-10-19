@@ -113,6 +113,7 @@ func TestDropUsesTheSlotFromTheFailingCall(t *testing.T) {
 			t.Parallel()
 			gw := ids.New[ids.GatewayKind]()
 			reg := flippingAutoRegistry()
+			reg.MCPTarget.URL = "https://" + first + "/mcp"
 			original := clientCacheKey(gw, reg, issuerMeta(first))
 			victim := clientCacheKey(gw, reg, issuerMeta(second))
 			if original == victim {

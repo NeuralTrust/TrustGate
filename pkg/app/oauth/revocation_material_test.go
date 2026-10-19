@@ -149,8 +149,11 @@ func TestRevocationMaterialRefusesAUserChosenHost(t *testing.T) {
 	}}
 
 	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
-	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
-		t.Fatalf("material = %+v, err = %v; want host refusal", material, err)
+	if !errors.Is(err, ErrUpstreamSetupRequired) || material != nil {
+		t.Fatalf("material = %+v, err = %v; want the employee host ignored", material, err)
+	}
+	if strings.Contains(err.Error(), "admin-secret") || strings.Contains(err.Error(), "evil.example") {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
 	}
 }
 
@@ -169,22 +172,28 @@ func TestRevocationMaterialRefusesDCRSecretOnUserChosenHost(t *testing.T) {
 		cached: &RegisteredClient{ClientID: "dcr-id", ClientSecret: "dcr-secret"},
 	}
 	s := &connectService{registrar: registrar}
-	reg := wholeHostAutoRegistry("evil.example")
+	reg := &registrydomain.Registry{Type: registrydomain.TypeMCP, MCPTarget: &registrydomain.MCPTarget{
+		URL:            "https://{account_url}/mcp",
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "account_url", Required: true}},
+		InstanceConfig: map[string]string{"account_url": "evil.example"},
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.snowflake/mcp",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	}}
 
 	material, err := s.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "", reg)
-	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
-		t.Fatalf("material = %+v, err = %v; want host refusal", material, err)
+	if !errors.Is(err, ErrUpstreamSetupRequired) || material != nil {
+		t.Fatalf("material = %+v, err = %v; want the employee host ignored", material, err)
 	}
 	if strings.Contains(err.Error(), "dcr-secret") || strings.Contains(err.Error(), "evil.example") {
 		t.Fatalf("error leaks the secret or the rejected host: %v", err)
 	}
 
 	auth, refreshErr := s.RefreshAuth(context.Background(), ids.New[ids.GatewayKind](), reg)
-	if refreshErr != nil {
-		t.Fatalf("RefreshAuth: %v", refreshErr)
-	}
-	if auth.ClientSecret != "dcr-secret" || auth.TokenURL != "https://evil.example/token" {
-		t.Fatalf("refresh auth = %+v", auth)
+	if !errors.Is(refreshErr, ErrUpstreamSetupRequired) || auth != nil {
+		t.Fatalf("RefreshAuth = %+v, err = %v; want the employee host ignored", auth, refreshErr)
 	}
 }
 
@@ -252,9 +261,8 @@ func TestRevocationMaterialAllowsDCROnPinnedRegistrableDomain(t *testing.T) {
 	}
 	s := &connectService{registrar: registrar}
 	reg := &registrydomain.Registry{Type: registrydomain.TypeMCP, MCPTarget: &registrydomain.MCPTarget{
-		URL:            "https://{domain}.aha.io/api/v1/mcp",
-		URLVariables:   []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
-		InstanceConfig: map[string]string{"domain": "acme"},
+		URL:          "https://acme.aha.io/api/v1/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
 		Auth: &registrydomain.MCPAuth{
 			Mode:         registrydomain.MCPAuthModeForwarded,
 			Provider:     "io.aha/mcp",
@@ -273,9 +281,8 @@ func TestRevocationMaterialAllowsDCROnPinnedRegistrableDomain(t *testing.T) {
 
 func wholeHostAutoRegistry(host string) *registrydomain.Registry {
 	return &registrydomain.Registry{Type: registrydomain.TypeMCP, MCPTarget: &registrydomain.MCPTarget{
-		URL:            "https://{account_url}/mcp",
-		URLVariables:   []registrydomain.MCPURLVariable{{Name: "account_url", Required: true}},
-		InstanceConfig: map[string]string{"account_url": host},
+		URL:          "https://" + host + "/mcp",
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "account_url", Required: true}},
 		Auth: &registrydomain.MCPAuth{
 			Mode:         registrydomain.MCPAuthModeForwarded,
 			Provider:     "com.snowflake/mcp",

@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,6 +196,14 @@ var shelfClock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func shelfRegistry(code string) *registrydomain.Registry {
 	return namedRegistry(code, "")
+}
+
+const snowflakeFilledURL = "https://acme.snowflakecomputing.com/api/v2/databases/ledger/mcp"
+
+func filledSnowflake(name string) *registrydomain.Registry {
+	reg := namedRegistry("snowflake", name)
+	reg.MCPTarget.URL = snowflakeFilledURL
+	return reg
 }
 
 func namedRegistry(code, name string) *registrydomain.Registry {
@@ -583,13 +592,12 @@ func TestInstallNoGrantsMeansNobody(t *testing.T) {
 // code and one granted, the install binds to the granted one — no choice needed.
 func TestInstallInstanceGrantBindsToThatInstance(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	finance := namedRegistry("snowflake", "Snowflake (finance)")
-	analytics := namedRegistry("snowflake", "Snowflake (analytics)")
+	finance := filledSnowflake("Snowflake (finance)")
+	analytics := filledSnowflake("Snowflake (analytics)")
 	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
 	installs := &fakeInstalls{}
 	grants := grantsOf(instanceGrant(gw, "snowflake", finance.ID, []string{"finance"}, nil))
 	in := req(gw, "snowflake", "finance")
-	in.Config = map[string]string{"account_url": "acme", "database": "ledger"}
 	res, err := newInstallerWithGrants(t, regs, installs, grants).Install(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Install: %v", err)
@@ -607,12 +615,11 @@ func TestInstallInstanceGrantBindsToThatInstance(t *testing.T) {
 // Nothing is recorded until then.
 func TestInstallSeveralUsableInstancesRequiresChoice(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	finance := namedRegistry("snowflake", "Snowflake (finance)")
-	analytics := namedRegistry("snowflake", "Snowflake (analytics)")
+	finance := filledSnowflake("Snowflake (finance)")
+	analytics := filledSnowflake("Snowflake (analytics)")
 	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
 	installs := &fakeInstalls{}
 	in := openReq(gw, "snowflake")
-	in.Config = map[string]string{"account_url": "acme", "database": "ledger"}
 	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Install: %v", err)
@@ -667,7 +674,6 @@ func TestInstallNamedUngrantedInstanceFilesBoundRequest(t *testing.T) {
 	installs := &fakeInstalls{}
 	grants := grantsOf(instanceGrant(gw, "snowflake", finance.ID, nil, []string{"ana"}))
 	in := req(gw, "snowflake")
-	in.Config = map[string]string{"account_url": "acme", "database": "x"}
 	in.RegistryID = analytics.ID
 	res, err := newInstallerWithGrants(t, regs, installs, grants).Install(context.Background(), in)
 	if err != nil {
@@ -698,16 +704,14 @@ func TestInstallSeveralInstancesNoneGrantedFilesCodeRequest(t *testing.T) {
 // different configured instance is a different install (its own row).
 func TestInstallSameConfigDifferentRegistryIsNewInstance(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	finance := namedRegistry("snowflake", "finance")
-	analytics := namedRegistry("snowflake", "analytics")
+	finance := filledSnowflake("finance")
+	analytics := filledSnowflake("analytics")
 	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
-	config := map[string]string{"account_url": "acme", "database": "x"}
 	existing := &installationdomain.Installation{
-		ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: config, RegistryID: finance.ID,
+		ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, RegistryID: finance.ID,
 	}
 	installs := &fakeInstalls{byCode: []*installationdomain.Installation{existing}}
 	in := openReq(gw, "snowflake")
-	in.Config = config
 	in.RegistryID = analytics.ID
 	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
 	if err != nil {
@@ -810,16 +814,13 @@ func TestInstallRequiresConfigWhenVariablesMissing(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{}
 	installs := &fakeInstalls{}
-	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+	_, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
 		Install(context.Background(), openReq(gw, "snowflake"))
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if !res.RequiresConfig || len(res.ConfigVariables) != 2 {
-		t.Fatalf("must ask for the two required variables, got %+v", res)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "must be set by an admin") {
+		t.Fatalf("an unfilled registry variable must be refused, got %v", err)
 	}
 	if len(installs.upserts) != 0 {
-		t.Fatalf("a requires-config result must not record an install, got %+v", installs.upserts)
+		t.Fatalf("nothing is recorded until an admin fills the row, got %+v", installs.upserts)
 	}
 }
 
@@ -829,20 +830,10 @@ func TestInstallWithConfigStoresAndInstalls(t *testing.T) {
 	installs := &fakeInstalls{}
 	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
-	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+	_, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
 		Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if res.RequiresConfig || res.Status != installationdomain.StatusInstalled {
-		t.Fatalf("a fully-configured install must proceed, got %+v", res)
-	}
-	if len(installs.upserts) != 1 {
-		t.Fatalf("expected one install row, got %+v", installs.upserts)
-	}
-	cfg := installs.upserts[0].Config
-	if cfg["account_url"] != "acme.snowflakecomputing.com" || cfg["database"] != "ANALYTICS" {
-		t.Fatalf("config not persisted on the installation: %+v", cfg)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), `variable "account_url" is set by an admin`) {
+		t.Fatalf("an employee registry variable must be refused, got %v", err)
 	}
 }
 
@@ -985,15 +976,9 @@ func TestInstallDifferentConfigCreatesNewInstance(t *testing.T) {
 	}}
 	in := openReq(gw, "snowflake")
 	in.Config = configB
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if res.AlreadyInstalled {
-		t.Fatal("a new config must be a new instance, not already-installed")
-	}
-	if len(installs.upserts) != 1 || !installs.upserts[0].SameConfig(configB) {
-		t.Fatal("expected an upsert carrying the new config")
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a second database is a second registry row, not an employee value, got %v", err)
 	}
 }
 
@@ -1078,16 +1063,13 @@ func TestInstallGrantedStillAsksForPerUserConfig(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{}
 	installs := &fakeInstalls{}
-	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+	_, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
 		Install(context.Background(), openReq(gw, "snowflake"))
 
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if !res.RequiresConfig || len(res.ConfigVariables) == 0 {
-		t.Fatalf("an install must collect its per-user values, got %+v", res)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "must be set by an admin") {
+		t.Fatalf("an install of an unfilled row must be refused, got %v", err)
 	}
 	if len(installs.upserts) != 0 {
-		t.Fatalf("nothing is recorded until they are supplied, got %+v", installs.upserts)
+		t.Fatalf("nothing is recorded until an admin fills the row, got %+v", installs.upserts)
 	}
 }

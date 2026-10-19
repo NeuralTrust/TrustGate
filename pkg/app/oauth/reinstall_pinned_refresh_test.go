@@ -47,7 +47,7 @@ func TestReinstall_KeepsPinnedKeySoRefreshAuthStaysOnTheCatalog(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "kibana", "", &registrydomain.MCPTarget{
 		Code: code,
-		URL:  "https://acme.kb.example.com/s/{space}/mcp",
+		URL:  "https://acme.kb.example.com/s/default/mcp",
 		URLVariables: []registrydomain.MCPURLVariable{
 			{Name: "host", Required: true},
 			{Name: "space", Required: true},
@@ -126,7 +126,7 @@ func TestReinstall_KeepsPinnedKeySoRefreshAuthStaysOnTheCatalog(t *testing.T) {
 	}
 	res, err := installer.Install(context.Background(), appstore.InstallRequest{
 		GatewayID: gw, PrincipalSub: "ana", Code: code, InstalledBy: "ana", OpenMode: true,
-		Config: map[string]string{"space": "default"},
+		Config: map[string]string{},
 	})
 	if err != nil {
 		t.Fatalf("reinstall: %v", err)

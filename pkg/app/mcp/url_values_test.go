@@ -84,8 +84,9 @@ func subCtx(sub string) context.Context {
 
 func TestComposerTarget_ResolvesURLVariablesPerUser(t *testing.T) {
 	reg := urlVarRegistry(t)
+	reg.MCPTarget.URL = "https://acme.snowflakecomputing.com/api/v2/databases/ANALYTICS/mcp"
 	finder := fakeInstallFinder{byCode: map[string]map[string]string{
-		"snowflake": {"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"},
+		"snowflake": {"account_url": "evil.example", "database": "OTHER"},
 	}}
 	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finder, nil)}
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
@@ -96,10 +97,10 @@ func TestComposerTarget_ResolvesURLVariablesPerUser(t *testing.T) {
 	}
 	want := "https://acme.snowflakecomputing.com/api/v2/databases/ANALYTICS/mcp"
 	if tgt.URL != want {
-		t.Fatalf("URL not resolved from install config: got %q want %q", tgt.URL, want)
+		t.Fatalf("URL must come from the admin row: got %q want %q", tgt.URL, want)
 	}
 	if !strings.Contains(tgt.PinKey, ":u:") {
-		t.Fatalf("resolved URL must be folded into the pin key for per-user isolation: %q", tgt.PinKey)
+		t.Fatalf("a row that still declares variables folds the URL into the pin key: %q", tgt.PinKey)
 	}
 }
 
@@ -108,11 +109,11 @@ func TestComposerTarget_InstanceConfigOverlayWins(t *testing.T) {
 	// ambiguous, so a per-instance clone carries its own config as an overlay,
 	// and the resolver must resolve from the overlay, not the (wrong) Find.
 	reg := urlVarRegistry(t)
+	reg.MCPTarget.URL = "https://acme.snowflakecomputing.com/api/v2/databases/FINANCE/mcp"
 	reg.MCPTarget.InstanceConfig = map[string]string{
-		"account_url": "acme.snowflakecomputing.com",
-		"database":    "FINANCE",
+		"account_url": "evil.example",
+		"database":    "ANALYTICS",
 	}
-	// The by-code finder would (wrongly) return the analytics instance.
 	finder := fakeInstallFinder{byCode: map[string]map[string]string{
 		"snowflake": {"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"},
 	}}
@@ -125,17 +126,15 @@ func TestComposerTarget_InstanceConfigOverlayWins(t *testing.T) {
 	}
 	want := "https://acme.snowflakecomputing.com/api/v2/databases/FINANCE/mcp"
 	if tgt.URL != want {
-		t.Fatalf("instance overlay must win over the by-code lookup: got %q want %q", tgt.URL, want)
+		t.Fatalf("the admin URL must win over install config: got %q want %q", tgt.URL, want)
 	}
 }
 
 func TestComposerTarget_DifferentUsersDifferentPinKeys(t *testing.T) {
 	reg := urlVarRegistry(t)
-	finder := fakeInstallFinder{byCode: map[string]map[string]string{}}
-	// Two users, two accounts.
+	reg.MCPTarget.URL = "https://acme.snowflakecomputing.com/api/v2/databases/D/mcp"
 	finderA := fakeInstallFinder{byCode: map[string]map[string]string{"snowflake": {"account_url": "a.snowflakecomputing.com", "database": "D"}}}
 	finderB := fakeInstallFinder{byCode: map[string]map[string]string{"snowflake": {"account_url": "b.snowflakecomputing.com", "database": "D"}}}
-	_ = finder
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
 
 	ca := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finderA, nil)}
@@ -148,11 +147,8 @@ func TestComposerTarget_DifferentUsersDifferentPinKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("target b: %v", err)
 	}
-	if ta.URL == tb.URL {
-		t.Fatal("two users' accounts must resolve to different URLs")
-	}
-	if ta.PinKey == tb.PinKey {
-		t.Fatalf("two users must not share a session pin key: %q", ta.PinKey)
+	if ta.URL != tb.URL || ta.URL != reg.MCPTarget.URL {
+		t.Fatalf("non-secret hosts are the admin URL for every user: %q %q", ta.URL, tb.URL)
 	}
 }
 

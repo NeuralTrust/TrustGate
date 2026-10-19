@@ -318,6 +318,14 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	if err != nil {
 		return nil, err
 	}
+	// A choice or a request has not picked the row it will dial. The admin URL
+	// is required only when this call records an install against one instance.
+	if len(decision.choices) == 0 && !decision.requiresAdminSetup &&
+		decision.status != installationdomain.StatusPendingApproval {
+		if err := rejectUnfilledAdminVariables(entry.URL, catalogURLVariables(entry.URLVariables), boundTarget(decision.bound)); err != nil {
+			return nil, err
+		}
+	}
 	i.refreshBoundCatalog(ctx, in.GatewayID, code, &decision)
 	if decision.requiresAdminSetup {
 		return &InstallResult{
@@ -468,7 +476,11 @@ func planInstallConfig(
 	provided map[string]string,
 	bound *registrydomain.MCPTarget,
 ) (config map[string]string, missingPlain, secretRequired []registrydomain.MCPURLVariable, err error) {
-	declared := unpinnedURLVariables(catalogURLVariables(entry.URLVariables), bound)
+	all := catalogURLVariables(entry.URLVariables)
+	if err := rejectSuppliedNonSecrets(all, provided); err != nil {
+		return nil, nil, nil, err
+	}
+	declared := unpinnedURLVariables(all, bound)
 	pinned := make(map[string]struct{})
 	for _, v := range entry.URLVariables {
 		if bound.PinsURLVariable(v.Name) {
@@ -504,20 +516,57 @@ func planInstallConfig(
 		stored[k] = val
 	}
 	for _, v := range declared {
-		if !v.Required {
+		if !v.Required || !v.Secret {
 			continue
 		}
-		switch {
-		case v.Secret:
-			secretRequired = append(secretRequired, v)
-		case strings.TrimSpace(stored[v.Name]) == "":
-			missingPlain = append(missingPlain, v)
-		}
+		secretRequired = append(secretRequired, v)
 	}
 	if len(stored) == 0 {
 		stored = nil
 	}
 	return stored, missingPlain, secretRequired, nil
+}
+
+// rejectSuppliedNonSecrets refuses a non-secret registry variable from the
+// caller. The value belongs on the registry row. A secret credential is the
+// caller's own and is not refused here.
+func rejectSuppliedNonSecrets(declared []registrydomain.MCPURLVariable, provided map[string]string) error {
+	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
+	for _, variable := range declared {
+		byName[variable.Name] = variable
+	}
+	for name, raw := range provided {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		variable, known := byName[name]
+		if !known || variable.Secret {
+			continue
+		}
+		return fmt.Errorf("%w: variable %q is set by an admin on the registry", ErrConfigInvalid, name)
+	}
+	return nil
+}
+
+// rejectUnfilledAdminVariables refuses an install while a required non-secret
+// placeholder is still open on the registry. The admin create form writes
+// those values into the server URL; an employee cannot supply them later.
+func rejectUnfilledAdminVariables(catalogURL string, declared []registrydomain.MCPURLVariable, bound *registrydomain.MCPTarget) error {
+	rowURL := ""
+	if bound != nil {
+		rowURL = bound.URL
+	}
+	admin, _ := registrydomain.AdminBoundValues(catalogURL, declared, rowURL)
+	for _, variable := range declared {
+		if variable.Secret || !variable.Required {
+			continue
+		}
+		if bound.PinsURLVariable(variable.Name) || strings.TrimSpace(admin[variable.Name]) != "" {
+			continue
+		}
+		return fmt.Errorf("%w: variable %q must be set by an admin on the registry", ErrConfigInvalid, variable.Name)
+	}
+	return nil
 }
 
 // installDecision is the outcome of applying the Store access model to one
