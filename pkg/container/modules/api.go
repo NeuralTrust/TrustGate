@@ -316,9 +316,15 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cc cache.Client) appoauth.FlowStore {
+	if err := c.Provide(func(cc cache.Client) *infraoauth.Store {
 		return infraoauth.NewStore(cc.RedisClient())
 	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store *infraoauth.Store) appoauth.FlowStore { return store }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store *infraoauth.Store) appoauth.SubjectSessions { return store }); err != nil {
 		return err
 	}
 	if err := c.Provide(func() appoauth.UserInfoClient {
