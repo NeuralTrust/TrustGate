@@ -150,7 +150,11 @@ type singleConnectView struct {
 	Linked         bool
 	AccountRef     string
 	NeedsReconnect bool
-	Found          bool
+	// AwaitingAdmin is an unconnected shared account this ticket cannot
+	// connect. Start refuses that write; the page names who connects it
+	// instead of offering the button.
+	AwaitingAdmin bool
+	Found         bool
 	// Waiting is set while a server the ticket names is not on this plane yet
 	// and the page is still retrying: RetryURL reloads it after RetryAfter
 	// seconds, one attempt further on.
@@ -229,6 +233,11 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		view.AccountRef = p.AccountRef
 		view.NeedsReconnect = p.NeedsReconnect
 		view.Found = true
+		// Shared is already "this ticket is not the subject the instance
+		// reads". An unconnected row in that state has nothing this person
+		// can finish, so the page waits instead of posting a connect that
+		// Start answers 409.
+		view.AwaitingAdmin = p.Shared && !p.Linked
 		break
 	}
 	if view.ServerName == "" {
