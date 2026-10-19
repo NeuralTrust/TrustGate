@@ -40,14 +40,21 @@ type Service struct {
 	hub    *Hub
 	source SnapshotSource
 	logger *slog.Logger
+
+	usage         UsageSource
+	usageGateways GatewayResolver
 }
 
 // NewService builds the ConfigSync server implementation.
-func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger) *Service {
+func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, opts ...ServiceOption) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{hub: hub, source: source, logger: logger}
+	s := &Service{hub: hub, source: source, logger: logger}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Sync registers the data plane's stream, pushes an immediate notice when the
@@ -70,6 +77,16 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 
 	if _, version, ok := s.source.SnapshotFor(scope); ok && version != hello.GetLastAppliedVersion() {
 		conn.enqueue(version)
+	}
+
+	var usageChanges <-chan struct{}
+	if s.usage != nil {
+		changes, release := s.usage.Subscribe()
+		defer release()
+		usageChanges = changes
+		if err := s.sendUsage(stream, scope); err != nil {
+			return err
+		}
 	}
 
 	recvErr := make(chan error, 1)
@@ -100,8 +117,20 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			if err := stream.Send(notice); err != nil {
 				return err
 			}
+		case <-usageChanges:
+			if err := s.sendUsage(stream, scope); err != nil {
+				return err
+			}
 		}
 	}
+}
+
+func (s *Service) sendUsage(stream snapshotpb.ConfigSync_SyncServer, scope string) error {
+	msg, ok := s.usageSnapshotFor(stream.Context(), scope)
+	if !ok {
+		return nil
+	}
+	return stream.Send(msg)
 }
 
 // GetSnapshot answers not_modified when the DP's applied_version matches current,

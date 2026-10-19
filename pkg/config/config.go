@@ -201,6 +201,19 @@ type Config struct {
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
 	AdminM2M            AdminM2MConfig
+	Usage               UsageConfig
+}
+
+// UsageConfig controls Usage System enforcement. It is off by default, and off
+// means today's behaviour: no usage states reach the data planes, nothing is
+// blocked for usage and readiness does not wait for a usage list. Only the
+// control plane reads it; data planes follow the flag in the snapshot.
+type UsageConfig struct {
+	// Enabled is USAGE_SYSTEM_ENABLED.
+	Enabled bool
+	// ReadyTimeout is USAGE_READY_TIMEOUT: how long a starting plane stays not
+	// ready while it has no usage list before it serves without one and logs.
+	ReadyTimeout time.Duration
 }
 
 // AdminM2MPublicKey is one verification key advertised by the credential
@@ -359,6 +372,10 @@ type ServerConfig struct {
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
 // absent or invalid.
 const DefaultAdminTokenMaxTTL = time.Hour
+
+// DefaultUsageReadyTimeout bounds how long a plane waits for its first usage
+// list before it reports ready without one.
+const DefaultUsageReadyTimeout = 30 * time.Second
 
 type MCPDefaultIdPConfig struct {
 	Issuer       string
@@ -669,6 +686,10 @@ func LoadConfig() (*Config, error) {
 		RateLimit:           rateLimit,
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
+		Usage: UsageConfig{
+			Enabled:      getEnvBool("USAGE_SYSTEM_ENABLED", false),
+			ReadyTimeout: getEnvDuration("USAGE_READY_TIMEOUT", DefaultUsageReadyTimeout),
+		},
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
 	// a SaaS deployment that already mints M2M tokens needs no extra config.

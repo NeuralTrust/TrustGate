@@ -56,6 +56,12 @@ message Snapshot {
   // Shipping the field does not block a deploy of older data planes.
   // A missing list is not a revocation.
   repeated SessionRevocation session_revocations = 15;
+  // usage_enforcement is true when the control plane enforces Usage System
+  // states: the data plane then blocks exhausted tenants and is not ready until
+  // it has received the list of them. False (the default, omitted on the wire)
+  // keeps the snapshot bytes and version identical to a control plane without
+  // the feature.
+  bool usage_enforcement = 16;
 }
 
 // SessionRevocation is one default-IdP subject whose sessions were revoked.

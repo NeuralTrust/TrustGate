@@ -63,8 +63,14 @@ type Snapshot struct {
 	// Shipping the field does not block a deploy of older data planes.
 	// A missing list is not a revocation.
 	SessionRevocations []*SessionRevocation `protobuf:"bytes,15,rep,name=session_revocations,json=sessionRevocations,proto3" json:"session_revocations,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// usage_enforcement is true when the control plane enforces Usage System
+	// states: the data plane then blocks exhausted tenants and is not ready until
+	// it has received the list of them. False (the default, omitted on the wire)
+	// keeps the snapshot bytes and version identical to a control plane without
+	// the feature.
+	UsageEnforcement bool `protobuf:"varint,16,opt,name=usage_enforcement,json=usageEnforcement,proto3" json:"usage_enforcement,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Snapshot) Reset() {
@@ -186,6 +192,13 @@ func (x *Snapshot) GetSessionRevocations() []*SessionRevocation {
 		return x.SessionRevocations
 	}
 	return nil
+}
+
+func (x *Snapshot) GetUsageEnforcement() bool {
+	if x != nil {
+		return x.UsageEnforcement
+	}
+	return false
 }
 
 // SessionRevocation is one default-IdP subject whose sessions were revoked.
@@ -809,7 +822,7 @@ var File_snapshot_proto protoreflect.FileDescriptor
 const file_snapshot_proto_rawDesc = "" +
 	"\n" +
 	"\x0esnapshot.proto\x12\n" +
-	"snapshotpb\"\xf4\x05\n" +
+	"snapshotpb\"\xa1\x06\n" +
 	"\bSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12/\n" +
 	"\bgateways\x18\x02 \x03(\v2\x13.snapshotpb.GatewayR\bgateways\x122\n" +
@@ -827,7 +840,8 @@ const file_snapshot_proto_rawDesc = "" +
 	"\x0estore_policies\x18\r \x03(\v2\x17.snapshotpb.StorePolicyR\rstorePolicies\x127\n" +
 	"\vtenant_caps\x18\x0e \x03(\v2\x16.snapshotpb.TenantCapsR\n" +
 	"tenantCaps\x12N\n" +
-	"\x13session_revocations\x18\x0f \x03(\v2\x1d.snapshotpb.SessionRevocationR\x12sessionRevocationsJ\x04\b\a\x10\bJ\x04\b\v\x10\fR\x05roles\"}\n" +
+	"\x13session_revocations\x18\x0f \x03(\v2\x1d.snapshotpb.SessionRevocationR\x12sessionRevocations\x12+\n" +
+	"\x11usage_enforcement\x18\x10 \x01(\bR\x10usageEnforcementJ\x04\b\a\x10\bJ\x04\b\v\x10\fR\x05roles\"}\n" +
 	"\x11SessionRevocation\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x10\n" +

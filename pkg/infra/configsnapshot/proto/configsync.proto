@@ -51,7 +51,34 @@ message Ack {
 message ServerMessage {
   oneof msg {
     VersionNotice notice = 1;
+    UsageSnapshot usage = 2;
   }
+}
+
+// UsageSnapshot lists every tenant whose usage is exhausted, as the control
+// plane knows it. A tenant missing from the list is healthy unless the data
+// plane already holds a newer version for it than as_of_version, so a stream
+// that reconnects to a control plane replica that is behind cannot undo a
+// newer block. The control plane sends one on connect and again after every
+// change; data planes that predate it ignore the message.
+message UsageSnapshot {
+  repeated TenantUsage exhausted = 1;
+  int64 as_of_version = 2;
+}
+
+// TenantUsage is the exhausted usage state of one tenant.
+message TenantUsage {
+  string tenant_id = 1;
+  UsageReason reason = 2;
+  // version comes from Usage System's global sequence and never decreases.
+  int64 version = 3;
+}
+
+// UsageReason explains why a tenant is exhausted.
+enum UsageReason {
+  USAGE_REASON_UNSPECIFIED = 0;
+  USAGE_REASON_FREE_LIMIT_REACHED = 1;
+  USAGE_REASON_WALLET_EMPTY = 2;
 }
 
 message VersionNotice {
