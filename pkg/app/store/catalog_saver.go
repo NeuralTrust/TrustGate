@@ -16,18 +16,34 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
-// catalogTargetSaver writes a reconciled registry the same way an admin update
-// does after validation: the row, the in-memory cache, the invalidation event,
-// and the config-sync signal. It does not run Updater, which would reject a
-// catalog shape that still needs an admin secret.
+// mcpTargetSwapper is the registry write that locks the row and updates only
+// mcp_target. The domain Repository stays free of it so snapshot fakes do not
+// have to implement a catalog compare-and-swap.
+type mcpTargetSwapper interface {
+	CompareAndSwapMCPTarget(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		id ids.RegistryID,
+		updatedAt time.Time,
+		match func(current *registrydomain.MCPTarget) (next *registrydomain.MCPTarget, ok bool),
+	) (bool, error)
+}
+
+// catalogTargetSaver writes a reconciled mcp_target under a row lock, then the
+// in-memory cache, the invalidation event, and the config-sync signal. It does
+// not run Updater, which would reject a catalog shape that still needs an
+// admin secret, and it does not write the registry's name or description.
 type catalogTargetSaver struct {
 	repo      registrydomain.Repository
 	memory    *cache.TTLMap
@@ -57,12 +73,17 @@ func NewCatalogTargetSaver(
 	}, nil
 }
 
-func (s *catalogTargetSaver) SaveCatalogTarget(ctx context.Context, reg *registrydomain.Registry) error {
-	if reg == nil {
-		return ErrUnavailable
+func (s *catalogTargetSaver) SaveCatalogTarget(ctx context.Context, reg *registrydomain.Registry, oldFP string) (bool, error) {
+	if reg == nil || reg.MCPTarget == nil {
+		return false, ErrUnavailable
 	}
-	if err := s.repo.Update(ctx, reg); err != nil {
-		return err
+	swapper, ok := s.repo.(mcpTargetSwapper)
+	if !ok {
+		return false, fmt.Errorf("store: registry repository cannot compare-and-swap a catalog target")
+	}
+	applied, err := swapper.CompareAndSwapMCPTarget(ctx, reg.GatewayID, reg.ID, reg.UpdatedAt, catalogSwap(oldFP, reg.MCPTarget))
+	if err != nil || !applied {
+		return false, err
 	}
 	if s.memory != nil {
 		s.memory.Set(reg.ID.String(), reg)
@@ -71,5 +92,5 @@ func (s *catalogTargetSaver) SaveCatalogTarget(ctx context.Context, reg *registr
 	if s.signaler != nil {
 		s.signaler.Signal(ctx)
 	}
-	return nil
+	return true, nil
 }
