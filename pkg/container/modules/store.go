@@ -203,7 +203,7 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	// Revoking an account deletes it from the vault the preview reads it from;
 	// a plane without one offers no Disconnect.
 	if p.Vault != nil {
-		disconnector, err := appstore.NewPrincipalDisconnector(p.Registries, p.Vault, p.Logger)
+		disconnector, err := appstore.NewPrincipalDisconnector(p.Registries, p.Vault, p.Logger, appstore.WithDisconnectorInstalls(p.Installs))
 		if err != nil {
 			return nil, err
 		}

@@ -23,6 +23,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
@@ -60,20 +61,36 @@ type RegistryFinder interface {
 
 type principalDisconnector struct {
 	registries RegistryFinder
+	installs   installationdomain.Reader
 	vault      vaultdomain.Repository
 	logger     *slog.Logger
 }
 
+// DisconnectorOption tunes NewPrincipalDisconnector.
+type DisconnectorOption func(*principalDisconnector)
+
+// WithDisconnectorInstalls supplies the principal's installs so a per-user
+// region is revoked under the same vault key connect and dial use.
+func WithDisconnectorInstalls(installs installationdomain.Reader) DisconnectorOption {
+	return func(d *principalDisconnector) { d.installs = installs }
+}
+
 // NewPrincipalDisconnector wires the revoke over the registries and the vault
 // the preview reads the connection from.
-func NewPrincipalDisconnector(registries RegistryFinder, vault vaultdomain.Repository, logger *slog.Logger) (PrincipalDisconnector, error) {
+func NewPrincipalDisconnector(registries RegistryFinder, vault vaultdomain.Repository, logger *slog.Logger, opts ...DisconnectorOption) (PrincipalDisconnector, error) {
 	if registries == nil || vault == nil {
 		return nil, ErrUnavailable
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &principalDisconnector{registries: registries, vault: vault, logger: logger}, nil
+	d := &principalDisconnector{registries: registries, vault: vault, logger: logger}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(d)
+		}
+	}
+	return d, nil
 }
 
 // Disconnect deletes the caller's credential for the instance. One that is not
@@ -96,7 +113,11 @@ func (d *principalDisconnector) Disconnect(ctx context.Context, in PrincipalDisc
 	if registrydomain.CredentialSubject(reg, sub) != sub {
 		return ErrSharedConnection
 	}
-	provider := registrydomain.ForwardedVaultProvider(reg)
+	config, err := d.installConfig(ctx, in.GatewayID, sub, reg)
+	if err != nil {
+		return err
+	}
+	provider := registrydomain.ForwardedVaultProviderFor(reg, config)
 	if provider == "" {
 		return registrydomain.ErrNotFound
 	}
@@ -113,4 +134,15 @@ func (d *principalDisconnector) Disconnect(ctx context.Context, in PrincipalDisc
 		slog.String("provider_id", forwardedAuthOf(reg).Provider),
 		slog.String("source", "portal"))
 	return nil
+}
+
+func (d *principalDisconnector) installConfig(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (map[string]string, error) {
+	if d.installs == nil {
+		return nil, nil
+	}
+	installs, err := d.installs.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, fmt.Errorf("store: list installs: %w", err)
+	}
+	return installConfigFor(reg, installs), nil
 }
