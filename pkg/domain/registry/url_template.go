@@ -335,3 +335,100 @@ func optionValues(v MCPURLVariable) []string {
 	}
 	return out
 }
+
+// ClosedOptionMatch returns the placeholder values that make template resolve
+// to want. Supplied values are used as given. A missing value for a closed
+// variable is filled by trying each listed option, and the match holds only
+// when exactly one combination resolves to want (SameCanonicalResource). An
+// open variable is never guessed. The returned map is a copy.
+func ClosedOptionMatch(template string, vars []MCPURLVariable, values map[string]string, want string) (map[string]string, bool) {
+	raw := strings.TrimSpace(template)
+	if raw == "" || strings.TrimSpace(want) == "" {
+		return nil, false
+	}
+	if !strings.Contains(raw, "{") {
+		if !SameCanonicalResource(want, raw) {
+			return nil, false
+		}
+		return cloneStringMap(values), true
+	}
+	declared := make(map[string]MCPURLVariable, len(vars))
+	for _, variable := range vars {
+		declared[variable.Name] = variable
+	}
+	filled := cloneStringMap(values)
+	var missing []MCPURLVariable
+	for _, name := range TemplateVariableNames(raw) {
+		if strings.TrimSpace(filled[name]) != "" {
+			continue
+		}
+		variable, known := declared[name]
+		if !known || !variable.HasOptions() {
+			return nil, false
+		}
+		missing = append(missing, variable)
+	}
+	if len(missing) == 0 {
+		resolved, err := ResolveURL(raw, vars, filled)
+		if err != nil || !SameCanonicalResource(want, resolved) {
+			return nil, false
+		}
+		return filled, true
+	}
+	return matchClosedOptions(raw, vars, filled, missing, want)
+}
+
+func matchClosedOptions(template string, vars []MCPURLVariable, base map[string]string, missing []MCPURLVariable, want string) (map[string]string, bool) {
+	if base == nil {
+		base = map[string]string{}
+	}
+	var matched map[string]string
+	matches := 0
+	var walk func(i int)
+	walk = func(i int) {
+		if matches > 1 {
+			return
+		}
+		if i == len(missing) {
+			resolved, err := ResolveURL(template, vars, base)
+			if err != nil || !SameCanonicalResource(want, resolved) {
+				return
+			}
+			matches++
+			if matches == 1 {
+				matched = cloneStringMap(base)
+			}
+			return
+		}
+		name := missing[i].Name
+		previous, had := base[name]
+		for _, option := range missing[i].Options {
+			base[name] = strings.TrimSpace(option.Value)
+			walk(i + 1)
+			if matches > 1 {
+				break
+			}
+		}
+		if had {
+			base[name] = previous
+		} else {
+			delete(base, name)
+		}
+	}
+	walk(0)
+	if matches != 1 {
+		return nil, false
+	}
+	return matched, true
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}

@@ -178,6 +178,13 @@ func configureCatalog() fakeConfigCatalog {
 			Code: "com.brightdata/mcp", DisplayName: "Bright Data",
 			URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
 		},
+		"kibana": {
+			Code: "kibana", DisplayName: "Kibana",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "host", Required: true},
+				{Name: "space", Required: true},
+			},
+		},
 	}}
 }
 

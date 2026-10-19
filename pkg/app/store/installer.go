@@ -156,6 +156,10 @@ type Installer interface {
 	// install of. A lookup failure is returned to the caller; search treats that
 	// as "unknown" and does not fail the browse.
 	InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error)
+	// PinTarget is the configured instance Install would bind in to. Nil when
+	// that install would not resolve to exactly one instance, so a caller
+	// leaves every catalog variable per-user.
+	PinTarget(ctx context.Context, in InstallRequest) (*registrydomain.MCPTarget, error)
 }
 
 // CredentialRevoker revokes the upstream OAuth token held in a per-user
@@ -283,20 +287,22 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
+	// Which configured instance (registry) does this install bind to, and does it
+	// install now or file a request? Decided against the gateway's instances of
+	// the code and the principal's grants, before any row is touched.
+	decision, err := i.decide(ctx, in, entry, code)
+	if err != nil {
+		return nil, err
+	}
+
 	// Per-user endpoint configuration (URL variables). Malformed input is refused
 	// here; what is *missing* is held until the access decision is known, because
 	// only an install needs it (see below). Secret values are never inline — they
 	// are entered through the hosted form — so their absence never blocks
 	// recording: the install stands and the dial fails closed until they arrive.
-	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config)
-	if err != nil {
-		return nil, err
-	}
-
-	// Which configured instance (registry) does this install bind to, and does it
-	// install now or file a request? Decided against the gateway's instances of
-	// the code and the principal's grants, before any row is touched.
-	decision, err := i.decide(ctx, in, entry, code)
+	// Variables the bound instance's URL already fixes are neither asked for nor
+	// kept: the dial uses that URL whatever the user sends.
+	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config, boundTarget(decision.bound))
 	if err != nil {
 		return nil, err
 	}
@@ -351,9 +357,13 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	// Older data can hold one instance in several rows. Refresh the installed
 	// one: refreshing a pending or revoked sibling instead would make the
 	// principal hold the installed instance twice.
+	//
+	// A row written before the bound URL fixed a variable still stores that
+	// key. The dial no longer reads it, so it is not what makes an instance.
+	bound := boundTarget(decision.bound)
 	var sameInstance *installationdomain.Installation
 	for _, e := range existing {
-		if !e.SameInstance(decision.registryID, decision.canonical, config) {
+		if !sameInstanceIgnoringPins(e, decision.registryID, decision.canonical, config, bound) {
 			continue
 		}
 		if sameInstance == nil || refreshRank(e) < refreshRank(sameInstance) {
@@ -394,6 +404,9 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
 		record.RegistryID = sameInstance.RegistryID
+		// The new config omits keys this instance pins. The row already has
+		// them, and dropping one changes what a later token refresh asks for.
+		record.Config = mergePinnedConfig(record.Config, sameInstance.Config, bound)
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err
@@ -435,13 +448,21 @@ func refreshRank(in *installationdomain.Installation) int {
 // It returns: the plain values to persist on the installation; the required plain
 // variables still missing (which block the install until supplied); and the
 // required secret variables (collected out-of-band through the hosted form, so
-// they do not block recording the install).
+// they do not block recording the install). A variable bound pins is dropped
+// from all three: its value is never validated, stored or requested.
 func planInstallConfig(
 	entry catalogdomain.MCPServer,
 	provided map[string]string,
+	bound *registrydomain.MCPTarget,
 ) (config map[string]string, missingPlain, secretRequired []registrydomain.MCPURLVariable, err error) {
-	declared := catalogURLVariables(entry.URLVariables)
-	if len(declared) == 0 {
+	declared := unpinnedURLVariables(catalogURLVariables(entry.URLVariables), bound)
+	pinned := make(map[string]struct{})
+	for _, v := range entry.URLVariables {
+		if bound.PinsURLVariable(v.Name) {
+			pinned[strings.TrimSpace(v.Name)] = struct{}{}
+		}
+	}
+	if len(declared) == 0 && len(pinned) == 0 {
 		return nil, nil, nil, nil
 	}
 	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
@@ -452,6 +473,9 @@ func planInstallConfig(
 	for k, raw := range provided {
 		val := strings.TrimSpace(raw)
 		if val == "" {
+			continue
+		}
+		if _, ok := pinned[k]; ok {
 			continue
 		}
 		v, known := byName[k]
@@ -561,6 +585,28 @@ func (i *installer) decide(
 		d.canonical = all[0].ID
 	}
 	return d, nil
+}
+
+// PinTarget is the instance Install would bind in to. Nil when that install
+// would not resolve to exactly one instance (the caller must pick, or none
+// exists yet): the caller then treats every catalog variable as per-user.
+func (i *installer) PinTarget(ctx context.Context, in InstallRequest) (*registrydomain.MCPTarget, error) {
+	code := strings.TrimSpace(in.Code)
+	entry, ok, err := storeEntry(ctx, i.catalog, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	decision, err := i.decide(ctx, in, entry, code)
+	if err != nil {
+		return nil, err
+	}
+	if len(decision.choices) > 0 {
+		return nil, nil
+	}
+	return boundTarget(decision.bound), nil
 }
 
 // enabledInstances narrows a code's instances to the ones an administrator has

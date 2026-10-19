@@ -132,6 +132,11 @@ type MCPAuth struct {
 	TokenURL     string                `json:"token_url,omitempty"`
 	Scopes       []string              `json:"scopes,omitempty"`
 	Resource     string                `json:"resource,omitempty"`
+	// ResourcePerInstance is set when the catalog's own oauth.resource is a
+	// template, so each instance has its own audience (PagerDuty's region).
+	// The vault key then fills closed options from instance config. Left
+	// unset, the stored resource is fingerprinted exactly as it was saved.
+	ResourcePerInstance bool `json:"resource_per_instance,omitempty"`
 	// TokenEndpointAuthMethod selects how client_id/secret are presented to the
 	// token endpoint for client_credentials: client_secret_basic (default) or
 	// client_secret_post.
@@ -283,6 +288,40 @@ func (t *MCPTarget) RequiredURLVariables() []string {
 		}
 	}
 	return out
+}
+
+// PinsURLVariable reports whether this target fixes the named URL variable
+// itself, so no per-user value is ever substituted for it. It is pinned only
+// when the MCP URL is set and the name is absent from every template the dial
+// and the connect path fill: the MCP URL, and the OAuth authorize, token,
+// userinfo and resource URLs. An admin instance copies the catalog's authorize
+// and token templates even after its MCP URL is written out, and a variable
+// those templates still name has to be collected or the connect fails closed.
+func (t *MCPTarget) PinsURLVariable(name string) bool {
+	if t == nil || strings.TrimSpace(t.URL) == "" {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	if templateHasVariable(t.URL, name) {
+		return false
+	}
+	if t.Auth != nil {
+		for _, raw := range []string{t.Auth.AuthorizeURL, t.Auth.TokenURL, t.Auth.UserinfoURL, t.Auth.Resource} {
+			if templateHasVariable(raw, name) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func templateHasVariable(raw, name string) bool {
+	for _, token := range TemplateVariableNames(raw) {
+		if token == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *MCPTarget) Normalize() {
@@ -469,7 +508,7 @@ func (a *MCPAuth) Validate() error {
 				return fmt.Errorf("%w: manual registration must provide both authorize_url and token_url or neither for discovery",
 					ErrInvalidMCPTarget)
 			}
-			if hasAuthorizeURL && (!isHTTPURL(a.AuthorizeURL) || !isHTTPURL(a.TokenURL)) {
+			if hasAuthorizeURL && (!httpURLAcceptingTemplate(a.AuthorizeURL) || !httpURLAcceptingTemplate(a.TokenURL)) {
 				return fmt.Errorf("%w: authorize_url and token_url must be valid http(s) URLs", ErrInvalidMCPTarget)
 			}
 			if secret.IsMasked(a.ClientSecret) {
@@ -525,6 +564,14 @@ func (a *MCPAuth) validateIdentityID() error {
 func isHTTPURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// httpURLAcceptingTemplate is isHTTPURL after {name} placeholders are treated
+// as filled. Manual authorize and token URLs use the same tenant templates as
+// the server URL, and "{" is not a legal host character until a value replaces
+// it. A brace that is not a {name} placeholder is left in place and still fails.
+func httpURLAcceptingTemplate(raw string) bool {
+	return isHTTPURL(urlTemplateToken.ReplaceAllString(raw, "x"))
 }
 
 // ResolveSecretsFrom keeps the stored credentials an update left blank or sent
