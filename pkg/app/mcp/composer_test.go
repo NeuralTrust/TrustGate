@@ -1192,6 +1192,30 @@ func TestComposer_Invoke_UsesResolvedTarget(t *testing.T) {
 	}
 }
 
+func TestResolve_EmptyStoreIsUnknownTool(t *testing.T) {
+	t.Parallel()
+	c := newTestComposer(&fakeDialer{})
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+	_, err := c.Resolve(context.Background(), store, "ghost")
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) || unknown.Error() != "Unknown tool: ghost" {
+		t.Fatalf("err = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrNoMCPRegistries) {
+		t.Fatal("an empty Store must not be reported as no MCP registries")
+	}
+}
+
+func TestResolve_EmptyConsumerStaysNoRegistries(t *testing.T) {
+	t.Parallel()
+	c := newTestComposer(&fakeDialer{})
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
+	_, err := c.Resolve(context.Background(), rc, "ghost")
+	if !errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("err = %v, want ErrNoMCPRegistries", err)
+	}
+}
+
 func TestComposer_NoMCPRegistries(t *testing.T) {
 	t.Parallel()
 	c := newTestComposer(&fakeDialer{})

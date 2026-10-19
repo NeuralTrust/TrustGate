@@ -51,7 +51,8 @@ const (
 )
 
 // ErrStoreToolUnavailable is returned when the Store meta-tools cannot serve a
-// request (unconfigured catalog, or an unknown meta-tool name).
+// request because the catalog or the caller is missing. An unknown tool name
+// is not this error.
 var ErrStoreToolUnavailable = errors.New("mcp: store tool unavailable")
 
 // ErrStoreInstallDisabled: the caller's Store access is None, so nothing can
@@ -222,7 +223,7 @@ func (t *storeTool) Call(
 	case StoreRequestModelsToolName:
 		return t.requestModels(ctx, baseURL, arguments)
 	default:
-		return nil, fmt.Errorf("%w: unknown tool %q", ErrStoreToolUnavailable, name)
+		return nil, &UnknownToolError{Name: name}
 	}
 }
 
