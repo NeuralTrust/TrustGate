@@ -584,31 +584,61 @@ func TestExposedName_V2CollidingInstancesKeepTheDigest(t *testing.T) {
 func TestExposedName_V2TruncationKeepsTheTail(t *testing.T) {
 	t.Parallel()
 	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	const slug = "elastic_agent_builder_mcp_"
 	tool := strings.Repeat("a", 40) + "_list_indices"
 	got := namedFor(reg, tool)
-	if len(got) > maxExposedNameLength {
-		t.Fatalf("name %q is %d characters, want at most %d", got, len(got), maxExposedNameLength)
+	hash := strings.TrimPrefix(contentSuffix(slug+tool), "_")
+	want := slug + strings.Repeat("a", 14) + "_" + hash + "_a_list_indices"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
 	}
-	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_") {
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name %q is %d bytes, want at most %d", got, len(got), maxExposedNameLength)
+	}
+	if !strings.HasPrefix(got, slug) {
 		t.Fatalf("name = %q, want the server prefix kept", got)
 	}
 	if !strings.HasSuffix(got, "_list_indices") {
 		t.Fatalf("name = %q, want the action words kept", got)
 	}
-	other := namedFor(reg, strings.Repeat("b", 40)+"_list_indices")
+	if strings.Contains(got, "__") {
+		t.Fatalf("name = %q, want single underscores around the hash", got)
+	}
+	otherTool := strings.Repeat("b", 40) + "_list_indices"
+	other := namedFor(reg, otherTool)
 	if other == got {
 		t.Fatalf("two long tools collapsed to %q", got)
 	}
+	otherHash := strings.TrimPrefix(contentSuffix(slug+otherTool), "_")
+	otherWant := slug + strings.Repeat("b", 14) + "_" + otherHash + "_b_list_indices"
+	if other != otherWant {
+		t.Fatalf("other = %q, want %q", other, otherWant)
+	}
 	if !strings.HasSuffix(other, "_list_indices") {
 		t.Fatalf("other = %q, want its tail kept too", other)
+	}
+	// A cut that lands on '_' must not glue a second underscore onto the hash.
+	edged := strings.Repeat("a", 13) + "_" + strings.Repeat("b", 14) + "_" + strings.Repeat("c", 13)
+	gotEdge := namedFor(reg, edged)
+	if strings.Contains(gotEdge, "__") || len(gotEdge) > maxExposedNameLength || !utf8.ValidString(gotEdge) {
+		t.Fatalf("edged name = %q", gotEdge)
+	}
+	edgeHash := strings.TrimPrefix(contentSuffix(slug+edged), "_")
+	edgeWant := slug + strings.Repeat("a", 13) + "_" + edgeHash + "_" + strings.Repeat("c", 13)
+	if gotEdge != edgeWant {
+		t.Fatalf("edged name = %q, want %q", gotEdge, edgeWant)
 	}
 }
 
 func TestExposedName_V2TruncationDoesNotSplitARune(t *testing.T) {
 	t.Parallel()
 	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
-	// The cut falls on the continuation byte of "é" (c3 a9).
-	tool := strings.Repeat("x", 20) + "é" + strings.Repeat("y", 28)
+	// Head and tail budgets are 14 bytes. é (c3 a9) straddles each cut, so a
+	// raw byte slice would start or end mid-rune.
+	tool := strings.Repeat("x", 13) + "é" + strings.Repeat("y", 11) + "é" + strings.Repeat("z", 13)
+	if len(tool) != 41 || utf8.RuneStart(tool[14]) || utf8.RuneStart(tool[len(tool)-14]) {
+		t.Fatalf("fixture is %d bytes; both cuts must fall on a continuation byte", len(tool))
+	}
 	got := namedFor(reg, tool)
 	if len(got) > maxExposedNameLength {
 		t.Fatalf("name %q is %d bytes, want at most %d", got, len(got), maxExposedNameLength)
@@ -616,7 +646,62 @@ func TestExposedName_V2TruncationDoesNotSplitARune(t *testing.T) {
 	if !utf8.ValidString(got) {
 		t.Fatalf("name %q is not UTF-8", got)
 	}
-	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_") || !strings.HasSuffix(got, "y") {
-		t.Fatalf("name = %q, want the server prefix and a rune-aligned tail", got)
+	if strings.Contains(got, "__") {
+		t.Fatalf("name = %q, want single underscores", got)
+	}
+	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_"+strings.Repeat("x", 13)+"_") || !strings.HasSuffix(got, "z") {
+		t.Fatalf("name = %q, want the server prefix, the tool start, and a rune-aligned tail", got)
+	}
+}
+
+// Endor Labs publishes query_docs_filesystem_endor_labs_documentation. The
+// action words lead the tool, so a tail-only cut replaced them with the hash
+// and, because the kept tail began with '_', a double underscore.
+func TestExposedName_V2TruncationKeepsEndorLeadingWords(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Endor", "com.endorlabs/docs-mcp")
+	const tool = "query_docs_filesystem_endor_labs_documentation"
+	got := namedFor(reg, tool)
+	const want = "endorlabs_docs_mcp_query_docs_filesy_dca24876_labs_documentation"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name is %d bytes, want at most %d", len(got), maxExposedNameLength)
+	}
+	if strings.Contains(got, "__") {
+		t.Fatalf("name = %q contains a double underscore", got)
+	}
+	if !strings.HasPrefix(got, "endorlabs_docs_mcp_query_docs") || !strings.HasSuffix(got, "_documentation") {
+		t.Fatalf("name = %q, want query_docs kept at the start and _documentation at the end", got)
+	}
+	if again := namedFor(reg, tool); again != got {
+		t.Fatalf("name is not stable: %q then %q", got, again)
+	}
+	const search = "search_endor_labs_documentation"
+	if short := namedFor(reg, search); short != "endorlabs_docs_mcp_"+search {
+		t.Fatalf("short name = %q, want it unchanged", short)
+	}
+}
+
+// Multibyte runes sit on both cuts and inside both kept sides. The runes that
+// straddle a cut are dropped whole; the ones that fit stay whole.
+func TestExposedName_V2TruncationKeepsMultibyteRunesWhole(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	tool := "é" + strings.Repeat("a", 11) + "é" + strings.Repeat("b", 10) + "é" + strings.Repeat("c", 11) + "é"
+	if len(tool) != 40 || utf8.RuneStart(tool[14]) || utf8.RuneStart(tool[len(tool)-14]) {
+		t.Fatalf("fixture is %d bytes; both cuts must fall on a continuation byte", len(tool))
+	}
+	got := namedFor(reg, tool)
+	head := "é" + strings.Repeat("a", 11)
+	tail := strings.Repeat("c", 11) + "é"
+	hash := strings.TrimPrefix(contentSuffix("elastic_agent_builder_mcp_"+tool), "_")
+	want := "elastic_agent_builder_mcp_" + head + "_" + hash + "_" + tail
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	if len(got) > maxExposedNameLength || !utf8.ValidString(got) || strings.Contains(got, "__") {
+		t.Fatalf("name = %q is %d bytes", got, len(got))
 	}
 }
