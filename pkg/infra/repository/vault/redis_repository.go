@@ -113,12 +113,19 @@ type storedCredential struct {
 	PrincipalSub string        `json:"principal_sub"`
 	Provider     string        `json:"provider"`
 	AccountRef   string        `json:"account_ref"`
-	AccessToken  string        `json:"access_token"`
-	RefreshToken string        `json:"refresh_token"`
-	Scopes       []string      `json:"scopes"`
-	ExpiresAt    *time.Time    `json:"expires_at"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	// OAuthClientID is the dynamic client the grant was issued to. Empty means
+	// it was issued before the id was stored. A gateway replica that predates
+	// this field drops it when it re-marshals the JSON. That absence must not
+	// grow a fallback that picks a different client: refresh keeps the client
+	// the slot already selected. Every replica has to run this version before
+	// a redirect_uri swap can retain a legacy client (ENG-2190).
+	OAuthClientID string     `json:"oauth_client_id,omitempty"`
+	AccessToken   string     `json:"access_token"`
+	RefreshToken  string     `json:"refresh_token"`
+	Scopes        []string   `json:"scopes"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 func (s *storedCredential) matches(gatewayID ids.GatewayID, principalSub, provider string) bool {
@@ -144,25 +151,30 @@ func (r *redisRepository) Upsert(ctx context.Context, c *domain.Credential) erro
 	}
 	id := c.ID
 	createdAt := c.CreatedAt
+	oauthClientID := c.OAuthClientID
 	if existing != nil {
 		id = existing.ID
 		createdAt = existing.CreatedAt
 		if refresh == "" {
 			refresh = existing.RefreshToken
 		}
+		if oauthClientID == "" {
+			oauthClientID = existing.OAuthClientID
+		}
 	}
 	stored := storedCredential{
-		ID:           id,
-		GatewayID:    c.GatewayID,
-		PrincipalSub: c.PrincipalSub,
-		Provider:     c.Provider,
-		AccountRef:   c.AccountRef,
-		AccessToken:  access,
-		RefreshToken: refresh,
-		Scopes:       c.Scopes,
-		ExpiresAt:    nullableTime(c.ExpiresAt),
-		CreatedAt:    createdAt,
-		UpdatedAt:    time.Now().UTC(),
+		ID:            id,
+		GatewayID:     c.GatewayID,
+		PrincipalSub:  c.PrincipalSub,
+		Provider:      c.Provider,
+		AccountRef:    c.AccountRef,
+		OAuthClientID: oauthClientID,
+		AccessToken:   access,
+		RefreshToken:  refresh,
+		Scopes:        c.Scopes,
+		ExpiresAt:     nullableTime(c.ExpiresAt),
+		CreatedAt:     createdAt,
+		UpdatedAt:     time.Now().UTC(),
 	}
 	// #nosec G117 -- token fields are encrypted before this struct is marshaled.
 	payload, err := json.Marshal(stored)
@@ -310,14 +322,15 @@ func loadFrom(ctx context.Context, rc redis.Cmdable, key string) (*storedCredent
 
 func (r *redisRepository) decrypt(stored *storedCredential) (*domain.Credential, error) {
 	c := &domain.Credential{
-		ID:           stored.ID,
-		GatewayID:    stored.GatewayID,
-		PrincipalSub: stored.PrincipalSub,
-		Provider:     stored.Provider,
-		AccountRef:   stored.AccountRef,
-		Scopes:       stored.Scopes,
-		CreatedAt:    stored.CreatedAt,
-		UpdatedAt:    stored.UpdatedAt,
+		ID:            stored.ID,
+		GatewayID:     stored.GatewayID,
+		PrincipalSub:  stored.PrincipalSub,
+		Provider:      stored.Provider,
+		AccountRef:    stored.AccountRef,
+		OAuthClientID: stored.OAuthClientID,
+		Scopes:        stored.Scopes,
+		CreatedAt:     stored.CreatedAt,
+		UpdatedAt:     stored.UpdatedAt,
 	}
 	var err error
 	if c.AccessToken, err = r.cipher.Decrypt(stored.AccessToken); err != nil {

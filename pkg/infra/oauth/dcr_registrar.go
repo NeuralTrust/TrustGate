@@ -169,31 +169,54 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 		return nil, fmt.Errorf("%w (%s)", appoauth.ErrUpstreamNotDiscoverable, upstreamURL)
 	}
 
-	as := strings.TrimSuffix(prm.AuthorizationServers[0], "/")
-	var doc appoauth.UpstreamAuthServer
+	as := strings.TrimSpace(prm.AuthorizationServers[0])
+	// as is authorization_servers[0], so testing membership in that list cannot
+	// fail. Refuse a value that is not an http(s) URL before it is fetched.
+	if appoauth.NormalizeIssuerURL(as) == "" {
+		return nil, fmt.Errorf("oauth dcr: bad authorization server %q", as)
+	}
 	asu, err := url.Parse(as)
 	if err != nil || asu.Host == "" {
 		return nil, fmt.Errorf("oauth dcr: bad authorization server %q", as)
 	}
 	asOrigin := asu.Scheme + "://" + asu.Host
 	asPath := strings.TrimSuffix(asu.Path, "/")
+	asBase := strings.TrimSuffix(as, "/")
 	asCandidates := []string{
 		asOrigin + "/.well-known/oauth-authorization-server" + asPath,
 		asOrigin + "/.well-known/openid-configuration" + asPath,
-		as + "/.well-known/openid-configuration",
+		asBase + "/.well-known/openid-configuration",
 	}
+	var doc appoauth.UpstreamAuthServer
 	ok := false
+	mismatch := false
 	for _, c := range asCandidates {
 		var attempt appoauth.UpstreamAuthServer
-		if err := r.getJSON(ctx, c, &attempt); err == nil && attempt.AuthorizationEndpoint != "" && attempt.TokenEndpoint != "" {
-			doc = attempt
-			ok = true
-			break
+		if err := r.getJSON(ctx, c, &attempt); err != nil || attempt.AuthorizationEndpoint == "" || attempt.TokenEndpoint == "" {
+			continue
 		}
+		// RFC 8414 §3.3: the issuer is the URL the well-known path was inserted
+		// into, not a value the document may choose. A mismatch is discarded
+		// before any client secret is sent to the endpoints it names.
+		if !appoauth.IssuerMatchesAuthorizationServer(attempt.Issuer, as) {
+			mismatch = true
+			slog.Warn("oauth dcr: discarding authorization server metadata because its issuer does not match the URL that was fetched",
+				"authorization_server", appoauth.NormalizeIssuerURL(as),
+				"issuer", strutil.SanitizeUpstream(attempt.Issuer, 200))
+			continue
+		}
+		doc = attempt
+		ok = true
+		break
 	}
 	if !ok {
+		if mismatch {
+			return nil, fmt.Errorf("oauth dcr: authorization server issuer does not match the metadata URL")
+		}
 		return nil, fmt.Errorf("oauth dcr: no authorization-server metadata at %s", as)
 	}
+	doc.ValidatedIssuer = appoauth.NormalizeIssuerURL(as)
+	doc.Issuer = doc.ValidatedIssuer
 	if len(doc.ScopesSupported) == 0 {
 		doc.ScopesSupported = prm.ScopesSupported
 	}
@@ -205,20 +228,29 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 }
 
 func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
+	now := time.Now()
 	cached, cacheErr := r.clients.GetClient(ctx, key)
-	if cacheErr == nil && cached != nil && cached.RedirectURI == redirectURI && r.clientNameMatches(cached) {
+	if cacheErr == nil && cached != nil && r.clientReusable(cached, meta, redirectURI, now) {
 		return cached, nil
 	}
-	// A client is already registered but for a different redirect URI or under a
-	// different name. Replacing it is deliberate, and it invalidates every
+	// A client is already registered but no longer usable here: the redirect URI
+	// or client name changed, the authorization server differs, or the
+	// registration expired. Replacing it is deliberate, and it invalidates every
 	// refresh token the old client holds, so say so rather than losing those
 	// grants silently.
 	replacing := cacheErr == nil && cached != nil
 	if replacing {
+		newIssuer, newEndpoint := "", ""
+		if meta != nil {
+			newIssuer, newEndpoint = registeredIssuer(meta), meta.RegistrationEndpoint
+		}
 		slog.Warn("oauth dcr: re-registering upstream client because its redirect URI or client name changed; grants held by the previous client can no longer be refreshed",
 			"key", key,
 			"old_redirect_uri", cached.RedirectURI, "new_redirect_uri", redirectURI,
-			"old_client_name", cached.ClientName, "new_client_name", r.clientName)
+			"old_client_name", cached.ClientName, "new_client_name", r.clientName,
+			"old_issuer", cached.Issuer, "new_issuer", newIssuer,
+			"old_registration_endpoint", cached.RegistrationEndpoint, "new_registration_endpoint", newEndpoint,
+			"registration_expired", registrationExpired(cached, now))
 	}
 	if meta.RegistrationEndpoint == "" {
 		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", appoauth.ErrUpstreamNotDiscoverable)
@@ -257,23 +289,34 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		return nil, fmt.Errorf("%w (status %d)", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode)
 	}
 	var doc struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
+		ClientID              string `json:"client_id"`
+		ClientSecret          string `json:"client_secret"`
+		ClientSecretExpiresAt int64  `json:"client_secret_expires_at"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil || doc.ClientID == "" {
 		return nil, fmt.Errorf("oauth dcr: registration response has no client_id")
 	}
 	client := &appoauth.RegisteredClient{
-		ClientID:     doc.ClientID,
-		ClientSecret: doc.ClientSecret,
-		RedirectURI:  redirectURI,
-		ClientName:   r.clientName,
+		ClientID:              doc.ClientID,
+		ClientSecret:          doc.ClientSecret,
+		RedirectURI:           redirectURI,
+		ClientName:            r.clientName,
+		Issuer:                registeredIssuer(meta),
+		RegistrationEndpoint:  meta.RegistrationEndpoint,
+		ClientSecretExpiresAt: doc.ClientSecretExpiresAt,
 	}
 	if replacing {
-		if err := r.clients.SaveClient(ctx, key, *client); err != nil {
+		stored, swapped, err := r.clients.ReplaceClientIfMatch(ctx, key, cached.ClientID, *client)
+		if err != nil {
 			return nil, err
 		}
-		return client, nil
+		if swapped {
+			return client, nil
+		}
+		if stored != nil && r.clientReusable(stored, meta, redirectURI, time.Now()) {
+			return stored, nil
+		}
+		return nil, fmt.Errorf("oauth dcr: cached client changed while registering a replacement")
 	}
 	// First registration for this upstream. Other replicas may be registering
 	// at the same moment; claim the slot atomically so all of them converge on a
@@ -292,7 +335,123 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 }
 
 func (r *upstreamRegistrar) CachedClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
-	return r.clients.GetClient(ctx, key)
+	cached, err := r.clients.GetClient(ctx, key)
+	if err != nil || cached == nil || registrationExpired(cached, time.Now()) {
+		return nil, err
+	}
+	return cached, nil
+}
+
+// rejectedRegistrationExpiry is a client_secret_expires_at in the past. Dropping
+// a client stamps this on the stored row so the next EnsureClient takes the
+// replacing path (and its warning) instead of deleting the slot and racing a
+// fresh claim.
+const rejectedRegistrationExpiry int64 = 1
+
+// DropCachedClient marks the cached client expired when it is still clientID.
+// A row that has already been replaced is left alone, so a rejection of an
+// older client cannot tombstone the one a concurrent registration just stored.
+// Callers that only read the cache then see no client; the next EnsureClient
+// still finds the row and replaces it.
+func (r *upstreamRegistrar) DropCachedClient(ctx context.Context, key, clientID string) error {
+	if clientID == "" {
+		return nil
+	}
+	cached, err := r.clients.GetClient(ctx, key)
+	if err != nil || cached == nil || cached.ClientID != clientID {
+		return err
+	}
+	cached.ClientSecretExpiresAt = rejectedRegistrationExpiry
+	// The refresh marker belongs only to a redirect_uri swap. Clearing it here
+	// stops a later dead-client drop of that row from posting its secret.
+	cached.RefreshRetained = false
+	_, _, err = r.clients.ReplaceClientIfMatch(ctx, key, clientID, *cached)
+	return err
+}
+
+func (r *upstreamRegistrar) clientReusable(cached *appoauth.RegisteredClient, meta *appoauth.UpstreamAuthServer, redirectURI string, now time.Time) bool {
+	return cached.RedirectURI == redirectURI &&
+		r.clientNameMatches(cached) &&
+		authorizationServerMatches(cached, meta) &&
+		!registrationExpired(cached, now)
+}
+
+// authorizationServerMatches reports whether a cached registration was minted
+// for this authorization server. A field left empty was stored before the
+// binding existed and is not a mismatch: treating it as one would re-register
+// every existing client and strand its refresh tokens.
+func authorizationServerMatches(cached *appoauth.RegisteredClient, meta *appoauth.UpstreamAuthServer) bool {
+	if meta == nil {
+		return true
+	}
+	if cached.Issuer != "" && appoauth.NormalizeIssuerURL(cached.Issuer) != appoauth.NormalizeIssuerURL(registeredIssuer(meta)) {
+		return false
+	}
+	if cached.RegistrationEndpoint != "" && cached.RegistrationEndpoint != meta.RegistrationEndpoint {
+		return false
+	}
+	return true
+}
+
+func registeredIssuer(meta *appoauth.UpstreamAuthServer) string {
+	if meta == nil {
+		return ""
+	}
+	if validated := appoauth.ValidatedIssuer(meta); validated != "" {
+		return validated
+	}
+	return appoauth.NormalizeIssuerURL(meta.Issuer)
+}
+
+func registrationExpired(cached *appoauth.RegisteredClient, now time.Time) bool {
+	if cached == nil || cached.ClientSecretExpiresAt <= 0 {
+		return false
+	}
+	return !now.Before(time.Unix(cached.ClientSecretExpiresAt, 0))
+}
+
+const (
+	authorizePreflightTimeout = 3 * time.Second
+	authorizePreflightMaxBody = 8 << 10
+)
+
+// PreflightAuthorize GETs rawURL once, through the same guarded client
+// discovery uses, and returns that response without following a redirect.
+// allowedAuthorizeURL is the catalog authorize URL. The request must be https
+// and share that URL's scheme, host, and port. Anything else is refused
+// before a dial.
+func (r *upstreamRegistrar) PreflightAuthorize(ctx context.Context, rawURL, allowedAuthorizeURL string) (appoauth.AuthorizePreflight, error) {
+	if !appoauth.AuthorizeEndpointAllowed(rawURL, allowedAuthorizeURL) {
+		return appoauth.AuthorizePreflight{}, fmt.Errorf("oauth dcr: authorize preflight url is not allowed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, authorizePreflightTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return appoauth.AuthorizePreflight{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	client := *r.http
+	client.CheckRedirect = refuseAuthorizeRedirect
+	client.Timeout = authorizePreflightTimeout
+	res, err := client.Do(req)
+	if err != nil {
+		return appoauth.AuthorizePreflight{}, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, authorizePreflightMaxBody))
+	if err != nil {
+		return appoauth.AuthorizePreflight{}, err
+	}
+	return appoauth.AuthorizePreflight{
+		Status:   res.StatusCode,
+		Location: res.Header.Get("Location"),
+		Body:     string(raw),
+	}, nil
+}
+
+func refuseAuthorizeRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func (r *upstreamRegistrar) getJSON(ctx context.Context, rawurl string, out any) error {

@@ -266,6 +266,74 @@ func TestConnect_DoesNotDowngradeAfterModernDiscoverError(t *testing.T) {
 	}
 }
 
+func TestConnect_ClassifiesRejectedCredentialsAndRedirects(t *testing.T) {
+	t.Parallel()
+	t.Run("401", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("token supersecret123"))
+		}))
+		t.Cleanup(srv.Close)
+		_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+		if !errors.Is(err, appmcp.ErrUnreachable) || !errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+			t.Fatalf("error = %v, want unreachable and unauthorized", err)
+		}
+		assertClassified(t, err, appmcp.UpstreamFailureCredential, http.StatusUnauthorized,
+			"the server rejected the credential (HTTP 401)")
+		if strings.Contains(err.Error(), "supersecret123") {
+			t.Fatalf("upstream body leaked: %v", err)
+		}
+	})
+	t.Run("403", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("token supersecret123"))
+		}))
+		t.Cleanup(srv.Close)
+		_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+		if !errors.Is(err, appmcp.ErrUnreachable) {
+			t.Fatalf("error = %v, want ErrUnreachable", err)
+		}
+		if errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+			t.Fatalf("403 must not be ErrUpstreamUnauthorized: %v", err)
+		}
+		assertClassified(t, err, appmcp.UpstreamFailureCredential, http.StatusForbidden,
+			"the server rejected the credential (HTTP 403)")
+		if strings.Contains(err.Error(), "supersecret123") {
+			t.Fatalf("upstream body leaked: %v", err)
+		}
+	})
+	t.Run("308", func(t *testing.T) {
+		t.Parallel()
+		const body = "do-not-echo-this-body"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "https://elsewhere.example/mcp")
+			w.WriteHeader(http.StatusPermanentRedirect)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(srv.Close)
+		_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+		if !errors.Is(err, appmcp.ErrUnreachable) {
+			t.Fatalf("error = %v, want ErrUnreachable", err)
+		}
+		assertClassified(t, err, appmcp.UpstreamFailureRedirect, http.StatusPermanentRedirect,
+			"upstream redirected (HTTP 308) — not followed")
+		if strings.Contains(err.Error(), body) || strings.Contains(err.Error(), "elsewhere.example") {
+			t.Fatalf("redirect target or body leaked: %v", err)
+		}
+	})
+}
+
+func assertClassified(t *testing.T, err error, kind string, status int, phrase string) {
+	t.Helper()
+	got := appmcp.ClassifyUpstreamFailure(err)
+	if got == nil || got.Kind != kind || got.Status != status || got.StatusPhrase() != phrase {
+		t.Fatalf("classified = %+v (%v), want %s %d %q", got, err, kind, status, phrase)
+	}
+}
+
 func TestConnect_DoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
 	t.Parallel()
 	var redirectedRequests atomic.Int64

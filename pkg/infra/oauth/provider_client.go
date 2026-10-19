@@ -210,22 +210,21 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 		return nil, fmt.Errorf("oauth provider: non-JSON token response (status %d)", res.StatusCode)
 	}
 	if res.StatusCode != http.StatusOK || doc.Error != "" || doc.AccessToken == "" {
+		code := strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen)
+		if clientIsUnrecognized(doc.Error) {
+			return nil, &appoauth.InvalidClientError{
+				Code:        code,
+				Description: redactTokenDescription(doc.ErrorDesc, maxErrorDescLen, basicUser, basicPass, doc.AccessToken, doc.RefreshToken, doc.IDToken, form),
+			}
+		}
 		if grantIsInvalid(doc.Error) {
-			description := doc.ErrorDesc
-			secrets := []string{basicUser, basicPass, doc.AccessToken, doc.RefreshToken, doc.IDToken}
-			for _, values := range form {
-				secrets = append(secrets, values...)
+			return nil, &appoauth.InvalidGrantError{
+				Code:        code,
+				Description: redactTokenDescription(doc.ErrorDesc, 512, basicUser, basicPass, doc.AccessToken, doc.RefreshToken, doc.IDToken, form),
 			}
-			for _, secret := range secrets {
-				if secret != "" {
-					description = strings.ReplaceAll(description, secret, "[redacted]")
-				}
-			}
-			description = strutil.SanitizeUpstream(description, 512)
-			return nil, &appoauth.InvalidGrantError{Code: strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen), Description: description}
 		}
 		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s",
-			strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen), strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
+			code, strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
 	}
 	if doc.TokenType != "" &&
 		!strings.EqualFold(doc.TokenType, "Bearer") &&
@@ -265,6 +264,28 @@ func grantIsInvalid(code string) bool {
 	default:
 		return false
 	}
+}
+
+func clientIsUnrecognized(code string) bool {
+	switch code {
+	case "invalid_client", "unauthorized_client":
+		return true
+	default:
+		return false
+	}
+}
+
+func redactTokenDescription(description string, limit int, basicUser, basicPass, access, refresh, idToken string, form url.Values) string {
+	secrets := []string{basicUser, basicPass, access, refresh, idToken}
+	for _, values := range form {
+		secrets = append(secrets, values...)
+	}
+	for _, secret := range secrets {
+		if secret != "" {
+			description = strings.ReplaceAll(description, secret, "[redacted]")
+		}
+	}
+	return strutil.SanitizeUpstream(description, limit)
 }
 
 func parseExpiresIn(raw json.RawMessage) (time.Duration, error) {

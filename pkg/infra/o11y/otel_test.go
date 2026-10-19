@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -27,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
 
 func testLogger() *slog.Logger {
@@ -238,4 +240,17 @@ func TestResourceIdentifiesTheGateway(t *testing.T) {
 	require.Equal(t, ServiceName, attrs["service.name"])
 	require.Equal(t, ServiceName, attrs[gatewayAttribute])
 	require.Equal(t, "test", attrs["deployment.environment.name"])
+}
+
+func TestNewResourceIdentifiesTheInstance(t *testing.T) {
+	host, err := os.Hostname()
+	require.NoError(t, err)
+
+	res := newResource(&config.Config{AppEnv: "test"})
+
+	got, ok := res.Set().Value(semconv.ServiceInstanceIDKey)
+	require.True(t, ok, "service.instance.id must be set so replicas do not share one series")
+	require.Equal(t, host, got.AsString())
+	name, _ := res.Set().Value(semconv.ServiceNameKey)
+	require.Equal(t, ServiceName, name.AsString(), "service.name must not change")
 }

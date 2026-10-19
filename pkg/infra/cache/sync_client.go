@@ -43,20 +43,21 @@ type SyncClient struct {
 	*redis.Client
 }
 
-// NewSyncClient builds a client for the background plan-counter sync. It differs
-// from the shared one on purpose: the caller's context deadline bounds every call
-// (ContextTimeoutEnabled), every timeout is the sync timeout (at most
-// MaxSyncTimeout) instead of go-redis's 3 to 5 seconds, a failed call is not
-// retried because the next tick is the retry, and the pool is small because the
-// loop runs one round trip at a time. Only the dial timeout is longer than the
-// sync timeout (see syncDialTimeout), and one connection is kept warm in the
-// background (see syncMinIdleConns). It does not ping at boot: that warm-up runs
-// in a goroutine, so Redis being down neither blocks nor stops the process, since
-// the limiter fails open. The failure is not silent: go-redis logs "failed to
-// dial after N attempts" through its internal logger (5 attempts, 100 ms
-// backoff, per dial), and then probes at most about once a second instead of
-// hammering Redis.
-func NewSyncClient(config Config, timeout time.Duration) (*SyncClient, error) {
+// NewSyncClient builds a client for the background plan-counter sync and for the
+// one cold read. syncTimeout is the background round trip. coldReadTimeout is
+// the longest a single command may run: read, write and pool wait use it,
+// because ContextTimeoutEnabled keeps the shorter of that and the call's own
+// deadline, and a cold read's deadline is longer than a sync round. A failed
+// call is not retried because the next tick is the retry, and the pool is small
+// because the loop runs one round trip at a time. Only the dial timeout is
+// longer than the sync timeout (see syncDialTimeout), and one connection is
+// kept warm in the background (see syncMinIdleConns). The constructor does not
+// ping: startup warms the store on its own budget, so Redis being down neither
+// blocks nor stops the process. The limiter fails open. A dial that fails is
+// not silent: go-redis logs "failed to dial after N attempts" through its
+// internal logger (5 attempts, 100 ms backoff, per dial), and then probes at
+// most about once a second instead of hammering Redis.
+func NewSyncClient(config Config, syncTimeout, coldReadTimeout time.Duration) (*SyncClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -64,22 +65,34 @@ func NewSyncClient(config Config, timeout time.Duration) (*SyncClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configure redis authentication: %w", err)
 	}
-	options := buildSyncOptions(buildRedisOptions(config, provider), timeout)
+	options := buildSyncOptions(buildRedisOptions(config, provider), syncTimeout, coldReadTimeout)
 	return &SyncClient{Client: redis.NewClient(options)}, nil
 }
 
-func buildSyncOptions(options *redis.Options, timeout time.Duration) *redis.Options {
-	if timeout <= 0 || timeout > MaxSyncTimeout {
-		timeout = MaxSyncTimeout
+func buildSyncOptions(options *redis.Options, syncTimeout, coldReadTimeout time.Duration) *redis.Options {
+	if syncTimeout <= 0 || syncTimeout > MaxSyncTimeout {
+		syncTimeout = MaxSyncTimeout
+	}
+	budget := coldReadTimeout
+	if budget <= 0 {
+		budget = syncTimeout
+	}
+	if budget > MaxSyncTimeout {
+		budget = MaxSyncTimeout
+	}
+	if budget < syncTimeout {
+		budget = syncTimeout
 	}
 	options.ContextTimeoutEnabled = true
-	options.DialTimeout = syncDialTimeout(timeout)
-	options.ReadTimeout = timeout
-	options.WriteTimeout = timeout
+	options.DialTimeout = syncDialTimeout(syncTimeout)
+	options.ReadTimeout = budget
+	options.WriteTimeout = budget
 	options.MaxRetries = -1
 	options.PoolSize = 2
 	options.MinIdleConns = syncMinIdleConns
-	options.PoolTimeout = timeout
+	options.PoolTimeout = budget
+	// Not go-redis's 30 minute default. See syncConnMaxIdleTime.
+	options.ConnMaxIdleTime = syncConnMaxIdleTime
 	return options
 }
 
@@ -95,11 +108,22 @@ func buildSyncOptions(options *redis.Options, timeout time.Duration) *redis.Opti
 // still runs inside the call is the handshake of a connection that was already
 // dialed: fetching the IAM token and HELLO/AUTH. The AWS credentials cache keeps retrieving after the
 // call's context is cancelled, so a slow first retrieval is cached for the next
-// tick. ConnMaxIdleTime (30 minutes by default) is left alone: a tick uses the
-// connection far more often than that, and an idle one that is reaped is
-// replaced in the background by the same mechanism. The pool size stays at 2, of
-// which this takes one.
+// tick. The pool size stays at 2, of which this takes one.
 const syncMinIdleConns = 1
+
+// syncConnMaxIdleTime is how long a pooled sync connection may sit unused.
+// go-redis defaults this to 30 minutes. That is too long here: once the last
+// slot is evicted the sync loop returns before it calls Redis, so nothing
+// touches the socket. The default dialer already probes with a 30 second
+// keepalive, which keeps a load balancer or NAT from idle-dropping the flow.
+// The EOF on the next command is the server closing it. ElastiCache Serverless
+// does that. A TLS session is not a syscall.Conn, so the pool's peek never
+// notices, and the command is sent on the dead socket. Four minutes is under
+// the 30 minute default that still hands a socket out after about 29 minutes
+// idle. The cold read then discards the idle sockets and dials inside its own
+// budget. A tenant that is still tracked is synced every second, so its
+// connection never meets this.
+const syncConnMaxIdleTime = 4 * time.Minute
 
 // syncDialTimeout is the dial timeout for a (already clamped) sync timeout: at
 // least minDialTimeout, because a cold connection needs the TCP connect and the

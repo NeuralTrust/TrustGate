@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -181,6 +183,133 @@ func (s *ConnectStore) SaveClientIfAbsent(ctx context.Context, key string, c app
 		return &c, nil
 	}
 	return incumbent, nil
+}
+
+// replaceClientScript writes ARGV[2] only when the stored JSON client's
+// client_id is ARGV[1]. Returns {1, written} or {0, previous}. Previous is
+// empty when the slot is empty.
+const replaceClientScript = `
+local raw = redis.call('GET', KEYS[1])
+if not raw or raw == '' then
+  return {0, ''}
+end
+local ok, row = pcall(cjson.decode, raw)
+if not ok or type(row) ~= 'table' or row['client_id'] ~= ARGV[1] then
+  return {0, raw}
+end
+redis.call('SET', KEYS[1], ARGV[2])
+return {1, ARGV[2]}
+`
+
+func (s *ConnectStore) ReplaceClientIfMatch(ctx context.Context, key, expectedClientID string, next appoauth.RegisteredClient) (*appoauth.RegisteredClient, bool, error) {
+	rawNext, err := json.Marshal(next)
+	if err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: encode client: %w", err)
+	}
+	res, err := s.rdb.Eval(ctx, replaceClientScript, []string{clientPrefix + key}, expectedClientID, string(rawNext)).Result()
+	if err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: replace client: %w", err)
+	}
+	swapped, raw, err := replaceClientResult(res)
+	if err != nil {
+		return nil, false, err
+	}
+	if swapped {
+		return &next, true, nil
+	}
+	if raw == "" {
+		return nil, false, nil
+	}
+	var current appoauth.RegisteredClient
+	if err := json.Unmarshal([]byte(raw), &current); err != nil {
+		return nil, false, fmt.Errorf("oauth connect store: decode client: %w", err)
+	}
+	return &current, false, nil
+}
+
+func replaceClientResult(res any) (bool, string, error) {
+	vals, ok := res.([]any)
+	if !ok || len(vals) != 2 {
+		return false, "", fmt.Errorf("oauth connect store: replace client: unexpected reply")
+	}
+	swapped, ok := redisFlag(vals[0])
+	if !ok {
+		return false, "", fmt.Errorf("oauth connect store: replace client: unexpected flag")
+	}
+	switch raw := vals[1].(type) {
+	case string:
+		return swapped, raw, nil
+	case []byte:
+		return swapped, string(raw), nil
+	case nil:
+		return swapped, "", nil
+	default:
+		return false, "", fmt.Errorf("oauth connect store: replace client: unexpected value")
+	}
+}
+
+func redisFlag(v any) (bool, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n == 1, true
+	case int:
+		return n == 1, true
+	default:
+		return false, false
+	}
+}
+
+// HasDynamicClient reports whether a dynamic client is cached for this
+// gateway and catalog code. The key is gateway|provider, and provider is the
+// code plus a resource fingerprint, so the match is the code and the code
+// followed by "|", never a raw prefix of the code.
+func (s *ConnectStore) HasDynamicClient(ctx context.Context, gatewayID ids.GatewayID, code string) (bool, error) {
+	if s == nil || s.rdb == nil {
+		return false, errors.New("oauth connect store: redis unavailable")
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false, nil
+	}
+	gateway := gatewayID.String()
+	exact := clientPrefix + gateway + "|" + code
+	n, err := s.rdb.Exists(ctx, exact).Result()
+	if err != nil {
+		return false, fmt.Errorf("oauth connect store: dynamic client: %w", err)
+	}
+	if n > 0 {
+		return true, nil
+	}
+	pattern := clientPrefix + escapeRedisGlob(gateway) + "|" + escapeRedisGlob(code) + "|*"
+	var cursor uint64
+	for {
+		keys, next, err := s.rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return false, fmt.Errorf("oauth connect store: scan dynamic client: %w", err)
+		}
+		for _, key := range keys {
+			if dynamicClientForCode(key, gateway, code) {
+				return true, nil
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return false, nil
+		}
+	}
+}
+
+func dynamicClientForCode(key, gatewayID, code string) bool {
+	rest, ok := strings.CutPrefix(key, clientPrefix)
+	if !ok {
+		return false
+	}
+	prefix := gatewayID + "|" + code
+	return rest == prefix || strings.HasPrefix(rest, prefix+"|")
+}
+
+func escapeRedisGlob(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`).Replace(value)
 }
 
 func (s *ConnectStore) GetClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {

@@ -26,7 +26,7 @@ import (
 // `self_service`, and the seed is checked against every entry's own facts in
 // pkg/app/catalog. All that is left here is that the Store reads the entry's
 // answer rather than guessing at its auth shape — the table of shapes this test
-// used to carry is what the seed check now covers, over the real 198 entries
+// used to carry is what the seed check now covers, over the real 199 entries
 // instead of invented ones.
 func TestCatalogNeedsAdminCredential(t *testing.T) {
 	for _, tc := range []struct {
@@ -105,6 +105,32 @@ func TestCatalogRegistry_SecretURLVariableMapsToNoAuth(t *testing.T) {
 	}
 	if err := reg.MCPTarget.Validate(); err != nil {
 		t.Fatalf("materialised target must validate: %v", err)
+	}
+}
+
+// TestCatalogRegistry_OptionalPublicHeaderMaterialisesNone: a public server
+// with an optional key (Algolia) materialises with no auth so the shelf
+// validates. A required key still cannot.
+func TestCatalogRegistry_OptionalPublicHeaderMaterialisesNone(t *testing.T) {
+	reg, err := catalogRegistry(catalogdomain.MCPServer{
+		Code: "com.algolia/mcp", URL: "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp",
+		Transport: "streamable-http", AuthHint: "static", RequiresAuth: false, SelfService: true,
+		URLVariables: []catalogdomain.MCPURLVariable{
+			{Name: "app_id", Required: true},
+			{Name: "uniq_id", Required: true},
+		},
+		AuthHeaders: []catalogdomain.MCPAuthHeader{{
+			Name: "Authorization", Required: false, Secret: true, Scheme: "Bearer",
+		}},
+	}, ids.New[ids.GatewayKind]())
+	if err != nil {
+		t.Fatalf("catalogRegistry: %v", err)
+	}
+	if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeNone {
+		t.Fatalf("optional public key must materialise as auth none, got %+v", reg.MCPTarget.Auth)
+	}
+	if err := reg.MCPTarget.Validate(); err != nil {
+		t.Fatalf("materialised public target must validate: %v", err)
 	}
 }
 

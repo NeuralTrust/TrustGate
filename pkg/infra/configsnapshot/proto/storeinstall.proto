@@ -73,6 +73,10 @@ message Installation {
   string decision = 13;
   string decided_by = 14;
   int64 decided_at_unix = 15;
+  // naming_version is obsolete. Tool names no longer depend on a stored
+  // version, and upsert ignores this field. The number stays so an older data
+  // plane that still sends it decodes.
+  int32 naming_version = 16;
 }
 
 message UpsertInstallationRequest {

@@ -64,19 +64,20 @@ func (r *Repository) Upsert(ctx context.Context, c *domain.Credential) error {
 	}
 	const query = `
 		INSERT INTO vault_credentials
-			(id, gateway_id, principal_sub, provider, account_ref, access_token, refresh_token, scopes, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			(id, gateway_id, principal_sub, provider, account_ref, access_token, refresh_token, scopes, expires_at, created_at, updated_at, oauth_client_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (gateway_id, principal_sub, provider) DO UPDATE SET
 			account_ref = EXCLUDED.account_ref,
 			access_token = EXCLUDED.access_token,
 			refresh_token = CASE WHEN EXCLUDED.refresh_token <> '' THEN EXCLUDED.refresh_token ELSE vault_credentials.refresh_token END,
 			scopes = EXCLUDED.scopes,
 			expires_at = EXCLUDED.expires_at,
-			updated_at = EXCLUDED.updated_at`
+			updated_at = EXCLUDED.updated_at,
+			oauth_client_id = CASE WHEN EXCLUDED.oauth_client_id <> '' THEN EXCLUDED.oauth_client_id ELSE vault_credentials.oauth_client_id END`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, query,
 			c.ID, c.GatewayID, c.PrincipalSub, c.Provider, c.AccountRef,
-			access, refresh, scopes, nullableTime(c.ExpiresAt), c.CreatedAt, time.Now().UTC(),
+			access, refresh, scopes, nullableTime(c.ExpiresAt), c.CreatedAt, time.Now().UTC(), c.OAuthClientID,
 		)
 		return err
 	})
@@ -84,7 +85,7 @@ func (r *Repository) Upsert(ctx context.Context, c *domain.Credential) error {
 
 func (r *Repository) Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) (*domain.Credential, error) {
 	const query = `
-		SELECT id, gateway_id, principal_sub, provider, account_ref, access_token, refresh_token, scopes, expires_at, created_at, updated_at
+		SELECT id, gateway_id, principal_sub, provider, account_ref, access_token, refresh_token, scopes, expires_at, created_at, updated_at, oauth_client_id
 		FROM vault_credentials
 		WHERE gateway_id = $1 AND principal_sub = $2 AND provider = $3`
 	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, provider)
@@ -97,7 +98,7 @@ func (r *Repository) Find(ctx context.Context, gatewayID ids.GatewayID, principa
 
 func (r *Repository) ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*domain.Credential, error) {
 	const query = `
-		SELECT id, gateway_id, principal_sub, provider, account_ref, access_token, refresh_token, scopes, expires_at, created_at, updated_at
+		SELECT id, gateway_id, principal_sub, provider, account_ref, access_token, refresh_token, scopes, expires_at, created_at, updated_at, oauth_client_id
 		FROM vault_credentials
 		WHERE gateway_id = $1 AND principal_sub = $2
 		ORDER BY provider`
@@ -165,7 +166,7 @@ func (r *Repository) scan(row pgx.Row) (*domain.Credential, error) {
 		expiresAt  *time.Time
 	)
 	if err := row.Scan(&c.ID, &c.GatewayID, &c.PrincipalSub, &c.Provider, &c.AccountRef,
-		&access, &refresh, &scopesJSON, &expiresAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&access, &refresh, &scopesJSON, &expiresAt, &c.CreatedAt, &c.UpdatedAt, &c.OAuthClientID); err != nil {
 		return nil, err
 	}
 	var err error

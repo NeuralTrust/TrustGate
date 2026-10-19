@@ -1,0 +1,653 @@
+{
+  "servers": [
+    {
+      "name": "ai.mem0/mcp",
+      "server_url": "https://mcp.mem0.ai/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Token <Mem0 API key>",
+          "required": true,
+          "secret": true,
+          "scheme": "Token"
+        }
+      ]
+    },
+    {
+      "name": "app.thoughtspot/mcp",
+      "server_url": "https://agent.thoughtspot.app/mcp?api-version=latest",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://agent.thoughtspot.app/authorize",
+        "token_url": "https://agent.thoughtspot.app/token",
+        "resource": "https://agent.thoughtspot.app/mcp"
+      }
+    },
+    {
+      "name": "co.elastic/agent-builder-mcp",
+      "server_url": "https://{kibana_url}/api/agent_builder/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "ApiKey <Elastic API key> with Agent Builder privileges.",
+          "required": true,
+          "secret": true,
+          "scheme": "ApiKey"
+        }
+      ],
+      "url_variables": [
+        {
+          "name": "kibana_url",
+          "description": "Your Kibana host.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "com.algolia/mcp",
+      "server_url": "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <APP_ID:SEARCH_API_KEY> (Agent Studio search key).",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
+      "url_variables": [
+        {
+          "name": "app_id",
+          "description": "Your Algolia Application ID.",
+          "required": true
+        },
+        {
+          "name": "uniq_id",
+          "description": "Unique MCP instance ID from the Algolia dashboard.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "com.amazon.aws/mcp",
+      "server_url": "https://aws-mcp.{region}.api.aws/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true
+      },
+      "url_variables": [
+        {
+          "name": "region",
+          "description": "AWS MCP endpoint region: us-east-1 or eu-central-1.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "com.amplitude/mcp",
+      "server_url": "https://mcp.amplitude.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.amplitude.com/authorize",
+        "token_url": "https://mcp.amplitude.com/token",
+        "scopes": [
+          "mcp:read",
+          "mcp:write",
+          "offline_access"
+        ],
+        "resource": "https://mcp.amplitude.com"
+      }
+    },
+    {
+      "name": "com.chargebee/mcp",
+      "server_url": "https://{subdomain}.mcp.chargebee.com/{agent}",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      },
+      "url_variables": [
+        {
+          "name": "subdomain",
+          "description": "Your Chargebee site subdomain.",
+          "required": true
+        },
+        {
+          "name": "agent",
+          "description": "Agent path, e.g. data_lookup_agent (EU/AU: mcp.eu/mcp.au).",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "com.checkr/mcp",
+      "server_url": "https://mcp.checkr.com",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.checkr.com/authorize",
+        "token_url": "https://mcp.checkr.com/token",
+        "scopes": [
+          "openid"
+        ],
+        "resource": "https://mcp.checkr.com/"
+      }
+    },
+    {
+      "name": "com.clickhouse/cloud-mcp",
+      "server_url": "https://mcp.clickhouse.cloud/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.clickhouse.cloud/authorize",
+        "token_url": "https://mcp.clickhouse.cloud/token",
+        "scopes": [
+          "mcp:access",
+          "clickstack:access",
+          "openid",
+          "profile",
+          "email"
+        ],
+        "resource": "https://mcp.clickhouse.cloud/mcp"
+      }
+    },
+    {
+      "name": "com.dropbox/mcp",
+      "server_url": "https://mcp.dropbox.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://www.dropbox.com/oauth2/authorize",
+        "token_url": "https://api.dropboxapi.com/oauth2/token",
+        "scopes": [
+          "account_info.read",
+          "file_requests.read",
+          "file_requests.write",
+          "files.content.read",
+          "files.content.write",
+          "files.metadata.read",
+          "sharing.read",
+          "sharing.write"
+        ],
+        "resource": "https://mcp.dropbox.com/mcp"
+      }
+    },
+    {
+      "name": "com.excalidraw/mcp",
+      "server_url": "https://mcp.excalidraw.com",
+      "transport": "streamable-http",
+      "requires_auth": false,
+      "self_service": true
+    },
+    {
+      "name": "com.intercom/mcp",
+      "server_url": "https://mcp.intercom.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.intercom.com/authorize",
+        "token_url": "https://mcp.intercom.com/token",
+        "resource": "https://mcp.intercom.com/mcp"
+      }
+    },
+    {
+      "name": "com.jotform/mcp",
+      "server_url": "https://mcp.jotform.com",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://oauth2.jotform.com/authorize",
+        "token_url": "https://oauth2.jotform.com/token",
+        "scopes": [
+          "full"
+        ],
+        "resource": "https://mcp.jotform.com/mcp"
+      }
+    },
+    {
+      "name": "com.motherduck/mcp",
+      "server_url": "https://api.motherduck.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp-auth.motherduck.com/authorize",
+        "token_url": "https://mcp-auth.motherduck.com/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "read:databases",
+          "offline_access"
+        ],
+        "resource": "https://api.motherduck.com/mcp"
+      }
+    },
+    {
+      "name": "com.pagerduty/mcp",
+      "server_url": "https://mcp.pagerduty.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://app.pagerduty.com/global/oauth/authorize",
+        "token_url": "https://app.pagerduty.com/global/oauth/token",
+        "scopes": [
+          "read",
+          "write",
+          "incidents.read",
+          "oncalls.read",
+          "services.read",
+          "users.read",
+          "openid"
+        ],
+        "resource": "https://mcp.pagerduty.com/mcp"
+      }
+    },
+    {
+      "name": "com.pandadoc/mcp",
+      "server_url": "https://mcp.pandadoc.com/v1/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.pandadoc.com/authorize",
+        "token_url": "https://mcp.pandadoc.com/token",
+        "scopes": [
+          "read",
+          "read+write"
+        ],
+        "resource": "https://mcp.pandadoc.com/v1/mcp"
+      }
+    },
+    {
+      "name": "com.pipedream/mcp",
+      "server_url": "https://remote.mcp.pipedream.net/v3",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <OAuth2 client_credentials access token>.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        },
+        {
+          "name": "x-pd-project-id",
+          "description": "Pipedream project ID.",
+          "required": true,
+          "secret": false,
+          "scheme": "raw"
+        },
+        {
+          "name": "x-pd-environment",
+          "description": "Project environment, e.g. production.",
+          "required": true,
+          "secret": false,
+          "scheme": "raw"
+        },
+        {
+          "name": "x-pd-external-user-id",
+          "description": "Your end-user identifier for tool calls.",
+          "required": true,
+          "secret": false,
+          "scheme": "raw"
+        },
+        {
+          "name": "x-pd-app-slug",
+          "description": "Target app slug for the tools.",
+          "required": true,
+          "secret": false,
+          "scheme": "raw"
+        }
+      ]
+    },
+    {
+      "name": "com.plaid/mcp",
+      "server_url": "https://api.dashboard.plaid.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <OAuth2 client_credentials access token; scope mcp:dashboard>.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ]
+    },
+    {
+      "name": "com.railway/mcp",
+      "server_url": "https://mcp.railway.com/",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://backboard.railway.com/oauth/auth?resource=https%3A%2F%2Fbackboard.railway.com",
+        "token_url": "https://backboard.railway.com/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access",
+          "workspace:member"
+        ],
+        "resource": "https://mcp.railway.com"
+      }
+    },
+    {
+      "name": "com.scrapingant/mcp",
+      "server_url": "https://api.scrapingant.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "x-api-key",
+          "description": "API key",
+          "required": true,
+          "secret": true,
+          "scheme": "raw"
+        }
+      ]
+    },
+    {
+      "name": "com.semrush/mcp",
+      "server_url": "https://mcp.semrush.com/v1/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.semrush.com/apis/v4/auth/v0/oauth2/auth",
+        "token_url": "https://api.semrush.com/apis/v4-raw/auth/v1/oauth2/access_token",
+        "scopes": [
+          "mcp.access",
+          "offline_access",
+          "offline"
+        ],
+        "resource": "https://mcp.semrush.com/v1/mcp"
+      }
+    },
+    {
+      "name": "com.shopify/storefront",
+      "server_url": "https://{shop}.myshopify.com/api/mcp",
+      "transport": "streamable-http",
+      "requires_auth": false,
+      "self_service": true,
+      "url_variables": [
+        {
+          "name": "shop",
+          "description": "Store domain, e.g. example.myshopify.com (use the full host).",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "com.shortcut/mcp",
+      "server_url": "https://mcp.shortcut.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "authorize_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/code",
+        "token_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/token",
+        "scopes": [
+          "openid"
+        ],
+        "resource": "https://mcp.shortcut.com/mcp"
+      }
+    },
+    {
+      "name": "com.squareup/mcp",
+      "server_url": "https://mcp.squareup.com/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.squareup.com/authorize",
+        "token_url": "https://mcp.squareup.com/token",
+        "scopes": [
+          "PAYMENTS_READ",
+          "PAYMENTS_WRITE",
+          "ORDERS_READ",
+          "ORDERS_WRITE",
+          "CUSTOMERS_READ",
+          "CUSTOMERS_WRITE",
+          "ITEMS_READ",
+          "MERCHANT_PROFILE_READ"
+        ],
+        "resource": "https://mcp.squareup.com/mcp"
+      }
+    },
+    {
+      "name": "com.teamwork/mcp",
+      "server_url": "https://mcp.ai.teamwork.com",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Teamwork API key>.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ]
+    },
+    {
+      "name": "com.vercel/mcp",
+      "server_url": "https://mcp.vercel.com",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://vercel.com/oauth/authorize",
+        "token_url": "https://vercel.com/api/login/oauth/token",
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "offline_access"
+        ],
+        "resource": "https://mcp.vercel.com/"
+      }
+    },
+    {
+      "name": "dev.firecrawl/mcp",
+      "server_url": "https://mcp.firecrawl.dev/v2/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.firecrawl.dev/api/oauth/authorize",
+        "token_url": "https://www.firecrawl.dev/api/oauth/token",
+        "scopes": [
+          "firecrawl:global"
+        ],
+        "resource": "https://mcp.firecrawl.dev/v2/mcp"
+      }
+    },
+    {
+      "name": "dev.jam/mcp",
+      "server_url": "https://mcp.jam.dev/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.jam.dev/oauth/authorize",
+        "token_url": "https://api.jam.dev/oauth/token",
+        "scopes": [
+          "mcp:read",
+          "mcp:write",
+          "cli:read",
+          "cli:write"
+        ],
+        "resource": "https://mcp.jam.dev/mcp"
+      }
+    },
+    {
+      "name": "io.globalping/mcp",
+      "server_url": "https://mcp.globalping.dev/mcp",
+      "transport": "streamable-http",
+      "requires_auth": false,
+      "self_service": true
+    },
+    {
+      "name": "io.prismic/mcp",
+      "server_url": "https://mcp.prismic.io/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.prismic.io/authorize",
+        "token_url": "https://mcp.prismic.io/token",
+        "resource": "https://mcp.prismic.io/mcp"
+      }
+    },
+    {
+      "name": "net.todoist/mcp",
+      "server_url": "https://ai.todoist.net/mcp",
+      "transport": "streamable-http",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://todoist.com/oauth/authorize",
+        "token_url": "https://todoist.com/oauth/access_token",
+        "scopes": [
+          "data:read_write",
+          "data:read",
+          "task:add",
+          "data:delete",
+          "project:delete",
+          "user:read"
+        ],
+        "resource": "https://ai.todoist.net/mcp"
+      }
+    }
+  ]
+}

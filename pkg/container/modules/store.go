@@ -26,6 +26,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	installationrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/installation"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -95,11 +96,28 @@ func Store(c *container.Container) error {
 	// connect-from-catalog path uses. On the data plane this port is served by
 	// the gRPC client instead (see ConfigSyncData); here it writes directly.
 	if err := c.Provide(func(
-		catalog appcatalog.MCPServerCatalog,
-		registries registrydomain.Repository,
-		creator appregistry.Creator,
-	) (appstore.RegistryEnsurer, error) {
-		return appstore.NewRegistryEnsurer(catalog, registries, creator)
+		repo registrydomain.Repository,
+		manager *cache.TTLMapManager,
+		publisher cache.EventPublisher,
+		logger *slog.Logger,
+		sig snapshotSignalParams,
+	) (appstore.CatalogTargetSaver, error) {
+		return appstore.NewCatalogTargetSaver(
+			repo,
+			manager.GetTTLMap(cache.RegistryTTLName),
+			publisher,
+			sig.Signaler,
+			logger,
+		)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(p registryEnsurerParams) (appstore.RegistryEnsurer, error) {
+		var opts []appstore.EnsurerOption
+		if p.Reapply != nil {
+			opts = append(opts, appstore.WithEnsurerReapply(p.Reapply))
+		}
+		return appstore.NewRegistryEnsurer(p.Catalog, p.Registries, p.Creator, opts...)
 	}); err != nil {
 		return err
 	}
@@ -129,6 +147,15 @@ func Store(c *container.Container) error {
 	return c.Provide(provideStorePrincipalHandler)
 }
 
+type registryEnsurerParams struct {
+	dig.In
+
+	Catalog    appcatalog.MCPServerCatalog
+	Registries registrydomain.Repository
+	Creator    appregistry.Creator
+	Reapply    *appstore.CatalogReapply `optional:"true"`
+}
+
 type storePrincipalParams struct {
 	dig.In
 	Catalog    appcatalog.MCPServerCatalog
@@ -142,6 +169,8 @@ type storePrincipalParams struct {
 	Grants   storeaccessdomain.Reader
 	Policies storeaccessdomain.PolicyReader
 	Ensurer  appstore.RegistryEnsurer
+	// Reapply reconciles a stale catalog instance during an on-behalf install.
+	Reapply  *appstore.CatalogReapply `optional:"true"`
 	Gateways gatewaydomain.Repository `optional:"true"`
 	// Configure mints the hosted form a user finishes a server's per-user setup
 	// on. Absent on planes without it, and the Portal then offers no form.
@@ -152,6 +181,9 @@ type storePrincipalParams struct {
 	// on planes without the OAuth connect service.
 	Connect appoauth.ConnectService `optional:"true"`
 	Logger  *slog.Logger            `optional:"true"`
+	// Revoker asks the vendor to revoke a per-user token on uninstall. Absent,
+	// uninstall still deletes the local credential when Vault is set.
+	Revoker appstore.CredentialRevoker `optional:"true"`
 }
 
 // provideStorePrincipalHandler serves the Portal's admin preview of one user's
@@ -165,7 +197,13 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	if err != nil {
 		return nil, err
 	}
-	installer, err := appstore.NewInstaller(p.Catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+	installOpts := []appstore.InstallerOption{
+		appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger),
+	}
+	if p.Reapply != nil {
+		installOpts = append(installOpts, appstore.WithCatalogInstanceRefresh(p.Reapply))
+	}
+	installer, err := appstore.NewInstaller(p.Catalog, p.Registries, p.Installs, p.Grants, p.Ensurer, installOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +237,7 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	// Revoking an account deletes it from the vault the preview reads it from;
 	// a plane without one offers no Disconnect.
 	if p.Vault != nil {
-		disconnector, err := appstore.NewPrincipalDisconnector(p.Registries, p.Vault, p.Logger)
+		disconnector, err := appstore.NewPrincipalDisconnector(p.Registries, p.Vault, p.Logger, appstore.WithDisconnectorInstalls(p.Installs))
 		if err != nil {
 			return nil, err
 		}

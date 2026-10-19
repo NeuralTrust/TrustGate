@@ -149,7 +149,9 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
 	for i, b := range candidates {
-		candidates[i].exposed = exposedNameFor(b.exposed, b.registry).String()
+		// Prompts keep <server>_<prompt>. Tool names drop a repeated server
+		// prefix; prompts do not.
+		candidates[i].exposed = promptName(b.exposed, b.registry)
 	}
 	return &promptComposition{bindings: candidates, pending: pendingAccount}, nil
 }

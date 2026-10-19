@@ -282,3 +282,34 @@ func TestErrorResponseCannotBypassLimitWithSSEContentType(t *testing.T) {
 		t.Fatalf("error=%v, want ErrResponseTooLarge", err)
 	}
 }
+
+func TestConnect_OversizedUnauthorizedStillRejectsTheCredential(t *testing.T) {
+	const leaked = "secret-token-body"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusUnauthorized)
+		chunk := []byte(leaked + strings.Repeat("x", 1<<20))
+		for range 9 {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err := mcpclient.New().Connect(ctx, appmcp.Target{URL: srv.URL})
+	if !errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+		t.Fatalf("error = %v, want ErrUpstreamUnauthorized so the refresh retry still runs", err)
+	}
+	if errors.Is(err, mcpclient.ErrResponseTooLarge) {
+		t.Fatalf("oversized 401 became a size error: %v", err)
+	}
+	if strings.Contains(err.Error(), leaked) {
+		t.Fatalf("upstream body leaked: %v", err)
+	}
+}

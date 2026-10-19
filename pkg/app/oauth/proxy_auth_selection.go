@@ -204,6 +204,7 @@ func (p *authProxy) validateClientRedirect(ctx context.Context, clientID, redire
 	if isPrivateUseRedirectURIString(redirectURI) && !isLegacyPrivateUseRedirectURI(redirectURI) {
 		return oauthErr("invalid_request", "private-use redirect_uri must be registered for this client")
 	}
+	recordKnownClientRedirect(ctx, clientID, redirectURI)
 	return nil
 }
 

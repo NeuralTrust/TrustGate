@@ -333,13 +333,13 @@
           "required": true
         }
       ],
-      "requires_auth": true,
-      "self_service": false,
+      "requires_auth": false,
+      "self_service": true,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <APP_ID:SEARCH_API_KEY> (Agent Studio search key).",
-          "required": true,
+          "description": "Optional; the public Algolia MCP endpoint doesn't require it.",
+          "required": false,
           "secret": true,
           "scheme": "Bearer"
         }
@@ -368,8 +368,7 @@
         "authorize_url": "https://mcp.amplitude.com/authorize",
         "token_url": "https://mcp.amplitude.com/token",
         "scopes": [
-          "mcp:read",
-          "mcp:write",
+          "all:read",
           "offline_access"
         ],
         "resource": "https://mcp.amplitude.com"
@@ -1611,7 +1610,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Braintrust API key>.",
+          "description": "<Braintrust API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -1917,7 +1916,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Builder Private API key>.",
+          "description": "<Builder Private API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -2580,7 +2579,7 @@
         "Search and read Chargebee billing"
       ],
       "transport": "streamable-http",
-      "server_url": "https://{subdomain}.mcp.chargebee.com/{agent}",
+      "server_url": "https://{subdomain}.{region}.chargebee.com/{agent}",
       "url_variables": [
         {
           "name": "subdomain",
@@ -2588,17 +2587,55 @@
           "required": true
         },
         {
+          "name": "region",
+          "description": "Chargebee data center.",
+          "required": true,
+          "options": [
+            {
+              "value": "mcp",
+              "label": "United States"
+            },
+            {
+              "value": "mcp.eu",
+              "label": "Europe"
+            },
+            {
+              "value": "mcp.au",
+              "label": "Australia"
+            }
+          ]
+        },
+        {
           "name": "agent",
-          "description": "Agent path, e.g. data_lookup_agent (EU/AU: mcp.eu/mcp.au).",
-          "required": true
+          "description": "Chargebee MCP agent.",
+          "required": true,
+          "options": [
+            {
+              "value": "knowledge_base_agent",
+              "label": "Knowledge base"
+            },
+            {
+              "value": "data_lookup_agent",
+              "label": "Data lookup"
+            },
+            {
+              "value": "onboarding_agent",
+              "label": "Onboarding"
+            }
+          ]
         }
       ],
       "requires_auth": true,
       "self_service": false,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true
-      },
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "per-MCP-server key from Settings > Agentic AI > MCP Servers (we add 'Bearer'). Not used by the knowledge base agent.",
+          "required": false,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 55,
       "tools": [
         {
@@ -2615,7 +2652,7 @@
       "name": "com.checkr/mcp",
       "vendor": "Checkr",
       "category": "HR & Recruiting",
-      "description": "Background checks: manage and retrieve screening reports (OAuth Dynamic Client Registration).",
+      "description": "Background checks: manage and retrieve screening reports.",
       "capabilities": [
         "Manage retrieve screening reports",
         "Get a candidate by ID",
@@ -2624,12 +2661,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.checkr.com",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.checkr.com/authorize",
         "token_url": "https://mcp.checkr.com/token",
@@ -2637,6 +2674,15 @@
           "openid"
         ],
         "resource": "https://mcp.checkr.com/"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Checkr.",
+        "steps": [
+          "Create an OAuth app in Checkr.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.checkr/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.checkr/mcp."
       },
       "tools": [
         {
@@ -2677,7 +2723,6 @@
         "token_url": "https://mcp.clickhouse.cloud/token",
         "scopes": [
           "mcp:access",
-          "clickstack:access",
           "openid",
           "profile",
           "email"
@@ -3958,26 +4003,28 @@
       "name": "dev.cube/mcp",
       "vendor": "Cube",
       "category": "Data & Analytics",
-      "description": "Semantic layer queries via Cube Cloud (OAuth + PKCE; per-tenant host).",
+      "description": "Semantic layer queries via Cube Cloud (OAuth + PKCE).",
       "capabilities": [
         "Query the semantic layer",
         "Explore Cube metrics",
         "Analyze workspace data"
       ],
       "transport": "streamable-http",
-      "server_url": "https://{cube_host}/api/mcp",
-      "url_variables": [
-        {
-          "name": "cube_host",
-          "description": "Your Cube MCP server host.",
-          "required": true
-        }
-      ],
+      "server_url": "https://cubecloud.dev/mcp",
       "requires_auth": true,
-      "self_service": false,
+      "self_service": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://cubecloud.dev/mcp/oauth/authorize",
+        "token_url": "https://cubecloud.dev/mcp/oauth/token",
+        "scopes": [
+          "mcp-agent-access"
+        ],
+        "resource": "https://cubecloud.dev/mcp"
       }
     },
     {
@@ -4054,7 +4101,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <API key>",
+          "description": "<API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -4107,7 +4154,12 @@
         {
           "name": "workspace_host",
           "description": "Databricks workspace host.",
-          "required": true
+          "required": true,
+          "host_suffix": [
+            "*.cloud.databricks.com",
+            "*.gcp.databricks.com",
+            "*.azuredatabricks.net"
+          ]
         },
         {
           "name": "path",
@@ -4405,7 +4457,7 @@
       "name": "com.getdbt/mcp",
       "vendor": "dbt Labs",
       "category": "Data & Analytics",
-      "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta).",
+      "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta). An admin registers an OAuth app; dbt issues a client ID and no client secret.",
       "capabilities": [
         "Query semantic layer",
         "Query model metadata",
@@ -4417,14 +4469,49 @@
         {
           "name": "dbt_host",
           "description": "dbt Cloud host, e.g. cloud.getdbt.com or <prefix>.us1.dbt.com.",
-          "required": true
+          "required": true,
+          "host_suffix": [
+            "*.getdbt.com",
+            "*.us1.dbt.com",
+            "*.us2.dbt.com",
+            "*.us3.dbt.com",
+            "*.us5.dbt.com",
+            "*.eu1.dbt.com",
+            "*.eu2.dbt.com",
+            "*.eu3.dbt.com",
+            "*.eu4.dbt.com",
+            "*.au1.dbt.com",
+            "*.au2.dbt.com",
+            "*.jp1.dbt.com"
+          ]
         }
       ],
       "requires_auth": true,
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{dbt_host}/oauth/authorize",
+        "token_url": "https://{dbt_host}/oauth/token",
+        "scopes": [
+          "offline_access",
+          "account:read",
+          "projects:query",
+          "catalog:read"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in dbt.",
+        "steps": [
+          "In Account settings, Integrations, App integrations, add a manual integration.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.getdbt/mcp.",
+          "Enter the client ID. dbt does not issue a client secret."
+        ],
+        "docs_url": "https://docs.getdbt.com/docs/platform/manage-access/connect-apps-oauth",
+        "note": "{dbt_host} is the account host, for example cloud.getdbt.com or prefix.us1.dbt.com. The client must use PKCE. Register the callback https://<gateway-mcp host>/oauth/callback/com.getdbt/mcp."
       },
       "relevance": 70,
       "tools": [
@@ -4545,7 +4632,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <DigitalOcean API token>",
+          "description": "<DigitalOcean API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -4620,7 +4707,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <DigitalOcean API token>",
+          "description": "<DigitalOcean API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -4679,7 +4766,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <DigitalOcean API token>",
+          "description": "<DigitalOcean API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -4862,7 +4949,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <DigitalOcean API token>",
+          "description": "<DigitalOcean API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -5061,7 +5148,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <DigitalOcean API token>",
+          "description": "<DigitalOcean API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -5156,12 +5243,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.dropbox.com/mcp",
       "requires_auth": true,
-      "self_service": false,
+      "self_service": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "manual",
-        "dcr": false,
+        "registration": "auto",
+        "dcr": true,
         "pkce": true,
         "authorize_url": "https://www.dropbox.com/oauth2/authorize",
         "token_url": "https://api.dropboxapi.com/oauth2/token",
@@ -5249,7 +5336,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Dynatrace Platform Token> with mcp-gateway:servers:invoke and :read scopes.",
+          "description": "<Dynatrace Platform Token> with mcp-gateway:servers:invoke and :read scopes (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -5311,18 +5398,23 @@
       "name": "co.elastic/agent-builder-mcp",
       "vendor": "Elastic",
       "category": "Search & Observability",
-      "description": "Elastic Agent Builder tools per Kibana deployment (custom space: /s/{space}/api/agent_builder/mcp).",
+      "description": "Elastic Agent Builder tools for one Kibana space. Which tools appear depends on the deployment.",
       "capabilities": [
         "Search Elastic data",
         "Query observability signals",
         "Use Agent Builder tools"
       ],
       "transport": "streamable-http",
-      "server_url": "https://{kibana_url}/api/agent_builder/mcp",
+      "server_url": "https://{kibana_url}/s/{space}/api/agent_builder/mcp",
       "url_variables": [
         {
           "name": "kibana_url",
-          "description": "Your Kibana host.",
+          "description": "Kibana endpoint host (…kb….cloud.es.io).",
+          "required": true
+        },
+        {
+          "name": "space",
+          "description": "Kibana space id. The default space is default.",
           "required": true
         }
       ],
@@ -5331,7 +5423,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "ApiKey <Elastic API key> with Agent Builder privileges.",
+          "description": "<API key restricted with role_descriptors> (we add 'ApiKey').",
           "required": true,
           "secret": true,
           "scheme": "ApiKey"
@@ -5414,7 +5506,7 @@
         "Read checkpoint state for restore"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.excalidraw.com",
+      "server_url": "https://mcp.excalidraw.com/mcp",
       "requires_auth": false,
       "self_service": true,
       "tools": [
@@ -5562,7 +5654,7 @@
       "name": "dev.firecrawl/mcp",
       "vendor": "Firecrawl",
       "category": "Web Scraping & Data",
-      "description": "Web scraping, crawling, and extraction (OAuth keyless; or API key in path).",
+      "description": "Web scraping, crawling, and extraction. API key on /v2/mcp; keyless access is a separate limited endpoint.",
       "capabilities": [
         "Scrape web pages",
         "Crawl sites",
@@ -5571,20 +5663,16 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.firecrawl.dev/v2/mcp",
       "requires_auth": true,
-      "self_service": true,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
-        "pkce": true,
-        "authorize_url": "https://www.firecrawl.dev/api/oauth/authorize",
-        "token_url": "https://www.firecrawl.dev/api/oauth/token",
-        "scopes": [
-          "firecrawl:global"
-        ],
-        "resource": "https://mcp.firecrawl.dev/v2/mcp"
-      },
+      "self_service": false,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "<Firecrawl API key> (we add 'Bearer').",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 65,
       "tools": [
         {
@@ -5630,7 +5718,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <API key>",
+          "description": "<API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -5660,18 +5748,18 @@
       "name": "com.freshworks/mcp",
       "vendor": "Freshworks",
       "category": "Customer Support",
-      "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway.",
+      "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway. An admin must create an OAuth app in Freshworks.",
       "capabilities": [
         "Manage tickets",
         "Look up assets",
         "Search the knowledge base"
       ],
       "transport": "streamable-http",
-      "server_url": "https://{domain}/mcp",
+      "server_url": "https://{domain}.freshservice.com/mcp",
       "url_variables": [
         {
           "name": "domain",
-          "description": "Your Freshworks instance domain, e.g. yourco.freshservice.com.",
+          "description": "Subdomain label only, e.g. yourco, not yourco.freshservice.com.",
           "required": true
         }
       ],
@@ -5679,7 +5767,51 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "cross_domain_contact": true,
+        "authorize_url": "https://{domain}.myfreshworks.com/org/oauth/v2/authorize",
+        "token_url": "https://{domain}.myfreshworks.com/org/oauth/v2/token",
+        "scopes": [
+          "freshservice.tickets.create",
+          "freshservice.tickets.edit",
+          "freshservice.tickets.conversations.create",
+          "freshservice.tickets.view",
+          "freshservice.assets.view",
+          "freshservice.assets.manage",
+          "freshservice.onboarding_requests.create",
+          "freshservice.onboarding_requests.view",
+          "freshservice.onboarding_requests.fields.view",
+          "freshservice.offboarding_requests.create",
+          "freshservice.offboarding_requests.view",
+          "freshservice.offboarding_requests.fields.view",
+          "freshservice.products.view",
+          "freshservice.agents.manage",
+          "freshservice.requesters.view",
+          "freshservice.solutions.publish",
+          "freshservice.solutions.view",
+          "freshservice.service_catalog.view",
+          "freshservice.service_catalog.edit",
+          "freshservice.workspaces.view",
+          "freshservice.solutions.manage",
+          "freshservice.tickets.fields.manage",
+          "freshservice.locations.view",
+          "freshservice.vendors.view",
+          "freshservice.departments.view",
+          "freshservice.agentgroups.manage",
+          "freshservice.objects.manage"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Freshworks.",
+        "steps": [
+          "Create an OAuth app in Freshworks.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "{domain} is the subdomain label only, for example yourco, not yourco.freshservice.com. An admin must create an OAuth app in Freshworks. Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp."
       },
       "relevance": 60
     },
@@ -5927,8 +6059,21 @@
       ],
       "transport": "streamable-http",
       "server_url": "https://mcp.globalping.dev/mcp",
-      "requires_auth": false,
+      "requires_auth": true,
       "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.globalping.dev/authorize",
+        "token_url": "https://mcp.globalping.dev/token",
+        "scopes": [
+          "measurements"
+        ],
+        "resource": "https://mcp.globalping.dev/mcp"
+      },
       "tools": [
         {
           "name": "ping",
@@ -6001,7 +6146,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <GoodData API token>.",
+          "description": "<GoodData API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -8102,7 +8247,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <token from a Halo API Application>.",
+          "description": "<token from a Halo API Application> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -8318,7 +8463,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "App <API key> (or OAuth 2.1)",
+          "description": "<API key> (or OAuth 2.1) (we add 'App')",
           "required": true,
           "secret": true,
           "scheme": "App"
@@ -8339,16 +8484,25 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.intercom.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.intercom.com/authorize",
         "token_url": "https://mcp.intercom.com/token",
         "resource": "https://mcp.intercom.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Intercom.",
+        "steps": [
+          "Create an OAuth app in Intercom.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.intercom/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.intercom/mcp."
       },
       "relevance": 75,
       "tools": [
@@ -8430,9 +8584,7 @@
         "token_url": "https://api.jam.dev/oauth/token",
         "scopes": [
           "mcp:read",
-          "mcp:write",
-          "cli:read",
-          "cli:write"
+          "mcp:write"
         ],
         "resource": "https://mcp.jam.dev/mcp"
       },
@@ -8713,7 +8865,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <API key>",
+          "description": "<API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -8818,19 +8970,19 @@
         "Create or retrieve form submissions"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.jotform.com",
+      "server_url": "https://mcp.jotform.com/mcp",
       "requires_auth": true,
-      "self_service": false,
+      "self_service": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "manual",
-        "dcr": false,
+        "registration": "auto",
+        "dcr": true,
         "pkce": true,
         "authorize_url": "https://oauth2.jotform.com/authorize",
         "token_url": "https://oauth2.jotform.com/token",
         "scopes": [
-          "full"
+          "readOnly"
         ],
         "resource": "https://mcp.jotform.com/mcp"
       },
@@ -8869,16 +9021,37 @@
         "List administrators"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.jumpcloud.com/v1",
+      "server_url": "https://{host}/v1",
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <API key>",
+          "description": "<jca_…> read-only admin key (we add 'Bearer').",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
+        }
+      ],
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "JumpCloud data center.",
+          "required": true,
+          "options": [
+            {
+              "value": "mcp.jumpcloud.com",
+              "label": "United States"
+            },
+            {
+              "value": "mcp.eu.jumpcloud.com",
+              "label": "Europe"
+            },
+            {
+              "value": "mcp.in.jumpcloud.com",
+              "label": "India"
+            }
+          ]
         }
       ],
       "tools": [
@@ -9184,23 +9357,48 @@
       "name": "com.langfuse/mcp",
       "vendor": "Langfuse",
       "category": "LLM Observability",
-      "description": "Langfuse data platform: traces, prompts, datasets (EU; US us.cloud.langfuse.com).",
+      "description": "Langfuse data platform: traces, prompts, and datasets. Pick the cloud host for the project.",
       "capabilities": [
         "Work with traces",
         "Work with prompts",
         "Work with datasets"
       ],
       "transport": "streamable-http",
-      "server_url": "https://cloud.langfuse.com/api/public/mcp",
+      "server_url": "https://{host}/api/public/mcp",
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Basic <Base64(public_key:secret_key)> project credentials.",
+          "description": "<Base64(pk-lf-…:sk-lf-…)> (we add 'Basic'). Project keys are read/write.",
           "required": true,
           "secret": true,
           "scheme": "Basic"
+        }
+      ],
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "Langfuse cloud host.",
+          "required": true,
+          "options": [
+            {
+              "value": "cloud.langfuse.com",
+              "label": "Europe"
+            },
+            {
+              "value": "us.cloud.langfuse.com",
+              "label": "United States"
+            },
+            {
+              "value": "jp.cloud.langfuse.com",
+              "label": "Japan"
+            },
+            {
+              "value": "hipaa.cloud.langfuse.com",
+              "label": "HIPAA (US)"
+            }
+          ]
         }
       ],
       "tools": [
@@ -9738,7 +9936,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Mandrill API key>",
+          "description": "<Mandrill API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -9821,13 +10019,13 @@
         "Update memory"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.mem0.ai/mcp",
+      "server_url": "https://mcp.mem0.ai/mcp/",
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Token <Mem0 API key>",
+          "description": "<Mem0 API key> (we add 'Token')",
           "required": true,
           "secret": true,
           "scheme": "Token"
@@ -10455,7 +10653,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Mollie Advanced access token>.",
+          "description": "<Mollie Advanced access token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -11013,11 +11211,7 @@
         "authorize_url": "https://mcp-auth.motherduck.com/authorize",
         "token_url": "https://mcp-auth.motherduck.com/token",
         "scopes": [
-          "openid",
-          "profile",
-          "email",
-          "read:databases",
-          "offline_access"
+          "mcp:connect"
         ],
         "resource": "https://api.motherduck.com/mcp"
       },
@@ -11413,31 +11607,57 @@
       "name": "com.newrelic/mcp",
       "vendor": "New Relic",
       "category": "Observability",
-      "description": "Query New Relic telemetry, dashboards, and alerts.",
+      "description": "Query New Relic telemetry, dashboards, and alerts. An admin must register an OAuth app that accepts the gateway callback.",
       "capabilities": [
         "Query telemetry",
         "Monitor dashboards",
         "Monitor alerts"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.newrelic.com/mcp/",
+      "server_url": "https://{host}/mcp/",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
-        "authorize_url": "https://login.newrelic.com/login",
-        "token_url": "https://mcp.newrelic.com/oauth2/token",
+        "authorize_url": "https://oauth2.service.newrelic.com/oauth2/auth",
+        "token_url": "https://oauth2.service.newrelic.com/oauth2/token",
         "scopes": [
-          "openid",
-          "profile",
-          "email"
-        ],
-        "resource": "https://mcp.newrelic.com/mcp/"
+          "observability:read",
+          "offline",
+          "offline_access"
+        ]
       },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in New Relic.",
+        "steps": [
+          "Create an OAuth app in New Relic.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.newrelic/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "docs_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/overview/",
+        "note": "New Relic dynamic client registration returns one shared client and only allows localhost redirect URIs, so this gateway's callback is rejected. Registration is manual. Scopes are observability:read, offline, and offline_access. The host is the region: mcp.newrelic.com (United States) or mcp.eu.newrelic.com (Europe). Register the callback https://<gateway-mcp host>/oauth/callback/com.newrelic/mcp."
+      },
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "New Relic region.",
+          "required": true,
+          "options": [
+            {
+              "value": "mcp.newrelic.com",
+              "label": "United States"
+            },
+            {
+              "value": "mcp.eu.newrelic.com",
+              "label": "Europe"
+            }
+          ]
+        }
+      ],
       "relevance": 80,
       "tools": [
         {
@@ -11822,23 +12042,40 @@
       "name": "com.paddle/mcp",
       "vendor": "Paddle",
       "category": "Billing & Payments",
-      "description": "Subscriptions, transactions, and products (live; sandbox sandbox-mcp.paddle.com).",
+      "description": "Subscriptions, transactions, and products. Choose live or sandbox.",
       "capabilities": [
         "Manage subscriptions",
         "Manage transactions",
         "Manage products"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.paddle.com/mcp",
+      "server_url": "https://{host}/mcp",
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Paddle API key>.",
+          "description": "<read-only API key; never a live billing key> (we add 'Bearer'). Sandbox keys use the pdl_sdbx_ prefix.",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
+        }
+      ],
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "Paddle environment.",
+          "required": true,
+          "options": [
+            {
+              "value": "mcp.paddle.com",
+              "label": "Live"
+            },
+            {
+              "value": "sandbox-mcp.paddle.com",
+              "label": "Sandbox"
+            }
+          ]
         }
       ],
       "relevance": 50,
@@ -11868,7 +12105,7 @@
         "Work with schedules"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.pagerduty.com/mcp",
+      "server_url": "https://{host}/mcp",
       "requires_auth": true,
       "self_service": false,
       "oauth": {
@@ -11881,15 +12118,31 @@
         "token_url": "https://app.pagerduty.com/global/oauth/token",
         "scopes": [
           "read",
-          "write",
           "incidents.read",
           "oncalls.read",
           "services.read",
           "users.read",
           "openid"
         ],
-        "resource": "https://mcp.pagerduty.com/mcp"
+        "resource": "https://{host}/mcp"
       },
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "PagerDuty service region.",
+          "required": true,
+          "options": [
+            {
+              "value": "mcp.pagerduty.com",
+              "label": "United States"
+            },
+            {
+              "value": "mcp.eu.pagerduty.com",
+              "label": "Europe"
+            }
+          ]
+        }
+      ],
       "relevance": 80,
       "tools": [
         {
@@ -12022,7 +12275,7 @@
         "token_url": "https://mcp.pandadoc.com/token",
         "scopes": [
           "read",
-          "read+write"
+          "documents:read"
         ],
         "resource": "https://mcp.pandadoc.com/v1/mcp"
       }
@@ -12319,7 +12572,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Pinecone API key>",
+          "description": "<Pinecone API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -12337,7 +12590,7 @@
       "name": "com.pipedream/mcp",
       "vendor": "Pipedream",
       "category": "Automation",
-      "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps (Connect API auth).",
+      "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps (Connect API auth). x-pd-external-user-id is one admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use.",
       "capabilities": [
         "Call tools across connected apps",
         "Run hosted automations",
@@ -12348,13 +12601,6 @@
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <OAuth2 client_credentials access token>.",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        },
         {
           "name": "x-pd-project-id",
           "description": "Pipedream project ID.",
@@ -12371,7 +12617,7 @@
         },
         {
           "name": "x-pd-external-user-id",
-          "description": "Your end-user identifier for tool calls.",
+          "description": "One admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use.",
           "required": true,
           "secret": false,
           "scheme": "raw"
@@ -12384,6 +12630,24 @@
           "scheme": "raw"
         }
       ],
+      "oauth": {
+        "required": true,
+        "grant_type": "client_credentials",
+        "token_url": "https://api.pipedream.com/v1/oauth/token",
+        "token_endpoint_auth_method": "client_secret_post"
+      },
+      "auth_methods": [
+        "oauth"
+      ],
+      "config_guide": {
+        "summary": "Create machine-to-machine OAuth credentials in Pipedream.",
+        "steps": [
+          "Create an OAuth client in the Pipedream workspace API settings and enter its client ID and client secret.",
+          "Enter x-pd-project-id, x-pd-environment, x-pd-external-user-id, and x-pd-app-slug."
+        ],
+        "docs_url": "https://pipedream.com/docs/connect/mcp/developers",
+        "note": "The gateway posts client_id and client_secret to https://api.pipedream.com/v1/oauth/token and sends the access token as Bearer. x-pd-external-user-id is one admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use."
+      },
       "relevance": 60
     },
     {
@@ -12397,18 +12661,22 @@
         "Work with financial data access"
       ],
       "transport": "streamable-http",
-      "server_url": "https://api.dashboard.plaid.com/mcp",
+      "server_url": "https://api.dashboard.plaid.com/mcp/",
       "requires_auth": true,
-      "self_service": false,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <OAuth2 client_credentials access token; scope mcp:dashboard>.",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        }
-      ],
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://dashboard.plaid.com/oauth/authorize",
+        "token_url": "https://api.dashboard.plaid.com/oauth/token",
+        "scopes": [
+          "mcp:dashboard"
+        ],
+        "resource": "https://api.dashboard.plaid.com/mcp/"
+      },
       "relevance": 75,
       "tools": [
         {
@@ -12867,16 +13135,25 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.prismic.io/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.prismic.io/authorize",
         "token_url": "https://mcp.prismic.io/token",
         "resource": "https://mcp.prismic.io/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Prismic.",
+        "steps": [
+          "Create an OAuth app in Prismic.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/io.prismic/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/io.prismic/mcp."
       },
       "tools": [
         {
@@ -12964,11 +13241,8 @@
         "authorize_url": "https://backboard.railway.com/oauth/auth?resource=https%3A%2F%2Fbackboard.railway.com",
         "token_url": "https://backboard.railway.com/oauth/token",
         "scopes": [
-          "openid",
-          "profile",
-          "email",
-          "offline_access",
-          "workspace:member"
+          "workspace:member",
+          "offline_access"
         ],
         "resource": "https://mcp.railway.com"
       },
@@ -13127,7 +13401,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Basic <Base64(key_id:key_secret)> merchant token.",
+          "description": "<Base64(key_id:key_secret)> merchant token (we add 'Basic')",
           "required": true,
           "secret": true,
           "scheme": "Basic"
@@ -13202,7 +13476,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Render API key>",
+          "description": "<Render API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -13321,7 +13595,9 @@
       "transport": "sse",
       "server_url": "https://mcp.replicate.com/sse",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
+      "hidden": true,
+      "hidden_reason": "broken_unsupported: TrustGate MCP plane only supports streamable-http",
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13486,18 +13762,18 @@
       "name": "com.salesforce/mcp",
       "vendor": "Salesforce",
       "category": "Sales & CRM",
-      "description": "Hosted Salesforce MCP servers (append a server name, e.g. platform/sobject-all). Sandbox uses /v1/sandbox/.",
+      "description": "Hosted Salesforce MCP servers for a production org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
       "capabilities": [
         "Query Salesforce records",
         "Update CRM objects",
         "Search accounts and opportunities"
       ],
       "transport": "streamable-http",
-      "server_url": "https://api.salesforce.com/platform/mcp/v1/{server}",
+      "server_url": "https://api.salesforce.com/platform/mcp/v1/platform/{server}",
       "url_variables": [
         {
           "name": "server",
-          "description": "Salesforce hosted MCP server path, e.g. platform/sobject-all.",
+          "description": "Salesforce hosted MCP server name, one path segment such as sobject-all.",
           "required": true
         }
       ],
@@ -13505,7 +13781,74 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://login.salesforce.com/services/oauth2/authorize",
+        "token_url": "https://login.salesforce.com/services/oauth2/token",
+        "scopes": [
+          "mcp_api",
+          "refresh_token"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an External Client App in Salesforce.",
+        "steps": [
+          "Create an External Client App with OAuth, PKCE, and JWT-based access tokens.",
+          "Add the scopes Access MCP servers (mcp_api) and Perform requests at any time (refresh_token).",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp.",
+          "Enter the consumer key as the client ID and the consumer secret as the client secret."
+        ],
+        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
+        "note": "Production orgs authorize at https://login.salesforce.com. Sandbox and scratch orgs use com.salesforce/mcp-sandbox, which authorizes at https://test.salesforce.com. The server name is one path segment and cannot contain '/'. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp."
+      },
+      "relevance": 100
+    },
+    {
+      "name": "com.salesforce/mcp-sandbox",
+      "vendor": "Salesforce (Sandbox)",
+      "category": "Sales & CRM",
+      "description": "Hosted Salesforce MCP servers for a sandbox or scratch org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
+      "capabilities": [
+        "Query Salesforce records",
+        "Update CRM objects",
+        "Search accounts and opportunities"
+      ],
+      "transport": "streamable-http",
+      "server_url": "https://api.salesforce.com/platform/mcp/v1/sandbox/platform/{server}",
+      "url_variables": [
+        {
+          "name": "server",
+          "description": "Salesforce hosted MCP server name, one path segment such as sobject-all.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "self_service": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://test.salesforce.com/services/oauth2/authorize",
+        "token_url": "https://test.salesforce.com/services/oauth2/token",
+        "scopes": [
+          "mcp_api",
+          "refresh_token"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an External Client App in a Salesforce sandbox or scratch org.",
+        "steps": [
+          "Create an External Client App with OAuth, PKCE, and JWT-based access tokens.",
+          "Add the scopes Access MCP servers (mcp_api) and Perform requests at any time (refresh_token).",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp-sandbox.",
+          "Enter the consumer key as the client ID and the consumer secret as the client secret."
+        ],
+        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
+        "note": "Sandbox and scratch orgs authorize at https://test.salesforce.com. The server name is one path segment and cannot contain '/'. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp-sandbox."
       },
       "relevance": 100
     },
@@ -13651,7 +13994,7 @@
         "Search and read ScrapingAnt web scraping"
       ],
       "transport": "streamable-http",
-      "server_url": "https://api.scrapingant.com/mcp",
+      "server_url": "https://api.scrapingant.com/mcp/",
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
@@ -13753,12 +14096,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.semrush.com/v1/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://api.semrush.com/apis/v4/auth/v0/oauth2/auth",
         "token_url": "https://api.semrush.com/apis/v4-raw/auth/v1/oauth2/access_token",
@@ -13768,6 +14111,15 @@
           "offline"
         ],
         "resource": "https://mcp.semrush.com/v1/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Semrush.",
+        "steps": [
+          "Create an OAuth app in Semrush.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.semrush/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.semrush/mcp."
       },
       "relevance": 55,
       "tools": [
@@ -13958,7 +14310,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <API key>",
+          "description": "<API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -13983,7 +14335,7 @@
       "name": "com.servicenow/mcp",
       "vendor": "ServiceNow",
       "category": "ITSM",
-      "description": "Per-instance ServiceNow MCP server (Zurich+); append your registered server name.",
+      "description": "Per-instance ServiceNow MCP server (Zurich+); append your registered server name. An admin must create an OAuth app on the instance.",
       "capabilities": [
         "Manage incidents and requests",
         "Search the knowledge base",
@@ -14007,7 +14359,25 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{instance}.service-now.com/oauth_auth.do",
+        "token_url": "https://{instance}.service-now.com/oauth_token.do",
+        "scopes": [
+          "useraccount"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app on the ServiceNow instance.",
+        "steps": [
+          "Create an OAuth authorization-code inbound integration for the MCP client.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.servicenow/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "docs_url": "https://www.servicenow.com/docs/r/zurich/intelligent-experiences/create-oauth-inbound-integration-mcp-client.html",
+        "note": "{instance} is the instance name only, for example acme, not acme.service-now.com. Use the useraccount scope and leave the integration broadly scoped so MCP tools stay visible. Register the callback https://<gateway-mcp host>/oauth/callback/com.servicenow/mcp."
       },
       "relevance": 85
     },
@@ -14026,7 +14396,7 @@
       "url_variables": [
         {
           "name": "shop",
-          "description": "Store domain, e.g. example.myshopify.com (use the full host).",
+          "description": "Store subdomain, e.g. example (without .myshopify.com).",
           "required": true
         }
       ],
@@ -14052,7 +14422,7 @@
       "name": "com.shortcut/mcp",
       "vendor": "Shortcut",
       "category": "Project Management",
-      "description": "Stories, epics, and iterations via Shortcut (OAuth, no token needed).",
+      "description": "Stories, epics, and iterations via Shortcut (OAuth; no API token needed).",
       "capabilities": [
         "Manage stories",
         "Manage epics",
@@ -14061,18 +14431,27 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.shortcut.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "authorize_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/code",
         "token_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/token",
         "scopes": [
           "openid"
         ],
         "resource": "https://mcp.shortcut.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Shortcut.",
+        "steps": [
+          "Create an OAuth app in Shortcut.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.shortcut/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.shortcut/mcp."
       },
       "tools": [
         {
@@ -14315,7 +14694,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Smartsheet API token> (OAuth available via supported AI clients).",
+          "description": "<Smartsheet API token> (OAuth available via supported AI clients) (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -14489,7 +14868,7 @@
       "name": "com.snowflake/mcp",
       "vendor": "Snowflake",
       "category": "Data & Analytics",
-      "description": "Snowflake-managed Cortex MCP server scoped to a database/schema.",
+      "description": "Snowflake-managed Cortex MCP server scoped to a database/schema. An admin must create a Snowflake OAuth security integration.",
       "capabilities": [
         "Query Cortex data",
         "Explore database schemas",
@@ -14501,7 +14880,8 @@
         {
           "name": "account_url",
           "description": "Snowflake account URL host.",
-          "required": true
+          "required": true,
+          "host_suffix": ["*.snowflakecomputing.com"]
         },
         {
           "name": "database",
@@ -14523,7 +14903,27 @@
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{account_url}/oauth/authorize",
+        "token_url": "https://{account_url}/oauth/token-request",
+        "scopes": [
+          "refresh_token",
+          "session:role:all"
+        ]
+      },
+      "config_guide": {
+        "summary": "Create a Snowflake OAuth security integration for TrustGate.",
+        "steps": [
+          "Create a custom OAuth security integration (confidential, or public with PKCE).",
+          "Set ALLOWED_ROLES_LIST to the roles this integration may use, and set OAUTH_USE_SECONDARY_ROLES = NONE.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
+        "note": "{account_url} is the account host, for example org-account.snowflakecomputing.com. The session uses the user's default role (session:role:all) and refresh_token keeps the grant refreshable. Set ALLOWED_ROLES_LIST to the roles this integration may use and OAUTH_USE_SECONDARY_ROLES = NONE. Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp."
       },
       "relevance": 95
     },
@@ -14590,7 +14990,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <YourSonarQubeUserToken> (SonarQube Cloud user token).",
+          "description": "<YourSonarQubeUserToken> (SonarQube Cloud user token) (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -14706,7 +15106,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <API key>",
+          "description": "<API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -14741,12 +15141,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.squareup.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.squareup.com/authorize",
         "token_url": "https://mcp.squareup.com/token",
@@ -14761,6 +15161,15 @@
           "MERCHANT_PROFILE_READ"
         ],
         "resource": "https://mcp.squareup.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Square.",
+        "steps": [
+          "Create an OAuth app in Square.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.squareup/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.squareup/mcp."
       },
       "relevance": 70,
       "tools": [
@@ -14817,16 +15226,25 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.storyblok.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.storyblok.com/oauth/authorize",
         "token_url": "https://mcp.storyblok.com/oauth/token",
         "resource": "https://mcp.storyblok.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Storyblok.",
+        "steps": [
+          "Create an OAuth app in Storyblok.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Storyblok restricts redirect URIs to loopback or an allowlisted hosted-connector and rejects this gateway's callback (invalid_redirect_uri). Registration is manual. Register the callback https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp."
       },
       "relevance": 60,
       "tools": [
@@ -15312,16 +15730,20 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.ai.teamwork.com",
       "requires_auth": true,
-      "self_service": false,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <Teamwork API key>.",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        }
-      ],
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.teamwork.com/launchpad/login",
+        "token_url": "https://www.teamwork.com/launchpad/v1/token.json",
+        "scopes": [
+          "projects"
+        ],
+        "resource": "https://mcp.ai.teamwork.com"
+      },
       "tools": [
         {
           "name": "twdesk-create_company",
@@ -16062,7 +16484,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Telnyx API key>.",
+          "description": "<Telnyx API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -16109,16 +16531,25 @@
       "transport": "streamable-http",
       "server_url": "https://agent.thoughtspot.app/mcp?api-version=latest",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://agent.thoughtspot.app/authorize",
         "token_url": "https://agent.thoughtspot.app/token",
         "resource": "https://agent.thoughtspot.app/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in ThoughtSpot.",
+        "steps": [
+          "Create an OAuth app in ThoughtSpot.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/app.thoughtspot/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/app.thoughtspot/mcp."
       },
       "tools": [
         {
@@ -16228,12 +16659,7 @@
         "authorize_url": "https://todoist.com/oauth/authorize",
         "token_url": "https://todoist.com/oauth/access_token",
         "scopes": [
-          "data:read_write",
-          "data:read",
-          "task:add",
-          "data:delete",
-          "project:delete",
-          "user:read"
+          "data:read_write"
         ],
         "resource": "https://ai.todoist.net/mcp"
       },
@@ -16586,12 +17012,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.vercel.com",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://vercel.com/oauth/authorize",
         "token_url": "https://vercel.com/api/login/oauth/token",
@@ -16602,6 +17028,15 @@
           "offline_access"
         ],
         "resource": "https://mcp.vercel.com/"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Vercel.",
+        "steps": [
+          "Create an OAuth app in Vercel.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.vercel/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.vercel/mcp."
       },
       "relevance": 85,
       "tools": [
@@ -16691,7 +17126,7 @@
       "name": "com.vimeo/mcp",
       "vendor": "Vimeo",
       "category": "Media & Video",
-      "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse).",
+      "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse). An admin must register an OAuth app with Vimeo that accepts the gateway callback URL (https://<gateway>/oauth/callback/com.vimeo/mcp). If Vimeo does not allow that callback, the connector cannot be used.",
       "capabilities": [
         "Manage videos",
         "Query the video library",
@@ -16700,12 +17135,12 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.vimeo.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.vimeo.com/oauth/authorize",
         "token_url": "https://mcp.vimeo.com/oauth/token",
@@ -16718,6 +17153,15 @@
           "create"
         ],
         "resource": "https://mcp.vimeo.com"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Vimeo.",
+        "steps": [
+          "Create an OAuth app in Vimeo.",
+          "Register the callback https://<gateway>/oauth/callback/com.vimeo/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Vimeo rejects the gateway callback URI at authorize (400 'redirect_uri not allowed') for any dynamic client, so dynamic client registration cannot work. Registration is manual. An admin must register an OAuth app with Vimeo that accepts https://<gateway>/oauth/callback/com.vimeo/mcp. If Vimeo does not allow that callback, the connector cannot be used."
       }
     },
     {
@@ -16903,7 +17347,7 @@
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <W&B API key>.",
+          "description": "<W&B API key> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -17051,23 +17495,68 @@
       "name": "com.workato/developer-api",
       "vendor": "Workato",
       "category": "Automation",
-      "description": "Workato Developer/Embedded API MCP: manage workspace assets and projects.",
+      "description": "Workato Developer/Embedded API MCP: manage workspace assets and projects. Tool count depends on the API client role.",
       "capabilities": [
         "Manage workspace assets",
         "Work with projects",
         "Run Workato automations"
       ],
       "transport": "streamable-http",
-      "server_url": "https://app.workato.com/mcp",
+      "server_url": "https://{host}/mcp",
       "requires_auth": true,
       "self_service": false,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <Workato API token>",
+          "description": "<Workato API token> (we add 'Bearer')",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
+        }
+      ],
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "Workato data center. Trial is app.trial.workato.com for Free, Pro, and Sandbox workspaces.",
+          "required": true,
+          "options": [
+            {
+              "value": "app.workato.com",
+              "label": "United States"
+            },
+            {
+              "value": "app.eu.workato.com",
+              "label": "Europe"
+            },
+            {
+              "value": "app.jp.workato.com",
+              "label": "Japan"
+            },
+            {
+              "value": "app.sg.workato.com",
+              "label": "Singapore"
+            },
+            {
+              "value": "app.au.workato.com",
+              "label": "Australia"
+            },
+            {
+              "value": "app.il.workato.com",
+              "label": "Israel"
+            },
+            {
+              "value": "app.kr.workato.com",
+              "label": "Korea"
+            },
+            {
+              "value": "app.uk.workato.com",
+              "label": "United Kingdom"
+            },
+            {
+              "value": "app.trial.workato.com",
+              "label": "Trial"
+            }
+          ]
         }
       ],
       "relevance": 60
@@ -17098,6 +17587,13 @@
           "docs:read:export"
         ],
         "resource": "https://mcp.zoom.us"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Docs.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
       },
       "relevance": 90,
       "tools": [
@@ -17178,6 +17674,13 @@
         ],
         "resource": "https://mcp.zoom.us"
       },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Team Chat.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+      },
       "relevance": 90,
       "tools": [
         {
@@ -17237,6 +17740,13 @@
           "whiteboard:read:list_collaborators"
         ],
         "resource": "https://mcp.zoom.us"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Whiteboard.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
       },
       "relevance": 90,
       "tools": [
@@ -17318,6 +17828,13 @@
         ],
         "resource": "https://mcp.zoom.us"
       },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Zoom Workspace.",
+        "steps": [
+          "Add TrustGate's OAuth callback URL, then enter the client ID."
+        ],
+        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+      },
       "relevance": 90,
       "tools": [
         {
@@ -17370,23 +17887,23 @@
         }
       ],
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true
       },
       "config_guide": {
-        "summary": "Grant your AWS identity OAuth access to AWS MCP Server.",
+        "summary": "Register an OAuth app for AWS MCP Server.",
         "steps": [
           "Attach arn:aws:iam::aws:policy/AWSMCPSignInOAuthAccessPolicy to the IAM role or user that will sign in.",
           "Enter the endpoint region: us-east-1 or eu-central-1.",
-          "Select Install and complete AWS Sign-In; TrustGate registers its own OAuth client."
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.amazon.aws/mcp, then enter the client ID and client secret."
         ],
         "docs_url": "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html",
-        "note": "AWS Sign-In only issues DCR clients for allowlisted redirect URIs, so this gateway's callback must be approved by AWS."
+        "note": "AWS Sign-In rejects dynamic client registration for this gateway's redirect URI (invalid_redirect_uri). An admin registers the OAuth app and the callback https://<gateway-mcp host>/oauth/callback/com.amazon.aws/mcp."
       },
       "relevance": 95,
       "tools": [

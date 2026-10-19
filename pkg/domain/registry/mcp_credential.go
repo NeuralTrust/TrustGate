@@ -83,28 +83,109 @@ func (r *Registry) ForwardedAuth() *MCPAuth {
 // each is connected on its own; sharing there would forward a token minted for
 // one tenant to another.
 //
-// A URL still carrying `{placeholders}` fingerprints as written. Every vault key
-// is already per principal, so a template resolved differently per user needs no
-// further separation here.
+// A catalog resource marked per-instance is filled from this registry's
+// instance config when every placeholder is a closed option, so two regions
+// of that catalog code do not share a token. Anything else — an open
+// placeholder, a shared account, a resource the catalog did not declare as
+// per-instance — stays written. New Relic and Vanta rows, including one an
+// admin saved with their own client, keep the template fingerprint their
+// tokens were stored under. An empty resource falls back to the server URL
+// and is fingerprinted the same way.
 func ForwardedCredentialResource(reg *Registry) string {
 	cfg := reg.ForwardedAuth()
 	if cfg == nil {
 		return ""
 	}
-	if resource := strings.TrimSpace(cfg.Resource); resource != "" {
-		return canonicalResource(resource)
+	resource := strings.TrimSpace(cfg.Resource)
+	if resource == "" && reg.MCPTarget != nil {
+		resource = strings.TrimSpace(reg.MCPTarget.URL)
+	} else if resolved, ok := resolvedClosedResource(reg, resource); ok {
+		return canonicalResource(resolved)
 	}
-	return canonicalResource(reg.MCPTarget.URL)
+	return canonicalResource(resource)
+}
+
+// resolvedClosedResource fills resource from instance config when the catalog
+// marked it per-instance and every placeholder is a closed option with a
+// value. A shared account is never filled: the one token is saved and read
+// under the stored resource. Anything else returns false and the caller
+// fingerprints resource as written.
+func resolvedClosedResource(reg *Registry, resource string) (string, bool) {
+	if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil || !strings.Contains(resource, "{") {
+		return "", false
+	}
+	if !reg.MCPTarget.Auth.ResourcePerInstance || reg.MCPTarget.Auth.Shared() {
+		return "", false
+	}
+	names := TemplateVariableNames(resource)
+	if len(names) == 0 {
+		return "", false
+	}
+	declared := make(map[string]MCPURLVariable, len(reg.MCPTarget.URLVariables))
+	for _, variable := range reg.MCPTarget.URLVariables {
+		declared[variable.Name] = variable
+	}
+	values := make(map[string]string, len(names))
+	for _, name := range names {
+		variable, known := declared[name]
+		if !known || !variable.HasOptions() {
+			return "", false
+		}
+		val := strings.TrimSpace(reg.MCPTarget.InstanceConfig[name])
+		if val == "" || !variable.AllowsValue(val) {
+			return "", false
+		}
+		values[name] = val
+	}
+	resolved, err := ResolveURL(resource, reg.MCPTarget.URLVariables, values)
+	if err != nil || strings.ContainsAny(resolved, "{}") {
+		return "", false
+	}
+	return resolved, true
+}
+
+// RegistryWithInstanceConfig returns a clone whose target carries values as
+// its instance config. The caller's registry is not modified. A registry that
+// already has instance config, or an empty value map, is returned as given.
+func RegistryWithInstanceConfig(reg *Registry, values map[string]string) *Registry {
+	if reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) > 0 || len(values) == 0 {
+		return reg
+	}
+	cp := *reg
+	target := *reg.MCPTarget
+	cfg := make(map[string]string, len(values))
+	for key, value := range values {
+		cfg[key] = value
+	}
+	target.InstanceConfig = cfg
+	cp.MCPTarget = &target
+	return &cp
+}
+
+// ForwardedVaultProviderFor is the vault key for reg. config is a per-user
+// install's plain URL values and is applied only when the registry does not
+// already carry instance config. A shared account ignores config. Every
+// reader and writer of a forwarded credential goes through this function.
+func ForwardedVaultProviderFor(reg *Registry, config map[string]string) string {
+	if auth := reg.ForwardedAuth(); auth != nil && auth.Shared() {
+		return ForwardedVaultProvider(reg)
+	}
+	if len(config) > 0 {
+		reg = RegistryWithInstanceConfig(reg, config)
+	}
+	return ForwardedVaultProvider(reg)
 }
 
 // ForwardedVaultProvider is the vault "provider" key a registry's forwarded
 // OAuth credential is stored under: the provider name plus a fingerprint of the
-// resource ForwardedCredentialResource resolves.
+// resource ForwardedCredentialResource resolves. Callers that hold a per-user
+// install use ForwardedVaultProviderFor so the key matches connect and dial.
 //
-// Every reader and writer of such a credential derives its key here, and the
-// dynamically registered OAuth client is cached under the same key (see
-// appoauth.clientKey): a refresh token can only be redeemed by the client it
-// was issued to, so the credential and that client must never be keyed apart.
+// Every reader and writer of such a credential derives its key here. The
+// dynamically registered OAuth client is cached under this same fingerprint
+// plus the authorization server it was registered with (see appoauth.clientKey):
+// a refresh token can only be redeemed by the client it was issued to, and two
+// hosts that resolve one template must not share that client.
 //
 // Empty when the registry forwards nothing, or names no provider.
 func ForwardedVaultProvider(reg *Registry) string {
@@ -155,4 +236,13 @@ func canonicalResource(raw string) string {
 	parsed.Fragment = ""
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String()
+}
+
+// SameCanonicalResource reports whether two resource identifiers name the same
+// protected resource. Comparison uses canonicalResource: scheme and host case,
+// a default port, a trailing slash, and any fragment. Empty values are not the
+// same resource.
+func SameCanonicalResource(a, b string) bool {
+	left, right := canonicalResource(a), canonicalResource(b)
+	return left != "" && left == right
 }

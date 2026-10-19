@@ -146,9 +146,10 @@ const (
 
 	defaultRateLimitEnabled = true
 
-	defaultRateLimitSyncInterval = time.Second
-	defaultRateLimitSyncTimeout  = 200 * time.Millisecond
-	defaultRateLimitRetention    = 30 * time.Second
+	defaultRateLimitSyncInterval    = time.Second
+	defaultRateLimitSyncTimeout     = 200 * time.Millisecond
+	defaultRateLimitColdReadTimeout = time.Second
+	defaultRateLimitRetention       = 30 * time.Second
 
 	defaultMCPConnectRateLimitEnabled  = true
 	defaultMCPConnectRateLimitSource   = 10
@@ -607,9 +608,13 @@ type RateLimitConfig struct {
 	// Redis. Overshoot past a cap is bounded by the tenant's request rate times
 	// this interval.
 	SyncInterval time.Duration
-	// SyncTimeout bounds one round trip to Redis from the sync loop. It never
-	// applies to a request: requests do not call Redis.
+	// SyncTimeout bounds one round trip to Redis from the sync loop. A request
+	// that already has a counter does not wait on it.
 	SyncTimeout time.Duration
+	// ColdReadTimeout bounds the one Redis read that fills a slot this pod does
+	// not have yet. It is longer than SyncTimeout because that read can be the
+	// first command on the connection. A hard error still fails open.
+	ColdReadTimeout time.Duration
 	// FailedRetention is how long usage that could not be synced is kept for
 	// resending, from its first failure, before it is dropped and counted.
 	FailedRetention time.Duration
@@ -1112,6 +1117,10 @@ func getRateLimitConfig() (RateLimitConfig, error) {
 	if err != nil {
 		return RateLimitConfig{}, err
 	}
+	coldReadTimeout, err := parsePositiveDurationEnv("RATE_LIMIT_COLD_READ_TIMEOUT", defaultRateLimitColdReadTimeout)
+	if err != nil {
+		return RateLimitConfig{}, err
+	}
 	retention, err := parsePositiveDurationEnv("RATE_LIMIT_FAILED_RETENTION", defaultRateLimitRetention)
 	if err != nil {
 		return RateLimitConfig{}, err
@@ -1120,6 +1129,7 @@ func getRateLimitConfig() (RateLimitConfig, error) {
 		Enabled:         getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
 		SyncInterval:    syncInterval,
 		SyncTimeout:     syncTimeout,
+		ColdReadTimeout: coldReadTimeout,
 		FailedRetention: retention,
 	}, nil
 }
@@ -1129,6 +1139,10 @@ func getRateLimitConfig() (RateLimitConfig, error) {
 func (c RateLimitConfig) Validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	if c.ColdReadTimeout > ratelimitdomain.MaxSyncTimeout {
+		return fmt.Errorf("%w: RATE_LIMIT_COLD_READ_TIMEOUT: %s exceeds the maximum of %s",
+			errors.ErrInvalidConfig, c.ColdReadTimeout, ratelimitdomain.MaxSyncTimeout)
 	}
 	if err := ratelimitdomain.ValidateRetention(c.FailedRetention, c.SyncInterval, c.SyncTimeout); err != nil {
 		return fmt.Errorf("%w: RATE_LIMIT_FAILED_RETENTION: %v", errors.ErrInvalidConfig, err)

@@ -18,6 +18,9 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -126,4 +129,93 @@ func TestStartRateLimitLoadsTheTenantCapsBeforeReturning(t *testing.T) {
 	got, err := caps.FindTenantCaps(context.Background(), "tenant-1")
 	require.NoError(t, err, "loaded synchronously, not by the background loop")
 	assert.Equal(t, 300, got.BurstPerMin)
+}
+
+type redisCmdCounter struct{ ping, script atomic.Int64 }
+
+func (c *redisCmdCounter) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (c *redisCmdCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		c.count(cmd.Name())
+		return next(ctx, cmd)
+	}
+}
+
+func (c *redisCmdCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			c.count(cmd.Name())
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func (c *redisCmdCounter) count(name string) {
+	switch strings.ToLower(name) {
+	case "ping":
+		c.ping.Add(1)
+	case "script":
+		c.script.Add(1)
+	}
+}
+
+// The sync connection is authenticated and the script is loaded before
+// startRateLimit returns, which is before the servers listen.
+func TestStartRateLimitWarmsTheSyncClientBeforeReturning(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	counts := &redisCmdCounter{}
+	rc.AddHook(counts)
+	meter := ratelimitapp.NewMeter(
+		oneGatewayResolver{},
+		ratelimitinfra.NewStore(rc, quietLogger()),
+		ratelimitapp.Options{SyncInterval: time.Hour, DisableKick: true},
+		quietLogger(),
+	)
+	stop := startRateLimit(rateLimitParams{Meter: meter, SyncRedis: &cache.SyncClient{Client: rc}}, quietLogger())
+	defer stop()
+
+	assert.GreaterOrEqual(t, counts.ping.Load(), int64(1), "warmup pings, which is the HELLO/AUTH")
+	assert.GreaterOrEqual(t, counts.script.Load(), int64(1), "warmup loads the sync script")
+}
+
+// Redis that accepts and never answers must not hold boot. The warmup gives up
+// and the pod still starts; a later cold read fails open.
+func TestStartRateLimitWarmupGivesUpWhenRedisHangs(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+	rc := redis.NewClient(&redis.Options{
+		Addr:                  ln.Addr().String(),
+		DialTimeout:           30 * time.Second,
+		ReadTimeout:           30 * time.Second,
+		WriteTimeout:          30 * time.Second,
+		MaxRetries:            -1,
+		ContextTimeoutEnabled: true,
+	})
+	t.Cleanup(func() { _ = rc.Close() })
+	meter := ratelimitapp.NewMeter(
+		oneGatewayResolver{},
+		ratelimitinfra.NewStore(rc, quietLogger()),
+		ratelimitapp.Options{SyncInterval: time.Hour, DisableKick: true},
+		quietLogger(),
+	)
+
+	start := time.Now()
+	stop := startRateLimit(rateLimitParams{Meter: meter, SyncRedis: &cache.SyncClient{Client: rc}}, quietLogger())
+	defer stop()
+	assert.Less(t, time.Since(start), ratelimitapp.DefaultSyncWarmTimeout+time.Second, "warmup is bounded and a failure does not refuse to serve")
 }

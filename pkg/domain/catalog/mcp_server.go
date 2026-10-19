@@ -106,6 +106,12 @@ type MCPURLVariable struct {
 	// an edition. One entry then covers what would otherwise be a near-duplicate
 	// entry per value. Empty means free text.
 	Options []MCPURLVariableOption `json:"options,omitempty"`
+	// HostSuffix lists the DNS suffixes a whole-host value must stay under
+	// (`vendor.com` or `*.vendor.com`). One vendor often has several zones, so
+	// the list is the whole bound. Only vendor-run zones that do not serve
+	// tenant content belong here; a public suffix is ignored. An open variable
+	// with an empty list is not a bound on the host.
+	HostSuffix []string `json:"host_suffix,omitempty"`
 }
 
 // MCPURLVariableOption is one allowed value of a closed URL variable.
@@ -170,6 +176,11 @@ type MCPOAuth struct {
 	// TokenEndpointAuthMethod is used with client_credentials:
 	// client_secret_basic (default) or client_secret_post.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+	// CrossDomainContact opts this entry into a catalog-pinned authorize or
+	// token host on a different literal domain from the MCP host, when both
+	// share the tenant label. Seed only. A new entry needs a security review
+	// before this is set.
+	CrossDomainContact bool `json:"cross_domain_contact,omitempty"`
 }
 
 // SupportedAuthMethods reports which install methods the entry offers: an

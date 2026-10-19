@@ -29,13 +29,27 @@ import (
 // metacharacters through the placeholder syntax itself.
 var urlTemplateToken = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
 
-// safeURLSegment guards a value that will be substituted into a host or path
-// segment (In != "query"). It is a deliberately strict allow-list — a DNS-label
-// / identifier charset — so a per-user value can never inject URL structure
-// (`/ : @ ? # %`, spaces, control characters) and repoint the shared registry's
-// upstream to another host or path. Query values are percent-escaped instead and
-// do not go through this check.
-var safeURLSegment = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+// urlSegmentBody is the DNS-label interior: it starts and ends with a letter or
+// digit, and the middle may contain letters, digits, '.', '_' and '-'. A value
+// of only separators, a trailing separator, or a leading '.' or '_' cannot match.
+const urlSegmentBody = `[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?`
+
+// strictURLSegment is that label shape with the first character required to be
+// a letter or digit, so a leading '-' is rejected. It applies to every
+// placement that is not a URL host or path segment. Those placements are not
+// known to be confined to a URL, and a leading '-' is what an option or
+// argument parser treats as a flag, so the rejection stays.
+var strictURLSegment = regexp.MustCompile(`^` + urlSegmentBody + `$`)
+
+// safeURLSegment is strictURLSegment plus a leading run of '-'. Host and path
+// values (In "" or "path") are substituted verbatim into an http(s) URL and
+// dialed by the HTTP client; they are never a process argument. '-' is not a
+// URL delimiter, so it cannot add a scheme, userinfo, port, query or an extra
+// path segment — including a segment such as "-..", which the separate ".."
+// check rejects anyway. The allow-list still blocks '/', traversal and host or
+// scheme injection. Query values do not use either pattern: they are
+// percent-escaped, and that rule is unchanged.
+var safeURLSegment = regexp.MustCompile(`^-*` + urlSegmentBody + `$`)
 
 // ErrURLTemplate is the base for URL-template resolution and validation errors.
 var ErrURLTemplate = fmt.Errorf("registry: url template")
@@ -265,8 +279,9 @@ func ValidateURLValue(v MCPURLVariable, val string) error {
 
 // validateValue enforces the per-position rules on one supplied value. Query
 // values may hold arbitrary non-control text (they are percent-escaped at
-// substitution); host/path values must pass the structure-safe charset and carry
-// no ".." path-traversal sequence.
+// substitution). Host and path values must pass the structure-safe charset,
+// may start with '-', and must carry no ".." path-traversal sequence. Any
+// other placement uses the same checks but rejects a leading '-'.
 func validateValue(v MCPURLVariable, val string) error {
 	// A closed variable is checked against its own set first: the charset rules
 	// would accept any well-formed host, and the point of the set is that only
@@ -286,10 +301,29 @@ func validateValue(v MCPURLVariable, val string) error {
 	if strings.Contains(val, "..") {
 		return fmt.Errorf("%w: variable %q must not contain %q", ErrURLTemplate, v.Name, "..")
 	}
-	if !safeURLSegment.MatchString(val) {
-		return fmt.Errorf("%w: variable %q has an unsafe value; only letters, digits, '.', '-' and '_' are allowed", ErrURLTemplate, v.Name)
+	pattern := strictURLSegment
+	shape := "and it must start and end with a letter or digit"
+	if segmentAllowsLeadingHyphen(v.In) {
+		pattern = safeURLSegment
+		shape = "and it must start with a letter, digit or '-' and end with a letter or digit"
+	}
+	if !pattern.MatchString(val) {
+		return fmt.Errorf("%w: variable %q has an unsafe value; only letters, digits, '.', '-' and '_' are allowed, %s", ErrURLTemplate, v.Name, shape)
 	}
 	return nil
+}
+
+// segmentAllowsLeadingHyphen reports whether this placement is a URL host or
+// path segment. Empty In is that placement (a host label or a path segment);
+// "path" is the same placement written explicitly. Anything else fails closed
+// onto the stricter label shape.
+func segmentAllowsLeadingHyphen(in string) bool {
+	switch in {
+	case "", URLVariableInPath:
+		return true
+	default:
+		return false
+	}
 }
 
 // optionValues lists a closed variable's allowed values, for an error a caller
@@ -298,6 +332,103 @@ func optionValues(v MCPURLVariable) []string {
 	out := make([]string, 0, len(v.Options))
 	for _, option := range v.Options {
 		out = append(out, option.Value)
+	}
+	return out
+}
+
+// ClosedOptionMatch returns the placeholder values that make template resolve
+// to want. Supplied values are used as given. A missing value for a closed
+// variable is filled by trying each listed option, and the match holds only
+// when exactly one combination resolves to want (SameCanonicalResource). An
+// open variable is never guessed. The returned map is a copy.
+func ClosedOptionMatch(template string, vars []MCPURLVariable, values map[string]string, want string) (map[string]string, bool) {
+	raw := strings.TrimSpace(template)
+	if raw == "" || strings.TrimSpace(want) == "" {
+		return nil, false
+	}
+	if !strings.Contains(raw, "{") {
+		if !SameCanonicalResource(want, raw) {
+			return nil, false
+		}
+		return cloneStringMap(values), true
+	}
+	declared := make(map[string]MCPURLVariable, len(vars))
+	for _, variable := range vars {
+		declared[variable.Name] = variable
+	}
+	filled := cloneStringMap(values)
+	var missing []MCPURLVariable
+	for _, name := range TemplateVariableNames(raw) {
+		if strings.TrimSpace(filled[name]) != "" {
+			continue
+		}
+		variable, known := declared[name]
+		if !known || !variable.HasOptions() {
+			return nil, false
+		}
+		missing = append(missing, variable)
+	}
+	if len(missing) == 0 {
+		resolved, err := ResolveURL(raw, vars, filled)
+		if err != nil || !SameCanonicalResource(want, resolved) {
+			return nil, false
+		}
+		return filled, true
+	}
+	return matchClosedOptions(raw, vars, filled, missing, want)
+}
+
+func matchClosedOptions(template string, vars []MCPURLVariable, base map[string]string, missing []MCPURLVariable, want string) (map[string]string, bool) {
+	if base == nil {
+		base = map[string]string{}
+	}
+	var matched map[string]string
+	matches := 0
+	var walk func(i int)
+	walk = func(i int) {
+		if matches > 1 {
+			return
+		}
+		if i == len(missing) {
+			resolved, err := ResolveURL(template, vars, base)
+			if err != nil || !SameCanonicalResource(want, resolved) {
+				return
+			}
+			matches++
+			if matches == 1 {
+				matched = cloneStringMap(base)
+			}
+			return
+		}
+		name := missing[i].Name
+		previous, had := base[name]
+		for _, option := range missing[i].Options {
+			base[name] = strings.TrimSpace(option.Value)
+			walk(i + 1)
+			if matches > 1 {
+				break
+			}
+		}
+		if had {
+			base[name] = previous
+		} else {
+			delete(base, name)
+		}
+	}
+	walk(0)
+	if matches != 1 {
+		return nil, false
+	}
+	return matched, true
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
 	}
 	return out
 }

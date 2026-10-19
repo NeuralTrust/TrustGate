@@ -16,9 +16,16 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
+
+	"golang.org/x/net/publicsuffix"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -30,54 +37,796 @@ var ErrUpstreamSetupRequired = fmt.Errorf(
 	"oauth connect: this server's address is not complete: finish its setup before connecting: %w",
 	commonerrors.ErrValidation)
 
+// ErrUnresolvedOAuthPlaceholder is returned when the authorize URL, the token
+// URL, or the resource indicator still contains a `{placeholder}` after this
+// instance's URL variables are applied. The browser is not redirected.
+var ErrUnresolvedOAuthPlaceholder = fmt.Errorf(
+	"oauth connect: the authorization URL still has an unresolved placeholder, so the browser was not redirected: %w",
+	commonerrors.ErrValidation)
+
+// ErrOAuthURLHost is returned when a per-user URL variable would send the
+// authorize redirect or the token request somewhere this server's declaration
+// does not allow. The browser is not redirected, and the client secret is not
+// sent. The rejected host is not included.
+var ErrOAuthURLHost = fmt.Errorf(
+	"oauth connect: the authorization URL does not match this server, so the browser was not redirected: %w",
+	commonerrors.ErrValidation)
+
 // discover finds the upstream's OAuth server at the URL the principal will
 // actually dial. A templated URL was handed to discovery as-is, so every
 // {variable} server failed with "bad upstream url" even after its values were
 // given (RUN-1636).
+//
+// A protected-resource `resource` is kept only when its canonical form is the
+// URL discovery was made for (RFC 9728 §3.3). Every caller reads it from here,
+// so an empty stored resource never adopts another one.
 func (s *connectService) discover(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
+	res upstreamResolution,
 ) (*UpstreamAuthServer, error) {
-	upstream, err := s.upstreamURL(ctx, gatewayID, principalSub, reg)
-	if err != nil {
-		return nil, err
+	if !res.ready {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return s.registrar.Discover(ctx, upstream)
+	meta, err := s.registrar.Discover(ctx, res.url)
+	if err != nil || meta == nil {
+		return meta, err
+	}
+	if prm := strings.TrimSpace(meta.Resource); prm != "" && !registrydomain.SameCanonicalResource(prm, res.url) {
+		out := *meta
+		out.Resource = ""
+		return &out, nil
+	}
+	return meta, nil
 }
 
-// upstreamURL resolves a registry's URL for one principal with the values the
-// dial path uses, and holds the result to the dial path's SSRF gate: discovery
-// fetches from that host, so a URL assembled from per-user values must be public
-// here as well. A URL with no placeholders is returned unchanged.
-func (s *connectService) upstreamURL(
+// upstreamResolution is one read of this principal's install values and the
+// upstream URL those values produce. A flow resolves once and passes the same
+// value to discovery and every host check. A later read can see a value the
+// user changed in between, and a token URL discovered on the first host would
+// then be checked against the second (ENG-2238).
+type upstreamResolution struct {
+	url    string
+	values map[string]string
+	ready  bool
+}
+
+// resolveUpstream is the one read a flow takes of this principal's install
+// values and the upstream URL those values produce. Discovery fetches from
+// that host, so a URL assembled from per-user values is held to the dial
+// path's SSRF gate here. A URL with no placeholders is returned unchanged.
+// Callers that already hold a ready resolution must not call it again: pass
+// that resolution through.
+func (s *connectService) resolveUpstream(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
-) (string, error) {
-	target := reg.MCPTarget
-	if target == nil || !target.HasURLVariables() {
-		if target == nil {
-			return "", nil
+) (upstreamResolution, error) {
+	if reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
+		raw := ""
+		if reg != nil && reg.MCPTarget != nil {
+			raw = reg.MCPTarget.URL
 		}
-		return target.URL, nil
+		return upstreamResolution{url: raw, ready: true}, nil
 	}
-	values := target.InstanceConfig
+	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
+	if err != nil {
+		return upstreamResolution{}, err
+	}
+	resolved, err := registrydomain.ResolveURL(reg.MCPTarget.URL, reg.MCPTarget.URLVariables, values)
+	if err != nil {
+		return upstreamResolution{}, fmt.Errorf("%w: %v", ErrUpstreamSetupRequired, err)
+	}
+	if err := registrydomain.ValidateResolvedUpstreamHost(resolved); err != nil {
+		return upstreamResolution{}, err
+	}
+	return upstreamResolution{url: resolved, values: values, ready: true}, nil
+}
+
+// principalURLValues is the per-user placeholder map the dial path uses:
+// instance config, replaced by the principal's stored values when those are
+// available. A nil target must not reach here.
+func (s *connectService) principalURLValues(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+) (map[string]string, error) {
+	values := reg.MCPTarget.InstanceConfig
 	if s.urlValues != nil && principalSub != "" {
 		v, err := s.urlValues.Values(ctx, gatewayID, principalSub, reg)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		values = v
 	}
-	resolved, err := registrydomain.ResolveURL(target.URL, target.URLVariables, values)
-	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUpstreamSetupRequired, err)
+	return values, nil
+}
+
+// finalizeAuthURLs applies this instance's URL variables to the resource
+// indicator and to any authorize, token, or userinfo URL that still carries a
+// placeholder, then refuses to redirect while one remains.
+//
+// A templated server stores the resource as the server template (catalog
+// resource_metadata copies the URL). A protected-resource `resource` replaces
+// that template only when its canonical form is the resolved upstream URL
+// (RFC 9728 §3.3). The stored resource is left alone: the vault key
+// fingerprints it as written.
+//
+// A placeholder in a path or query is filled and sent. A placeholder that is
+// only part of the host must resolve to the same scheme, host, and port as
+// the upstream URL. A placeholder that is the whole host is a value the user
+// chose, so matching that host proves nothing: it is allowed only when every
+// such variable is closed (Options) or the resolved host matches a suffix the
+// variable declares. Otherwise the redirect and the token request — where the
+// client secret goes — are refused before either leaves.
+func (s *connectService) finalizeAuthURLs(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	meta *UpstreamAuthServer,
+	res upstreamResolution,
+) (*registrydomain.MCPAuth, error) {
+	if cfg == nil {
+		return nil, nil
 	}
-	if err := registrydomain.ValidateResolvedUpstreamHost(resolved); err != nil {
-		return "", err
+	if !res.ready && (meta != nil || hasOAuthPlaceholder(cfg)) {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	vars := s.hostBoundURLVariables(reg)
+	if err := s.refusePublicSuffixHosts(ctx, gatewayID, principalSub, reg, cfg, meta, res); err != nil {
+		return nil, err
+	}
+	if err := s.refuseOpenWholeHostDiscovery(ctx, gatewayID, principalSub, reg, cfg, meta, vars, res); err != nil {
+		return nil, err
+	}
+	if !hasOAuthPlaceholder(cfg) {
+		return s.finishResolvedAuth(reg, cfg)
+	}
+	if reg == nil || reg.MCPTarget == nil {
+		return nil, ErrUnresolvedOAuthPlaceholder
+	}
+	out := *cfg
+	if meta != nil && strings.ContainsAny(out.Resource, "{}") {
+		if prm := strings.TrimSpace(meta.Resource); prm != "" {
+			out.Resource = prm
+		}
+	}
+	if !hasOAuthPlaceholder(&out) {
+		return s.finishResolvedAuth(reg, &out)
+	}
+	for _, field := range []*string{&out.AuthorizeURL, &out.TokenURL, &out.UserinfoURL} {
+		rewritten, err := substituteContactURL(*field, res.url, vars, res.values)
+		if err != nil && errors.Is(err, ErrOAuthURLHost) {
+			if template, pinned := s.catalogSharedLabelContact(reg, *field, res); pinned {
+				rewritten, err = substituteSharedLabelContact(*field, vars, res.values, template)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		*field = rewritten
+	}
+	if strings.ContainsAny(out.Resource, "{}") {
+		substituted, err := registrydomain.ResolveURL(out.Resource, vars, res.values)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrUnresolvedOAuthPlaceholder, err)
+		}
+		out.Resource = substituted
+	}
+	return s.finishResolvedAuth(reg, &out)
+}
+
+// refuseOpenWholeHostDiscovery applies the whole-host rule to a manual
+// registry whose token URL was not pinned. manualAuth fills that URL from
+// metadata discovered on the user-chosen host, and the client secret is posted
+// there. A closed variable or a declared host suffix is the only bound that
+// is not the user's own input.
+func (s *connectService) refuseOpenWholeHostDiscovery(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	meta *UpstreamAuthServer,
+	vars []registrydomain.MCPURLVariable,
+	res upstreamResolution,
+) error {
+	// Dynamic registration mints its client at the authorization server
+	// discovery just found, so the connect and refresh paths may post that
+	// secret back to it. Revocation is not that case: the cached client is
+	// posted to whatever endpoint the document names, and RevocationMaterial
+	// applies refuseUnboundUserChosenHost before returning one.
+	if cfg.Registration == registrydomain.RegistrationAuto || meta == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	return s.refuseUnboundUserChosenHost(ctx, gatewayID, principalSub, reg, vars, res)
+}
+
+// refuseUnboundUserChosenHost returns ErrOAuthURLHost when a per-user value
+// picks the registrable domain and neither a closed variable nor a declared
+// suffix bounds it. The caller must not have sent a client secret yet.
+func (s *connectService) refuseUnboundUserChosenHost(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	vars []registrydomain.MCPURLVariable,
+	res upstreamResolution,
+) error {
+	if reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	names, chosen := userChosenHostNames(reg.MCPTarget.URL)
+	if !chosen {
+		return nil
+	}
+	if !res.ready {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return err
+		}
+	}
+	if publicSuffixHost(normalizedHostname(res.url)) {
+		return ErrOAuthURLHost
+	}
+	if hostVariablesClosed(names, vars) {
+		return nil
+	}
+	if declaredSuffixMatches(normalizedHostname(res.url), names, vars) {
+		return nil
+	}
+	return ErrOAuthURLHost
+}
+
+// refusePublicSuffixHosts rejects a contact host, or the upstream host
+// discovery was made against, when that host is itself a public suffix.
+// A closed variable or a suffix match cannot authorize `com`, `co.uk`, or
+// `github.io`: anyone can register a name under them.
+func (s *connectService) refusePublicSuffixHosts(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	meta *UpstreamAuthServer,
+	res upstreamResolution,
+) error {
+	if cfg != nil {
+		for _, raw := range []string{cfg.AuthorizeURL, cfg.TokenURL, cfg.UserinfoURL} {
+			if strings.TrimSpace(raw) == "" || strings.ContainsAny(raw, "{}") {
+				continue
+			}
+			if publicSuffixHost(normalizedHostname(raw)) {
+				return ErrOAuthURLHost
+			}
+		}
+	}
+	if meta == nil || reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
+		return nil
+	}
+	if !res.ready {
+		var err error
+		res, err = s.resolveUpstream(ctx, gatewayID, principalSub, reg)
+		if err != nil {
+			return err
+		}
+	}
+	if publicSuffixHost(normalizedHostname(res.url)) {
+		return ErrOAuthURLHost
+	}
+	return nil
+}
+
+func (s *connectService) finishResolvedAuth(reg *registrydomain.Registry, cfg *registrydomain.MCPAuth) (*registrydomain.MCPAuth, error) {
+	cfg = withholdSharedSecret(cfg, reg, s.sharedOAuth)
+	if hasOAuthPlaceholder(cfg) {
+		return nil, ErrUnresolvedOAuthPlaceholder
+	}
+	return cfg, nil
+}
+
+func hasOAuthPlaceholder(cfg *registrydomain.MCPAuth) bool {
+	return strings.ContainsAny(cfg.AuthorizeURL, "{}") ||
+		strings.ContainsAny(cfg.TokenURL, "{}") ||
+		strings.ContainsAny(cfg.UserinfoURL, "{}") ||
+		strings.ContainsAny(cfg.Resource, "{}")
+}
+
+// substituteContactURL fills placeholders in a URL the gateway contacts.
+// Path and query placeholders are filled as written. A templated host must
+// share the resolved upstream's scheme, host, and port. When the placeholder
+// is the whole host, that match is not enough: the variable has to be closed
+// or the host has to match a declared suffix.
+func substituteContactURL(raw, resolvedUpstream string, vars []registrydomain.MCPURLVariable, values map[string]string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.ContainsAny(raw, "{}") {
+		return raw, nil
+	}
+	templatedHost := hostHasPlaceholder(raw)
+	resolved, err := registrydomain.ResolveURL(raw, vars, values)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnresolvedOAuthPlaceholder, err)
+	}
+	if !templatedHost {
+		return resolved, nil
+	}
+	if publicSuffixHost(normalizedHostname(resolved)) {
+		return "", ErrOAuthURLHost
+	}
+	names, chosen := userChosenHostNames(raw)
+	if chosen && !hostVariablesClosed(names, vars) && !declaredSuffixMatches(normalizedHostname(resolved), names, vars) {
+		return "", ErrOAuthURLHost
+	}
+	if !sameContactOrigin(resolved, resolvedUpstream) {
+		return "", ErrOAuthURLHost
 	}
 	return resolved, nil
+}
+
+// catalogSharedLabelContact reports the catalog server template when raw is
+// exactly that entry's authorize or token URL and this instance's upstream is
+// that server. The caller may then fill a contact host on a different literal
+// domain, as long as the tenant label is one the server template also uses.
+// A pinned registry uses these URLs as configured.
+func (s *connectService) catalogSharedLabelContact(reg *registrydomain.Registry, raw string, res upstreamResolution) (string, bool) {
+	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil || !res.ready {
+		return "", false
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" {
+		return "", false
+	}
+	entry, ok := s.catalog.GetByCode(code)
+	if !ok || !crossDomainContactEligible(entry) || !catalogServerMatches(entry, res) {
+		return "", false
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	if raw != strings.TrimSpace(entry.OAuth.AuthorizeURL) && raw != strings.TrimSpace(entry.OAuth.TokenURL) {
+		return "", false
+	}
+	return entry.URL, true
+}
+
+// crossDomainContactEligible reports whether the catalog entry is allowed to
+// pin authorize or token on a different literal domain from its MCP host.
+// The seed opts in with oauth.cross_domain_contact, and the templates must
+// share a tenant label that does not choose the registrable domain.
+func crossDomainContactEligible(entry catalogdomain.MCPServer) bool {
+	if entry.OAuth == nil || !entry.OAuth.CrossDomainContact {
+		return false
+	}
+	return contactHostCrossesDomain(entry.URL, entry.OAuth.AuthorizeURL) ||
+		contactHostCrossesDomain(entry.URL, entry.OAuth.TokenURL)
+}
+
+func contactHostCrossesDomain(serverURL, contactURL string) bool {
+	serverURL = strings.TrimSpace(serverURL)
+	contactURL = strings.TrimSpace(contactURL)
+	if serverURL == "" || contactURL == "" || !hostHasPlaceholder(contactURL) {
+		return false
+	}
+	names, chosen := userChosenHostNames(contactURL)
+	if chosen || len(names) == 0 {
+		return false
+	}
+	upNames, upChosen := userChosenHostNames(serverURL)
+	if upChosen || !hostPlaceholdersCovered(names, upNames) {
+		return false
+	}
+	contactHost, okContact := templateHostname(contactURL)
+	serverHost, okServer := templateHostname(serverURL)
+	if !okContact || !okServer {
+		return false
+	}
+	return !strings.EqualFold(contactHost, serverHost)
+}
+
+// substituteSharedLabelContact fills a catalog-pinned contact URL whose host
+// is a different literal domain from the MCP host. The placeholder must not
+// choose the registrable domain, and every placeholder in the contact host
+// must also be in the server template, so the tenant label cannot be split.
+func substituteSharedLabelContact(raw string, vars []registrydomain.MCPURLVariable, values map[string]string, upstreamTemplate string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	names, chosen := userChosenHostNames(raw)
+	if chosen || len(names) == 0 {
+		return "", ErrOAuthURLHost
+	}
+	upNames, upChosen := userChosenHostNames(upstreamTemplate)
+	if upChosen || !hostPlaceholdersCovered(names, upNames) {
+		return "", ErrOAuthURLHost
+	}
+	resolved, err := registrydomain.ResolveURL(raw, vars, values)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnresolvedOAuthPlaceholder, err)
+	}
+	if publicSuffixHost(normalizedHostname(resolved)) {
+		return "", ErrOAuthURLHost
+	}
+	return resolved, nil
+}
+
+func hostPlaceholdersCovered(contact, upstream []string) bool {
+	if len(contact) == 0 {
+		return false
+	}
+	have := make(map[string]struct{}, len(upstream))
+	for _, name := range upstream {
+		have[name] = struct{}{}
+	}
+	for _, name := range contact {
+		if _, ok := have[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// hostHasPlaceholder reports whether a per-user value chooses the host.
+// `{` in the host makes url.Parse fail, which is itself that case.
+func hostHasPlaceholder(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed == nil {
+		return strings.ContainsAny(raw, "{}")
+	}
+	return strings.ContainsAny(parsed.Host, "{}")
+}
+
+func normalizedHostname(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+}
+
+// userChosenHostNames reports the placeholders in a URL's hostname when a
+// per-user value can pick the registrable domain. The host is pinned only
+// when the labels to the right of the last placeholder are literal and hold a
+// registrable domain (`{domain}.aha.io`, `{tenant}-be.glean.com`). A value
+// that is the whole host, or that sits next to the public suffix
+// (`mcp.{domain}`, `api-{domain}`, `{a}.{b}.com`), chooses where the request
+// goes.
+func userChosenHostNames(raw string) ([]string, bool) {
+	host, ok := templateHostname(raw)
+	if !ok || !strings.Contains(host, "{") {
+		return nil, false
+	}
+	names, _ := splitPlaceholders(host)
+	if len(names) == 0 {
+		return nil, false
+	}
+	return names, !literalRegistrableSuffix(host)
+}
+
+// literalRegistrableSuffix reports whether a registrable domain
+// (publicsuffix.EffectiveTLDPlusOne) is fully literal to the right of the
+// last placeholder. The label that holds the placeholder is not part of
+// that domain, so mcp.{domain} and mcp.{domain}.com stay user-chosen.
+func literalRegistrableSuffix(host string) bool {
+	end := strings.LastIndex(host, "}")
+	if end < 0 {
+		return false
+	}
+	rest := host[end+1:]
+	dot := strings.IndexByte(rest, '.')
+	if dot < 0 {
+		return false
+	}
+	literal := strings.ToLower(strings.Trim(rest[dot+1:], "."))
+	if literal == "" || strings.ContainsAny(literal, "{}") {
+		return false
+	}
+	_, err := publicsuffix.EffectiveTLDPlusOne(literal)
+	return err == nil
+}
+
+// templateHostname is the hostname of a URL template. `{` in the host makes
+// url.Parse fail, so the host is taken from the text in that case. A literal
+// port is not part of the name.
+func templateHostname(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed != nil && parsed.Hostname() != "" && !strings.Contains(parsed.Hostname(), "{") {
+		return parsed.Hostname(), true
+	}
+	const schemeSep = "://"
+	i := strings.Index(raw, schemeSep)
+	if i < 0 {
+		return "", false
+	}
+	rest := raw[i+len(schemeSep):]
+	if at := strings.Index(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	end := len(rest)
+	for j, c := range rest {
+		if c == '/' || c == '?' || c == '#' {
+			end = j
+			break
+		}
+	}
+	hostport := rest[:end]
+	if hostport == "" {
+		return "", false
+	}
+	if colon := strings.LastIndex(hostport, ":"); colon >= 0 && !strings.Contains(hostport[colon:], "}") {
+		return hostport[:colon], true
+	}
+	return hostport, true
+}
+
+// splitPlaceholders returns the {name} tokens in host and the text that is
+// not one of those tokens.
+func splitPlaceholders(host string) ([]string, string) {
+	var names []string
+	var rest strings.Builder
+	for i := 0; i < len(host); {
+		if host[i] != '{' {
+			rest.WriteByte(host[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(host[i:], '}')
+		if end <= 1 {
+			rest.WriteByte(host[i])
+			i++
+			continue
+		}
+		name := host[i+1 : i+end]
+		if !placeholderName(name) {
+			rest.WriteString(host[i : i+end+1])
+			i += end + 1
+			continue
+		}
+		names = append(names, name)
+		i += end + 1
+	}
+	return names, rest.String()
+}
+
+func placeholderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func hostVariablesClosed(names []string, vars []registrydomain.MCPURLVariable) bool {
+	if len(names) == 0 {
+		return false
+	}
+	byName := variablesByName(vars)
+	for _, name := range names {
+		v, ok := byName[name]
+		if !ok || !v.HasOptions() {
+			return false
+		}
+	}
+	return true
+}
+
+func declaredSuffixMatches(host string, names []string, vars []registrydomain.MCPURLVariable) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" || publicSuffixHost(host) {
+		return false
+	}
+	byName := variablesByName(vars)
+	for _, name := range names {
+		v, ok := byName[name]
+		if !ok {
+			continue
+		}
+		for _, suffix := range validHostSuffixes(v.HostSuffix) {
+			if hostUnderSuffix(host, suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hostBoundURLVariables is the variable list the host check uses. When the
+// registry's code is a catalog code, the catalog entry for that code is the
+// bound: a registry copied before host_suffix existed stores an empty list
+// and gets the catalog's, and a stored list can only narrow the catalog's,
+// never widen it. A variable the catalog gives no suffix has none here,
+// whatever the row stores. A registry whose code is not in the catalog keeps
+// its stored list. The stored registry is not modified.
+func (s *connectService) hostBoundURLVariables(reg *registrydomain.Registry) []registrydomain.MCPURLVariable {
+	if reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	vars := reg.MCPTarget.URLVariables
+	fromCatalog, ok := s.catalogHostSuffixes(reg)
+	if !ok || len(vars) == 0 {
+		return vars
+	}
+	out := make([]registrydomain.MCPURLVariable, len(vars))
+	copy(out, vars)
+	for i := range out {
+		out[i].HostSuffix = narrowHostSuffixes(fromCatalog[out[i].Name], out[i].HostSuffix)
+	}
+	return out
+}
+
+// catalogHostSuffixes returns the catalog entry's suffixes by variable name,
+// read only from the entry for the registry's own code. ok is false when the
+// code is empty or not a catalog code.
+func (s *connectService) catalogHostSuffixes(reg *registrydomain.Registry) (map[string][]string, bool) {
+	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil {
+		return nil, false
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" {
+		return nil, false
+	}
+	entry, ok := s.catalog.GetByCode(code)
+	if !ok {
+		return nil, false
+	}
+	out := make(map[string][]string, len(entry.URLVariables))
+	for _, v := range entry.URLVariables {
+		if suffixes := validHostSuffixes(v.HostSuffix); len(suffixes) > 0 {
+			out[v.Name] = suffixes
+		}
+	}
+	return out, true
+}
+
+// narrowHostSuffixes is the set of hosts both lists allow. An empty stored
+// list takes the catalog's. A stored suffix outside every catalog suffix is
+// dropped; a catalog suffix under a stored one is kept.
+func narrowHostSuffixes(catalog, stored []string) []string {
+	if len(catalog) == 0 {
+		return nil
+	}
+	stored = validHostSuffixes(stored)
+	if len(stored) == 0 {
+		return catalog
+	}
+	var out []string
+	seen := make(map[string]struct{})
+	add := func(suffix string) {
+		if _, dup := seen[suffix]; !dup {
+			seen[suffix] = struct{}{}
+			out = append(out, suffix)
+		}
+	}
+	for _, st := range stored {
+		for _, c := range catalog {
+			switch {
+			case hostUnderSuffix(st, c):
+				add(st)
+			case hostUnderSuffix(c, st):
+				add(c)
+			}
+		}
+	}
+	return out
+}
+
+func validHostSuffixes(in []string) []string {
+	var out []string
+	for _, raw := range in {
+		if suffix := normalizeHostSuffix(raw); suffix != "" {
+			out = append(out, suffix)
+		}
+	}
+	return out
+}
+
+func hostUnderSuffix(host, suffix string) bool {
+	return host == suffix || strings.HasSuffix(host, "."+suffix)
+}
+
+func cloneHostSuffixes(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, suffix := range in {
+		suffix = strings.TrimSpace(suffix)
+		if suffix == "" {
+			continue
+		}
+		out = append(out, suffix)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func variablesByName(vars []registrydomain.MCPURLVariable) map[string]registrydomain.MCPURLVariable {
+	out := make(map[string]registrydomain.MCPURLVariable, len(vars))
+	for _, v := range vars {
+		out[v.Name] = v
+	}
+	return out
+}
+
+// normalizeHostSuffix returns the suffix to match against, or "" when it is
+// not a usable bound: fewer than two labels, or a public suffix (`com`,
+// `co.uk`, `github.io`) under which anyone can register a host.
+func normalizeHostSuffix(raw string) string {
+	suffix := strings.ToLower(strings.TrimSpace(raw))
+	suffix = strings.TrimPrefix(suffix, "*.")
+	suffix = strings.Trim(suffix, ".")
+	if suffix == "" || strings.ContainsAny(suffix, "*{}/:@ ") || strings.Count(suffix, ".") < 1 || publicSuffixHost(suffix) {
+		return ""
+	}
+	return suffix
+}
+
+// publicSuffixHost reports whether host is a public suffix. A name under it
+// can be registered by anyone, so it is neither a host_suffix nor a host the
+// gateway will send a client secret to.
+func publicSuffixHost(host string) bool {
+	host = strings.ToLower(strings.Trim(strings.TrimSpace(host), "."))
+	if host == "" || strings.ContainsAny(host, "*{}/:@ ") || net.ParseIP(host) != nil {
+		return false
+	}
+	ps, icann := publicsuffix.PublicSuffix(host)
+	if ps != host {
+		return false
+	}
+	// An unmatched name is reported as its own last label. That is not a
+	// listed suffix (`unused`, `localhost`). A listed one is an ICANN suffix
+	// (`com`, `co.uk`) or a multi-label private suffix (`github.io`).
+	return icann || strings.Contains(host, ".")
+}
+
+// sameContactOrigin compares scheme, hostname, and port. An empty port is the
+// scheme's default, so https://host and https://host:443 are the same origin.
+// A URL with userinfo is not an origin the gateway will contact.
+func sameContactOrigin(contact, upstream string) bool {
+	cs, ch, cp, okContact := contactOrigin(contact)
+	us, uh, up, okUpstream := contactOrigin(upstream)
+	return okContact && okUpstream && cs == us && ch == uh && cp == up
+}
+
+func contactOrigin(raw string) (scheme, host, port string, ok bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.User != nil {
+		return "", "", "", false
+	}
+	scheme = strings.ToLower(parsed.Scheme)
+	host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "" || (scheme != "http" && scheme != "https") {
+		return "", "", "", false
+	}
+	port = parsed.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return scheme, host, port, true
 }

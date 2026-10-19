@@ -20,9 +20,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
@@ -34,6 +36,9 @@ import (
 type claimStore struct {
 	mu      sync.Mutex
 	clients map[string]appoauth.RegisteredClient
+	saves   int
+	claims  int
+	swaps   int
 }
 
 func newClaimStore() *claimStore {
@@ -44,6 +49,7 @@ func (s *claimStore) SaveClient(_ context.Context, key string, c appoauth.Regist
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clients[key] = c
+	s.saves++
 	return nil
 }
 
@@ -64,7 +70,29 @@ func (s *claimStore) SaveClientIfAbsent(_ context.Context, key string, c appoaut
 		return &existing, nil
 	}
 	s.clients[key] = c
+	s.claims++
 	return &c, nil
+}
+
+func (s *claimStore) ReplaceClientIfMatch(_ context.Context, key, expectedClientID string, next appoauth.RegisteredClient) (*appoauth.RegisteredClient, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.clients[key]
+	if !ok || existing.ClientID != expectedClientID {
+		if !ok {
+			return nil, false, nil
+		}
+		return &existing, false, nil
+	}
+	s.clients[key] = next
+	s.swaps++
+	return &next, true, nil
+}
+
+func (s *claimStore) counts() (saves, claims, swaps int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves, s.claims, s.swaps
 }
 
 // Dynamic client registration is not idempotent: every call mints a fresh
@@ -263,4 +291,354 @@ func TestEnsureClient_RejectedRegistrationIsTyped(t *testing.T) {
 	require.ErrorIs(t, err, appoauth.ErrUpstreamRegistrationRejected)
 	require.Contains(t, err.Error(), "status 400")
 	require.Contains(t, err.Error(), "invalid_client_metadata")
+}
+
+func registrationIDP(t *testing.T, issued *atomic.Int64) *httptest.Server {
+	t.Helper()
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := issued.Add(1)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"client_id":                fmt.Sprintf("client-%d", n),
+			"client_secret_expires_at": time.Now().Add(time.Hour).Unix(),
+		})
+	}))
+	t.Cleanup(idp.Close)
+	return idp
+}
+
+func seedClient(t *testing.T, store *claimStore, c appoauth.RegisteredClient) {
+	t.Helper()
+	require.NoError(t, store.SaveClient(context.Background(), "gw|reg", c))
+}
+
+// A cached client registered at another authorization server is not reusable,
+// even when the redirect URI and client name still match. Replacement swaps the
+// stored row only while it is still that client, rather than racing a fresh claim.
+func TestEnsureClient_DifferentIssuerReregisters(t *testing.T) {
+	t.Parallel()
+	var issued atomic.Int64
+	idp := registrationIDP(t, &issued)
+	store := newClaimStore()
+	redirect := "https://gw.example.com/oauth/callback/p"
+	seedClient(t, store, appoauth.RegisteredClient{
+		ClientID:              "stale",
+		RedirectURI:           redirect,
+		ClientName:            infraoauth.DefaultClientName,
+		Issuer:                "https://old.example",
+		RegistrationEndpoint:  idp.URL,
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	})
+	r := infraoauth.NewUpstreamRegistrar(store, idp.Client())
+	got, err := r.EnsureClient(context.Background(), "gw|reg", &appoauth.UpstreamAuthServer{
+		Issuer:               "https://new.example",
+		RegistrationEndpoint: idp.URL,
+	}, redirect)
+	require.NoError(t, err)
+	require.NotEqual(t, "stale", got.ClientID)
+	require.Equal(t, "https://new.example", got.Issuer)
+	require.EqualValues(t, 1, issued.Load())
+	saves, claims, swaps := store.counts()
+	require.Equal(t, 1, saves, "seeding the row is the only blind write")
+	require.Equal(t, 0, claims, "replacement must not open a fresh registration race")
+	require.Equal(t, 1, swaps, "replacement must swap the stored client")
+}
+
+func TestEnsureClient_DifferentRegistrationEndpointReregisters(t *testing.T) {
+	t.Parallel()
+	var issued atomic.Int64
+	idp := registrationIDP(t, &issued)
+	store := newClaimStore()
+	redirect := "https://gw.example.com/oauth/callback/p"
+	seedClient(t, store, appoauth.RegisteredClient{
+		ClientID:             "stale",
+		RedirectURI:          redirect,
+		ClientName:           infraoauth.DefaultClientName,
+		Issuer:               "https://as.example",
+		RegistrationEndpoint: "https://old.example/register",
+	})
+	r := infraoauth.NewUpstreamRegistrar(store, idp.Client())
+	got, err := r.EnsureClient(context.Background(), "gw|reg", &appoauth.UpstreamAuthServer{
+		Issuer:               "https://as.example",
+		RegistrationEndpoint: idp.URL,
+	}, redirect)
+	require.NoError(t, err)
+	require.NotEqual(t, "stale", got.ClientID)
+	require.Equal(t, idp.URL, got.RegistrationEndpoint)
+	require.EqualValues(t, 1, issued.Load())
+	_, claims, swaps := store.counts()
+	require.Equal(t, 0, claims)
+	require.Equal(t, 1, swaps)
+}
+
+func TestEnsureClient_ExpiredRegistrationReregisters(t *testing.T) {
+	t.Parallel()
+	var issued atomic.Int64
+	idp := registrationIDP(t, &issued)
+	store := newClaimStore()
+	redirect := "https://gw.example.com/oauth/callback/p"
+	meta := &appoauth.UpstreamAuthServer{Issuer: "https://as.example", RegistrationEndpoint: idp.URL}
+	seedClient(t, store, appoauth.RegisteredClient{
+		ClientID:              "stale",
+		RedirectURI:           redirect,
+		ClientName:            infraoauth.DefaultClientName,
+		Issuer:                meta.Issuer,
+		RegistrationEndpoint:  meta.RegistrationEndpoint,
+		ClientSecretExpiresAt: time.Now().Add(-time.Minute).Unix(),
+	})
+	r := infraoauth.NewUpstreamRegistrar(store, idp.Client())
+	got, err := r.EnsureClient(context.Background(), "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.NotEqual(t, "stale", got.ClientID)
+	require.EqualValues(t, 1, issued.Load())
+	saves, claims, swaps := store.counts()
+	require.Equal(t, 1, saves)
+	require.Equal(t, 0, claims)
+	require.Equal(t, 1, swaps)
+}
+
+// A client bound to this server, with a registration that has not expired, is
+// reused. So is a row written before the server was recorded: an empty issuer
+// is not treated as a different server.
+func TestEnsureClient_BoundUnexpiredClientIsReused(t *testing.T) {
+	t.Parallel()
+	var issued atomic.Int64
+	idp := registrationIDP(t, &issued)
+	store := newClaimStore()
+	redirect := "https://gw.example.com/oauth/callback/p"
+	meta := &appoauth.UpstreamAuthServer{Issuer: "https://as.example", RegistrationEndpoint: idp.URL}
+	r := infraoauth.NewUpstreamRegistrar(store, idp.Client())
+	ctx := context.Background()
+
+	first, err := r.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.Equal(t, meta.Issuer, first.Issuer)
+	require.Equal(t, meta.RegistrationEndpoint, first.RegistrationEndpoint)
+	require.Greater(t, first.ClientSecretExpiresAt, time.Now().Unix())
+
+	again, err := r.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.Equal(t, first.ClientID, again.ClientID)
+	require.EqualValues(t, 1, issued.Load())
+
+	seedClient(t, store, appoauth.RegisteredClient{
+		ClientID:    "legacy",
+		RedirectURI: redirect,
+		ClientName:  infraoauth.DefaultClientName,
+	})
+	legacy, err := r.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.Equal(t, "legacy", legacy.ClientID)
+	require.EqualValues(t, 1, issued.Load())
+}
+
+func TestDropCachedClient_NextEnsureClientReplaces(t *testing.T) {
+	t.Parallel()
+	var issued atomic.Int64
+	idp := registrationIDP(t, &issued)
+	store := newClaimStore()
+	redirect := "https://gw.example.com/oauth/callback/p"
+	meta := &appoauth.UpstreamAuthServer{Issuer: "https://as.example", RegistrationEndpoint: idp.URL}
+	r := infraoauth.NewUpstreamRegistrar(store, idp.Client())
+	ctx := context.Background()
+
+	first, err := r.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", first.ClientID))
+
+	cached, err := r.CachedClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Nil(t, cached, "a rejected client is no longer usable")
+	raw, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.NotNil(t, raw, "the row stays so the next registration replaces it")
+	require.Equal(t, first.ClientID, raw.ClientID)
+	require.Positive(t, raw.ClientSecretExpiresAt)
+	require.LessOrEqual(t, raw.ClientSecretExpiresAt, time.Now().Unix())
+
+	second, err := r.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.NotEqual(t, first.ClientID, second.ClientID)
+	require.EqualValues(t, 2, issued.Load())
+	_, claims, swaps := store.counts()
+	require.Equal(t, 2, swaps, "drop and the following EnsureClient both swap the stored client")
+	require.Equal(t, 1, claims, "the replacement must not claim a fresh slot")
+}
+
+func TestDropCachedClient_ClearsRefreshRetained(t *testing.T) {
+	t.Parallel()
+	store := newClaimStore()
+	ctx := context.Background()
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:              "client-a",
+		ClientSecret:          "legacy-secret",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+		RefreshRetained:       true,
+	}))
+	r := infraoauth.NewUpstreamRegistrar(store, nil)
+
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", "client-a"))
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, "client-a", got.ClientID)
+	require.Equal(t, "legacy-secret", got.ClientSecret)
+	require.False(t, got.RefreshRetained)
+	require.EqualValues(t, 1, got.ClientSecretExpiresAt)
+}
+
+func TestDropCachedClient_StaleClientIDIsIgnored(t *testing.T) {
+	t.Parallel()
+	store := newClaimStore()
+	ctx := context.Background()
+	current := appoauth.RegisteredClient{
+		ClientID:              "client-b",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", current))
+	r := infraoauth.NewUpstreamRegistrar(store, nil)
+
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", "client-a"))
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, "client-b", got.ClientID)
+	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+}
+
+func TestDropAndReplace_ConcurrentClientsStayConsistent(t *testing.T) {
+	t.Parallel()
+	store := newClaimStore()
+	ctx := context.Background()
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{
+		ClientID:              "client-a",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}))
+	replacement := appoauth.RegisteredClient{
+		ClientID:              "client-b",
+		ClientSecretExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	r := infraoauth.NewUpstreamRegistrar(store, nil)
+
+	var wg sync.WaitGroup
+	const n = 32
+	for range n {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = r.DropCachedClient(ctx, "gw|reg", "client-a")
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, _ = store.ReplaceClientIfMatch(ctx, "gw|reg", "client-a", replacement)
+		}()
+	}
+	wg.Wait()
+
+	got, err := store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	switch got.ClientID {
+	case "client-a":
+		require.LessOrEqual(t, got.ClientSecretExpiresAt, time.Now().Unix())
+	case "client-b":
+		require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+	default:
+		t.Fatalf("client_id = %q", got.ClientID)
+	}
+
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", replacement))
+	require.NoError(t, r.DropCachedClient(ctx, "gw|reg", "client-a"))
+	got, err = store.GetClient(ctx, "gw|reg")
+	require.NoError(t, err)
+	require.Equal(t, "client-b", got.ClientID)
+	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
+}
+
+func TestDiscover_SpoofedIssuerIsRefused(t *testing.T) {
+	t.Parallel()
+	var tokenHits atomic.Int64
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srvURL + "/mcp",
+			"authorization_servers": []string{srvURL},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 "https://victim.example",
+			"authorization_endpoint": srvURL + "/authorize",
+			"token_endpoint":         srvURL + "/token",
+			"registration_endpoint":  "https://victim.example/register",
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		tokenHits.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	_, err := r.Discover(context.Background(), srv.URL+"/mcp")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "issuer does not match")
+	require.Zero(t, tokenHits.Load())
+}
+
+func TestDiscover_IssuerMatchIgnoresCaseAndTrailingSlash(t *testing.T) {
+	t.Parallel()
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srvURL + "/mcp",
+			"authorization_servers": []string{srvURL + "/"},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		issuer := "HTTP://" + strings.TrimPrefix(srvURL, "http://") + "/"
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 issuer,
+			"authorization_endpoint": srvURL + "/authorize",
+			"token_endpoint":         srvURL + "/token",
+			"registration_endpoint":  srvURL + "/register",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	srvURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	meta, err := r.Discover(context.Background(), srv.URL+"/mcp")
+	require.NoError(t, err)
+	require.Equal(t, srv.URL, meta.ValidatedIssuer)
+	require.Equal(t, meta.ValidatedIssuer, meta.Issuer)
+}
+
+func TestDiscover_NonHTTPAuthorizationServerIsRefused(t *testing.T) {
+	t.Parallel()
+	var metadataHits atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              "https://evil.example/mcp",
+			"authorization_servers": []string{"ftp://evil.example"},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		metadataHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	_, err := r.Discover(context.Background(), srv.URL+"/mcp")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bad authorization server")
+	require.Zero(t, metadataHits.Load())
 }

@@ -75,6 +75,24 @@ func notionCatalog() fakeCatalog {
 	}}}
 }
 
+func previewNames(t *testing.T, server map[string]any) []string {
+	t.Helper()
+	raw, ok := server["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools = %T, want a list", server["tools"])
+	}
+	names := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		tool, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("tool = %T", entry)
+		}
+		name, _ := tool["name"].(string)
+		names = append(names, name)
+	}
+	return names
+}
+
 func callInventory(t *testing.T, tool InventoryTool, arguments string) map[string]any {
 	t.Helper()
 	var raw json.RawMessage
@@ -240,6 +258,68 @@ func TestInventoryTool_NamesThePendingServersToolsFromTheCatalog(t *testing.T) {
 
 // Many MCP clients hand the model only the text block, so the text — not just
 // structuredContent — has to carry every server, its state and its tools.
+func TestInventoryTool_UnavailableServersUseExposedNames(t *testing.T) {
+	t.Parallel()
+	catalog := fakeCatalog{servers: []catalogdomain.MCPServer{{
+		Code: "com.example/mcp",
+		Tools: []catalogdomain.MCPTool{
+			{Name: "read_me"},
+			{Name: "dns"},
+		},
+	}}}
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{Servers: []InventoryServer{{
+		Name:  "Example",
+		Code:  "com.example/mcp",
+		State: InventoryStateUnavailable,
+		Cause: "credential_rejected_401",
+		slug:  "example",
+	}}}}, catalog)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+
+	result := callInventory(t, tool, "")
+	names := previewNames(t, structuredServers(t, result)[0])
+	if len(names) != 2 || names[0] != "example_read_me" || names[1] != "example_dns" {
+		t.Fatalf("tools = %v, want the exposed names", names)
+	}
+	text := resultText(t, result)
+	for _, want := range []string{
+		"unavailable: the server rejected the credential (HTTP 401), so its tools cannot be called right now",
+		"example_read_me",
+		"example_dns",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("text does not mention %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestInventoryTool_UnavailableServerWithoutASlugListsNoTools(t *testing.T) {
+	t.Parallel()
+	catalog := fakeCatalog{servers: []catalogdomain.MCPServer{{
+		Code:  "com.example/mcp",
+		Tools: []catalogdomain.MCPTool{{Name: "read_me"}, {Name: "dns"}},
+	}}}
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{Servers: []InventoryServer{{
+		Name:  "Example",
+		Code:  "com.example/mcp",
+		State: InventoryStateUnavailable,
+	}}}}, catalog)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+
+	result := callInventory(t, tool, "")
+	if names := previewNames(t, structuredServers(t, result)[0]); len(names) != 0 {
+		t.Fatalf("tools = %v, want none when the exposed name cannot be formed", names)
+	}
+	text := resultText(t, result)
+	if strings.Contains(text, "read_me") || strings.Contains(text, "dns") {
+		t.Fatalf("text lists a raw upstream name:\n%s", text)
+	}
+}
+
 func TestInventoryTool_PutsEveryServerInTheTextBody(t *testing.T) {
 	t.Parallel()
 	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: twoServerInventory()}, notionCatalog())

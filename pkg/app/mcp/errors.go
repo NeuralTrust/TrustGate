@@ -68,6 +68,31 @@ type ApplicationNotConnectedError struct {
 	Shared bool
 }
 
+// UnknownToolError is a tools/call name that no bound registry owns. It wraps
+// ErrToolNotFound so the JSON-RPC layer answers -32602; the text is the message
+// the caller reads.
+type UnknownToolError struct {
+	Name string
+}
+
+func (e *UnknownToolError) Error() string {
+	return "Unknown tool: " + e.Name
+}
+
+func (e *UnknownToolError) Unwrap() error { return ErrToolNotFound }
+
+// ServerNotServingError reports that the registry which owns a tool is installed
+// but not serving. The text names that server and its state and nothing else:
+// the discovery error underneath can carry an upstream URL.
+type ServerNotServingError struct {
+	Server string
+	State  string
+}
+
+func (e *ServerNotServingError) Error() string {
+	return fmt.Sprintf("mcp: server %q is %s", e.Server, e.State)
+}
+
 func (e *ApplicationNotConnectedError) Error() string {
 	server := e.Registry
 	if server == "" {

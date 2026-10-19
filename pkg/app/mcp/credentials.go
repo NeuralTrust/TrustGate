@@ -252,7 +252,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	// caller reads the same credential and nobody calling can connect it: the
 	// admin does, once, on the instance.
 	subject := registrydomain.CredentialSubject(reg, principal.Subject)
-	cred, err := r.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+	cred, err := r.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProviderFor(reg, nil))
 	if errors.Is(err, vaultdomain.ErrNotFound) {
 		return r.consentRequired(ctx, rc, reg, cfg.Provider, subject,
 			ConsentCauseNoCredential, "no stored credential for this account and provider")
@@ -314,6 +314,30 @@ func (r *credentialResolver) Refresh(
 	return nil
 }
 
+func (r *credentialResolver) forgetRejectedDynamicClient(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	reg *registrydomain.Registry,
+	clientID, slot string,
+	cause error,
+) {
+	if r == nil || r.connect == nil || clientID == "" || !errors.Is(cause, appoauth.ErrInvalidClient) {
+		return
+	}
+	auth := reg.ForwardedAuth()
+	if auth == nil || auth.Registration != registrydomain.RegistrationAuto {
+		return
+	}
+	dropper, ok := r.connect.(appoauth.RegisteredClientDropper)
+	if !ok {
+		return
+	}
+	if err := dropper.DropRegisteredClient(ctx, gatewayID, reg, clientID, slot); err != nil {
+		r.logger.Warn("mcp credentials: failed to drop a dynamic client the authorization server rejected",
+			"error", err, "gateway_id", gatewayID.String(), "provider", auth.Provider)
+	}
+}
+
 func (r *credentialResolver) refreshCredential(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
@@ -328,7 +352,7 @@ func (r *credentialResolver) refreshCredential(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	vaultProvider := registrydomain.ForwardedVaultProvider(reg)
+	vaultProvider := registrydomain.ForwardedVaultProviderFor(reg, nil)
 	key := gatewayID.String() + "|" + subject + "|" + vaultProvider
 	result := r.refresh.DoChan(key, func() (any, error) {
 		// A caller disconnect must not abandon a rotating grant shared by other callers.
@@ -382,6 +406,7 @@ func (r *credentialResolver) refreshCredential(
 		}
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
 		if err != nil {
+			r.forgetRejectedDynamicClient(ctx, gatewayID, reg, refreshCfg.ClientID, refreshCfg.ClientSlot, err)
 			// Providers that rotate refresh tokens (Notion, and OAuth 2.1 in
 			// general) invalidate the previous one on every refresh, and
 			// singleflight only dedupes within this process. A sibling replica
@@ -408,6 +433,9 @@ func (r *credentialResolver) refreshCredential(
 		refreshed := *cred
 		cred = &refreshed
 		previousRefreshToken := cred.RefreshToken
+		if cred.OAuthClientID == "" && refreshCfg != nil {
+			cred.OAuthClientID = refreshCfg.ClientID
+		}
 		cred.AccessToken = fresh.AccessToken
 		if fresh.RefreshToken != "" {
 			cred.RefreshToken = fresh.RefreshToken
@@ -566,6 +594,20 @@ var errCredentialRefreshUnsupported = errors.New("mcp credentials: auth mode can
 
 var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected credential was refreshed too recently")
 
+// resolveProbeKey marks a discovery that is only classifying a tool name, not
+// asking the user to connect. Consent still fails the dial; it just does not
+// mint a ticket.
+type resolveProbeKey struct{}
+
+func withResolveProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, resolveProbeKey{}, true)
+}
+
+func resolveProbe(ctx context.Context) bool {
+	probed, _ := ctx.Value(resolveProbeKey{}).(bool)
+	return probed
+}
+
 // consentRequired is the single funnel through which a downstream call asks the
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
@@ -600,6 +642,14 @@ func (r *credentialResolver) consentRequired(
 		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg)}
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	// A resolve probe is deciding whether some other name could be this
+	// server's. The answer is still "consent required", but the caller will
+	// discard it unless this server owns the name, and the owning path does
+	// not probe — so minting a ticket here would hand out a connect link
+	// nobody is going to see (ENG-2178).
+	if resolveProbe(ctx) {
+		return &ConsentRequiredError{Provider: provider, Path: consumerPath, Cause: cause}
+	}
 	var ticket string
 	var err error
 	if code := storeServerCode(rc, reg); code != "" {

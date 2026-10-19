@@ -336,6 +336,16 @@ func startRateLimit(p rateLimitParams, logger *slog.Logger) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	if p.Meter != nil {
+		// Authenticate and load the script before the servers listen, so the
+		// first request is not the connection's first command. A failure is
+		// logged and the pod still serves: a cold read fails open, as before.
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), ratelimitapp.DefaultSyncWarmTimeout)
+		if err := p.Meter.Warm(warmCtx); err != nil {
+			logger.Warn("rate limit: sync client warmup failed; cold reads fail open until Redis answers",
+				slog.String("component", "ratelimit"),
+				slog.Any("error", err))
+		}
+		warmCancel()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
