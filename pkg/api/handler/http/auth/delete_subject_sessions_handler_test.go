@@ -24,11 +24,14 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	sessionrevocation "github.com/NeuralTrust/TrustGate/pkg/domain/sessionrevocation"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -51,13 +54,31 @@ func (f *fakeSubjectSessions) RevokeSubjectSessions(_ context.Context, org, gate
 	return f.revoked, nil
 }
 
+type fakeDurableRevocations struct {
+	err   error
+	calls int
+}
+
+func (f *fakeDurableRevocations) Upsert(context.Context, string, string, string, time.Time) error {
+	f.calls++
+	return f.err
+}
+
+func (f *fakeDurableRevocations) ListActive(context.Context, time.Time) ([]sessionrevocation.Record, error) {
+	return nil, nil
+}
+
 func subjectSessionsApp(sessions appoauth.SubjectSessions, identity middleware.AdminIdentity) *fiber.App {
+	return subjectSessionsAppFull(sessions, &fakeDurableRevocations{}, &configsynctest.FakeSignaler{}, identity)
+}
+
+func subjectSessionsAppFull(sessions appoauth.SubjectSessions, revocations sessionrevocation.Store, signaler *configsynctest.FakeSignaler, identity middleware.AdminIdentity) *fiber.App {
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
 		middleware.StoreAdminIdentity(c, identity)
 		return c.Next()
 	})
-	h := authhttp.NewDeleteSubjectSessionsHandler(sessions, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := authhttp.NewDeleteSubjectSessionsHandler(sessions, revocations, signaler, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	app.Delete("/v1/gateways/:gateway_id/subjects/:user_id/sessions", h.Handle)
 	return app
 }
@@ -91,7 +112,9 @@ func TestDeleteSubjectSessions_RevokesAndRepeatsAsZero(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	sessions := &fakeSubjectSessions{revoked: 2}
-	app := subjectSessionsApp(sessions, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "org-1"})
+	revocations := &fakeDurableRevocations{}
+	signaler := &configsynctest.FakeSignaler{}
+	app := subjectSessionsAppFull(sessions, revocations, signaler, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "org-1"})
 
 	status, raw := deleteSubjectSessions(t, app, gw.String(), "user-1")
 	require.Equal(t, http.StatusOK, status, raw)
@@ -100,11 +123,31 @@ func TestDeleteSubjectSessions_RevokesAndRepeatsAsZero(t *testing.T) {
 	require.Equal(t, "org-1", sessions.org)
 	require.Equal(t, gw.String(), sessions.gateway)
 	require.Equal(t, "user-1", sessions.subject)
+	require.Equal(t, 1, revocations.calls)
+	require.Equal(t, 1, signaler.Count())
 
 	sessions.revoked = 0
 	status, raw = deleteSubjectSessions(t, app, gw.String(), "user-1")
 	require.Equal(t, http.StatusOK, status, raw)
 	require.JSONEq(t, `{"revoked":0}`, raw)
+	require.Equal(t, 2, revocations.calls)
+	require.Equal(t, 2, signaler.Count())
+}
+
+func TestDeleteSubjectSessions_DurableWriteFailureIs500(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	sessions := &fakeSubjectSessions{revoked: 1}
+	revocations := &fakeDurableRevocations{err: errors.New("db down")}
+	signaler := &configsynctest.FakeSignaler{}
+	app := subjectSessionsAppFull(sessions, revocations, signaler, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "org-1"})
+
+	status, raw := deleteSubjectSessions(t, app, gw.String(), "user-1")
+	require.Equal(t, http.StatusInternalServerError, status, raw)
+	require.Contains(t, raw, `"error":"internal_error"`)
+	require.Equal(t, 1, revocations.calls)
+	require.Equal(t, 0, sessions.calls, "redis is not touched when the durable write fails")
+	require.Equal(t, 0, signaler.Count())
 }
 
 func TestDeleteSubjectSessions_ErrorStatuses(t *testing.T) {
