@@ -192,6 +192,20 @@ type FlowStore interface {
 	DeleteSession(ctx context.Context, refreshToken string) error
 }
 
+// SnapshotRevocations is the revocation marker in the config snapshot a data
+// plane is serving. RevokedAt reports it, or false when that snapshot has no
+// marker for the subject. A snapshot that is not loaded reports false: that
+// is not a revocation. A Redis error reading the process-local marker stays
+// the fail-closed path.
+//
+// Field 15 of the snapshot carries these rows. A data plane built before
+// that field ignores it and keeps serving; the revocation applies once that
+// plane runs a build that reads the field. Shipping the field does not block
+// a deploy of older data planes.
+type SnapshotRevocations interface {
+	RevokedAt(gatewayID, org, subject string) (time.Time, bool)
+}
+
 // SubjectSessions revokes the default identity provider's refresh records for
 // one subject. Personal keys, grants and other identity providers are not its
 // concern.

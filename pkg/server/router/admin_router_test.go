@@ -149,6 +149,8 @@ func TestAdminRouterRefusesServiceCredentialsOnSubjectSessions(t *testing.T) {
 		AdminAuthz:          middleware.NewAdminAuthzMiddleware(nil, gateways),
 		DeleteSubjectSessions: authhttp.NewDeleteSubjectSessionsHandler(
 			subjectSessionsMustNotRun{},
+			nil,
+			nil,
 			slog.New(slog.NewTextHandler(io.Discard, nil)),
 		),
 	}).BuildRoutes(app))

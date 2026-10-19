@@ -58,6 +58,19 @@ type Data struct {
 	// TenantCaps are the plan caps of the tenants the gateways above belong to.
 	// A scoped snapshot carries only its own tenant.
 	TenantCaps []ratelimitdomain.TenantCaps
+	// SessionRevocations are default-IdP revocations for the gateways above,
+	// still inside the marker lifetime. A snapshot from before the field, or
+	// one with none, is not a revocation. A data plane that does not know the
+	// field skips it.
+	SessionRevocations []SessionRevocation
+}
+
+// SessionRevocation is one default-IdP subject revoked at RevokedAt.
+type SessionRevocation struct {
+	GatewayID string
+	Org       string
+	Subject   string
+	RevokedAt time.Time
 }
 
 type Snapshot struct {
@@ -96,7 +109,14 @@ type Snapshot struct {
 	storeGrantsByGateway   map[ids.GatewayID][]*storeaccessdomain.Grant
 	storePoliciesByGateway map[ids.GatewayID][]*storeaccessdomain.Policy
 
-	tenantCaps map[string]*ratelimitdomain.TenantCaps
+	tenantCaps       map[string]*ratelimitdomain.TenantCaps
+	sessionRevokedAt map[sessionRevocationKey]time.Time
+}
+
+type sessionRevocationKey struct {
+	gatewayID string
+	org       string
+	subject   string
 }
 
 func Build(data Data) *Snapshot {
@@ -127,10 +147,18 @@ func Build(data Data) *Snapshot {
 		storeGrantsByGateway:   make(map[ids.GatewayID][]*storeaccessdomain.Grant),
 		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
 		tenantCaps:             make(map[string]*ratelimitdomain.TenantCaps, len(data.TenantCaps)),
+		sessionRevokedAt:       make(map[sessionRevocationKey]time.Time, len(data.SessionRevocations)),
 	}
 	for i := range s.data.TenantCaps {
 		c := &s.data.TenantCaps[i]
 		s.tenantCaps[c.TenantID] = c
+	}
+	for i := range s.data.SessionRevocations {
+		rev := s.data.SessionRevocations[i]
+		if rev.GatewayID == "" || rev.Org == "" || rev.Subject == "" || rev.RevokedAt.IsZero() {
+			continue
+		}
+		s.sessionRevokedAt[sessionRevocationKey{gatewayID: rev.GatewayID, org: rev.Org, subject: rev.Subject}] = rev.RevokedAt
 	}
 
 	s.buildGateways()
@@ -159,6 +187,16 @@ func (s *Snapshot) buildStoreGrants() {
 // policies in snapshot order (nil when it has none).
 func (s *Snapshot) StorePoliciesByGateway(gatewayID ids.GatewayID) []*storeaccessdomain.Policy {
 	return s.storePoliciesByGateway[gatewayID]
+}
+
+// SessionRevokedAt is the revocation instant for this default-IdP subject, or
+// false when this snapshot has no marker. A missing marker is not a revocation.
+func (s *Snapshot) SessionRevokedAt(gatewayID, org, subject string) (time.Time, bool) {
+	if s == nil {
+		return time.Time{}, false
+	}
+	at, ok := s.sessionRevokedAt[sessionRevocationKey{gatewayID: gatewayID, org: org, subject: subject}]
+	return at, ok
 }
 
 // StoreGrantsByGateway returns a gateway's MCP Store access grants in snapshot
