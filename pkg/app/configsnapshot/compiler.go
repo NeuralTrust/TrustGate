@@ -80,8 +80,10 @@ type Compiler struct {
 	lastCaps map[string]ratelimitdomain.TenantCaps
 
 	// revocations lists default-IdP session revocations. sessionMaxAge is
-	// MCP_DEFAULT_IDP_SESSION_MAX_AGE; the marker window is the longer of that
-	// and the 30-day idle session lifetime, the same bound the Redis marker uses.
+	// MCP_DEFAULT_IDP_SESSION_MAX_AGE as configured on the admin process that
+	// compiles the snapshot; the marker window is the longer of that and the
+	// 30-day idle session lifetime, the same bound the Redis marker uses. A
+	// value set only on the MCP process does not extend this window.
 	revocations   sessionrevocation.Store
 	sessionMaxAge time.Duration
 	// lastRevocations is the last listing that succeeded, replaced whole.
@@ -155,7 +157,8 @@ func markerTTL(sessionMaxAge time.Duration) time.Duration {
 
 // WithSessionRevocations stamps each snapshot with the default-IdP revocations
 // of the gateways it carries, limited to the marker lifetime. sessionMaxAge is
-// MCP_DEFAULT_IDP_SESSION_MAX_AGE; non-positive leaves the window at 30 days.
+// MCP_DEFAULT_IDP_SESSION_MAX_AGE as configured on the admin process; non-positive
+// leaves the window at 30 days.
 func WithSessionRevocations(r sessionrevocation.Store, sessionMaxAge time.Duration) CompilerOption {
 	return func(c *Compiler) {
 		c.revocations = r
