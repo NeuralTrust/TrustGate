@@ -112,6 +112,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(func(s *infraoauth.ConnectStore) appoauth.ClientStore { return s }); err != nil {
 		return err
 	}
+	if err := c.Provide(provideCatalogReapply); err != nil {
+		return err
+	}
 	if err := c.Provide(func(clients appoauth.ClientStore, cfg *config.Config) appoauth.UpstreamRegistrar {
 		return infraoauth.NewUpstreamRegistrar(clients, nil, infraoauth.WithClientName(cfg.Server.MCPOAuthClientName))
 	}); err != nil {
@@ -261,6 +264,10 @@ type connectServiceParams struct {
 	Handoff  appoauth.ConnectHandoff
 	// Clients names the app a connect link was minted from.
 	Clients appoauth.FlowStore `optional:"true"`
+	// Ensurer persists a safe catalog correction; the viewer applies it to this
+	// connect without waiting for the next config snapshot.
+	Ensurer appstore.RegistryEnsurer `optional:"true"`
+	Reapply *appstore.CatalogReapply `optional:"true"`
 }
 
 type connectHandoffParams struct {
@@ -300,6 +307,9 @@ type rpcGatewayParams struct {
 	// plane provides the gRPC-client one. Absent on SEARCH-only planes, where a
 	// self-service install downgrades to a pending request.
 	Ensurer appstore.RegistryEnsurer `optional:"true"`
+	// Reapply corrects a stale catalog instance on install. Absent, install
+	// keeps the stored row.
+	Reapply *appstore.CatalogReapply `optional:"true"`
 	// Configure mints the hosted-form link where a user enters a server's per-user
 	// URL variables. Nil on planes without the installation/vault stores; then the
 	// install tool reports the needed variables but offers no link.
@@ -363,7 +373,7 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
 		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
+			catalogInstallOptions(p.Vault, p.Revoker, p.Logger, p.Reapply)...)
 		if err != nil {
 			return nil, err
 		}
@@ -460,6 +470,7 @@ type configureServiceParams struct {
 	Store     appoauth.ConnectStore         `optional:"true"`
 	Consumers appconsumer.DataFinder        `optional:"true"`
 	Vault     vaultdomain.Repository        `optional:"true"`
+	Reapply   *appstore.CatalogReapply      `optional:"true"`
 	Installs  installationdomain.Repository `optional:"true"`
 	Catalog   appcatalog.MCPServerCatalog   `optional:"true"`
 	Shared    mcpoauth.Provider
@@ -492,7 +503,7 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 	var opts []appoauth.ConfigureOption
 	if p.Registries != nil {
 		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer,
-			appstore.WithUninstallCredentials(p.Vault, p.Revoker, p.Logger))
+			catalogInstallOptions(p.Vault, p.Revoker, p.Logger, p.Reapply)...)
 		if err != nil {
 			return nil, err
 		}
@@ -535,6 +546,46 @@ func provideConnectHandoff(p connectHandoffParams) appoauth.ConnectHandoff {
 	return appoauth.NewConnectHandoff(p.Store, p.Gateways, domains...)
 }
 
+type catalogReapplyParams struct {
+	dig.In
+
+	Catalog appcatalog.MCPServerCatalog `optional:"true"`
+	Shared  mcpoauth.Provider
+	Saver   appstore.CatalogTargetSaver `optional:"true"`
+	Vault   vaultdomain.Repository      `optional:"true"`
+	DCR     *infraoauth.ConnectStore    `optional:"true"`
+	Logger  *slog.Logger                `optional:"true"`
+}
+
+func provideCatalogReapply(p catalogReapplyParams) (*appstore.CatalogReapply, error) {
+	catalog := p.Catalog
+	if catalog == nil {
+		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
+		if err != nil {
+			return nil, err
+		}
+		catalog = loaded
+	}
+	var dcr appstore.DynamicClientChecker
+	if p.DCR != nil {
+		dcr = p.DCR
+	}
+	return appstore.NewCatalogReapply(catalog, p.Saver, p.Vault, dcr, p.Logger)
+}
+
+func catalogInstallOptions(
+	vault vaultdomain.Repository,
+	revoker appstore.CredentialRevoker,
+	logger *slog.Logger,
+	reapply *appstore.CatalogReapply,
+) []appstore.InstallerOption {
+	opts := []appstore.InstallerOption{appstore.WithUninstallCredentials(vault, revoker, logger)}
+	if reapply != nil {
+		opts = append(opts, appstore.WithCatalogInstanceRefresh(reapply))
+	}
+	return opts
+}
+
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {
 	catalog := p.Catalog
 	if catalog == nil {
@@ -555,6 +606,9 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 	opts = append(opts, appoauth.WithConnectHandoff(p.Handoff))
 	if p.Clients != nil {
 		opts = append(opts, appoauth.WithConnectClients(p.Clients))
+	}
+	if p.Reapply != nil {
+		opts = append(opts, appoauth.WithCatalogInstanceRefresh(p.Ensurer, p.Reapply))
 	}
 	return appoauth.NewConnectService(
 		p.Store,

@@ -184,6 +184,17 @@ type InstallerOption func(*installer)
 // revoke; the registry has no revocation URL.
 // revoker may be nil, which skips the vendor call. The cached dynamic client
 // is not deleted.
+// WithCatalogInstanceRefresh asks Ensure to reconcile an existing instance
+// with the current catalog, then answers this install from that shape so
+// RequiresAuth follows a mode change (for example none to forwarded). The
+// reconciler leaves credentials, admin edits, and uncertain rows untouched.
+// Ensure errors are logged and do not fail the install.
+func WithCatalogInstanceRefresh(viewer CatalogViewer) InstallerOption {
+	return func(i *installer) {
+		i.viewer = viewer
+	}
+}
+
 func WithUninstallCredentials(vault vaultdomain.Repository, revoker CredentialRevoker, logger *slog.Logger) InstallerOption {
 	return func(i *installer) {
 		i.vault = vault
@@ -230,6 +241,7 @@ type installer struct {
 	installs   installationdomain.Repository
 	grants     storeaccessdomain.Reader
 	ensurer    RegistryEnsurer
+	viewer     CatalogViewer
 	vault      vaultdomain.Repository
 	revoker    CredentialRevoker
 	logger     *slog.Logger
@@ -300,6 +312,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	if err != nil {
 		return nil, err
 	}
+	i.refreshBoundCatalog(ctx, in.GatewayID, code, &decision)
 	if decision.requiresAdminSetup {
 		return &InstallResult{
 			Code:               code,
@@ -503,6 +516,27 @@ type installDecision struct {
 	materialise        bool
 	choices            []InstanceChoice
 	requiresAdminSetup bool
+}
+
+// refreshBoundCatalog persists a safe catalog correction through Ensure and
+// then views that shape on the instance this install already resolved. Custom
+// servers are not catalog codes and are skipped.
+func (i *installer) refreshBoundCatalog(ctx context.Context, gatewayID ids.GatewayID, code string, decision *installDecision) {
+	if i == nil || i.viewer == nil || i.ensurer == nil || decision == nil || decision.bound == nil {
+		return
+	}
+	if _, ok := i.catalog.GetByCode(code); !ok {
+		return
+	}
+	if err := i.ensurer.Ensure(ctx, gatewayID, code); err != nil {
+		i.logger.Warn("store: catalog reapply",
+			slog.String("code", code),
+			slog.String("error", err.Error()),
+		)
+	}
+	if viewed := i.viewer.ViewCurrentCatalog(ctx, decision.bound); viewed != nil {
+		decision.bound = viewed
+	}
 }
 
 // requiresUserAuth reports whether the install still needs the user to sign in
