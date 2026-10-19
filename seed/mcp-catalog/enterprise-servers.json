@@ -2652,7 +2652,7 @@
       "name": "com.checkr/mcp",
       "vendor": "Checkr",
       "category": "HR & Recruiting",
-      "description": "Background checks: manage and retrieve screening reports (OAuth Dynamic Client Registration).",
+      "description": "Background checks: manage and retrieve screening reports.",
       "capabilities": [
         "Manage retrieve screening reports",
         "Get a candidate by ID",
@@ -14241,7 +14241,7 @@
       "name": "com.shortcut/mcp",
       "vendor": "Shortcut",
       "category": "Project Management",
-      "description": "Stories, epics, and iterations via Shortcut (OAuth, no token needed).",
+      "description": "Stories, epics, and iterations via Shortcut (OAuth; no API token needed).",
       "capabilities": [
         "Manage stories",
         "Manage epics",
