@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
@@ -412,6 +413,16 @@ func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
 		return fiber.NewError(fiber.StatusBadGateway,
 			"The provider refused to register this gateway as an OAuth app, so the account cannot be connected yet. "+
 				"Ask your administrator to check this connector's configuration. Details: "+err.Error())
+	}
+	// No OAuth metadata is the upstream's shape, not a fault in this request.
+	// A plain error falls through to a text/plain 500; answer 502 with the
+	// same {error, message} body the JSON error responses use.
+	if errors.Is(err, appoauth.ErrUpstreamNotDiscoverable) {
+		return c.Status(fiber.StatusBadGateway).JSON(httpio.ErrorBody{
+			Error: "upstream_not_discoverable",
+			Message: "The provider does not publish OAuth metadata, so the account cannot be connected yet. " +
+				"Ask your administrator to configure a pre-registered OAuth app. Details: " + err.Error(),
+		})
 	}
 	return err
 }
