@@ -12031,7 +12031,7 @@
         "Work with schedules"
       ],
       "transport": "streamable-http",
-      "server_url": "https://mcp.pagerduty.com/mcp",
+      "server_url": "https://{host}/mcp",
       "requires_auth": true,
       "self_service": false,
       "oauth": {
@@ -12050,8 +12050,25 @@
           "users.read",
           "openid"
         ],
-        "resource": "https://mcp.pagerduty.com/mcp"
+        "resource": "https://{host}/mcp"
       },
+      "url_variables": [
+        {
+          "name": "host",
+          "description": "PagerDuty service region.",
+          "required": true,
+          "options": [
+            {
+              "value": "mcp.pagerduty.com",
+              "label": "United States"
+            },
+            {
+              "value": "mcp.eu.pagerduty.com",
+              "label": "Europe"
+            }
+          ]
+        }
+      ],
       "relevance": 80,
       "tools": [
         {

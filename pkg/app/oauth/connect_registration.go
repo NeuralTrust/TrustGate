@@ -320,7 +320,10 @@ func registryCode(reg *registrydomain.Registry) string {
 // Cube row whose {cube_host} resolves somewhere other than cubecloud.dev) keeps
 // the resource and scopes it stored. Sending the hosted resource to that
 // authorization server fails with invalid_target. res is the resolution this
-// flow already computed; a not-ready resolution does not match.
+// flow already computed; a not-ready resolution does not match. A fixed URL
+// with no install values matches a templated catalog server when exactly one
+// closed option resolves to it, and the catalog resource is filled with that
+// option before it is returned.
 func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog, res upstreamResolution) *registrydomain.MCPAuth {
 	if cfg == nil || cat == nil {
 		return cfg
@@ -340,7 +343,8 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 	if len(entry.OAuth.Scopes) == 0 && resource == "" {
 		return cfg
 	}
-	if !catalogServerMatches(entry, res) {
+	values, ok := catalogMatchValues(entry, res)
+	if !ok {
 		return cfg
 	}
 	out := *cfg
@@ -348,44 +352,161 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
 	}
 	if resource != "" {
-		out.Resource = resource
+		// Fill a templated catalog resource with the values that matched the
+		// server URL, including a closed option inferred for a fixed-URL row.
+		// The unresolved template must not be assigned: finalizeAuthURLs would
+		// refuse the redirect with ErrUnresolvedOAuthPlaceholder.
+		resolved, resolvedOK := resolveCatalogTemplate(entry, resource, values)
+		if !resolvedOK || strings.ContainsAny(resolved, "{}") {
+			return cfg
+		}
+		out.Resource = resolved
 	}
 	return &out
 }
 
 // catalogServerMatches reports whether the row's resolved upstream URL is the
 // catalog entry's server URL. A templated catalog URL is filled with the same
-// values that produced the row URL. Comparison is SameCanonicalResource, so a
-// trailing slash or default port does not hide a match. An empty catalog URL,
-// or a template that these values cannot fill, does not match.
+// values that produced the row URL. When the row has no value for a closed
+// (options) variable, each listed option is tried, and the row matches only
+// when exactly one option resolves to that URL. An open variable is never
+// guessed, so a self-hosted install keeps the resource and scopes it stored.
+// Comparison is SameCanonicalResource, so a trailing slash or default port
+// does not hide a match. An empty catalog URL, or a template that these
+// values cannot fill, does not match.
 func catalogServerMatches(entry catalogdomain.MCPServer, res upstreamResolution) bool {
+	_, ok := catalogMatchValues(entry, res)
+	return ok
+}
+
+// catalogMatchValues returns the placeholder values that make the catalog
+// server URL the row's resolved upstream URL. The row's values are used as
+// given. A missing value for a closed variable is filled by trying each listed
+// option, and the match holds only when exactly one such filling resolves to
+// res.url. The returned map is a copy.
+func catalogMatchValues(entry catalogdomain.MCPServer, res upstreamResolution) (map[string]string, bool) {
 	if !res.ready {
-		return false
+		return nil, false
 	}
-	catalogURL, ok := resolveCatalogServerURL(entry, res.values)
-	if !ok {
-		return false
+	raw := strings.TrimSpace(entry.URL)
+	if raw == "" {
+		return nil, false
 	}
-	return registrydomain.SameCanonicalResource(res.url, catalogURL)
+	if !strings.Contains(raw, "{") {
+		if !registrydomain.SameCanonicalResource(res.url, raw) {
+			return nil, false
+		}
+		return cloneStringMap(res.values), true
+	}
+	vars := catalogRegistryURLVars(entry)
+	declared := make(map[string]registrydomain.MCPURLVariable, len(vars))
+	for _, variable := range vars {
+		declared[variable.Name] = variable
+	}
+	values := cloneStringMap(res.values)
+	var missing []registrydomain.MCPURLVariable
+	for _, name := range registrydomain.TemplateVariableNames(raw) {
+		if strings.TrimSpace(values[name]) != "" {
+			continue
+		}
+		variable, known := declared[name]
+		if !known || !variable.HasOptions() {
+			return nil, false
+		}
+		missing = append(missing, variable)
+	}
+	if len(missing) == 0 {
+		resolved, ok := resolveCatalogServerURL(entry, values)
+		if !ok || !registrydomain.SameCanonicalResource(res.url, resolved) {
+			return nil, false
+		}
+		return values, true
+	}
+	return matchClosedOptions(entry, values, missing, res.url)
+}
+
+// matchClosedOptions tries each combination of the missing closed variables.
+// It returns those values only when exactly one combination resolves to want.
+func matchClosedOptions(entry catalogdomain.MCPServer, base map[string]string, missing []registrydomain.MCPURLVariable, want string) (map[string]string, bool) {
+	if base == nil {
+		base = map[string]string{}
+	}
+	var matched map[string]string
+	matches := 0
+	var walk func(i int)
+	walk = func(i int) {
+		if matches > 1 {
+			return
+		}
+		if i == len(missing) {
+			resolved, ok := resolveCatalogServerURL(entry, base)
+			if !ok || !registrydomain.SameCanonicalResource(want, resolved) {
+				return
+			}
+			matches++
+			if matches == 1 {
+				matched = cloneStringMap(base)
+			}
+			return
+		}
+		name := missing[i].Name
+		previous, had := base[name]
+		for _, option := range missing[i].Options {
+			base[name] = option.Value
+			walk(i + 1)
+			if matches > 1 {
+				break
+			}
+		}
+		if had {
+			base[name] = previous
+		} else {
+			delete(base, name)
+		}
+	}
+	walk(0)
+	if matches != 1 {
+		return nil, false
+	}
+	return matched, true
 }
 
 func resolveCatalogServerURL(entry catalogdomain.MCPServer, values map[string]string) (string, bool) {
-	raw := strings.TrimSpace(entry.URL)
+	return resolveCatalogTemplate(entry, entry.URL, values)
+}
+
+func resolveCatalogTemplate(entry catalogdomain.MCPServer, raw string, values map[string]string) (string, bool) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", false
 	}
 	if !strings.Contains(raw, "{") {
 		return raw, true
 	}
-	vars := make([]registrydomain.MCPURLVariable, 0, len(entry.URLVariables))
-	for _, v := range entry.URLVariables {
-		vars = append(vars, toRegistryURLVar(v))
-	}
-	resolved, err := registrydomain.ResolveURL(raw, vars, values)
+	resolved, err := registrydomain.ResolveURL(raw, catalogRegistryURLVars(entry), values)
 	if err != nil {
 		return "", false
 	}
 	return resolved, true
+}
+
+func catalogRegistryURLVars(entry catalogdomain.MCPServer) []registrydomain.MCPURLVariable {
+	vars := make([]registrydomain.MCPURLVariable, 0, len(entry.URLVariables))
+	for _, variable := range entry.URLVariables {
+		vars = append(vars, toRegistryURLVar(variable))
+	}
+	return vars
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *RegisteredClient) *registrydomain.MCPAuth {
