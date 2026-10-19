@@ -119,7 +119,8 @@ type InstallResult struct {
 	RequiresAdminSetup bool
 	// RequiresInstanceChoice is true when the admin has connected several
 	// instances of this server that the principal may use and the install did not
-	// say which. No install is recorded; the caller picks one of InstanceChoices
+	// say which. An instance whose required admin URL variable is still unfilled
+	// is omitted. No install is recorded; the caller picks one of InstanceChoices
 	// and re-invokes with its id.
 	RequiresInstanceChoice bool
 	InstanceChoices        []InstanceChoice
@@ -764,13 +765,36 @@ func (i *installer) decideAmong(
 	}
 
 	// Instances exist: the usable ones are all of them for a code holder, else
-	// those granted individually.
+	// those granted individually. A row whose required admin URL variable is
+	// still unfilled is not usable, so it is neither auto-selected nor listed
+	// as a choice. The explicit-instance branch above still binds a named
+	// unfilled row, and Install refuses it with rejectUnfilledAdminVariables.
 	usable := instances
 	if !codeGranted {
 		usable = usable[:0:0]
 		for _, reg := range instances {
 			if grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
 				usable = append(usable, reg)
+			}
+		}
+	}
+	if len(usable) > 1 {
+		declared := catalogURLVariables(entry.URLVariables)
+		filled := make([]*registrydomain.Registry, 0, len(usable))
+		for _, reg := range usable {
+			if rejectUnfilledAdminVariables(entry.URL, declared, boundTarget(reg)) != nil {
+				continue
+			}
+			filled = append(filled, reg)
+		}
+		switch {
+		case len(filled) > 0:
+			usable = filled
+		case catalogNeedsAdminCredential(entry):
+			return installDecision{requiresAdminSetup: true}, nil
+		default:
+			if err := rejectUnfilledAdminVariables(entry.URL, declared, boundTarget(usable[0])); err != nil {
+				return installDecision{}, err
 			}
 		}
 	}
