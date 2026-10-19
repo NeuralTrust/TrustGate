@@ -120,6 +120,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// 109 after the catalog seed fixes: ten DCR failures left self-service
 	// (nine manual OAuth apps, Firecrawl an admin API key) and six admin-gated
 	// entries became self-service (Algolia, Teamwork, Plaid, Cube, Dropbox, Jotform).
+	// Freshworks (ENG-2261) was already not self-service and stays that way as a
+	// manual OAuth app, so this count does not move.
 	require.Equal(t, 109, self, "self_service count changed")
 }
 
@@ -244,10 +246,6 @@ func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
 				"*.au2.dbt.com",
 				"*.jp1.dbt.com",
 			},
-		},
-		"com.freshworks/mcp": {
-			variable: "domain",
-			suffixes: []string{"*.freshservice.com"},
 		},
 		"com.snowflake/mcp": {
 			variable: "account_url",

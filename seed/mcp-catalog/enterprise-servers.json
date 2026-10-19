@@ -5727,27 +5727,69 @@
       "name": "com.freshworks/mcp",
       "vendor": "Freshworks",
       "category": "Customer Support",
-      "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway.",
+      "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway. An admin must create an OAuth app in Freshworks.",
       "capabilities": [
         "Manage tickets",
         "Look up assets",
         "Search the knowledge base"
       ],
       "transport": "streamable-http",
-      "server_url": "https://{domain}/mcp",
+      "server_url": "https://{domain}.freshservice.com/mcp",
       "url_variables": [
         {
           "name": "domain",
-          "description": "Your Freshworks instance domain, e.g. yourco.freshservice.com.",
-          "required": true,
-          "host_suffix": ["*.freshservice.com"]
+          "description": "Your Freshservice subdomain, e.g. yourco.",
+          "required": true
         }
       ],
       "requires_auth": true,
       "self_service": false,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://{domain}.myfreshworks.com/org/oauth/v2/authorize",
+        "token_url": "https://{domain}.myfreshworks.com/org/oauth/v2/token",
+        "scopes": [
+          "freshservice.tickets.create",
+          "freshservice.tickets.edit",
+          "freshservice.tickets.conversations.create",
+          "freshservice.tickets.view",
+          "freshservice.assets.view",
+          "freshservice.assets.manage",
+          "freshservice.onboarding_requests.create",
+          "freshservice.onboarding_requests.view",
+          "freshservice.onboarding_requests.fields.view",
+          "freshservice.offboarding_requests.create",
+          "freshservice.offboarding_requests.view",
+          "freshservice.offboarding_requests.fields.view",
+          "freshservice.products.view",
+          "freshservice.agents.manage",
+          "freshservice.requesters.view",
+          "freshservice.solutions.publish",
+          "freshservice.solutions.view",
+          "freshservice.service_catalog.view",
+          "freshservice.service_catalog.edit",
+          "freshservice.workspaces.view",
+          "freshservice.solutions.manage",
+          "freshservice.tickets.fields.manage",
+          "freshservice.locations.view",
+          "freshservice.vendors.view",
+          "freshservice.departments.view",
+          "freshservice.agentgroups.manage",
+          "freshservice.objects.manage"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Freshworks.",
+        "steps": [
+          "Create an OAuth app in Freshworks.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Dynamic client registration is not available for this gateway. An admin must create an OAuth app in Freshworks. Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp."
       },
       "relevance": 60
     },
