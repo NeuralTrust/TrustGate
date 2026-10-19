@@ -180,8 +180,8 @@ func TestInstall_ReinstallOverARowThatStoresAPinnedKey(t *testing.T) {
 	if !res.AlreadyInstalled || len(installs.upserts) != 1 || installs.upserts[0].ID != old.ID {
 		t.Fatalf("reinstall must refresh the existing row, got %+v upserts=%d", res, len(installs.upserts))
 	}
-	if cfg := installs.upserts[0].Config; len(cfg) != 1 || cfg["space"] != "default" {
-		t.Fatalf("refreshed row keeps the unpinned value, got %+v", cfg)
+	if cfg := installs.upserts[0].Config; cfg["space"] != "default" || cfg["host"] != "acme.kb.example.com" {
+		t.Fatalf("refreshed row keeps the unpinned value and the pinned key, got %+v", cfg)
 	}
 }
 

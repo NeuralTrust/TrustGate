@@ -15,6 +15,8 @@
 package store
 
 import (
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -75,6 +77,27 @@ func sameInstanceIgnoringPins(
 	view := *row
 	view.Config = withoutPinnedKeys(row.Config, bound)
 	return view.SameInstance(registryID, canonical, withoutPinnedKeys(config, bound))
+}
+
+// mergePinnedConfig copies onto next every value previous still holds for a
+// key bound pins. A reinstall no longer asks for that key, but the connect
+// path fills the catalog server URL with the principal's stored values, and
+// a missing one stops the catalog scopes and resource from applying.
+func mergePinnedConfig(next, previous map[string]string, bound *registrydomain.MCPTarget) map[string]string {
+	if bound == nil || len(previous) == 0 {
+		return next
+	}
+	out := next
+	for k, v := range previous {
+		if strings.TrimSpace(v) == "" || !bound.PinsURLVariable(k) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, 1)
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // sameConfigIgnoringPins is SameConfig once keys bound pins are left out of
