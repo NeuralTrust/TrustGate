@@ -79,6 +79,8 @@ func storeMCPAt(t *testing.T, base, gatewayID, apiKey, method string, params map
 // On the MCP plane as production runs it, a person with an OAuth server
 // installed and not connected gets its connect link by installing it again —
 // the install the plane forwards to the control plane — and opens the page.
+// Setting that person's Store access to None then drops the server from the
+// listing the same plane serves.
 func TestDBLessMCP_StoreConnectsAnInstalledServerThroughInstall(t *testing.T) {
 	defer Track(t, "DBLessDataPlane")()
 	idp := newOAuthProviderStub(t)
@@ -97,11 +99,6 @@ func TestDBLessMCP_StoreConnectsAnInstalledServerThroughInstall(t *testing.T) {
 	status, installed := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/v1/gateways/%s/store/principal/installs", AdminURL, gwID), nil,
 		map[string]any{"principal_sub": alice, "code": code})
 	require.Equal(t, http.StatusOK, status, "body=%v", installed)
-	// An administrator then turns installing off for alice. What she already
-	// has stays hers, and connecting it is not installing.
-	status, policy := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/v1/gateways/%s/store/access-policies", AdminURL, gwID), nil,
-		map[string]any{"principal_type": "user", "principal_id": alice, "mode": "none"})
-	require.Equal(t, http.StatusOK, status, "body=%v", policy)
 	status, issued := CreateLLMKey(t, gwID, alice, llmKeyExpiry(llmKeyDay))
 	require.Equal(t, http.StatusCreated, status, "body=%v", issued)
 	rawKey := fmt.Sprint(issued["api_key"])
@@ -140,4 +137,22 @@ func TestDBLessMCP_StoreConnectsAnInstalledServerThroughInstall(t *testing.T) {
 	require.NoError(t, err, "body=%v", called)
 	require.Equal(t, "/store/mcp/connect", link.Path, "body=%v", called)
 	require.NotEmpty(t, link.Query().Get("ticket"))
+
+	// None closes the surface. The install row stays; the plane stops listing it
+	// once the policy reaches the snapshot.
+	status, policy := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/v1/gateways/%s/store/access-policies", AdminURL, gwID), nil,
+		map[string]any{"principal_type": "user", "principal_id": alice, "mode": "none"})
+	require.Equal(t, http.StatusOK, status, "body=%v", policy)
+	require.Eventually(t, func() bool {
+		status, called := storeMCPAt(t, base, gwID, rawKey, "tools/call", map[string]any{
+			"name": "trustgate_list_tools", "arguments": map[string]any{},
+		})
+		if status != http.StatusOK || called["error"] != nil {
+			return false
+		}
+		result, _ := called["result"].(map[string]any)
+		structured, _ := result["structuredContent"].(map[string]any)
+		servers, _ := structured["servers"].([]any)
+		return len(servers) == 0
+	}, 30*time.Second, 300*time.Millisecond, "none must drop the install from the db-less plane; logs:\n%s", logs.String())
 }
