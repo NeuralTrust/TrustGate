@@ -13797,7 +13797,7 @@
     },
     {
       "name": "com.salesforce/mcp-sandbox",
-      "vendor": "Salesforce",
+      "vendor": "Salesforce (Sandbox)",
       "category": "Sales & CRM",
       "description": "Hosted Salesforce MCP servers for a sandbox or scratch org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
       "capabilities": [
