@@ -32,11 +32,13 @@ type MCPAuthCatalog interface {
 }
 
 // RequireAdminBoundURLVariables rejects a registry save while a required
-// non-secret URL placeholder is still open. The admin form writes each value
-// into the server URL; the catalog OAuth templates keep the placeholder and
-// connect reads the value back from that URL. A secret credential is not
-// required here. A catalog code with no such variable, or a target that is
-// not a catalog entry, is left alone.
+// non-secret URL placeholder is still open, or while a value the admin wrote
+// fails the catalog rules: ValidateURLValues (charset and closed options),
+// the variable's host suffix, or userinfo in the URL. The admin form writes
+// each value into the server URL; the catalog OAuth templates keep the
+// placeholder and connect reads the value back from that URL. A secret
+// credential is not required here. A catalog code with no such variable, or
+// a target that is not a catalog entry, is left alone.
 func RequireAdminBoundURLVariables(target *domain.MCPTarget, catalog MCPAuthCatalog) error {
 	if target == nil || catalog == nil {
 		return nil
@@ -50,21 +52,46 @@ func RequireAdminBoundURLVariables(target *domain.MCPTarget, catalog MCPAuthCata
 		return nil
 	}
 	vars := catalogURLVarsAsRegistry(entry.URLVariables)
-	admin, _ := domain.AdminBoundValues(entry.URL, vars, target.URL)
-	var missing []string
-	for _, variable := range vars {
-		if variable.Secret || !variable.Required {
-			continue
-		}
-		if target.PinsURLVariable(variable.Name) || strings.TrimSpace(admin[variable.Name]) != "" {
-			continue
-		}
-		missing = append(missing, variable.Name)
+	if err := domain.RejectURLUserinfo(target.URL); err != nil {
+		return fmt.Errorf("%w: %w", commonerrors.ErrValidation, err)
 	}
-	if len(missing) == 0 {
+	admin, matched := domain.AdminBoundValues(entry.URL, vars, target.URL)
+	if strings.Contains(entry.URL, "{") && strings.TrimSpace(target.URL) != "" && !matched {
+		return fmt.Errorf("%w: registry URL does not match the catalog template", commonerrors.ErrValidation)
+	}
+	var missing []string
+	values := make(map[string]string)
+	var check []domain.MCPURLVariable
+	for _, variable := range vars {
+		if variable.Secret {
+			continue
+		}
+		val := ""
+		if matched {
+			val = strings.TrimSpace(admin[variable.Name])
+		}
+		if val == "" {
+			if variable.Required && !target.PinsURLVariable(variable.Name) {
+				missing = append(missing, variable.Name)
+			}
+			continue
+		}
+		values[variable.Name] = val
+		check = append(check, variable)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: registry variable %s must be set on the registry", commonerrors.ErrValidation, strings.Join(missing, ", "))
+	}
+	if len(check) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: registry variable %s must be set on the registry", commonerrors.ErrValidation, strings.Join(missing, ", "))
+	if err := domain.ValidateURLValues(check, values); err != nil {
+		return fmt.Errorf("%w: %w", commonerrors.ErrValidation, err)
+	}
+	if err := domain.ValidateHostSuffixes(check, values); err != nil {
+		return fmt.Errorf("%w: %w", commonerrors.ErrValidation, err)
+	}
+	return nil
 }
 
 func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCatalog) error {
