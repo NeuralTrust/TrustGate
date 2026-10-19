@@ -83,18 +83,85 @@ func (r *Registry) ForwardedAuth() *MCPAuth {
 // each is connected on its own; sharing there would forward a token minted for
 // one tenant to another.
 //
-// A URL still carrying `{placeholders}` fingerprints as written. Every vault key
-// is already per principal, so a template resolved differently per user needs no
-// further separation here.
+// A manual client's resource template whose every placeholder is a closed
+// option is filled from this registry's instance config before it is
+// fingerprinted, so two regions of one catalog code do not share a token.
+// An open placeholder stays written. A dynamic-registration template stays
+// written too: New Relic and Vanta already store tokens under that
+// fingerprint, and the DCR client cache is keyed the same way. An empty
+// resource falls back to the server URL and is fingerprinted as written,
+// which is the key those rows were saved under.
 func ForwardedCredentialResource(reg *Registry) string {
 	cfg := reg.ForwardedAuth()
 	if cfg == nil {
 		return ""
 	}
-	if resource := strings.TrimSpace(cfg.Resource); resource != "" {
-		return canonicalResource(resource)
+	resource := strings.TrimSpace(cfg.Resource)
+	if resource == "" && reg.MCPTarget != nil {
+		resource = strings.TrimSpace(reg.MCPTarget.URL)
+	} else if resolved, ok := resolvedClosedResource(reg, resource); ok {
+		return canonicalResource(resolved)
 	}
-	return canonicalResource(reg.MCPTarget.URL)
+	return canonicalResource(resource)
+}
+
+// resolvedClosedResource fills resource from instance config when every
+// placeholder is a closed option with a value. Anything else returns false
+// and the caller fingerprints resource as written.
+func resolvedClosedResource(reg *Registry, resource string) (string, bool) {
+	if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil || !strings.Contains(resource, "{") {
+		return "", false
+	}
+	// Registration auto is dynamic client registration. Its cache key is this
+	// same fingerprint of the template as written (see appoauth.clientKey).
+	// Resolving a closed option would orphan every token already stored
+	// under that key.
+	if reg.MCPTarget.Auth.Registration == RegistrationAuto {
+		return "", false
+	}
+	names := TemplateVariableNames(resource)
+	if len(names) == 0 {
+		return "", false
+	}
+	declared := make(map[string]MCPURLVariable, len(reg.MCPTarget.URLVariables))
+	for _, variable := range reg.MCPTarget.URLVariables {
+		declared[variable.Name] = variable
+	}
+	values := make(map[string]string, len(names))
+	for _, name := range names {
+		variable, known := declared[name]
+		if !known || !variable.HasOptions() {
+			return "", false
+		}
+		val := strings.TrimSpace(reg.MCPTarget.InstanceConfig[name])
+		if val == "" || !variable.AllowsValue(val) {
+			return "", false
+		}
+		values[name] = val
+	}
+	resolved, err := ResolveURL(resource, reg.MCPTarget.URLVariables, values)
+	if err != nil || strings.ContainsAny(resolved, "{}") {
+		return "", false
+	}
+	return resolved, true
+}
+
+// RegistryWithInstanceConfig returns a clone whose target carries values as
+// its instance config. The caller's registry is not modified. A registry that
+// already has instance config, or an empty value map, is returned as given.
+func RegistryWithInstanceConfig(reg *Registry, values map[string]string) *Registry {
+	if reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) > 0 || len(values) == 0 {
+		return reg
+	}
+	cp := *reg
+	target := *reg.MCPTarget
+	cfg := make(map[string]string, len(values))
+	for key, value := range values {
+		cfg[key] = value
+	}
+	target.InstanceConfig = cfg
+	cp.MCPTarget = &target
+	return &cp
 }
 
 // ForwardedVaultProvider is the vault "provider" key a registry's forwarded

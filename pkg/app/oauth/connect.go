@@ -398,7 +398,7 @@ func (s *connectService) providerStatuses(
 		// on this endpoint — with nothing the caller could do about it.
 		subject := registrydomain.CredentialSubject(reg, ticket.PrincipalSub)
 		status.Shared = subject != ticket.PrincipalSub
-		cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+		cred, err := s.vault.Find(ctx, gatewayID, subject, s.forwardedVaultProvider(ctx, gatewayID, ticket.PrincipalSub, reg))
 		switch {
 		case err == nil:
 			status.Linked = true
@@ -582,7 +582,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg),
+		gatewayID, st.Ticket.PrincipalSub, s.forwardedVaultProvider(ctx, gatewayID, st.Ticket.PrincipalSub, reg),
 		resolveAccountRef(ctx, s.userinfo, cfg, token),
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
@@ -630,7 +630,7 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, ins
 		if !ownsSharedAccount(reg, ticket.PrincipalSub) {
 			return ErrSharedAccountNotYours
 		}
-		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
+		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, s.forwardedVaultProvider(ctx, gatewayID, ticket.PrincipalSub, reg))
 	} else {
 		err = s.deleteProviderCredentials(ctx, gatewayID, ticket.PrincipalSub, provider)
 	}
@@ -854,6 +854,24 @@ func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
 	}
 	sort.Strings(providers)
 	return providers
+}
+
+// forwardedVaultProvider is the credential key for this principal. A templated
+// registry with no instance config yet takes the principal's install values,
+// so the key matches the one the dial path computes from the scoped clone.
+func (s *connectService) forwardedVaultProvider(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) string {
+	return registrydomain.ForwardedVaultProvider(s.registryForVaultKey(ctx, gatewayID, principalSub, reg))
+}
+
+func (s *connectService) registryForVaultKey(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) *registrydomain.Registry {
+	if s == nil || reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) > 0 || !reg.MCPTarget.HasURLVariables() {
+		return reg
+	}
+	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
+	if err != nil || len(values) == 0 {
+		return reg
+	}
+	return registrydomain.RegistryWithInstanceConfig(reg, values)
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {

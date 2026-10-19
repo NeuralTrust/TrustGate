@@ -19,6 +19,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -528,4 +529,131 @@ func TestCanonicalizeMCPAuthFromCatalog_StoredClientIDStaysManualWhenCatalogIsAu
 			require.NoError(t, fresh.Validate())
 		})
 	}
+}
+
+const (
+	pagerDutyCode      = "com.pagerduty/mcp"
+	pagerDutyUS        = "https://mcp.pagerduty.com/mcp"
+	pagerDutyEU        = "https://mcp.eu.pagerduty.com/mcp"
+	pagerDutyTemplate  = "https://{host}/mcp"
+	pagerDutyAuthorize = "https://app.pagerduty.com/global/oauth/authorize"
+	pagerDutyToken     = "https://app.pagerduty.com/global/oauth/token"
+)
+
+func pagerDutyCatalog() stubCatalog {
+	return stubCatalog{entries: map[string]catalogdomain.MCPServer{
+		pagerDutyCode: {
+			Code: pagerDutyCode,
+			URL:  pagerDutyTemplate,
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name:     "host",
+				Required: true,
+				Options: []catalogdomain.MCPURLVariableOption{
+					{Value: "mcp.pagerduty.com", Label: "United States"},
+					{Value: "mcp.eu.pagerduty.com", Label: "Europe"},
+				},
+			}},
+			OAuth: &catalogdomain.MCPOAuth{
+				Required:         true,
+				ResourceMetadata: true,
+				Registration:     "manual",
+				AuthorizeURL:     pagerDutyAuthorize,
+				TokenURL:         pagerDutyToken,
+				Scopes:           []string{"read", "incidents.read", "oncalls.read", "services.read", "users.read", "openid"},
+				Resource:         pagerDutyTemplate,
+			},
+		},
+	}}
+}
+
+func pagerDutyTarget(url, resource string) *domain.MCPTarget {
+	return &domain.MCPTarget{
+		Code: pagerDutyCode,
+		URL:  url,
+		URLVariables: []domain.MCPURLVariable{{
+			Name:     "host",
+			Required: true,
+			Options: []domain.MCPURLVariableOption{
+				{Value: "mcp.pagerduty.com", Label: "United States"},
+				{Value: "mcp.eu.pagerduty.com", Label: "Europe"},
+			},
+		}},
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     pagerDutyCode,
+			Registration: domain.RegistrationManual,
+			ClientID:     "pagerduty-client",
+			AuthorizeURL: pagerDutyAuthorize,
+			TokenURL:     pagerDutyToken,
+			Resource:     resource,
+			Scopes:       []string{"read"},
+		},
+	}
+}
+
+func forwardedVaultKey(t *testing.T, target *domain.MCPTarget) string {
+	t.Helper()
+	cp := *target
+	auth := *target.Auth
+	cp.Auth = &auth
+	reg, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "PagerDuty", "", &cp)
+	require.NoError(t, err)
+	return domain.ForwardedVaultProvider(reg)
+}
+
+// An admin update echoes the catalog template into oauth.resource. The stored
+// audience has to stay the concrete US resource, or the vault fingerprint
+// changes and every existing token is orphaned.
+func TestCanonicalizeMCPAuthFromCatalog_PagerDutyFixedURLKeepsVaultKey(t *testing.T) {
+	t.Parallel()
+	target := pagerDutyTarget(pagerDutyUS, pagerDutyUS)
+	keyBefore := forwardedVaultKey(t, target)
+	target.Auth.Resource = pagerDutyTemplate
+
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, pagerDutyCatalog()))
+	require.Equal(t, pagerDutyUS, target.Auth.Resource)
+	require.Equal(t, keyBefore, forwardedVaultKey(t, target))
+	require.NotEqual(t, keyBefore, forwardedVaultKey(t, pagerDutyTarget(pagerDutyUS, pagerDutyTemplate)))
+	require.Equal(t, pagerDutyAuthorize, target.Auth.AuthorizeURL)
+	require.Equal(t, pagerDutyToken, target.Auth.TokenURL)
+	require.Equal(t, []string{"read", "incidents.read", "oncalls.read", "services.read", "users.read", "openid"}, target.Auth.Scopes)
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_PagerDutyTemplateURLKeepsConcreteResource(t *testing.T) {
+	t.Parallel()
+	target := pagerDutyTarget(pagerDutyTemplate, pagerDutyUS)
+	keyBefore := forwardedVaultKey(t, target)
+
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, pagerDutyCatalog()))
+	require.Equal(t, pagerDutyUS, target.Auth.Resource)
+	require.Equal(t, keyBefore, forwardedVaultKey(t, target))
+	require.Equal(t, pagerDutyAuthorize, target.Auth.AuthorizeURL)
+	require.Equal(t, pagerDutyToken, target.Auth.TokenURL)
+}
+
+// Fixed-URL US and EU rows in one gateway store different audiences, so one
+// connect cannot overwrite the other's vault entry.
+func TestCanonicalizeMCPAuthFromCatalog_PagerDutyRegionsDoNotShareAVaultKey(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	us := pagerDutyTarget(pagerDutyUS, pagerDutyTemplate)
+	eu := pagerDutyTarget(pagerDutyEU, pagerDutyTemplate)
+	cat := pagerDutyCatalog()
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(us, cat))
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(eu, cat))
+	require.Equal(t, pagerDutyUS, us.Auth.Resource)
+	require.Equal(t, pagerDutyEU, eu.Auth.Resource)
+
+	usReg, err := domain.NewMCPRegistry(gw, "PagerDuty US", "", us)
+	require.NoError(t, err)
+	euReg, err := domain.NewMCPRegistry(gw, "PagerDuty EU", "", eu)
+	require.NoError(t, err)
+	usKey := domain.ForwardedVaultProvider(usReg)
+	euKey := domain.ForwardedVaultProvider(euReg)
+	require.NotEqual(t, usKey, euKey)
+
+	tokens := map[string]string{usKey: "us-token"}
+	tokens[euKey] = "eu-token"
+	require.Equal(t, "us-token", tokens[domain.ForwardedVaultProvider(usReg)])
+	require.Equal(t, "eu-token", tokens[domain.ForwardedVaultProvider(euReg)])
 }
