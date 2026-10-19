@@ -798,11 +798,17 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 			GatewayID:   grant.GatewayID,
 			AuthID:      grant.AuthID,
 			Org:         grant.Org,
-			Groups:      grant.Groups,
+			Groups:      cloneGroups(grant.Groups),
 			StoreAccess: grant.StoreAccess,
 			Audiences:   grant.Audiences,
 			LoginAt:     loginAt,
 			ExpiresAt:   loginAt.Add(lifetime),
+		}
+		// The default IdP's groups claim is kept beside the effective list so a
+		// later directory push is added to it. A push cannot remove those names.
+		if grant.AuthID == appauth.DefaultIdPAuthID().String() {
+			rec.ClaimGroups = cloneGroups(grant.Groups)
+			rec.ClaimSnapshot = true
 		}
 		if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
 			return nil, fmt.Errorf("oauth: persist session: %w", err)
@@ -971,6 +977,9 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 	if rec.AuthID == appauth.DefaultIdPAuthID().String() && !gatewayNamed(rec.GatewayID) {
 		return nil, oauthErr("invalid_grant", "session predates gateway binding; sign in again")
 	}
+	// A directory push that landed after this record was loaded has to win
+	// over the copy refresh is about to save. ExpiresAt is not part of that.
+	p.applyPushedDirectoryGroups(ctx, &rec)
 	resp, err := p.mintSession(CodeGrant{
 		ClientID:    rec.ClientID,
 		Subject:     rec.Subject,

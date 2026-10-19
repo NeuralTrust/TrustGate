@@ -164,6 +164,9 @@ func provideAuthServices(c *container.Container) error {
 	if err := c.Provide(authhttp.NewUpdateAuthOwnerGroupsHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(authhttp.NewUpdateSubjectGroupsHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(authhttp.NewDeleteSubjectSessionsHandler); err != nil {
 		return err
 	}
