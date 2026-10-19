@@ -63,7 +63,8 @@ func TestFederatedToolKeepsDestinationAcrossOutage(t *testing.T) {
 func TestDiscoveryReloadsAfterInstallationURLChanges(t *testing.T) {
 	t.Parallel()
 	reg := urlVarRegistry(t)
-	values := map[string]string{"account_url": "a.example.com", "database": "FIRST"}
+	reg.MCPTarget.URL = "https://a.example.com/api/v2/databases/FIRST/mcp"
+	values := map[string]string{"account_url": "a.example.com", "database": "SECOND"}
 	finder := fakeInstallFinder{byCode: map[string]map[string]string{"snowflake": values}}
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://a.example.com/api/v2/databases/FIRST/mcp":  {tools: tools("first")},
@@ -74,7 +75,7 @@ func TestDiscoveryReloadsAfterInstallationURLChanges(t *testing.T) {
 	first, err := comp.ListTools(subCtx("alice"), rc)
 	require.NoError(t, err)
 	require.Equal(t, []string{namedFor(reg, "first")}, toolNames(first))
-	values["database"] = "SECOND"
+	reg.MCPTarget.URL = "https://a.example.com/api/v2/databases/SECOND/mcp"
 	second, err := comp.ListTools(subCtx("alice"), rc)
 	require.NoError(t, err)
 	require.Equal(t, []string{namedFor(reg, "second")}, toolNames(second))

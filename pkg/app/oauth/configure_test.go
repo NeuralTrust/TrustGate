@@ -17,6 +17,7 @@ package oauth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -290,26 +291,15 @@ func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", nil, []string{"ana"})}, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 
-	page, err := f.svc.Submit(context.Background(), id, map[string]string{
+	_, err := f.svc.Submit(context.Background(), id, map[string]string{
 		"account_url": "acme.snowflakecomputing.com",
 		"database":    "ANALYTICS",
 	})
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
+	if err == nil || !errors.Is(err, oauth.ErrConfigureInvalid) || !strings.Contains(err.Error(), `variable "account_url" is set by an admin`) {
+		t.Fatalf("registry variables must be refused, got %v", err)
 	}
-	if !page.Saved || page.Pending {
-		t.Fatalf("submit must report saved and not pending, got %+v", page)
-	}
-	rows := f.rows(t, "snowflake")
-	if len(rows) != 1 {
-		t.Fatalf("expected one installation, got %d", len(rows))
-	}
-	inst := rows[0]
-	if inst.Status != installationdomain.StatusInstalled {
-		t.Fatalf("available server must install, got %q", inst.Status)
-	}
-	if inst.Config["account_url"] != "acme.snowflakecomputing.com" || inst.Config["database"] != "ANALYTICS" {
-		t.Fatalf("plain values not persisted: %+v", inst.Config)
+	if rows := f.rows(t, "snowflake"); len(rows) != 0 {
+		t.Fatalf("nothing may be stored, got %+v", rows)
 	}
 }
 
@@ -319,11 +309,9 @@ func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 // request, never as an installed row.
 func TestConfigure_FirstConfigureOfGovernedServerIsPending(t *testing.T) {
 	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
-	id := f.ticket(t, "snowflake", "", "marketing")
-
+	id := f.reasonTicket(t, "snowflake", "marketing")
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
-		"account_url": "acme.snowflakecomputing.com",
-		"database":    "ANALYTICS",
+		oauth.ReasonFormField: "loading the quarterly revenue model",
 	})
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
@@ -341,11 +329,10 @@ func TestConfigure_FirstConfigureOfGovernedServerIsPending(t *testing.T) {
 // server not on the shelf is a request for the admin — the form cannot install it.
 func TestConfigure_FirstConfigureCuratedNotOnShelfIsPending(t *testing.T) {
 	f := configureFixture(t, false) // curated, empty shelf
-	id := f.ticket(t, "snowflake", "")
+	id := f.reasonTicket(t, "snowflake")
 
 	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
-		"account_url": "acme.snowflakecomputing.com",
-		"database":    "ANALYTICS",
+		oauth.ReasonFormField: "loading the quarterly revenue model",
 	}); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -360,10 +347,10 @@ func TestConfigure_FirstConfigureCuratedNotOnShelfIsPending(t *testing.T) {
 // Selected, a principal outside the grant files a request; one inside installs.
 func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
 	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
-	values := map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
+	values := map[string]string{oauth.ReasonFormField: "loading the quarterly revenue model"}
 
 	// Not in the group: recorded as a pending request, not installed.
-	excluded := f.ticket(t, "snowflake", "", "marketing")
+	excluded := f.reasonTicket(t, "snowflake", "marketing")
 	page, err := f.svc.Submit(context.Background(), excluded, values)
 	if err != nil {
 		t.Fatalf("group-excluded Submit: %v", err)
@@ -377,8 +364,10 @@ func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
 
 	// In the group (fresh fixture, so the pending request above does not merge):
 	// installs instantly.
-	g := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
-	allowed := g.ticket(t, "snowflake", "", "data-eng")
+	allowedShelf := shelf("snowflake")
+	allowedShelf.MCPTarget.URL = "https://acme.snowflakecomputing.com/mcp"
+	g := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, allowedShelf)
+	allowed := g.reasonTicket(t, "snowflake", "data-eng")
 	if _, err := g.svc.Submit(context.Background(), allowed, values); err != nil {
 		t.Fatalf("group member Submit: %v", err)
 	}
@@ -399,11 +388,12 @@ func TestConfigure_FirstConfigureWithoutInstallerRefused(t *testing.T) {
 	svc := oauth.NewConfigureService(store, &stubDataFinder{data: data}, configureCatalog(), installs, &memVaultRepo{})
 	id, err := svc.CreateTicket(context.Background(), oauth.ConfigureTicketRequest{
 		GatewayID: gw, PrincipalSub: "ana", ConsumerPath: appconsumer.MCPPath("dev"), Code: "snowflake",
+		AskReason: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	_, err = svc.Submit(context.Background(), id, map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"})
+	_, err = svc.Submit(context.Background(), id, map[string]string{oauth.ReasonFormField: "loading the quarterly revenue model"})
 	if !errors.Is(err, oauth.ErrConfigureInstallUnavailable) {
 		t.Fatalf("configure-before-install without an installer must be refused, got %v", err)
 	}
@@ -418,8 +408,8 @@ func TestConfigure_FirstConfigureIncompleteSavesNothing(t *testing.T) {
 	f := configureFixture(t, true, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 	_, err := f.svc.Submit(context.Background(), id, map[string]string{"account_url": "acme.snowflakecomputing.com"})
-	if !errors.Is(err, oauth.ErrConfigureIncomplete) || !errors.Is(err, oauth.ErrConfigureInvalid) {
-		t.Fatalf("incomplete first configuration must be rejected as invalid/incomplete, got %v", err)
+	if err == nil || !errors.Is(err, oauth.ErrConfigureInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a registry variable must be refused, got %v", err)
 	}
 	if rows := f.rows(t, "snowflake"); len(rows) != 0 {
 		t.Fatalf("nothing may be recorded, got %+v", rows)
@@ -433,23 +423,16 @@ func TestConfigure_ExistingInstanceMergesInPlace(t *testing.T) {
 	pending := f.seed(t, "snowflake", installationdomain.StatusPendingApproval, map[string]string{"account_url": "acme.snowflakecomputing.com"})
 	id := f.ticket(t, "snowflake", pending.ID.String())
 
-	page, err := f.svc.Submit(context.Background(), id, map[string]string{"database": "ANALYTICS"})
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
+	_, err := f.svc.Submit(context.Background(), id, map[string]string{"database": "ANALYTICS"})
+	if err == nil || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a registry variable must be refused, got %v", err)
 	}
-	if !page.Pending {
-		t.Fatal("page must still report pending for a pending instance")
-	}
-	rows := f.rows(t, "snowflake")
-	if len(rows) != 1 {
-		t.Fatalf("merging must not create a second row, got %d", len(rows))
-	}
-	got := rows[0]
+	got := f.rows(t, "snowflake")[0]
 	if got.Status != installationdomain.StatusPendingApproval {
-		t.Fatalf("merging must not change the status, got %q", got.Status)
+		t.Fatalf("a refused submit must not change the status, got %q", got.Status)
 	}
-	if got.Config["account_url"] != "acme.snowflakecomputing.com" || got.Config["database"] != "ANALYTICS" {
-		t.Fatalf("values not merged: %+v", got.Config)
+	if got.Config["database"] != "" || got.Config["account_url"] != "acme.snowflakecomputing.com" {
+		t.Fatalf("config must be unchanged, got %+v", got.Config)
 	}
 }
 
@@ -461,20 +444,11 @@ func TestConfigure_TicketTargetsPinnedInstance(t *testing.T) {
 	b := f.seed(t, "snowflake", installationdomain.StatusInstalled, map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "B"})
 
 	id := f.ticket(t, "snowflake", b.ID.String())
-	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"database": "B2"}); err != nil {
-		t.Fatalf("Submit: %v", err)
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"database": "B2"}); err == nil || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a registry variable must be refused, got %v", err)
 	}
-	if a.Config["database"] != "A" {
-		t.Fatalf("instance A must be untouched, got %+v", a.Config)
-	}
-	if b.Config["database"] != "B2" {
-		t.Fatalf("instance B must carry the new value, got %+v", b.Config)
-	}
-
-	// An unpinned ticket cannot choose between the two.
-	unpinned := f.ticket(t, "snowflake", "")
-	if _, err := f.svc.Submit(context.Background(), unpinned, map[string]string{"database": "C"}); !errors.Is(err, oauth.ErrConfigureAmbiguous) {
-		t.Fatalf("unpinned ticket over two instances must be ambiguous, got %v", err)
+	if a.Config["database"] != "A" || b.Config["database"] != "B" {
+		t.Fatalf("neither instance may change, got A=%+v B=%+v", a.Config, b.Config)
 	}
 }
 
@@ -533,17 +507,8 @@ func TestConfigure_PageReportsSetState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
-	var accountSet, dbSet bool
-	for _, v := range page.Variables {
-		switch v.Name {
-		case "account_url":
-			accountSet = v.Set
-		case "database":
-			dbSet = v.Set
-		}
-	}
-	if !accountSet || dbSet {
-		t.Fatalf("expected account_url set and database unset, got %+v", page.Variables)
+	if len(page.Variables) != 0 {
+		t.Fatalf("non-secret variables are not on the form, got %+v", page.Variables)
 	}
 }
 
@@ -559,11 +524,10 @@ func TestConfigure_UnknownTicketFails(t *testing.T) {
 // a request the installer refuses for having no reason.
 func TestConfigure_CarriesTheRequestersReasonToTheRequest(t *testing.T) {
 	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
-	id := f.ticket(t, "snowflake", "", "marketing")
+	id := f.reasonTicket(t, "snowflake", "marketing")
 
 	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
-		"account_url": "acme.snowflakecomputing.com",
-		"database":    "ANALYTICS",
+		oauth.ReasonFormField: "loading the quarterly revenue model",
 	}); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -634,8 +598,6 @@ func TestConfigure_TheReasonFieldIsNotACatalogVariable(t *testing.T) {
 	f := configureFixture(t, false)
 	id := f.reasonTicket(t, "snowflake")
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
-		"account_url":         "acme.snowflakecomputing.com",
-		"database":            "ANALYTICS",
 		oauth.ReasonFormField: "loading the quarterly revenue model",
 	})
 	if err != nil {
@@ -646,10 +608,16 @@ func TestConfigure_TheReasonFieldIsNotACatalogVariable(t *testing.T) {
 	}
 	rows := f.rows(t, "snowflake")
 	if len(rows) != 1 || rows[0].Reason != "loading the quarterly revenue model" {
-		t.Fatalf("the reason must reach the request and the variables their own places, got %+v", rows)
+		t.Fatalf("the reason must reach the request, got %+v", rows)
 	}
-	if rows[0].Config["account_url"] != "acme.snowflakecomputing.com" {
-		t.Fatalf("variables must still be stored, got %+v", rows[0].Config)
+	if len(rows[0].Config) != 0 {
+		t.Fatalf("a reason is not a registry variable, got %+v", rows[0].Config)
+	}
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
+		"account_url":         "acme.snowflakecomputing.com",
+		oauth.ReasonFormField: "loading the quarterly revenue model",
+	}); err == nil || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a registry variable submitted with the reason must be refused, got %v", err)
 	}
 }
 
@@ -661,13 +629,11 @@ func TestConfigure_TheReasonFieldOnAFormThatDoesNotAskIsIgnored(t *testing.T) {
 	id := f.ticket(t, "snowflake", "")
 	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
 		oauth.ReasonFormField: "x",
-		"account_url":         "acme.snowflakecomputing.com",
-		"database":            "analytics",
-	}); err != nil {
-		t.Fatalf("Submit: %v", err)
+	}); !errors.Is(err, oauth.ErrConfigureNothingToCollect) {
+		t.Fatalf("a reason on a form that does not ask is not something to collect, got %v", err)
 	}
-	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"nonsense": "x"}); !errors.Is(err, oauth.ErrConfigureInvalid) {
-		t.Fatalf("an unknown variable must still be refused, got %v", err)
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"account_url": "acme.snowflakecomputing.com"}); err == nil || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a registry variable must be refused, got %v", err)
 	}
 }
 
@@ -764,21 +730,8 @@ func TestConfigure_PageOffersAClosedVariablesSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
-	if len(page.Variables) != 1 {
-		t.Fatalf("expected one variable, got %+v", page.Variables)
-	}
-	got := page.Variables[0].Options
-	want := []oauth.ConfigureVariableOption{
-		{Value: "mcp.vanta.com", Label: "United States"},
-		{Value: "mcp.eu.vanta.com", Label: "Europe"},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %+v, want %+v", got, want)
-		}
+	if len(page.Variables) != 0 {
+		t.Fatalf("a region is a registry variable, got %+v", page.Variables)
 	}
 }
 
@@ -797,11 +750,10 @@ func TestConfigure_SubmitRefusesAValueOutsideTheSet(t *testing.T) {
 		t.Fatalf("a refused value must store nothing, got %+v", rows)
 	}
 
-	page, err := f.svc.Submit(context.Background(), id, map[string]string{"host": "mcp.eu.vanta.com"})
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"host": "mcp.eu.vanta.com"}); err == nil || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("a published region is still a registry variable, got %v", err)
 	}
-	if !page.Saved {
-		t.Fatalf("a declared option must save, got %+v", page)
+	if rows := f.rows(t, "com.vanta/mcp"); len(rows) != 0 {
+		t.Fatalf("nothing may be stored, got %+v", rows)
 	}
 }

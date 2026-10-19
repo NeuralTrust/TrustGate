@@ -417,9 +417,10 @@ func TestCuratedCatalog_TemplatedOAuthResourceIsClosed(t *testing.T) {
 	}
 }
 
-// Own-client rows (manual registration, resource copied from a templated
-// URL) keep the template vault key for every catalog entry except one whose
-// oauth.resource is itself a template. That is PagerDuty, and only PagerDuty.
+// Own-client rows keep the template vault key. Installation config does not
+// choose it. PagerDuty's oauth.resource is a template, so the key changes
+// only when the admin URL is one closed host. That is PagerDuty, and only
+// PagerDuty.
 func TestCuratedCatalog_VaultKeyStableExceptPagerDutyRegion(t *testing.T) {
 	t.Parallel()
 	cat, err := NewMCPServerCatalog(nil)
@@ -440,11 +441,15 @@ func TestCuratedCatalog_VaultKeyStableExceptPagerDutyRegion(t *testing.T) {
 		plain := registrydomain.ForwardedVaultProvider(reg)
 		reg.MCPTarget.InstanceConfig = firstClosedOptions(server)
 		filled := registrydomain.ForwardedVaultProvider(reg)
-		if strings.Contains(server.OAuth.Resource, "{") {
-			require.NotEqual(t, plain, filled, server.Code)
+		require.Equalf(t, plain, filled, "catalog entry %q changed vault key from install config %s -> %s", server.Code, plain, filled)
+		if !strings.Contains(server.OAuth.Resource, "{") {
 			continue
 		}
-		require.Equalf(t, plain, filled, "catalog entry %q changed vault key %s -> %s", server.Code, plain, filled)
+		concrete, err := registrydomain.ResolveURL(server.URL, reg.MCPTarget.URLVariables, firstClosedOptions(server))
+		require.NoError(t, err)
+		reg.MCPTarget.URL = concrete
+		regional := registrydomain.ForwardedVaultProvider(reg)
+		require.NotEqualf(t, plain, regional, "catalog entry %q kept the template key after the admin URL was filled", server.Code)
 	}
 	require.Equal(t, []string{"com.pagerduty/mcp"}, perInstance)
 }

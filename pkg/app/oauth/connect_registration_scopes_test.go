@@ -209,16 +209,15 @@ func TestConnectService_SelfHostedCubeKeepsStoredResourceAndScopes(t *testing.T)
 	)
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "cube", "", &registrydomain.MCPTarget{
-		Code:           code,
-		URL:            template,
-		URLVariables:   []registrydomain.MCPURLVariable{{Name: "cube_host", Required: true}},
-		InstanceConfig: map[string]string{"cube_host": "self.cube.example"},
+		Code:         code,
+		URL:          resolved,
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "cube_host", Required: true}},
 		Auth: &registrydomain.MCPAuth{
 			Mode:         registrydomain.MCPAuthModeForwarded,
 			Provider:     code,
 			Registration: registrydomain.RegistrationAuto,
 			Scopes:       []string{storedScope},
-			Resource:     template,
+			Resource:     resolved,
 		},
 	})
 	if err != nil {
@@ -382,10 +381,9 @@ func TestConnectService_CatalogAppliesWhenTemplateResolvesToTheRowURL(t *testing
 	)
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "vendor", "", &registrydomain.MCPTarget{
-		Code:           code,
-		URL:            template,
-		URLVariables:   []registrydomain.MCPURLVariable{{Name: "host", Required: true}},
-		InstanceConfig: map[string]string{"host": "mcp.vendor.example"},
+		Code:         code,
+		URL:          resolved,
+		URLVariables: []registrydomain.MCPURLVariable{{Name: "host", Required: true}},
 		Auth: &registrydomain.MCPAuth{
 			Mode:         registrydomain.MCPAuthModeForwarded,
 			Provider:     code,

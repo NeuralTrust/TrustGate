@@ -103,9 +103,13 @@ func pagerDutyHostOptions() []domain.MCPURLVariable {
 
 func pagerDutyTemplated(t *testing.T, gw ids.GatewayID, name string, config map[string]string) *domain.Registry {
 	t.Helper()
+	url := "https://{host}/mcp"
+	if host := strings.TrimSpace(config["host"]); host != "" {
+		url = "https://" + host + "/mcp"
+	}
 	reg, err := domain.NewMCPRegistry(gw, name, "", &domain.MCPTarget{
 		Code:         "com.pagerduty/mcp",
-		URL:          "https://{host}/mcp",
+		URL:          url,
 		URLVariables: pagerDutyHostOptions(),
 		Auth: &domain.MCPAuth{
 			Mode:                domain.MCPAuthModeForwarded,
@@ -119,13 +123,12 @@ func pagerDutyTemplated(t *testing.T, gw ids.GatewayID, name string, config map[
 		},
 	})
 	require.NoError(t, err)
-	reg.MCPTarget.InstanceConfig = config
 	return reg
 }
 
-// Per-user installs keep the catalog template on the shelf. The vault key
-// fills the closed host from instance config, so US and EU in one gateway
-// do not overwrite each other's token.
+// Two admin rows write their region into the server URL. The vault key is
+// that URL, so US and EU in one gateway do not overwrite each other's token.
+// Install config is not a source for the host.
 func TestForwardedVaultProvider_PagerDutyTemplatedRegionsDoNotOverwrite(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
@@ -300,7 +303,7 @@ func TestForwardedVaultProvider_SharedAccountKeepsTheTemplateKey(t *testing.T) {
 	require.Contains(t, domain.ForwardedVaultProvider(shared), "|17636ceb2ec1")
 	require.Contains(t, domain.ForwardedVaultProviderFor(shared, config), "|17636ceb2ec1")
 	require.Contains(t, domain.ForwardedVaultProvider(own), "|b35ba3004532")
-	require.Contains(t, domain.ForwardedVaultProviderFor(pagerDutyTemplated(t, gw, "shelf", nil), config), "|b35ba3004532")
+	require.Contains(t, domain.ForwardedVaultProviderFor(pagerDutyTemplated(t, gw, "shelf", nil), config), "|17636ceb2ec1")
 }
 
 func TestForwardedVaultProviderName_LeavesAPlainKeyAlone(t *testing.T) {

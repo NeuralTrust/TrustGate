@@ -24,7 +24,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,7 +31,6 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
@@ -69,14 +67,6 @@ func (h hostRewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 type hostServer struct {
 	server        *httptest.Server
 	registrations atomic.Int64
-	tokenClient   string
-	mu            sync.Mutex
-}
-
-func (h *hostServer) lastTokenClient() string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.tokenClient
 }
 
 func newHostServer(t *testing.T, host, tokenError string) *hostServer {
@@ -107,11 +97,7 @@ func newHostServer(t *testing.T, host, tokenError string) *hostServer {
 			"client_secret_expires_at": time.Now().Add(time.Hour).Unix(),
 		})
 	})
-	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		h.mu.Lock()
-		h.tokenClient = r.Form.Get("client_id")
-		h.mu.Unlock()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
 		if tokenError != "" {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -468,6 +454,7 @@ func TestConnectService_TemplatedHostsIsolateDynamicClients(t *testing.T) {
 	evil := newHostServer(t, "evil.example", "invalid_client")
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
+	reg.MCPTarget.URL = "https://good.example/mcp"
 	store := newMemConnectStore()
 	values := principalURLValues{
 		"alice":   {"host": "good.example"},
@@ -502,53 +489,11 @@ func TestConnectService_TemplatedHostsIsolateDynamicClients(t *testing.T) {
 		t.Fatalf("mallory Start: %v", err)
 	}
 	malloryClient := mustQuery(t, malloryURL).Get("client_id")
-	if malloryClient != "evil.example-client-1" || evil.registrations.Load() != 1 {
-		t.Fatalf("mallory client = %q, registrations = %d", malloryClient, evil.registrations.Load())
+	if malloryClient != aliceClient || evil.registrations.Load() != 0 {
+		t.Fatalf("mallory client = %q, evil registrations = %d, want the admin host and no employee retarget", malloryClient, evil.registrations.Load())
 	}
-	legacy := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
-	if len(store.clients) != 2 {
-		t.Fatalf("cached clients = %d, want one per host", len(store.clients))
-	}
-	for key, client := range store.clients {
-		if key == legacy || len(key) <= len(legacy)+1 || key[:len(legacy)+1] != legacy+"|" {
-			t.Fatalf("cache key %q, want it scoped under %s", key, legacy)
-		}
-		if client.ClientID != aliceClient && client.ClientID != malloryClient {
-			t.Fatalf("unexpected client %q", client.ClientID)
-		}
-	}
-
-	_, err = svc.Callback(ctx, base, "linear", mustQuery(t, malloryURL).Get("state"), "the-code", "", "")
-	if !errors.Is(err, oauth.ErrInvalidClient) {
-		t.Fatalf("mallory callback: %v", err)
-	}
-	if evil.lastTokenClient() != malloryClient {
-		t.Fatalf("token client_id = %q, want %q", evil.lastTokenClient(), malloryClient)
-	}
-	if good.registrations.Load() != 1 {
-		t.Fatalf("good registrations = %d, want the other host's rejection to leave it", good.registrations.Load())
-	}
-	aliceCtx := identity.WithPrincipal(ctx, &identity.Principal{Subject: "alice"})
-	malloryCtx := identity.WithPrincipal(ctx, &identity.Principal{Subject: "mallory"})
-	aliceUsable, err := svc.CredentialUsable(aliceCtx, gw, reg)
-	if err != nil || !aliceUsable {
-		t.Fatalf("alice usable = %v, err %v", aliceUsable, err)
-	}
-	malloryUsable, err := svc.CredentialUsable(malloryCtx, gw, reg)
-	if err != nil || malloryUsable {
-		t.Fatalf("mallory usable = %v, err %v, want the rejected client dropped", malloryUsable, err)
-	}
-	for _, client := range store.clients {
-		switch client.ClientID {
-		case aliceClient:
-			if client.ClientSecretExpiresAt <= time.Now().Unix() {
-				t.Fatalf("alice's client was expired: %+v", client)
-			}
-		case malloryClient:
-			if client.ClientSecretExpiresAt <= 0 || client.ClientSecretExpiresAt > time.Now().Unix() {
-				t.Fatalf("mallory's client = %+v, want it expired", client)
-			}
-		}
+	if !strings.Contains(malloryURL, "https://good.example/") {
+		t.Fatalf("mallory redirect = %q, want the admin host", malloryURL)
 	}
 }
 
@@ -558,6 +503,7 @@ func TestConnectService_LegacyClientKeyStaysReadableForItsIssuer(t *testing.T) {
 	evil := newHostServer(t, "evil.example", "")
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
+	reg.MCPTarget.URL = "https://good.example/mcp"
 	store := newMemConnectStore()
 	legacy := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
 	redirect := "https://gw.example.com/oauth/callback/linear"
@@ -602,8 +548,8 @@ func TestConnectService_LegacyClientKeyStaysReadableForItsIssuer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mallory Start: %v", err)
 	}
-	if got := mustQuery(t, malloryURL).Get("client_id"); got == "legacy-client" || evil.registrations.Load() != 1 {
-		t.Fatalf("mallory client = %q, registrations = %d, want a client of her own", got, evil.registrations.Load())
+	if got := mustQuery(t, malloryURL).Get("client_id"); got != "legacy-client" || evil.registrations.Load() != 0 {
+		t.Fatalf("mallory client = %q, registrations = %d, want the admin host's legacy client", got, evil.registrations.Load())
 	}
 	if store.clients[legacy].ClientID != "legacy-client" || store.clients[legacy].ClientSecretExpiresAt <= time.Now().Unix() {
 		t.Fatalf("legacy row = %+v, want it unchanged", store.clients[legacy])
@@ -619,6 +565,7 @@ func TestConnectService_TemplatedHostDoesNotReuseOrDropUnboundLegacy(t *testing.
 	evil := newHostServer(t, "evil.example", "invalid_client")
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
+	reg.MCPTarget.URL = "https://good.example/mcp"
 	store := newMemConnectStore()
 	legacy := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
 	store.clients[legacy] = oauth.RegisteredClient{
@@ -659,12 +606,11 @@ func TestConnectService_TemplatedHostDoesNotReuseOrDropUnboundLegacy(t *testing.
 	if err != nil {
 		t.Fatalf("mallory Start: %v", err)
 	}
-	_, err = svc.Callback(ctx, base, "linear", mustQuery(t, malloryURL).Get("state"), "the-code", "", "")
-	if !errors.Is(err, oauth.ErrInvalidClient) {
-		t.Fatalf("mallory callback: %v", err)
+	if got := mustQuery(t, malloryURL).Get("client_id"); got == "legacy-client" || evil.registrations.Load() != 0 {
+		t.Fatalf("mallory client = %q, evil registrations = %d, want the admin host and no employee retarget", got, evil.registrations.Load())
 	}
 	if store.clients[legacy].ClientID != "legacy-client" || store.clients[legacy].ClientSecretExpiresAt != 0 {
-		t.Fatalf("legacy row = %+v, want it untouched by the templated host's rejection", store.clients[legacy])
+		t.Fatalf("legacy row = %+v, want it untouched", store.clients[legacy])
 	}
 }
 
@@ -784,6 +730,7 @@ func TestConnectService_SpoofedIssuerDoesNotReceiveTheOtherHostsSecret(t *testin
 
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
+	reg.MCPTarget.URL = "https://good.example/mcp"
 	store := newMemConnectStore()
 	svc := connectWithHosts(t, gw, reg, store, map[string]*httptest.Server{
 		"good.example": good.server,
@@ -813,11 +760,11 @@ func TestConnectService_SpoofedIssuerDoesNotReceiveTheOtherHostsSecret(t *testin
 	if err != nil {
 		t.Fatalf("mallory ticket: %v", err)
 	}
-	if _, err := svc.Start(ctx, base, base, malloryTicket, "linear", ""); err == nil {
-		t.Fatal("mallory's spoofed issuer was accepted")
+	if _, err := startLocation(svc.Start(ctx, base, base, malloryTicket, "linear", "")); err != nil {
+		t.Fatalf("mallory Start: %v", err)
 	}
-	if got := evilSecret.Load().(string); got != "" && strings.Contains(got, aliceSecret) {
-		t.Fatalf("evil received alice's secret: %q", got)
+	if got := evilSecret.Load().(string); got != "" {
+		t.Fatalf("evil was contacted: %q", got)
 	}
 	for _, client := range store.clients {
 		if client.ClientSecret == aliceSecret && (client.ClientSecretExpiresAt <= 0 || client.ClientSecretExpiresAt > time.Now().Unix()) {
