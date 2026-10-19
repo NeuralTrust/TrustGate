@@ -109,6 +109,7 @@ type AdminRouterDeps struct {
 	UpdateAuthBudget        *authhttp.UpdateAuthBudgetHandler
 	UpdateAuthOwnerGroups   *authhttp.UpdateAuthOwnerGroupsHandler
 	UpdateSubjectGroups     *authhttp.UpdateSubjectGroupsHandler
+	DeleteSubjectSessions   *authhttp.DeleteSubjectSessionsHandler
 	DeleteAuth              *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
@@ -278,11 +279,16 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		auths.Put("/:id/groups", directoryGroups, r.deps.UpdateAuthOwnerGroups.Handle)
 	}
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
-	// Same admin credential as PUT .../auths/{id}/groups. The subject has no
-	// personal-key row; the call only updates default-IdP refresh records.
-	if r.deps.UpdateSubjectGroups != nil {
+	// One /subjects group. Gateway access is on the group. Both routes refuse
+	// a service credential: a groups push and offboarding present a console JWT.
+	if r.deps.UpdateSubjectGroups != nil || r.deps.DeleteSubjectSessions != nil {
 		subjects := gw.Group("/:gateway_id/subjects", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
-		subjects.Put("/:user_id/groups", directoryGroups, r.deps.UpdateSubjectGroups.Handle)
+		if r.deps.UpdateSubjectGroups != nil {
+			subjects.Put("/:user_id/groups", directoryGroups, r.deps.UpdateSubjectGroups.Handle)
+		}
+		if r.deps.DeleteSubjectSessions != nil {
+			subjects.Delete("/:user_id/sessions", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.DeleteSubjectSessions.Handle)
+		}
 	}
 
 	// Routes that carry no gateway scope are console-only: a machine credential

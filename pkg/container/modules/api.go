@@ -327,6 +327,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(func(store *infraoauth.Store) appoauth.SessionGroups { return store }); err != nil {
 		return err
 	}
+	if err := c.Provide(func(store *infraoauth.Store) appoauth.SubjectSessions { return store }); err != nil {
+		return err
+	}
 	if err := c.Provide(func() appoauth.UserInfoClient {
 		return infraoauth.NewUserInfoClient(nil)
 	}); err != nil {
