@@ -16,6 +16,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -505,6 +507,39 @@ func TestConnectStart_RejectedRegistrationIsBadGateway(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "invalid_client_metadata") {
 		t.Fatalf("body must keep the upstream reason: %s", body)
+	}
+}
+
+// An upstream with no OAuth metadata is the provider's shape. It must not
+// surface as a plain-text 500; the body is the JSON error shape.
+func TestConnectStart_UndiscoverableUpstreamIsJSONBadGateway(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{startErr: fmt.Errorf("%w (https://mcp.example/mcp)", appoauth.ErrUpstreamNotDiscoverable)}
+	h := newTestConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Post(ConnectStartPath, h.Start)
+	res, err := app.Test(ownPagePost("/oauth/connect/legacy?ticket=abc"))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", res.StatusCode)
+	}
+	if ct := res.Header.Get(fiber.HeaderContentType); !strings.Contains(ct, fiber.MIMEApplicationJSON) {
+		t.Fatalf("content-type = %q, want json", ct)
+	}
+	var body httpio.ErrorBody
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not the JSON error shape: %v", err)
+	}
+	if body.Error != "upstream_not_discoverable" {
+		t.Fatalf("error = %q", body.Error)
+	}
+	if !strings.Contains(body.Message, "does not publish OAuth metadata") {
+		t.Fatalf("message = %q", body.Message)
+	}
+	if !strings.Contains(body.Message, "https://mcp.example/mcp") {
+		t.Fatalf("message = %q, want the upstream detail", body.Message)
 	}
 }
 
