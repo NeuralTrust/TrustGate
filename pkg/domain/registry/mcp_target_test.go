@@ -188,6 +188,31 @@ func TestMCPAuth_ForwardedManualCanDiscoverEndpoints(t *testing.T) {
 	}
 }
 
+func TestMCPAuth_ForwardedManualAcceptsTenantHostTemplates(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	target := validMCPTarget()
+	target.URL = "https://{domain}.freshservice.com/mcp"
+	target.URLVariables = []MCPURLVariable{{Name: "domain", Required: true}}
+	target.Auth = &MCPAuth{
+		Mode:         MCPAuthModeForwarded,
+		Provider:     "com.freshworks/mcp",
+		Registration: RegistrationManual,
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		AuthorizeURL: "https://{domain}.myfreshworks.com/org/oauth/v2/authorize",
+		TokenURL:     "https://{domain}.myfreshworks.com/org/oauth/v2/token",
+	}
+	if _, err := NewMCPRegistry(gwID, "freshworks", "", target); err != nil {
+		t.Fatalf("templated manual authorize/token URLs should validate, got %v", err)
+	}
+
+	target.Auth.AuthorizeURL = "https://{bad host}.example.com/authorize"
+	if _, err := NewMCPRegistry(gwID, "freshworks", "", target); err == nil {
+		t.Fatal("a brace that is not a {name} placeholder should be rejected")
+	}
+}
+
 func TestNewMCPRegistry_OpenAPISource(t *testing.T) {
 	t.Parallel()
 	target := &MCPTarget{

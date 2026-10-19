@@ -508,7 +508,7 @@ func (a *MCPAuth) Validate() error {
 				return fmt.Errorf("%w: manual registration must provide both authorize_url and token_url or neither for discovery",
 					ErrInvalidMCPTarget)
 			}
-			if hasAuthorizeURL && (!isHTTPURL(a.AuthorizeURL) || !isHTTPURL(a.TokenURL)) {
+			if hasAuthorizeURL && (!httpURLAcceptingTemplate(a.AuthorizeURL) || !httpURLAcceptingTemplate(a.TokenURL)) {
 				return fmt.Errorf("%w: authorize_url and token_url must be valid http(s) URLs", ErrInvalidMCPTarget)
 			}
 			if secret.IsMasked(a.ClientSecret) {
@@ -564,6 +564,14 @@ func (a *MCPAuth) validateIdentityID() error {
 func isHTTPURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// httpURLAcceptingTemplate is isHTTPURL after {name} placeholders are treated
+// as filled. Manual authorize and token URLs use the same tenant templates as
+// the server URL, and "{" is not a legal host character until a value replaces
+// it. A brace that is not a {name} placeholder is left in place and still fails.
+func httpURLAcceptingTemplate(raw string) bool {
+	return isHTTPURL(urlTemplateToken.ReplaceAllString(raw, "x"))
 }
 
 // ResolveSecretsFrom keeps the stored credentials an update left blank or sent

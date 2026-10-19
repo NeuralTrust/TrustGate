@@ -66,6 +66,7 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 			"io.prismic/mcp",
 			"com.semrush/mcp",
 			"app.thoughtspot/mcp",
+			"com.freshworks/mcp",
 		} {
 			server := mustCatalogServer(t, cat, code)
 			require.False(t, server.SelfService, code)
@@ -316,6 +317,57 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 			require.NotEqual(t, "Authorization", header.Name)
 		}
 		require.Equal(t, "https://pipedream.com/docs/connect/mcp/developers", pipedream.ConfigGuide.DocsURL)
+	})
+
+	t.Run("freshworks manual oauth", func(t *testing.T) {
+		freshworks := mustCatalogServer(t, cat, "com.freshworks/mcp")
+		require.Equal(t, "https://{domain}.freshservice.com/mcp", freshworks.URL)
+		require.Equal(t, "https://yourco.freshservice.com/mcp", resolveCatalogURL(t, freshworks, map[string]string{"domain": "yourco"}))
+		domain := variableByName(t, freshworks, "domain")
+		require.Empty(t, domain.HostSuffix)
+		require.Equal(t, "Subdomain label only, e.g. yourco, not yourco.freshservice.com.", domain.Description)
+		require.Contains(t, freshworks.ConfigGuide.Note, "{domain} is the subdomain label only")
+		require.Contains(t, freshworks.ConfigGuide.Note, "not yourco.freshservice.com")
+		require.False(t, freshworks.SelfService)
+		require.True(t, freshworks.RequiresConfig)
+		requireOAuth(t, freshworks, "manual", false, []string{
+			"freshservice.tickets.create",
+			"freshservice.tickets.edit",
+			"freshservice.tickets.conversations.create",
+			"freshservice.tickets.view",
+			"freshservice.assets.view",
+			"freshservice.assets.manage",
+			"freshservice.onboarding_requests.create",
+			"freshservice.onboarding_requests.view",
+			"freshservice.onboarding_requests.fields.view",
+			"freshservice.offboarding_requests.create",
+			"freshservice.offboarding_requests.view",
+			"freshservice.offboarding_requests.fields.view",
+			"freshservice.products.view",
+			"freshservice.agents.manage",
+			"freshservice.requesters.view",
+			"freshservice.solutions.publish",
+			"freshservice.solutions.view",
+			"freshservice.service_catalog.view",
+			"freshservice.service_catalog.edit",
+			"freshservice.workspaces.view",
+			"freshservice.solutions.manage",
+			"freshservice.tickets.fields.manage",
+			"freshservice.locations.view",
+			"freshservice.vendors.view",
+			"freshservice.departments.view",
+			"freshservice.agentgroups.manage",
+			"freshservice.objects.manage",
+		})
+		require.NotNil(t, freshworks.OAuth.PKCE)
+		require.True(t, *freshworks.OAuth.PKCE)
+		require.True(t, freshworks.OAuth.CrossDomainContact)
+		require.Equal(t, "https://{domain}.myfreshworks.com/org/oauth/v2/authorize", freshworks.OAuth.AuthorizeURL)
+		require.Equal(t, "https://{domain}.myfreshworks.com/org/oauth/v2/token", freshworks.OAuth.TokenURL)
+		require.Empty(t, freshworks.OAuth.Resource)
+		require.True(t, freshworks.OAuth.ResourceMetadata)
+		require.Contains(t, freshworks.Description, "An admin must create an OAuth app in Freshworks")
+		require.Contains(t, freshworks.ConfigGuide.Summary, "OAuth app in Freshworks")
 	})
 
 	t.Run("dropbox and jotform dcr", func(t *testing.T) {

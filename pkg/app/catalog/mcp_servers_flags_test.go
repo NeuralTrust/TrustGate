@@ -124,6 +124,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// and Replicate was hidden as SSE-unsupported, so it no longer loads.
 	// 106 after Vimeo left self-service (vendor rejects the gateway callback
 	// for any dynamic client, ENG-2189).
+	// Freshworks (ENG-2261) was already not self-service and stays that way as a
+	// manual OAuth app, so this count does not move.
 	require.Equal(t, 106, self, "self_service count changed")
 }
 
@@ -248,10 +250,6 @@ func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
 				"*.au2.dbt.com",
 				"*.jp1.dbt.com",
 			},
-		},
-		"com.freshworks/mcp": {
-			variable: "domain",
-			suffixes: []string{"*.freshservice.com"},
 		},
 		"com.snowflake/mcp": {
 			variable: "account_url",
