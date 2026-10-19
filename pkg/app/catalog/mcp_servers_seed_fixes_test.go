@@ -164,6 +164,14 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		require.False(t, header.Required)
 		require.Equal(t, "Bearer", header.Scheme)
 		require.Equal(t, "Optional; the public Algolia MCP endpoint doesn't require it.", header.Description)
+		// ENG-2212: vendor uniq ids can start with '-'. The value is a path
+		// segment of the catalog URL, so it is accepted; traversal is not.
+		uniq := asRegistryURLVariable(variableByName(t, algolia, "uniq_id"))
+		require.NoError(t, registrydomain.ValidateURLValue(uniq, "-7f3a9c2e"))
+		require.Error(t, registrydomain.ValidateURLValue(uniq, "../x"))
+		require.Error(t, registrydomain.ValidateURLValue(uniq, ""))
+		require.Equal(t, "https://latency.algolia.net/mcp/1/-7f3a9c2e/mcp",
+			resolveCatalogURL(t, algolia, map[string]string{"app_id": "latency", "uniq_id": "-7f3a9c2e"}))
 	})
 
 	t.Run("regional and environment hosts", func(t *testing.T) {
