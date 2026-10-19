@@ -462,3 +462,141 @@ func TestConnectService_CatalogAppliesWhenTemplateResolvesToTheRowURL(t *testing
 		t.Fatalf("refresh resource = %q, want the catalog resource", refreshed.Resource)
 	}
 }
+
+// A concrete instance URL that equals one closed region of a templated catalog
+// entry takes that entry's scopes on the authorize request. The registry row
+// is left as stored. New Relic publishes one scope list for both regions.
+func TestConnectService_RegionOptionURLUsesCatalogScopes(t *testing.T) {
+	t.Parallel()
+	const catalogScope = "observability:read offline offline_access"
+	tests := []struct {
+		name         string
+		url          string
+		registration registrydomain.MCPClientRegistration
+		stored       []string
+		want         string
+	}{
+		{
+			name:         "old US URL",
+			url:          "https://mcp.newrelic.com/mcp/",
+			registration: registrydomain.RegistrationAuto,
+			stored:       []string{"openid", "profile", "email"},
+			want:         catalogScope,
+		},
+		{
+			name:         "EU URL",
+			url:          "https://mcp.eu.newrelic.com/mcp/",
+			registration: registrydomain.RegistrationAuto,
+			stored:       []string{"openid", "profile", "email"},
+			want:         catalogScope,
+		},
+		{
+			name:         "admin scopes",
+			url:          "https://mcp.newrelic.com/mcp/",
+			registration: registrydomain.RegistrationManual,
+			stored:       []string{"admin:read"},
+			want:         "admin:read",
+		},
+		{
+			name:         "non-catalog URL",
+			url:          "https://self.example/mcp/",
+			registration: registrydomain.RegistrationAuto,
+			stored:       []string{"openid", "profile", "email"},
+			want:         "openid profile email",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const code = "com.newrelic/mcp"
+			gw := ids.New[ids.GatewayKind]()
+			auth := &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     code,
+				Registration: tc.registration,
+				Scopes:       append([]string(nil), tc.stored...),
+				Resource:     tc.url,
+			}
+			if tc.registration == registrydomain.RegistrationManual {
+				auth.ClientID = "admin-client"
+			}
+			reg, err := registrydomain.NewMCPRegistry(gw, "newrelic", "", &registrydomain.MCPTarget{
+				Code: code,
+				URL:  tc.url,
+				Auth: auth,
+			})
+			if err != nil {
+				t.Fatalf("registry: %v", err)
+			}
+			data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+				Consumer: &consumerdomain.Consumer{
+					ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+					Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+				},
+				Registries: []*registrydomain.Registry{reg},
+			}})
+			host := tc.url
+			registrar := &fixedRegistrar{
+				meta: &oauth.UpstreamAuthServer{
+					AuthorizationEndpoint: host + "oauth/authorize",
+					TokenEndpoint:         host + "oauth/token",
+					ScopesSupported:       []string{"openid", "observability:read", "offline", "offline_access"},
+					Resource:              tc.url,
+				},
+				client: &oauth.RegisteredClient{ClientID: "dcr-newrelic", Issuer: host},
+			}
+			svc := oauth.NewConnectService(
+				newMemConnectStore(),
+				&memVaultRepo{},
+				&stubDataFinder{data: data},
+				infraoauth.NewProviderClient(nil),
+				registrar,
+				discardConnectAuditor(),
+				nil, nil,
+				stubScopeCatalog{
+					code:   code,
+					url:    "https://{host}/mcp/",
+					scopes: []string{"observability:read", "offline", "offline_access"},
+					urlVariables: []catalogdomain.MCPURLVariable{{
+						Name: "host",
+						Options: []catalogdomain.MCPURLVariableOption{
+							{Value: "mcp.newrelic.com"},
+							{Value: "mcp.eu.newrelic.com"},
+						},
+					}},
+				},
+				nil,
+			)
+			ctx := context.Background()
+			ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, code, ""))
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			u, _ := url.Parse(location)
+			if got := u.Query().Get("scope"); got != tc.want {
+				t.Fatalf("scope = %q, want %q", got, tc.want)
+			}
+			if got := u.Query().Get("resource"); got != tc.url {
+				t.Fatalf("resource = %q, want the stored resource", got)
+			}
+			if strings.Join(reg.MCPTarget.Auth.Scopes, " ") != strings.Join(tc.stored, " ") {
+				t.Fatalf("stored scopes = %v, row was rewritten", reg.MCPTarget.Auth.Scopes)
+			}
+
+			refreshed, err := svc.RefreshAuth(ctx, gw, reg)
+			if err != nil {
+				t.Fatalf("RefreshAuth: %v", err)
+			}
+			if strings.Join(refreshed.Scopes, " ") != tc.want {
+				t.Fatalf("refresh scope = %q, want %q", strings.Join(refreshed.Scopes, " "), tc.want)
+			}
+			if strings.Join(reg.MCPTarget.Auth.Scopes, " ") != strings.Join(tc.stored, " ") {
+				t.Fatalf("stored scopes = %v after refresh, row was rewritten", reg.MCPTarget.Auth.Scopes)
+			}
+		})
+	}
+}

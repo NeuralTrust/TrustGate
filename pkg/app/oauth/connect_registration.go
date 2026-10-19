@@ -337,21 +337,51 @@ func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat
 		return cfg
 	}
 	resource := strings.TrimSpace(entry.OAuth.Resource)
-	if len(entry.OAuth.Scopes) == 0 && resource == "" {
+	if catalogServerMatches(entry, res) && (len(entry.OAuth.Scopes) > 0 || resource != "") {
+		out := *cfg
+		if len(entry.OAuth.Scopes) > 0 {
+			out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+		}
+		if resource != "" {
+			out.Resource = resource
+		}
+		return &out
+	}
+	return regionOptionScopes(cfg, entry, res)
+}
+
+// regionOptionScopes copies catalog scopes onto the authorize request when the
+// resolved instance URL is one published region of this catalog entry. The
+// registry row is not written. A manual registration with its own non-empty
+// scope list is an admin OAuth app and keeps those scopes. This is not a
+// re-apply of the rest of the catalog (URL, resource, registration).
+func regionOptionScopes(cfg *registrydomain.MCPAuth, entry catalogdomain.MCPServer, res upstreamResolution) *registrydomain.MCPAuth {
+	if cfg == nil || entry.OAuth == nil || len(entry.OAuth.Scopes) == 0 || !res.ready {
 		return cfg
 	}
-	if !catalogServerMatches(entry, res) {
+	if cfg.Registration == registrydomain.RegistrationManual && hasScope(cfg.Scopes) {
+		return cfg
+	}
+	if !catalogOptionURLMatches(entry, res.url) {
 		return cfg
 	}
 	out := *cfg
-	if len(entry.OAuth.Scopes) > 0 {
-		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
-	}
-	if resource != "" {
-		out.Resource = resource
-	}
+	out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
 	return &out
 }
+
+func hasScope(scopes []string) bool {
+	for _, scope := range scopes {
+		if strings.TrimSpace(scope) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// catalogOptionExpansionCap bounds how many closed-option combinations a
+// templated catalog URL is expanded to. Region lists are a handful of values.
+const catalogOptionExpansionCap = 64
 
 // catalogServerMatches reports whether the row's resolved upstream URL is the
 // catalog entry's server URL. A templated catalog URL is filled with the same
@@ -367,6 +397,64 @@ func catalogServerMatches(entry catalogdomain.MCPServer, res upstreamResolution)
 		return false
 	}
 	return registrydomain.SameCanonicalResource(res.url, catalogURL)
+}
+
+// catalogOptionURLMatches reports whether resolved equals the catalog template
+// filled with one combination of its closed option values. A variable without
+// options cannot be guessed. A product of options above catalogOptionExpansionCap
+// is not expanded.
+func catalogOptionURLMatches(entry catalogdomain.MCPServer, resolved string) bool {
+	raw := strings.TrimSpace(entry.URL)
+	if raw == "" || resolved == "" || !strings.Contains(raw, "{") {
+		return false
+	}
+	names := registrydomain.TemplateVariableNames(raw)
+	if len(names) == 0 {
+		return false
+	}
+	byName := make(map[string]catalogdomain.MCPURLVariable, len(entry.URLVariables))
+	vars := make([]registrydomain.MCPURLVariable, 0, len(entry.URLVariables))
+	for _, v := range entry.URLVariables {
+		byName[v.Name] = v
+		vars = append(vars, toRegistryURLVar(v))
+	}
+	options := make([][]string, len(names))
+	count := 1
+	for i, name := range names {
+		variable, ok := byName[name]
+		if !ok {
+			return false
+		}
+		for _, option := range variable.Options {
+			value := strings.TrimSpace(option.Value)
+			if value != "" {
+				options[i] = append(options[i], value)
+			}
+		}
+		if len(options[i]) == 0 {
+			return false
+		}
+		count *= len(options[i])
+		if count > catalogOptionExpansionCap {
+			return false
+		}
+	}
+	values := make(map[string]string, len(names))
+	var walk func(int) bool
+	walk = func(i int) bool {
+		if i == len(names) {
+			expanded, err := registrydomain.ResolveURL(raw, vars, values)
+			return err == nil && registrydomain.SameCanonicalResource(resolved, expanded)
+		}
+		for _, value := range options[i] {
+			values[names[i]] = value
+			if walk(i + 1) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(0)
 }
 
 func resolveCatalogServerURL(entry catalogdomain.MCPServer, values map[string]string) (string, bool) {
