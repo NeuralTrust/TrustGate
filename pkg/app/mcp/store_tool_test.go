@@ -774,9 +774,17 @@ func TestStoreInstallInstanceChoiceRoundTrip(t *testing.T) {
 	if inst.lastRegistry != analytics {
 		t.Fatalf("the chosen instance must reach the installer as RegistryID, got %s", inst.lastRegistry)
 	}
-	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
-		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`)); err == nil {
-		t.Fatal("a malformed instance id must be refused")
+	before := len(inst.installed)
+	raw, err = tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`))
+	if err != nil {
+		t.Fatalf("a malformed instance id must be a tool error, not a Go error: %v", err)
+	}
+	if !resultIsError(t, raw) {
+		t.Fatal("a malformed instance id must set isError")
+	}
+	if len(inst.installed) != before {
+		t.Fatal("a malformed instance id must not be recorded")
 	}
 }
 

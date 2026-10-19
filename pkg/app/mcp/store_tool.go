@@ -266,7 +266,10 @@ func (t *storeTool) install(
 	if raw := strings.TrimSpace(args.Instance); raw != "" {
 		parsed, err := ids.Parse[ids.RegistryKind](raw)
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid instance id %q", ErrStoreToolUnavailable, raw)
+			// A malformed id is a fact about the request. ErrStoreToolUnavailable
+			// is for a tool that cannot run; sending this as that error becomes
+			// an internal error (-32603). The submitted id is not repeated.
+			return instanceIDToolError(args.Code)
 		}
 		registryID = parsed
 	}
@@ -304,6 +307,16 @@ func (t *storeTool) install(
 		return toolErrorResult("SSE transport is not supported by the gateway yet", map[string]any{
 			"code": strings.TrimSpace(args.Code),
 		})
+	}
+	if errors.Is(err, appstore.ErrConfigInvalid) {
+		// The installer's text names the variable and the rule. It does not
+		// include the supplied value, so a secret passed inline cannot leak.
+		return toolErrorResult(err.Error(), map[string]any{
+			"code": strings.TrimSpace(args.Code),
+		})
+	}
+	if errors.Is(err, appstore.ErrUnknownInstance) {
+		return instanceIDToolError(args.Code)
 	}
 	if err != nil {
 		return nil, err
@@ -728,6 +741,14 @@ func marshalToolResult(text string, structured map[string]any) (json.RawMessage,
 		return nil, fmt.Errorf("%w: encode result: %w", ErrStoreToolUnavailable, err)
 	}
 	return raw, nil
+}
+
+// instanceIDToolError refuses an install whose instance is not one of the ids
+// a previous choice listed. The submitted id is left out of the result.
+func instanceIDToolError(code string) (json.RawMessage, error) {
+	return toolErrorResult("instance must be one of the listed instance ids", map[string]any{
+		"code": strings.TrimSpace(code),
+	})
 }
 
 // toolErrorResult is a tool result the caller reads as a failure (isError)
