@@ -16,6 +16,8 @@ package oauth_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -598,5 +600,102 @@ func TestConnectService_RegionOptionURLUsesCatalogScopes(t *testing.T) {
 				t.Fatalf("stored scopes = %v after refresh, row was rewritten", reg.MCPTarget.Auth.Scopes)
 			}
 		})
+	}
+}
+
+// An old grant was issued for openid profile email. RefreshAuth reports the
+// catalog scopes, but the refresh_token request omits scope. RFC 6749 §6 then
+// keeps the scope originally granted, so the catalog list is not sent and the
+// grant is not rejected as invalid_scope.
+func TestConnectService_OldScopeGrantRefreshOmitsScope(t *testing.T) {
+	t.Parallel()
+	const (
+		code         = "com.newrelic/mcp"
+		storedURL    = "https://mcp.newrelic.com/mcp/"
+		catalogScope = "observability:read offline offline_access"
+		oldRefresh   = "old-newrelic-refresh"
+	)
+	var posted url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse form: %v", err)
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		posted = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"new-access","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "newrelic", "", &registrydomain.MCPTarget{
+		Code: code,
+		URL:  storedURL,
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     code,
+			Registration: registrydomain.RegistrationAuto,
+			Scopes:       []string{"openid", "profile", "email"},
+			Resource:     storedURL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	provider := infraoauth.NewProviderClient(srv.Client())
+	svc := oauth.NewConnectService(
+		newMemConnectStore(),
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		provider,
+		&fixedRegistrar{
+			meta: &oauth.UpstreamAuthServer{
+				AuthorizationEndpoint: "https://oauth2.service.newrelic.com/oauth2/auth",
+				TokenEndpoint:         srv.URL,
+				ScopesSupported:       []string{"openid", "observability:read", "offline", "offline_access"},
+				Resource:              storedURL,
+			},
+			client: &oauth.RegisteredClient{ClientID: "dcr-newrelic", Issuer: "https://oauth2.service.newrelic.com"},
+		},
+		discardConnectAuditor(),
+		nil, nil,
+		stubScopeCatalog{
+			code:   code,
+			url:    "https://{host}/mcp/",
+			scopes: []string{"observability:read", "offline", "offline_access"},
+			urlVariables: []catalogdomain.MCPURLVariable{{
+				Name: "host",
+				Options: []catalogdomain.MCPURLVariableOption{
+					{Value: "mcp.newrelic.com"},
+					{Value: "mcp.eu.newrelic.com"},
+				},
+			}},
+		},
+		nil,
+	)
+	ctx := context.Background()
+	refreshed, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if strings.Join(refreshed.Scopes, " ") != catalogScope {
+		t.Fatalf("refresh config scope = %q, want the catalog scope", strings.Join(refreshed.Scopes, " "))
+	}
+	if _, err := provider.Refresh(ctx, refreshed, oldRefresh); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if posted.Get("grant_type") != "refresh_token" || posted.Get("refresh_token") != oldRefresh {
+		t.Fatalf("refresh form = %v", posted)
+	}
+	if _, ok := posted["scope"]; ok {
+		t.Fatalf("refresh form sent scope %q; an old grant must omit scope", posted.Get("scope"))
 	}
 }
