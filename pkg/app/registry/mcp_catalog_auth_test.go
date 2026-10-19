@@ -719,3 +719,72 @@ func TestCanonicalizeMCPAuthFromCatalog_NewRelicOwnClientKeepsTemplateKey(t *tes
 		require.NotContains(t, domain.ForwardedVaultProvider(reg), "|e9cccbc4d5eb")
 	}
 }
+
+func TestRequireAdminBoundURLVariables_RejectsUnsafeHosts(t *testing.T) {
+	t.Parallel()
+	cat := stubCatalog{entries: map[string]catalogdomain.MCPServer{
+		"com.pagerduty/mcp": {
+			Code: "com.pagerduty/mcp",
+			URL:  "https://{host}/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name:     "host",
+				Required: true,
+				Options: []catalogdomain.MCPURLVariableOption{
+					{Value: "mcp.pagerduty.com", Label: "United States"},
+					{Value: "mcp.eu.pagerduty.com", Label: "Europe"},
+				},
+			}},
+		},
+		"com.snowflake/mcp": {
+			Code: "com.snowflake/mcp",
+			URL:  "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{name}",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "account_url", Required: true, HostSuffix: []string{"*.snowflakecomputing.com"}},
+				{Name: "database", Required: true},
+				{Name: "schema", Required: true},
+				{Name: "name", Required: true},
+			},
+		},
+	}}
+
+	const snowflake = "https://xy12345.us-east-1.snowflakecomputing.com/api/v2/databases/QA_MCP/schemas/PUBLIC/mcp-servers/QA_AGENT"
+	require.NoError(t, RequireAdminBoundURLVariables(&domain.MCPTarget{
+		Code: "com.snowflake/mcp",
+		URL:  snowflake,
+	}, cat))
+	require.NoError(t, RequireAdminBoundURLVariables(&domain.MCPTarget{
+		Code: "com.pagerduty/mcp",
+		URL:  "https://mcp.eu.pagerduty.com/mcp",
+	}, cat))
+
+	cases := []struct {
+		name   string
+		target *domain.MCPTarget
+		want   string
+	}{
+		{
+			name:   "pagerduty outside the closed options",
+			target: &domain.MCPTarget{Code: "com.pagerduty/mcp", URL: "https://mcp.evil.com/mcp"},
+			want:   "must be one of",
+		},
+		{
+			name:   "snowflake outside the host suffix",
+			target: &domain.MCPTarget{Code: "com.snowflake/mcp", URL: "https://evil.com/api/v2/databases/QA_MCP/schemas/PUBLIC/mcp-servers/QA_AGENT"},
+			want:   "host suffix",
+		},
+		{
+			name:   "userinfo",
+			target: &domain.MCPTarget{Code: "com.snowflake/mcp", URL: "https://user:pass@xy12345.us-east-1.snowflakecomputing.com/api/v2/databases/QA_MCP/schemas/PUBLIC/mcp-servers/QA_AGENT"},
+			want:   "userinfo",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := RequireAdminBoundURLVariables(tc.target, cat)
+			require.Error(t, err)
+			require.ErrorIs(t, err, commonerrors.ErrValidation)
+			require.Contains(t, err.Error(), tc.want)
+		})
+	}
+}

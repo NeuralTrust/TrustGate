@@ -84,11 +84,12 @@ func TestGuardOutcomeDecision(t *testing.T) {
 		// No verdict expressed still passes.
 		{status: "", mode: policy.ModeEnforce, want: decisionAllowed},
 		{status: "", mode: policy.ModeObserve, want: decisionAllowed},
-		// skip and error are statuses the engine emits. They used to hit the
-		// default, which forwards and records reported, in every mode.
-		{status: statusSkip, mode: policy.ModeEnforce, want: decisionReported},
-		{status: statusSkip, mode: policy.ModeObserve, want: decisionReported},
-		{status: statusSkip, mode: policy.ModeThrottle, want: decisionReported},
+		// A Skip gate continues the request. Record it as allowed in every
+		// mode, the same way the stream leg lets a skip through.
+		{status: statusSkip, mode: policy.ModeEnforce, want: decisionAllowed},
+		{status: statusSkip, mode: policy.ModeObserve, want: decisionAllowed},
+		{status: statusSkip, mode: policy.ModeThrottle, want: decisionAllowed},
+		// error used to hit the default, which forwards and records reported.
 		{status: statusError, mode: policy.ModeEnforce, want: decisionReported},
 		{status: statusError, mode: policy.ModeObserve, want: decisionReported},
 		// transform is applied before this function. Asked directly, it keeps

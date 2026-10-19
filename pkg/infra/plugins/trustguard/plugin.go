@@ -117,10 +117,10 @@ const (
 	decisionFailedOpen  = "failed_open"
 	decisionTransformed = "transformed"
 	// Statuses a successful TrustGuard evaluate puts on GuardResponse.Status.
-	// allow, report, transform, ask and block are the ones this plugin already
-	// switched on. skip and error are statuses the engine emits that used to
-	// fall through the default (forward, recorded reported). An empty status
-	// is not one of these; it is handled with allow.
+	// allow, report, transform, ask, block and skip are switched on here.
+	// skip continues the request and is recorded allowed. error is a status
+	// the engine emits that used to fall through the default (forward,
+	// recorded reported). An empty status is handled with allow.
 	statusBlock     = "block"
 	statusReport    = "report"
 	statusTransform = "transform"
@@ -802,10 +802,11 @@ type guardStatusClass int
 
 const (
 	// guardStatusAllow forwards and records allowed. An empty status is this
-	// class: a missing status was already a pass.
+	// class: a missing status was already a pass. skip is this class: a Skip
+	// gate continues the request and is recorded allowed.
 	guardStatusAllow guardStatusClass = iota
-	// guardStatusReport forwards and records reported. skip and error are in
-	// this class because that is what the default branch did with them.
+	// guardStatusReport forwards and records reported. error is in this class
+	// because that is what the default branch did with it.
 	guardStatusReport
 	// guardStatusTransform is applied by the caller. If guardOutcomeDecision
 	// is asked, it records reported, which is what the old default returned.
@@ -819,9 +820,9 @@ const (
 
 func classifyGuardStatus(status string) guardStatusClass {
 	switch status {
-	case statusAllow, "":
+	case statusAllow, statusSkip, "":
 		return guardStatusAllow
-	case statusReport, statusSkip, statusError:
+	case statusReport, statusError:
 		return guardStatusReport
 	case statusTransform:
 		return guardStatusTransform

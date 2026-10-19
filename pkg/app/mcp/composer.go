@@ -107,6 +107,11 @@ type binding struct {
 	registry *registrydomain.Registry
 	tool     Tool
 	exposed  string
+	// legacyLocal is the name v0.66.0 prefixed: the toolkit ExposeAs when one
+	// was set, otherwise the upstream name. It is captured before v2 naming
+	// replaces exposed. Empty on rows that exist only so prefix stripping sees
+	// the full upstream list.
+	legacyLocal string
 }
 
 func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
@@ -243,14 +248,16 @@ func matchExposed(bindings []binding, name string) (binding, bool, error) {
 }
 
 // matchLegacyExposed returns the single published binding whose v0.66.0
-// spelling is name. It runs only after no current name matched, so a v2 name
-// always wins, a spelling two bindings share resolves to neither, and Resolve
-// skips it when a toolkit turned that exact name away.
+// spelling is name. That spelling is built from the toolkit ExposeAs when the
+// tool was renamed, and from the upstream name otherwise. It runs only after
+// no current name matched, so a v2 name always wins, a spelling two bindings
+// share resolves to neither, and Resolve skips it when a toolkit turned that
+// exact name away.
 func matchLegacyExposed(bindings []binding, name string) (binding, bool) {
 	var found binding
 	seen := false
 	for _, b := range bindings {
-		if legacyExposedName(b.tool.Name, b.registry) != name {
+		if b.legacyLocal == "" || legacyExposedName(b.legacyLocal, b.registry) != name {
 			continue
 		}
 		if seen {
@@ -596,6 +603,9 @@ func assignExposedNames(surfaces []serverSurface) []binding {
 		selected := make(map[string]struct{}, len(surface.bindings))
 		for _, sel := range surface.bindings {
 			selected[sel.tool.Name] = struct{}{}
+			// exposed is still the toolkit's local name here: ExposeAs when
+			// set, otherwise the upstream name. v0.66.0 prefixed that.
+			sel.legacyLocal = sel.exposed
 			published = append(published, sel)
 		}
 		for _, tool := range surface.upstream {

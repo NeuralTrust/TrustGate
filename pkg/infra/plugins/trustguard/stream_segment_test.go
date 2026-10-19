@@ -198,10 +198,20 @@ func TestSegmentVerdicts(t *testing.T) {
 	}{
 		{"allow", policy.ModeEnforce, produced, GuardResponse{Status: statusAllow}, appplugins.SegmentVerdict{}},
 		{"empty status allows", policy.ModeEnforce, produced, GuardResponse{}, appplugins.SegmentVerdict{}},
+		{"skip allows the block", policy.ModeEnforce, produced, GuardResponse{
+			Status: statusSkip,
+			Findings: []GuardFinding{{
+				Source:  &GuardFindingSource{Kind: "gate", GateName: "skip_pii"},
+				Signal:  &GuardFindingSignal{Type: "gate_skip", Confidence: 1},
+				Outcome: &GuardFindingOutcome{Action: "skip"},
+			}},
+		}, appplugins.SegmentVerdict{}},
+		{"something-new blocks in blocking mode", policy.ModeEnforce, produced,
+			GuardResponse{Status: "something-new"},
+			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
 		{"report never blocks a block", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusReport, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{}},
-		{"skip allows the block", policy.ModeEnforce, produced, GuardResponse{Status: statusSkip}, appplugins.SegmentVerdict{}},
 		{"error allows the block", policy.ModeEnforce, produced, GuardResponse{Status: statusError}, appplugins.SegmentVerdict{}},
 		{"block", policy.ModeEnforce, produced, GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{
