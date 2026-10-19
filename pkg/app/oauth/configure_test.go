@@ -178,6 +178,13 @@ func configureCatalog() fakeConfigCatalog {
 			Code: "com.brightdata/mcp", DisplayName: "Bright Data",
 			URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
 		},
+		"kibana": {
+			Code: "kibana", DisplayName: "Kibana",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "host", Required: true},
+				{Name: "space", Required: true},
+			},
+		},
 	}}
 }
 
@@ -215,7 +222,6 @@ func configureFixtureGranted(t *testing.T, open bool, grants []*storeaccessdomai
 	}
 	svc := oauth.NewConfigureService(store, &stubDataFinder{data: data}, catalog, installs, vault,
 		oauth.WithConfigureInstaller(installer),
-		oauth.WithConfigureRegistries(sh),
 		oauth.WithConfigureOpenMode(func(_ context.Context, _ ids.GatewayID, principalSub string, _ []string) bool {
 			// Pinned to the requester the ticket names: a fixture that ignored the
 			// subject would not notice the form deciding for nobody.

@@ -266,6 +266,17 @@ func testCatalog() fakeCatalog {
 			},
 			SelfService: true,
 		},
+		// Aha's MCP URL can be written out while its manual client still
+		// templates the tenant into the authorize and token URLs.
+		"com.aha/mcp": {
+			Code:        "com.aha/mcp",
+			DisplayName: "Aha",
+			URL:         "https://{domain}.aha.io/api/v1/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "domain", Required: true},
+			},
+			SelfService: true,
+		},
 		"com.replicate/mcp": {
 			Code:        "com.replicate/mcp",
 			DisplayName: "Replicate",

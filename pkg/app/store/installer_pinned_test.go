@@ -155,6 +155,117 @@ func TestInstall_NamedInstanceDecidesWhatIsPinned(t *testing.T) {
 	}
 }
 
+// A row written when host was still per-user stores it. The admin URL has
+// since fixed host, so a reinstall only carries space. That is the same
+// instance: a second row would rename the tools and make an uninstall
+// without an id ambiguous.
+func TestInstall_ReinstallOverARowThatStoresAPinnedKey(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	row := adminRow("https://acme.kb.example.com/s/{space}/mcp")
+	old, err := installationdomain.New(gw, "ana", "kibana", "ana", map[string]string{
+		"host":  "acme.kb.example.com",
+		"space": "default",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{old}}
+	in := openReq(gw, "kibana")
+	in.Config = map[string]string{"space": "default"}
+
+	res, err := newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.AlreadyInstalled || len(installs.upserts) != 1 || installs.upserts[0].ID != old.ID {
+		t.Fatalf("reinstall must refresh the existing row, got %+v upserts=%d", res, len(installs.upserts))
+	}
+	if cfg := installs.upserts[0].Config; len(cfg) != 1 || cfg["space"] != "default" {
+		t.Fatalf("refreshed row keeps the unpinned value, got %+v", cfg)
+	}
+}
+
+// The pinned key is ignored on both sides, not the whole config: a different
+// space is still a second instance.
+func TestInstall_ReinstallWithADifferentUnpinnedValueIsANewRow(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	row := adminRow("https://acme.kb.example.com/s/{space}/mcp")
+	old, err := installationdomain.New(gw, "ana", "kibana", "ana", map[string]string{
+		"host":  "acme.kb.example.com",
+		"space": "default",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{old}}
+	in := openReq(gw, "kibana")
+	in.Config = map[string]string{"space": "finance"}
+
+	res, err := newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.AlreadyInstalled || installs.upserts[0].ID == old.ID {
+		t.Fatalf("a different space is a new instance, got %+v", res)
+	}
+}
+
+// Two rows that differ only by a key the serving URL now pins are one
+// instance. Counting both renames each one's tools.
+func TestDistinctInstalls_PinnedKeyDoesNotSplitTheInstance(t *testing.T) {
+	shelf := adminRow("https://acme.kb.example.com/s/{space}/mcp")
+	old := &installationdomain.Installation{
+		ID: ids.New[ids.InstallationKind](), CatalogCode: "kibana",
+		Status: installationdomain.StatusInstalled,
+		Config: map[string]string{"host": "acme.kb.example.com", "space": "default"},
+	}
+	fresh := &installationdomain.Installation{
+		ID: ids.New[ids.InstallationKind](), CatalogCode: "kibana",
+		Status: installationdomain.StatusInstalled,
+		Config: map[string]string{"space": "default"},
+	}
+	other := &installationdomain.Installation{
+		ID: ids.New[ids.InstallationKind](), CatalogCode: "kibana",
+		Status: installationdomain.StatusInstalled,
+		Config: map[string]string{"host": "acme.kb.example.com", "space": "finance"},
+	}
+	byID := map[ids.RegistryID]*registrydomain.Registry{shelf.ID: shelf}
+	byCode := map[string][]*registrydomain.Registry{"kibana": {shelf}}
+
+	got, counts := distinctInstalls([]*installationdomain.Installation{old, fresh}, byID, byCode)
+	if len(got) != 1 || counts["kibana"] != 1 {
+		t.Fatalf("pinned host must not split the instance, got %d (count %d)", len(got), counts["kibana"])
+	}
+	got, counts = distinctInstalls([]*installationdomain.Installation{old, other}, byID, byCode)
+	if len(got) != 2 || counts["kibana"] != 2 {
+		t.Fatalf("a different space stays two instances, got %d (count %d)", len(got), counts["kibana"])
+	}
+}
+
+// A fixed MCP URL with a manual client whose authorize and token URLs still
+// template the tenant does not pin that variable: the connect path fills it.
+func TestInstall_OAuthTemplateKeepsTheVariable(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	row := shelfRegistry("com.aha/mcp")
+	row.MCPTarget.URL = "https://acme.aha.io/api/v1/mcp"
+	row.MCPTarget.Auth = &registrydomain.MCPAuth{
+		Mode:         registrydomain.MCPAuthModeForwarded,
+		Registration: registrydomain.RegistrationManual,
+		ClientID:     "admin-client",
+		AuthorizeURL: "https://{domain}.aha.io/oauth/authorize",
+		TokenURL:     "https://{domain}.aha.io/oauth/token",
+	}
+
+	res, err := newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, &fakeInstalls{}).
+		Install(context.Background(), openReq(gw, "com.aha/mcp"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if got := configNames(res.ConfigVariables); !res.RequiresConfig || len(got) != 1 || got[0] != "domain" {
+		t.Fatalf("domain is still required by the oauth templates, got %+v", res)
+	}
+}
+
 func TestPrincipalPreview_PinnedVariableIsNeverMissing(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	row := mustInstall(t, gw, "ana", "kibana")

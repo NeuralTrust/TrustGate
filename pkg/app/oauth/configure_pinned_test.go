@@ -18,9 +18,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // snowflakeAdminRow is a shared admin instance whose URL already names the
@@ -84,6 +87,109 @@ func TestConfigure_SubmitIgnoresAPinnedValue(t *testing.T) {
 	}
 	if rows[0].Config["database"] != "ANALYTICS" {
 		t.Fatalf("unpinned value must be stored: %+v", rows[0].Config)
+	}
+}
+
+func kibanaRow(url string, at time.Time, enabled bool) *registrydomain.Registry {
+	r := shelf("kibana")
+	r.CreatedAt = at
+	r.Enabled = enabled
+	r.MCPTarget.URL = url
+	return r
+}
+
+func hasVariable(page *oauth.ConfigurePage, name string) bool {
+	for _, v := range page.Variables {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// The oldest row is disabled and pins host. The installer binds the enabled
+// row, whose URL still templates host. The form must ask for it: hiding it
+// makes every submit fail incomplete, because the install still needs it.
+func TestConfigure_DisabledOldestDoesNotPin(t *testing.T) {
+	disabled := kibanaRow("https://pinned.kb.example.com/s/{space}/mcp", time.Unix(1, 0), false)
+	enabled := kibanaRow("https://{host}/s/{space}/mcp", time.Unix(2, 0), true)
+	f := configureFixture(t, true, disabled, enabled)
+	id := f.ticket(t, "kibana", "")
+
+	page, err := f.svc.Page(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if !hasVariable(page, "host") || !hasVariable(page, "space") {
+		t.Fatalf("form must ask for the enabled instance's variables, got %v", variableNames(page))
+	}
+
+	saved, err := f.svc.Submit(context.Background(), id, map[string]string{
+		"host":  "kb.example.com",
+		"space": "default",
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if !saved.Saved {
+		t.Fatalf("submit must install, got %+v", saved)
+	}
+	rows := f.rows(t, "kibana")
+	if len(rows) != 1 || rows[0].RegistryID != enabled.ID {
+		t.Fatalf("install must bind the enabled instance, got %+v", rows)
+	}
+	if rows[0].Config["host"] != "kb.example.com" || rows[0].Config["space"] != "default" {
+		t.Fatalf("both values must be stored, got %+v", rows[0].Config)
+	}
+}
+
+// Under Selected the oldest instance is not the one the grant names. Pins
+// follow the granted instance, which still templates host.
+func TestConfigure_SelectedGrantDoesNotPinTheUngrantedInstance(t *testing.T) {
+	oldest := kibanaRow("https://pinned.kb.example.com/s/{space}/mcp", time.Unix(1, 0), true)
+	granted := kibanaRow("https://{host}/s/{space}/mcp", time.Unix(2, 0), true)
+	g, err := storeaccessdomain.New(ids.New[ids.GatewayKind](), "kibana", granted.ID, nil, []string{"ana"})
+	if err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{g}, oldest, granted)
+	id := f.ticket(t, "kibana", "")
+
+	page, err := f.svc.Page(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if !hasVariable(page, "host") {
+		t.Fatalf("form must ask for the granted instance's host, got %v", variableNames(page))
+	}
+
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
+		"host":  "kb.example.com",
+		"space": "default",
+	}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	rows := f.rows(t, "kibana")
+	if len(rows) != 1 || rows[0].RegistryID != granted.ID {
+		t.Fatalf("install must bind the granted instance, got %+v", rows)
+	}
+	if rows[0].Config["host"] != "kb.example.com" {
+		t.Fatalf("host must be stored, got %+v", rows[0].Config)
+	}
+}
+
+// Two usable instances: the install cannot choose, so the form pins nothing.
+func TestConfigure_AmbiguousInstallPinsNothing(t *testing.T) {
+	oldest := kibanaRow("https://pinned.kb.example.com/s/{space}/mcp", time.Unix(1, 0), true)
+	other := kibanaRow("https://{host}/s/{space}/mcp", time.Unix(2, 0), true)
+	f := configureFixture(t, true, oldest, other)
+
+	page, err := f.svc.Page(context.Background(), f.ticket(t, "kibana", ""))
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if !hasVariable(page, "host") || !hasVariable(page, "space") {
+		t.Fatalf("an ambiguous install pins nothing, got %v", variableNames(page))
 	}
 }
 

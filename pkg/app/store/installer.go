@@ -156,6 +156,10 @@ type Installer interface {
 	// install of. A lookup failure is returned to the caller; search treats that
 	// as "unknown" and does not fail the browse.
 	InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error)
+	// PinTarget is the configured instance Install would bind in to. Nil when
+	// that install would not resolve to exactly one instance, so a caller
+	// leaves every catalog variable per-user.
+	PinTarget(ctx context.Context, in InstallRequest) (*registrydomain.MCPTarget, error)
 }
 
 // CredentialRevoker revokes the upstream OAuth token held in a per-user
@@ -353,9 +357,13 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	// Older data can hold one instance in several rows. Refresh the installed
 	// one: refreshing a pending or revoked sibling instead would make the
 	// principal hold the installed instance twice.
+	//
+	// A row written before the bound URL fixed a variable still stores that
+	// key. The dial no longer reads it, so it is not what makes an instance.
+	bound := boundTarget(decision.bound)
 	var sameInstance *installationdomain.Installation
 	for _, e := range existing {
-		if !e.SameInstance(decision.registryID, decision.canonical, config) {
+		if !sameInstanceIgnoringPins(e, decision.registryID, decision.canonical, config, bound) {
 			continue
 		}
 		if sameInstance == nil || refreshRank(e) < refreshRank(sameInstance) {
@@ -574,6 +582,28 @@ func (i *installer) decide(
 		d.canonical = all[0].ID
 	}
 	return d, nil
+}
+
+// PinTarget is the instance Install would bind in to. Nil when that install
+// would not resolve to exactly one instance (the caller must pick, or none
+// exists yet): the caller then treats every catalog variable as per-user.
+func (i *installer) PinTarget(ctx context.Context, in InstallRequest) (*registrydomain.MCPTarget, error) {
+	code := strings.TrimSpace(in.Code)
+	entry, ok, err := storeEntry(ctx, i.catalog, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	decision, err := i.decide(ctx, in, entry, code)
+	if err != nil {
+		return nil, err
+	}
+	if len(decision.choices) > 0 {
+		return nil, nil
+	}
+	return boundTarget(decision.bound), nil
 }
 
 // enabledInstances narrows a code's instances to the ones an administrator has

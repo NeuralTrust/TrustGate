@@ -15,9 +15,8 @@
 package store
 
 import (
-	"context"
-
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -41,26 +40,52 @@ func unpinnedURLVariables(vars []registrydomain.MCPURLVariable, bound *registryd
 	return out
 }
 
-// ServingTarget is the target of the instance that serves an install of code:
-// the one registryID names, else the code's canonical (oldest) instance. Nil
-// when the gateway holds none yet, so a caller treats every catalog variable as
-// per-user. The hosted configure form uses it to leave out the variables that
-// instance's URL already fixes, as the installer does.
-func ServingTarget(
-	ctx context.Context,
-	lister RegistryLister,
-	gatewayID ids.GatewayID,
-	code string,
-	registryID ids.RegistryID,
-) (*registrydomain.MCPTarget, error) {
-	if lister == nil {
-		return nil, nil
+// withoutPinnedKeys returns config without the keys bound fixes. The map is
+// returned unchanged when nothing is pinned, so a caller can compare it with
+// the same rules as an exact config match.
+func withoutPinnedKeys(config map[string]string, bound *registrydomain.MCPTarget) map[string]string {
+	if len(config) == 0 || bound == nil {
+		return config
 	}
-	regs, err := findRegistriesByCode(ctx, lister, gatewayID, code)
-	if err != nil {
-		return nil, err
+	out := make(map[string]string, len(config))
+	for k, v := range config {
+		if bound.PinsURLVariable(k) {
+			continue
+		}
+		out[k] = v
 	}
-	return boundTarget(servingRegistry(regs, registryID)), nil
+	if len(out) == len(config) {
+		return config
+	}
+	return out
+}
+
+// sameInstanceIgnoringPins is SameInstance once keys bound pins are left out of
+// both configs. A reinstall that no longer stores a pinned value is the row
+// that still does.
+func sameInstanceIgnoringPins(
+	row *installationdomain.Installation,
+	registryID, canonical ids.RegistryID,
+	config map[string]string,
+	bound *registrydomain.MCPTarget,
+) bool {
+	if row == nil {
+		return false
+	}
+	view := *row
+	view.Config = withoutPinnedKeys(row.Config, bound)
+	return view.SameInstance(registryID, canonical, withoutPinnedKeys(config, bound))
+}
+
+// sameConfigIgnoringPins is SameConfig once keys bound pins are left out of
+// both configs.
+func sameConfigIgnoringPins(row *installationdomain.Installation, config map[string]string, bound *registrydomain.MCPTarget) bool {
+	if row == nil {
+		return len(withoutPinnedKeys(config, bound)) == 0
+	}
+	view := *row
+	view.Config = withoutPinnedKeys(row.Config, bound)
+	return view.SameConfig(withoutPinnedKeys(config, bound))
 }
 
 func servingRegistry(regs []*registrydomain.Registry, registryID ids.RegistryID) *registrydomain.Registry {

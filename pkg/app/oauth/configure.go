@@ -131,9 +131,12 @@ type ConfigureTicketRequest struct {
 }
 
 // ConfigureInstaller is the governed install path the configure flow records a
-// first-time configuration through. appstore.Installer satisfies it.
+// first-time configuration through. appstore.Installer satisfies it. PinTarget
+// is the instance that path would bind, so the form leaves out only the
+// variables that instance fixes.
 type ConfigureInstaller interface {
 	Install(ctx context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error)
+	PinTarget(ctx context.Context, in appstore.InstallRequest) (*registrydomain.MCPTarget, error)
 }
 
 //go:generate mockery --name=ConfigureService --dir=. --output=./mocks --filename=oauth_configure_service_mock.go --case=underscore --with-expecter
@@ -157,10 +160,6 @@ type configureService struct {
 	installs  installationdomain.Repository
 	vault     vaultdomain.Repository
 	installer ConfigureInstaller
-	// registries finds the instance a ticket's install is served by, so the
-	// form leaves out the variables that instance's URL already fixes. Nil
-	// shows every variable the catalog declares.
-	registries RegistryLister
 	// openMode reports whether the gateway's Store is open (self-service) for a
 	// form-driven first install. Nil means "not open": the install is governed as
 	// a request unless the shelf says otherwise.
@@ -181,13 +180,6 @@ type ConfigureOption func(*configureService)
 // creates an installation row on its own.
 func WithConfigureInstaller(installer ConfigureInstaller) ConfigureOption {
 	return func(s *configureService) { s.installer = installer }
-}
-
-// WithConfigureRegistries lets the form leave out, and ignore on submit, the
-// URL variables the serving instance pins (an admin instance whose URL already
-// names the region or tenant): the dial uses that URL whatever the user enters.
-func WithConfigureRegistries(registries RegistryLister) ConfigureOption {
-	return func(s *configureService) { s.registries = registries }
 }
 
 // WithConfigureOpenMode supplies how the service decides whether the gateway's
@@ -397,22 +389,37 @@ func (s *configureService) page(
 	}, nil
 }
 
-// servingTarget is the target of the instance the ticket's install is served
-// by. A failed lookup answers nil, which shows the form as the catalog
-// declares it.
+// servingTarget is the target Install would bind this ticket to. Nil when that
+// install would not resolve to one instance, or the lookup fails: the form
+// then asks for every variable the catalog declares rather than hiding one the
+// install still needs.
 func (s *configureService) servingTarget(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	ticket *ConnectTicket,
 ) *registrydomain.MCPTarget {
-	if s.registries == nil {
+	if s.installer == nil {
 		return nil
 	}
-	var registryID ids.RegistryID
-	if inst, err := s.instance(ctx, gatewayID, ticket); err == nil && inst != nil {
-		registryID = inst.RegistryID
+	req := appstore.InstallRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: ticket.PrincipalSub,
+		Code:         ticket.Code,
+		Groups:       ticket.Groups,
 	}
-	target, err := appstore.ServingTarget(ctx, s.registries, gatewayID, ticket.Code, registryID)
+	if s.openMode != nil {
+		req.OpenMode = s.openMode(ctx, gatewayID, ticket.PrincipalSub, ticket.Groups)
+	}
+	// An existing row is written in place. Name its instance so the pins are
+	// that row's, which is the one Install binds when the instance is named.
+	inst, err := s.instance(ctx, gatewayID, ticket)
+	if err != nil {
+		return nil
+	}
+	if inst != nil {
+		req.RegistryID = inst.RegistryID
+	}
+	target, err := s.installer.PinTarget(ctx, req)
 	if err != nil {
 		return nil
 	}
