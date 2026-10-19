@@ -85,7 +85,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 198, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 199, "the seed grew or shrank; re-audit the flags")
 
 	self := 0
 	for _, s := range servers {
@@ -128,6 +128,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// manual OAuth app, so this count does not move.
 	// Salesforce, ServiceNow, Snowflake, and dbt (ENG-2223) were already not
 	// self-service. They stay that way as manual admin OAuth apps.
+	// com.salesforce/mcp-sandbox is a second manual admin OAuth app, so this
+	// count stays 106.
 	require.Equal(t, 106, self, "self_service count changed")
 }
 

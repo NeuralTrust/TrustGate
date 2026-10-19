@@ -48,7 +48,14 @@ func TestConnectService_AdminOAuthAppsUseClientIDAndPKCE(t *testing.T) {
 			values:          map[string]string{"server": "sobject-all"},
 			authorizePrefix: "https://login.salesforce.com/services/oauth2/authorize?",
 			scope:           "mcp_api refresh_token",
-			resource:        "https://api.salesforce.com/platform/mcp/v1/sobject-all",
+			resource:        "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
+		},
+		{
+			code:            "com.salesforce/mcp-sandbox",
+			values:          map[string]string{"server": "sobject-all"},
+			authorizePrefix: "https://test.salesforce.com/services/oauth2/authorize?",
+			scope:           "mcp_api refresh_token",
+			resource:        "https://api.salesforce.com/platform/mcp/v1/sandbox/platform/sobject-all",
 		},
 		{
 			code:            "com.servicenow/mcp",

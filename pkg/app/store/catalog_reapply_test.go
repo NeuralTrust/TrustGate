@@ -631,6 +631,7 @@ func TestReapplyDoesNotWriteAdminOAuthWithoutClientID(t *testing.T) {
 	withClearProbes(reapply)
 	for _, code := range []string{
 		"com.salesforce/mcp",
+		"com.salesforce/mcp-sandbox",
 		"com.servicenow/mcp",
 		"com.snowflake/mcp",
 		"com.getdbt/mcp",
