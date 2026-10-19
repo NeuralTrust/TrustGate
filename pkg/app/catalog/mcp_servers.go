@@ -128,6 +128,11 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 	return parseCuratedMCPServers(mcpcatalog.EnterpriseServersJSON)
 }
 
+// ParseCuratedMCPServers parses a catalog document in the seed schema.
+func ParseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
+	return parseCuratedMCPServers(data)
+}
+
 func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 	var raw rawCatalog
 	if err := json.Unmarshal(data, &raw); err != nil {

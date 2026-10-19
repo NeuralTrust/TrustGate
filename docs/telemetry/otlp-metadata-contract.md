@@ -83,7 +83,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.method` | `mcp.method` (JSON-RPC method, e.g. `tools/call`) |
 | `trustgate.mcp.operation` | `mcp.operation` (`tool`, `discovery`, `prompt`, `resource`, `initialize`) |
 | `trustgate.mcp.server_name` | `mcp.server_name` (federated MCP registry name the call was routed to) |
-| `trustgate.mcp.registry_id` | `mcp.registry_id` |
+| `trustgate.mcp.registry_id` | `mcp.registry_id`. During the Store stand-in window — the registry a first install just created is not in the snapshot yet — this is the installation id, not the persisted registry id. `trustgate.mcp.catalog_code` still names the server, so the row joins to the real registry once the snapshot arrives |
 | `trustgate.mcp.host` | `mcp.host` |
 | `trustgate.mcp.catalog_code` | `mcp.catalog_code` |
 | `trustgate.mcp.transport` | `mcp.transport` |

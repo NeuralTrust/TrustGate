@@ -39,6 +39,7 @@ type fakeUpstream struct {
 	lastPrompt string
 	lastRead   string
 	result     json.RawMessage
+	callErr    error
 }
 
 func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
@@ -47,6 +48,9 @@ func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
 
 func (f *fakeUpstream) CallTool(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
 	f.lastCall = name
+	if f.callErr != nil {
+		return f.result, f.callErr
+	}
 	return f.result, nil
 }
 
@@ -108,15 +112,50 @@ type fakeCreds struct {
 	err error
 	// errByURL optionally returns a per-upstream error keyed by MCPTarget.URL.
 	errByURL map[string]error
+	mu       sync.Mutex
+	applied  []string
+	// minted records consent errors returned outside a resolve probe. A probe
+	// must not count: that is the connect ticket the probe exists to avoid.
+	minted []string
 }
 
-func (f *fakeCreds) Apply(_ context.Context, _ *appconsumer.RoutableConsumer, reg *registrydomain.Registry, _ *Target) error {
-	if f.errByURL != nil && reg != nil && reg.MCPTarget != nil {
-		if err, ok := f.errByURL[reg.MCPTarget.URL]; ok {
-			return err
+func (f *fakeCreds) Apply(ctx context.Context, _ *appconsumer.RoutableConsumer, reg *registrydomain.Registry, _ *Target) error {
+	decided := f.err
+	url := ""
+	if reg != nil && reg.MCPTarget != nil {
+		url = reg.MCPTarget.URL
+		if f.errByURL != nil {
+			if err, ok := f.errByURL[url]; ok {
+				decided = err
+			}
 		}
 	}
-	return f.err
+	if url != "" {
+		f.mu.Lock()
+		f.applied = append(f.applied, url)
+		var consent *ConsentRequiredError
+		if !resolveProbe(ctx) && errors.As(decided, &consent) {
+			f.minted = append(f.minted, url)
+		}
+		f.mu.Unlock()
+	}
+	return decided
+}
+
+func (f *fakeCreds) appliedURLs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.applied))
+	copy(out, f.applied)
+	return out
+}
+
+func (f *fakeCreds) mintedURLs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.minted))
+	copy(out, f.minted)
+	return out
 }
 
 func mcpRegistry(t *testing.T, name, url string) *registrydomain.Registry {
@@ -589,6 +628,532 @@ func TestComposer_Resolve_UnknownToolSurfacesPendingConsent(t *testing.T) {
 	}
 	if consentErr.Provider != "com.notion/mcp" {
 		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+}
+
+// An unknown name is not hiding on whichever installed server lacks a
+// credential. Resolving it must answer -32602's tool error and must not enter
+// that server's consent flow, which is what mints a connect ticket (ENG-2178).
+func TestComposer_Resolve_UnknownNameDoesNotConsentAnotherServer(t *testing.T) {
+	t.Parallel()
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	graphite := mcpRegistry(t, "Graphite", "https://graphite.example.com/mcp")
+	graphite.MCPTarget.Code = "com.graphite/mcp"
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+		"https://graphite.example.com/mcp":  {tools: tools("list_diffs")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, atlassian, graphite)
+
+	_, err := c.Resolve(context.Background(), rc, "does-not-exist")
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("error = %v, want UnknownToolError", err)
+	}
+	if unknown.Error() != "Unknown tool: does-not-exist" {
+		t.Fatalf("error = %q, want the unknown-tool message", unknown.Error())
+	}
+	if !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want it to be ErrToolNotFound so the handler answers -32602", err)
+	}
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatalf("unknown name returned a consent error for %q", consent.Provider)
+	}
+	if minted := creds.mintedURLs(); len(minted) != 0 {
+		t.Fatalf("connect tickets minted for %v", minted)
+	}
+}
+
+// A tool of an unconnected server still asks that server's user to connect.
+// A second unconnected server must not be the one named, and must not have a
+// ticket minted for it.
+func TestComposer_Resolve_UnconnectedToolConsentsItsOwner(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example.com/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp":    {tools: tools("search")},
+		"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "notion-tk", Path: "/p/mcp",
+		},
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "atl-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, atlassian)
+
+	_, err := c.Resolve(context.Background(), rc, namedFor(atlassian, "searchJira"))
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want ConsentRequiredError for Atlassian", err)
+	}
+	if consent.Provider != "com.atlassian/mcp" {
+		t.Fatalf("provider = %q, want com.atlassian/mcp", consent.Provider)
+	}
+	if consent.Ticket != "atl-tk" {
+		t.Fatalf("ticket = %q, want the Atlassian consent, not another server's", consent.Ticket)
+	}
+	applied := creds.appliedURLs()
+	if len(applied) != 1 || applied[0] != atlassian.MCPTarget.URL {
+		t.Fatalf("credential checks = %v, want only Atlassian", applied)
+	}
+}
+
+// A tool of a server that is installed but unreachable names that server and
+// its state. It must not come back as another server's consent prompt.
+func TestComposer_Resolve_UnavailableOwnerNamesThatServer(t *testing.T) {
+	t.Parallel()
+	linear := mcpRegistry(t, "Linear", "https://linear.example.com/mcp")
+	linear.MCPTarget.Code = "com.linear/mcp"
+	graphite := mcpRegistry(t, "Graphite", "https://graphite.example.com/mcp")
+	graphite.MCPTarget.Code = "com.graphite/mcp"
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	dialer := &fakeDialer{
+		upstreams: map[string]*fakeUpstream{
+			"https://linear.example.com/mcp":    {tools: tools("list_issues")},
+			"https://graphite.example.com/mcp":  {tools: tools("list_diffs")},
+			"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+		},
+		dialErr: map[string]error{
+			"https://graphite.example.com/mcp": ErrUnreachable,
+		},
+	}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, linear, graphite, atlassian)
+
+	_, err := c.Resolve(context.Background(), rc, namedFor(graphite, "list_diffs"))
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatalf("unavailable tool returned consent for %q", consent.Provider)
+	}
+	var down *ServerNotServingError
+	if !errors.As(err, &down) {
+		t.Fatalf("error = %v, want ServerNotServingError", err)
+	}
+	if down.Server != "Graphite" || down.State != InventoryStateUnavailable {
+		t.Fatalf("error = %+v, want Graphite unavailable", down)
+	}
+	if strings.Contains(err.Error(), "atlassian") || strings.Contains(err.Error(), "Atlassian") {
+		t.Fatalf("error = %q names the wrong server", err.Error())
+	}
+	for _, url := range creds.appliedURLs() {
+		if url == atlassian.MCPTarget.URL {
+			t.Fatal("resolving Graphite's tool minted a connect attempt for Atlassian")
+		}
+	}
+}
+
+// tools/list on a fail-closed consumer still refuses when any upstream is down
+// (TestComposer_FailMode). Resolving a name does not use another registry's
+// discovery or consent error as the answer, which is also what used to mint a
+// connect ticket for a server the call does not target.
+func TestComposer_Resolve_FailClosedIgnoresUnrelatedUpstream(t *testing.T) {
+	t.Parallel()
+	linear := mcpRegistry(t, "Linear", "https://linear.example.com/mcp")
+	linear.MCPTarget.Code = "com.linear/mcp"
+	graphite := mcpRegistry(t, "Graphite", "https://graphite.example.com/mcp")
+	graphite.MCPTarget.Code = "com.graphite/mcp"
+	atlassian := mcpRegistry(t, "Atlassian", "https://atlassian.example.com/mcp")
+	atlassian.MCPTarget.Code = "com.atlassian/mcp"
+	up := &fakeUpstream{tools: tools("list_issues"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{
+		upstreams: map[string]*fakeUpstream{
+			"https://linear.example.com/mcp":    up,
+			"https://graphite.example.com/mcp":  {tools: tools("list_diffs")},
+			"https://atlassian.example.com/mcp": {tools: tools("searchJira")},
+		},
+		dialErr: map[string]error{
+			"https://graphite.example.com/mcp": ErrUnreachable,
+		},
+	}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://atlassian.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.atlassian/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed},
+	}, linear, graphite, atlassian)
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, namedFor(linear, "list_issues"), nil); err != nil {
+		t.Fatalf("call to the healthy owner = %v, want it to ignore the other servers", err)
+	}
+	if up.lastCall != "list_issues" {
+		t.Fatalf("upstream call = %q, want list_issues", up.lastCall)
+	}
+	for _, url := range creds.appliedURLs() {
+		if url == atlassian.MCPTarget.URL || url == graphite.MCPTarget.URL {
+			t.Fatalf("calling Linear dialed %s", url)
+		}
+	}
+}
+
+// google's drive_list and google_drive's list spell the same exposed name.
+// The longer prefix used to own it, so a call of the tool google is serving
+// came back as google_drive's consent and minted google_drive a ticket.
+func TestComposer_Resolve_OverlappingSlugServesTheOwner(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	googleUp := &fakeUpstream{tools: tools("drive_list", "search"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  {tools: tools("list", "files")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://drive.example/mcp": &ConsentRequiredError{
+			Provider: "com.google_drive/mcp", Ticket: "drive-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 || names[0] != "google_drive_list" || names[1] != "google_search" {
+		t.Fatalf("tools = %v, want [google_drive_list google_search]", names)
+	}
+	mintedAfterList := len(creds.mintedURLs())
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "google_drive_list", nil); err != nil {
+		t.Fatalf("calling google's drive_list: %v", err)
+	}
+	if googleUp.lastCall != "drive_list" {
+		t.Fatalf("upstream call = %q, want drive_list", googleUp.lastCall)
+	}
+	if minted := creds.mintedURLs(); len(minted) != mintedAfterList {
+		t.Fatalf("resolve minted %v, want no new ticket", minted)
+	}
+}
+
+// The overlapping name is google_drive's tool when google does not serve it.
+// That server's consent, ticket included, is still the answer.
+func TestComposer_Resolve_OverlappingSlugConsentsTheUnservedOwner(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": {tools: tools("search")},
+		"https://drive.example/mcp":  {tools: tools("list")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://drive.example/mcp": &ConsentRequiredError{
+			Provider: "com.google_drive/mcp", Ticket: "drive-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, google, drive)
+
+	_, err := c.Resolve(context.Background(), rc, "google_drive_list")
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want Google Drive's consent", err)
+	}
+	if consent.Provider != "com.google_drive/mcp" || consent.Ticket != "drive-tk" {
+		t.Fatalf("consent = %+v, want Google Drive's ticket", consent)
+	}
+	if minted := creds.mintedURLs(); len(minted) != 1 || minted[0] != drive.MCPTarget.URL {
+		t.Fatalf("minted = %v, want only Google Drive", minted)
+	}
+}
+
+// When both servers really serve the shared spelling, list and call qualify
+// just those names. The tools that do not collide keep the names they had.
+func TestComposer_Resolve_OverlappingSlugDisambiguatesWhenBothServe(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	googleUp := &fakeUpstream{tools: tools("drive_list", "search"), result: json.RawMessage(`{"content":[]}`)}
+	driveUp := &fakeUpstream{tools: tools("list", "files"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	wantPlain := map[string]string{
+		"google_search":      "search",
+		"google_drive_files": "files",
+	}
+	var colliding []string
+	for _, name := range names {
+		if _, plain := wantPlain[name]; plain {
+			delete(wantPlain, name)
+			continue
+		}
+		colliding = append(colliding, name)
+	}
+	if len(wantPlain) != 0 {
+		t.Fatalf("tools = %v, missing %v", names, wantPlain)
+	}
+	if len(colliding) != 2 {
+		t.Fatalf("colliding names = %v, want the two overlapping tools", colliding)
+	}
+	for _, name := range colliding {
+		if !strings.HasPrefix(name, "google_drive_list_") || len(name) > 64 {
+			t.Fatalf("colliding name = %q, want a short suffix on google_drive_list", name)
+		}
+	}
+	if colliding[0] == colliding[1] {
+		t.Fatalf("both tools exposed as %q", colliding[0])
+	}
+
+	called := map[string]string{}
+	for _, name := range colliding {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve %q: %v", name, err)
+		}
+		if _, err := c.Invoke(context.Background(), rc, target, nil); err != nil {
+			t.Fatalf("Invoke %q: %v", name, err)
+		}
+		called[target.Registry.Name] = target.Tool.Name
+	}
+	if called["Google"] != "drive_list" || called["Google Drive"] != "list" {
+		t.Fatalf("calls = %v, want Google/drive_list and Google Drive/list", called)
+	}
+	if googleUp.lastCall != "drive_list" || driveUp.lastCall != "list" {
+		t.Fatalf("upstream calls = %q and %q", googleUp.lastCall, driveUp.lastCall)
+	}
+}
+
+// Two bindings published under one name used to resolve to whichever came
+// first. That is an unknown tool, not a guess, and it is not a consent.
+func TestMatchExposed_DuplicateIsUnknown(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	name := "google_drive_list_de3f"
+	_, ok, err := matchExposed([]binding{
+		{registry: drive, tool: Tool{Name: "list_de3f"}, exposed: name},
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: name},
+	}, name)
+	if ok {
+		t.Fatal("duplicate match was treated as a single tool")
+	}
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("error = %v, want UnknownToolError", err)
+	}
+	if unknown.Error() != "Unknown tool: "+name {
+		t.Fatalf("error = %q, want the unknown-tool message", unknown.Error())
+	}
+	if !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want ErrToolNotFound so the handler answers -32602", err)
+	}
+}
+
+// google_drive publishes list and list_<google's digest>. The second tool's
+// plain name is the suffixed spelling of google's drive_list. Listing must
+// withhold the copy, and calling that spelling must reach google — Drive is
+// registered first, which is what used to win — and must not mint a ticket.
+func TestComposer_Resolve_CopiedSuffixStaysWithTheOwner(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	// A longer prefix that is not serving. Falling through to consent would
+	// mint its ticket; the call is google's tool and must not.
+	sneak := mcpRegistry(t, "Sneak", "https://sneak.example/mcp")
+	sneak.MCPTarget.Code = "com.google_drive_list/mcp"
+	copy := "list_" + registryDigest(google, collisionSuffixLen)
+	victim := disambiguateCollision("google_drive_list", google)
+
+	googleUp := &fakeUpstream{tools: tools("drive_list", "search"), result: json.RawMessage(`{"content":[]}`)}
+	driveUp := &fakeUpstream{tools: tools("list", copy, "files"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+		"https://sneak.example/mcp":  {tools: tools("nope")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://sneak.example/mcp": &ConsentRequiredError{
+			Provider: "com.google_drive_list/mcp", Ticket: "sneak-tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, drive, google, sneak)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	count := map[string]int{}
+	for _, name := range names {
+		count[name]++
+	}
+	if len(names) != 4 || count[victim] != 1 || count["google_search"] != 1 || count["google_drive_files"] != 1 {
+		t.Fatalf("tools = %v, want %q once plus the three names that do not copy it", names, victim)
+	}
+	if count[disambiguateCollision("google_drive_list", drive)] != 1 {
+		t.Fatalf("tools = %v, want Drive's own list under its suffix", names)
+	}
+	mintedAfterList := creds.mintedURLs()
+
+	target, err := c.Resolve(context.Background(), rc, victim)
+	if err != nil {
+		t.Fatalf("Resolve %q: %v", victim, err)
+	}
+	if target.Registry != google || target.Tool.Name != "drive_list" {
+		t.Fatalf("resolved to %s/%s, want Google/drive_list", target.Registry.Name, target.Tool.Name)
+	}
+	if _, err := c.Invoke(context.Background(), rc, target, nil); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if googleUp.lastCall != "drive_list" {
+		t.Fatalf("google call = %q, want drive_list", googleUp.lastCall)
+	}
+	if driveUp.lastCall != "" {
+		t.Fatalf("drive was invoked with %q", driveUp.lastCall)
+	}
+	if minted := creds.mintedURLs(); len(minted) != len(mintedAfterList) {
+		t.Fatalf("resolve minted %v, list had already minted %v", minted, mintedAfterList)
+	}
+
+	inv, err := c.ToolInventory(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("inventory: %v", err)
+	}
+	googleInv := inventoryByName(inv, "Google")
+	if googleInv == nil {
+		t.Fatal("inventory has no Google server")
+	}
+	var onGoogle bool
+	for _, tool := range googleInv.Tools {
+		if tool.Name == victim {
+			onGoogle = true
+		}
+	}
+	if !onGoogle {
+		t.Fatalf("Google inventory = %+v, want %q", googleInv.Tools, victim)
+	}
+	if driveInv := inventoryByName(inv, "Google Drive"); driveInv != nil {
+		for _, tool := range driveInv.Tools {
+			if tool.Name == victim {
+				t.Fatalf("Drive inventory lists %q", victim)
+			}
+		}
+	}
+}
+
+// A slug of 55+ characters used to be sliced, so the prefix match missed and
+// every tool on that server was an unknown tool. List and call share the hash
+// of the slug instead. A tool that still fits keeps the slug.
+func TestComposer_Resolve_OverlongSlugStaysCallable(t *testing.T) {
+	t.Parallel()
+	slug := strings.Repeat("a", 55)
+	reg := mcpRegistry(t, "Long", "https://long.example/mcp")
+	reg.MCPTarget.Code = "com." + slug + "/mcp"
+	longTool := strings.Repeat("b", 20) + "_work"
+	up := &fakeUpstream{tools: tools(longTool, "ping"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://long.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 {
+		t.Fatalf("tools = %v, want the long tool and ping", names)
+	}
+	prefix := hashedSlug(slug) + "_"
+	var hashed, plain string
+	for _, name := range names {
+		switch {
+		case name == slug+"_ping":
+			plain = name
+		case strings.HasPrefix(name, prefix) && !strings.HasPrefix(name, slug):
+			hashed = name
+		default:
+			t.Fatalf("name = %q, want either %s_ping or %s…", name, slug, prefix)
+		}
+	}
+	if hashed == "" || plain == "" {
+		t.Fatalf("tools = %v, want one hashed name and one unchanged short name", names)
+	}
+	if len(hashed) > 64 {
+		t.Fatalf("hashed name length = %d, want at most 64", len(hashed))
+	}
+
+	called := map[string]string{}
+	for _, name := range []string{hashed, plain} {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve %q: %v", name, err)
+		}
+		if target.Registry != reg {
+			t.Fatalf("Resolve %q registry = %s, want Long", name, target.Registry.Name)
+		}
+		if _, err := c.Invoke(context.Background(), rc, target, nil); err != nil {
+			t.Fatalf("Invoke %q: %v", name, err)
+		}
+		called[name] = target.Tool.Name
+	}
+	if called[hashed] != longTool || called[plain] != "ping" {
+		t.Fatalf("calls = %v, want the hashed name to be %s and the short name to be ping", called, longTool)
+	}
+	if up.lastCall != "ping" {
+		t.Fatalf("last upstream call = %q, want ping", up.lastCall)
 	}
 }
 
@@ -1133,5 +1698,283 @@ func TestComposer_InvokeNeedingAnAccountForgetsTheCachedLists(t *testing.T) {
 	}
 	if _, err := c.ListTools(ctx, rc); !errors.As(err, &consentErr) {
 		t.Fatalf("ListTools after a refused call = %v, want ConsentRequiredError, not the cached tools", err)
+	}
+}
+
+// A v2 name is what tools/call routes on, and a toolkit entry keyed on that
+// name still allows the call through to the upstream tool.
+func TestComposer_V2NameReachesUpstreamAndPolicyApplies(t *testing.T) {
+	t.Parallel()
+	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
+	docs.MCPTarget.Code = "com.devexpress/docs"
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+
+	upDocs := &fakeUpstream{tools: tools("devexpress_docs_search", "devexpress_docs_get_content"), result: json.RawMessage(`{"content":[]}`)}
+	upClickup := &fakeUpstream{tools: tools("get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://devexpress.example/mcp": upDocs,
+		"https://clickup.example/mcp":    upClickup,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{
+			FailMode: consumerdomain.FailModeOpen,
+			Toolkit: consumerdomain.Toolkit{
+				{RegistryID: docs.ID, Tool: "devexpress_docs_search"},
+				{RegistryID: clickup.ID, Tool: "get_task"},
+			},
+		},
+	}, docs, clickup)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 || names[0] != "devexpress_docs_search" || names[1] != "clickup_get_task" {
+		t.Fatalf("tools = %v, want [devexpress_docs_search clickup_get_task]", names)
+	}
+
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "devexpress_docs_search", nil); err != nil {
+		t.Fatalf("calling the v2 name: %v", err)
+	}
+	if upDocs.lastCall != "devexpress_docs_search" {
+		t.Fatalf("upstream = %q, want devexpress_docs_search", upDocs.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("calling clickup_get_task: %v", err)
+	}
+	if upClickup.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", upClickup.lastCall)
+	}
+
+	_, err = c.Resolve(context.Background(), rc, "devexpress_docs_get_content")
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want the toolkit to refuse the v2 name it does not list", err)
+	}
+	if denied.Tool != "devexpress_docs_get_content" {
+		t.Fatalf("denied = %q, want devexpress_docs_get_content", denied.Tool)
+	}
+}
+
+// Allowing get_task must not move clickup_clickup_get_task onto get_task.
+// The sibling is part of the upstream list either way, so the spelling is
+// fixed before the toolkit chooses what to publish.
+func TestComposer_ToolkitChangeDoesNotRebindV2Name(t *testing.T) {
+	t.Parallel()
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	up := &fakeUpstream{tools: tools("get_task", "clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://clickup.example/mcp": up,
+	}})
+	onlyPrefixed := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: clickup.ID, Tool: "clickup_get_task"},
+		}},
+	}, clickup)
+	listed, err := c.ListTools(context.Background(), onlyPrefixed)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "clickup_clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, onlyPrefixed, "clickup_clickup_get_task", nil); err != nil {
+		t.Fatalf("calling the prefixed tool: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task", up.lastCall)
+	}
+
+	both := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: clickup.ID, Tool: "get_task"},
+			{RegistryID: clickup.ID, Tool: "clickup_get_task"},
+		}},
+	}, clickup)
+	listed, err = c.ListTools(context.Background(), both)
+	if err != nil {
+		t.Fatalf("ListTools with both tools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 2 || names[0] != "clickup_get_task" || names[1] != "clickup_clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_get_task clickup_clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, both, "clickup_clickup_get_task", nil); err != nil {
+		t.Fatalf("prefixed name after the toolkit grew: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task still", up.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, both, "clickup_get_task", nil); err != nil {
+		t.Fatalf("short name: %v", err)
+	}
+	if up.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", up.lastCall)
+	}
+}
+
+// Adding the unprefixed sibling upstream is what moves the names. A toolkit
+// change must not, and this is the change that does.
+func TestComposer_UpstreamSiblingRebindsV2Name(t *testing.T) {
+	t.Parallel()
+	clickup := mcpRegistry(t, "ClickUp", "https://clickup.example/mcp")
+	clickup.MCPTarget.Code = "com.clickup/mcp"
+	up := &fakeUpstream{tools: tools("clickup_get_task"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://clickup.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, clickup)
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("calling clickup_get_task: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task", up.lastCall)
+	}
+
+	// Discovery caches the first list. A fresh composer is what the gateway
+	// serves once that cache is gone and the upstream now also offers get_task.
+	up.tools = tools("get_task", "clickup_get_task")
+	c = newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://clickup.example/mcp": up,
+	}})
+	listed, err = c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools after the sibling appeared: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 2 || names[0] != "clickup_get_task" || names[1] != "clickup_clickup_get_task" {
+		t.Fatalf("tools = %v, want [clickup_get_task clickup_clickup_get_task]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_get_task", nil); err != nil {
+		t.Fatalf("short name after the sibling appeared: %v", err)
+	}
+	if up.lastCall != "get_task" {
+		t.Fatalf("upstream = %q, want get_task", up.lastCall)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "clickup_clickup_get_task", nil); err != nil {
+		t.Fatalf("prefixed name after the sibling appeared: %v", err)
+	}
+	if up.lastCall != "clickup_get_task" {
+		t.Fatalf("upstream = %q, want clickup_get_task", up.lastCall)
+	}
+}
+
+func TestComposer_V2RegistryKeepsPromptNamesOnV1(t *testing.T) {
+	t.Parallel()
+	docs := mcpRegistry(t, "DevExpress", "https://devexpress.example/mcp")
+	docs.MCPTarget.Code = "com.devexpress/docs"
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://devexpress.example/mcp": {prompts: prompts("devexpress_docs_search")},
+	}})
+	got, err := c.ListPrompts(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, docs))
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "devexpress_docs_devexpress_docs_search" {
+		t.Fatalf("prompts = %v, want the original doubled spelling", got)
+	}
+}
+
+// Cross-server collision suffixes count published tools only. A tool the
+// toolkit does not expose does not change the published name. Calling a
+// spelling that is not published is unknown, not denied.
+func TestComposer_UnpublishedToolDoesNotSuffixAPublishedName(t *testing.T) {
+	t.Parallel()
+	assertHiddenCrossServerToolDoesNotSuffix(t)
+}
+
+func assertHiddenCrossServerToolDoesNotSuffix(t *testing.T) {
+	t.Helper()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	googleUp := &fakeUpstream{tools: tools("drive_list")}
+	driveUp := &fakeUpstream{tools: tools("list"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://google.example/mcp": googleUp,
+		"https://drive.example/mcp":  driveUp,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: drive.ID, Tool: "list"},
+		}},
+	}, google, drive)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if names := toolNames(listed); len(names) != 1 || names[0] != "google_drive_list" {
+		t.Fatalf("tools = %v, want [google_drive_list]", names)
+	}
+	if _, err := resolveAndInvoke(context.Background(), c, rc, "google_drive_list", nil); err != nil {
+		t.Fatalf("calling google_drive_list: %v", err)
+	}
+	if driveUp.lastCall != "list" {
+		t.Fatalf("upstream = %q, want list", driveUp.lastCall)
+	}
+	if googleUp.lastCall != "" {
+		t.Fatalf("hidden upstream was called with %q", googleUp.lastCall)
+	}
+	for _, reg := range []*registrydomain.Registry{google, drive} {
+		suffix := disambiguateCollision("google_drive_list", reg)
+		_, err := c.Resolve(context.Background(), rc, suffix)
+		var denied *ToolNotPermittedError
+		if errors.As(err, &denied) {
+			t.Fatalf("suffix %q: denied, want unknown", suffix)
+		}
+		if !errors.Is(err, ErrToolNotFound) {
+			t.Fatalf("suffix %q: %v, want unknown", suffix, err)
+		}
+	}
+}
+
+// Renaming find to search used to skip collision handling and publish a second
+// notion_search next to the tool that already had that name. tools/call then
+// could not choose either. The rename goes through resolveNames: both copies
+// take this registry's digest, and that shared suffix is withheld.
+func TestComposer_RenamedNameGoesThroughCollision(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	up := &fakeUpstream{tools: tools("find", "search", "pages"), result: json.RawMessage(`{"content":[]}`)}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example/mcp": up,
+	}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "find", ExposeAs: "search"},
+			{RegistryID: notion.ID, Tool: "search"},
+			{RegistryID: notion.ID, Tool: "pages"},
+		}},
+	}, notion)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 1 || names[0] != "notion_pages" {
+		t.Fatalf("tools = %v, want [notion_pages]: the colliding rename is withheld, pages is not", names)
+	}
+	if _, err := c.Resolve(context.Background(), rc, "notion_search"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("Resolve notion_search = %v, want unknown", err)
+	}
+	if up.lastCall != "" {
+		t.Fatalf("upstream was called with %q", up.lastCall)
 	}
 }

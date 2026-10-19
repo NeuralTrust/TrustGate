@@ -291,10 +291,13 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	// and announcing a change on it asks for another list of what was just sent.
 	// The surface is re-read either way, so the announcement is recorded against
 	// the snapshot the next request will compare with.
-	result = stampResultEnvelope(req.Method, result)
+	// Read the tool result before the envelope is stamped: an install that
+	// recorded nothing, and an uninstall of a code that was not installed,
+	// must not announce a tool-list change.
 	moved := h.surfaceMoved(c, rc)
 	listChanged := req.Method != "tools/list" &&
-		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params)))
+		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params, result)))
+	result = stampResultEnvelope(req.Method, result)
 	if raw, ok := result.(json.RawMessage); ok {
 		return writeRPCBody(c, rawRPCResponse(req.ID, raw), listChanged)
 	}
@@ -395,6 +398,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		consentErr    *appmcp.ConsentRequiredError
 		notPermitted  *appmcp.ToolNotPermittedError
 		appNotLinked  *appmcp.ApplicationNotConnectedError
+		notServing    *appmcp.ServerNotServingError
 		invalidParams *InvalidParamsError
 	)
 	switch {
@@ -501,6 +505,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
+	case errors.As(err, &notServing):
+		// The owning server is installed but not reachable. Name that server and
+		// its state; the discovery error itself can carry an upstream URL, so it
+		// stays out of the message the caller reads.
+		return writeRPCError(c, id, codeInternalError, notServing.Error())
 	case errors.Is(err, appmcp.ErrUnreachable), errors.Is(err, appmcp.ErrUpstreamUnavailable):
 		slog.Default().Warn("mcp handler: upstream MCP server unreachable",
 			"method", c.Method(), "path", c.Path(), "error", err)

@@ -158,6 +158,16 @@ func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain
 	if reg := strings.TrimSpace(entry.OAuth.Registration); reg != "" {
 		target.Auth.Registration = domain.MCPClientRegistration(reg)
 	}
+	// A row saved while this server required a manual client already has a
+	// client id. The catalog may since have switched to dynamic registration
+	// (Dropbox, Jotform). Forcing auto here makes Validate reject the row,
+	// because auto does not accept client_id, and the admin would have to
+	// clear the client id to save any other edit. Keep the stored client on
+	// manual registration. A save that carries no client id still follows the
+	// catalog and becomes auto.
+	if target.Auth.Registration == domain.RegistrationAuto && strings.TrimSpace(target.Auth.ClientID) != "" {
+		target.Auth.Registration = domain.RegistrationManual
+	}
 	if target.Auth.Registration == "" {
 		target.Auth.Registration = domain.RegistrationManual
 	}
@@ -185,13 +195,95 @@ func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain
 	if len(entry.OAuth.Scopes) > 0 {
 		target.Auth.Scopes = append([]string(nil), entry.OAuth.Scopes...)
 	}
-	switch resource := strings.TrimSpace(entry.OAuth.Resource); {
+	assignCatalogResource(target, entry)
+	return nil
+}
+
+// assignCatalogResource copies the catalog audience onto the row. A templated
+// audience is stored as the concrete resource the target URL resolves to, using
+// the same closed-option match as connect. A concrete resource already on the
+// row is left in place when that match is not unique: replacing it with the
+// template would change the vault fingerprint and orphan every stored token.
+func assignCatalogResource(target *domain.MCPTarget, entry catalogdomain.MCPServer) {
+	if target == nil || target.Auth == nil || entry.OAuth == nil {
+		return
+	}
+	resource := strings.TrimSpace(entry.OAuth.Resource)
+	stored := strings.TrimSpace(target.Auth.Resource)
+	// Only a catalog resource that is itself a template is per-instance.
+	// Copying a templated server URL into the row (resource_metadata) must
+	// not flip this: New Relic and Vanta tokens are stored under that template.
+	target.Auth.ResourcePerInstance = strings.Contains(resource, "{")
+	templated := strings.Contains(resource, "{") || (resource == "" && entry.OAuth.ResourceMetadata && strings.Contains(target.URL, "{"))
+	if templated {
+		if concrete, ok := concreteCatalogResource(target, entry, resource); ok {
+			target.Auth.Resource = concrete
+			return
+		}
+		if stored != "" && !strings.ContainsAny(stored, "{}") {
+			return
+		}
+	}
+	switch {
 	case resource != "":
 		target.Auth.Resource = resource
-	case entry.OAuth.ResourceMetadata && strings.TrimSpace(target.Auth.Resource) == "":
+	case entry.OAuth.ResourceMetadata && stored == "":
 		target.Auth.Resource = target.URL
 	}
-	return nil
+}
+
+// concreteCatalogResource resolves a templated catalog resource against the
+// target URL. It succeeds only when exactly one closed option produces that
+// URL, so an open host and an ambiguous option list never invent an audience.
+func concreteCatalogResource(target *domain.MCPTarget, entry catalogdomain.MCPServer, resource string) (string, bool) {
+	if target == nil {
+		return "", false
+	}
+	vars := catalogURLVarsAsRegistry(entry.URLVariables)
+	values, ok := domain.ClosedOptionMatch(entry.URL, vars, nil, target.URL)
+	if !ok {
+		return "", false
+	}
+	template := resource
+	if template == "" {
+		template = strings.TrimSpace(entry.URL)
+	}
+	if template == "" || !strings.Contains(template, "{") {
+		if template == "" {
+			return "", false
+		}
+		return template, true
+	}
+	resolved, err := domain.ResolveURL(template, vars, values)
+	if err != nil || strings.ContainsAny(resolved, "{}") {
+		return "", false
+	}
+	return resolved, true
+}
+
+func catalogURLVarsAsRegistry(vars []catalogdomain.MCPURLVariable) []domain.MCPURLVariable {
+	if len(vars) == 0 {
+		return nil
+	}
+	out := make([]domain.MCPURLVariable, 0, len(vars))
+	for _, variable := range vars {
+		converted := domain.MCPURLVariable{
+			Name:        strings.TrimSpace(variable.Name),
+			Description: variable.Description,
+			Required:    variable.Required,
+			Secret:      variable.Secret,
+			In:          strings.TrimSpace(variable.In),
+			HostSuffix:  append([]string(nil), variable.HostSuffix...),
+		}
+		for _, option := range variable.Options {
+			converted.Options = append(converted.Options, domain.MCPURLVariableOption{
+				Value: strings.TrimSpace(option.Value),
+				Label: option.Label,
+			})
+		}
+		out = append(out, converted)
+	}
+	return out
 }
 
 // bindSharedOAuth points a forwarded target at the platform's shared OAuth

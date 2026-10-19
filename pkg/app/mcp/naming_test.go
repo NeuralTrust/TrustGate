@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -72,6 +73,132 @@ func TestExposedName_CarriesItsServerWhateverElseIsBound(t *testing.T) {
 	}
 	if got := exposedNameFor("list_issues", linear).String(); got != "linear_list_issues" {
 		t.Fatalf("name = %q, want linear_list_issues", got)
+	}
+}
+
+// Every prefix that fits is a candidate. notion_ai_search fits both notion and
+// notion_ai; which one serves it is decided from the tools, not by keeping the
+// longer prefix and dropping the other. A name with no server prefix belongs
+// to nobody.
+func TestRegistriesForExposedName_OverlappingPrefixesAreCandidates(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+	notionAI := mcpRegistry(t, "Notion AI", "https://notion-ai.example/mcp")
+	notionAI.MCPTarget.Code = "com.notion_ai/mcp"
+
+	owners := registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "notion_ai_search")
+	if len(owners) != 2 || owners[0] != notion || owners[1] != notionAI {
+		t.Fatalf("owners = %v, want Notion and Notion AI", owners)
+	}
+	owners = registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "notion_search")
+	if len(owners) != 1 || owners[0] != notion {
+		t.Fatalf("owners = %v, want Notion", owners)
+	}
+	if got := registriesForExposedName([]*registrydomain.Registry{notion, notionAI}, "does-not-exist"); len(got) != 0 {
+		t.Fatalf("owners = %v, want none", got)
+	}
+}
+
+// Two servers can spell different tools as one string. Only those names take a
+// digest; everything else stays exactly the name it had with one server bound.
+func TestResolveNames_CollisionSuffixOnlyOnOverlap(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+
+	got := resolveNames([]binding{
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: google, tool: Tool{Name: "search"}, exposed: "search"},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+		{registry: drive, tool: Tool{Name: "files"}, exposed: "files"},
+	}, nil)
+
+	byNative := map[string]string{}
+	for _, b := range got {
+		byNative[b.registry.Name+"/"+b.tool.Name] = b.exposed
+	}
+	if byNative["Google/search"] != "google_search" {
+		t.Fatalf("search = %q, want it unchanged", byNative["Google/search"])
+	}
+	if byNative["Google Drive/files"] != "google_drive_files" {
+		t.Fatalf("files = %q, want it unchanged", byNative["Google Drive/files"])
+	}
+	googleList := byNative["Google/drive_list"]
+	driveList := byNative["Google Drive/list"]
+	if googleList == "google_drive_list" || driveList == "google_drive_list" || googleList == driveList {
+		t.Fatalf("colliding names = %q and %q, want two distinct suffixed names", googleList, driveList)
+	}
+	for _, name := range []string{googleList, driveList} {
+		if !strings.HasPrefix(name, "google_drive_list_") || len(name) > maxExposedNameLength {
+			t.Fatalf("colliding name = %q, want google_drive_list_<digest> within %d", name, maxExposedNameLength)
+		}
+	}
+	if googleList != disambiguateCollision("google_drive_list", google) || driveList != disambiguateCollision("google_drive_list", drive) {
+		t.Fatalf("suffixes = %q and %q, want the registry digests", googleList, driveList)
+	}
+	// The same inputs name the tools the same way again.
+	again := resolveNames([]binding{
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+	}, nil)
+	if again[0].exposed != googleList || again[1].exposed != driveList {
+		t.Fatalf("second resolution = %q %q, want %q %q", again[0].exposed, again[1].exposed, googleList, driveList)
+	}
+}
+
+// google_drive can publish list_<google's digest> next to list. The plain tool
+// then spells exactly the suffixed name google's drive_list was given. That
+// copy is withheld; the suffix owner keeps the name. Anything that does not
+// collide is unchanged.
+func TestResolveNames_PlainCopyOfSuffixIsWithheld(t *testing.T) {
+	t.Parallel()
+	google := mcpRegistry(t, "Google", "https://google.example/mcp")
+	google.MCPTarget.Code = "com.google/mcp"
+	drive := mcpRegistry(t, "Google Drive", "https://drive.example/mcp")
+	drive.MCPTarget.Code = "com.google_drive/mcp"
+	copy := "list_" + registryDigest(google, collisionSuffixLen)
+	victim := disambiguateCollision("google_drive_list", google)
+
+	// Drive is first, which is the order that used to make the copy win.
+	got := resolveNames([]binding{
+		{registry: drive, tool: Tool{Name: copy}, exposed: copy},
+		{registry: drive, tool: Tool{Name: "list"}, exposed: "list"},
+		{registry: drive, tool: Tool{Name: "files"}, exposed: "files"},
+		{registry: google, tool: Tool{Name: "drive_list"}, exposed: "drive_list"},
+		{registry: google, tool: Tool{Name: "search"}, exposed: "search"},
+	}, nil)
+
+	byNative := map[string]string{}
+	for _, b := range got {
+		key := b.registry.Name + "/" + b.tool.Name
+		if _, dup := byNative[key]; dup {
+			t.Fatalf("tool %s published twice", key)
+		}
+		byNative[key] = b.exposed
+	}
+	if _, stolen := byNative["Google Drive/"+copy]; stolen {
+		t.Fatalf("copied name %q was published as %q", copy, byNative["Google Drive/"+copy])
+	}
+	if byNative["Google/drive_list"] != victim {
+		t.Fatalf("victim = %q, want %q", byNative["Google/drive_list"], victim)
+	}
+	owners := 0
+	for _, name := range byNative {
+		if name == victim {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("bindings spelling %q = %d, want the suffix owner only", victim, owners)
+	}
+	if byNative["Google Drive/files"] != "google_drive_files" || byNative["Google/search"] != "google_search" {
+		t.Fatalf("unchanged names = %q and %q", byNative["Google Drive/files"], byNative["Google/search"])
+	}
+	if byNative["Google Drive/list"] == "" || byNative["Google Drive/list"] == "google_drive_list" || byNative["Google Drive/list"] == victim {
+		t.Fatalf("drive list = %q, want its own suffix", byNative["Google Drive/list"])
 	}
 }
 
@@ -145,11 +272,66 @@ func TestExposedName_TooLongIsCutButStaysDistinct(t *testing.T) {
 	}
 }
 
+// A slug long enough that the content-hash suffix would leave the tool nothing
+// used to be cut, so the exposed name no longer started with the server and
+// every call answered "Unknown tool". The server part becomes a short hash of
+// the slug instead. A name that still fits is not touched, and neither is a
+// slug that leaves the tool one character.
+func TestExposedName_OverlongSlugIsHashedNotCut(t *testing.T) {
+	t.Parallel()
+	slug := strings.Repeat("a", 55)
+	reg := mcpRegistry(t, "Long", "https://long.example/mcp")
+	reg.MCPTarget.Code = "com." + slug + "/mcp"
+	if got := serverSlug(reg); got != slug {
+		t.Fatalf("slug = %q, want %d a's", got, len(slug))
+	}
+
+	tool := strings.Repeat("b", 20)
+	one := exposedNameFor(tool+"_one", reg).String()
+	two := exposedNameFor(tool+"_two", reg).String()
+	prefix := hashedSlug(slug) + "_"
+	for _, name := range []string{one, two} {
+		if len(name) > maxExposedNameLength {
+			t.Fatalf("name %q is %d characters, want at most %d", name, len(name), maxExposedNameLength)
+		}
+		if !strings.HasPrefix(name, prefix) {
+			t.Fatalf("name = %q, want the slug's hash %q", name, prefix)
+		}
+		if strings.HasPrefix(name, slug) {
+			t.Fatalf("name = %q still starts with the slug, which is what the cut did", name)
+		}
+	}
+	if one == two {
+		t.Fatalf("two tools share the hashed name %q", one)
+	}
+	if got := registriesForExposedName([]*registrydomain.Registry{reg}, one); len(got) != 1 || got[0] != reg {
+		t.Fatalf("owners of %q = %v, want the long server", one, got)
+	}
+
+	// Short enough to fit after the slug: the hash must not rename it.
+	if got, want := exposedNameFor("x", reg).String(), slug+"_x"; got != want {
+		t.Fatalf("short tool = %q, want %q", got, want)
+	}
+
+	// One character of tool still fits, so the server stays whole.
+	barely := strings.Repeat("c", 53)
+	barelyReg := mcpRegistry(t, "Barely", "https://barely.example/mcp")
+	barelyReg.MCPTarget.Code = "com." + barely + "/mcp"
+	longTool := strings.Repeat("d", 40)
+	got := exposedNameFor(longTool, barelyReg).String()
+	if !strings.HasPrefix(got, barely+"_") || len(got) > maxExposedNameLength {
+		t.Fatalf("name = %q, want the 53-character server kept whole", got)
+	}
+}
+
 func perInstanceRegistry(t *testing.T, name, url string, cfg map[string]string) *registrydomain.Registry {
 	t.Helper()
 	reg := mcpRegistry(t, name, url)
 	reg.MCPTarget.Code = "snowflake"
 	reg.MCPTarget.InstanceConfig = cfg
+	// A second instance of the code: its id differs from the shelf it clones,
+	// which is what puts the per-instance digest on the name.
+	reg.InstanceOf = ids.New[ids.RegistryKind]()
 	return reg
 }
 
@@ -242,9 +424,8 @@ func TestExposedName_ShelfAndConfiguredInstanceKeepTheirNames(t *testing.T) {
 	target.InstanceConfig = map[string]string{"workspace": "acme"}
 	configured.MCPTarget = &target
 	configured.InstanceOf = shelf.ID
-	want := "linear_" + registryDigest(shelf, 6) + "_save_issue"
-	if got := namedFor(&configured, "save_issue"); got != want {
-		t.Fatalf("configured instance name = %q, want %q", got, want)
+	if got := namedFor(&configured, "save_issue"); got != "linear_save_issue" {
+		t.Fatalf("configured instance name = %q, want linear_save_issue", got)
 	}
 }
 
@@ -272,5 +453,255 @@ func TestComposer_ListTools_ConfiglessStoreInstancesServeDistinctNames(t *testin
 	}
 	if len(names) != 4 {
 		t.Fatalf("tools = %v, want both instances' two tools", names)
+	}
+}
+
+func v2Registry(t *testing.T, name, code string) *registrydomain.Registry {
+	t.Helper()
+	reg := mcpRegistry(t, name, "https://"+name+".example/mcp")
+	reg.MCPTarget.Code = code
+	return reg
+}
+
+func TestExposedName_V2DropsARepeatedServerPrefix(t *testing.T) {
+	t.Parallel()
+	docs := v2Registry(t, "DevExpress", "com.devexpress/docs")
+	if got := namedFor(docs, "devexpress_docs_search"); got != "devexpress_docs_search" {
+		t.Fatalf("search = %q, want devexpress_docs_search", got)
+	}
+	if got := namedFor(docs, "DevExpress_Docs_Get_Content"); got != "devexpress_docs_Get_Content" {
+		t.Fatalf("mixed case = %q, want the slug canonical and the rest untouched", got)
+	}
+
+	clickup := v2Registry(t, "ClickUp", "com.clickup/mcp")
+	if got := namedFor(clickup, "get_task"); got != "clickup_get_task" {
+		t.Fatalf("get_task = %q, want clickup_get_task", got)
+	}
+}
+
+// A partial overlap is not the server prefix. v2 leaves those doubled.
+func TestExposedName_V2LeavesPartialOverlapsDoubled(t *testing.T) {
+	t.Parallel()
+	vonage := v2Registry(t, "Vonage", "com.vonage/docs-mcp")
+	if got := namedFor(vonage, "vonage_docs_search"); got != "vonage_docs_mcp_vonage_docs_search" {
+		t.Fatalf("vonage = %q, want the slug prepended", got)
+	}
+	twilio := v2Registry(t, "Twilio", "com.twilio/docs")
+	if got := namedFor(twilio, "twilio__search"); got != "twilio_docs_twilio__search" {
+		t.Fatalf("twilio = %q, want the slug prepended", got)
+	}
+}
+
+func TestResolveNames_V2KeepsTheDoubledFormOnASameServerCollision(t *testing.T) {
+	t.Parallel()
+	clickup := v2Registry(t, "ClickUp", "com.clickup/mcp")
+	got := resolveNames([]binding{
+		{registry: clickup, tool: Tool{Name: "get_task"}, exposed: "get_task"},
+		{registry: clickup, tool: Tool{Name: "clickup_get_task"}, exposed: "clickup_get_task"},
+	}, nil)
+	byNative := map[string]string{}
+	for _, b := range got {
+		byNative[b.tool.Name] = b.exposed
+	}
+	if byNative["get_task"] != "clickup_get_task" {
+		t.Fatalf("get_task = %q, want clickup_get_task", byNative["get_task"])
+	}
+	if byNative["clickup_get_task"] != "clickup_clickup_get_task" {
+		t.Fatalf("prefixed tool = %q, want clickup_clickup_get_task", byNative["clickup_get_task"])
+	}
+}
+
+// x, clickup_x and clickup_clickup_x each have to keep a name. Stopping the
+// prefix bump at the first collision used to give two of them one spelling
+// and then drop both.
+func TestResolveNames_V2PrefixChainStaysInjective(t *testing.T) {
+	t.Parallel()
+	clickup := v2Registry(t, "ClickUp", "com.clickup/mcp")
+	got := resolveNames([]binding{
+		{registry: clickup, tool: Tool{Name: "x"}, exposed: "x"},
+		{registry: clickup, tool: Tool{Name: "clickup_x"}, exposed: "clickup_x"},
+		{registry: clickup, tool: Tool{Name: "clickup_clickup_x"}, exposed: "clickup_clickup_x"},
+	}, nil)
+	byNative := map[string]string{}
+	seen := map[string]string{}
+	for _, b := range got {
+		byNative[b.tool.Name] = b.exposed
+		if prev, ok := seen[b.exposed]; ok {
+			t.Fatalf("%s and %s both publish %q", prev, b.tool.Name, b.exposed)
+		}
+		seen[b.exposed] = b.tool.Name
+	}
+	if len(byNative) != 3 {
+		t.Fatalf("published %d tools, want all 3: %v", len(byNative), byNative)
+	}
+	if byNative["x"] != "clickup_x" || byNative["clickup_x"] != "clickup_clickup_x" || byNative["clickup_clickup_x"] != "clickup_clickup_clickup_x" {
+		t.Fatalf("names = %v", byNative)
+	}
+}
+
+func TestSuffixWithin_DoesNotSplitARune(t *testing.T) {
+	t.Parallel()
+	// "é" is two bytes. A 4-byte window ends on the continuation byte.
+	s := "aaébbb"
+	got := suffixWithin(s, 4)
+	if !utf8.ValidString(got) {
+		t.Fatalf("suffix %q is not UTF-8", got)
+	}
+	if got != "bbb" {
+		t.Fatalf("suffix = %q, want bbb", got)
+	}
+	if len(suffixWithin(s, len(s))) != len(s) {
+		t.Fatal("a string that fits must be returned whole")
+	}
+}
+
+func TestExposedName_V2SingleInstanceOmitsDigest(t *testing.T) {
+	t.Parallel()
+	elastic := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	elastic.MCPTarget.InstanceConfig = map[string]string{"project": "logs"}
+	elastic.InstanceOf = elastic.ID
+	if got := namedFor(elastic, "search"); got != "elastic_agent_builder_mcp_search" {
+		t.Fatalf("single instance = %q, want elastic_agent_builder_mcp_search", got)
+	}
+}
+
+func TestExposedName_V2CollidingInstancesKeepTheDigest(t *testing.T) {
+	t.Parallel()
+	shelf := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	a := storeClone(shelf)
+	b := storeClone(shelf)
+	nameA, nameB := namedFor(a, "search"), namedFor(b, "search")
+	wantA := "elastic_agent_builder_mcp_" + registryDigest(a, 6) + "_search"
+	wantB := "elastic_agent_builder_mcp_" + registryDigest(b, 6) + "_search"
+	if nameA != wantA || nameB != wantB {
+		t.Fatalf("instances = %q and %q, want %q and %q", nameA, nameB, wantA, wantB)
+	}
+	if nameA == nameB {
+		t.Fatalf("two instances share %q", nameA)
+	}
+}
+
+func TestExposedName_V2TruncationKeepsTheTail(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	const slug = "elastic_agent_builder_mcp_"
+	tool := strings.Repeat("a", 40) + "_list_indices"
+	got := namedFor(reg, tool)
+	hash := strings.TrimPrefix(contentSuffix(slug+tool), "_")
+	want := slug + strings.Repeat("a", 14) + "_" + hash + "_a_list_indices"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name %q is %d bytes, want at most %d", got, len(got), maxExposedNameLength)
+	}
+	if !strings.HasPrefix(got, slug) {
+		t.Fatalf("name = %q, want the server prefix kept", got)
+	}
+	if !strings.HasSuffix(got, "_list_indices") {
+		t.Fatalf("name = %q, want the action words kept", got)
+	}
+	if strings.Contains(got, "__") {
+		t.Fatalf("name = %q, want single underscores around the hash", got)
+	}
+	otherTool := strings.Repeat("b", 40) + "_list_indices"
+	other := namedFor(reg, otherTool)
+	if other == got {
+		t.Fatalf("two long tools collapsed to %q", got)
+	}
+	otherHash := strings.TrimPrefix(contentSuffix(slug+otherTool), "_")
+	otherWant := slug + strings.Repeat("b", 14) + "_" + otherHash + "_b_list_indices"
+	if other != otherWant {
+		t.Fatalf("other = %q, want %q", other, otherWant)
+	}
+	if !strings.HasSuffix(other, "_list_indices") {
+		t.Fatalf("other = %q, want its tail kept too", other)
+	}
+	// A cut that lands on '_' must not glue a second underscore onto the hash.
+	edged := strings.Repeat("a", 13) + "_" + strings.Repeat("b", 14) + "_" + strings.Repeat("c", 13)
+	gotEdge := namedFor(reg, edged)
+	if strings.Contains(gotEdge, "__") || len(gotEdge) > maxExposedNameLength || !utf8.ValidString(gotEdge) {
+		t.Fatalf("edged name = %q", gotEdge)
+	}
+	edgeHash := strings.TrimPrefix(contentSuffix(slug+edged), "_")
+	edgeWant := slug + strings.Repeat("a", 13) + "_" + edgeHash + "_" + strings.Repeat("c", 13)
+	if gotEdge != edgeWant {
+		t.Fatalf("edged name = %q, want %q", gotEdge, edgeWant)
+	}
+}
+
+func TestExposedName_V2TruncationDoesNotSplitARune(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	// Head and tail budgets are 14 bytes. é (c3 a9) straddles each cut, so a
+	// raw byte slice would start or end mid-rune.
+	tool := strings.Repeat("x", 13) + "é" + strings.Repeat("y", 11) + "é" + strings.Repeat("z", 13)
+	if len(tool) != 41 || utf8.RuneStart(tool[14]) || utf8.RuneStart(tool[len(tool)-14]) {
+		t.Fatalf("fixture is %d bytes; both cuts must fall on a continuation byte", len(tool))
+	}
+	got := namedFor(reg, tool)
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name %q is %d bytes, want at most %d", got, len(got), maxExposedNameLength)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("name %q is not UTF-8", got)
+	}
+	if strings.Contains(got, "__") {
+		t.Fatalf("name = %q, want single underscores", got)
+	}
+	if !strings.HasPrefix(got, "elastic_agent_builder_mcp_"+strings.Repeat("x", 13)+"_") || !strings.HasSuffix(got, "z") {
+		t.Fatalf("name = %q, want the server prefix, the tool start, and a rune-aligned tail", got)
+	}
+}
+
+// Endor Labs publishes query_docs_filesystem_endor_labs_documentation. The
+// action words lead the tool, so a tail-only cut replaced them with the hash
+// and, because the kept tail began with '_', a double underscore.
+func TestExposedName_V2TruncationKeepsEndorLeadingWords(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Endor", "com.endorlabs/docs-mcp")
+	const tool = "query_docs_filesystem_endor_labs_documentation"
+	got := namedFor(reg, tool)
+	const want = "endorlabs_docs_mcp_query_docs_filesy_dca24876_labs_documentation"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	if len(got) > maxExposedNameLength {
+		t.Fatalf("name is %d bytes, want at most %d", len(got), maxExposedNameLength)
+	}
+	if strings.Contains(got, "__") {
+		t.Fatalf("name = %q contains a double underscore", got)
+	}
+	if !strings.HasPrefix(got, "endorlabs_docs_mcp_query_docs") || !strings.HasSuffix(got, "_documentation") {
+		t.Fatalf("name = %q, want query_docs kept at the start and _documentation at the end", got)
+	}
+	if again := namedFor(reg, tool); again != got {
+		t.Fatalf("name is not stable: %q then %q", got, again)
+	}
+	const search = "search_endor_labs_documentation"
+	if short := namedFor(reg, search); short != "endorlabs_docs_mcp_"+search {
+		t.Fatalf("short name = %q, want it unchanged", short)
+	}
+}
+
+// Multibyte runes sit on both cuts and inside both kept sides. The runes that
+// straddle a cut are dropped whole; the ones that fit stay whole.
+func TestExposedName_V2TruncationKeepsMultibyteRunesWhole(t *testing.T) {
+	t.Parallel()
+	reg := v2Registry(t, "Elastic", "com.elastic_agent_builder_mcp/mcp")
+	tool := "é" + strings.Repeat("a", 11) + "é" + strings.Repeat("b", 10) + "é" + strings.Repeat("c", 11) + "é"
+	if len(tool) != 40 || utf8.RuneStart(tool[14]) || utf8.RuneStart(tool[len(tool)-14]) {
+		t.Fatalf("fixture is %d bytes; both cuts must fall on a continuation byte", len(tool))
+	}
+	got := namedFor(reg, tool)
+	head := "é" + strings.Repeat("a", 11)
+	tail := strings.Repeat("c", 11) + "é"
+	hash := strings.TrimPrefix(contentSuffix("elastic_agent_builder_mcp_"+tool), "_")
+	want := "elastic_agent_builder_mcp_" + head + "_" + hash + "_" + tail
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	if len(got) > maxExposedNameLength || !utf8.ValidString(got) || strings.Contains(got, "__") {
+		t.Fatalf("name = %q is %d bytes", got, len(got))
 	}
 }

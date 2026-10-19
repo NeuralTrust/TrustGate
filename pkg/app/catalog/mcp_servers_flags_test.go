@@ -22,6 +22,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/publicsuffix"
 )
 
 // self_service is declared per entry rather than derived, so the one thing that
@@ -103,21 +104,35 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 
 		// self_service: true on a server whose credential is a static one is
 		// only possible when that credential is per user — a secret URL variable
-		// each user enters for themselves, never a shared header.
+		// each user enters for themselves, or an optional header on a public
+		// server (Algolia). A required shared header is an admin's to add.
 		if static, oauth := s.SupportedAuthMethods(); s.SelfService && static && !oauth {
-			require.Empty(t, s.AuthHeaders, "%s: a shared header is an admin's to add", s.Code)
+			for _, header := range s.AuthHeaders {
+				require.Falsef(t, header.Required, "%s: a required shared header is an admin's to add", s.Code)
+			}
 			require.True(t, staticCredentialSlot(s), "%s: nothing for a user to enter", s.Code)
 		}
 	}
 
 	// Canary: a change in this count means entries moved between the two
 	// answers, which is worth looking at deliberately. 114 since Dropbox moved
-	// to manual registration: it refuses dynamic client registration outright
-	// ("only pre-registered MCP trusted partners"), so an operator's client is
-	// the only way in (RUN-1641). 113 since Canva followed: its DCR server only
-	// authorizes allowlisted redirect URIs, so an operator's Developer Portal
-	// app is the only way in (RUN-1639).
-	require.Equal(t, 113, self, "self_service count changed")
+	// to manual registration (RUN-1641). 113 since Canva followed (RUN-1639).
+	// 109 after the catalog seed fixes: ten DCR failures left self-service
+	// (nine manual OAuth apps, Firecrawl an admin API key) and six admin-gated
+	// entries became self-service (Algolia, Teamwork, Plaid, Cube, Dropbox, Jotform).
+	// 107 after Storyblok left self-service (vendor redirect allowlist, ENG-2189)
+	// and Replicate was hidden as SSE-unsupported, so it no longer loads.
+	// 106 after Vimeo left self-service (vendor rejects the gateway callback
+	// for any dynamic client, ENG-2189).
+	// Freshworks (ENG-2261) was already not self-service and stays that way as a
+	// manual OAuth app, so this count does not move.
+	// Salesforce, ServiceNow, Snowflake, and dbt (ENG-2223) were already not
+	// self-service. They stay that way as manual admin OAuth apps.
+	// com.salesforce/mcp-sandbox is a second manual admin OAuth app, so this
+	// count stayed 106.
+	// 105 after New Relic left self-service. Dynamic registration returns one
+	// shared client that only allows localhost redirect URIs (ENG-2189).
+	require.Equal(t, 105, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
@@ -205,6 +220,81 @@ func TestCuratedCatalog_VantaIsOneEntryPerRegionChoice(t *testing.T) {
 	require.True(t, entry.OAuth.ResourceMetadata)
 }
 
+// These entries template the whole host. The suffix list is the bound that
+// lets an existing install keep connecting on the vendor's domains. Each
+// suffix is a vendor-run zone that does not serve tenant content.
+func TestCuratedCatalog_WholeHostEntriesDeclareVendorSuffixes(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	want := map[string]struct {
+		variable string
+		suffixes []string
+	}{
+		"com.databricks/mcp": {
+			variable: "workspace_host",
+			suffixes: []string{
+				"*.cloud.databricks.com",
+				"*.gcp.databricks.com",
+				"*.azuredatabricks.net",
+			},
+		},
+		"com.getdbt/mcp": {
+			variable: "dbt_host",
+			suffixes: []string{
+				"*.getdbt.com",
+				"*.us1.dbt.com",
+				"*.us2.dbt.com",
+				"*.us3.dbt.com",
+				"*.us5.dbt.com",
+				"*.eu1.dbt.com",
+				"*.eu2.dbt.com",
+				"*.eu3.dbt.com",
+				"*.eu4.dbt.com",
+				"*.au1.dbt.com",
+				"*.au2.dbt.com",
+				"*.jp1.dbt.com",
+			},
+		},
+		"com.snowflake/mcp": {
+			variable: "account_url",
+			suffixes: []string{"*.snowflakecomputing.com"},
+		},
+	}
+	for code, spec := range want {
+		entry, ok := cat.GetByCode(code)
+		require.True(t, ok, code)
+		var got []string
+		for _, v := range entry.URLVariables {
+			if v.Name == spec.variable {
+				got = v.HostSuffix
+			}
+		}
+		require.Equal(t, spec.suffixes, got, "%s %s", code, spec.variable)
+	}
+}
+
+// The connect path ignores a suffix that is a public suffix or a single label,
+// so a seeded one would silently refuse every install of that entry.
+func TestCuratedCatalog_HostSuffixesAreRegistrable(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, entry := range cat.ListMCPServers() {
+		for _, v := range entry.URLVariables {
+			for _, raw := range v.HostSuffix {
+				suffix := strings.TrimPrefix(raw, "*.")
+				require.Equal(t, raw, "*."+suffix, "%s %s: %q must be written as *.domain", entry.Code, v.Name, raw)
+				require.GreaterOrEqual(t, strings.Count(suffix, "."), 1, "%s %s: %q", entry.Code, v.Name, raw)
+				ps, _ := publicsuffix.PublicSuffix(suffix)
+				require.NotEqual(t, suffix, ps, "%s %s: %q is a public suffix", entry.Code, v.Name, raw)
+			}
+		}
+	}
+}
+
 func optionValues(v domain.MCPURLVariable) []string {
 	out := make([]string, 0, len(v.Options))
 	for _, option := range v.Options {
@@ -217,10 +307,11 @@ func optionValues(v domain.MCPURLVariable) []string {
 // seed guard runs the real rules rather than a copy of them.
 func asRegistryURLVariable(v domain.MCPURLVariable) registrydomain.MCPURLVariable {
 	out := registrydomain.MCPURLVariable{
-		Name:     v.Name,
-		Required: v.Required,
-		Secret:   v.Secret,
-		In:       v.In,
+		Name:       v.Name,
+		Required:   v.Required,
+		Secret:     v.Secret,
+		In:         v.In,
+		HostSuffix: v.HostSuffix,
 	}
 	for _, option := range v.Options {
 		out.Options = append(out.Options, registrydomain.MCPURLVariableOption{

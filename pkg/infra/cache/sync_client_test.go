@@ -29,25 +29,26 @@ import (
 
 func TestBuildSyncOptionsIsBoundedAndDoesNotRetry(t *testing.T) {
 	t.Parallel()
-	o := buildSyncOptions(&redis.Options{Addr: "x:1"}, 200*time.Millisecond)
+	o := buildSyncOptions(&redis.Options{Addr: "x:1"}, 200*time.Millisecond, time.Second)
 
 	assert.True(t, o.ContextTimeoutEnabled, "the caller's deadline must bound every call")
 	assert.Equal(t, -1, o.MaxRetries, "go-redis retries 3 times by default; the next tick is the retry")
 	assert.Equal(t, time.Second, o.DialTimeout, "a cold connection needs TLS and an IAM token: floor of 1s")
-	assert.Equal(t, 200*time.Millisecond, o.ReadTimeout)
-	assert.Equal(t, 200*time.Millisecond, o.WriteTimeout)
-	assert.Equal(t, 200*time.Millisecond, o.PoolTimeout)
+	assert.Equal(t, time.Second, o.ReadTimeout, "a cold read may be the first command, so the command budget is longer than the sync round")
+	assert.Equal(t, time.Second, o.WriteTimeout)
+	assert.Equal(t, time.Second, o.PoolTimeout)
 	assert.Equal(t, 2, o.PoolSize, "the loop runs one round trip at a time")
 	assert.Equal(t, 1, o.MinIdleConns, "one connection is dialed in the background, outside the sync deadline")
 	assert.LessOrEqual(t, o.MinIdleConns, o.PoolSize, "go-redis ignores a warm-up larger than the pool")
 	assert.Zero(t, o.ConnMaxLifetime, "the warm connection must not be recycled")
-	assert.Equal(t, time.Duration(0), o.ConnMaxIdleTime, "left to go-redis's 30 minute default, far above the tick")
+	assert.Equal(t, syncConnMaxIdleTime, o.ConnMaxIdleTime, "an idle socket is closed before ElastiCache Serverless drops it")
+	assert.Less(t, o.ConnMaxIdleTime, 30*time.Minute, "go-redis's default still hands out a socket after ~29 minutes idle")
 }
 
 func TestBuildSyncOptionsCapsTheTimeout(t *testing.T) {
 	t.Parallel()
 	for _, in := range []time.Duration{0, -time.Second, time.Minute} {
-		o := buildSyncOptions(&redis.Options{}, in)
+		o := buildSyncOptions(&redis.Options{}, in, 0)
 		assert.Equal(t, MaxSyncTimeout, o.ReadTimeout, "timeout %s", in)
 		assert.Equal(t, MaxSyncTimeout, o.DialTimeout, "timeout %s", in)
 	}
@@ -66,9 +67,9 @@ func TestSyncDialTimeoutHasAFloorAndACap(t *testing.T) {
 		{"capped at the maximum", MaxSyncTimeout, MaxSyncTimeout},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			o := buildSyncOptions(&redis.Options{}, tt.in)
+			o := buildSyncOptions(&redis.Options{}, tt.in, 0)
 			assert.Equal(t, tt.want, o.DialTimeout)
-			assert.Equal(t, min(max(tt.in, 0), MaxSyncTimeout), o.ReadTimeout, "read and write stay at the sync timeout")
+			assert.Equal(t, min(max(tt.in, 0), MaxSyncTimeout), o.ReadTimeout, "with no cold-read budget, read and write stay at the sync timeout")
 			assert.Equal(t, o.ReadTimeout, o.WriteTimeout)
 		})
 	}
@@ -79,7 +80,7 @@ func TestSyncDialTimeoutHasAFloorAndACap(t *testing.T) {
 func TestNewSyncClientDoesNotFailOrBlockAtBoot(t *testing.T) {
 	t.Parallel()
 	started := time.Now()
-	c, err := NewSyncClient(Config{Host: "127.0.0.1", Port: 1}, 200*time.Millisecond)
+	c, err := NewSyncClient(Config{Host: "127.0.0.1", Port: 1}, 200*time.Millisecond, time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	assert.Less(t, time.Since(started), time.Second)
@@ -119,7 +120,7 @@ func TestSyncClientFirstCallSucceedsAfterASlowBackgroundDial(t *testing.T) {
 			return conn, err
 		},
 	}
-	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout))}
+	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout, syncTimeout))}
 	t.Cleanup(func() { _ = c.Close() })
 
 	select { // the first tick comes after the warm-up dial
@@ -136,4 +137,88 @@ func TestSyncClientFirstCallSucceedsAfterASlowBackgroundDial(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), callBudget)
 	defer cancel()
 	require.NoError(t, c.Ping(ctx).Err(), "the connection was dialed outside the call")
+}
+
+// slowFirstRead holds the first read, which is where a cold HELLO/AUTH sits,
+// and then behaves like the connection it wraps.
+type slowFirstRead struct {
+	net.Conn
+	delay time.Duration
+	once  sync.Once
+}
+
+func (c *slowFirstRead) Read(b []byte) (int, error) {
+	c.once.Do(func() { time.Sleep(c.delay) })
+	return c.Conn.Read(b)
+}
+
+// The command budget is the cold-read timeout, not the 200 ms sync round. A
+// first read slower than the sync round and inside the cold-read budget
+// completes. The sync loop still ends at its own context.
+func TestSyncClientSlowFirstReadFitsTheColdReadBudget(t *testing.T) {
+	t.Parallel()
+	const (
+		syncTimeout = 200 * time.Millisecond
+		coldRead    = time.Second
+		slowRead    = 400 * time.Millisecond
+	)
+	server := miniredis.RunT(t)
+	options := &redis.Options{
+		Addr: server.Addr(),
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &slowFirstRead{Conn: conn, delay: slowRead}, nil
+		},
+	}
+	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout, coldRead))}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), coldRead)
+	defer cancel()
+	require.NoError(t, c.Ping(ctx).Err(), "the first read is allowed the cold-read budget")
+}
+
+// opaqueConn is a net.Conn and not a syscall.Conn, which is what a TLS session
+// looks like to the pool: the peek health check cannot see a reset on it.
+type opaqueConn struct{ net.Conn }
+
+// An idle TLS-like connection that the peer has already dropped is discarded
+// and replaced on the next command. The production idle time is shortened here
+// so the test does not wait it out; the option assertion above pins the value.
+func TestSyncClientReplacesAnIdleStaleConnection(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	const idle = 50 * time.Millisecond
+	options := buildSyncOptions(&redis.Options{
+		Addr: server.Addr(),
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return opaqueConn{conn}, nil
+		},
+	}, 200*time.Millisecond, time.Second)
+	require.Equal(t, syncConnMaxIdleTime, options.ConnMaxIdleTime)
+	options.ConnMaxIdleTime = idle
+	c := redis.NewClient(options)
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, c.Ping(ctx).Err())
+	// Two sockets, both past the idle time, then the peer drops them. Without
+	// the idle close the next two commands each take one dead socket and fail.
+	time.Sleep(idle + 200*time.Millisecond)
+	server.Close()
+	require.NoError(t, server.Restart())
+
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	require.NoError(t, c.Ping(ctx).Err(), "the idle sockets are closed and the command dials")
+	assert.Less(t, time.Since(start), time.Second, "the replacement lands inside the cold-read budget")
 }

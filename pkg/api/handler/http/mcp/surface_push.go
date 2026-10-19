@@ -122,7 +122,11 @@ func (h *Handler) surfaceMoved(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) b
 // surfaceVersion is the value a client keys its cached tool list on, in
 // server/discover's serverInfo and in initialize's.
 //
-// It has to move whenever the caller's tools do. SurfaceFingerprint reads the
+// It has to move whenever the caller's bound servers, toolkit, installs, or
+// grants do. It does not see upstream tool names: an upstream that adds a
+// sibling can rebind a v2 name without this version moving, and folding those
+// names in would dial every server on the watch path. The client learns the
+// new spelling on its next tools/list. SurfaceFingerprint reads the
 // consumer's own record — bound registries and toolkit — which describes a
 // custom MCP consumer exactly and the MCP Store not at all: the Store's
 // consumer is synthetic, carries no registries, and resolves its servers per
@@ -154,9 +158,14 @@ func (h *Handler) surfaceVersion(c *fiber.Ctx, rc *appconsumer.RoutableConsumer)
 // surfaceMoved reads a snapshot cached for a few seconds, so the call that made
 // the change is the one likeliest to be answered from a snapshot taken before
 // it — the announcement would then wait for the next request. On an install or
-// an uninstall there is nothing to detect: the tools changed because the caller
-// just asked for them to.
-func changesTheSurface(method string, params json.RawMessage) bool {
+// an uninstall that recorded or removed a row there is nothing to detect: the
+// tools changed because the caller just asked for them to. An install that
+// recorded nothing (admin setup, or required config with no row) and an
+// uninstall of a code that was not installed did not change the surface.
+//
+// A nil result is treated as a change for those two tools, which is what the
+// callers that only know the method name already assumed.
+func changesTheSurface(method string, params json.RawMessage, result any) bool {
 	if method != "tools/call" {
 		return false
 	}
@@ -166,7 +175,90 @@ func changesTheSurface(method string, params json.RawMessage) bool {
 	if err := json.Unmarshal(params, &call); err != nil {
 		return false
 	}
-	return call.Name == appmcp.StoreInstallToolName || call.Name == appmcp.StoreUninstallToolName
+	switch call.Name {
+	case appmcp.StoreInstallToolName:
+		return installChangesTheSurface(result)
+	case appmcp.StoreUninstallToolName:
+		return uninstallChangesTheSurface(result)
+	default:
+		return false
+	}
+}
+
+// installChangesTheSurface is false when the install result says nothing was
+// recorded: a tool error, a server that needs an admin, or required config
+// that stopped before a row existed. A result that cannot be read is announced,
+// matching the previous "install always changes the surface" rule.
+func installChangesTheSurface(result any) bool {
+	isError, structured, ok := surfaceResult(result)
+	if !ok {
+		return true
+	}
+	if isError {
+		return false
+	}
+	if structured == nil {
+		return true
+	}
+	if admin, _ := structured["requires_admin_setup"].(bool); admin {
+		return false
+	}
+	if needs, _ := structured["requires_config"].(bool); needs {
+		if _, hasInstance := structured["instance"]; !hasInstance {
+			return false
+		}
+	}
+	return true
+}
+
+// uninstallChangesTheSurface is false when the result says the code was not
+// installed. A result that cannot be read is announced.
+func uninstallChangesTheSurface(result any) bool {
+	_, structured, ok := surfaceResult(result)
+	if !ok || structured == nil {
+		return true
+	}
+	if was, exists := structured["was_installed"].(bool); exists && !was {
+		return false
+	}
+	if uninstalled, exists := structured["uninstalled"].(bool); exists {
+		return uninstalled
+	}
+	return true
+}
+
+// surfaceResult reads isError and structuredContent off a tool result. ok is
+// false when there is no result to read.
+func surfaceResult(result any) (isError bool, structured map[string]any, ok bool) {
+	if result == nil {
+		return false, nil, false
+	}
+	var raw []byte
+	switch typed := result.(type) {
+	case json.RawMessage:
+		raw = []byte(typed)
+	case []byte:
+		raw = typed
+	case string:
+		raw = []byte(typed)
+	default:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return false, nil, false
+		}
+		raw = encoded
+	}
+	if len(raw) == 0 {
+		return false, nil, false
+	}
+	var envelope struct {
+		IsError    bool           `json:"isError"`
+		Structured map[string]any `json:"structuredContent"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return false, nil, false
+	}
+	return envelope.IsError, envelope.Structured, true
 }
 
 // writeRPCBody sends one JSON-RPC response, as a lone JSON document or — when

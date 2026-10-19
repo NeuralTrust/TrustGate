@@ -496,6 +496,24 @@ func TestInstallationsService_UpsertValidatesWireRecord(t *testing.T) {
 	}
 }
 
+func TestInstallationsService_UpsertIgnoresNamingVersion(t *testing.T) {
+	gw := tenantGateway(t, "acme")
+	repo := newMemInstallations()
+	svc := NewInstallationsService(repo, nil, &fakeGateways{
+		byID: map[ids.GatewayID]*gatewaydomain.Gateway{gw.ID: gw},
+	}, discardLogger())
+	ctx := WithScope(context.Background(), gw.ID.String())
+
+	stale := protoInstall(t, gw.ID, "alice", "github")
+	stale.NamingVersion = 9
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: stale}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if got := repo.rows[key(gw.ID, "alice", "github")]; got == nil || got.CatalogCode != "github" {
+		t.Fatalf("stored install = %+v, want the row kept and the version ignored", got)
+	}
+}
+
 // RUN-1652: a Portal install is recorded by the console with the caller's email
 // as installed_by, and the configure page on the data plane then merges the
 // user's values into that same row. Rewriting the config of a row that already

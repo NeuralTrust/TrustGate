@@ -44,10 +44,16 @@ type ResolvedTool struct {
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
 type Composer interface {
 	ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error)
-	// Resolve binds an exposed tool name to its upstream with a single
-	// composition pass. A name nobody serves answers ErrToolNotFound, one the
-	// toolkit turned away *ToolNotPermittedError, and one that may live behind an
-	// unconnected upstream *ConsentRequiredError, in that order of precedence.
+	// Resolve binds an exposed tool name to the registry that owns it. Ownership
+	// is the server prefix of the name, decided before other registries are
+	// dialed, so their consent and discovery errors cannot answer the call and
+	// a connect ticket is minted only for the owner. Where two prefixes fit,
+	// the owner is the one that serves the exact name tools/list publishes.
+	// A name nobody owns answers *UnknownToolError (ErrToolNotFound). One the
+	// toolkit turned away answers *ToolNotPermittedError. One whose server is
+	// waiting on an account answers that server's *ConsentRequiredError or
+	// *ApplicationNotConnectedError. One whose server is installed but
+	// unreachable answers *ServerNotServingError.
 	Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error)
 	// Invoke calls a resolved tool on its owning upstream with the given
 	// arguments.
@@ -131,25 +137,173 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 }
 
 func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error) {
-	comp, err := c.compose(ctx, rc)
+	registries := mcpRegistries(rc)
+	if len(registries) == 0 {
+		return nil, ErrNoMCPRegistries
+	}
+	// The exposed name carries its server. Servers that do not fit its prefix
+	// are not dialed: dialing them minted a connect ticket for whichever
+	// installed server lacked a credential (ENG-2178).
+	owners := registriesForExposedName(registries, name)
+	// No server prefix. The name can still be an upstream's own name that the
+	// toolkit turned away, recorded under that own name, so the servers that
+	// answer are asked. A server that needs an account is not this name's
+	// owner: the ask is a probe and must not mint a ticket.
+	unscoped := len(owners) == 0
+	if unscoped {
+		owners = registries
+	}
+	// Several prefixes can fit one name. Discover every candidate without
+	// minting, then keep the one whose tools/list name is exactly this. A
+	// ticket is minted only once that owner is known, and only for them.
+	probe := unscoped || len(owners) > 1
+	discoverCtx := ctx
+	if probe {
+		discoverCtx = withResolveProbe(ctx)
+	}
+	surfaces, err := c.serverSurfaces(discoverCtx, rc, owners)
 	if err != nil {
 		return nil, err
 	}
-	for _, b := range comp.bindings {
-		if b.exposed == name {
-			return &ResolvedTool{Registry: b.registry, Tool: b.tool, Exposed: b.exposed}, nil
-		}
+	// Within-server spellings are fixed from every tool the dialed servers
+	// returned, including ones the toolkit will not publish, so hiding a
+	// sibling cannot point an existing name at a different upstream tool.
+	// Cross-server suffixes count published tools only.
+	chosen, ok, err := matchExposed(assignExposedNames(surfaces), name)
+	if err != nil {
+		return nil, err
 	}
-	if _, forbidden := comp.denied[name]; forbidden {
+	if ok {
+		return &ResolvedTool{Registry: chosen.registry, Tool: chosen.tool, Exposed: chosen.exposed}, nil
+	}
+	if unscoped {
+		if denied(surfaces, name) {
+			return nil, &ToolNotPermittedError{Tool: name}
+		}
+		return nil, &UnknownToolError{Name: name}
+	}
+	// Nobody who answered serves this exact name. The longest prefix is the
+	// server the name was written for; a shorter one that answered without the
+	// tool does not take its denial or its consent.
+	longest := longestPrefixSurfaces(surfaces, name)
+	if denied(longest, name) {
 		return nil, &ToolNotPermittedError{Tool: name}
 	}
-	if comp.consent != nil {
-		return nil, comp.consent
+	var unavailable *ServerNotServingError
+	for _, surface := range longest {
+		if surface.consent != nil {
+			if probe {
+				return nil, c.mintedConsent(ctx, rc, surface.registry, name)
+			}
+			return nil, surface.consent
+		}
+		if surface.notConnected != nil {
+			return nil, surface.notConnected
+		}
+		if surface.err != nil && unavailable == nil {
+			// The dial error stays in the log. It can name a URL, and the
+			// caller is told which server and which state, not that detail.
+			c.logger.Warn("mcp composer: owning upstream unavailable",
+				"registry", surface.registry.Name, "error", surface.err)
+			unavailable = &ServerNotServingError{
+				Server: inventoryServerName(surface.registry),
+				State:  InventoryStateUnavailable,
+			}
+		}
 	}
-	if comp.notConnected != nil {
-		return nil, comp.notConnected
+	if unavailable != nil {
+		return nil, unavailable
 	}
-	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
+	return nil, &UnknownToolError{Name: name}
+}
+
+// matchExposed returns the single binding published under name. A second
+// match is Unknown tool: callers map that to JSON-RPC -32602, and Resolve
+// returns it before the consent path, so neither side is minted a ticket.
+func matchExposed(bindings []binding, name string) (binding, bool, error) {
+	var found binding
+	seen := false
+	for _, b := range bindings {
+		if b.exposed != name {
+			continue
+		}
+		if seen {
+			return binding{}, false, &UnknownToolError{Name: name}
+		}
+		found = b
+		seen = true
+	}
+	return found, seen, nil
+}
+
+// denied reports whether a serving surface turned this exact name away. A
+// toolkit denial outranks a pending consent: connecting an account cannot
+// grant a tool the consumer is not allowed to use.
+func denied(surfaces []serverSurface, name string) bool {
+	for _, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		for _, native := range surface.denied {
+			if native == name || exposedNameFor(native, surface.registry).String() == name {
+				return true
+			}
+		}
+		for _, exposed := range surface.deniedExposed {
+			if exposed == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// longestPrefixSurfaces keeps the surfaces whose server prefix is the longest
+// fit for name. Equal lengths all stay, in the order the registries were given.
+func longestPrefixSurfaces(surfaces []serverSurface, name string) []serverSurface {
+	best := 0
+	var out []serverSurface
+	for _, surface := range surfaces {
+		n := matchedPrefixLen(surface.registry, name)
+		if n == 0 || n < best {
+			continue
+		}
+		if n > best {
+			out = nil
+			best = n
+		}
+		out = append(out, surface)
+	}
+	return out
+}
+
+// mintedConsent repeats discovery of one owner outside a resolve probe, so the
+// consent the probe withheld grows the connect ticket the caller is about to
+// be shown. The probe itself must not mint: a longer prefix that does not
+// serve the name is asked only to be ruled out.
+func (c *composer) mintedConsent(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, name string) error {
+	again, err := c.serverSurfaces(ctx, rc, []*registrydomain.Registry{reg})
+	if err != nil {
+		return err
+	}
+	if len(again) == 1 {
+		surface := again[0]
+		if surface.consent != nil {
+			return surface.consent
+		}
+		if surface.notConnected != nil {
+			return surface.notConnected
+		}
+		if surface.err != nil {
+			c.logger.Warn("mcp composer: owning upstream unavailable",
+				"registry", surface.registry.Name, "error", surface.err)
+			return &ServerNotServingError{
+				Server: inventoryServerName(surface.registry),
+				State:  InventoryStateUnavailable,
+			}
+		}
+	}
+	return &UnknownToolError{Name: name}
 }
 
 func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool, arguments json.RawMessage) (json.RawMessage, error) {
@@ -167,6 +321,10 @@ func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	if fixableByConnecting(err) {
 		c.forgetDiscovery(ctx, target.Registry)
 	}
+	// After the unauthorized retry above, so a revoked Zoom token is still
+	// refreshed once. Only error 4741 is rewritten; every other failure,
+	// including a 401 that is not 4741, is returned as it was.
+	out, err = rewriteZoomRevokedCall(target.Registry, out, err)
 	if err != nil || ClientAcceptsTypedOutput(ctx) {
 		return out, err
 	}
@@ -224,7 +382,14 @@ func hostFromURL(raw string) string {
 type serverSurface struct {
 	registry *registrydomain.Registry
 	bindings []binding
+	// upstream is every tool the server returned, before the toolkit. Name
+	// resolution reads this, so hiding a tool cannot hand its spelling to
+	// another tool of the same server.
+	upstream []Tool
 	denied   []string
+	// deniedExposed is the spelling a toolkit-hidden tool would have been
+	// published under. It is filled when names are assigned.
+	deniedExposed []string
 	// policy is what the consumer's toolkit permits on this server. It is known
 	// whether or not the server answered, which is what lets a caller be told
 	// what an unreachable server would offer without overstating it.
@@ -269,6 +434,7 @@ func (c *composer) serverSurfaces(
 			out = append(out, surface)
 			continue
 		}
+		surface.upstream = tools
 		surface.bindings = selectTools(toolkit, reg, tools)
 		if toolkit != nil {
 			allowed := make(map[string]struct{}, len(surface.bindings))
@@ -297,12 +463,10 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	}
 	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 
-	var candidates []binding
 	var pendingConsent *ConsentRequiredError
 	var pendingNotConnected *ApplicationNotConnectedError
 
 	var firstSkipped error
-	denied := make(map[string]struct{})
 	reachable := 0
 	for _, surface := range surfaces {
 		reg := surface.registry
@@ -333,11 +497,6 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			continue
 		}
 		reachable++
-		candidates = append(candidates, surface.bindings...)
-		for _, name := range surface.denied {
-			denied[name] = struct{}{}
-			denied[exposedNameFor(name, reg).String()] = struct{}{}
-		}
 	}
 	if reachable == 0 {
 		if pendingConsent != nil {
@@ -351,7 +510,22 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	bindings := resolveNames(candidates, registries)
+	// v2 prefix stripping sees the full upstream list. Cross-server suffixes
+	// are decided from the tools the toolkit publishes.
+	bindings := assignExposedNames(surfaces)
+	denied := make(map[string]struct{})
+	for _, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		for _, name := range surface.denied {
+			denied[name] = struct{}{}
+			denied[exposedNameFor(name, surface.registry).String()] = struct{}{}
+		}
+		for _, name := range surface.deniedExposed {
+			denied[name] = struct{}{}
+		}
+	}
 	// A name that another registry ends up exposing was never really denied.
 	for _, b := range bindings {
 		delete(denied, b.exposed)
@@ -376,6 +550,41 @@ func (p toolPolicy) permits(tool string) bool {
 		return true
 	}
 	return slices.Contains(p.names, tool)
+}
+
+// assignExposedNames publishes the name each selected tool is called by.
+// Prefix stripping runs over every tool the reachable servers returned, so
+// hiding a sibling cannot point an existing name at a different upstream
+// tool. Cross-server suffixes count published tools only. A toolkit ExposeAs
+// is the name resolveNames sees for that tool, so the rename goes through the
+// same collision handling. Tools the resolution withholds are omitted. The
+// spellings of unpublished tools are recorded on the surfaces for tools/call.
+func assignExposedNames(surfaces []serverSurface) []binding {
+	var published []binding
+	var background []binding
+	hiddenAt := make([]int, 0)
+	for i, surface := range surfaces {
+		if !surface.serves() {
+			continue
+		}
+		selected := make(map[string]struct{}, len(surface.bindings))
+		for _, sel := range surface.bindings {
+			selected[sel.tool.Name] = struct{}{}
+			published = append(published, sel)
+		}
+		for _, tool := range surface.upstream {
+			if _, allowed := selected[tool.Name]; allowed {
+				continue
+			}
+			background = append(background, binding{registry: surface.registry, tool: tool, exposed: tool.Name})
+			hiddenAt = append(hiddenAt, i)
+		}
+	}
+	named, hidden := resolveNamesSeen(published, background)
+	for i, h := range hidden {
+		surfaces[hiddenAt[i]].deniedExposed = append(surfaces[hiddenAt[i]].deniedExposed, h.exposed)
+	}
+	return named
 }
 
 // toolkitPolicy reads off what the toolkit allows on one server, by the same

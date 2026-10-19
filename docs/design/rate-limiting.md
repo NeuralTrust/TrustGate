@@ -64,7 +64,8 @@ The restamp **always** signals the snapshot, whether or not it touched a gateway
 | Gateway has no tenant | Unmetered |
 | Entitlements lookup fails (not "not found") | Fail-open + `fail_open{reason=tier_load}` |
 | Gateway not found | Fail-open + `fail_open{reason=tier_load}` (the request then gets its own 404) |
-| Redis slow or down | Requests do not notice. The sync fails, is logged, and requests are served from memory (fail-open) |
+| Redis error or timeout on a cold read | Fail-open + `fail_open{reason=cold_read}` and a warning that names the tenant. The next sync still loads the total |
+| Redis slow or down for a tenant this pod already tracks | The request does not wait. The sync fails, is logged, and requests are served from memory (fail-open) |
 
 A tier change is applied **to the next request** of each pod: the decision compares the cached total with the *current* caps.
 
@@ -135,7 +136,7 @@ gt:rl:tok:{<tenant>}:<pod>-<round>      TTL max(2 x retention, 1 min): idempoten
 
 ## 3b. In-memory counter and background sync
 
-A request **never calls Redis**. It counts in memory, and one loop per pod reconciles.
+A request that already has a counter never calls Redis. It counts in memory, and one loop per pod reconciles. A pod with no counter for the tenant reads the shared totals before it decides (`RATE_LIMIT_COLD_READ_TIMEOUT`, default 1 s). That read is a zero delta, so a closed socket (EOF, reset, or broken pipe) is tried once more inside the same budget. Startup pings Redis and loads the script, bounded, before the servers listen; if that fails the pod still starts and the cold read fails open.
 
 ### Request path (memory only)
 
@@ -156,7 +157,7 @@ Every `RATE_LIMIT_SYNC_INTERVAL` (default **1 s**):
 2. One pipeline with one script per tenant adds the delta and returns the totals.
 3. Write the totals into `synced`: every pod learns the whole tenant's total.
 
-**Early flush (kick).** A request sends a **non-blocking** signal (channel of capacity 1) when a tenant's `pending` reaches `max(1, 10 % of the cap)`, and **on the first request that creates a tenant's counter** on the pod (a cold pod or an evicted tenant: until its first sync the pod does not know what the others spent). The loop then syncs early, with **at least 50 ms between syncs**. The request still does not call Redis. A kick is suppressed only while the last sync *round* failed (the call failed, or every tenant in a round of several did); one tenant's own failure does not silence the others.
+**Early flush (kick).** A request sends a **non-blocking** signal (channel of capacity 1) when a tenant's `pending` reaches `max(1, 10 % of the cap)`, and **on the first request that creates a tenant's counter** on the pod (a cold pod or an evicted tenant: until its first sync the pod does not know what the others spent). The loop then syncs early, with **at least 50 ms between syncs**. That kick is not the cold read; the cold read already ran, on its own budget, before the decision. A kick is suppressed only while the last sync *round* failed (the call failed, or every tenant in a round of several did); one tenant's own failure does not silence the others.
 
 Other properties:
 
@@ -166,7 +167,7 @@ Other properties:
 - **Token TTL.** `max(2 x retention, 1 min)`. Every resend that finds its token renews it to the full TTL (`PEXPIRE` inside the script), so a round sent in several chunks, whose later chunks go out late, does not lose its token between two sends: the TTL only has to cover the gap between sends. Start-up rejects any configuration where `retention + sync interval + 2 x sync timeout + 5 s` is not below that TTL (the first failing call spends one timeout before the retention clock starts, and the last resend another), and a retention above **10 min** or a sync timeout above **5 s**. Live token keys are of the order of `active tenants x TTL / interval` in the worst case; a tick without usage writes no token.
 - The sync call **does not inherit the loop's cancellation** (`context.WithoutCancel` plus `RATE_LIMIT_SYNC_TIMEOUT`): a SIGTERM does not abort a round already on the wire.
 - **Shutdown (SIGTERM).** After the servers stop and **before the sync client closes**, one last sync flushes the deltas, bounded by `FlushTimeout` (2 s): once it expires it stops starting new chunks but never cancels the one already on the wire, and the usage not yet sent is counted in `sync.dropped` with `reason=shutdown`. A crash loses at most one interval (accepted undercount).
-- **Dedicated Redis client** for the sync: `ContextTimeoutEnabled`, read, write and pool timeouts of `RATE_LIMIT_SYNC_TIMEOUT` (default **200 ms**, capped at 5 s) and a dial timeout of `max(RATE_LIMIT_SYNC_TIMEOUT, 1 s)` (also capped at 5 s), because a cold connection pays for the TCP connect and the TLS handshake that a warm round trip does not. The pool keeps **one connection dialed in the background** (`MinIdleConns = 1`): go-redis dials it on its own context, bounded by the dial timeout only, at boot and again whenever the connection is removed, so the cold dial never competes with the 200 ms deadline of a sync call. What still runs inside the call is the handshake of that already open connection (the IAM auth token and `HELLO`/`AUTH`); the AWS credentials cache keeps retrieving after a call gives up, so a slow first retrieval is cached for the next tick. Also `MaxRetries = -1` (go-redis would otherwise retry three times), a pool of 2, and **no ping at boot**: the warm-up is a goroutine, so Redis being down neither blocks nor stops the process. Its failure is not silent: go-redis logs `failed to dial after N attempts` through its internal logger (5 attempts with a 100 ms backoff per dial, then a probe about once a second), it does not hammer Redis.
+- **Dedicated Redis client** for the sync and the cold read: `ContextTimeoutEnabled`, read, write and pool timeouts of `RATE_LIMIT_COLD_READ_TIMEOUT` (default **1 s**, capped at 5 s) and a dial timeout of `max(RATE_LIMIT_SYNC_TIMEOUT, 1 s)` (also capped at 5 s). The sync loop's own context stays at `RATE_LIMIT_SYNC_TIMEOUT` (default **200 ms**), so a background round does not inherit the longer command budget. The pool keeps **one connection dialed in the background** (`MinIdleConns = 1`) and closes a socket idle for **4 minutes** (`ConnMaxIdleTime`), under the 30 minute client default. The dialer's 30 second keepalive already holds a load-balancer flow open, so an idle EOF is ElastiCache Serverless closing the socket; the cold read dials a new one inside its budget instead of writing to that dead TLS session. Before the servers listen, startup pings (HELLO/AUTH) and `SCRIPT LOAD`s, bounded by 2 s; a failure is logged and the pod still serves. Also `MaxRetries = -1`, a pool of 2. A dial that fails is not silent: go-redis logs `failed to dial after N attempts`.
 - **Month change.** The usage not yet sent for the month that just ended is sent to *that* month's key; billing is not lost at the boundary.
 - **Idle tenants** (10 min without traffic and nothing pending) are evicted from memory. A request holding an evicted counter looks it up again; nothing spins.
 - **Observability.** All instruments are under the `trustgate.ratelimit.` prefix except the snapshot one. `trustgate.ratelimit.sync.duration` (histogram, and a `ratelimit.sync` span with `ratelimit.tenants`, `ratelimit.failed` and `ratelimit.outage` attributes), `sync.errors`, `sync.dropped` (attribute `reason`: `retention` or `shutdown`), `sync.kicks`, `tracked_tenants`, `tenant_caps.load_errors`, `trustgate.configsnapshot.tenant_caps.errors` and `fail_open` (`trustgate.ratelimit.fail_open`). A round with nothing to do emits no span, and a request emits none.
@@ -191,7 +192,7 @@ Reading it: under sustained load the overshoot is **the tenant's rps x the sync 
 
 | Failure | What happens |
 |---------|--------------|
-| Redis slow or unreachable | Requests unaffected (memory only). Sync fails after `RATE_LIMIT_SYNC_TIMEOUT`, is logged (throttled), counted in `sync.errors`; no kicks while it lasts |
+| Redis error or timeout on the cold read | That request fails open (`fail_open{reason=cold_read}`, warning names the tenant). A tenant already tracked does not wait. Sync fails after `RATE_LIMIT_SYNC_TIMEOUT`, is logged (throttled), counted in `sync.errors`; no kicks while the outage lasts |
 | Reply lost after Redis applied the round | The round is resent under the same token; Redis returns totals without applying twice |
 | Redis down longer than the retention | The round is dropped, `sync.dropped` counts the units; undercount bounded by the retention, never an unbounded queue |
 | Redis restarts (script cache lost) | `NOSCRIPT` triggers a reload and one retry of the affected items |
@@ -237,7 +238,8 @@ Common rules:
 |----------|---------|--------|
 | `RATE_LIMIT_ENABLED` | `true` | Turns off the limiter, the sync and its client: with `false` no meter and no sync Redis client are built (nor the credentials provider) |
 | `RATE_LIMIT_SYNC_INTERVAL` | `1s` | How often a pod reconciles with Redis. Sustained overshoot is about the tenant's rps x this value |
-| `RATE_LIMIT_SYNC_TIMEOUT` | `200ms` | Bound of each **sync** round trip (never of a request). Maximum 5 s |
+| `RATE_LIMIT_SYNC_TIMEOUT` | `200ms` | Bound of each **background sync** round trip. A request that already has a counter does not wait on it. Maximum 5 s |
+| `RATE_LIMIT_COLD_READ_TIMEOUT` | `1s` | Bound of the one Redis read that fills a missing counter. A hard error still fails open. Maximum 5 s |
 | `RATE_LIMIT_FAILED_RETENTION` | `30s` | How long, from its first failure, the usage of a sync that did not reach Redis is kept before it is dropped. Maximum 10 min; it sets the token TTL |
 
 `REDIS_DB` selects the database as for every other Redis use of the process.

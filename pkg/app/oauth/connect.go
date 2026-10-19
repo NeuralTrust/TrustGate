@@ -18,12 +18,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -32,7 +35,10 @@ import (
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
-var _ ConnectService = (*connectService)(nil)
+var (
+	_ ConnectService          = (*connectService)(nil)
+	_ RegisteredClientDropper = (*connectService)(nil)
+)
 
 // registryLister finds a gateway's registries so the connect flow can attach the
 // installed registry a Store-scoped ticket points at (the synthetic Store
@@ -56,11 +62,19 @@ type connectService struct {
 	catalog     authCatalog
 	registries  RegistryLister
 	urlValues   URLValueSource
+	ensurer     appstore.RegistryEnsurer
+	catalogView appstore.CatalogViewer
 	// handoff decides where a connection may be started from.
 	handoff ConnectHandoff
 	// clients names the app a ticket's minter works in; nil names none.
 	clients GatewayClientReader
 	now     func() time.Time
+	// authorizeAccepted remembers a legacy authorize probe the server accepted.
+	// A healthy row is not probed again until that entry expires. The map is
+	// process-local: a restart probes once more, and nothing is written to the
+	// client row (ENG-2190, ENG-2189).
+	authorizeAccepted   map[string]time.Time
+	authorizeAcceptedMu sync.Mutex
 }
 
 // GatewayClientReader reads an OAuth client the gateway registered. FlowStore
@@ -104,6 +118,28 @@ func WithConnectHandoff(h ConnectHandoff) ConnectOption {
 	return func(s *connectService) { s.handoff = h }
 }
 
+// WithCatalogInstanceRefresh reconciles an existing catalog instance before
+// this connect uses it, then reads the current catalog shape for the request.
+// The shared snapshot is not mutated. Ensure errors are logged and do not
+// fail the connect. Disconnect uses the same shape, which stays the stored
+// row whenever a credential is present.
+func WithCatalogInstanceRefresh(ensurer appstore.RegistryEnsurer, viewer appstore.CatalogViewer) ConnectOption {
+	return func(s *connectService) {
+		s.ensurer = ensurer
+		s.catalogView = viewer
+	}
+}
+
+// WithConnectClock overrides the clock connect uses for the legacy authorize
+// acceptance cache. Production leaves it unset.
+func WithConnectClock(now func() time.Time) ConnectOption {
+	return func(s *connectService) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 type authCatalog interface {
 	GetByCode(code string) (catalogdomain.MCPServer, bool)
 }
@@ -122,17 +158,18 @@ func NewConnectService(
 	opts ...ConnectOption,
 ) ConnectService {
 	s := &connectService{
-		store:       store,
-		vault:       vault,
-		consumers:   consumers,
-		provider:    provider,
-		registrar:   registrar,
-		auditor:     auditor,
-		sharedOAuth: sharedOAuth,
-		userinfo:    userinfo,
-		catalog:     catalog,
-		registries:  registries,
-		now:         time.Now,
+		store:             store,
+		vault:             vault,
+		consumers:         consumers,
+		provider:          provider,
+		registrar:         registrar,
+		auditor:           auditor,
+		sharedOAuth:       sharedOAuth,
+		userinfo:          userinfo,
+		catalog:           catalog,
+		registries:        registries,
+		now:               time.Now,
+		authorizeAccepted: map[string]time.Time{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -376,7 +413,7 @@ func (s *connectService) providerStatuses(
 		// on this endpoint — with nothing the caller could do about it.
 		subject := registrydomain.CredentialSubject(reg, ticket.PrincipalSub)
 		status.Shared = subject != ticket.PrincipalSub
-		cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+		cred, err := s.vault.Find(ctx, gatewayID, subject, s.forwardedVaultProvider(ctx, gatewayID, ticket.PrincipalSub, reg))
 		switch {
 		case err == nil:
 			status.Linked = true
@@ -387,7 +424,7 @@ func (s *connectService) providerStatuses(
 			if !status.NeedsReconnect {
 				// A lookup failure answers "usable" (see CredentialUsable), so a
 				// cache blip cannot tell every user to reconnect.
-				usable, _ := s.CredentialUsable(ctx, gatewayID, reg)
+				usable, _ := s.credentialUsable(ctx, gatewayID, ticket.PrincipalSub, reg)
 				status.NeedsReconnect = !usable
 			}
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
@@ -416,7 +453,7 @@ func (s *connectService) Start(
 	if !connectProviderAllowed(ticket, data, rc, provider) {
 		return nil, ErrProviderNotFound
 	}
-	reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)
+	reg := s.refreshCatalogInstance(ctx, gatewayID, connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID))
 	if reg == nil {
 		return nil, ErrProviderNotFound
 	}
@@ -439,14 +476,18 @@ func (s *connectService) Start(
 	// started from, so the instance travels in the state and is not re-derived
 	// there: two instances of one provider are otherwise indistinguishable on
 	// the way back, and the first one always won.
-	if err := s.store.SaveConnect(ctx, state, ConnectState{
+	connectState := ConnectState{
 		Ticket:      *ticket,
 		TicketID:    ticketID,
 		Provider:    provider,
 		Instance:    reg.ID.String(),
 		Verifier:    verifier,
 		StartOrigin: startOrigin,
-	}); err != nil {
+	}
+	if forwarded := forwardedAuth(reg); forwarded != nil && forwarded.Registration == registrydomain.RegistrationAuto {
+		connectState.ClientID = cfg.ClientID
+	}
+	if err := s.store.SaveConnect(ctx, state, connectState); err != nil {
 		return nil, err
 	}
 	return &ConnectStart{
@@ -540,25 +581,33 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if !connectProviderAllowed(&st.Ticket, data, rc, provider) {
 		return st.TicketID, ErrProviderNotFound
 	}
-	reg := connectRegistry(data.EffectiveRegistries(rc), provider, st.Instance, st.Ticket.InstanceID)
+	reg := s.refreshCatalogInstance(ctx, gatewayID, connectRegistry(data.EffectiveRegistries(rc), provider, st.Instance, st.Ticket.InstanceID))
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg)
+	cfg, err := s.exchangeAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg, st.ClientID)
 	if err != nil {
 		return st.TicketID, err
 	}
 	token, err := s.provider.ExchangeCode(ctx, cfg, code, connectCallbackURL(baseURL, provider), st.Verifier)
 	if err != nil {
+		if errors.Is(err, ErrInvalidClient) {
+			s.rejectDynamicClient(ctx, gatewayID, reg, cfg.ClientID, cfg.ClientSlot)
+		}
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg),
+		gatewayID, st.Ticket.PrincipalSub, s.forwardedVaultProvider(ctx, gatewayID, st.Ticket.PrincipalSub, reg),
 		resolveAccountRef(ctx, s.userinfo, cfg, token),
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
 	if err != nil {
 		return st.TicketID, err
+	}
+	// The grant was issued to this client. A later refresh has to present the
+	// same one, even after a newer registration becomes the client new connects use.
+	if cfg != nil {
+		cred.OAuthClientID = cfg.ClientID
 	}
 	if err := s.vault.Upsert(ctx, cred); err != nil {
 		return st.TicketID, err
@@ -567,6 +616,17 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		s.auditor.ProviderLinked(ctx, identity, cfg.Provider)
 	}
 	return st.TicketID, nil
+}
+
+func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID, slot string) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || clientID == "" {
+		return
+	}
+	if err := s.DropRegisteredClient(ctx, gatewayID, reg, clientID, slot); err != nil {
+		slog.Warn("oauth connect: failed to drop a dynamic client the authorization server rejected",
+			"error", err, "provider", cfg.Provider, "gateway_id", gatewayID.String())
+	}
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, instanceID string) error {
@@ -581,11 +641,11 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, ins
 	// once it is not: a ticket pinned to a provider whose registry the admin has
 	// since removed must still be able to clear the stored credential, or the
 	// user is left holding an account they cannot revoke.
-	if reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID); reg != nil {
+	if reg := s.refreshCatalogInstance(ctx, gatewayID, connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)); reg != nil {
 		if !ownsSharedAccount(reg, ticket.PrincipalSub) {
 			return ErrSharedAccountNotYours
 		}
-		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
+		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, s.forwardedVaultProvider(ctx, gatewayID, ticket.PrincipalSub, reg))
 	} else {
 		err = s.deleteProviderCredentials(ctx, gatewayID, ticket.PrincipalSub, provider)
 	}
@@ -724,17 +784,47 @@ func (s *connectService) storeRegistry(
 	if instanceID != "" {
 		for _, reg := range items {
 			if reg != nil && reg.ID.String() == instanceID {
-				return reg
+				return s.refreshCatalogInstance(ctx, gatewayID, reg)
 			}
 		}
 		return nil
 	}
 	for _, reg := range items {
 		if reg != nil && reg.MCPTarget != nil && registrydomain.StoreCode(reg) == code {
-			return reg
+			return s.refreshCatalogInstance(ctx, gatewayID, reg)
 		}
 	}
 	return nil
+}
+
+// refreshCatalogInstance asks the control plane to persist a safe catalog
+// correction, then returns the shape this request should use. The registry
+// argument is not mutated. A missing catalog code, a nil viewer, or an Ensure
+// error leaves the stored row in place.
+func (s *connectService) refreshCatalogInstance(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) *registrydomain.Registry {
+	if s == nil || s.catalogView == nil || reg == nil || reg.MCPTarget == nil {
+		return reg
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" || s.catalog == nil {
+		return reg
+	}
+	if _, ok := s.catalog.GetByCode(code); !ok {
+		return reg
+	}
+	if s.ensurer != nil {
+		if err := s.ensurer.Ensure(ctx, gatewayID, code); err != nil {
+			slog.Warn("oauth connect: catalog reapply",
+				slog.String("code", code),
+				slog.String("registry_id", reg.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+	if viewed := s.catalogView.ViewCurrentCatalog(ctx, reg); viewed != nil {
+		return viewed
+	}
+	return reg
 }
 
 func appConnectTicket(ticket *ConnectTicket) bool {
@@ -809,6 +899,24 @@ func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
 	}
 	sort.Strings(providers)
 	return providers
+}
+
+// forwardedVaultProvider is the credential key for this principal. A templated
+// registry with no instance config yet takes the principal's install values,
+// so the key matches the one the dial path computes from the scoped clone.
+func (s *connectService) forwardedVaultProvider(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) string {
+	return registrydomain.ForwardedVaultProviderFor(s.registryForVaultKey(ctx, gatewayID, principalSub, reg), nil)
+}
+
+func (s *connectService) registryForVaultKey(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) *registrydomain.Registry {
+	if s == nil || reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) > 0 || !reg.MCPTarget.HasURLVariables() {
+		return reg
+	}
+	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
+	if err != nil || len(values) == 0 {
+		return reg
+	}
+	return registrydomain.RegistryWithInstanceConfig(reg, values)
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {

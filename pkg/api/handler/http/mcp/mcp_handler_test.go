@@ -448,6 +448,54 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	}
 }
 
+// A name no registry owns is invalid params, and the message is the unknown-tool
+// text rather than another server's consent prompt (ENG-2178).
+func TestHandler_ToolsCall_UnknownToolIsInvalidParams(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "ghost").
+		Return(nil, &appmcp.UnknownToolError{Name: "ghost"}).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"ghost"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32602 {
+		t.Fatalf("code = %v, want -32602", rpcErr["code"])
+	}
+	if msg, _ := rpcErr["message"].(string); msg != "Unknown tool: ghost" {
+		t.Fatalf("message = %q, want the unknown-tool message", msg)
+	}
+}
+
+// The server that owns the tool is installed but unreachable. The caller is
+// told which server and which state, not handed a generic internal error and
+// not another server's consent.
+func TestHandler_ToolsCall_UnavailableOwnerNamesServer(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "graphite_list_diffs").
+		Return(nil, &appmcp.ServerNotServingError{Server: "Graphite", State: appmcp.InventoryStateUnavailable}).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"graphite_list_diffs"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32603 {
+		t.Fatalf("code = %v, want -32603", rpcErr["code"])
+	}
+	msg, _ := rpcErr["message"].(string)
+	if msg != `mcp: server "Graphite" is unavailable` {
+		t.Fatalf("message = %q, want the server and its state", msg)
+	}
+}
+
 // A tool the toolkit forbids is reported to the agent as a policy denial over
 // HTTP 200, so the client surfaces the reason instead of failing the transport.
 func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {

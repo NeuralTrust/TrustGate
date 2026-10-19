@@ -52,6 +52,13 @@ type MCPOrigin string
 // server's default instance rather than something an operator configured.
 const MCPOriginStore MCPOrigin = "store"
 
+// MCPOriginPending marks a request-scoped stand-in served while the registry
+// a first install just created is still absent from the config snapshot. It is
+// never persisted. The stand-in's id is the installation id, which is what
+// audit already records as the registry id, so those calls join to the install
+// and from there to the real registry once the snapshot arrives.
+const MCPOriginPending MCPOrigin = "pending"
+
 type OpenAPITarget struct {
 	SpecURL string `json:"spec_url"`
 }
@@ -125,6 +132,11 @@ type MCPAuth struct {
 	TokenURL     string                `json:"token_url,omitempty"`
 	Scopes       []string              `json:"scopes,omitempty"`
 	Resource     string                `json:"resource,omitempty"`
+	// ResourcePerInstance is set when the catalog's own oauth.resource is a
+	// template, so each instance has its own audience (PagerDuty's region).
+	// The vault key then fills closed options from instance config. Left
+	// unset, the stored resource is fingerprinted exactly as it was saved.
+	ResourcePerInstance bool `json:"resource_per_instance,omitempty"`
 	// TokenEndpointAuthMethod selects how client_id/secret are presented to the
 	// token endpoint for client_credentials: client_secret_basic (default) or
 	// client_secret_post.
@@ -134,6 +146,10 @@ type MCPAuth struct {
 	// stored or accepted from a client: the gateway only calls an endpoint the
 	// upstream itself advertised, with the token that upstream just issued.
 	UserinfoURL string `json:"-"`
+	// ClientSlot is the cache key the dynamic client in ClientID was read
+	// from. Exchange and refresh set it so a later invalid_client drop
+	// tombstones that key and does not discover again. Never stored.
+	ClientSlot string `json:"-"`
 	// SecretUnreadable marks an auth read from storage whose value or client
 	// secret could not be decrypted and was returned empty. Validate does not
 	// require that secret, so unrelated edits still save; the repository keeps
@@ -196,8 +212,10 @@ type MCPURLVariable struct {
 	// keeps it out of the model context (collected via the connect link, never as
 	// a chat argument).
 	Secret bool `json:"secret,omitempty"`
-	// In is where the placeholder sits: "" (a host or path segment, validated to a
-	// structure-safe charset) or "query" (a query-string value, percent-escaped).
+	// In is where the placeholder sits: "" or "path" (a host or path segment,
+	// validated to a structure-safe charset that may start with '-') or "query"
+	// (a query-string value, percent-escaped). Any other placement keeps the
+	// stricter charset, which rejects a leading '-'.
 	In string `json:"in,omitempty"`
 	// Options closes the value to a fixed set. Some servers differ only by a
 	// region or an edition whose hosts the vendor publishes — the answer is a
@@ -205,6 +223,16 @@ type MCPURLVariable struct {
 	// every one of them instead of a near-duplicate entry each. Empty means the
 	// value is free text, validated by the charset rules alone.
 	Options []MCPURLVariableOption `json:"options,omitempty"`
+	// HostSuffix lists the DNS suffixes a whole-host value must stay under
+	// (`vendor.com` or `*.vendor.com`). OAuth connect sends an admin client
+	// secret only when a whole-host variable is closed by Options or the
+	// resolved host matches one of these suffixes. Empty does not constrain
+	// the host. A public suffix (`com`, `co.uk`) or a single label is ignored.
+	// When this target's code is a catalog code, the catalog entry for that
+	// code is the bound: an empty list (a registry materialised before the
+	// catalog declared suffixes) takes the catalog's list, and a stored list
+	// can only narrow it.
+	HostSuffix []string `json:"host_suffix,omitempty"`
 }
 
 // MCPURLVariableOption is one allowed value of a closed URL variable.
@@ -233,8 +261,11 @@ func (v MCPURLVariable) AllowsValue(val string) bool {
 	return false
 }
 
-// URLVariableIn values.
+// URLVariableIn values. Empty In is a host or path segment, the same placement
+// as URLVariableInPath. Query values are percent-escaped and do not use the
+// segment charset.
 const (
+	URLVariableInPath  = "path"
 	URLVariableInQuery = "query"
 )
 
@@ -257,6 +288,40 @@ func (t *MCPTarget) RequiredURLVariables() []string {
 		}
 	}
 	return out
+}
+
+// PinsURLVariable reports whether this target fixes the named URL variable
+// itself, so no per-user value is ever substituted for it. It is pinned only
+// when the MCP URL is set and the name is absent from every template the dial
+// and the connect path fill: the MCP URL, and the OAuth authorize, token,
+// userinfo and resource URLs. An admin instance copies the catalog's authorize
+// and token templates even after its MCP URL is written out, and a variable
+// those templates still name has to be collected or the connect fails closed.
+func (t *MCPTarget) PinsURLVariable(name string) bool {
+	if t == nil || strings.TrimSpace(t.URL) == "" {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	if templateHasVariable(t.URL, name) {
+		return false
+	}
+	if t.Auth != nil {
+		for _, raw := range []string{t.Auth.AuthorizeURL, t.Auth.TokenURL, t.Auth.UserinfoURL, t.Auth.Resource} {
+			if templateHasVariable(raw, name) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func templateHasVariable(raw, name string) bool {
+	for _, token := range TemplateVariableNames(raw) {
+		if token == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *MCPTarget) Normalize() {
@@ -443,7 +508,7 @@ func (a *MCPAuth) Validate() error {
 				return fmt.Errorf("%w: manual registration must provide both authorize_url and token_url or neither for discovery",
 					ErrInvalidMCPTarget)
 			}
-			if hasAuthorizeURL && (!isHTTPURL(a.AuthorizeURL) || !isHTTPURL(a.TokenURL)) {
+			if hasAuthorizeURL && (!httpURLAcceptingTemplate(a.AuthorizeURL) || !httpURLAcceptingTemplate(a.TokenURL)) {
 				return fmt.Errorf("%w: authorize_url and token_url must be valid http(s) URLs", ErrInvalidMCPTarget)
 			}
 			if secret.IsMasked(a.ClientSecret) {
@@ -499,6 +564,14 @@ func (a *MCPAuth) validateIdentityID() error {
 func isHTTPURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// httpURLAcceptingTemplate is isHTTPURL after {name} placeholders are treated
+// as filled. Manual authorize and token URLs use the same tenant templates as
+// the server URL, and "{" is not a legal host character until a value replaces
+// it. A brace that is not a {name} placeholder is left in place and still fails.
+func httpURLAcceptingTemplate(raw string) bool {
+	return isHTTPURL(urlTemplateToken.ReplaceAllString(raw, "x"))
 }
 
 // ResolveSecretsFrom keeps the stored credentials an update left blank or sent

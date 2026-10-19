@@ -24,7 +24,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,6 +81,19 @@ func (m *memConnectStore) SaveClientIfAbsent(_ context.Context, key string, c oa
 	}
 	m.clients[key] = c
 	return &c, nil
+}
+
+func (m *memConnectStore) ReplaceClientIfMatch(_ context.Context, key, expectedClientID string, next oauth.RegisteredClient) (*oauth.RegisteredClient, bool, error) {
+	current, ok := m.clients[key]
+	if !ok || current.ClientID != expectedClientID {
+		if !ok {
+			return nil, false, nil
+		}
+		return &current, false, nil
+	}
+	m.clients[key] = next
+	stored := next
+	return &stored, true, nil
 }
 
 // SaveTicket keeps the ticket as the real store does — as JSON — so a field
@@ -1845,4 +1860,182 @@ func TestConnectService_TicketNamesTheAppItCameFrom(t *testing.T) {
 			t.Fatalf("%s: client name = %q, want %q", name, ticket.ClientName, tc.want)
 		}
 	}
+}
+
+func TestConnectService_RejectedDynamicClientIsRegisteredAgain(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		tokenError string
+		errCode    string
+		errDesc    string
+		drop       bool
+	}{
+		{name: "token invalid_client", tokenError: "invalid_client", drop: true},
+		{name: "token unauthorized_client", tokenError: "unauthorized_client", drop: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var registrations atomic.Int64
+			var tokenCalls atomic.Int64
+			var srvURL string
+			mux := http.NewServeMux()
+			mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"resource":              srvURL + "/mcp",
+					"authorization_servers": []string{srvURL},
+					"scopes_supported":      []string{"read"},
+				})
+			})
+			mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 srvURL,
+					"authorization_endpoint": srvURL + "/authorize",
+					"token_endpoint":         srvURL + "/token",
+					"registration_endpoint":  srvURL + "/register",
+				})
+			})
+			mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+				n := registrations.Add(1)
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"client_id":                "client-" + strconv.FormatInt(n, 10),
+					"client_secret_expires_at": time.Now().Add(time.Hour).Unix(),
+				})
+			})
+			mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+				tokenCalls.Add(1)
+				if tc.tokenError != "" {
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"error": tc.tokenError, "error_description": "unrecognized client_id",
+					})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "expires_in": 3600})
+			})
+			srv := httptest.NewServer(mux)
+			srvURL = srv.URL
+			t.Cleanup(srv.Close)
+
+			gw := ids.New[ids.GatewayKind]()
+			reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", &registrydomain.MCPTarget{
+				URL: srv.URL + "/mcp",
+				Auth: &registrydomain.MCPAuth{
+					Mode:         registrydomain.MCPAuthModeForwarded,
+					Provider:     "linear",
+					Registration: registrydomain.RegistrationAuto,
+				},
+			})
+			if err != nil {
+				t.Fatalf("registry: %v", err)
+			}
+			data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+				Consumer: &consumerdomain.Consumer{
+					ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+					Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+				},
+				Registries: []*registrydomain.Registry{reg},
+			}})
+			store := newMemConnectStore()
+			svc := oauth.NewConnectService(
+				store, &memVaultRepo{}, &stubDataFinder{data: data},
+				infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil),
+				discardConnectAuditor(), nil, nil, nil, nil,
+			)
+			ctx := context.Background()
+			ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			location, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", ""))
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			u, _ := url.Parse(location)
+			if u.Query().Get("client_id") != "client-1" {
+				t.Fatalf("client_id = %q, want the first registration", u.Query().Get("client_id"))
+			}
+
+			code, errCode, errDesc := "", tc.errCode, tc.errDesc
+			if tc.tokenError != "" {
+				code = "the-code"
+			}
+			back, err := svc.Callback(ctx, "https://gw.example.com", "linear", u.Query().Get("state"), code, errCode, errDesc)
+			if err == nil {
+				t.Fatal("callback returned nil error")
+			}
+			if back != ticket {
+				t.Fatalf("ticket = %q, want %q", back, ticket)
+			}
+			if tc.tokenError != "" {
+				if !errors.Is(err, oauth.ErrInvalidClient) {
+					t.Fatalf("error = %v, want ErrInvalidClient", err)
+				}
+				if tokenCalls.Load() != 1 {
+					t.Fatalf("token calls = %d, want 1", tokenCalls.Load())
+				}
+			} else {
+				var oe *oauth.OAuthError
+				if !errors.As(err, &oe) || oe.Code != tc.errCode {
+					t.Fatalf("error = %v, want oauth error %s", err, tc.errCode)
+				}
+				if tokenCalls.Load() != 0 {
+					t.Fatalf("token calls = %d, want 0", tokenCalls.Load())
+				}
+			}
+
+			usable, err := svc.CredentialUsable(ctx, gw, reg)
+			if err != nil {
+				t.Fatalf("CredentialUsable: %v", err)
+			}
+			stored := soleClient(t, store)
+			if tc.drop {
+				if usable {
+					t.Fatal("rejected client is still usable")
+				}
+				if stored.ClientID != "client-1" || stored.ClientSecretExpiresAt <= 0 || stored.ClientSecretExpiresAt > time.Now().Unix() {
+					t.Fatalf("cached client = %+v, want the original client kept and expired", stored)
+				}
+			} else if !usable || stored.ClientSecretExpiresAt <= time.Now().Unix() {
+				t.Fatalf("usable = %v, cached = %+v, want the registration kept", usable, stored)
+			}
+
+			again, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "linear", ""))
+			if err != nil {
+				t.Fatalf("second Start: %v", err)
+			}
+			gotID := mustQuery(t, again).Get("client_id")
+			if tc.drop {
+				if gotID == "client-1" || registrations.Load() != 2 {
+					t.Fatalf("client_id = %q, registrations = %d, want a replacement", gotID, registrations.Load())
+				}
+				return
+			}
+			if gotID != "client-1" || registrations.Load() != 1 {
+				t.Fatalf("client_id = %q, registrations = %d, want the cached client", gotID, registrations.Load())
+			}
+		})
+	}
+}
+
+func soleClient(t *testing.T, store *memConnectStore) oauth.RegisteredClient {
+	t.Helper()
+	if len(store.clients) != 1 {
+		t.Fatalf("cached clients = %d, want 1", len(store.clients))
+	}
+	for _, c := range store.clients {
+		return c
+	}
+	return oauth.RegisteredClient{}
+}
+
+func mustQuery(t *testing.T, rawURL string) url.Values {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawURL, err)
+	}
+	return u.Query()
 }

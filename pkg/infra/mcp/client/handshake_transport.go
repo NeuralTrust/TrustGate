@@ -19,10 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -47,6 +47,10 @@ type handshakeRoundTripper struct {
 	discoverLegacyCandidate atomic.Bool
 	initializeBadRequest    atomic.Bool
 	unauthorizedResponses   atomic.Uint64
+	// notedFailure is the classified dial failure this attempt observed. The
+	// SDK's own error often drops the typed error RoundTrip returned, so
+	// Connect reads this and puts it back on the chain.
+	notedFailure atomic.Pointer[appmcp.UpstreamFailure]
 }
 
 func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -81,15 +85,48 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		boundResponse(resp, req)
 	}
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		// A 401 is the refresh retry's signal whatever the body size is.
+		// Reading the body through the response limit would turn a large
+		// 401 into ErrResponseTooLarge and skip that retry. The body is
+		// closed unread, so it cannot ride out in the error text.
+		dropResponseBody(resp)
 		t.unauthorizedResponses.Add(1)
 		if tracker, ok := req.Context().Value(unauthorizedTrackerKey{}).(*atomic.Bool); ok {
 			tracker.Store(true)
 		}
-		if resp.Body != nil {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHandshakeBody))
-			_ = resp.Body.Close()
+		failure := &appmcp.UpstreamFailure{Kind: appmcp.UpstreamFailureCredential, Status: resp.StatusCode}
+		t.notedFailure.Store(failure)
+		return nil, failure
+	}
+	if err == nil && resp.StatusCode == http.StatusForbidden {
+		// 403 is a rejected credential, and it is not ErrUpstreamUnauthorized:
+		// that sentinel is the refresh retry's signal, which a 403 must not trip.
+		// The response itself is still returned so the SDK's handshake proceeds
+		// as before; only the body is dropped, so it cannot be copied into the
+		// error the composer logs. An oversized body is still the size limit.
+		if tooLarge := discardUpstreamBody(resp); tooLarge != nil {
+			return nil, tooLarge
 		}
-		return nil, fmt.Errorf("%w: HTTP %d", appmcp.ErrUpstreamUnauthorized, resp.StatusCode)
+		failure := &appmcp.UpstreamFailure{Kind: appmcp.UpstreamFailureCredential, Status: resp.StatusCode}
+		t.notedFailure.Store(failure)
+		resp.Body = io.NopCloser(strings.NewReader(""))
+		resp.ContentLength = 0
+		return resp, nil
+	}
+	if err == nil && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		kind := appmcp.UpstreamFailureRedirect
+		if redirectToHTTP(req, resp.Header.Get("Location")) {
+			kind = appmcp.UpstreamFailureDowngrade
+		}
+		// The redirect is not followed. CheckRedirect refuses one that this
+		// branch did not already turn into an error. The body is drained
+		// through the size limit and is not part of the error.
+		if tooLarge := discardUpstreamBody(resp); tooLarge != nil {
+			return nil, tooLarge
+		}
+		failure := &appmcp.UpstreamFailure{Kind: kind, Status: resp.StatusCode}
+		t.notedFailure.Store(failure)
+		return nil, failure
 	}
 	if err == nil && ok && method == methodServerDiscover && isLegacyDiscoverResponse(resp) {
 		t.discoverLegacyCandidate.Store(true)
@@ -102,6 +139,44 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 
 func rejectRedirect(*http.Request, []*http.Request) error {
 	return errors.New("MCP upstream redirects are not allowed")
+}
+
+// dropResponseBody closes the body without reading it.
+func dropResponseBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+// discardUpstreamBody drains resp.Body through the response size limit and
+// closes it. ErrResponseTooLarge is returned so an error response cannot
+// skip that limit by wearing an SSE content type. Any other read error is
+// dropped: the status is what the caller acts on, and the body must not be
+// copied into that error.
+func discardUpstreamBody(resp *http.Response) error {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	_, err := io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if errors.Is(err, ErrResponseTooLarge) {
+		return ErrResponseTooLarge
+	}
+	return nil
+}
+
+// redirectToHTTP reports an https request whose Location is http. That
+// downgrade is named on its own; any other redirect is "not followed".
+func redirectToHTTP(req *http.Request, loc string) bool {
+	if req == nil || req.URL == nil || !strings.EqualFold(req.URL.Scheme, "https") {
+		return false
+	}
+	target, err := req.URL.Parse(loc)
+	if err != nil || target == nil {
+		return false
+	}
+	return strings.EqualFold(target.Scheme, "http")
 }
 
 func isLegacyDiscoverResponse(resp *http.Response) bool {

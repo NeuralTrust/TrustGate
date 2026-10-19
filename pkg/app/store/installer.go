@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -29,6 +30,7 @@ import (
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 var (
@@ -37,6 +39,13 @@ var (
 	// ErrNotInstalled: the principal holds no installed instance of the code
 	// (or of the instance named), or holds several and named none.
 	ErrNotInstalled = errors.New("store: not installed")
+	// ErrNothingInstalled is uninstall of a code the principal has no row for.
+	// Removing nothing is an idempotent answer, not a fault in the gateway.
+	ErrNothingInstalled = errors.New("store: nothing installed")
+	// ErrSSEUnsupported is an install of a catalog server whose only transport
+	// is SSE. The gateway dials streamable HTTP and has no SSE client; the
+	// install stops before a registry is materialised.
+	ErrSSEUnsupported = errors.New("SSE transport is not supported by the gateway yet")
 	// ErrRoleNotAllowed is returned when a server is on the shelf but the
 	// principal's roles are not permitted to install it.
 	ErrRoleNotAllowed = errors.New("store: your role is not allowed to install this server")
@@ -139,8 +148,65 @@ type Installer interface {
 	// Uninstall removes an install. When instanceID is set it removes that one
 	// instance (which must belong to code); otherwise it removes the sole
 	// instance, or returns ErrAmbiguousInstance when the principal holds several
-	// of that code.
+	// of that code. When credentials are wired, removing the last active
+	// installation that uses a per-user vault key also deletes that credential.
+	// ErrNothingInstalled when the principal has no row for the code.
 	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code, instanceID string) error
+	// InstalledCodes is the set of catalog codes the principal has an active
+	// install of. A lookup failure is returned to the caller; search treats that
+	// as "unknown" and does not fail the browse.
+	InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error)
+	// PinTarget is the configured instance Install would bind in to. Nil when
+	// that install would not resolve to exactly one instance, so a caller
+	// leaves every catalog variable per-user.
+	PinTarget(ctx context.Context, in InstallRequest) (*registrydomain.MCPTarget, error)
+}
+
+// CredentialRevoker revokes the upstream OAuth token held in a per-user
+// credential. A nil error means the token was revoked or the provider does not
+// advertise revocation. Callers log a non-nil error and still delete the local
+// credential.
+type CredentialRevoker interface {
+	Revoke(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry, cred *vaultdomain.Credential) error
+}
+
+// InstallerOption configures optional installer dependencies.
+type InstallerOption func(*installer)
+
+// WithUninstallCredentials releases the principal's per-user vault credential
+// when Uninstall removes the last active installation that resolves to it. A
+// shared account is left in place, and so is a credential another active
+// installation of the same principal still uses. An admin-provisioned registry
+// (any origin other than the store) that resolves to the same per-user key
+// keeps it too: that registry reads the vault directly, with no installation
+// row. Vault ErrNotFound is success. Any other vault error fails Uninstall
+// before the installation row is removed, so a retry can still release the
+// credential. Vendor revocation runs only after that local delete and after
+// the per-key lock is released. It is best-effort: a failure or an unsupported
+// provider is logged and never keeps the local token or fails Uninstall.
+// A pinned registry (authorize and token URLs both configured) does not
+// revoke; the registry has no revocation URL.
+// revoker may be nil, which skips the vendor call. The cached dynamic client
+// is not deleted.
+// WithCatalogInstanceRefresh asks Ensure to reconcile an existing instance
+// with the current catalog, then answers this install from that shape so
+// RequiresAuth follows a mode change (for example none to forwarded). The
+// reconciler leaves credentials, admin edits, and uncertain rows untouched.
+// Ensure errors are logged and do not fail the install.
+func WithCatalogInstanceRefresh(viewer CatalogViewer) InstallerOption {
+	return func(i *installer) {
+		i.viewer = viewer
+	}
+}
+
+func WithUninstallCredentials(vault vaultdomain.Repository, revoker CredentialRevoker, logger *slog.Logger) InstallerOption {
+	return func(i *installer) {
+		i.vault = vault
+		i.revoker = revoker
+		if logger != nil {
+			i.logger = logger
+		}
+	}
 }
 
 // InstallRequest carries everything an install decision needs. Groups are the
@@ -179,6 +245,10 @@ type installer struct {
 	installs   installationdomain.Repository
 	grants     storeaccessdomain.Reader
 	ensurer    RegistryEnsurer
+	viewer     CatalogViewer
+	vault      vaultdomain.Repository
+	revoker    CredentialRevoker
+	logger     *slog.Logger
 }
 
 // NewInstaller wires the Store installer over the catalog, the gateway's
@@ -198,17 +268,25 @@ func NewInstaller(
 	installs installationdomain.Repository,
 	grants storeaccessdomain.Reader,
 	ensurer RegistryEnsurer,
+	opts ...InstallerOption,
 ) (Installer, error) {
 	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &installer{
+	inst := &installer{
 		catalog:    catalog,
 		registries: registries,
 		installs:   installs,
 		grants:     grants,
 		ensurer:    ensurer,
-	}, nil
+		logger:     slog.Default(),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(inst)
+		}
+	}
+	return inst, nil
 }
 
 func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
@@ -221,16 +299,6 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
-	// Per-user endpoint configuration (URL variables). Malformed input is refused
-	// here; what is *missing* is held until the access decision is known, because
-	// only an install needs it (see below). Secret values are never inline — they
-	// are entered through the hosted form — so their absence never blocks
-	// recording: the install stands and the dial fails closed until they arrive.
-	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config)
-	if err != nil {
-		return nil, err
-	}
-
 	// Which configured instance (registry) does this install bind to, and does it
 	// install now or file a request? Decided against the gateway's instances of
 	// the code and the principal's grants, before any row is touched.
@@ -238,6 +306,19 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	if err != nil {
 		return nil, err
 	}
+
+	// Per-user endpoint configuration (URL variables). Malformed input is refused
+	// here; what is *missing* is held until the access decision is known, because
+	// only an install needs it (see below). Secret values are never inline — they
+	// are entered through the hosted form — so their absence never blocks
+	// recording: the install stands and the dial fails closed until they arrive.
+	// Variables the bound instance's URL already fixes are neither asked for nor
+	// kept: the dial uses that URL whatever the user sends.
+	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config, boundTarget(decision.bound))
+	if err != nil {
+		return nil, err
+	}
+	i.refreshBoundCatalog(ctx, in.GatewayID, code, &decision)
 	if decision.requiresAdminSetup {
 		return &InstallResult{
 			Code:               code,
@@ -289,9 +370,13 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	// Older data can hold one instance in several rows. Refresh the installed
 	// one: refreshing a pending or revoked sibling instead would make the
 	// principal hold the installed instance twice.
+	//
+	// A row written before the bound URL fixed a variable still stores that
+	// key. The dial no longer reads it, so it is not what makes an instance.
+	bound := boundTarget(decision.bound)
 	var sameInstance *installationdomain.Installation
 	for _, e := range existing {
-		if !e.SameInstance(decision.registryID, decision.canonical, config) {
+		if !sameInstanceIgnoringPins(e, decision.registryID, decision.canonical, config, bound) {
 			continue
 		}
 		if sameInstance == nil || refreshRank(e) < refreshRank(sameInstance) {
@@ -302,6 +387,13 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 
 	// Materialise the registry only once the install is certain to be recorded.
 	if decision.materialise {
+		// SSE is the one catalog transport the gateway cannot dial. Refuse it
+		// here, before Ensure, so the failure is this sentence rather than a
+		// registry-validation error, and so a registry that already exists is
+		// left alone.
+		if strings.EqualFold(strings.TrimSpace(entry.Transport), "sse") {
+			return nil, ErrSSEUnsupported
+		}
 		if err := i.ensurer.Ensure(ctx, in.GatewayID, code); err != nil {
 			return nil, err
 		}
@@ -325,6 +417,9 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
 		record.RegistryID = sameInstance.RegistryID
+		// The new config omits keys this instance pins. The row already has
+		// them, and dropping one changes what a later token refresh asks for.
+		record.Config = mergePinnedConfig(record.Config, sameInstance.Config, bound)
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err
@@ -366,13 +461,21 @@ func refreshRank(in *installationdomain.Installation) int {
 // It returns: the plain values to persist on the installation; the required plain
 // variables still missing (which block the install until supplied); and the
 // required secret variables (collected out-of-band through the hosted form, so
-// they do not block recording the install).
+// they do not block recording the install). A variable bound pins is dropped
+// from all three: its value is never validated, stored or requested.
 func planInstallConfig(
 	entry catalogdomain.MCPServer,
 	provided map[string]string,
+	bound *registrydomain.MCPTarget,
 ) (config map[string]string, missingPlain, secretRequired []registrydomain.MCPURLVariable, err error) {
-	declared := catalogURLVariables(entry.URLVariables)
-	if len(declared) == 0 {
+	declared := unpinnedURLVariables(catalogURLVariables(entry.URLVariables), bound)
+	pinned := make(map[string]struct{})
+	for _, v := range entry.URLVariables {
+		if bound.PinsURLVariable(v.Name) {
+			pinned[strings.TrimSpace(v.Name)] = struct{}{}
+		}
+	}
+	if len(declared) == 0 && len(pinned) == 0 {
 		return nil, nil, nil, nil
 	}
 	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
@@ -383,6 +486,9 @@ func planInstallConfig(
 	for k, raw := range provided {
 		val := strings.TrimSpace(raw)
 		if val == "" {
+			continue
+		}
+		if _, ok := pinned[k]; ok {
 			continue
 		}
 		v, known := byName[k]
@@ -434,6 +540,27 @@ type installDecision struct {
 	materialise        bool
 	choices            []InstanceChoice
 	requiresAdminSetup bool
+}
+
+// refreshBoundCatalog persists a safe catalog correction through Ensure and
+// then views that shape on the instance this install already resolved. Custom
+// servers are not catalog codes and are skipped.
+func (i *installer) refreshBoundCatalog(ctx context.Context, gatewayID ids.GatewayID, code string, decision *installDecision) {
+	if i == nil || i.viewer == nil || i.ensurer == nil || decision == nil || decision.bound == nil {
+		return
+	}
+	if _, ok := i.catalog.GetByCode(code); !ok {
+		return
+	}
+	if err := i.ensurer.Ensure(ctx, gatewayID, code); err != nil {
+		i.logger.Warn("store: catalog reapply",
+			slog.String("code", code),
+			slog.String("error", err.Error()),
+		)
+	}
+	if viewed := i.viewer.ViewCurrentCatalog(ctx, decision.bound); viewed != nil {
+		decision.bound = viewed
+	}
 }
 
 // requiresUserAuth reports whether the install still needs the user to sign in
@@ -492,6 +619,28 @@ func (i *installer) decide(
 		d.canonical = all[0].ID
 	}
 	return d, nil
+}
+
+// PinTarget is the instance Install would bind in to. Nil when that install
+// would not resolve to exactly one instance (the caller must pick, or none
+// exists yet): the caller then treats every catalog variable as per-user.
+func (i *installer) PinTarget(ctx context.Context, in InstallRequest) (*registrydomain.MCPTarget, error) {
+	code := strings.TrimSpace(in.Code)
+	entry, ok, err := storeEntry(ctx, i.catalog, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	decision, err := i.decide(ctx, in, entry, code)
+	if err != nil {
+		return nil, err
+	}
+	if len(decision.choices) > 0 {
+		return nil, nil
+	}
+	return boundTarget(decision.bound), nil
 }
 
 // enabledInstances narrows a code's instances to the ones an administrator has
@@ -668,6 +817,27 @@ func (i *installer) Installed(ctx context.Context, in InstallRequest) (*InstallR
 	}, nil
 }
 
+// InstalledCodes returns the catalog codes this principal has an active
+// install of. Pending and revoked rows are not installed.
+func (i *installer) InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error) {
+	rows, err := i.installs.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row == nil || !row.IsActive() {
+			continue
+		}
+		code := strings.TrimSpace(row.CatalogCode)
+		if code == "" {
+			continue
+		}
+		out[code] = struct{}{}
+	}
+	return out, nil
+}
+
 func (i *installer) Instances(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -695,34 +865,43 @@ func (i *installer) Uninstall(
 	// A specific instance was named: remove exactly that one — and only if it is
 	// an instance of the named code, so a stray id cannot be used to revoke an
 	// unrelated server.
+	var target *installationdomain.Installation
 	if id := strings.TrimSpace(instanceID); id != "" {
 		installID, err := ids.Parse[ids.InstallationKind](id)
 		if err != nil {
 			return fmt.Errorf("%w: invalid instance id %q", installationdomain.ErrInvalidInstallation, id)
 		}
-		target, err := i.installs.FindByID(ctx, gatewayID, principalSub, installID)
+		found, err := i.installs.FindByID(ctx, gatewayID, principalSub, installID)
 		if err != nil {
 			return err
 		}
-		if target.CatalogCode != code {
+		if found.CatalogCode != code {
 			return fmt.Errorf("%w: instance %q is not an instance of %q", installationdomain.ErrNotFound, id, code)
 		}
-		return i.installs.DeleteByID(ctx, gatewayID, principalSub, installID)
+		target = found
+	} else {
+		// Otherwise remove the sole instance; refuse to guess when several exist.
+		active, err := i.Instances(ctx, gatewayID, principalSub, code)
+		if err != nil {
+			return err
+		}
+		switch len(active) {
+		case 0:
+			// Nothing active; fall back to clearing any inactive row for the code.
+			// A missing row is "nothing was installed", which the caller answers
+			// idempotently. Any other delete failure still fails the call.
+			err := i.installs.Delete(ctx, gatewayID, principalSub, code)
+			if errors.Is(err, installationdomain.ErrNotFound) {
+				return ErrNothingInstalled
+			}
+			return err
+		case 1:
+			target = active[0]
+		default:
+			return ErrAmbiguousInstance
+		}
 	}
-	// Otherwise remove the sole instance; refuse to guess when several exist.
-	active, err := i.Instances(ctx, gatewayID, principalSub, code)
-	if err != nil {
-		return err
-	}
-	switch len(active) {
-	case 0:
-		// Nothing active; fall back to clearing any inactive row for the code.
-		return i.installs.Delete(ctx, gatewayID, principalSub, code)
-	case 1:
-		return i.installs.DeleteByID(ctx, gatewayID, principalSub, active[0].ID)
-	default:
-		return ErrAmbiguousInstance
-	}
+	return i.uninstallActive(ctx, gatewayID, principalSub, target)
 }
 
 // sortRegistries orders instances deterministically: creation time, then id.

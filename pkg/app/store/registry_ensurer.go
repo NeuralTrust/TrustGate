@@ -27,8 +27,10 @@ import (
 // "created on first install" self-service path from the design memo. It is the
 // write the DB-less data plane cannot make itself: on the control plane it
 // persists the registry directly; on the data plane it is a thin gRPC forwarder
-// to the control plane. Ensure is idempotent — a second call for a code that is
-// already on the shelf is a no-op.
+// to the control plane. Ensure is idempotent. A second call does not create
+// another row. With a catalog reconciler wired, it re-applies the current
+// catalog to an instance that still matches a previous seed value and holds
+// no credential.
 type RegistryEnsurer interface {
 	Ensure(ctx context.Context, gatewayID ids.GatewayID, code string) error
 }
@@ -43,6 +45,19 @@ type registryEnsurer struct {
 	catalog    CatalogReader
 	registries RegistryLister
 	creator    appregistry.Creator
+	reapply    *CatalogReapply
+}
+
+// EnsurerOption configures the control-plane materialiser.
+type EnsurerOption func(*registryEnsurer)
+
+// WithEnsurerReapply reconciles an existing instance of the code when install
+// or connect calls Ensure. Without it, Ensure stays a no-op once any instance
+// exists.
+func WithEnsurerReapply(reapply *CatalogReapply) EnsurerOption {
+	return func(e *registryEnsurer) {
+		e.reapply = reapply
+	}
 }
 
 // NewRegistryEnsurer wires the control-plane registry materialiser.
@@ -50,11 +65,18 @@ func NewRegistryEnsurer(
 	catalog CatalogReader,
 	registries RegistryLister,
 	creator appregistry.Creator,
+	opts ...EnsurerOption,
 ) (RegistryEnsurer, error) {
 	if catalog == nil || registries == nil || creator == nil {
 		return nil, ErrUnavailable
 	}
-	return &registryEnsurer{catalog: catalog, registries: registries, creator: creator}, nil
+	ensurer := &registryEnsurer{catalog: catalog, registries: registries, creator: creator}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ensurer)
+		}
+	}
+	return ensurer, nil
 }
 
 func (e *registryEnsurer) Ensure(ctx context.Context, gatewayID ids.GatewayID, code string) error {
@@ -66,11 +88,18 @@ func (e *registryEnsurer) Ensure(ctx context.Context, gatewayID ids.GatewayID, c
 	// The check runs against whatever lister is local — the control plane's DB
 	// here — so it reflects the authoritative registry set, not a lagging
 	// snapshot.
-	existing, err := findRegistryByCode(ctx, e.registries, gatewayID, code)
+	existing, err := findRegistriesByCode(ctx, e.registries, gatewayID, code)
 	if err != nil {
 		return err
 	}
-	if existing != nil {
+	if len(existing) > 0 {
+		// Re-apply is per code on this install or connect, not a background
+		// migration. A save failure is logged inside Reapply and does not fail
+		// the caller. With no reconciler wired, an existing row is left as it
+		// is — the same no-op Ensure had before.
+		if e.reapply != nil {
+			e.reapply.Reapply(ctx, gatewayID, existing)
+		}
 		return nil
 	}
 	enabled := true

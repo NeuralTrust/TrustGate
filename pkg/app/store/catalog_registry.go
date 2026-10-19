@@ -91,6 +91,7 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 			Secret:      v.Secret,
 			In:          strings.TrimSpace(v.In),
 			Options:     registryURLVarOptions(v.Options),
+			HostSuffix:  cloneHostSuffixes(v.HostSuffix),
 		})
 	}
 	return out
@@ -100,6 +101,24 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 // registry. The set is what the install path validates a supplied value
 // against, so dropping it here would leave the choice enforceable only by the
 // UI that offered it.
+func cloneHostSuffixes(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, suffix := range in {
+		suffix = strings.TrimSpace(suffix)
+		if suffix == "" {
+			continue
+		}
+		out = append(out, suffix)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func registryURLVarOptions(options []catalogdomain.MCPURLVariableOption) []registrydomain.MCPURLVariableOption {
 	if len(options) == 0 {
 		return nil
@@ -135,6 +154,13 @@ func catalogAuth(entry catalogdomain.MCPServer) *registrydomain.MCPAuth {
 	case oauth:
 		return catalogOAuth(entry.Code, entry.OAuth)
 	case static && len(entry.AuthHeaders) > 0:
+		// A public server may still document an optional key (Algolia). Mapping
+		// that to static auth would store a header with no value, which cannot
+		// validate, so the shared shelf would never come up. None leaves the
+		// public endpoint reachable; an admin who fills the key uses static.
+		if !entry.RequiresAuth && !authHeaderRequired(entry.AuthHeaders) {
+			return &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeNone}
+		}
 		return &registrydomain.MCPAuth{
 			Mode:   registrydomain.MCPAuthModeStatic,
 			Header: strings.TrimSpace(entry.AuthHeaders[0].Name),
@@ -147,6 +173,15 @@ func catalogAuth(entry catalogdomain.MCPServer) *registrydomain.MCPAuth {
 // catalogAuthMethods is the catalog entry's declared install methods.
 func catalogAuthMethods(entry catalogdomain.MCPServer) (static, oauth bool) {
 	return entry.SupportedAuthMethods()
+}
+
+func authHeaderRequired(headers []catalogdomain.MCPAuthHeader) bool {
+	for _, header := range headers {
+		if header.Required {
+			return true
+		}
+	}
+	return false
 }
 
 // catalogNeedsAdminCredential reports whether a catalog entry cannot be
@@ -177,13 +212,19 @@ func catalogOAuth(code string, o *catalogdomain.MCPOAuth) *registrydomain.MCPAut
 			Resource: strings.TrimSpace(o.Resource),
 		}
 	}
+	resource := strings.TrimSpace(o.Resource)
 	auth := &registrydomain.MCPAuth{
 		Mode:         registrydomain.MCPAuthModeForwarded,
 		Provider:     strings.TrimSpace(code),
 		AuthorizeURL: strings.TrimSpace(o.AuthorizeURL),
 		TokenURL:     strings.TrimSpace(o.TokenURL),
 		Scopes:       o.Scopes,
-		Resource:     strings.TrimSpace(o.Resource),
+		// A closed-option template stays on this shared shelf. The vault key
+		// fills it from the caller's instance config only when the catalog
+		// resource itself is that template; pinning one region here would
+		// make every other region dial that audience.
+		Resource:            resource,
+		ResourcePerInstance: strings.Contains(resource, "{"),
 	}
 	if strings.EqualFold(strings.TrimSpace(o.Registration), "manual") {
 		auth.Registration = registrydomain.RegistrationManual
