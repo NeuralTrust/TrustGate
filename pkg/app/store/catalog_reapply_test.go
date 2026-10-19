@@ -616,6 +616,81 @@ func TestReapplyManualWithoutClientIDRefusedUnlessShared(t *testing.T) {
 	}
 }
 
+// These entries were not in the #1118 previous-seed table, and the new shape
+// is a manual app with no client id. Re-apply must not write that shape:
+// an empty client id is not a credential the row can dial with.
+func TestReapplyDoesNotWriteAdminOAuthWithoutClientID(t *testing.T) {
+	loadPreviousCatalog()
+	if previousLoadErr != nil {
+		t.Fatal(previousLoadErr)
+	}
+	catalog := testReapplyCatalog(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	saver := &countingSaver{}
+	reapply := newTestReapply(t, catalog, saver, slog.New(slog.DiscardHandler))
+	withClearProbes(reapply)
+	for _, code := range []string{
+		"com.salesforce/mcp",
+		"com.servicenow/mcp",
+		"com.snowflake/mcp",
+		"com.getdbt/mcp",
+	} {
+		if _, ok := previousByCode[code]; ok {
+			t.Fatalf("%s is in the previous fingerprint table", code)
+		}
+		entry, ok := catalog.GetByCode(code)
+		if !ok {
+			t.Fatalf("missing %s", code)
+		}
+		shape, err := storedCatalogShape(entry)
+		if err != nil {
+			t.Fatalf("shape %s: %v", code, err)
+		}
+		if shape.URL != entry.URL {
+			t.Fatalf("%s url = %s", code, shape.URL)
+		}
+		if !manualWithoutClient(shape) {
+			t.Fatalf("%s stored shape is not refused for an empty client id: %+v", code, shape.Auth)
+		}
+		old := &registrydomain.MCPTarget{
+			Code:      code,
+			URL:       entry.URL,
+			Transport: registrydomain.MCPTransportStreamableHTTP,
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     code,
+				Registration: registrydomain.RegistrationAuto,
+			},
+		}
+		if raisesAuthRequirement(old, shape) {
+			t.Fatalf("%s raises the auth requirement", code)
+		}
+		reg := &registrydomain.Registry{
+			ID:        ids.New[ids.RegistryKind](),
+			GatewayID: gatewayID,
+			Name:      code,
+			Type:      registrydomain.TypeMCP,
+			Enabled:   true,
+			MCPTarget: old,
+		}
+		before, err := catalogFingerprint(old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reapply.Reapply(context.Background(), gatewayID, []*registrydomain.Registry{reg})
+		after, err := catalogFingerprint(reg.MCPTarget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after != before || reg.MCPTarget.Auth.Registration != registrydomain.RegistrationAuto {
+			t.Fatalf("%s was re-applied: registration=%s", code, reg.MCPTarget.Auth.Registration)
+		}
+	}
+	if saver.calls != 0 {
+		t.Fatalf("saves = %d, want 0", saver.calls)
+	}
+}
+
 func TestReapplyCubeTemplateIsNotPointedAtCloud(t *testing.T) {
 	catalog := testReapplyCatalog(t)
 	entry, ok := catalog.GetByCode("dev.cube/mcp")

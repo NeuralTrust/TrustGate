@@ -126,6 +126,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// for any dynamic client, ENG-2189).
 	// Freshworks (ENG-2261) was already not self-service and stays that way as a
 	// manual OAuth app, so this count does not move.
+	// Salesforce, ServiceNow, Snowflake, and dbt (ENG-2223) were already not
+	// self-service. They stay that way as manual admin OAuth apps.
 	require.Equal(t, 106, self, "self_service count changed")
 }
 
