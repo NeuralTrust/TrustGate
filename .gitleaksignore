@@ -18,3 +18,4 @@ c2db9eae55225cbd50eeae07e73e11c2d1926e8b:postman/TrustGate-TrustGuard-E2E.postma
 0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:27
 0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:47
 0016d1ac26fe8e3fbd076679d9eaa8876f71f5b2:pkg/domain/registry/headers_test.go:generic-api-key:78
+85c20374762fee0cf6fe1e184988a4ef214ecc62:pkg/app/oauth/connect_admin_row_test.go:generic-api-key:147
