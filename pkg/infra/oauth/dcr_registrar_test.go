@@ -564,12 +564,14 @@ func TestDiscover_BadUpstreamURLOmitsTheURL(t *testing.T) {
 	for _, raw := range []string{
 		"http://user:s3cret@example.com/%zz?token=supersecret#frag",
 		"http://user:s3cret@/mcp?token=supersecret",
+		"https://svc:Ab/cd@host",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			_, err := r.Discover(context.Background(), raw)
 			require.Error(t, err)
 			msg := err.Error()
-			require.Contains(t, msg, "bad upstream url")
+			require.Equal(t, "oauth dcr: bad upstream url", msg)
+			require.NotContains(t, msg, "Ab")
 			require.NotContains(t, msg, raw)
 			require.NotContains(t, msg, "s3cret")
 			require.NotContains(t, msg, "supersecret")
