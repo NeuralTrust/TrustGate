@@ -167,6 +167,16 @@ func (s *memFlowStore) SaveCode(_ context.Context, code string, g CodeGrant) err
 	return nil
 }
 
+func (s *memFlowStore) GetCode(_ context.Context, code string) (*CodeGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, ok := s.codes[code]
+	if !ok {
+		return nil, nil
+	}
+	return &g, nil
+}
+
 func (s *memFlowStore) TakeCode(_ context.Context, code string) (*CodeGrant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

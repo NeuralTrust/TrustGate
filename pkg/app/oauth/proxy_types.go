@@ -166,6 +166,9 @@ type FlowStore interface {
 	SavePending(ctx context.Context, state string, p PendingAuthorization) error
 	TakePending(ctx context.Context, state string) (*PendingAuthorization, error)
 	SaveCode(ctx context.Context, code string, g CodeGrant) error
+	// GetCode reads a code grant without consuming it. A missing code is a nil
+	// grant and a nil error. TakeCode is the single use, and it stays atomic.
+	GetCode(ctx context.Context, code string) (*CodeGrant, error)
 	TakeCode(ctx context.Context, code string) (*CodeGrant, error)
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
