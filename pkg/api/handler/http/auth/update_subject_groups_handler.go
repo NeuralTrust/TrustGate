@@ -55,7 +55,7 @@ type SubjectGroupsResponse struct {
 
 // Handle godoc
 // @Summary      Set directory groups on a subject's default-IdP sessions
-// @Description  Adds the given directory groups to the login claim on the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path. The body is {"groups": ["<group>", ...]}. The result is the union of that claim and this list, deduplicated. An empty list leaves the claim groups in place. Names are trimmed, deduplicated and sorted, with the same bounds as a personal key's owner groups. A subject with no refresh records answers 200 {"updated": 0} and does not write a session. The call does not change session expiry and does not revoke a session. Authentication is the admin credential required for PUT /auths/{id}/groups. The org matched on each record is the console token's tenant_id.
+// @Description  Adds the given directory groups to the login claim on the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path. The body is {"groups": ["<group>", ...]}. The result is the union of that claim and this list, deduplicated. An empty list leaves the claim groups in place. Names are trimmed, deduplicated and sorted, with the same bounds as a personal key's owner groups. A subject with no refresh records answers 200 {"updated": 0} and does not write a session. The call does not change session expiry and does not revoke a session. Authentication is a console JWT, the same interactive identity required for PUT /auths/{id}/groups. A service credential is refused. The org matched on each record is the console token's tenant_id.
 // @Tags         auths
 // @Accept       json
 // @Produce      json

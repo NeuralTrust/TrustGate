@@ -22,7 +22,9 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestSessionIndexWrittenOnSaveAndRemovedOnRetire(t *testing.T) {
@@ -184,6 +186,106 @@ func TestApplyDirectoryGroupsDropsAnExpiredIndexMember(t *testing.T) {
 	if mr.Exists(digestSessionKey("refresh-1")) {
 		t.Fatal("expired session was written back")
 	}
+}
+
+func TestApplyDirectoryGroupsKeepsTheRotationGraceTTL(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	expires := time.Now().Add(2 * time.Hour).UTC()
+	rec := defaultSession("gw-1", "org-1", "user-1", expires)
+	rec.Groups = []string{"A"}
+	rec.ClaimGroups = []string{"A"}
+	rec.ClaimSnapshot = true
+	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	key := digestSessionKey("refresh-1")
+	mr.SetTTL(key, 60*time.Second)
+
+	updated, err := store.ApplyDirectoryGroups(ctx, "org-1", "gw-1", "user-1", []string{"C"})
+	if err != nil || updated != 1 {
+		t.Fatalf("updated %d err %v", updated, err)
+	}
+	if !mr.Exists(key) {
+		t.Fatal("session in its rotation grace was deleted")
+	}
+	if ttl := mr.TTL(key); ttl <= 0 || ttl > 60*time.Second {
+		t.Fatalf("ttl = %s, want the remaining grace window", ttl)
+	}
+	got, err := store.GetSession(ctx, "refresh-1")
+	if err != nil || got == nil || !sameList(got.Groups, []string{"A", "C"}) || !got.ExpiresAt.Equal(expires) {
+		t.Fatalf("grace session = %+v err %v", got, err)
+	}
+}
+
+func TestApplyDirectoryGroupsDoesNotRecreateARetiredSession(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	const refresh = "refresh-retired"
+	sessionKey := digestSessionKey(refresh)
+	rdb.AddHook(dropSessionOnConditionalSet{key: sessionKey, mr: mr})
+	store := infraoauth.NewStore(rdb)
+	ctx := context.Background()
+	rec := defaultSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	rec.Groups = []string{"A"}
+	rec.ClaimGroups = []string{"A"}
+	rec.ClaimSnapshot = true
+	if err := store.SaveSession(ctx, refresh, rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	updated, err := store.ApplyDirectoryGroups(ctx, "org-1", "gw-1", "user-1", []string{"C"})
+	if err != nil || updated != 0 {
+		t.Fatalf("updated %d err %v", updated, err)
+	}
+	if mr.Exists(sessionKey) {
+		t.Fatal("retired session was recreated")
+	}
+}
+
+// dropSessionOnConditionalSet deletes the session key once the groups write
+// has read it and is about to SET XX KEEPTTL, which is the rotation race.
+type dropSessionOnConditionalSet struct {
+	key string
+	mr  *miniredis.Miniredis
+}
+
+func (h dropSessionOnConditionalSet) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h dropSessionOnConditionalSet) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		args := cmd.Args()
+		if len(args) > 1 && strings.EqualFold(cmd.Name(), "set") && setOnlyIfPresentKeepingTTL(args) {
+			if key, ok := args[1].(string); ok && key == h.key {
+				h.mr.Del(key)
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h dropSessionOnConditionalSet) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func setOnlyIfPresentKeepingTTL(args []interface{}) bool {
+	var present, keep bool
+	for _, arg := range args {
+		s, ok := arg.(string)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(s) {
+		case "xx":
+			present = true
+		case "keepttl":
+			keep = true
+		}
+	}
+	return present && keep
 }
 
 func defaultSession(gateway, org, subject string, expires time.Time) appoauth.SessionRecord {
