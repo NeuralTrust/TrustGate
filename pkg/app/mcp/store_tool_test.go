@@ -309,8 +309,12 @@ func TestEmptyStoreCallIsUnknownToolAndStoreSearchStillRuns(t *testing.T) {
 		ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP, Active: true,
 	}}
 	_, err = d.Dispatch(ctx, plain, "", "tools/call", json.RawMessage(`{"name":"ghost"}`))
-	if !errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrToolNotFound) {
-		t.Fatalf("consumer with no registries = %v, want ErrNoMCPRegistries", err)
+	var plainUnknown *UnknownToolError
+	if !errors.As(err, &plainUnknown) || plainUnknown.Error() != "Unknown tool: ghost" {
+		t.Fatalf("consumer with no registries = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrNoMCPRegistries) {
+		t.Fatal("an application with nothing attached must not be reported as no MCP registries")
 	}
 }
 
