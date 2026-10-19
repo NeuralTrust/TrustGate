@@ -25,6 +25,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/dig"
@@ -66,4 +68,23 @@ func TestAdminUsageReadinessFollowsTheFlag(t *testing.T) {
 			assert.NoError(t, check(context.Background()))
 		}
 	}
+}
+
+func TestDataPlaneUsageReadinessFollowsTheSnapshotFlag(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Usage: config.UsageConfig{ReadyTimeout: time.Hour}}
+	withFlag := func(enforced bool) configsync.ConfigStore[*readmodel.Snapshot] {
+		store := configsync.NewMemoryStore[*readmodel.Snapshot]()
+		store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: readmodel.Build(readmodel.Data{UsageEnforcement: enforced})})
+		return store
+	}
+
+	off := dataPlaneUsageReadiness(withFlag(false), appusage.NewEnforcement(), cfg, slog.Default())
+	assert.NoError(t, off(context.Background()), "flag off must not wait for a usage list")
+
+	enforcement := appusage.NewEnforcement()
+	on := dataPlaneUsageReadiness(withFlag(true), enforcement, cfg, slog.Default())
+	assert.ErrorIs(t, on(context.Background()), appusage.ErrListNotReady)
+	enforcement.ApplySnapshot(usagedomain.Snapshot{})
+	assert.NoError(t, on(context.Background()))
 }
