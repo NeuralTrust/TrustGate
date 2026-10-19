@@ -404,6 +404,9 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		record.ID = sameInstance.ID
 		record.CreatedAt = sameInstance.CreatedAt
 		record.RegistryID = sameInstance.RegistryID
+		// The new config omits keys this instance pins. The row already has
+		// them, and dropping one changes what a later token refresh asks for.
+		record.Config = mergePinnedConfig(record.Config, sameInstance.Config, bound)
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err
