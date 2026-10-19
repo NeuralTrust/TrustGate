@@ -40,13 +40,19 @@ func (c shapeCatalog) SharedOAuthCredentials(string) (string, string, bool) {
 	return "", "", false
 }
 
-// storedCatalogShape is the mcp_target Create persists for a catalog entry:
-// the shared shelf from catalogMCPTarget, then the auth canonicalisation the
-// creator runs (resource fallback, registration, client-credentials token
-// method). The result does not alias the catalog entry's slices.
+// storedCatalogShape is the mcp_target Create persists for a catalog entry
+// that carries no platform OAuth client. Previous-seed fingerprints use this
+// so a platform client id never becomes part of the old shape.
 func storedCatalogShape(entry catalogdomain.MCPServer) (*registrydomain.MCPTarget, error) {
+	return storedCatalogShapeIn(entry, shapeCatalog{entry: entry})
+}
+
+// storedCatalogShapeIn is storedCatalogShape using catalog for the shared
+// OAuth client. A manual registration then carries the platform client id the
+// connect path expects, instead of an empty one.
+func storedCatalogShapeIn(entry catalogdomain.MCPServer, catalog appregistry.MCPAuthCatalog) (*registrydomain.MCPTarget, error) {
 	target := catalogMCPTarget(entry)
-	if err := appregistry.CanonicalizeMCPAuthFromCatalog(target, shapeCatalog{entry: entry}); err != nil {
+	if err := appregistry.CanonicalizeMCPAuthFromCatalog(target, catalog); err != nil {
 		return nil, err
 	}
 	return cloneMCPTarget(target)

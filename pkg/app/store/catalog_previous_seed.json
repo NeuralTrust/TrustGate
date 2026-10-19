@@ -558,24 +558,6 @@
       }
     },
     {
-      "name": "dev.cube/mcp",
-      "server_url": "https://{cube_host}/api/mcp",
-      "transport": "streamable-http",
-      "requires_auth": true,
-      "self_service": false,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true
-      },
-      "url_variables": [
-        {
-          "name": "cube_host",
-          "description": "Your Cube MCP server host.",
-          "required": true
-        }
-      ]
-    },
-    {
       "name": "dev.firecrawl/mcp",
       "server_url": "https://mcp.firecrawl.dev/v2/mcp",
       "transport": "streamable-http",

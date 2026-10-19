@@ -21,7 +21,10 @@ import (
 	"sync"
 	"time"
 
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
@@ -34,11 +37,18 @@ type CatalogViewer interface {
 	ViewCurrentCatalog(ctx context.Context, reg *registrydomain.Registry) *registrydomain.Registry
 }
 
-// CatalogTargetSaver persists a registry whose catalog-derived fields were
-// replaced. It does not re-validate: the caller already accepted the shape,
-// including a catalog row that has no admin secret yet.
+// CatalogTargetSaver persists the catalog fields of a registry when the row
+// still matches oldFP and still has no credential. applied is false when the
+// row changed after it was read; the caller's in-memory registry is then left
+// as it was. The saver does not re-validate.
 type CatalogTargetSaver interface {
-	SaveCatalogTarget(ctx context.Context, reg *registrydomain.Registry) error
+	SaveCatalogTarget(ctx context.Context, reg *registrydomain.Registry, oldFP string) (applied bool, err error)
+}
+
+// catalogInstallReader is the installation lookup a re-apply needs. A nil
+// reader is an unknown answer, and the row is then left untouched.
+type catalogInstallReader interface {
+	ListByCatalogCode(ctx context.Context, gatewayID ids.GatewayID, catalogCode string) ([]*installationdomain.Installation, error)
 }
 
 // DynamicClientChecker reports whether a dynamic OAuth client is cached for a
@@ -54,27 +64,30 @@ type vaultBoundStore interface {
 
 // CatalogReapply decides whether one existing registry may take the current
 // catalog URL, auth, and registration. It updates only an exact previous-seed
-// match that has no live credential. Anything else, including a probe error,
+// match that has no live credential, no active installation, and no stricter
+// auth than the row already requires. Anything else, including a probe error,
 // is left untouched.
 type CatalogReapply struct {
-	catalog CatalogReader
-	saver   CatalogTargetSaver
-	vault   vaultBoundStore
-	dcr     DynamicClientChecker
-	logger  *slog.Logger
-	mu      sync.Mutex
-	locks   map[string]*sync.Mutex
+	catalog  CatalogReader
+	saver    CatalogTargetSaver
+	vault    vaultBoundStore
+	dcr      DynamicClientChecker
+	installs catalogInstallReader
+	logger   *slog.Logger
+	mu       sync.Mutex
+	locks    map[string]*sync.Mutex
 }
 
 // NewCatalogReapply wires the install/connect reconciler. saver may be nil on
 // a plane that only views the current shape; the control plane passes the
-// saver that persists it. vault and dcr may be nil, which refuses any row
-// whose credentials live outside the registry.
+// saver that persists it. vault, dcr, and installs may be nil, which refuses
+// any row whose credentials or installations the caller cannot see.
 func NewCatalogReapply(
 	catalog CatalogReader,
 	saver CatalogTargetSaver,
 	vault vaultdomain.Repository,
 	dcr DynamicClientChecker,
+	installs catalogInstallReader,
 	logger *slog.Logger,
 ) (*CatalogReapply, error) {
 	if catalog == nil {
@@ -92,12 +105,13 @@ func NewCatalogReapply(
 		bound = checker
 	}
 	return &CatalogReapply{
-		catalog: catalog,
-		saver:   saver,
-		vault:   bound,
-		dcr:     dcr,
-		logger:  logger,
-		locks:   map[string]*sync.Mutex{},
+		catalog:  catalog,
+		saver:    saver,
+		vault:    bound,
+		dcr:      dcr,
+		installs: installs,
+		logger:   logger,
+		locks:    map[string]*sync.Mutex{},
 	}, nil
 }
 
@@ -126,12 +140,16 @@ func (r *CatalogReapply) reapplyOne(ctx context.Context, reg *registrydomain.Reg
 	updated := *reg
 	updated.MCPTarget = next
 	updated.UpdatedAt = time.Now().UTC()
-	if err := r.saver.SaveCatalogTarget(ctx, &updated); err != nil {
+	applied, err := r.saver.SaveCatalogTarget(ctx, &updated, oldFP)
+	if err != nil {
 		r.logger.Warn("store: catalog reapply save failed",
 			slog.String("catalog_code", registrydomain.StoreCode(reg)),
 			slog.String("registry_id", reg.ID.String()),
 			slog.String("error", err.Error()),
 		)
+		return
+	}
+	if !applied {
 		return
 	}
 	reg.MCPTarget = updated.MCPTarget
@@ -183,7 +201,7 @@ func (r *CatalogReapply) decide(ctx context.Context, reg *registrydomain.Registr
 	if !found {
 		return nil, "", "", false
 	}
-	current, err := storedCatalogShape(entry)
+	current, err := r.currentCatalogTarget(entry)
 	if err != nil {
 		r.logger.Warn("store: catalog reapply current shape failed",
 			slog.String("catalog_code", code),
@@ -213,6 +231,19 @@ func (r *CatalogReapply) decide(ctx context.Context, reg *registrydomain.Registr
 	if catalogCustomized(reg.MCPTarget) {
 		return nil, "", "", false
 	}
+	if raisesAuthRequirement(reg.MCPTarget, current) || breaksWorkingNoAuth(reg.MCPTarget, current) {
+		return nil, "", "", false
+	}
+	if blocked, err := r.installationBlocks(ctx, reg.GatewayID, code); err != nil || blocked {
+		if err != nil {
+			r.logger.Warn("store: catalog reapply installation check failed",
+				slog.String("catalog_code", code),
+				slog.String("registry_id", reg.ID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+		return nil, "", "", false
+	}
 	if blocked, err := credentialsBlock(ctx, r.vault, r.dcr, reg); err != nil || blocked {
 		if err != nil {
 			r.logger.Warn("store: catalog reapply credential check failed",
@@ -223,7 +254,7 @@ func (r *CatalogReapply) decide(ctx context.Context, reg *registrydomain.Registr
 		}
 		return nil, "", "", false
 	}
-	if !acceptableCatalogWrite(reg, current) {
+	if manualWithoutClient(current) || !acceptableCatalogWrite(reg, current) {
 		return nil, "", "", false
 	}
 	if reg.MCPTarget != nil {
@@ -231,6 +262,13 @@ func (r *CatalogReapply) decide(ctx context.Context, reg *registrydomain.Registr
 		current.InstanceConfig = reg.MCPTarget.InstanceConfig
 	}
 	return current, oldFP, newFP, true
+}
+
+func (r *CatalogReapply) currentCatalogTarget(entry catalogdomain.MCPServer) (*registrydomain.MCPTarget, error) {
+	if auth, ok := r.catalog.(appregistry.MCPAuthCatalog); ok && auth != nil {
+		return storedCatalogShapeIn(entry, auth)
+	}
+	return storedCatalogShape(entry)
 }
 
 func (r *CatalogReapply) audit(ctx context.Context, code string, id ids.RegistryID, oldFP, newFP string) {
@@ -384,13 +422,123 @@ func credentialGapOnly(err error) bool {
 	}
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "forwarded with manual registration requires client_id"):
-		return true
 	case strings.Contains(msg, "auth mode static requires header and value"):
 		return true
 	case strings.Contains(msg, "client_credentials requires client_id and client_secret"):
 		return true
 	default:
 		return false
+	}
+}
+
+// installationBlocks refuses a re-apply when this code has an active install
+// or when that fact cannot be checked. A pending or revoked row does not use
+// the shared registry's auth, so it does not block.
+func (r *CatalogReapply) installationBlocks(ctx context.Context, gatewayID ids.GatewayID, code string) (bool, error) {
+	if r == nil || r.installs == nil {
+		return true, nil
+	}
+	rows, err := r.installs.ListByCatalogCode(ctx, gatewayID, code)
+	if err != nil {
+		return true, err
+	}
+	for _, row := range rows {
+		if row.IsActive() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// authRequirementRank orders how much a caller must present. A higher rank is
+// a stricter requirement. An unrecognised mode ranks above every known mode,
+// so a new mode refuses until it is classified.
+func authRequirementRank(mode registrydomain.MCPAuthMode) int {
+	switch mode {
+	case registrydomain.MCPAuthModeNone, "":
+		return 0
+	case registrydomain.MCPAuthModeStatic, registrydomain.MCPAuthModePassthrough, registrydomain.MCPAuthModeExchange:
+		return 1
+	case registrydomain.MCPAuthModeForwarded, registrydomain.MCPAuthModeClientCredentials:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func authModeOf(target *registrydomain.MCPTarget) registrydomain.MCPAuthMode {
+	if target == nil || target.Auth == nil {
+		return ""
+	}
+	return target.Auth.Mode
+}
+
+// raisesAuthRequirement reports a re-apply that would make an existing caller
+// present a credential the row did not require. none to forwarded is the
+// Globalping case: one install would force every anonymous user through OAuth.
+func raisesAuthRequirement(old, next *registrydomain.MCPTarget) bool {
+	return authRequirementRank(authModeOf(next)) > authRequirementRank(authModeOf(old))
+}
+
+// breaksWorkingNoAuth reports a URL change on a row that currently needs no
+// auth. Excalidraw's old URL still serves; pointing it at the new path would
+// break every caller that has no credential to recover with.
+func breaksWorkingNoAuth(old, next *registrydomain.MCPTarget) bool {
+	if old == nil || next == nil {
+		return true
+	}
+	mode := authModeOf(old)
+	if mode != "" && mode != registrydomain.MCPAuthModeNone {
+		return false
+	}
+	return strings.TrimSpace(old.URL) != strings.TrimSpace(next.URL)
+}
+
+// manualWithoutClient reports a forwarded target whose registration is not
+// dynamic and whose client id is empty. Validate would reject it, and a
+// connect with that id fails closed, so the row is left on its working shape.
+func manualWithoutClient(target *registrydomain.MCPTarget) bool {
+	if target == nil || target.Auth == nil {
+		return false
+	}
+	if target.Auth.Mode != registrydomain.MCPAuthModeForwarded {
+		return false
+	}
+	if target.Auth.Registration == registrydomain.RegistrationAuto {
+		return false
+	}
+	return strings.TrimSpace(target.Auth.ClientID) == ""
+}
+
+// mcpTargetStillPrevious is the check the compare-and-swap runs under the row
+// lock: the catalog fields are still the previous seed, and the row still
+// holds no credential and no admin overlay.
+func mcpTargetStillPrevious(oldFP string) func(*registrydomain.MCPTarget) bool {
+	return func(current *registrydomain.MCPTarget) bool {
+		if current == nil || rowHasCredential(current) || catalogCustomized(current) {
+			return false
+		}
+		fp, err := catalogFingerprint(current)
+		return err == nil && fp == oldFP
+	}
+}
+
+// catalogSwap builds the mcp_target to store when the locked row is still the
+// previous seed. Origin, instance config, and every other non-catalog field
+// stay as the locked row has them.
+func catalogSwap(oldFP string, proposed *registrydomain.MCPTarget) func(*registrydomain.MCPTarget) (*registrydomain.MCPTarget, bool) {
+	return func(current *registrydomain.MCPTarget) (*registrydomain.MCPTarget, bool) {
+		if proposed == nil || !mcpTargetStillPrevious(oldFP)(current) {
+			return nil, false
+		}
+		merged, err := cloneMCPTarget(current)
+		if err != nil || merged == nil {
+			return nil, false
+		}
+		merged.URL = proposed.URL
+		merged.Transport = proposed.Transport
+		merged.Auth = proposed.Auth
+		merged.URLVariables = proposed.URLVariables
+		return merged, true
 	}
 }

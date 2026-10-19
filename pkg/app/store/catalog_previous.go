@@ -26,16 +26,20 @@ import (
 //go:embed catalog_previous_seed.json
 var previousSeedJSON []byte
 
-// ambiguousCatalogCodes changed in the #1102 seed, but the old concrete URL is
-// also a host an admin would store by filling the new template in the connect
-// panel (that panel drops the template and the url_variables). An exact match
-// cannot tell those rows apart, so they are not in the previous table.
+// ambiguousCatalogCodes changed in the #1102 seed, but an exact URL match
+// cannot tell a self-hosted install from the old catalog value. JumpCloud,
+// Langfuse, New Relic, Paddle, and Workato keep a concrete host an admin
+// stores by filling the new template (the connect panel drops the template
+// and the url_variables). Cube's old URL is itself the template
+// https://{cube_host}/api/mcp, so a self-hosted install must never be pointed
+// at cubecloud.dev. None of these codes are in the previous table.
 var ambiguousCatalogCodes = []string{
 	"com.jumpcloud/genai",
 	"com.langfuse/mcp",
 	"com.newrelic/mcp",
 	"com.paddle/mcp",
 	"com.workato/developer-api",
+	"dev.cube/mcp",
 }
 
 var (

@@ -549,12 +549,13 @@ func provideConnectHandoff(p connectHandoffParams) appoauth.ConnectHandoff {
 type catalogReapplyParams struct {
 	dig.In
 
-	Catalog appcatalog.MCPServerCatalog `optional:"true"`
-	Shared  mcpoauth.Provider
-	Saver   appstore.CatalogTargetSaver `optional:"true"`
-	Vault   vaultdomain.Repository      `optional:"true"`
-	DCR     *infraoauth.ConnectStore    `optional:"true"`
-	Logger  *slog.Logger                `optional:"true"`
+	Catalog  appcatalog.MCPServerCatalog `optional:"true"`
+	Shared   mcpoauth.Provider
+	Saver    appstore.CatalogTargetSaver   `optional:"true"`
+	Vault    vaultdomain.Repository        `optional:"true"`
+	DCR      *infraoauth.ConnectStore      `optional:"true"`
+	Installs installationdomain.Repository `optional:"true"`
+	Logger   *slog.Logger                  `optional:"true"`
 }
 
 func provideCatalogReapply(p catalogReapplyParams) (*appstore.CatalogReapply, error) {
@@ -570,7 +571,7 @@ func provideCatalogReapply(p catalogReapplyParams) (*appstore.CatalogReapply, er
 	if p.DCR != nil {
 		dcr = p.DCR
 	}
-	return appstore.NewCatalogReapply(catalog, p.Saver, p.Vault, dcr, p.Logger)
+	return appstore.NewCatalogReapply(catalog, p.Saver, p.Vault, dcr, p.Installs, p.Logger)
 }
 
 func catalogInstallOptions(
