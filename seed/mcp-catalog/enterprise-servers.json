@@ -12559,7 +12559,7 @@
       "name": "com.pipedream/mcp",
       "vendor": "Pipedream",
       "category": "Automation",
-      "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps (Connect API auth).",
+      "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps (Connect API auth). x-pd-external-user-id is one admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use.",
       "capabilities": [
         "Call tools across connected apps",
         "Run hosted automations",
@@ -12586,7 +12586,7 @@
         },
         {
           "name": "x-pd-external-user-id",
-          "description": "Your end-user identifier for tool calls.",
+          "description": "One admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use.",
           "required": true,
           "secret": false,
           "scheme": "raw"
@@ -12605,6 +12605,9 @@
         "token_url": "https://api.pipedream.com/v1/oauth/token",
         "token_endpoint_auth_method": "client_secret_post"
       },
+      "auth_methods": [
+        "oauth"
+      ],
       "config_guide": {
         "summary": "Create machine-to-machine OAuth credentials in Pipedream.",
         "steps": [
@@ -12612,7 +12615,7 @@
           "Enter x-pd-project-id, x-pd-environment, x-pd-external-user-id, and x-pd-app-slug."
         ],
         "docs_url": "https://pipedream.com/docs/connect/mcp/developers",
-        "note": "The gateway posts client_id and client_secret to https://api.pipedream.com/v1/oauth/token and sends the access token as Bearer. Per-user external user id stays the x-pd-external-user-id header."
+        "note": "The gateway posts client_id and client_secret to https://api.pipedream.com/v1/oauth/token and sends the access token as Bearer. x-pd-external-user-id is one admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use."
       },
       "relevance": 60
     },
