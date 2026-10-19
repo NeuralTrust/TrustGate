@@ -180,7 +180,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 		if reg := byID[in.RegistryID]; reg != nil {
 			row.Registry = reg.Name
 		}
-		row.NeedsConfig = p.missingConfig(ctx, gatewayID, principalSub, in)
+		row.NeedsConfig = p.missingConfig(ctx, gatewayID, principalSub, in, boundTarget(servingRegistry(registriesOfCode(regs, in.CatalogCode), in.RegistryID)))
 		state.Installs = append(state.Installs, row)
 	}
 
@@ -257,6 +257,18 @@ func (p *principalPreview) fillConnection(
 	return nil
 }
 
+// registriesOfCode is the gateway's instances of one catalog code, oldest first.
+func registriesOfCode(regs []*registrydomain.Registry, code string) []*registrydomain.Registry {
+	var out []*registrydomain.Registry
+	for _, reg := range regs {
+		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
+			out = append(out, reg)
+		}
+	}
+	sortRegistries(out)
+	return out
+}
+
 // forwardedAuthOf returns the registry's auth block when the upstream expects the
 // caller's own credential (the "connect your account" sources), else nil.
 func forwardedAuthOf(reg *registrydomain.Registry) *registrydomain.MCPAuth {
@@ -272,12 +284,14 @@ func forwardedAuthOf(reg *registrydomain.Registry) *registrydomain.MCPAuth {
 // missingConfig names the required per-user URL variables this installation
 // still has no value for: a plain one absent from the row's config, a secret
 // one absent from the vault. A revoked row is nobody's problem, and a catalog
-// entry that declares none answers nil.
+// entry that declares none answers nil. A variable the serving instance's URL
+// pins is never missing.
 func (p *principalPreview) missingConfig(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	in *installationdomain.Installation,
+	bound *registrydomain.MCPTarget,
 ) []string {
 	if in == nil || in.Status == installationdomain.StatusRevoked {
 		return nil
@@ -287,7 +301,7 @@ func (p *principalPreview) missingConfig(
 		return nil
 	}
 	var missing []string
-	for _, v := range catalogURLVariables(entry.URLVariables) {
+	for _, v := range unpinnedURLVariables(catalogURLVariables(entry.URLVariables), bound) {
 		if !v.Required {
 			continue
 		}

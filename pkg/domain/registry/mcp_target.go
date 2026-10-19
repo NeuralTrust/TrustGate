@@ -280,6 +280,24 @@ func (t *MCPTarget) RequiredURLVariables() []string {
 	return out
 }
 
+// PinsURLVariable reports whether this target fixes the named URL variable
+// itself: its URL is set and carries no {name} placeholder, so the dial path
+// never substitutes a per-user value for it. An admin instance whose URL was
+// written out in full (a region, a tenant host) pins every variable of its
+// catalog entry that the URL no longer templates.
+func (t *MCPTarget) PinsURLVariable(name string) bool {
+	if t == nil || strings.TrimSpace(t.URL) == "" {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	for _, token := range TemplateVariableNames(t.URL) {
+		if token == name {
+			return false
+		}
+	}
+	return true
+}
+
 func (t *MCPTarget) Normalize() {
 	if t == nil {
 		return
