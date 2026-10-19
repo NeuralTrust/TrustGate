@@ -467,12 +467,23 @@ func TestCuratedCatalog_AdminOAuthApps(t *testing.T) {
 	require.NoError(t, err)
 
 	salesforce := mustCatalogServer(t, cat, "com.salesforce/mcp")
-	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/{server}", salesforce.URL)
+	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/platform/{server}", salesforce.URL)
 	require.False(t, salesforce.SelfService)
 	require.True(t, salesforce.RequiresConfig)
 	requireOAuth(t, salesforce, "manual", false, []string{"mcp_api", "refresh_token"})
 	requireAdminOAuthApp(t, salesforce, "https://login.salesforce.com/services/oauth2/authorize", "https://login.salesforce.com/services/oauth2/token")
 	require.Contains(t, salesforce.ConfigGuide.Note, "https://test.salesforce.com")
+	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
+		resolveCatalogURL(t, salesforce, map[string]string{"server": "sobject-all"}))
+
+	sandbox := mustCatalogServer(t, cat, "com.salesforce/mcp-sandbox")
+	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/sandbox/platform/{server}", sandbox.URL)
+	require.False(t, sandbox.SelfService)
+	require.True(t, sandbox.RequiresConfig)
+	requireOAuth(t, sandbox, "manual", false, []string{"mcp_api", "refresh_token"})
+	requireAdminOAuthApp(t, sandbox, "https://test.salesforce.com/services/oauth2/authorize", "https://test.salesforce.com/services/oauth2/token")
+	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/sandbox/platform/sobject-all",
+		resolveCatalogURL(t, sandbox, map[string]string{"server": "sobject-all"}))
 
 	servicenow := mustCatalogServer(t, cat, "com.servicenow/mcp")
 	require.Equal(t, "https://{instance}.service-now.com/sncapps/mcp-server/mcp/{server}", servicenow.URL)
@@ -488,6 +499,8 @@ func TestCuratedCatalog_AdminOAuthApps(t *testing.T) {
 	require.True(t, snowflake.RequiresConfig)
 	requireOAuth(t, snowflake, "manual", false, []string{"refresh_token", "session:role:all"})
 	requireAdminOAuthApp(t, snowflake, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token-request")
+	require.Contains(t, snowflake.ConfigGuide.Note, "ALLOWED_ROLES_LIST")
+	require.Contains(t, snowflake.ConfigGuide.Note, "OAUTH_USE_SECONDARY_ROLES = NONE")
 
 	dbt := mustCatalogServer(t, cat, "com.getdbt/mcp")
 	require.Equal(t, "https://{dbt_host}/api/ai/v1/mcp/", dbt.URL)
@@ -497,6 +510,34 @@ func TestCuratedCatalog_AdminOAuthApps(t *testing.T) {
 	requireOAuth(t, dbt, "manual", false, []string{"offline_access", "account:read", "projects:query", "catalog:read"})
 	requireAdminOAuthApp(t, dbt, "https://{dbt_host}/oauth/authorize", "https://{dbt_host}/oauth/token")
 	require.Contains(t, dbt.ConfigGuide.Steps[2], "does not issue a client secret")
+}
+
+// A Salesforce hosted MCP server name is one path segment. The documented
+// production path is /v1/platform/<server> and the sandbox path is
+// /v1/sandbox/platform/<server>, so a value that carries '/' or '..' is
+// rejected by the existing segment charset rather than appended as a path.
+func TestCuratedCatalog_SalesforceServerNameIsOnePathSegment(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, code := range []string{"com.salesforce/mcp", "com.salesforce/mcp-sandbox"} {
+		server := mustCatalogServer(t, cat, code)
+		variable := asRegistryURLVariable(variableByName(t, server, "server"))
+		for _, bad := range []string{
+			"platform/sobject-all",
+			"sandbox/platform/sobject-all",
+			"..",
+			"sobject-all/..",
+			"a..b",
+			"foo/../bar",
+		} {
+			err := registrydomain.ValidateURLValue(variable, bad)
+			require.ErrorIs(t, err, registrydomain.ErrURLTemplate, "%s %q", code, bad)
+			_, resolveErr := registrydomain.ResolveURL(server.URL, []registrydomain.MCPURLVariable{variable}, map[string]string{"server": bad})
+			require.ErrorIs(t, resolveErr, registrydomain.ErrURLTemplate, "%s resolve %q", code, bad)
+		}
+	}
 }
 
 func requireAdminOAuthApp(t *testing.T, server domain.MCPServer, authorize, token string) {

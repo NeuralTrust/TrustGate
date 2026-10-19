@@ -13752,18 +13752,18 @@
       "name": "com.salesforce/mcp",
       "vendor": "Salesforce",
       "category": "Sales & CRM",
-      "description": "Hosted Salesforce MCP servers (append a server name, e.g. platform/sobject-all). An admin must create an External Client App. Sandbox MCP paths use /v1/sandbox/.",
+      "description": "Hosted Salesforce MCP servers for a production org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
       "capabilities": [
         "Query Salesforce records",
         "Update CRM objects",
         "Search accounts and opportunities"
       ],
       "transport": "streamable-http",
-      "server_url": "https://api.salesforce.com/platform/mcp/v1/{server}",
+      "server_url": "https://api.salesforce.com/platform/mcp/v1/platform/{server}",
       "url_variables": [
         {
           "name": "server",
-          "description": "Salesforce hosted MCP server path, e.g. platform/sobject-all.",
+          "description": "Salesforce hosted MCP server name, one path segment such as sobject-all.",
           "required": true
         }
       ],
@@ -13791,7 +13791,54 @@
           "Enter the consumer key as the client ID and the consumer secret as the client secret."
         ],
         "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
-        "note": "Production orgs use https://login.salesforce.com. Sandbox and scratch orgs authorize at https://test.salesforce.com, which this entry does not pin. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp."
+        "note": "Production orgs authorize at https://login.salesforce.com. Sandbox and scratch orgs use com.salesforce/mcp-sandbox, which authorizes at https://test.salesforce.com. The server name is one path segment and cannot contain '/'. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp."
+      },
+      "relevance": 100
+    },
+    {
+      "name": "com.salesforce/mcp-sandbox",
+      "vendor": "Salesforce",
+      "category": "Sales & CRM",
+      "description": "Hosted Salesforce MCP servers for a sandbox or scratch org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
+      "capabilities": [
+        "Query Salesforce records",
+        "Update CRM objects",
+        "Search accounts and opportunities"
+      ],
+      "transport": "streamable-http",
+      "server_url": "https://api.salesforce.com/platform/mcp/v1/sandbox/platform/{server}",
+      "url_variables": [
+        {
+          "name": "server",
+          "description": "Salesforce hosted MCP server name, one path segment such as sobject-all.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "self_service": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://test.salesforce.com/services/oauth2/authorize",
+        "token_url": "https://test.salesforce.com/services/oauth2/token",
+        "scopes": [
+          "mcp_api",
+          "refresh_token"
+        ]
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an External Client App in a Salesforce sandbox or scratch org.",
+        "steps": [
+          "Create an External Client App with OAuth, PKCE, and JWT-based access tokens.",
+          "Add the scopes Access MCP servers (mcp_api) and Perform requests at any time (refresh_token).",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp-sandbox.",
+          "Enter the consumer key as the client ID and the consumer secret as the client secret."
+        ],
+        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
+        "note": "Sandbox and scratch orgs authorize at https://test.salesforce.com. The server name is one path segment and cannot contain '/'. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp-sandbox."
       },
       "relevance": 100
     },
@@ -14861,11 +14908,12 @@
         "summary": "Create a Snowflake OAuth security integration for TrustGate.",
         "steps": [
           "Create a custom OAuth security integration (confidential, or public with PKCE).",
+          "Set ALLOWED_ROLES_LIST to the roles this integration may use, and set OAUTH_USE_SECONDARY_ROLES = NONE.",
           "Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp.",
           "Enter the client ID and client secret."
         ],
         "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
-        "note": "{account_url} is the account host, for example org-account.snowflakecomputing.com. The session uses the user's default role (session:role:all) and refresh_token keeps the grant refreshable. Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp."
+        "note": "{account_url} is the account host, for example org-account.snowflakecomputing.com. The session uses the user's default role (session:role:all) and refresh_token keeps the grant refreshable. Set ALLOWED_ROLES_LIST to the roles this integration may use and OAUTH_USE_SECONDARY_ROLES = NONE. Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp."
       },
       "relevance": 95
     },
