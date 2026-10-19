@@ -157,6 +157,10 @@ type configureService struct {
 	installs  installationdomain.Repository
 	vault     vaultdomain.Repository
 	installer ConfigureInstaller
+	// registries finds the instance a ticket's install is served by, so the
+	// form leaves out the variables that instance's URL already fixes. Nil
+	// shows every variable the catalog declares.
+	registries RegistryLister
 	// openMode reports whether the gateway's Store is open (self-service) for a
 	// form-driven first install. Nil means "not open": the install is governed as
 	// a request unless the shelf says otherwise.
@@ -177,6 +181,13 @@ type ConfigureOption func(*configureService)
 // creates an installation row on its own.
 func WithConfigureInstaller(installer ConfigureInstaller) ConfigureOption {
 	return func(s *configureService) { s.installer = installer }
+}
+
+// WithConfigureRegistries lets the form leave out, and ignore on submit, the
+// URL variables the serving instance pins (an admin instance whose URL already
+// names the region or tenant): the dial uses that URL whatever the user enters.
+func WithConfigureRegistries(registries RegistryLister) ConfigureOption {
+	return func(s *configureService) { s.registries = registries }
 }
 
 // WithConfigureOpenMode supplies how the service decides whether the gateway's
@@ -265,11 +276,13 @@ func (s *configureService) Submit(
 	}
 	// Nothing to fill and nothing to ask: the submit cannot store or file
 	// anything, so it must say so rather than confirm a write that never happened.
-	if len(entry.URLVariables) == 0 && !ticket.AskReason {
+	bound := s.servingTarget(ctx, gatewayID, ticket)
+	collected := unpinnedVariables(entry.URLVariables, bound)
+	if len(collected) == 0 && !ticket.AskReason {
 		return nil, ErrConfigureNothingToCollect
 	}
-	byName := make(map[string]catalogdomain.MCPURLVariable, len(entry.URLVariables))
-	for _, v := range entry.URLVariables {
+	byName := make(map[string]catalogdomain.MCPURLVariable, len(collected))
+	for _, v := range collected {
 		byName[strings.TrimSpace(v.Name)] = v
 	}
 	plain := map[string]string{}
@@ -280,6 +293,9 @@ func (s *configureService) Submit(
 		}
 		val := strings.TrimSpace(raw)
 		if val == "" {
+			continue
+		}
+		if bound.PinsURLVariable(k) && declares(entry.URLVariables, k) {
 			continue
 		}
 		v, ok := byName[k]
@@ -352,8 +368,9 @@ func (s *configureService) page(
 		config = inst.Config
 		pending = pending || inst.Status == installationdomain.StatusPendingApproval
 	}
-	vars := make([]ConfigureVariable, 0, len(entry.URLVariables))
-	for _, v := range entry.URLVariables {
+	collected := unpinnedVariables(entry.URLVariables, s.servingTarget(ctx, gatewayID, ticket))
+	vars := make([]ConfigureVariable, 0, len(collected))
+	for _, v := range collected {
 		name := strings.TrimSpace(v.Name)
 		vars = append(vars, ConfigureVariable{
 			Name:        name,
@@ -378,6 +395,47 @@ func (s *configureService) page(
 		// did and not what happened.
 		AskReason: ticket.AskReason,
 	}, nil
+}
+
+// servingTarget is the target of the instance the ticket's install is served
+// by. A failed lookup answers nil, which shows the form as the catalog
+// declares it.
+func (s *configureService) servingTarget(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	ticket *ConnectTicket,
+) *registrydomain.MCPTarget {
+	if s.registries == nil {
+		return nil
+	}
+	var registryID ids.RegistryID
+	if inst, err := s.instance(ctx, gatewayID, ticket); err == nil && inst != nil {
+		registryID = inst.RegistryID
+	}
+	target, err := appstore.ServingTarget(ctx, s.registries, gatewayID, ticket.Code, registryID)
+	if err != nil {
+		return nil
+	}
+	return target
+}
+
+func unpinnedVariables(vars []catalogdomain.MCPURLVariable, bound *registrydomain.MCPTarget) []catalogdomain.MCPURLVariable {
+	out := make([]catalogdomain.MCPURLVariable, 0, len(vars))
+	for _, v := range vars {
+		if !bound.PinsURLVariable(v.Name) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func declares(vars []catalogdomain.MCPURLVariable, name string) bool {
+	for _, v := range vars {
+		if strings.TrimSpace(v.Name) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *configureService) isSet(
