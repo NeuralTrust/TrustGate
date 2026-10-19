@@ -379,3 +379,49 @@ func TestMCPAuth_Validate_IdentityID(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPTarget_PinsURLVariable(t *testing.T) {
+	cases := []struct {
+		name   string
+		target *MCPTarget
+		v      string
+		want   bool
+	}{
+		{"nil target", nil, "host", false},
+		{"empty url", &MCPTarget{}, "host", false},
+		{"template keeps the token", &MCPTarget{URL: "https://{host}/mcp"}, "host", false},
+		{"concrete url pins it", &MCPTarget{URL: "https://cloud.langfuse.com/mcp"}, "host", true},
+		{"partial template pins the other", &MCPTarget{URL: "https://eu.example.com/s/{space}/mcp"}, "host", true},
+		{"partial template keeps its own", &MCPTarget{URL: "https://eu.example.com/s/{space}/mcp"}, "space", false},
+		{"authorize template keeps it", &MCPTarget{
+			URL:  "https://acme.aha.io/api/v1/mcp",
+			Auth: &MCPAuth{AuthorizeURL: "https://{domain}.aha.io/oauth/authorize"},
+		}, "domain", false},
+		{"token template keeps it", &MCPTarget{
+			URL:  "https://acme.aha.io/api/v1/mcp",
+			Auth: &MCPAuth{TokenURL: "https://{domain}.aha.io/oauth/token"},
+		}, "domain", false},
+		{"userinfo template keeps it", &MCPTarget{
+			URL:  "https://acme.aha.io/api/v1/mcp",
+			Auth: &MCPAuth{UserinfoURL: "https://{domain}.aha.io/oauth/userinfo"},
+		}, "domain", false},
+		{"resource template keeps it", &MCPTarget{
+			URL:  "https://acme.aha.io/api/v1/mcp",
+			Auth: &MCPAuth{Resource: "https://{domain}.aha.io/mcp"},
+		}, "domain", false},
+		{"concrete oauth urls still pin", &MCPTarget{
+			URL: "https://acme.aha.io/api/v1/mcp",
+			Auth: &MCPAuth{
+				AuthorizeURL: "https://acme.aha.io/oauth/authorize",
+				TokenURL:     "https://acme.aha.io/oauth/token",
+			},
+		}, "domain", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.target.PinsURLVariable(tc.v); got != tc.want {
+				t.Fatalf("PinsURLVariable(%q) = %v, want %v", tc.v, got, tc.want)
+			}
+		})
+	}
+}
