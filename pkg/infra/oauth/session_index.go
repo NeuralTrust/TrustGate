@@ -31,6 +31,10 @@ const (
 	// and subject. Default-IdP sessions are the only members. The org is not
 	// part of the key: a record is revoked only when its stored org matches.
 	ownerIndexPrefix = "oauth:session-by-owner:"
+	// sessionsRevokedPrefix holds the instant a subject's default-IdP sessions
+	// were revoked. The value is RFC3339Nano. The TTL is the max session
+	// lifetime, so a record issued before the marker cannot outlive it.
+	sessionsRevokedPrefix = "oauth:sessions-revoked:"
 )
 
 var _ appoauth.SubjectSessions = (*Store)(nil)
@@ -66,13 +70,19 @@ func (s *Store) unindexSession(ctx context.Context, refreshToken, gatewayID, sub
 	return nil
 }
 
-// RevokeSubjectSessions deletes the default-IdP refresh records for org,
-// gatewayID and subject and removes those digests from the owner index. A
-// record that does not match is left in place, including one that shares the
-// index with the subject. No matching record returns 0.
+// RevokeSubjectSessions marks the subject revoked, then deletes the default-IdP
+// refresh records for org, gatewayID and subject and removes those digests
+// from the owner index. The marker is written first so a record that is not
+// in the index, including one already inside the rotation grace window, cannot
+// be refreshed into a new session. A record that does not match is left in
+// place, including one that shares the index with the subject. No matching
+// record returns 0.
 func (s *Store) RevokeSubjectSessions(ctx context.Context, org, gatewayID, subject string) (int, error) {
 	if org == "" || gatewayID == "" || subject == "" {
 		return 0, nil
+	}
+	if err := s.markSessionsRevoked(ctx, gatewayID, org, subject, time.Now()); err != nil {
+		return 0, err
 	}
 	index := ownerIndexKey(gatewayID, subject)
 	digests, err := s.rdb.SMembers(ctx, index).Result()
@@ -145,6 +155,54 @@ func (s *Store) extendIndexTTL(ctx context.Context, key string, ttl time.Duratio
 		return fmt.Errorf("oauth flow store: index session: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) markSessionsRevoked(ctx context.Context, gatewayID, org, subject string, at time.Time) error {
+	if err := s.rdb.Set(ctx, sessionsRevokedKey(gatewayID, org, subject), at.UTC().Format(time.RFC3339Nano), sessionTTL).Err(); err != nil {
+		return fmt.Errorf("oauth flow store: mark sessions revoked: %w", err)
+	}
+	return nil
+}
+
+// SubjectRevokedAt reads the revocation marker. A missing key is the zero
+// time and a nil error. A Redis or decode error is returned, so a caller that
+// cannot tell whether the subject was revoked does not treat it as allowed.
+func (s *Store) SubjectRevokedAt(ctx context.Context, gatewayID, org, subject string) (time.Time, error) {
+	if gatewayID == "" || org == "" || subject == "" {
+		return time.Time{}, nil
+	}
+	raw, err := s.rdb.Get(ctx, sessionsRevokedKey(gatewayID, org, subject)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("oauth flow store: load session revocation: %w", err)
+	}
+	at, err := time.Parse(time.RFC3339Nano, string(raw))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("oauth flow store: decode session revocation: %w", err)
+	}
+	return at, nil
+}
+
+// DeleteSession removes the refresh record and its owner-index entry. An
+// unknown token is success.
+func (s *Store) DeleteSession(ctx context.Context, refreshToken string) error {
+	rec, err := s.GetSession(ctx, refreshToken)
+	if err != nil {
+		return err
+	}
+	if err := s.rdb.Del(ctx, sessionKey(refreshToken)).Err(); err != nil {
+		return fmt.Errorf("oauth flow store: delete session: %w", err)
+	}
+	if rec == nil {
+		return nil
+	}
+	return s.unindexSession(ctx, refreshToken, rec.GatewayID, rec.Subject)
+}
+
+func sessionsRevokedKey(gatewayID, org, subject string) string {
+	return sessionsRevokedPrefix + gatewayID + ":" + org + ":" + subject
 }
 
 func indexableSession(rec appoauth.SessionRecord) bool {

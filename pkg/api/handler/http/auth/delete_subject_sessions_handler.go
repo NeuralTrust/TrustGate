@@ -52,7 +52,7 @@ type SubjectSessionsResponse struct {
 
 // Handle godoc
 // @Summary      Revoke a subject's default-IdP sessions
-// @Description  Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. A subject with no records answers 200 {"revoked": 0}. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.
+// @Description  Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It also records a revocation marker so a refresh record that was not in the index cannot be rotated into a new session. A subject with no indexed records answers 200 {"revoked": 0}. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
