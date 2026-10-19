@@ -15,10 +15,12 @@
 package catalog
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	mcpcatalog "github.com/NeuralTrust/TrustGate/seed/mcp-catalog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -479,15 +481,16 @@ func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 			assertTools:    true,
 		},
 		{
-			code:         "com.storyblok/mcp",
-			url:          "https://mcp.storyblok.com/mcp",
-			authorizeURL: "https://mcp.storyblok.com/oauth/authorize",
-			tokenURL:     "https://mcp.storyblok.com/oauth/token",
-			resource:     "https://mcp.storyblok.com/mcp",
-			registration: "auto",
-			dcr:          true,
-			tools:        []string{"search", "describe", "execute_readonly", "execute_mutating", "execute_destructive", "upload_asset", "upload_asset_finish"},
-			assertTools:  true,
+			code:           "com.storyblok/mcp",
+			url:            "https://mcp.storyblok.com/mcp",
+			authorizeURL:   "https://mcp.storyblok.com/oauth/authorize",
+			tokenURL:       "https://mcp.storyblok.com/oauth/token",
+			resource:       "https://mcp.storyblok.com/mcp",
+			registration:   "manual",
+			dcr:            false,
+			requiresConfig: true,
+			tools:          []string{"search", "describe", "execute_readonly", "execute_mutating", "execute_destructive", "upload_asset", "upload_asset_finish"},
+			assertTools:    true,
 		},
 		{
 			code:         "com.holded/mcp",
@@ -528,8 +531,42 @@ func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 			if tc.assertTools {
 				require.Equal(t, tc.tools, toolNames)
 			}
+			if tc.code == "com.storyblok/mcp" {
+				require.False(t, server.SelfService)
+				require.NotNil(t, server.ConfigGuide)
+				require.Contains(t, server.ConfigGuide.Note, "restricts redirect URIs")
+				require.Contains(t, server.ConfigGuide.Note, "Registration is manual")
+				require.Contains(t, server.ConfigGuide.Note, "https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp")
+				require.Contains(t, server.ConfigGuide.Steps[1], "https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp")
+			}
 		})
 	}
+}
+
+// Replicate publishes only an SSE endpoint. The catalog keeps the row and
+// hides it the same way the probe marks transport the gateway cannot dial.
+func TestNewMCPServerCatalog_HidesSSEUnsupportedReplicate(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+	_, ok := cat.GetByCode("com.replicate/mcp")
+	require.False(t, ok)
+
+	var raw rawCatalog
+	require.NoError(t, json.Unmarshal(mcpcatalog.EnterpriseServersJSON, &raw))
+	var found bool
+	for _, server := range raw.Servers {
+		if server.Name != "com.replicate/mcp" {
+			continue
+		}
+		found = true
+		require.True(t, server.Hidden)
+		require.Equal(t, "broken_unsupported: TrustGate MCP plane only supports streamable-http", server.HiddenReason)
+		require.NotNil(t, server.SelfService)
+		require.False(t, *server.SelfService)
+	}
+	require.True(t, found)
 }
 
 func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
