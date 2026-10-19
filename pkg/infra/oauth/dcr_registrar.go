@@ -150,29 +150,12 @@ func upstreamURLForError(u *url.URL) string {
 	return clean.String()
 }
 
-// badUpstreamURL is the discover failure for a URL that cannot be fetched.
-// url.Parse's error embeds the raw URL, so only its cause is wrapped, and only
-// when that cause does not repeat the URL.
-func badUpstreamURL(raw string, err error) error {
-	cause := urlParseCause(err)
-	if cause == nil || strings.Contains(cause.Error(), raw) {
-		return errors.New("oauth dcr: bad upstream url")
-	}
-	return fmt.Errorf("oauth dcr: bad upstream url: %w", cause)
-}
-
-func urlParseCause(err error) error {
-	var parseErr *url.Error
-	if errors.As(err, &parseErr) {
-		return parseErr.Err
-	}
-	return err
-}
-
 func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*appoauth.UpstreamAuthServer, error) {
 	u, err := url.Parse(upstreamURL)
 	if err != nil || u.Host == "" {
-		return nil, badUpstreamURL(upstreamURL, err)
+		// url.Parse's text can quote part of a password (an unencoded / ? # is
+		// read as a port). The caller gets a fixed message.
+		return nil, errors.New("oauth dcr: bad upstream url")
 	}
 	origin := u.Scheme + "://" + u.Host
 
