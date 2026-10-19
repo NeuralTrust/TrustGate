@@ -798,3 +798,176 @@ func TestComposer_GetPrompt_AcceptsTheLegacySpelling(t *testing.T) {
 		}
 	}
 }
+
+// v0.66.0 prefixed the toolkit ExposeAs when one was set. A renamed tool is
+// reachable by that spelling, and the spelling built from its upstream name
+// was never published.
+func TestComposer_Resolve_RenamedToolUsesTheV0660ExposeAsName(t *testing.T) {
+	t.Parallel()
+	linear := v2Registry(t, "Linear", "app.linear/mcp")
+	linear.MCPTarget.InstanceConfig = map[string]string{"workspace": "eng"}
+	linear.InstanceOf = linear.ID
+	server := "linear_" + registryDigest(linear, 6)
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		linear.MCPTarget.URL: {tools: tools("create_issue", "list_teams", "delete_repo")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: linear.ID, Tool: "create_issue", ExposeAs: "file_ticket"},
+			{RegistryID: linear.ID, Tool: "list_teams"},
+		}},
+	}, linear)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	wantListed := []string{namedFor(linear, "file_ticket"), namedFor(linear, "list_teams")}
+	if len(names) != len(wantListed) || names[0] != wantListed[0] || names[1] != wantListed[1] {
+		t.Fatalf("tools = %v, want %v", names, wantListed)
+	}
+
+	renamed := server + "_file_ticket"
+	target, err := c.Resolve(context.Background(), rc, renamed)
+	if err != nil {
+		t.Fatalf("Resolve(%q): %v", renamed, err)
+	}
+	if target.Tool.Name != "create_issue" || target.Exposed != namedFor(linear, "file_ticket") {
+		t.Fatalf("Resolve(%q) = %q exposed as %q, want create_issue as %s", renamed, target.Tool.Name, target.Exposed, namedFor(linear, "file_ticket"))
+	}
+
+	upstreamLegacy := server + "_create_issue"
+	if _, err := c.Resolve(context.Background(), rc, upstreamLegacy); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("Resolve(%q) = %v, want ErrToolNotFound: that spelling was never published", upstreamLegacy, err)
+	}
+
+	for _, name := range []string{namedFor(linear, "list_teams"), server + "_list_teams"} {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", name, err)
+		}
+		if target.Tool.Name != "list_teams" || target.Exposed != namedFor(linear, "list_teams") {
+			t.Fatalf("Resolve(%q) = %q exposed as %q, want list_teams", name, target.Tool.Name, target.Exposed)
+		}
+	}
+
+	if _, err := c.Resolve(context.Background(), rc, server+"_delete_repo"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("legacy spelling of a denied tool: err = %v, want ErrToolNotFound", err)
+	}
+}
+
+// Without a per-instance digest, v0.66.0 still published <server>_<ExposeAs>.
+// <server>_<upstream> was never that tool's name.
+func TestComposer_Resolve_RenamedToolRejectsTheUpstreamLegacyName(t *testing.T) {
+	t.Parallel()
+	linear := v2Registry(t, "Linear", "app.linear/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		linear.MCPTarget.URL: {tools: tools("create_issue", "linear_save_issue", "linear_delete_repo")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: linear.ID, Tool: "create_issue", ExposeAs: "linear_file_ticket"},
+			{RegistryID: linear.ID, Tool: "linear_save_issue"},
+		}},
+	}, linear)
+
+	listed, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := toolNames(listed)
+	if len(names) != 2 || names[0] != "linear_file_ticket" || names[1] != "linear_save_issue" {
+		t.Fatalf("tools = %v, want the v2 names only", names)
+	}
+
+	target, err := c.Resolve(context.Background(), rc, "linear_linear_file_ticket")
+	if err != nil {
+		t.Fatalf("Resolve(linear_linear_file_ticket): %v", err)
+	}
+	if target.Tool.Name != "create_issue" || target.Exposed != "linear_file_ticket" {
+		t.Fatalf("Resolve(linear_linear_file_ticket) = %q exposed as %q, want create_issue as linear_file_ticket", target.Tool.Name, target.Exposed)
+	}
+	if _, err := c.Resolve(context.Background(), rc, "linear_create_issue"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("Resolve(linear_create_issue) = %v, want ErrToolNotFound", err)
+	}
+
+	for _, name := range []string{"linear_save_issue", "linear_linear_save_issue"} {
+		target, err := c.Resolve(context.Background(), rc, name)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", name, err)
+		}
+		if target.Tool.Name != "linear_save_issue" || target.Exposed != "linear_save_issue" {
+			t.Fatalf("Resolve(%q) = %q exposed as %q, want linear_save_issue", name, target.Tool.Name, target.Exposed)
+		}
+	}
+	if _, err := c.Resolve(context.Background(), rc, "linear_linear_delete_repo"); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("legacy spelling of a denied tool: err = %v, want ErrToolNotFound", err)
+	}
+}
+
+// v0.66.0 renamed prompts the same way it renamed tools, then prefixed that name.
+func TestComposer_GetPrompt_RenamedPromptUsesTheV0660ExposeAsName(t *testing.T) {
+	t.Parallel()
+	linear := v2Registry(t, "Linear", "app.linear/mcp")
+	linear.MCPTarget.InstanceConfig = map[string]string{"workspace": "eng"}
+	linear.InstanceOf = linear.ID
+	server := "linear_" + registryDigest(linear, 6)
+	up := &fakeUpstream{
+		prompts: prompts("summarize", "triage", "secret"),
+		result:  json.RawMessage(`{"messages":[]}`),
+	}
+	c := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{linear.MCPTarget.URL: up}})
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: linear.ID, Prompt: "summarize", ExposeAs: "brief"},
+			{RegistryID: linear.ID, Prompt: "triage"},
+		}},
+	}, linear)
+
+	listed, err := c.ListPrompts(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	got := make([]string, 0, len(listed))
+	for _, p := range listed {
+		got = append(got, p.Name)
+	}
+	wantListed := []string{promptName("brief", linear), promptName("triage", linear)}
+	if len(got) != len(wantListed) || got[0] != wantListed[0] || got[1] != wantListed[1] {
+		t.Fatalf("prompts = %v, want %v", got, wantListed)
+	}
+
+	renamed := server + "_brief"
+	up.lastPrompt = ""
+	if _, err := c.GetPrompt(context.Background(), rc, renamed, nil); err != nil {
+		t.Fatalf("GetPrompt(%q): %v", renamed, err)
+	}
+	if up.lastPrompt != "summarize" {
+		t.Fatalf("GetPrompt(%q) reached %q, want summarize", renamed, up.lastPrompt)
+	}
+
+	upstreamLegacy := server + "_summarize"
+	if _, err := c.GetPrompt(context.Background(), rc, upstreamLegacy, nil); !errors.Is(err, ErrPromptNotFound) {
+		t.Fatalf("GetPrompt(%q) = %v, want ErrPromptNotFound: that spelling was never published", upstreamLegacy, err)
+	}
+
+	for _, name := range []string{promptName("triage", linear), server + "_triage"} {
+		up.lastPrompt = ""
+		if _, err := c.GetPrompt(context.Background(), rc, name, nil); err != nil {
+			t.Fatalf("GetPrompt(%q): %v", name, err)
+		}
+		if up.lastPrompt != "triage" {
+			t.Fatalf("GetPrompt(%q) reached %q, want triage", name, up.lastPrompt)
+		}
+	}
+
+	if _, err := c.GetPrompt(context.Background(), rc, server+"_secret", nil); !errors.Is(err, ErrPromptNotFound) {
+		t.Fatalf("legacy spelling of a prompt the toolkit does not publish: err = %v, want ErrPromptNotFound", err)
+	}
+}
