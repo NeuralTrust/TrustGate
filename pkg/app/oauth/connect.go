@@ -901,22 +901,13 @@ func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
 	return providers
 }
 
-// forwardedVaultProvider is the credential key for this principal. A templated
-// registry with no instance config yet takes the principal's install values,
-// so the key matches the one the dial path computes from the scoped clone.
-func (s *connectService) forwardedVaultProvider(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) string {
-	return registrydomain.ForwardedVaultProviderFor(s.registryForVaultKey(ctx, gatewayID, principalSub, reg), nil)
-}
-
-func (s *connectService) registryForVaultKey(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) *registrydomain.Registry {
-	if s == nil || reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) > 0 || !reg.MCPTarget.HasURLVariables() {
-		return reg
-	}
-	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
-	if err != nil || len(values) == 0 {
-		return reg
-	}
-	return registrydomain.RegistryWithInstanceConfig(reg, values)
+// forwardedVaultProvider is the credential key for this registry. A closed
+// region the admin wrote into the server URL is part of the resource
+// fingerprint. An employee installation is not: two instances of one catalog
+// code would otherwise share, or swap, the account stored under the first
+// install Find returns.
+func (s *connectService) forwardedVaultProvider(_ context.Context, _ ids.GatewayID, _ string, reg *registrydomain.Registry) string {
+	return registrydomain.ForwardedVaultProvider(reg)
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {

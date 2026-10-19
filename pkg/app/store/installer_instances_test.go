@@ -16,7 +16,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -64,12 +66,9 @@ func TestInstallSameConfigRefreshesTheInstance(t *testing.T) {
 	installs := &fakeInstalls{byCode: rows}
 	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "db3"}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if !res.AlreadyInstalled || res.InstanceID != rows[3].ID.String() {
-		t.Fatalf("same-config install must refresh the existing instance, got %+v", res)
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("employee config must not select an instance, got %v", err)
 	}
 }
 
@@ -213,11 +212,8 @@ func TestInstallDoesNotCapTheNumberOfInstances(t *testing.T) {
 	installs := &fakeInstalls{byCode: liveRows("snowflake", 50, installationdomain.StatusInstalled)}
 	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if res.Status != installationdomain.StatusInstalled || res.AlreadyInstalled {
-		t.Fatalf("the 51st instance must install like any other, got %+v", res)
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("another database is another registry row, got %v", err)
 	}
 }

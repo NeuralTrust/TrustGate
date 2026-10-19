@@ -1116,7 +1116,7 @@ func storeInstallDefinition() (Tool, error) {
 		"name":  StoreInstallToolName,
 		"title": "Install an MCP server",
 		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
-			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
+			"A non-secret URL variable (a Snowflake account host, a ServiceNow instance, a region) is set by an administrator on the registry and must not be sent in `config`. A secret credential is entered through the configure link this returns, not inline. " +
 			"When the administrator connected several instances of a server, this returns requires_instance_choice with the list — ask the user which one and call install again with its id in `instance`. " +
 			"Governed by the user's role: a server outside it cannot be installed here, and this returns requires_reason with a request_url — hand that link to the user, who writes why they need it and files the request themselves. " +
 			"A server that needs the user's own account returns a connect link for them to authorize before its tools work. " +

@@ -85,6 +85,13 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 		if err := CanonicalizeMCPAuthFromCatalog(in.MCPTarget, c.catalog); err != nil {
 			return nil, err
 		}
+		// The gateway's own first-install shelf is the catalog template. An
+		// admin save is the path that has to fill non-secret placeholders.
+		if in.MCPTarget.Origin != domain.MCPOriginStore {
+			if err := RequireAdminBoundURLVariables(in.MCPTarget, c.catalog); err != nil {
+				return nil, err
+			}
+		}
 		if err := validateExchangeIdentity(ctx, c.auths, in.GatewayID, in.MCPTarget); err != nil {
 			return nil, err
 		}

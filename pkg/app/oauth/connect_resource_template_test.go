@@ -90,11 +90,81 @@ func (c legacySuffixCatalog) GetByCode(code string) (catalogdomain.MCPServer, bo
 	}
 	return catalogdomain.MCPServer{
 		Code: code,
+		// The admin form writes account_url into this template. Tests that
+		// pass the value as install config bind it into the row URL first.
+		URL: "https://{account_url}/mcp",
 		URLVariables: []catalogdomain.MCPURLVariable{{
 			Name:       "account_url",
 			HostSuffix: c.suffixes,
 		}},
 	}, true
+}
+
+// bindAdminURL writes values into the registry URL the way the admin form
+// does, and returns the template those values replaced. A URL that is already
+// concrete, or that the values do not fill, is left alone.
+func bindAdminURL(reg *registrydomain.Registry, values map[string]string) (string, bool) {
+	if reg == nil || reg.MCPTarget == nil || len(values) == 0 || !strings.Contains(reg.MCPTarget.URL, "{") {
+		return "", false
+	}
+	resolved, err := registrydomain.ResolveURL(reg.MCPTarget.URL, reg.MCPTarget.URLVariables, values)
+	if err != nil {
+		return "", false
+	}
+	template := reg.MCPTarget.URL
+	reg.MCPTarget.URL = resolved
+	return template, true
+}
+
+// adminBoundCatalog is the catalog connect reads when recovering non-secret
+// values from a concrete row URL. An entry that already names a URL keeps it.
+// A code the inner catalog does not know is answered with the template the
+// row started from, and with the row's own variables so a stored suffix is
+// not narrowed away.
+type adminBoundCatalog struct {
+	inner    catalogByCode
+	code     string
+	template string
+	vars     []catalogdomain.MCPURLVariable
+}
+
+func (c adminBoundCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
+	if c.inner != nil {
+		if entry, ok := c.inner.GetByCode(code); ok {
+			if strings.TrimSpace(entry.URL) == "" && code == c.code && c.template != "" {
+				entry.URL = c.template
+			}
+			return entry, true
+		}
+	}
+	if code == c.code && c.template != "" {
+		return catalogdomain.MCPServer{Code: code, URL: c.template, URLVariables: c.vars}, true
+	}
+	return catalogdomain.MCPServer{}, false
+}
+
+func catalogVarsFromRegistry(reg *registrydomain.Registry) []catalogdomain.MCPURLVariable {
+	if reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.URLVariables) == 0 {
+		return nil
+	}
+	out := make([]catalogdomain.MCPURLVariable, 0, len(reg.MCPTarget.URLVariables))
+	for _, variable := range reg.MCPTarget.URLVariables {
+		converted := catalogdomain.MCPURLVariable{
+			Name:       variable.Name,
+			Required:   variable.Required,
+			Secret:     variable.Secret,
+			In:         variable.In,
+			HostSuffix: append([]string(nil), variable.HostSuffix...),
+		}
+		for _, option := range variable.Options {
+			converted.Options = append(converted.Options, catalogdomain.MCPURLVariableOption{
+				Value: option.Value,
+				Label: option.Label,
+			})
+		}
+		out = append(out, converted)
+	}
+	return out
 }
 
 func templatedConnect(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar) oauth.ConnectService {
@@ -108,6 +178,26 @@ type catalogByCode interface {
 
 func templatedConnectCatalog(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog catalogByCode) oauth.ConnectService {
 	t.Helper()
+	return connectWithValues(t, reg, values, registrar, catalog, true)
+}
+
+// connectWithValues builds a connect service whose values map is the
+// principal's install config. bind writes that map into the registry URL the
+// way the admin form does. Security cases that still pass an employee host
+// leave bind false: the template stays open and the employee value is not a
+// source.
+func connectWithValues(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar, catalog catalogByCode, bind bool) oauth.ConnectService {
+	t.Helper()
+	if bind {
+		if template, bound := bindAdminURL(reg, values); bound {
+			catalog = adminBoundCatalog{
+				inner:    catalog,
+				code:     reg.MCPTarget.Code,
+				template: template,
+				vars:     catalogVarsFromRegistry(reg),
+			}
+		}
+	}
 	data := appconsumer.NewData(reg.GatewayID, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID: ids.New[ids.ConsumerKind](), GatewayID: reg.GatewayID,
@@ -498,7 +588,7 @@ func TestConnectService_PartialHostWithoutRegistrableDomainRefused(t *testing.T)
 				AuthorizationEndpoint: tokenSrv.URL + "/authorize",
 				TokenEndpoint:         tokenSrv.URL + "/token",
 			}}
-			assertNoRedirect(t, reg, map[string]string{"domain": "evil.com"}, registrar, oauth.ErrOAuthURLHost)
+			assertEmployeeHostIgnored(t, reg, map[string]string{"domain": "evil.com"}, registrar)
 			if tokenHits != 0 {
 				t.Fatalf("token server was called %d times", tokenHits)
 			}
@@ -564,8 +654,8 @@ func TestConnectService_LegacyWholeHostUsesCatalogSuffix(t *testing.T) {
 	}
 }
 
-// The same legacy row still refuses a host outside the catalog suffixes, and
-// the admin client secret is not posted there.
+// The same legacy row does not take an employee host. The template stays
+// open, discovery does not run, and the admin client secret is not posted.
 func TestConnectService_LegacyWholeHostRefusesNonVendorHost(t *testing.T) {
 	t.Parallel()
 	var tokenHits int
@@ -587,9 +677,9 @@ func TestConnectService_LegacyWholeHostRefusesNonVendorHost(t *testing.T) {
 		TokenEndpoint:         tokenSrv.URL + "/token",
 	}}
 	values := map[string]string{"account_url": "evil.example"}
-	svc := templatedConnectCatalog(t, reg, values, registrar, legacySuffixCatalog{
+	svc := connectWithValues(t, reg, values, registrar, legacySuffixCatalog{
 		suffixes: []string{"*.snowflakecomputing.com"},
-	})
+	}, false)
 	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
@@ -598,23 +688,24 @@ func TestConnectService_LegacyWholeHostRefusesNonVendorHost(t *testing.T) {
 	if err == nil || started != nil {
 		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
 	}
-	if !errors.Is(err, oauth.ErrOAuthURLHost) {
-		t.Fatalf("err = %v, want host refusal", err)
+	if !errors.Is(err, oauth.ErrUpstreamSetupRequired) {
+		t.Fatalf("err = %v, want the employee host left unused", err)
 	}
 	if strings.Contains(err.Error(), "admin-secret") || strings.Contains(err.Error(), "evil.example") {
 		t.Fatalf("error leaks the secret or the rejected host: %v", err)
 	}
 	refreshCtx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
-	if _, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg); !errors.Is(err, oauth.ErrOAuthURLHost) {
-		t.Fatalf("RefreshAuth err = %v, want host refusal", err)
+	if _, err := svc.RefreshAuth(refreshCtx, reg.GatewayID, reg); !errors.Is(err, oauth.ErrUpstreamSetupRequired) {
+		t.Fatalf("RefreshAuth err = %v, want the employee host left unused", err)
 	}
 	if tokenHits != 0 {
 		t.Fatalf("token server was called %d times", tokenHits)
 	}
 }
 
-// A manual registry with no pinned token URL takes the token URL from metadata
-// discovered on the host the user typed. That host is not a bound.
+// A manual registry with no pinned token URL used to discover metadata on the
+// host the employee typed. That value is not a source: the template stays
+// open and the token server is not called.
 func TestConnectService_ManualWholeHostDiscoveredTokenRefused(t *testing.T) {
 	t.Parallel()
 	var tokenHits int
@@ -629,7 +720,7 @@ func TestConnectService_ManualWholeHostDiscoveredTokenRefused(t *testing.T) {
 		AuthorizationEndpoint: tokenSrv.URL + "/authorize",
 		TokenEndpoint:         tokenSrv.URL + "/token",
 	}}
-	assertWholeHostSecretStays(t, reg, map[string]string{"account_url": "evil.example"}, registrar)
+	assertEmployeeHostIgnored(t, reg, map[string]string{"account_url": "evil.example"}, registrar)
 	if tokenHits != 0 {
 		t.Fatalf("token server was called %d times", tokenHits)
 	}
@@ -928,11 +1019,41 @@ func assertCatalogStartRefused(t *testing.T, reg *registrydomain.Registry, cat c
 	if err == nil || started != nil {
 		t.Fatalf("Start = %+v, err = %v; want no redirect", started, err)
 	}
-	if !errors.Is(err, oauth.ErrOAuthURLHost) {
-		t.Fatalf("err = %v, want host refusal", err)
+	// The employee map is not a source. A host the catalog template does not
+	// name, or a contact label the server URL does not carry, stays unresolved.
+	if !errors.Is(err, oauth.ErrUnresolvedOAuthPlaceholder) {
+		t.Fatalf("err = %v, want the employee host left unused", err)
 	}
 	if len(registrar.discovered) != 0 {
 		t.Fatalf("discovery ran: %v", registrar.discovered)
+	}
+}
+
+// assertEmployeeHostIgnored checks that an employee host on a still-templated
+// row does not redirect and does not reach the registrar.
+func assertEmployeeHostIgnored(t *testing.T, reg *registrydomain.Registry, values map[string]string, registrar oauth.UpstreamRegistrar) {
+	t.Helper()
+	if registrar == nil {
+		registrar = &fixedRegistrar{}
+	}
+	svc := connectWithValues(t, reg, values, registrar, legacySuffixCatalog{}, false)
+	ticket, err := svc.CreateTicket(context.Background(), reg.GatewayID, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	started, err := svc.Start(context.Background(), "https://gw.example.com", "https://gw.example.com", ticket, reg.MCPTarget.Auth.Provider, "")
+	if err == nil || started != nil {
+		loc := ""
+		if started != nil {
+			loc = started.Location
+		}
+		t.Fatalf("Start = %q, err = %v; want no redirect", loc, err)
+	}
+	if !errors.Is(err, oauth.ErrUpstreamSetupRequired) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want the employee host left unused", err)
+	}
+	if strings.Contains(err.Error(), "admin-secret") || strings.Contains(err.Error(), "evil.example") || strings.Contains(err.Error(), "evil.com") {
+		t.Fatalf("error leaks the secret or the rejected host: %v", err)
 	}
 }
 
