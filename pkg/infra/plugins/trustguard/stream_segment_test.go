@@ -196,6 +196,15 @@ func TestSegmentVerdicts(t *testing.T) {
 		want appplugins.SegmentVerdict
 	}{
 		{"allow", produced, GuardResponse{Status: statusAllow}, appplugins.SegmentVerdict{}},
+		{"skip allows the block", produced, GuardResponse{
+			Status: statusSkip,
+			Findings: []GuardFinding{{
+				Source:  &GuardFindingSource{Kind: "gate", GateName: "skip_pii"},
+				Signal:  &GuardFindingSignal{Type: "gate_skip", Confidence: 1},
+				Outcome: &GuardFindingOutcome{Action: "skip"},
+			}},
+		}, appplugins.SegmentVerdict{}},
+		{"unknown status still allows the block", produced, GuardResponse{Status: "something-new"}, appplugins.SegmentVerdict{}},
 		{"report never blocks a block", produced,
 			GuardResponse{Status: statusReport, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{}},

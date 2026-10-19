@@ -82,10 +82,17 @@ func TestGuardOutcomeDecision(t *testing.T) {
 		{status: statusAllow, mode: policy.ModeEnforce, want: decisionAllowed},
 		// No verdict expressed still passes.
 		{status: "", mode: policy.ModeEnforce, want: decisionAllowed},
+		// A Skip gate continues the request. Record it as allowed in every
+		// mode, the same way the stream leg lets a skip through.
+		{status: statusSkip, mode: policy.ModeEnforce, want: decisionAllowed},
+		{status: statusSkip, mode: policy.ModeObserve, want: decisionAllowed},
+		{status: statusSkip, mode: policy.ModeThrottle, want: decisionAllowed},
 		// An unrecognised verdict is recorded rather than passed silently.
-		// "allowed" is a decision, not a status, so it lands here.
+		// "allowed" is a decision, not a status, so it lands here. It is not
+		// a fail-open or a fail-closed.
 		{status: "allowed", mode: policy.ModeEnforce, want: decisionReported},
 		{status: "something-new", mode: policy.ModeEnforce, want: decisionReported},
+		{status: "something-new", mode: policy.ModeObserve, want: decisionReported},
 	}
 	for _, tc := range tests {
 		tc := tc
