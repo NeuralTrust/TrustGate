@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
@@ -115,13 +116,26 @@ const (
 	decisionAllowed     = "allowed"
 	decisionFailedOpen  = "failed_open"
 	decisionTransformed = "transformed"
-	statusBlock         = "block"
-	statusReport        = "report"
-	statusTransform     = "transform"
-	statusAsk           = "ask"
-	statusAllow         = "allow"
-	statusSkip          = "skip"
+	// Statuses a successful TrustGuard evaluate puts on GuardResponse.Status.
+	// allow, report, transform, ask, block and skip are switched on here.
+	// skip continues the request and is recorded allowed. error is a status
+	// the engine emits that used to fall through the default (forward,
+	// recorded reported). An empty status is handled with allow.
+	statusBlock     = "block"
+	statusReport    = "report"
+	statusTransform = "transform"
+	statusAsk       = "ask"
+	statusAllow     = "allow"
+	statusSkip      = "skip"
+	statusError     = "error"
 )
+
+// unrecognizedStatusLog is the warn a blocking policy emits for a status
+// outside that set. The status value is a log attribute. The payload is not.
+const unrecognizedStatusLog = "trustguard unrecognized status in blocking mode, blocking"
+
+// maxLoggedStatusBytes is how much of an unrecognized status the warn keeps.
+const maxLoggedStatusBytes = 64
 
 const (
 	reasonTransformNoPayload    = "transform_no_payload"
@@ -393,6 +407,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
 	if data.Decision == decisionBlocked {
+		if classifyGuardStatus(resp.Status) == guardStatusUnknown {
+			p.warnUnrecognizedStatus(ctx, in.Stage, in.Mode, direction, resp.Status, nil)
+		}
 		recordGuardOutcome(in.Event, data)
 		return nil, blockError(resp, direction)
 	}
@@ -414,8 +431,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 // few in a row retire inspection for every plugin on the stream, so one broken
 // guard would switch off the others.
 //
-// Mode is likewise not applied here. A block verdict is what the engine said;
-// the executor downgrades it to a report for an observe-mode entry.
+// A block or ask verdict is what the engine said; the executor downgrades it
+// to a report for an observe-mode entry, so mode is not applied to those.
+// An unrecognized status is the exception: a mode that blocks fail-closes
+// the segment here, and any other mode lets it through.
 func (p *Plugin) InspectSegment(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -776,22 +795,100 @@ func (p *Plugin) transformDegraded(
 	return outcome.Result, nil
 }
 
-func guardOutcomeDecision(status string, mode policy.Mode) string {
+// guardStatusClass is how one evaluate status is enforced. Every status
+// TrustGuard emits is named in classifyGuardStatus. Only guardStatusUnknown
+// changes with the policy mode.
+type guardStatusClass int
+
+const (
+	// guardStatusAllow forwards and records allowed. An empty status is this
+	// class: a missing status was already a pass. skip is this class: a Skip
+	// gate continues the request and is recorded allowed.
+	guardStatusAllow guardStatusClass = iota
+	// guardStatusReport forwards and records reported. error is in this class
+	// because that is what the default branch did with it.
+	guardStatusReport
+	// guardStatusTransform is applied by the caller. If guardOutcomeDecision
+	// is asked, it records reported, which is what the old default returned.
+	// The stream leg rewrites the buffer, or refuses a mask it cannot apply.
+	guardStatusTransform
+	// guardStatusBlock is an explicit block or ask.
+	guardStatusBlock
+	// guardStatusUnknown is a status this plugin does not recognize.
+	guardStatusUnknown
+)
+
+func classifyGuardStatus(status string) guardStatusClass {
 	switch status {
+	case statusAllow, statusSkip, "":
+		return guardStatusAllow
+	case statusReport, statusError:
+		return guardStatusReport
+	case statusTransform:
+		return guardStatusTransform
 	case statusBlock, statusAsk:
+		return guardStatusBlock
+	default:
+		return guardStatusUnknown
+	}
+}
+
+func guardOutcomeDecision(status string, mode policy.Mode) string {
+	switch classifyGuardStatus(status) {
+	case guardStatusBlock:
 		if appplugins.Blocks(mode) {
 			return decisionBlocked
 		}
 		return decisionReported
-	case statusReport:
+	case guardStatusReport, guardStatusTransform:
 		return decisionReported
-	case statusAllow, "":
+	case guardStatusAllow:
 		return decisionAllowed
-	case statusSkip:
-		return decisionAllowed
+	case guardStatusUnknown:
+		return unknownStatusDecision(mode)
 	default:
-		return decisionReported
+		return unknownStatusDecision(mode)
 	}
+}
+
+// unknownStatusDecision fail-closes a status this plugin does not recognize
+// when the policy blocks, and otherwise keeps the old default: recorded
+// reported, and the caller forwards.
+func unknownStatusDecision(mode policy.Mode) string {
+	if appplugins.Blocks(mode) {
+		return decisionBlocked
+	}
+	return decisionReported
+}
+
+// warnUnrecognizedStatus records an unrecognized evaluate status. status is
+// the verdict token. Callers pass nothing from the request or the response
+// payload.
+func (p *Plugin) warnUnrecognizedStatus(ctx context.Context, stage policy.Stage, mode policy.Mode, direction, status string, seq *int) {
+	attrs := []any{
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(stage)),
+		slog.String("mode", string(mode)),
+		slog.String("direction", direction),
+		slog.String("status", loggedStatus(status)),
+	}
+	if seq != nil {
+		attrs = append(attrs, slog.Int("seq", *seq))
+	}
+	p.warn(ctx, unrecognizedStatusLog, attrs...)
+}
+
+// loggedStatus bounds the status token written to the warn. The cut stays on
+// a rune boundary at or under maxLoggedStatusBytes.
+func loggedStatus(status string) string {
+	if len(status) <= maxLoggedStatusBytes {
+		return status
+	}
+	cut := maxLoggedStatusBytes
+	for cut > 0 && !utf8.RuneStart(status[cut]) {
+		cut--
+	}
+	return status[:cut]
 }
 
 func (p *Plugin) config(settings map[string]any) (Settings, error) {

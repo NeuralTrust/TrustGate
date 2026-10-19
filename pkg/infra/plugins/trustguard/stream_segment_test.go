@@ -191,12 +191,14 @@ func TestSegmentVerdicts(t *testing.T) {
 
 	tests := []struct {
 		name string
+		mode policy.Mode
 		seg  appplugins.StreamSegment
 		resp GuardResponse
 		want appplugins.SegmentVerdict
 	}{
-		{"allow", produced, GuardResponse{Status: statusAllow}, appplugins.SegmentVerdict{}},
-		{"skip allows the block", produced, GuardResponse{
+		{"allow", policy.ModeEnforce, produced, GuardResponse{Status: statusAllow}, appplugins.SegmentVerdict{}},
+		{"empty status allows", policy.ModeEnforce, produced, GuardResponse{}, appplugins.SegmentVerdict{}},
+		{"skip allows the block", policy.ModeEnforce, produced, GuardResponse{
 			Status: statusSkip,
 			Findings: []GuardFinding{{
 				Source:  &GuardFindingSource{Kind: "gate", GateName: "skip_pii"},
@@ -204,27 +206,35 @@ func TestSegmentVerdicts(t *testing.T) {
 				Outcome: &GuardFindingOutcome{Action: "skip"},
 			}},
 		}, appplugins.SegmentVerdict{}},
-		{"unknown status still allows the block", produced, GuardResponse{Status: "something-new"}, appplugins.SegmentVerdict{}},
-		{"report never blocks a block", produced,
+		{"something-new blocks in blocking mode", policy.ModeEnforce, produced,
+			GuardResponse{Status: "something-new"},
+			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
+		{"report never blocks a block", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusReport, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{}},
-		{"block", produced, GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}},
+		{"error allows the block", policy.ModeEnforce, produced, GuardResponse{Status: statusError}, appplugins.SegmentVerdict{}},
+		{"block", policy.ModeEnforce, produced, GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{
 				Block:   true,
 				Type:    typeBlocked,
 				Message: "Request blocked by security policy: toxicity (Toxicity).",
 			}},
-		{"ask blocks like block", produced, GuardResponse{Status: statusAsk}, appplugins.SegmentVerdict{
+		{"ask blocks like block", policy.ModeEnforce, produced, GuardResponse{Status: statusAsk}, appplugins.SegmentVerdict{
 			Block: true, Type: typeBlocked, Message: blockMessage,
 		}},
-		{"transform carries the masked buffer", produced,
+		{"transform carries the masked buffer", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusTransform, TransformedPayload: map[string]any{"input": "Hello [MASKED]"}},
 			appplugins.SegmentVerdict{HasTransform: true, Transformed: "Hello [MASKED]"}},
+		{"unknown status blocks in blocking mode", policy.ModeEnforce, produced,
+			GuardResponse{Status: "blok"},
+			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
+		{"unknown status allows in observe mode", policy.ModeObserve, produced,
+			GuardResponse{Status: "blok"}, appplugins.SegmentVerdict{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			verdict, err := segmentVerdict(tt.seg, &tt.resp)
+			verdict, err := segmentVerdict(tt.mode, tt.seg, &tt.resp)
 			require.NoError(t, err)
 			require.NotNil(t, verdict)
 			assert.Equal(t, tt.want, *verdict)
@@ -243,7 +253,7 @@ func TestSegmentVerdicts(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			verdict, err := segmentVerdict(tc.seg, &tc.resp)
+			verdict, err := segmentVerdict(policy.ModeEnforce, tc.seg, &tc.resp)
 			require.ErrorIs(t, err, errTransformUnappliable)
 			assert.Nil(t, verdict)
 		})
