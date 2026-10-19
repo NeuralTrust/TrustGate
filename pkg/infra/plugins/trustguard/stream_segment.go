@@ -26,6 +26,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -128,7 +129,7 @@ func (p *Plugin) inspectSegment(
 	}
 	p.streamRecovered(ctx, in, seg)
 	fingerprints, unidentified := streamFingerprints(in.Mode, resp.Findings)
-	verdict, err := segmentVerdict(seg, resp)
+	verdict, err := segmentVerdict(in.Mode, seg, resp)
 	if err != nil {
 		var unappliable *transformUnappliableError
 		detail := reasonTransformEncodeFailed
@@ -138,6 +139,9 @@ func (p *Plugin) inspectSegment(
 		block := segmentBlock(typeBlocked, clientBlockMessage(resp))
 		block.Fingerprints = fingerprints
 		return p.segmentGuardFailureOf(ctx, in, seg, failureReasonTransformFailed, detail, block, err)
+	}
+	if classifyGuardStatus(resp.Status) == guardStatusUnknown && appplugins.Blocks(in.Mode) {
+		p.warnUnrecognizedStatus(ctx, in.Stage, in.Mode, directionOutput, resp.Status, &seg.Seq)
 	}
 	verdict.Fingerprints = fingerprints
 	if unidentified > 0 {
@@ -608,9 +612,9 @@ func (e *transformUnappliableError) Error() string { return errTransformUnapplia
 
 func (e *transformUnappliableError) Is(target error) bool { return target == errTransformUnappliable }
 
-func segmentVerdict(seg appplugins.StreamSegment, resp *GuardResponse) (*appplugins.SegmentVerdict, error) {
-	switch resp.Status {
-	case statusTransform:
+func segmentVerdict(mode policy.Mode, seg appplugins.StreamSegment, resp *GuardResponse) (*appplugins.SegmentVerdict, error) {
+	switch classifyGuardStatus(resp.Status) {
+	case guardStatusTransform:
 		// A transform replaces the whole accumulated buffer. With nothing
 		// accumulated the flagged content is a tool call or reasoning text,
 		// which the buffer does not carry: applying the mask would neither
@@ -625,11 +629,24 @@ func segmentVerdict(seg appplugins.StreamSegment, resp *GuardResponse) (*appplug
 			return nil, &transformUnappliableError{reason: reasonTransformNoPayload}
 		}
 		return &appplugins.SegmentVerdict{HasTransform: true, Transformed: masked}, nil
-	case statusBlock, statusAsk:
+	case guardStatusBlock:
 		return segmentBlock(typeBlocked, clientBlockMessage(resp)), nil
-	default:
+	case guardStatusAllow, guardStatusReport:
 		return segmentAllow(), nil
+	case guardStatusUnknown:
+		return unknownSegmentVerdict(mode, resp), nil
+	default:
+		return unknownSegmentVerdict(mode, resp), nil
 	}
+}
+
+// unknownSegmentVerdict blocks an unrecognized status the same way an explicit
+// block does when the policy blocks, and otherwise lets the segment through.
+func unknownSegmentVerdict(mode policy.Mode, resp *GuardResponse) *appplugins.SegmentVerdict {
+	if appplugins.Blocks(mode) {
+		return segmentBlock(typeBlocked, clientBlockMessage(resp))
+	}
+	return segmentAllow()
 }
 
 func segmentAllow() *appplugins.SegmentVerdict {
