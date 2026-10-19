@@ -848,7 +848,7 @@ func TestExecuteSkipStatusRecordsAllowedAndForwards(t *testing.T) {
 	}
 }
 
-func TestExecuteUnknownStatusStillRecordsReported(t *testing.T) {
+func TestExecuteUnknownStatusBlocksInEnforce(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{
@@ -868,18 +868,31 @@ func TestExecuteUnknownStatusStillRecordsReported(t *testing.T) {
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event)
 	res, err := p.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if res != nil {
+		t.Fatalf("expected nil result on an unrecognized status, got %+v", res)
 	}
-	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream || res.RequestBody != nil || res.Body != nil {
-		t.Fatalf("expected untouched pass-through, got %+v", res)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusForbidden || pe.Type != typeBlocked {
+		t.Fatalf("plugin error = status %d type %q, want 403 %q", pe.StatusCode, pe.Type, typeBlocked)
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(pe.Body, &body); err != nil {
+		t.Fatalf("block body: %v", err)
+	}
+	if body.Status != statusBlock {
+		t.Fatalf("client body status = %q, want %q", body.Status, statusBlock)
 	}
 	if string(req.Body) != original {
 		t.Fatal("request body was rewritten")
 	}
 	attrs := span.PluginAttrsCopy()
-	if attrs.Decision != decisionReported {
-		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionReported)
+	if attrs.Decision != "block" {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, "block")
 	}
 	if attrs.ScoreLabel != "toxicity" {
 		t.Fatalf("ScoreLabel = %q, want toxicity", attrs.ScoreLabel)
@@ -888,8 +901,8 @@ func TestExecuteUnknownStatusStillRecordsReported(t *testing.T) {
 	if !ok {
 		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
 	}
-	if extras.Decision != decisionReported || extras.FailedOpen || extras.FailedClosed {
-		t.Fatalf("extras = %+v, want reported without fail-open or fail-closed", extras)
+	if extras.Decision != decisionBlocked || extras.FailedOpen || extras.FailedClosed {
+		t.Fatalf("extras = %+v, want blocked without fail-open or fail-closed", extras)
 	}
 }
 
