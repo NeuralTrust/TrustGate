@@ -496,7 +496,7 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 		if err != nil {
 			return nil, err
 		}
-		opts = append(opts, appoauth.WithConfigureInstaller(installer), appoauth.WithConfigureRegistries(p.Registries))
+		opts = append(opts, appoauth.WithConfigureInstaller(installer))
 	}
 	if p.Gateways != nil {
 		// The form-driven first install runs the same live mode decision as the
