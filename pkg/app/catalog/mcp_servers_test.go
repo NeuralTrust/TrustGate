@@ -15,10 +15,12 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -380,24 +382,35 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.Contains(t, server.ConfigGuide.Note, "/oauth/callback/com.amazon.aws/mcp")
 }
 
-// A templated oauth.resource never reaches substitution: the registry
-// canonicalizer copies it verbatim and the provider client sends it as the
-// RFC 8707 resource indicator, so the authorization server would receive a
-// literal "{placeholder}" and reject the grant. Entries that need a
-// per-instance audience set resource_metadata instead, which resolves to the
-// registry's own URL after URL variables are applied.
-func TestCuratedCatalog_HasNoTemplatedOAuthResource(t *testing.T) {
+// The registry canonicalizer copies oauth.resource verbatim. Connect fills a
+// template (applyCatalog, then finalizeAuthURLs) only from the row's URL
+// values, or from a closed option inferred for a fixed URL. An open
+// placeholder has nothing to fill it, so the authorization server would
+// receive a literal "{name}". A templated resource is allowed only when every
+// placeholder is a closed variable that also appears in the server URL.
+func TestCuratedCatalog_TemplatedOAuthResourceIsClosed(t *testing.T) {
 	t.Parallel()
 
 	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 
 	for _, server := range cat.ListMCPServers() {
-		if server.OAuth == nil {
+		if server.OAuth == nil || !strings.Contains(server.OAuth.Resource, "{") {
 			continue
 		}
-		require.NotContains(t, server.OAuth.Resource, "{",
-			"catalog entry %q declares a templated oauth.resource", server.Code)
+		names := registrydomain.TemplateVariableNames(server.OAuth.Resource)
+		require.NotEmptyf(t, names, "catalog entry %q resource has a brace but no placeholder", server.Code)
+		declared := make(map[string]domain.MCPURLVariable, len(server.URLVariables))
+		for _, variable := range server.URLVariables {
+			declared[variable.Name] = variable
+		}
+		for _, name := range names {
+			variable, ok := declared[name]
+			require.Truef(t, ok && variable.HasOptions(),
+				"catalog entry %q oauth.resource placeholder %q is not a closed url variable", server.Code, name)
+			require.Containsf(t, server.URL, "{"+name+"}",
+				"catalog entry %q oauth.resource placeholder %q is not in the server URL", server.Code, name)
+		}
 	}
 }
 
