@@ -754,6 +754,12 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 	if req.Code == "" {
 		return nil, oauthErr("invalid_request", "code is required")
 	}
+	// The marker is read before the code is consumed. A Redis error on that
+	// read fails the exchange and leaves the code unused, so the client can
+	// retry. A code the marker already covers is refused the same way.
+	if err := p.refuseRevokedCode(ctx, req.Code); err != nil {
+		return nil, err
+	}
 	grant, err := p.store.TakeCode(ctx, req.Code)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load code grant: %w", err)
@@ -783,12 +789,11 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		if loginAt.IsZero() {
 			loginAt = p.now()
 		}
-		revoked, err := p.loginRevoked(ctx, grant.AuthID, grant.GatewayID, grant.Org, grant.Subject, grant.IssuedAt)
-		if err != nil {
+		// A revoke can land after the read above and before this take. Judge
+		// the grant that was consumed. IssuedAt is passed as stored, including
+		// a zero time, so the marker comparison is unchanged.
+		if err := p.refuseIfLoginRevoked(ctx, grant.AuthID, grant.GatewayID, grant.Org, grant.Subject, grant.IssuedAt); err != nil {
 			return nil, err
-		}
-		if revoked {
-			return nil, oauthErr("invalid_grant", "session revoked; sign in again")
 		}
 		resp, err := p.mintSession(*grant)
 		if err != nil {
@@ -1048,6 +1053,33 @@ func (p *authProxy) refuseRevokedSession(ctx context.Context, refreshToken strin
 	}
 	if err := p.store.DeleteSession(ctx, refreshToken); err != nil {
 		return fmt.Errorf("oauth: delete revoked session: %w", err)
+	}
+	return oauthErr("invalid_grant", "session revoked; sign in again")
+}
+
+// refuseRevokedCode applies the revocation marker to a code that is still
+// stored. It does not consume the code. A missing code is left for TakeCode
+// to report. A marker that cannot be read is returned so the caller fails
+// closed without burning the code.
+func (p *authProxy) refuseRevokedCode(ctx context.Context, code string) error {
+	grant, err := p.store.GetCode(ctx, code)
+	if err != nil {
+		return fmt.Errorf("oauth: load code grant: %w", err)
+	}
+	if grant == nil || !grant.SessionMode {
+		return nil
+	}
+	return p.refuseIfLoginRevoked(ctx, grant.AuthID, grant.GatewayID, grant.Org, grant.Subject, grant.IssuedAt)
+}
+
+// refuseIfLoginRevoked refuses a default-IdP login the revocation marker
+// covers. issuedAt is the code's issue time, not the exchange clock, and a
+// zero time is refused only when a marker exists. The comparison is
+// time.Time.After, so an equal instant is a refusal and the unit is nanoseconds.
+func (p *authProxy) refuseIfLoginRevoked(ctx context.Context, authID, gatewayID, org, subject string, issuedAt time.Time) error {
+	revoked, err := p.loginRevoked(ctx, authID, gatewayID, org, subject, issuedAt)
+	if err != nil || !revoked {
+		return err
 	}
 	return oauthErr("invalid_grant", "session revoked; sign in again")
 }
