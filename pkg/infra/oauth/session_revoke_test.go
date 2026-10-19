@@ -671,11 +671,133 @@ func (r *revokeDuringSave) SaveSession(ctx context.Context, token string, rec ap
 
 func newRevokeProxy(t *testing.T, store appoauth.FlowStore) appoauth.AuthProxy {
 	t.Helper()
+	return newRevokeProxyWith(t, store)
+}
+
+type snapshotMarkers map[string]time.Time
+
+func (m snapshotMarkers) RevokedAt(gatewayID, org, subject string) (time.Time, bool) {
+	at, ok := m[gatewayID+"\n"+org+"\n"+subject]
+	return at, ok
+}
+
+func newRevokeProxyWith(t *testing.T, store appoauth.FlowStore, opts ...appoauth.ProxyOption) appoauth.AuthProxy {
+	t.Helper()
 	signer, err := infrasts.NewSigner("https://gw.example.com/sts", "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("signer: %v", err)
 	}
-	return appoauth.NewAuthProxy(nil, nil, nil, store, nil, signer, nil)
+	return appoauth.NewAuthProxy(nil, nil, nil, store, nil, signer, nil, opts...)
+}
+
+// A data plane that does not share the control plane's Redis has no Redis
+// marker. The snapshot marker is what refuses the refresh and the exchange,
+// and the local session is deleted.
+func TestSnapshotMarkerRefusesRefreshAndExchange(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	loginAt := time.Now().Add(-time.Hour).UTC()
+	rec := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	rec.LoginAt = loginAt
+	if err := store.SaveSession(ctx, "gwrt_target", rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	marker := loginAt.Add(time.Minute)
+	proxy := newRevokeProxyWith(t, store, appoauth.WithSnapshotRevocations(snapshotMarkers{
+		"gw-1\norg-1\nuser-1": marker,
+	}))
+
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_target",
+	})
+	requireInvalidGrant(t, err)
+	if got, err := store.GetSession(ctx, "gwrt_target"); err != nil || got != nil {
+		t.Fatalf("revoked session = %+v err %v, want it deleted", got, err)
+	}
+
+	if err := store.SaveCode(ctx, "pre-revoke", sessionCode("user-1", loginAt)); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	_, err = proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "authorization_code", Code: "pre-revoke",
+		RedirectURI: "https://app.example/cb", CodeVerifier: "client-verifier",
+	})
+	requireInvalidGrant(t, err)
+	for _, key := range mr.Keys() {
+		if strings.HasPrefix(key, "oauth:session:") {
+			t.Fatalf("exchange minted a session: %s", key)
+		}
+	}
+
+	if err := store.SaveCode(ctx, "post-revoke", sessionCode("user-1", marker.Add(time.Second))); err != nil {
+		t.Fatalf("save later code: %v", err)
+	}
+	if _, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "authorization_code", Code: "post-revoke",
+		RedirectURI: "https://app.example/cb", CodeVerifier: "client-verifier",
+	}); err != nil {
+		t.Fatalf("code issued after the snapshot marker must exchange: %v", err)
+	}
+}
+
+// The hosted plane shares Redis with the control plane. A snapshot that has
+// no marker leaves that Redis check as the one that refuses the refresh.
+func TestHostedRefreshStillUsesTheRedisMarker(t *testing.T) {
+	t.Parallel()
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+	loginAt := time.Now().Add(-time.Hour).UTC()
+	rec := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	rec.LoginAt = loginAt
+	if err := store.SaveSession(ctx, "gwrt_target", rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := store.RevokeSubjectSessions(ctx, "org-1", "gw-1", "user-1"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	proxy := newRevokeProxyWith(t, store, appoauth.WithSnapshotRevocations(snapshotMarkers{}))
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_target",
+	})
+	requireInvalidGrant(t, err)
+}
+
+// When both markers exist, the later instant is the one the login is compared
+// to. A login between them is refused. A login after both is not.
+func TestLaterRevocationMarkerWins(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	redisAt := time.Now().Add(-2 * time.Hour).UTC()
+	snapshotAt := redisAt.Add(time.Hour)
+	if err := mr.Set(revocationMarkerKey, redisAt.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("redis marker: %v", err)
+	}
+	proxy := newRevokeProxyWith(t, store, appoauth.WithSnapshotRevocations(snapshotMarkers{
+		"gw-1\norg-1\nuser-1": snapshotAt,
+	}))
+
+	between := defaultRevokeSession("gw-1", "org-1", "user-1", time.Now().Add(time.Hour).UTC())
+	between.LoginAt = redisAt.Add(30 * time.Minute)
+	if err := store.SaveSession(ctx, "gwrt_between", between); err != nil {
+		t.Fatalf("save between: %v", err)
+	}
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_between",
+	})
+	requireInvalidGrant(t, err)
+
+	after := between
+	after.LoginAt = snapshotAt.Add(time.Second)
+	if err := store.SaveSession(ctx, "gwrt_after", after); err != nil {
+		t.Fatalf("save after: %v", err)
+	}
+	if _, err := proxy.Exchange(ctx, "http://gw.example.com", appoauth.TokenRequest{
+		GrantType: "refresh_token", RefreshToken: "gwrt_after",
+	}); err != nil {
+		t.Fatalf("login after both markers must refresh: %v", err)
+	}
 }
 
 func requireInvalidGrant(t *testing.T, err error) {

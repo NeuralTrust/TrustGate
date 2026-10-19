@@ -49,6 +49,22 @@ message Snapshot {
   // then falls back to the caps stamped on the gateway. A scoped snapshot carries
   // only its own tenant's row.
   repeated TenantCaps tenant_caps = 14;
+  // Default-IdP session revocations for the gateways in this snapshot.
+  // revoked_at is RFC3339Nano UTC. A data plane built before this field
+  // ignores it (proto3 skips unknown fields) and keeps serving; the
+  // revocation applies once that plane runs a build that reads the field.
+  // Shipping the field does not block a deploy of older data planes.
+  // A missing list is not a revocation.
+  repeated SessionRevocation session_revocations = 15;
+}
+
+// SessionRevocation is one default-IdP subject whose sessions were revoked.
+// A data plane applies it to refresh records it stores locally.
+message SessionRevocation {
+  string gateway_id = 1;
+  string org = 2;
+  string subject = 3;
+  string revoked_at = 4;
 }
 
 // TenantCaps are one tenant's plan caps. quota_per_month 0 means unlimited, the
