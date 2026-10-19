@@ -215,12 +215,13 @@ func (s *scoper) Scope(
 // the composer names their tools apart. Installs that reach the same server with
 // the same config are one instance, exposed once (see distinctInstalls).
 //
-// Access is re-checked here, not only at install time: under Selected an
-// install stays exposed only while a grant still names the principal for its
-// code or its instance, so tightening a grant later revokes access immediately
-// rather than only for future installs. An instance an administrator turned off
-// is not exposed either, and the install is not moved onto another instance in
-// its place: that one may hold a different account.
+// Access is re-checked here, not only at install time: under None nothing is
+// exposed, grants included. Under Selected an install stays exposed only while
+// a grant still names the principal for its code or its instance, so tightening
+// a grant later revokes access immediately rather than only for future
+// installs. An instance an administrator turned off is not exposed either, and
+// the install is not moved onto another instance in its place: that one may
+// hold a different account.
 func (s *scoper) installedRegistries(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -246,14 +247,24 @@ func (s *scoper) installedRegistries(
 		sortRegistries(regs)
 	}
 	groups := principal.Groups()
-	// Under All every install stands; under Selected an install only stays
-	// exposed while a grant still names the principal for its code or instance.
-	enforceGrants := ResolveMode(ctx, s.modes, ModeQuery{
+	// None closes this principal's surface. An install, a direct grant and a
+	// group grant all stop here: the rows stay, and a later mode that is not
+	// None exposes them again on the next request. A mode that cannot be
+	// resolved does not land here — ResolveMode keeps today's fallback
+	// (curated when the policy read fails, otherwise the claim or the gateway
+	// default).
+	mode := ResolveMode(ctx, s.modes, ModeQuery{
 		GatewayID: gatewayID,
 		Subject:   principal.Subject,
 		Groups:    groups,
 		Fallback:  EffectiveStoreMode(ctx),
-	}) != gatewaydomain.StoreModeOpen
+	})
+	if mode == gatewaydomain.StoreModeNone {
+		return []*registrydomain.Registry{}, nil
+	}
+	// Under All every install stands; under Selected an install only stays
+	// exposed while a grant still names the principal for its code or instance.
+	enforceGrants := mode != gatewaydomain.StoreModeOpen
 	var grants *storeaccessdomain.Set
 	if enforceGrants {
 		if grants, err = loadGrantSet(ctx, s.grants, gatewayID); err != nil {
