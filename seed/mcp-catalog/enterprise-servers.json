@@ -13518,7 +13518,9 @@
       "transport": "sse",
       "server_url": "https://mcp.replicate.com/sse",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
+      "hidden": true,
+      "hidden_reason": "broken_unsupported: TrustGate MCP plane only supports streamable-http",
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -15042,16 +15044,25 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.storyblok.com/mcp",
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
+        "registration": "manual",
+        "dcr": false,
         "pkce": true,
         "authorize_url": "https://mcp.storyblok.com/oauth/authorize",
         "token_url": "https://mcp.storyblok.com/oauth/token",
         "resource": "https://mcp.storyblok.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Register TrustGate as an OAuth app in Storyblok.",
+        "steps": [
+          "Create an OAuth app in Storyblok.",
+          "Register the callback https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp.",
+          "Enter the client ID and client secret."
+        ],
+        "note": "Storyblok restricts redirect URIs to loopback or an allowlisted hosted-connector and rejects this gateway's callback (invalid_redirect_uri). Registration is manual. Register the callback https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp."
       },
       "relevance": 60,
       "tools": [
