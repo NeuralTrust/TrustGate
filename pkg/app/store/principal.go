@@ -203,7 +203,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 			Registry:   reg.Name,
 			Shared:     auth.Shared(),
 		}
-		if err := p.fillConnection(ctx, gatewayID, principalSub, reg, &conn); err != nil {
+		if err := p.fillConnection(ctx, gatewayID, principalSub, reg, installs, &conn); err != nil {
 			return nil, err
 		}
 		state.Connections = append(state.Connections, conn)
@@ -220,6 +220,7 @@ func (p *principalPreview) fillConnection(
 	gatewayID ids.GatewayID,
 	principalSub string,
 	reg *registrydomain.Registry,
+	installs []*installationdomain.Installation,
 	conn *PrincipalConnection,
 ) error {
 	if p.vault == nil {
@@ -230,7 +231,7 @@ func (p *principalPreview) fillConnection(
 	// will actually use. Reading the caller's own key would show the Portal a
 	// server as unconnected that works, and offer a Connect nobody can complete.
 	subject := registrydomain.CredentialSubject(reg, principalSub)
-	cred, err := p.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+	cred, err := p.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProviderFor(reg, installConfigFor(reg, installs)))
 	switch {
 	case err == nil:
 		conn.Linked = true
@@ -267,6 +268,49 @@ func forwardedAuthOf(reg *registrydomain.Registry) *registrydomain.MCPAuth {
 		return nil
 	}
 	return reg.MCPTarget.Auth
+}
+
+// installConfigFor is the per-user URL values connect and dial fingerprint
+// for this registry. An install bound to the registry wins; otherwise the
+// earliest active install of its catalog code, which is the one Find returns
+// when a principal holds a single instance.
+func installConfigFor(reg *registrydomain.Registry, installs []*installationdomain.Installation) map[string]string {
+	in := activeInstallFor(reg, installs)
+	if in == nil {
+		return nil
+	}
+	return in.Config
+}
+
+func activeInstallFor(reg *registrydomain.Registry, installs []*installationdomain.Installation) *installationdomain.Installation {
+	if reg == nil {
+		return nil
+	}
+	code := ""
+	if reg.MCPTarget != nil {
+		code = strings.TrimSpace(reg.MCPTarget.Code)
+	}
+	var bound, byCode *installationdomain.Installation
+	for _, in := range installs {
+		if in == nil || !in.IsActive() {
+			continue
+		}
+		if !in.RegistryID.IsNil() && in.RegistryID == reg.ID {
+			if bound == nil || in.CreatedAt.Before(bound.CreatedAt) {
+				bound = in
+			}
+			continue
+		}
+		if code != "" && in.CatalogCode == code && in.RegistryID.IsNil() {
+			if byCode == nil || in.CreatedAt.Before(byCode.CreatedAt) {
+				byCode = in
+			}
+		}
+	}
+	if bound != nil {
+		return bound
+	}
+	return byCode
 }
 
 // missingConfig names the required per-user URL variables this installation

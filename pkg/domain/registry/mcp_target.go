@@ -132,6 +132,11 @@ type MCPAuth struct {
 	TokenURL     string                `json:"token_url,omitempty"`
 	Scopes       []string              `json:"scopes,omitempty"`
 	Resource     string                `json:"resource,omitempty"`
+	// ResourcePerInstance is set when the catalog's own oauth.resource is a
+	// template, so each instance has its own audience (PagerDuty's region).
+	// The vault key then fills closed options from instance config. Left
+	// unset, the stored resource is fingerprinted exactly as it was saved.
+	ResourcePerInstance bool `json:"resource_per_instance,omitempty"`
 	// TokenEndpointAuthMethod selects how client_id/secret are presented to the
 	// token endpoint for client_credentials: client_secret_basic (default) or
 	// client_secret_post.
