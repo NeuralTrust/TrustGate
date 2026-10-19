@@ -53,6 +53,11 @@ import (
 	"go.uber.org/dig"
 )
 
+type oauthSnapshotParams struct {
+	dig.In
+	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+}
+
 type healthParams struct {
 	dig.In
 	Store                  configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
@@ -337,6 +342,13 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(p oauthSnapshotParams) appoauth.SnapshotRevocations {
+		// A process with no snapshot store reports no snapshot marker. The
+		// Redis marker remains the one that process consults.
+		return adapters.NewSessionRevocations(p.Store)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
@@ -345,15 +357,18 @@ func API(c *container.Container) error {
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
 		verifier appauth.JWTVerifier,
+		revocations appoauth.SnapshotRevocations,
 		cfg *config.Config,
 	) appoauth.AuthProxy {
 		// The platform token minted by the built-in default IdP is verified
 		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
 		// claims are trusted, and the sessions it brokers are bounded by
-		// MCP_DEFAULT_IDP_SESSION_MAX_AGE when it is set.
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE when it is set. The snapshot marker
+		// is the one a data plane that does not share this process's Redis reads.
 		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
 			appoauth.WithIdPTokenVerifier(verifier),
 			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),
+			appoauth.WithSnapshotRevocations(revocations),
 		)
 	}); err != nil {
 		return err

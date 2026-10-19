@@ -18,11 +18,15 @@ import (
 	"fmt"
 	"log/slog"
 
+	"time"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
+	sessionrevocation "github.com/NeuralTrust/TrustGate/pkg/domain/sessionrevocation"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -32,16 +36,21 @@ const maxSubjectIDLen = 256
 // DeleteSubjectSessionsHandler removes one subject's default-IdP refresh
 // records for the caller's tenant and the gateway in the path.
 type DeleteSubjectSessionsHandler struct {
-	sessions appoauth.SubjectSessions
-	logger   *slog.Logger
+	sessions    appoauth.SubjectSessions
+	revocations sessionrevocation.Store
+	signaler    configsyncport.SnapshotSignaler
+	logger      *slog.Logger
 }
 
-// NewDeleteSubjectSessionsHandler returns the handler.
-func NewDeleteSubjectSessionsHandler(sessions appoauth.SubjectSessions, logger *slog.Logger) *DeleteSubjectSessionsHandler {
+// NewDeleteSubjectSessionsHandler returns the handler. revocations is written
+// before the Redis marker so a data plane that does not share this process's
+// Redis still learns the revocation from the config snapshot. signaler wakes
+// the snapshot dispatcher; nil leaves the dispatcher's backstop as the fallback.
+func NewDeleteSubjectSessionsHandler(sessions appoauth.SubjectSessions, revocations sessionrevocation.Store, signaler configsyncport.SnapshotSignaler, logger *slog.Logger) *DeleteSubjectSessionsHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DeleteSubjectSessionsHandler{sessions: sessions, logger: logger}
+	return &DeleteSubjectSessionsHandler{sessions: sessions, revocations: revocations, signaler: signaler, logger: logger}
 }
 
 // SubjectSessionsResponse is how many refresh records the call removed. Zero
@@ -52,7 +61,7 @@ type SubjectSessionsResponse struct {
 
 // Handle godoc
 // @Summary      Revoke a subject's default-IdP sessions
-// @Description  Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It also records a revocation marker so a refresh record that was not in the index cannot be rotated into a new session. A subject with no indexed records answers 200 {"revoked": 0}. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.
+// @Description  Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It records the revocation durably and in Redis, so a refresh record that was not in the index cannot be rotated into a new session, including on a data plane that keeps its own session store. The durable record is what the config snapshot carries; a data plane built before that snapshot field ignores the field and keeps serving until it is upgraded. A subject with no indexed records on this process answers 200 {"revoked": 0}; revoked counts records deleted here. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
@@ -80,6 +89,23 @@ func (h *DeleteSubjectSessionsHandler) Handle(c *fiber.Ctx) error {
 	}
 	if h.sessions == nil {
 		return httpio.WriteError(c, fmt.Errorf("revoke subject sessions: sessions are not configured"))
+	}
+	if h.revocations == nil {
+		return httpio.WriteError(c, fmt.Errorf("revoke subject sessions: revocation record is not configured"))
+	}
+	// The durable row is the source the data plane's snapshot is compiled
+	// from. It is written first. A failure here is 500 and does not touch Redis.
+	revokedAt := time.Now().UTC()
+	if err := h.revocations.Upsert(c.UserContext(), gatewayID.String(), org, subject, revokedAt); err != nil {
+		h.logger.WarnContext(c.UserContext(), "subject sessions: revocation record failed",
+			slog.String("gateway_id", gatewayID.String()),
+			slog.String("org", org),
+			slog.String("subject", subject),
+		)
+		return httpio.WriteError(c, err)
+	}
+	if h.signaler != nil {
+		h.signaler.Signal(c.UserContext())
 	}
 	revoked, err := h.sessions.RevokeSubjectSessions(c.UserContext(), org, gatewayID.String(), subject)
 	if err != nil {
