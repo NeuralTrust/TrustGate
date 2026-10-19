@@ -554,6 +554,47 @@ func TestRefreshSessionPastWindowRefused(t *testing.T) {
 	}
 }
 
+// A session minted before a max age was configured already carries the idle
+// deadline stamped at its last refresh. Loading a max age does not rewrite that
+// deadline down to the new limit and does not keep sliding it: refresh succeeds
+// until the stored ExpiresAt, then the client re-authorizes.
+func TestRefreshSessionWithMaxAgeKeepsPreexistingDeadline(t *testing.T) {
+	t.Parallel()
+	store := newMemFlowStore()
+	noIdP := &http.Client{Transport: failingTransport{t}}
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, newTestSigner(t), nil,
+		WithDefaultIdPSessionMaxAge(24*time.Hour)).(*authProxy)
+	loginAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	seedDefaultIdPSession(t, store, "gwrt_old", loginAt, sessionIdleLifetime)
+
+	proxy.now = fixedClock(loginAt.Add(48 * time.Hour))
+	resp, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "gwrt_old",
+	})
+	if err != nil {
+		t.Fatalf("refresh before the stamped deadline must succeed: %v", err)
+	}
+	rotated := store.peekSession(resp["refresh_token"].(string))
+	if rotated == nil {
+		t.Fatal("rotated session must be persisted")
+		return
+	}
+	if !rotated.LoginAt.Equal(loginAt) || !rotated.ExpiresAt.Equal(loginAt.Add(sessionIdleLifetime)) {
+		t.Fatalf("a preexisting deadline must be kept, got login=%v expires=%v", rotated.LoginAt, rotated.ExpiresAt)
+	}
+
+	proxy.now = fixedClock(loginAt.Add(sessionIdleLifetime))
+	_, err = proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: resp["refresh_token"].(string),
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
+		t.Fatalf("refresh at the stamped deadline must be invalid_grant, got %v", err)
+	}
+}
+
 // Without MCP_DEFAULT_IDP_SESSION_MAX_AGE a default-IdP session (the MCP Store)
 // is renewed by use: each refresh moves its deadline a full idle window ahead,
 // so a client that keeps refreshing outlives any fixed lifetime counted from
