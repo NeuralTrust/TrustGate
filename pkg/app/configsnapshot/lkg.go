@@ -21,6 +21,8 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
 
 const (
@@ -146,10 +148,11 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 		raw        []byte
 		version    string
 		compiledAt time.Time
+		snap       *readmodel.Snapshot
 	}
 	good := map[string]restored{}
 	for _, rec := range records {
-		raw, reason := d.openRecord(rec)
+		raw, snap, reason := d.openRecord(rec)
 		if reason != "" {
 			recordLKGLoad(ctx, reason)
 			d.logger.Warn("persisted config snapshot row rejected",
@@ -157,7 +160,7 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 				slog.String("scope", rec.Scope), slog.String("reason", reason))
 			continue
 		}
-		good[rec.Scope] = restored{raw: raw, version: rec.Version, compiledAt: rec.CompiledAt}
+		good[rec.Scope] = restored{raw: raw, version: rec.Version, compiledAt: rec.CompiledAt, snap: snap}
 	}
 
 	global, ok := good[GlobalScope]
@@ -169,9 +172,11 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 		return
 	}
 	scoped := make(map[string]ScopedSnapshot, len(good))
+	snaps := make([]*readmodel.Snapshot, 0, len(good))
 	oldest := global.compiledAt
 	for scope, r := range good {
 		l.persisted[scope] = r.version
+		snaps = append(snaps, r.snap)
 		if scope == GlobalScope {
 			continue
 		}
@@ -180,6 +185,7 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 			oldest = r.compiledAt
 		}
 	}
+	d.seedRestoredRevocations(snaps)
 	d.holder.SetPartitioned(global.raw, global.version, scoped)
 	l.servedAt.Store(oldest.UnixNano())
 	l.source.Store(int32(SourcePersisted))
@@ -193,27 +199,71 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 		slog.Duration("age", l.now().Sub(oldest)))
 }
 
-// openRecord returns the snapshot bytes of a trustworthy row, or the reason the
-// row is not trusted.
-func (d *Dispatcher) openRecord(rec LKGRecord) ([]byte, string) {
+// openRecord returns the snapshot bytes and decoded snapshot of a trustworthy
+// row, or the reason the row is not trusted.
+func (d *Dispatcher) openRecord(rec LKGRecord) ([]byte, *readmodel.Snapshot, string) {
 	l := d.lkg
 	if rec.KeyID != l.sealer.KeyID() {
-		return nil, "key_mismatch"
+		return nil, nil, "key_mismatch"
 	}
 	if l.now().Sub(rec.CompiledAt) > l.maxAge {
-		return nil, "expired"
+		return nil, nil, "expired"
 	}
 	raw, err := l.sealer.Open(rec.Scope, rec.Version, rec.Payload)
 	if err != nil {
-		return nil, "undecryptable"
+		return nil, nil, "undecryptable"
 	}
 	if d.codec.Version(raw) != rec.Version {
-		return nil, "checksum_mismatch"
+		return nil, nil, "checksum_mismatch"
 	}
-	if _, err := d.codec.Decode(raw); err != nil {
-		return nil, "incompatible_snapshot"
+	snap, err := d.codec.Decode(raw)
+	if err != nil {
+		return nil, nil, "incompatible_snapshot"
 	}
-	return raw, ""
+	return raw, snap, ""
+}
+
+// seedRestoredRevocations copies markers out of the snapshots just restored so
+// the next compile can republish them when the revocation table cannot be read.
+func (d *Dispatcher) seedRestoredRevocations(snaps []*readmodel.Snapshot) {
+	seeder, ok := d.compiler.(sessionRevocationSeeder)
+	if !ok {
+		return
+	}
+	seeder.SeedSessionRevocations(revocationsFromSnapshots(snaps))
+}
+
+// revocationsFromSnapshots unions markers from the restored snapshots. The same
+// subject can ride the global snapshot and its scoped one; the later instant
+// wins, matching the table's upsert.
+func revocationsFromSnapshots(snaps []*readmodel.Snapshot) []readmodel.SessionRevocation {
+	type key struct {
+		gatewayID string
+		org       string
+		subject   string
+	}
+	byKey := make(map[key]readmodel.SessionRevocation)
+	for _, snap := range snaps {
+		if snap == nil {
+			continue
+		}
+		for _, row := range snap.Data().SessionRevocations {
+			if row.GatewayID == "" || row.Org == "" || row.Subject == "" || row.RevokedAt.IsZero() {
+				continue
+			}
+			k := key{row.GatewayID, row.Org, row.Subject}
+			prev, ok := byKey[k]
+			if ok && !row.RevokedAt.After(prev.RevokedAt) {
+				continue
+			}
+			byKey[k] = row
+		}
+	}
+	out := make([]readmodel.SessionRevocation, 0, len(byKey))
+	for _, row := range byKey {
+		out = append(out, row)
+	}
+	return out
 }
 
 // compiledAt stamps a compile with the persistence clock.

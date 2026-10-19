@@ -84,9 +84,13 @@ type Compiler struct {
 	// and the 30-day idle session lifetime, the same bound the Redis marker uses.
 	revocations   sessionrevocation.Store
 	sessionMaxAge time.Duration
-	// lastRevocations is the last listing that succeeded, replaced whole.
-	revMu           sync.Mutex
-	lastRevocations []readmodel.SessionRevocation
+	// lastRevocations is the last listing that succeeded, or the set Restore
+	// seeded from persisted snapshots. It is replaced whole. revocationsKnown
+	// stays false until one of those happens, including a listing of none, so a
+	// read error can tell "nothing to reuse" from "the last set was empty".
+	revMu            sync.Mutex
+	lastRevocations  []readmodel.SessionRevocation
+	revocationsKnown bool
 }
 
 // StoreGrantReader is the read side the compiler needs for MCP Store grants.
@@ -245,7 +249,11 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	mergeCatalog(&data, cat)
 	data.PlaygroundTokenKeys = c.playgroundTokenKeys
 	stampTenantCaps(&data, c.listTenantCaps(ctx))
-	stampSessionRevocations(&data, c.listSessionRevocations(ctx))
+	revocations, err := c.listSessionRevocations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stampSessionRevocations(&data, revocations)
 
 	sortData(&data)
 	return readmodel.Build(data), nil
@@ -307,7 +315,10 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 	// the tenants of the gateways it carries, and a scoped one only its own.
 	caps := c.listTenantCaps(ctx)
 	stampTenantCaps(&global, caps)
-	revocations := c.listSessionRevocations(ctx)
+	revocations, err := c.listSessionRevocations(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	stampSessionRevocations(&global, revocations)
 	for _, bucket := range buckets {
 		stampTenantCaps(bucket, caps)
@@ -386,32 +397,65 @@ func stampTenantCaps(data *readmodel.Data, caps map[string]ratelimitdomain.Tenan
 	}
 }
 
+// sessionRevocationSeeder is how Restore seeds last-known-good revocations.
+// A compiler that does not implement it stays unseeded, and a revocation read
+// with no prior listing then fails the compile.
+type sessionRevocationSeeder interface {
+	SeedSessionRevocations(rows []readmodel.SessionRevocation)
+}
+
+// SeedSessionRevocations records revocations taken from restored snapshots as
+// the last-known-good listing. A later read failure republishes them instead of
+// failing the compile. An empty slice still counts: the restored snapshots
+// carried none. A listing that already succeeded is left alone.
+func (c *Compiler) SeedSessionRevocations(rows []readmodel.SessionRevocation) {
+	seeded := append([]readmodel.SessionRevocation(nil), rows...)
+	c.revMu.Lock()
+	defer c.revMu.Unlock()
+	if c.revocationsKnown {
+		return
+	}
+	c.lastRevocations = seeded
+	c.revocationsKnown = true
+}
+
 // listSessionRevocations reads revocations still inside the marker lifetime.
-// A failed read reuses the last listing that succeeded: publishing a snapshot
-// that dropped the markers would tell a data plane the subject is not revoked.
-// A compiler that has never listed them publishes none, the same as a snapshot
-// from before the table existed. The dispatcher's backstop retries the read.
-func (c *Compiler) listSessionRevocations(ctx context.Context) []readmodel.SessionRevocation {
+// A failed read republishes the last listing that succeeded, or the set Restore
+// seeded. Publishing none would tell a data plane the subject is not revoked.
+// With no such listing the compile fails, so a restart that cannot read the
+// table does not replace a restored snapshot with an empty one. The
+// dispatcher's backstop retries the read.
+func (c *Compiler) listSessionRevocations(ctx context.Context) ([]readmodel.SessionRevocation, error) {
 	if c.revocations == nil {
-		return nil
+		return nil, nil
 	}
 	since := time.Now().Add(-markerTTL(c.sessionMaxAge))
 	list, err := c.revocations.ListActive(ctx, since)
 	if err != nil {
 		c.revMu.Lock()
+		known := c.revocationsKnown
 		last := c.lastRevocations
 		c.revMu.Unlock()
-		c.logger.Warn("configsnapshot: failed to list session revocations; reusing the last listing, or none if there is not one",
+		if !known {
+			c.logger.Warn("configsnapshot: failed to list session revocations with no last-known-good; refusing to publish",
+				slog.String("component", component),
+				slog.Any("error", err))
+			recordSessionRevocationsError(ctx, sessionRevocationsFailClosed)
+			return nil, fmt.Errorf("configsnapshot: list session revocations: %w", err)
+		}
+		c.logger.Warn("configsnapshot: failed to list session revocations; reusing the last listing",
 			slog.String("component", component),
-			slog.Bool("reusing_last", last != nil),
+			slog.Int("revocations", len(last)),
 			slog.Any("error", err))
-		return filterRevokedAfter(last, since)
+		recordSessionRevocationsError(ctx, sessionRevocationsFallback)
+		return filterRevokedAfter(last, since), nil
 	}
 	rows := filterRevokedAfter(toSessionRevocations(list), since)
 	c.revMu.Lock()
 	c.lastRevocations = rows
+	c.revocationsKnown = true
 	c.revMu.Unlock()
-	return rows
+	return rows, nil
 }
 
 func toSessionRevocations(rows []sessionrevocation.Record) []readmodel.SessionRevocation {
