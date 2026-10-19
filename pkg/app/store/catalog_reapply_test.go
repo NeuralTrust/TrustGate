@@ -720,3 +720,127 @@ func TestReapplyCubeTemplateIsNotPointedAtCloud(t *testing.T) {
 		t.Fatalf("cube template changed: saves=%d url=%s", saver.calls, reg.MCPTarget.URL)
 	}
 }
+
+// New Relic is excluded from the previous-seed table. A row that already has
+// credentials, a cached dynamic client, or an active installation keeps the
+// registration and URL it was stored with. The catalog entry is manual; that
+// shape is only for a new row.
+func TestReapplyLeavesExistingNewRelicRows(t *testing.T) {
+	loadPreviousCatalog()
+	if previousLoadErr != nil {
+		t.Fatal(previousLoadErr)
+	}
+	const code = "com.newrelic/mcp"
+	if _, ok := previousByCode[code]; ok {
+		t.Fatalf("%s is in the previous fingerprint table", code)
+	}
+	excluded := false
+	for _, candidate := range ambiguousCatalogCodes {
+		if candidate == code {
+			excluded = true
+			break
+		}
+	}
+	if !excluded {
+		t.Fatalf("%s is not excluded from catalog re-apply", code)
+	}
+
+	catalog := testReapplyCatalog(t)
+	entry, ok := catalog.GetByCode(code)
+	if !ok || entry.OAuth == nil || entry.OAuth.Registration != "manual" || entry.SelfService {
+		t.Fatalf("catalog entry self_service=%v oauth=%+v", entry.SelfService, entry.OAuth)
+	}
+	shape, err := storedCatalogShape(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manualWithoutClient(shape) || shape.Auth.Registration != registrydomain.RegistrationManual {
+		t.Fatalf("new catalog shape = %+v", shape.Auth)
+	}
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	credentialed := newRelicHeldRegistry(gatewayID, &registrydomain.MCPAuth{
+		Mode:         registrydomain.MCPAuthModeForwarded,
+		Provider:     code,
+		Registration: registrydomain.RegistrationManual,
+		ClientID:     "live-client",
+		ClientSecret: "live-secret",
+		AuthorizeURL: "https://oauth2.service.newrelic.com/oauth2/auth",
+		TokenURL:     "https://oauth2.service.newrelic.com/oauth2/token",
+		Scopes:       []string{"observability:read", "offline", "offline_access"},
+		Resource:     "https://{host}/mcp/",
+	}, "https://{host}/mcp/")
+	installed := newRelicHeldRegistry(gatewayID, &registrydomain.MCPAuth{
+		Mode:         registrydomain.MCPAuthModeForwarded,
+		Provider:     code,
+		Registration: registrydomain.RegistrationAuto,
+		AuthorizeURL: "https://oauth2.service.newrelic.com/oauth2/auth",
+		TokenURL:     "https://oauth2.service.newrelic.com/oauth2/token",
+		Scopes:       []string{"openid", "profile", "email"},
+		Resource:     "https://mcp.newrelic.com/mcp/",
+	}, "https://mcp.newrelic.com/mcp/")
+	cached := newRelicHeldRegistry(gatewayID, &registrydomain.MCPAuth{
+		Mode:         registrydomain.MCPAuthModeForwarded,
+		Provider:     code,
+		Registration: registrydomain.RegistrationAuto,
+		AuthorizeURL: "https://oauth2.service.newrelic.com/oauth2/auth",
+		TokenURL:     "https://oauth2.service.newrelic.com/oauth2/token",
+		Scopes:       []string{"observability:read", "offline", "offline_access"},
+		Resource:     "https://{host}/mcp/",
+	}, "https://{host}/mcp/")
+
+	saver := &countingSaver{}
+	reapply := newTestReapply(t, catalog, saver, slog.New(slog.DiscardHandler))
+	bound, dcr := withClearProbes(reapply)
+	bound.found = true
+	dcr.found = true
+	reapply.installs = scriptInstalls{
+		rows: []*installationdomain.Installation{{Status: installationdomain.StatusInstalled}},
+	}
+	reapply.Reapply(context.Background(), gatewayID, []*registrydomain.Registry{credentialed, installed, cached})
+	for _, reg := range []*registrydomain.Registry{credentialed, installed, cached} {
+		viewed := reapply.ViewCurrentCatalog(context.Background(), reg)
+		if viewed != reg {
+			t.Fatalf("%s view overlaid the stored row", reg.MCPTarget.URL)
+		}
+	}
+	if credentialed.MCPTarget.Auth.ClientID != "live-client" || credentialed.MCPTarget.Auth.ClientSecret != "live-secret" ||
+		credentialed.MCPTarget.Auth.Registration != registrydomain.RegistrationManual {
+		t.Fatalf("credentialed row = %+v", credentialed.MCPTarget.Auth)
+	}
+	if installed.MCPTarget.URL != "https://mcp.newrelic.com/mcp/" ||
+		installed.MCPTarget.Auth.Registration != registrydomain.RegistrationAuto ||
+		strings.Join(installed.MCPTarget.Auth.Scopes, " ") != "openid profile email" {
+		t.Fatalf("installed row = url %s auth %+v", installed.MCPTarget.URL, installed.MCPTarget.Auth)
+	}
+	if cached.MCPTarget.Auth.Registration != registrydomain.RegistrationAuto || cached.MCPTarget.Auth.ClientID != "" {
+		t.Fatalf("cached dynamic client row = %+v", cached.MCPTarget.Auth)
+	}
+	if saver.calls != 0 {
+		t.Fatalf("saves = %d, want 0", saver.calls)
+	}
+}
+
+func newRelicHeldRegistry(gatewayID ids.GatewayID, auth *registrydomain.MCPAuth, rawURL string) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: gatewayID,
+		Name:      "com.newrelic/mcp",
+		Type:      registrydomain.TypeMCP,
+		Enabled:   true,
+		MCPTarget: &registrydomain.MCPTarget{
+			Code:      "com.newrelic/mcp",
+			URL:       rawURL,
+			Transport: registrydomain.MCPTransportStreamableHTTP,
+			URLVariables: []registrydomain.MCPURLVariable{{
+				Name:     "host",
+				Required: true,
+				Options: []registrydomain.MCPURLVariableOption{
+					{Value: "mcp.newrelic.com", Label: "United States"},
+					{Value: "mcp.eu.newrelic.com", Label: "Europe"},
+				},
+			}},
+			Auth: auth,
+		},
+	}
+}
