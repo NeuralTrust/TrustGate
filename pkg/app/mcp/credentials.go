@@ -252,7 +252,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	// caller reads the same credential and nobody calling can connect it: the
 	// admin does, once, on the instance.
 	subject := registrydomain.CredentialSubject(reg, principal.Subject)
-	cred, err := r.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
+	cred, err := r.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProviderFor(reg, nil))
 	if errors.Is(err, vaultdomain.ErrNotFound) {
 		return r.consentRequired(ctx, rc, reg, cfg.Provider, subject,
 			ConsentCauseNoCredential, "no stored credential for this account and provider")
@@ -352,7 +352,7 @@ func (r *credentialResolver) refreshCredential(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	vaultProvider := registrydomain.ForwardedVaultProvider(reg)
+	vaultProvider := registrydomain.ForwardedVaultProviderFor(reg, nil)
 	key := gatewayID.String() + "|" + subject + "|" + vaultProvider
 	result := r.refresh.DoChan(key, func() (any, error) {
 		// A caller disconnect must not abandon a rotating grant shared by other callers.

@@ -617,6 +617,7 @@ func TestCanonicalizeMCPAuthFromCatalog_PagerDutyFixedURLKeepsVaultKey(t *testin
 	require.Equal(t, pagerDutyAuthorize, target.Auth.AuthorizeURL)
 	require.Equal(t, pagerDutyToken, target.Auth.TokenURL)
 	require.Equal(t, []string{"read", "incidents.read", "oncalls.read", "services.read", "users.read", "openid"}, target.Auth.Scopes)
+	require.True(t, target.Auth.ResourcePerInstance)
 }
 
 func TestCanonicalizeMCPAuthFromCatalog_PagerDutyTemplateURLKeepsConcreteResource(t *testing.T) {
@@ -656,4 +657,65 @@ func TestCanonicalizeMCPAuthFromCatalog_PagerDutyRegionsDoNotShareAVaultKey(t *t
 	tokens[euKey] = "eu-token"
 	require.Equal(t, "us-token", tokens[domain.ForwardedVaultProvider(usReg)])
 	require.Equal(t, "eu-token", tokens[domain.ForwardedVaultProvider(euReg)])
+}
+
+// An own-client New Relic row is manual and stores the URL template. The
+// catalog resource is empty, so the row is not per-instance and the vault
+// key stays the template fingerprint.
+func TestCanonicalizeMCPAuthFromCatalog_NewRelicOwnClientKeepsTemplateKey(t *testing.T) {
+	t.Parallel()
+	const code = "com.newrelic/mcp"
+	cat := stubCatalog{entries: map[string]catalogdomain.MCPServer{
+		code: {
+			Code: code,
+			URL:  "https://{host}/mcp/",
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name:     "host",
+				Required: true,
+				Options: []catalogdomain.MCPURLVariableOption{
+					{Value: "mcp.newrelic.com", Label: "United States"},
+					{Value: "mcp.eu.newrelic.com", Label: "Europe"},
+				},
+			}},
+			OAuth: &catalogdomain.MCPOAuth{
+				Required:         true,
+				ResourceMetadata: true,
+				Registration:     "auto",
+				AuthorizeURL:     "https://oauth2.service.newrelic.com/oauth2/auth",
+				TokenURL:         "https://oauth2.service.newrelic.com/oauth2/token",
+			},
+		},
+	}}
+	for _, host := range []string{"mcp.newrelic.com", "mcp.eu.newrelic.com"} {
+		target := &domain.MCPTarget{
+			Code: code,
+			URL:  "https://{host}/mcp/",
+			URLVariables: []domain.MCPURLVariable{{
+				Name:     "host",
+				Required: true,
+				Options: []domain.MCPURLVariableOption{
+					{Value: "mcp.newrelic.com"},
+					{Value: "mcp.eu.newrelic.com"},
+				},
+			}},
+			Auth: &domain.MCPAuth{
+				Mode:         domain.MCPAuthModeForwarded,
+				Provider:     code,
+				Registration: domain.RegistrationManual,
+				ClientID:     "own-client",
+				AuthorizeURL: "https://oauth2.service.newrelic.com/oauth2/auth",
+				TokenURL:     "https://oauth2.service.newrelic.com/oauth2/token",
+				Resource:     "https://{host}/mcp/",
+			},
+		}
+		require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+		require.False(t, target.Auth.ResourcePerInstance)
+		require.Equal(t, "https://{host}/mcp/", target.Auth.Resource)
+		require.Equal(t, domain.RegistrationManual, target.Auth.Registration)
+		reg, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "New Relic", "", target)
+		require.NoError(t, err)
+		reg.MCPTarget.InstanceConfig = map[string]string{"host": host}
+		require.Contains(t, domain.ForwardedVaultProvider(reg), "|17636ceb2ec1")
+		require.NotContains(t, domain.ForwardedVaultProvider(reg), "|e9cccbc4d5eb")
+	}
 }

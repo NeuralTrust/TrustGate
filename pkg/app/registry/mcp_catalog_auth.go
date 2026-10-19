@@ -210,6 +210,10 @@ func assignCatalogResource(target *domain.MCPTarget, entry catalogdomain.MCPServ
 	}
 	resource := strings.TrimSpace(entry.OAuth.Resource)
 	stored := strings.TrimSpace(target.Auth.Resource)
+	// Only a catalog resource that is itself a template is per-instance.
+	// Copying a templated server URL into the row (resource_metadata) must
+	// not flip this: New Relic and Vanta tokens are stored under that template.
+	target.Auth.ResourcePerInstance = strings.Contains(resource, "{")
 	templated := strings.Contains(resource, "{") || (resource == "" && entry.OAuth.ResourceMetadata && strings.Contains(target.URL, "{"))
 	if templated {
 		if concrete, ok := concreteCatalogResource(target, entry, resource); ok {

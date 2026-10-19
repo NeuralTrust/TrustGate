@@ -860,7 +860,7 @@ func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
 // registry with no instance config yet takes the principal's install values,
 // so the key matches the one the dial path computes from the scoped clone.
 func (s *connectService) forwardedVaultProvider(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) string {
-	return registrydomain.ForwardedVaultProvider(s.registryForVaultKey(ctx, gatewayID, principalSub, reg))
+	return registrydomain.ForwardedVaultProviderFor(s.registryForVaultKey(ctx, gatewayID, principalSub, reg), nil)
 }
 
 func (s *connectService) registryForVaultKey(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) *registrydomain.Registry {

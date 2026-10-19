@@ -76,7 +76,7 @@ func (i *installer) uninstallActive(
 	if err != nil {
 		return err
 	}
-	provider := registrydomain.ForwardedVaultProvider(registryForRevoke(bound, removed))
+	provider := registrydomain.ForwardedVaultProviderFor(registryForRevoke(bound, removed), nil)
 	if provider == "" || registrydomain.CredentialSubject(bound, principalSub) != principalSub {
 		return i.installs.DeleteByID(releaseCtx, gatewayID, principalSub, removed.ID)
 	}
@@ -186,7 +186,7 @@ func (i *installer) credentialStillUsed(
 		if err != nil {
 			return false, err
 		}
-		if registrydomain.ForwardedVaultProvider(registryForRevoke(otherReg, other)) != provider {
+		if registrydomain.ForwardedVaultProviderFor(registryForRevoke(otherReg, other), nil) != provider {
 			continue
 		}
 		if registrydomain.CredentialSubject(otherReg, principalSub) != principalSub {
@@ -220,7 +220,7 @@ func (i *installer) perUserKeyHeldByAdminRegistry(
 		if reg.MCPTarget != nil && reg.MCPTarget.Origin == registrydomain.MCPOriginStore {
 			continue
 		}
-		if registrydomain.ForwardedVaultProvider(reg) != provider {
+		if registrydomain.ForwardedVaultProviderFor(reg, nil) != provider {
 			continue
 		}
 		if registrydomain.CredentialSubject(reg, principalSub) != principalSub {
