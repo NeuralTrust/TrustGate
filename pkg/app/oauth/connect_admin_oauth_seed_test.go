@@ -37,6 +37,7 @@ func TestConnectService_AdminOAuthAppsUseClientIDAndPKCE(t *testing.T) {
 		t.Fatalf("catalog: %v", err)
 	}
 	cases := []struct {
+		name            string
 		code            string
 		values          map[string]string
 		authorizePrefix string
@@ -83,9 +84,29 @@ func TestConnectService_AdminOAuthAppsUseClientIDAndPKCE(t *testing.T) {
 			scope:           "offline_access account:read projects:query catalog:read",
 			resource:        "https://acme.us1.dbt.com/api/ai/v1/mcp/",
 		},
+		{
+			name:            "com.newrelic/mcp US",
+			code:            "com.newrelic/mcp",
+			values:          map[string]string{"host": "mcp.newrelic.com"},
+			authorizePrefix: "https://oauth2.service.newrelic.com/oauth2/auth?",
+			scope:           "observability:read offline offline_access",
+			resource:        "https://mcp.newrelic.com/mcp/",
+		},
+		{
+			name:            "com.newrelic/mcp EU",
+			code:            "com.newrelic/mcp",
+			values:          map[string]string{"host": "mcp.eu.newrelic.com"},
+			authorizePrefix: "https://oauth2.service.newrelic.com/oauth2/auth?",
+			scope:           "observability:read offline offline_access",
+			resource:        "https://mcp.eu.newrelic.com/mcp/",
+		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.code, func(t *testing.T) {
+		name := tc.name
+		if name == "" {
+			name = tc.code
+		}
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assertAdminClientRejected(t, cat, tc.code, "")
 			assertAdminClientRejected(t, cat, tc.code, "   ")

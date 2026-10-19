@@ -129,8 +129,10 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// Salesforce, ServiceNow, Snowflake, and dbt (ENG-2223) were already not
 	// self-service. They stay that way as manual admin OAuth apps.
 	// com.salesforce/mcp-sandbox is a second manual admin OAuth app, so this
-	// count stays 106.
-	require.Equal(t, 106, self, "self_service count changed")
+	// count stayed 106.
+	// 105 after New Relic left self-service. Dynamic registration returns one
+	// shared client that only allows localhost redirect URIs (ENG-2189).
+	require.Equal(t, 105, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
