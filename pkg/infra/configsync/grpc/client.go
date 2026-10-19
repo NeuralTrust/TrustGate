@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"google.golang.org/grpc"
@@ -54,6 +55,22 @@ type Client struct {
 	lastApplied         string
 	recvMu              sync.Mutex
 	sendMu              sync.Mutex
+
+	usageSink UsageSink
+}
+
+// UsageSink receives the usage snapshots the control plane pushes on the Sync
+// stream.
+type UsageSink interface {
+	ApplySnapshot(snapshot usagedomain.Snapshot)
+}
+
+// SetUsageSink routes usage snapshots to sink. Without one they are dropped,
+// which is what a data plane that does not enforce usage wants.
+func (c *Client) SetUsageSink(sink UsageSink) {
+	c.recvMu.Lock()
+	defer c.recvMu.Unlock()
+	c.usageSink = sink
 }
 
 // NewClient dials the control plane with TLS (or dev-insecure), per-RPC bearer
@@ -197,6 +214,9 @@ func (c *Client) Watch(ctx context.Context) (string, error) {
 			}
 			if notice := received.msg.GetNotice(); notice != nil {
 				return notice.GetVersion(), nil
+			}
+			if usage := received.msg.GetUsage(); usage != nil && c.usageSink != nil {
+				c.usageSink.ApplySnapshot(usageSnapshotFromProto(usage))
 			}
 		}
 	}

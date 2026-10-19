@@ -290,3 +290,44 @@ func TestSyncHoldsUsageUntilTheSourceIsReady(t *testing.T) {
 		t.Fatal("no usage message once the source became ready")
 	}
 }
+
+type recordingSink struct {
+	mu        sync.Mutex
+	snapshots []usagedomain.Snapshot
+}
+
+func (r *recordingSink) ApplySnapshot(snapshot usagedomain.Snapshot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshots = append(r.snapshots, snapshot)
+}
+
+func (r *recordingSink) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.snapshots)
+}
+
+func TestClientWatchFeedsUsageToTheSink(t *testing.T) {
+	src := &fakeSource{}
+	src.set([]byte("payload"), "v1")
+	usage := newFakeUsage(exhaustedState(t, "tenant-a", 7))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	client := dialClient(t, lis, "dp-1")
+	sink := &recordingSink{}
+	client.SetUsageSink(sink)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := client.Watch(ctx); err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	if sink.count() != 1 {
+		t.Fatalf("sink got %d snapshots, want 1", sink.count())
+	}
+	got := sink.snapshots[0]
+	if got.AsOfVersion != 7 || len(got.Exhausted) != 1 || got.Exhausted[0].TenantID != "tenant-a" ||
+		got.Exhausted[0].Reason != usagedomain.ReasonFreeLimitReached {
+		t.Fatalf("snapshot = %+v", got)
+	}
+}
