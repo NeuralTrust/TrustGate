@@ -555,6 +555,28 @@ func TestDropAndReplace_ConcurrentClientsStayConsistent(t *testing.T) {
 	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
 }
 
+func TestDiscover_NotDiscoverableOmitsQueryAndUserinfo(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	upstream := "http://user:s3cret@" + host + "/mcp?token=supersecret#frag"
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	_, err := r.Discover(context.Background(), upstream)
+	require.ErrorIs(t, err, appoauth.ErrUpstreamNotDiscoverable)
+	msg := err.Error()
+	require.NotContains(t, msg, "s3cret")
+	require.NotContains(t, msg, "user:")
+	require.NotContains(t, msg, "?")
+	require.NotContains(t, msg, "token=")
+	require.NotContains(t, msg, "supersecret")
+	require.NotContains(t, msg, "#frag")
+	require.Contains(t, msg, "http://"+host+"/mcp")
+}
+
 func TestDiscover_SpoofedIssuerIsRefused(t *testing.T) {
 	t.Parallel()
 	var tokenHits atomic.Int64
